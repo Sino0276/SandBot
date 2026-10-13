@@ -20,6 +20,7 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 | 배포        | 팀의 FtcRobotController 프로젝트 `TeamCode`에 Java 파일을 직접 저장. 빌드/설치는 Android Studio에서 함 (도구 내 ADB 배포, OnBot Java 업로드는 범위 밖)                     |
 | 언어        | UI는 i18n(한국어 기본, 영어). CLAUDE.md·코드 주석·커밋 메시지는 한국어                                                                                                     |
 | 툴체인      | pnpm · electron-vite(빌드) · electron-builder(패키징) · ESLint + Prettier · Vitest                                                                                         |
+| 단위        | 세 층으로 분리. 내부(저장·계산)는 미터·라디안으로 고정. 표시·입력 단위는 사용자 개인 앱 설정. 생성 Java 코드의 단위는 프로젝트(팀) 설정                                    |
 
 ## 아키텍처
 
@@ -48,12 +49,18 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **가짜 FTC SDK는 실제 SDK의 API 표면을 그대로 따른다.** 패키지·클래스·메서드 시그니처(`com.qualcomm.robotcore.hardware.*`, `com.qualcomm.robotcore.eventloop.opmode.*` 등)가 같아야 한다. 같은 소스가 Android Studio(실제 SDK)와 사이드카(가짜 SDK) 양쪽에서 수정 없이 컴파일되어야 한다.
 - **STEP 파싱은 UI 스레드에서 하지 않는다.** OCCT WASM은 무거우므로 워커에서 돌리고 결과 메시만 넘긴다.
 - **UI 문자열을 하드코딩하지 않는다.** 모든 문자열은 i18n 리소스(ko 기본, en)를 거친다.
+- **단위 변환은 경계에서만 한다.** 씬 파일·씬 그래프·시뮬레이터 등 내부 값은 항상 미터·라디안이다. 변환은 세 곳에서만 일어난다.
+  - STEP 임포트: 파일에 선언된 단위에서 미터로 변환
+  - UI 표시·입력: 사용자 표시 단위로 변환. 입력칸은 `12in`, `30cm`처럼 단위를 붙인 값도 받는다.
+  - 코드 생성: 프로젝트의 코드 단위로 변환
+- **표시 단위는 개인 앱 설정에, 코드 단위는 프로젝트 설정에 저장한다.** 같은 프로젝트를 여는 팀원마다 표시 단위가 달라도 프로젝트 파일과 생성 코드는 바뀌지 않아야 한다.
 
 ## 미결정 사항
 
 아래 항목은 아직 정하지 않았다. 스캐폴딩이나 구현 중에 이 항목을 만나면 추측해서 정하지 말고 사용자에게 확인한다.
 
-- 내부 길이 단위와 좌표계 (STEP은 보통 mm, FTC 필드 좌표는 inch)
+- 좌표계 규약 (Three.js는 Y-up, FTC 공식 필드 좌표계는 Z-up·필드 중앙 원점)
+- 표시 단위의 첫 실행 기본값 (언어·지역으로 추정할지, 처음에 묻게 할지)
 - 사이드카 IPC 방식(stdio JSON-RPC 또는 WebSocket)과 시뮬레이션 동기화 방식(lockstep 또는 실시간)
 - JDK를 앱에 번들할지 여부
 - 지원할 FTC 라이브러리 범위(Road Runner, Pedro Pathing 등)와 시즌별 필드 모델
