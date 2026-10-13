@@ -50,17 +50,12 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-i18next": "^17.0.16",
-    "react-resizable-panels": "^4.14.5",
+    "react-resizable-panels": "^4.14.4",
     "three": "^0.186.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vitest": "^5.0.4",
     "zustand": "^5.0.15"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild"
-    ]
-  }
+  "packageManager": "pnpm@11.28.5"
 }
