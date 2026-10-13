@@ -9,7 +9,7 @@ export type SceneObjectKind = 'robot' | 'assembly' | 'part'
 
 // 씬에 그릴 모양. 없으면 보이지 않는 그룹이다.
 export type ObjectVisual =
-  // CAD에서 불러온 메시. 형상 데이터는 geometryRegistry에 있고, 색은 0~1 RGB.
+  // CAD에서 불러온 메시. 형상 데이터는 geometryRegistry에 있고(id는 cadGeometryId), 색은 0~1 sRGB.
   | { type: 'mesh'; geometryId: string; color: Vec3 }
   // CAD가 없을 때 쓰는 임시 모양
   | { type: 'placeholder'; shape: 'robot' | 'webcam' }
@@ -19,11 +19,15 @@ export type AxisDirection = '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z'
 // CAD 루트 노드에만 있다. 이 노드의 transform은 CAD 좌표 → 로봇 좌표 정렬이다.
 export type CadSource = {
   fileName: string
+  // 이 PC에서의 원본 STEP 경로. 프로젝트 파일에는 프로젝트 기준 상대 경로도 함께 저장한다.
+  absolutePath: string
   // CAD 좌표에서 로봇의 위쪽·앞쪽에 해당하는 축
   upAxis: AxisDirection
   forwardAxis: AxisDirection
   // CAD 좌표(미터)의 전체 경계 상자. 노드의 피벗은 이 상자의 중심이다.
   bounds: { min: Vec3; max: Vec3 }
+  // 불러왔을 때의 메시 수. 다시 읽은 파일과 다르면 CAD가 바뀐 것이다.
+  meshCount: number
 }
 
 export type SceneObject = {

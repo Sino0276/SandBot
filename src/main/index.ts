@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { guardUnsavedChanges, registerProjectIpc } from './project'
 
 function createWindow(): void {
   // Create the browser window.
@@ -19,6 +20,8 @@ function createWindow(): void {
       sandbox: false
     }
   })
+
+  guardUnsavedChanges(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -52,6 +55,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  registerProjectIpc()
   createWindow()
 
   app.on('activate', function () {

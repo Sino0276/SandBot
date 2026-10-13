@@ -8,6 +8,8 @@ import {
   type CadAlignment
 } from '../cad/alignment'
 import { saveAlignmentPreference } from '../cad/alignmentPreference'
+import { relinkCad } from '../project/projectActions'
+import { useProjectStore } from '../project/projectStore'
 import type { AxisDirection, SceneObject } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 
@@ -20,6 +22,7 @@ const PRESET_LABEL_KEYS = {
 function CadAlignmentSection({ cadObject }: { cadObject: SceneObject }): React.JSX.Element | null {
   const { t } = useTranslation()
   const setCadAlignment = useSceneStore((state) => state.setCadAlignment)
+  const missing = useProjectStore((state) => state.missingCad.includes(cadObject.id))
   const cad = cadObject.cad
   if (!cad) return null
 
@@ -48,6 +51,16 @@ function CadAlignmentSection({ cadObject }: { cadObject: SceneObject }): React.J
           {cad.fileName}
         </span>
       </header>
+      <div className="cad-file">
+        <span className="cad-file-path" title={cad.absolutePath}>
+          {/* 긴 경로는 앞쪽을 줄임표로 줄인다(rtl). 경로 자체는 ltr로 격리해 '/'가 끝으로 튀지 않게 한다 */}
+          <bdi dir="ltr">{cad.absolutePath || cad.fileName}</bdi>
+        </span>
+        {missing && <span className="cad-file-missing">{t('inspector.cad.missing')}</span>}
+        <button type="button" className="panel-button" onClick={() => void relinkCad(cadObject.id)}>
+          {t('inspector.cad.relink')}
+        </button>
+      </div>
       <p className="inspector-note">{t('inspector.cad.hint')}</p>
       <label className="field-row">
         <span className="field-row-label">{t('inspector.cad.preset')}</span>

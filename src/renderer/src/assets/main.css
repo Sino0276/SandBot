@@ -351,6 +351,10 @@ body {
   background: #6b2430;
 }
 
+.status-banner.is-warning {
+  background: #6b5418;
+}
+
 .status-dismiss {
   flex: none;
   padding: 0 6px;
@@ -417,4 +421,102 @@ body {
   border: 1px solid var(--color-border);
   border-radius: 3px;
   font: inherit;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolbar-project {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-dirty {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cad-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.cad-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.cad-file-missing {
+  flex: none;
+  color: #ff8a8a;
+  font-size: 11px;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 16px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 40%);
+}
+
+.dialog-message {
+  margin: 0 0 16px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-button {
+  height: 26px;
+  padding: 0 12px;
+  color: var(--color-text);
+  background: var(--color-panel-header);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dialog-button.is-primary {
+  color: #fff;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }

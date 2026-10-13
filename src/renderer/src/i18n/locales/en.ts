@@ -1,8 +1,43 @@
 import type { Messages } from './ko'
 
 const en: Messages = {
+  common: {
+    dismiss: 'Dismiss'
+  },
   toolbar: {
-    language: 'Language'
+    language: 'Language',
+    noProject: 'Unsaved scene',
+    open: 'Open',
+    openShortcut: 'Open an FtcRobotController folder (Ctrl+O)',
+    save: 'Save',
+    saveShortcut: 'Save (Ctrl+S)'
+  },
+  project: {
+    chooseFolderTitle: 'Choose the FtcRobotController folder',
+    chooseStepTitle: 'Choose a STEP file'
+  },
+  dialog: {
+    unsavedChanges: 'You have unsaved changes. Save them?',
+    overwriteProject:
+      '{{name}} already has a SandBot project. Overwrite it with the current scene?',
+    save: 'Save',
+    discard: "Don't save",
+    overwrite: 'Overwrite',
+    cancel: 'Cancel'
+  },
+  notice: {
+    importing: 'Importing {{fileName}}…',
+    importReadFailed: 'Could not read {{fileName}} as a STEP file.',
+    importEmpty: '{{fileName}} contains no geometry to import.',
+    importFailed: 'Something went wrong while importing {{fileName}}.',
+    openingProject: 'Opening {{name}}…',
+    openFailed: 'Could not open the project ({{detail}}).',
+    saveFailed: 'Could not save ({{detail}}).',
+    noTeamCode: '{{name}} has no TeamCode folder. Make sure it is an FtcRobotController folder.',
+    cadMissing:
+      'Could not find {{count}} CAD file(s). Use [Locate file] in the Inspector to relink.',
+    cadChanged:
+      'The part count of {{fileName}} differs from when it was saved. The CAD may have changed, so some parts may not match.'
   },
   panels: {
     hierarchy: 'Hierarchy',
@@ -26,15 +61,8 @@ const en: Messages = {
     empty: 'No objects in the scene',
     emptyHint: 'Drop a STEP file onto the window or click [Import STEP].',
     importStep: 'Import STEP',
-    importing: 'Importing {{fileName}}…',
-    dismiss: 'Dismiss',
     expand: 'Expand',
     collapse: 'Collapse'
-  },
-  importError: {
-    readFailed: 'Could not read {{fileName}} as a STEP file.',
-    empty: '{{fileName}} contains no geometry to import.',
-    unknown: 'Something went wrong while importing {{fileName}}.'
   },
   inspector: {
     empty: 'No object selected',
@@ -53,7 +81,9 @@ const en: Messages = {
       presetZUp: 'Z-up (Onshape · Fusion 360 Z-up)',
       presetCustom: 'Custom',
       upAxis: 'Up axis',
-      forwardAxis: 'Forward axis'
+      forwardAxis: 'Forward axis',
+      missing: 'File not found',
+      relink: 'Locate file'
     }
   }
 }

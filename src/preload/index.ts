@@ -1,8 +1,26 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { posix, relative, resolve, sep } from 'path'
+import { IPC, type SandbotApi } from '../shared/ipc'
 
-// Custom APIs for renderer
-const api = {}
+const api: SandbotApi = {
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  relativePath: (from, to) => relative(from, to).split(sep).join(posix.sep),
+  resolvePath: (base, target) => resolve(base, target),
+  chooseProjectFolder: (title) => ipcRenderer.invoke(IPC.chooseProjectFolder, title),
+  chooseStepFile: (title, defaultPath) =>
+    ipcRenderer.invoke(IPC.chooseStepFile, title, defaultPath),
+  openProject: (root) => ipcRenderer.invoke(IPC.openProject, root),
+  saveProject: (root, content) => ipcRenderer.invoke(IPC.saveProject, root, content),
+  readStepFile: (path) => ipcRenderer.invoke(IPC.readStepFile, path),
+  setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
+  onCloseRequested: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(IPC.closeRequested, listener)
+    return () => ipcRenderer.removeListener(IPC.closeRequested, listener)
+  },
+  confirmClose: () => ipcRenderer.send(IPC.confirmClose)
+}
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise

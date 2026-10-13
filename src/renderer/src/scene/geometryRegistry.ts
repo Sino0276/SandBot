@@ -4,6 +4,7 @@ import type { BufferGeometry } from 'three'
 const geometries = new Map<string, BufferGeometry>()
 
 export function registerGeometry(id: string, geometry: BufferGeometry): void {
+  geometries.get(id)?.dispose()
   geometries.set(id, geometry)
 }
 

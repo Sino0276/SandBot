@@ -5,7 +5,12 @@ import { Vector3 } from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { worldMatrix, type SceneObjects } from '../scene/model'
 import { ALIGNMENT_PRESETS, alignmentRotation, boundsCenter } from './alignment'
-import { buildSceneObjects, convertOcctResult, type ImportedModel } from './stepImport'
+import {
+  buildSceneObjects,
+  cadGeometryId,
+  convertOcctResult,
+  type ImportedModel
+} from './stepImport'
 
 function counterIds(): () => string {
   let next = 0
@@ -76,16 +81,16 @@ describe('convertOcctResult', () => {
 function expectPivotsMatchCad(
   model: ImportedModel,
   objects: SceneObjects,
-  ids: Map<number, string>
+  cadRootId: string
 ): void {
   // 로봇이 원점에 있으면, 각 파트의 피벗은 "정렬 회전 × CAD 중심 + 평행이동"이어야 한다
   const rotation = alignmentRotation(ALIGNMENT_PRESETS.zUp)
-  const rootId = Object.values(objects).find((o) => o.cad)!.id
-  const root = new Vector3().setFromMatrixPosition(worldMatrix(objects, rootId))
+  const root = new Vector3().setFromMatrixPosition(worldMatrix(objects, cadRootId))
   const translation = root.sub(
     new Vector3(...boundsCenter(model.root.bounds)).applyMatrix4(rotation)
   )
-  for (const [meshIndex, geometryId] of ids) {
+  for (let meshIndex = 0; meshIndex < model.meshes.length; meshIndex++) {
+    const geometryId = cadGeometryId(cadRootId, meshIndex)
     const object = Object.values(objects).find(
       (o) => o.visual?.type === 'mesh' && o.visual.geometryId === geometryId
     )!
@@ -100,17 +105,23 @@ function expectPivotsMatchCad(
 describe('buildSceneObjects', () => {
   it('로봇 → CAD 루트 → 어셈블리·파트 순으로 만들고 피벗 위치를 보존한다', () => {
     const model = convertOcctResult(synthetic, 'robot.step')!
-    const { objects, robotId, geometryIds } = buildSceneObjects(model, {
+    const { objects, robotId, cadRootId } = buildSceneObjects(model, {
       fileName: 'robot.step',
+      absolutePath: '/cad/robot.step',
       alignment: ALIGNMENT_PRESETS.zUp,
       createId: counterIds()
     })
     expect(objects[robotId]).toMatchObject({ name: 'robot', kind: 'robot', parentId: null })
-    const cadRoot = Object.values(objects).find((o) => o.cad)!
+    const cadRoot = objects[cadRootId]
     expect(cadRoot).toMatchObject({ name: 'ROBOT_ASM', parentId: robotId })
-    expect(cadRoot.cad).toMatchObject({ fileName: 'robot.step', upAxis: '+Z', forwardAxis: '-Y' })
-    expect(geometryIds.size).toBe(3)
-    expectPivotsMatchCad(model, objects, geometryIds)
+    expect(cadRoot.cad).toMatchObject({
+      fileName: 'robot.step',
+      absolutePath: '/cad/robot.step',
+      upAxis: '+Z',
+      forwardAxis: '-Y',
+      meshCount: 3
+    })
+    expectPivotsMatchCad(model, objects, cadRootId)
   })
 })
 
@@ -136,11 +147,12 @@ describe('실제 STEP 파일 (CAx-IF as1_pe_203)', () => {
     ])
     expect(model.meshes).toHaveLength(18)
 
-    const { objects, geometryIds } = buildSceneObjects(model, {
+    const { objects, cadRootId } = buildSceneObjects(model, {
       fileName: 'as1_pe_203.stp',
+      absolutePath: file,
       alignment: ALIGNMENT_PRESETS.zUp,
       createId: counterIds()
     })
-    expectPivotsMatchCad(model, objects, geometryIds)
+    expectPivotsMatchCad(model, objects, cadRootId)
   })
 })

@@ -165,15 +165,25 @@ export function baseName(fileName: string): string {
 
 const IDENTITY_ROTATION: Vec3 = [0, 0, 0]
 
+// CAD 메시 형상 id. 프로젝트를 다시 열 때 같은 파일을 읽으면 같은 id로 다시 등록된다.
+export function cadGeometryId(cadRootId: string, meshIndex: number): string {
+  return `${cadRootId}:${meshIndex}`
+}
+
 // 불러온 모델을 씬 오브젝트로 만든다: 로봇(필드 중앙) → CAD 루트(정렬) → 어셈블리·파트.
-// 파트 형상은 meshIndex로 가리키고, 호출한 쪽이 geometryIds에 맞춰 형상을 등록한다.
+// 파트 형상은 cadGeometryId(CAD 루트 id, 메시 인덱스)로 가리키고, 호출한 쪽이 그 id로 형상을 등록한다.
 export function buildSceneObjects(
   model: ImportedModel,
-  options: { fileName: string; alignment: CadAlignment; createId: () => string }
-): { objects: SceneObjects; robotId: string; geometryIds: Map<number, string> } {
-  const { fileName, alignment, createId } = options
+  options: {
+    fileName: string
+    absolutePath: string
+    alignment: CadAlignment
+    createId: () => string
+  }
+): { objects: SceneObjects; robotId: string; cadRootId: string } {
+  const { fileName, absolutePath, alignment, createId } = options
   const objects: SceneObjects = {}
-  const geometryIds = new Map<number, string>()
+  const cadRootId = createId()
 
   const robotId = createId()
   objects[robotId] = {
@@ -184,13 +194,14 @@ export function buildSceneObjects(
     transform: { position: [0, 0, 0], rotation: IDENTITY_ROTATION }
   }
 
-  const add = (node: ImportedNode, parentId: string, transform: Transform): string => {
-    const id = createId()
+  const add = (node: ImportedNode, parentId: string, transform: Transform, id: string): void => {
     const object: SceneObject = { id, name: node.name, kind: node.kind, parentId, transform }
     if (node.meshIndex !== undefined) {
-      const geometryId = createId()
-      geometryIds.set(node.meshIndex, geometryId)
-      object.visual = { type: 'mesh', geometryId, color: model.meshes[node.meshIndex].color }
+      object.visual = {
+        type: 'mesh',
+        geometryId: cadGeometryId(cadRootId, node.meshIndex),
+        color: model.meshes[node.meshIndex].color
+      }
     }
     objects[id] = object
 
@@ -198,16 +209,26 @@ export function buildSceneObjects(
     const center = boundsCenter(node.bounds)
     for (const child of node.children) {
       const childCenter = boundsCenter(child.bounds)
-      add(child, id, {
-        position: [0, 1, 2].map((i) => childCenter[i] - center[i]) as Vec3,
-        rotation: IDENTITY_ROTATION
-      })
+      add(
+        child,
+        id,
+        {
+          position: [0, 1, 2].map((i) => childCenter[i] - center[i]) as Vec3,
+          rotation: IDENTITY_ROTATION
+        },
+        createId()
+      )
     }
-    return id
   }
 
-  const cadRootId = add(model.root, robotId, cadRootTransform(model.root.bounds, alignment))
-  objects[cadRootId].cad = { fileName, ...alignment, bounds: model.root.bounds }
+  add(model.root, robotId, cadRootTransform(model.root.bounds, alignment), cadRootId)
+  objects[cadRootId].cad = {
+    fileName,
+    absolutePath,
+    ...alignment,
+    bounds: model.root.bounds,
+    meshCount: model.meshes.length
+  }
 
-  return { objects, robotId, geometryIds }
+  return { objects, robotId, cadRootId }
 }

@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import { importStepFile, isStepFileName } from '../cad/importStep'
+import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useSceneStore } from '../scene/sceneStore'
+import { useDialogStore } from './dialogStore'
 import { useEditorStore } from './editorStore'
 import HierarchyPanel from './panels/HierarchyPanel'
 import InspectorPanel from './panels/InspectorPanel'
@@ -21,7 +23,16 @@ function isTextInput(target: EventTarget | null): boolean {
 function useEditorShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (isTextInput(event.target) || event.ctrlKey || event.metaKey || event.altKey) return
+      if (useDialogStore.getState().request) return
+      const command = event.ctrlKey || event.metaKey
+      // Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기. 입력 중인 숫자칸이 있으면 먼저 확정(blur)시킨다.
+      if (command && !event.altKey && (event.key === 's' || event.key === 'o')) {
+        event.preventDefault()
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+        void (event.key === 's' ? saveProject() : openProjectFolder())
+        return
+      }
+      if (isTextInput(event.target) || command || event.altKey) return
       // F: 선택한 오브젝트에 카메라 맞추기 (Unity와 같은 키)
       if (event.key === 'f' || event.key === 'F') {
         const { selectedId, focus } = useEditorStore.getState()

@@ -24,12 +24,26 @@ const PLACEHOLDER_SCENE: SceneObjects = {
   }
 }
 
-function isPlaceholderScene(objects: SceneObjects): boolean {
+export function isPlaceholderScene(objects: SceneObjects): boolean {
   return Object.values(objects).every((object) => object.visual?.type === 'placeholder')
+}
+
+function disposeMeshes(objects: SceneObjects, ids: string[]): void {
+  for (const id of ids) {
+    const visual = objects[id]?.visual
+    if (visual?.type === 'mesh') disposeGeometry(visual.geometryId)
+  }
 }
 
 type SceneState = {
   objects: SceneObjects
+  // geometryRegistry에 형상이 새로 등록될 때마다 올린다. CAD 메시가 이 값을 구독해 다시 그린다.
+  geometryRevision: number
+  bumpGeometryRevision: () => void
+  // 씬 전체를 바꾼다(프로젝트 열기). 기존 형상은 해제한다.
+  replaceObjects: (objects: SceneObjects) => void
+  // CAD 원본 파일 위치를 바꾼다(파일 다시 찾기).
+  setCadFile: (id: string, absolutePath: string, fileName: string) => void
   // 저장용 로컬 변환을 설정한다. 오브젝트 종류별 제약(예: 로봇은 바닥 평면)을 적용한다.
   setLocalTransform: (id: string, transform: Transform) => void
   // 오브젝트들을 추가한다. 씬에 임시 오브젝트만 있으면 그것들은 지운다.
@@ -42,6 +56,24 @@ type SceneState = {
 
 export const useSceneStore = create<SceneState>()((set) => ({
   objects: PLACEHOLDER_SCENE,
+  geometryRevision: 0,
+  bumpGeometryRevision: () => set((state) => ({ geometryRevision: state.geometryRevision + 1 })),
+  replaceObjects: (objects) =>
+    set((state) => {
+      disposeMeshes(state.objects, Object.keys(state.objects))
+      return { objects }
+    }),
+  setCadFile: (id, absolutePath, fileName) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object?.cad) return state
+      return {
+        objects: {
+          ...state.objects,
+          [id]: { ...object, cad: { ...object.cad, absolutePath, fileName } }
+        }
+      }
+    }),
   setLocalTransform: (id, transform) =>
     set((state) => {
       const object = state.objects[id]
@@ -60,12 +92,10 @@ export const useSceneStore = create<SceneState>()((set) => ({
   removeObject: (id) =>
     set((state) => {
       if (!state.objects[id]) return state
+      const removed = subtreeIds(state.objects, id)
+      disposeMeshes(state.objects, removed)
       const objects = { ...state.objects }
-      for (const removedId of subtreeIds(state.objects, id)) {
-        const visual = objects[removedId].visual
-        if (visual?.type === 'mesh') disposeGeometry(visual.geometryId)
-        delete objects[removedId]
-      }
+      for (const removedId of removed) delete objects[removedId]
       return { objects }
     }),
   setCadAlignment: (id, alignment) =>

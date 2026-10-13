@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { importStepFile } from '../../cad/importStep'
-import { useImportStore } from '../../cad/importStore'
 import { ancestorIds, childrenOf, type SceneObject, type SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
+import NoticeList from '../NoticeList'
+import { useNoticeStore } from '../noticeStore'
 import PanelFrame from '../PanelFrame'
 
 type TreeContext = {
@@ -73,30 +74,11 @@ function TreeItem({
   )
 }
 
-function ImportStatus(): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const { status, fileName, errorCode, reset } = useImportStore()
-  if (status === 'loading') {
-    return <p className="status-banner">{t('hierarchy.importing', { fileName })}</p>
-  }
-  if (status === 'error' && errorCode) {
-    return (
-      <p className="status-banner is-error">
-        <span>{t(`importError.${errorCode}`, { fileName })}</span>
-        <button type="button" className="status-dismiss" onClick={reset}>
-          {t('hierarchy.dismiss')}
-        </button>
-      </p>
-    )
-  }
-  return null
-}
-
 function HierarchyPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const selectedId = useEditorStore((state) => state.selectedId)
-  const loading = useImportStore((state) => state.status === 'loading')
+  const importing = useNoticeStore((state) => state.notices.some((n) => n.key === 'importing'))
   const fileInput = useRef<HTMLInputElement>(null)
   // 사용자가 직접 접거나 편 항목. 나머지는 깊이 2 미만만 펼친다.
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({})
@@ -121,7 +103,7 @@ function HierarchyPanel(): React.JSX.Element {
       <button
         type="button"
         className="panel-button"
-        disabled={loading}
+        disabled={importing}
         onClick={() => fileInput.current?.click()}
       >
         {t('hierarchy.importStep')}
@@ -142,7 +124,7 @@ function HierarchyPanel(): React.JSX.Element {
 
   return (
     <PanelFrame title={t('panels.hierarchy')} actions={actions}>
-      <ImportStatus />
+      <NoticeList />
       {roots.length === 0 ? (
         <p className="panel-empty">
           {t('hierarchy.empty')}

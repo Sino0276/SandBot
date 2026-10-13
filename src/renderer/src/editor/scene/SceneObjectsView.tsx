@@ -62,6 +62,8 @@ function CadMesh({
   highlighted,
   onClick
 }: CadMeshProps): React.JSX.Element | null {
+  // 형상은 프로젝트를 연 뒤 비동기로 등록되므로 등록될 때마다 다시 그린다
+  useSceneStore((state) => state.geometryRevision)
   const geometry = getGeometry(geometryId)
   // CAD 색은 sRGB 값이다
   const baseColor = useMemo(() => new Color().setRGB(...color, SRGBColorSpace), [color])
