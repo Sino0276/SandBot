@@ -5,7 +5,26 @@ export type Vec3 = [number, number, number]
 // 회전은 X(롤)·Y(피치)·Z(요) 라디안. 요 → 피치 → 롤 순으로 적용한다(Three.js Euler 순서 'ZYX').
 export type Transform = { position: Vec3; rotation: Vec3 }
 
-export type SceneObjectKind = 'robot' | 'part'
+export type SceneObjectKind = 'robot' | 'assembly' | 'part'
+
+// 씬에 그릴 모양. 없으면 보이지 않는 그룹이다.
+export type ObjectVisual =
+  // CAD에서 불러온 메시. 형상 데이터는 geometryRegistry에 있고, 색은 0~1 RGB.
+  | { type: 'mesh'; geometryId: string; color: Vec3 }
+  // CAD가 없을 때 쓰는 임시 모양
+  | { type: 'placeholder'; shape: 'robot' | 'webcam' }
+
+export type AxisDirection = '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z'
+
+// CAD 루트 노드에만 있다. 이 노드의 transform은 CAD 좌표 → 로봇 좌표 정렬이다.
+export type CadSource = {
+  fileName: string
+  // CAD 좌표에서 로봇의 위쪽·앞쪽에 해당하는 축
+  upAxis: AxisDirection
+  forwardAxis: AxisDirection
+  // CAD 좌표(미터)의 전체 경계 상자. 노드의 피벗은 이 상자의 중심이다.
+  bounds: { min: Vec3; max: Vec3 }
+}
 
 export type SceneObject = {
   id: string
@@ -14,6 +33,8 @@ export type SceneObject = {
   parentId: string | null
   // 부모 기준 로컬 변환. 부모가 없으면 필드 좌표계 기준이다.
   transform: Transform
+  visual?: ObjectVisual
+  cad?: CadSource
 }
 
 export type SceneObjects = Record<string, SceneObject>
@@ -109,4 +130,15 @@ export function constrainTransform(object: SceneObject, transform: Transform): T
     position: [transform.position[0], transform.position[1], 0],
     rotation: [0, 0, transform.rotation[2]]
   }
+}
+
+// 자기 자신과 모든 하위 오브젝트의 id
+export function subtreeIds(objects: SceneObjects, id: string): string[] {
+  return [id, ...childrenOf(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
+}
+
+// 부모부터 최상위까지의 id(자기 자신 제외)
+export function ancestorIds(objects: SceneObjects, id: string): string[] {
+  const parentId = objects[id]?.parentId
+  return parentId ? [parentId, ...ancestorIds(objects, parentId)] : []
 }

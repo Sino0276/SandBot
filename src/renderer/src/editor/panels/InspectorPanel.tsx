@@ -4,10 +4,12 @@ import {
   findRobotId,
   getTransformInFrame,
   localTransformFromFrame,
+  subtreeIds,
   type Transform,
   type Vec3
 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import CadAlignmentSection from '../CadAlignmentSection'
 import { useEditorStore } from '../editorStore'
 import NumberField from '../NumberField'
 import PanelFrame from '../PanelFrame'
@@ -77,6 +79,13 @@ function InspectorPanel(): React.JSX.Element {
   // 로봇 기준에서 로봇 자신은 좌표계의 원점이라 편집할 값이 없다
   const isFrameOrigin = isRobotRoot && shownFrame === 'robot'
 
+  // CAD 정렬은 CAD 루트를 직접 골랐거나, 그 CAD를 가진 로봇을 골랐을 때 보여 준다
+  const cadObjectId = object.cad
+    ? object.id
+    : object.kind === 'robot'
+      ? subtreeIds(objects, object.id).find((id) => objects[id].cad)
+      : undefined
+
   const commit = (key: keyof Transform, axis: 0 | 1 | 2, input: number): void => {
     const next: Transform = { position: [...value.position], rotation: [...value.rotation] }
     next[key][axis] = input
@@ -117,6 +126,7 @@ function InspectorPanel(): React.JSX.Element {
           onCommit={(axis, input) => commit('rotation', axis, input * DEG)}
         />
       </section>
+      {cadObjectId && <CadAlignmentSection cadObject={objects[cadObjectId]} />}
     </PanelFrame>
   )
 }

@@ -6,6 +6,7 @@ import { isRecentHandleInteraction, useEditorStore, type TransformMode } from '.
 import PanelFrame from '../PanelFrame'
 import CameraRig from '../scene/CameraRig'
 import FieldFloor from '../scene/FieldFloor'
+import FocusController from '../scene/FocusController'
 import FrameAxes from '../scene/FrameAxes'
 import { FIELD_VIEW_POSITION } from '../scene/frameHooks'
 import SceneObjectsView from '../scene/SceneObjectsView'
@@ -63,6 +64,7 @@ function ScenePanel(): React.JSX.Element {
         <TransformHandles />
         <OrbitControls makeDefault />
         <CameraRig />
+        <FocusController />
         <ViewGizmo />
       </Canvas>
     </PanelFrame>

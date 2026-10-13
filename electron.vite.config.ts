@@ -11,6 +11,10 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    // STEP 파서(OCCT WASM)를 도는 워커를 ES 모듈로 번들한다
+    worker: {
+      format: 'es'
+    }
   }
 })

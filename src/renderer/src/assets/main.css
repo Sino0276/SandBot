@@ -161,6 +161,7 @@ body {
 }
 
 .tree-row {
+  gap: 2px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -312,4 +313,108 @@ body {
 
 .number-field input:disabled {
   color: var(--color-text-muted);
+}
+
+.panel-button {
+  height: 20px;
+  padding: 0 8px;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.panel-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.panel-button:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--color-accent-muted);
+}
+
+.status-banner.is-error {
+  background: #6b2430;
+}
+
+.status-dismiss {
+  flex: none;
+  padding: 0 6px;
+  color: inherit;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tree-twisty {
+  flex: none;
+  width: 14px;
+  padding: 0;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-kind {
+  flex: none;
+  margin-left: 6px;
+}
+
+.inspector-file {
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.field-row-label {
+  color: var(--color-text-muted);
+}
+
+.field-select {
+  min-width: 0;
+  height: 22px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font: inherit;
 }

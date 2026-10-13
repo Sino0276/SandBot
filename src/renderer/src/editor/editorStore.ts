@@ -8,7 +8,10 @@ type EditorState = {
   // 필드/로봇 보기 전환. 축 표시·핸들 방향·인스펙터 값·카메라에 적용되고 저장 데이터는 바꾸지 않는다.
   frame: ReferenceFrame
   transformMode: TransformMode
+  // 카메라를 이 오브젝트에 맞추라는 요청. 같은 오브젝트를 다시 요청해도 반응하도록 매번 새 객체를 만든다.
+  focusRequest: { id: string } | null
   select: (id: string | null) => void
+  focus: (id: string) => void
   setFrame: (frame: ReferenceFrame) => void
   setTransformMode: (mode: TransformMode) => void
 }
@@ -17,7 +20,9 @@ export const useEditorStore = create<EditorState>()((set) => ({
   selectedId: null,
   frame: 'field',
   transformMode: 'translate',
+  focusRequest: null,
   select: (selectedId) => set({ selectedId }),
+  focus: (id) => set({ focusRequest: { id } }),
   setFrame: (frame) => set({ frame }),
   setTransformMode: (transformMode) => set({ transformMode })
 }))
