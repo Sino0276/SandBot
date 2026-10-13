@@ -1,0 +1,112 @@
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
+
+export type Vec3 = [number, number, number]
+
+// 회전은 X(롤)·Y(피치)·Z(요) 라디안. 요 → 피치 → 롤 순으로 적용한다(Three.js Euler 순서 'ZYX').
+export type Transform = { position: Vec3; rotation: Vec3 }
+
+export type SceneObjectKind = 'robot' | 'part'
+
+export type SceneObject = {
+  id: string
+  name: string
+  kind: SceneObjectKind
+  parentId: string | null
+  // 부모 기준 로컬 변환. 부모가 없으면 필드 좌표계 기준이다.
+  transform: Transform
+}
+
+export type SceneObjects = Record<string, SceneObject>
+
+// 보기 기준 좌표계. 로봇 좌표계는 X 앞, Y 왼쪽, Z 위이고 원점은 로봇 중심 바닥이다.
+export type ReferenceFrame = 'field' | 'robot'
+
+const EULER_ORDER = 'ZYX'
+
+export function transformToMatrix(transform: Transform): Matrix4 {
+  const [rx, ry, rz] = transform.rotation
+  const quaternion = new Quaternion().setFromEuler(new Euler(rx, ry, rz, EULER_ORDER))
+  return new Matrix4().compose(new Vector3(...transform.position), quaternion, new Vector3(1, 1, 1))
+}
+
+export function matrixToTransform(matrix: Matrix4): Transform {
+  const position = new Vector3()
+  const quaternion = new Quaternion()
+  matrix.decompose(position, quaternion, new Vector3())
+  const euler = new Euler().setFromQuaternion(quaternion, EULER_ORDER)
+  return { position: [position.x, position.y, position.z], rotation: [euler.x, euler.y, euler.z] }
+}
+
+export function childrenOf(objects: SceneObjects, parentId: string | null): SceneObject[] {
+  return Object.values(objects).filter((object) => object.parentId === parentId)
+}
+
+export function worldMatrix(objects: SceneObjects, id: string): Matrix4 {
+  const object = objects[id]
+  const local = transformToMatrix(object.transform)
+  return object.parentId ? worldMatrix(objects, object.parentId).multiply(local) : local
+}
+
+// 오브젝트가 속한 로봇(자기 자신 포함)의 id. 로봇에 속하지 않으면 null.
+export function findRobotId(objects: SceneObjects, id: string): string | null {
+  let current: SceneObject | undefined = objects[id]
+  while (current) {
+    if (current.kind === 'robot') return current.id
+    current = current.parentId ? objects[current.parentId] : undefined
+  }
+  return null
+}
+
+// 로봇 기준 보기에서 따라갈 로봇: 선택한 오브젝트의 로봇, 없으면 씬의 첫 로봇.
+export function activeRobotId(objects: SceneObjects, selectedId: string | null): string | null {
+  const fromSelection = selectedId && objects[selectedId] ? findRobotId(objects, selectedId) : null
+  return fromSelection ?? Object.values(objects).find((o) => o.kind === 'robot')?.id ?? null
+}
+
+// 기준 좌표계의 필드 기준 행렬. 로봇 기준인데 로봇에 속하지 않은 오브젝트는 필드 기준으로 대신한다.
+export function frameMatrix(objects: SceneObjects, id: string, frame: ReferenceFrame): Matrix4 {
+  const robotId = frame === 'robot' ? findRobotId(objects, id) : null
+  return robotId ? worldMatrix(objects, robotId) : new Matrix4()
+}
+
+export function getTransformInFrame(
+  objects: SceneObjects,
+  id: string,
+  frame: ReferenceFrame
+): Transform {
+  const relative = frameMatrix(objects, id, frame).invert().multiply(worldMatrix(objects, id))
+  return matrixToTransform(relative)
+}
+
+// 기준 좌표계로 표현한 변환을 저장용 로컬 변환으로 바꾼다.
+export function localTransformFromFrame(
+  objects: SceneObjects,
+  id: string,
+  frame: ReferenceFrame,
+  value: Transform
+): Transform {
+  return localTransformFromWorld(
+    objects,
+    id,
+    frameMatrix(objects, id, frame).multiply(transformToMatrix(value))
+  )
+}
+
+export function localTransformFromWorld(
+  objects: SceneObjects,
+  id: string,
+  world: Matrix4
+): Transform {
+  const parentId = objects[id].parentId
+  const local = parentId ? worldMatrix(objects, parentId).invert().multiply(world) : world
+  return matrixToTransform(local)
+}
+
+// 최상위 로봇은 필드 바닥 위에서만 움직인다(높이·롤·피치 0).
+export function constrainTransform(object: SceneObject, transform: Transform): Transform {
+  if (object.kind !== 'robot' || object.parentId !== null) return transform
+  return {
+    position: [transform.position[0], transform.position[1], 0],
+    rotation: [0, 0, transform.rotation[2]]
+  }
+}

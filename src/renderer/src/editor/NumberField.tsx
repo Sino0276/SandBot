@@ -1,0 +1,62 @@
+import { useRef, useState } from 'react'
+
+type NumberFieldProps = {
+  label: string
+  axis: 'x' | 'y' | 'z'
+  value: number
+  digits: number
+  disabled?: boolean
+  onCommit: (value: number) => void
+}
+
+function format(value: number, digits: number): string {
+  // -0.000 대신 0.000으로 보이게 한다
+  const rounded = Number(value.toFixed(digits))
+  return (rounded === 0 ? 0 : rounded).toFixed(digits)
+}
+
+// 입력 중에는 초안을 보여 주고, Enter나 포커스 이동으로 확정한다. Esc는 취소.
+function NumberField({
+  label,
+  axis,
+  value,
+  digits,
+  disabled = false,
+  onCommit
+}: NumberFieldProps): React.JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null)
+  const cancelled = useRef(false)
+
+  const commit = (): void => {
+    if (draft !== null && !cancelled.current) {
+      const parsed = Number(draft.trim())
+      if (draft.trim() !== '' && Number.isFinite(parsed)) onCommit(parsed)
+    }
+    cancelled.current = false
+    setDraft(null)
+  }
+
+  return (
+    <label className={`number-field axis-${axis}`}>
+      <span className="number-field-label">{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft ?? format(value, digits)}
+        disabled={disabled}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelled.current = true
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    </label>
+  )
+}
+
+export default NumberField

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대만 있다. 툴바(언어 선택)와 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터)이 있고 i18n이 적용되어 있다. 씬 뷰는 그리드·카메라 조작·축 기즈모만 있고, 하이어라키와 인스펙터는 빈 상태 문구만 표시한다. 씬 데이터 모델, CAD 임포트, 사이드카는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바(언어 선택)와 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 필드/로봇 기준 좌표계 전환이 있다. 씬에는 임시 씬(18 in 상자 로봇과 웹캠 파트, `scene/sceneStore.ts`)만 있고 저장되지 않는다. 프로젝트 파일, CAD 임포트, 하드웨어 컴포넌트, 사이드카는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 ## 확정된 설계 결정
 
@@ -21,6 +21,7 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 | 언어        | UI는 i18n(한국어 기본, 영어). CLAUDE.md·코드 주석·커밋 메시지는 한국어                                                                                                     |
 | 툴체인      | pnpm · electron-vite(빌드) · electron-builder(패키징) · ESLint + Prettier · Vitest                                                                                         |
 | 단위        | 세 층으로 분리. 내부(저장·계산)는 미터·라디안으로 고정. 표시·입력 단위는 사용자 개인 앱 설정. 생성 Java 코드의 단위는 프로젝트(팀) 설정                                    |
+| 좌표계      | 저장은 FTC 필드 좌표계(원점 필드 중앙 바닥, Z 위). 로봇 좌표계는 X 앞·Y 왼쪽·Z 위, 원점 로봇 중심 바닥. 보기 기준(필드/로봇)은 사용자가 전환                               |
 
 ## 아키텍처
 
@@ -54,12 +55,16 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
   - UI 표시·입력: 사용자 표시 단위로 변환. 입력칸은 `12in`, `30cm`처럼 단위를 붙인 값도 받는다.
   - 코드 생성: 프로젝트의 코드 단위로 변환
 - **표시 단위는 개인 앱 설정에, 코드 단위는 프로젝트 설정에 저장한다.** 같은 프로젝트를 여는 팀원마다 표시 단위가 달라도 프로젝트 파일과 생성 코드는 바뀌지 않아야 한다.
+- **좌표 저장은 한 가지, 보기 기준 전환은 표시만 바꾼다.** 씬 오브젝트의 `transform`은 부모 기준 로컬 값이고, 최상위는 필드 좌표계 값이다. 필드/로봇 전환은 축 표시, 핸들 방향, 인스펙터 값, 카메라에만 적용한다. 좌표 변환은 `scene/model.ts`의 함수(`getTransformInFrame`, `localTransformFromFrame` 등)로만 한다.
+- **회전은 X(롤)·Y(피치)·Z(요) 라디안이고, 적용 순서는 Three.js Euler `'ZYX'`다.** 렌더링(`rotation={[rx, ry, rz, 'ZYX']}`)과 계산이 같은 순서를 써야 한다.
+- **Z-up은 `scene/coordinates.ts`가 `Object3D.DEFAULT_UP`을 바꿔서 적용한다.** 이 모듈은 `main.tsx`에서 가장 먼저 import해야 한다.
+- **최상위 로봇은 바닥 평면에만 있다(높이·롤·피치 0).** `constrainTransform`이 강제하고, 핸들과 인스펙터도 해당 축을 막는다.
 
 ## 미결정 사항
 
 아래 항목은 아직 정하지 않았다. 스캐폴딩이나 구현 중에 이 항목을 만나면 추측해서 정하지 말고 사용자에게 확인한다.
 
-- 좌표계 규약 (Three.js는 Y-up, FTC 공식 필드 좌표계는 Z-up·필드 중앙 원점)
+- 필드 X·Y축이 어느 벽(얼라이언스·관중석)을 향하는지. FTC가 시즌별로 정하므로 시즌별 필드 모델과 함께 정한다.
 - 표시 단위의 첫 실행 기본값 (언어·지역으로 추정할지, 처음에 묻게 할지)
 - 사이드카 IPC 방식(stdio JSON-RPC 또는 WebSocket)과 시뮬레이션 동기화 방식(lockstep 또는 실시간)
 - JDK를 앱에 번들할지 여부
@@ -89,6 +94,9 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - 타입 검사는 `tsconfig.node.json`(main/preload/설정 파일)과 `tsconfig.web.json`(renderer) 두 갈래다. 새 최상위 설정 파일을 추가하면 `tsconfig.node.json`의 `include`에도 넣는다.
 - `@renderer` 경로 별칭은 `electron.vite.config.ts`, `tsconfig.web.json`, `vitest.config.ts` 세 곳에 정의되어 있다. 별칭을 추가·변경할 때는 세 곳을 함께 고친다.
 - 렌더러 UI는 `src/renderer/src/editor/`에 있다. `EditorLayout`이 툴바와 react-resizable-panels(v4: `Group`/`Panel`/`Separator`)의 3패널을 구성한다. 각 패널(`editor/panels/`)은 `PanelFrame`으로 헤더와 본문을 감싼다.
+- 씬 상태는 zustand 스토어 두 개로 나뉜다. `scene/sceneStore.ts`는 문서 데이터(오브젝트 트리)를, `editor/editorStore.ts`는 편집기 상태(선택, 보기 기준, 조작 모드)를 맡는다.
+- 이동·회전 핸들(`editor/scene/TransformHandles.tsx`)은 선택한 오브젝트가 아니라 대리 객체에 붙는다. 대리 객체는 "오브젝트 위치 + 보기 기준 좌표계 방향"을 갖고, 드래그한 변화량을 오브젝트에 옮긴다. 그래야 로봇 안의 파트도 로봇 축 방향으로 끌 수 있다. 핸들 클릭이 R3F에서는 빗나간 클릭(선택 해제)으로 처리되므로 `markHandleInteraction`으로 막는다.
+- 오른쪽 위 축 표시(`ViewGizmo`)는 drei `GizmoHelper`의 HUD만 쓰고 축은 직접 그린다. drei `GizmoViewport`는 회전된 축을 클릭했을 때 시점 방향을 잘못 계산한다.
 - 씬 뷰는 @react-three/fiber + drei다. `Canvas`가 `frameloop="demand"`이므로 R3F 바깥에서 Three.js 객체를 직접 바꾸면 `invalidate()`를 호출해야 다시 그려진다. drei 컴포넌트 중 CDN에서 리소스를 받는 것(`Environment` 프리셋, `Text` 기본 폰트 등)은 `index.html`의 CSP에 막힌다.
 - i18n은 `src/renderer/src/i18n/`(react-i18next)에 있다.
   - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.
