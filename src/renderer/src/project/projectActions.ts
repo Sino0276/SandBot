@@ -3,6 +3,7 @@ import { fileNameOf, loadCadGeometry } from '../cad/importStep'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
+import { clearHistory } from '../editor/history'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import type { SceneObjects } from '../scene/model'
@@ -14,6 +15,9 @@ const LAST_PROJECT_KEY = 'sandbot:lastProject'
 
 // 프로젝트를 여는 동안(씬 교체, CAD 경로 갱신)에는 변경으로 치지 않는다
 let loading = false
+
+// 마지막으로 저장하거나 연 씬. 실행 취소로 이 상태로 돌아오면 저장할 변경이 없는 것으로 본다.
+let savedObjects: SceneObjects | null = null
 
 // 열린 프로젝트에 딸린 알림(TeamCode 없음, CAD 못 찾음). 다른 프로젝트를 열면 지운다.
 const projectNotices = { noTeamCode: 0, cadMissing: 0 }
@@ -145,7 +149,8 @@ export function saveProject(): Promise<boolean> {
       return false
     }
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
-    setDirty(useSceneStore.getState().objects !== objects)
+    savedObjects = objects
+    setDirty(useSceneStore.getState().objects !== savedObjects)
     await syncTeamCode(projectRoot, objects)
     return true
   })
@@ -195,6 +200,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       }
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
+      savedObjects = useSceneStore.getState().objects
       setDirty(false)
     } catch (error) {
       if (options.quiet) {
@@ -205,6 +211,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       }
     } finally {
       loading = false
+      // 이전 씬과 여는 동안의 변경은 실행 취소 대상이 아니다
+      clearHistory()
       dismissNotice(progress)
     }
   })
@@ -245,8 +253,8 @@ export function initProjectSession(): void {
   useSceneStore.subscribe((state, previous) => {
     if (loading || state.objects === previous.objects) return
     // 프로젝트 없이 임시 씬만 만지는 것은 저장할 변경으로 치지 않는다
-    if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) return
-    setDirty(true)
+    if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) setDirty(false)
+    else setDirty(state.objects !== savedObjects)
   })
 
   const updateTitle = (): void => {

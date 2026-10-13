@@ -1,38 +1,37 @@
-import { OrbitControls } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
 import { useTranslation } from 'react-i18next'
 import type { ReferenceFrame } from '../../scene/model'
-import { isRecentHandleInteraction, useEditorStore, type TransformMode } from '../editorStore'
+import { isRecentHandleInteraction, useEditorStore } from '../editorStore'
+import { useFlyStore } from '../flyStore'
 import PanelFrame from '../PanelFrame'
 import CameraRig from '../scene/CameraRig'
 import FieldFloor from '../scene/FieldFloor'
+import EditorCameraControls from '../scene/EditorCameraControls'
 import FocusController from '../scene/FocusController'
 import FrameAxes from '../scene/FrameAxes'
+import ImuIndicators from '../scene/ImuIndicators'
 import { FIELD_VIEW_POSITION } from '../scene/frameHooks'
 import SceneObjectsView from '../scene/SceneObjectsView'
 import TransformHandles from '../scene/TransformHandles'
 import ViewGizmo from '../scene/ViewGizmo'
 import SegmentedControl from '../SegmentedControl'
+import ToolButtons from '../ToolButtons'
+import { useUnitStore } from '../../units/unitStore'
+import { formatLength } from '../../units/units'
 
 function ScenePanel(): React.JSX.Element {
   const { t } = useTranslation()
   const frame = useEditorStore((state) => state.frame)
   const setFrame = useEditorStore((state) => state.setFrame)
-  const transformMode = useEditorStore((state) => state.transformMode)
-  const setTransformMode = useEditorStore((state) => state.setTransformMode)
+  const tool = useEditorStore((state) => state.tool)
+  const flying = useFlyStore((state) => state.flying)
+  const flySpeed = useFlyStore((state) => state.speed)
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const select = useEditorStore((state) => state.select)
 
   const actions = (
     <>
-      <SegmentedControl<TransformMode>
-        label={t('scene.transformMode')}
-        value={transformMode}
-        options={[
-          { value: 'translate', label: t('scene.translate') },
-          { value: 'rotate', label: t('scene.rotate') }
-        ]}
-        onChange={setTransformMode}
-      />
+      <ToolButtons />
       <SegmentedControl<ReferenceFrame>
         label={t('scene.frame')}
         value={frame}
@@ -50,9 +49,12 @@ function ScenePanel(): React.JSX.Element {
       {/* 에디터는 대부분 정지 화면이므로 변경이 있을 때만 다시 그린다 */}
       <Canvas
         frameloop="demand"
+        // 손 도구(Q)에서는 손 모양 커서
+        style={{ cursor: tool === 'view' ? 'grab' : undefined }}
         camera={{ position: FIELD_VIEW_POSITION, fov: 50, near: 0.01, far: 200 }}
-        onPointerMissed={() => {
-          if (!isRecentHandleInteraction()) select(null)
+        onPointerMissed={(event) => {
+          // 우클릭(둘러보기)을 놓을 때의 contextmenu는 빗나간 클릭으로 치지 않는다
+          if (event.type === 'click' && !isRecentHandleInteraction()) select(null)
         }}
       >
         <color attach="background" args={['#1e1f22']} />
@@ -61,12 +63,21 @@ function ScenePanel(): React.JSX.Element {
         <FieldFloor />
         <SceneObjectsView />
         <FrameAxes />
+        <ImuIndicators />
         <TransformHandles />
-        <OrbitControls makeDefault />
+        <EditorCameraControls />
         <CameraRig />
         <FocusController />
         <ViewGizmo />
       </Canvas>
+      {flying && (
+        <div className="fly-hud" aria-live="polite">
+          {t('scene.flySpeed', {
+            speed: formatLength(flySpeed, lengthUnit),
+            unit: t(`units.symbols.${lengthUnit}`)
+          })}
+        </div>
+      )}
     </PanelFrame>
   )
 }

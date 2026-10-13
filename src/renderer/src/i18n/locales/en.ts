@@ -6,11 +6,16 @@ const en: Messages = {
   },
   toolbar: {
     language: 'Language',
+    lengthUnit: 'Length unit',
     noProject: 'Unsaved scene',
     open: 'Open',
     openShortcut: 'Open an FtcRobotController folder (Ctrl+O)',
     save: 'Save',
-    saveShortcut: 'Save (Ctrl+S)'
+    saveShortcut: 'Save (Ctrl+S)',
+    undo: 'Undo',
+    undoShortcut: 'Undo (Ctrl+Z)',
+    redo: 'Redo',
+    redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)'
   },
   project: {
     chooseFolderTitle: 'Choose the FtcRobotController folder',
@@ -18,6 +23,8 @@ const en: Messages = {
   },
   dialog: {
     unsavedChanges: 'You have unsaved changes. Save them?',
+    chooseLengthUnit:
+      'Which unit should lengths be shown in? You can change it in the toolbar at any time.',
     overwriteProject:
       '{{name}} already has a SandBot project. Overwrite it with the current scene?',
     save: 'Save',
@@ -49,6 +56,23 @@ const en: Messages = {
       'Only the letter case of generated file names changed ({{files}}). Git on Windows and macOS does not record this, so rename them with git mv -f when you commit.',
     codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).'
   },
+  units: {
+    symbols: {
+      mm: 'mm',
+      cm: 'cm',
+      m: 'm',
+      in: 'in'
+    },
+    names: {
+      mm: 'mm (millimeters)',
+      cm: 'cm (centimeters)',
+      m: 'm (meters)',
+      in: 'in (inches)'
+    },
+    lengthInputHint:
+      'You can type a unit (e.g. 12in, 30cm, 150mm). Without one, the value is read in {{unit}}.',
+    angleInputHint: 'Degrees (°). Add rad to enter radians.'
+  },
   panels: {
     hierarchy: 'Hierarchy',
     scene: 'Scene',
@@ -60,9 +84,13 @@ const en: Messages = {
     part: 'Part'
   },
   scene: {
-    transformMode: 'Tool',
-    translate: 'Move',
-    rotate: 'Rotate',
+    tool: 'Tool',
+    tools: {
+      view: 'Hand tool: drag with the left button to pan (Q)',
+      translate: 'Move (W)',
+      rotate: 'Rotate (E)'
+    },
+    flySpeed: 'Fly speed {{speed}} {{unit}}/s · scroll to change, Shift for faster',
     frame: 'Reference frame',
     field: 'Field',
     robot: 'Robot'
@@ -252,7 +280,7 @@ const en: Messages = {
       }
     },
     hints: {
-      imu: 'Choose which way the REV logo and the USB ports of the hub face on the robot.',
+      imu: 'Choose which way the REV logo and the USB ports of the hub face on the robot. In the scene, the purple arrow shows the logo direction and the orange arrow the USB direction.',
       webcam:
         'Enter the USB serial shown when you scan in Configure Robot on the Driver Station. Left empty, the webcam is not put in the configuration XML.',
       limelight:

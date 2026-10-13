@@ -16,3 +16,7 @@ export function disposeGeometry(id: string): void {
   geometries.get(id)?.dispose()
   geometries.delete(id)
 }
+
+export function geometryIds(): string[] {
+  return [...geometries.keys()]
+}

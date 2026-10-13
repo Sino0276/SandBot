@@ -24,10 +24,6 @@ async function readTextIfExists(path: string): Promise<string | null> {
   }
 }
 
-function isStepPath(path: string): boolean {
-  return /\.(step|stp)$/i.test(path)
-}
-
 // 선택한 경로 하나를 돌려준다. 취소하면 null.
 async function showOpenDialog(
   sender: Electron.WebContents,
@@ -73,17 +69,6 @@ export function registerProjectIpc(): void {
     const temp = `${target}.tmp`
     await writeFile(temp, content, 'utf8')
     await rename(temp, target)
-  })
-
-  // 렌더러가 임의 파일을 읽지 못하도록 STEP 확장자만 허용한다
-  ipcMain.handle(IPC.readStepFile, async (_event, path: string) => {
-    if (!isStepPath(path)) throw new Error(`not a STEP file: ${path}`)
-    try {
-      return new Uint8Array(await readFile(path))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
-    }
   })
 }
 

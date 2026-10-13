@@ -16,6 +16,15 @@ import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import RobotHardwareSection from '../hardware/RobotHardwareSection'
 import NumberField from '../NumberField'
 import PanelFrame from '../PanelFrame'
+import { useUnitStore } from '../../units/unitStore'
+import {
+  ANGLE_DIGITS,
+  fromDisplayLength,
+  LENGTH_DIGITS,
+  parseAngle,
+  parseLength,
+  toDisplayLength
+} from '../../units/units'
 
 const AXES = ['x', 'y', 'z'] as const
 
@@ -25,6 +34,9 @@ type VectorRowProps = {
   unit: string
   digits: number
   disabled: [boolean, boolean, boolean]
+  // 입력칸 문자열(단위를 붙일 수 있음)을 이 줄의 표시 단위 값으로 읽는다
+  parse: (text: string) => number | null
+  hint: string
   onCommit: (axis: 0 | 1 | 2, value: number) => void
 }
 
@@ -34,6 +46,8 @@ function VectorRow({
   unit,
   digits,
   disabled,
+  parse,
+  hint,
   onCommit
 }: VectorRowProps): React.JSX.Element {
   return (
@@ -50,6 +64,8 @@ function VectorRow({
             value={values[index]}
             digits={digits}
             disabled={disabled[index]}
+            parse={parse}
+            title={hint}
             onCommit={(value) => onCommit(index as 0 | 1 | 2, value)}
           />
         ))}
@@ -64,6 +80,7 @@ function InspectorPanel(): React.JSX.Element {
   const frame = useEditorStore((state) => state.frame)
   const objects = useSceneStore((state) => state.objects)
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
 
   const object = selectedId ? objects[selectedId] : undefined
   if (!object) {
@@ -116,18 +133,30 @@ function InspectorPanel(): React.JSX.Element {
           {isFrameOrigin && <p className="inspector-note">{t('inspector.robotOrigin')}</p>}
           <VectorRow
             label={t('inspector.position')}
-            values={value.position}
-            unit="m"
-            digits={3}
+            values={value.position.map((meters) => toDisplayLength(meters, lengthUnit)) as Vec3}
+            unit={t(`units.symbols.${lengthUnit}`)}
+            digits={LENGTH_DIGITS[lengthUnit]}
             disabled={[isFrameOrigin, isFrameOrigin, isFrameOrigin || isRobotRoot]}
-            onCommit={(axis, input) => commit('position', axis, input)}
+            parse={(text) => {
+              const meters = parseLength(text, lengthUnit)
+              return meters === null ? null : toDisplayLength(meters, lengthUnit)
+            }}
+            hint={t('units.lengthInputHint', { unit: t(`units.symbols.${lengthUnit}`) })}
+            onCommit={(axis, input) =>
+              commit('position', axis, fromDisplayLength(input, lengthUnit))
+            }
           />
           <VectorRow
             label={t('inspector.rotation')}
             values={value.rotation.map((radians) => radians / DEG) as Vec3}
             unit="°"
-            digits={1}
+            digits={ANGLE_DIGITS}
             disabled={[isFrameOrigin || isRobotRoot, isFrameOrigin || isRobotRoot, isFrameOrigin]}
+            parse={(text) => {
+              const radians = parseAngle(text)
+              return radians === null ? null : radians / DEG
+            }}
+            hint={t('units.angleInputHint')}
             onCommit={(axis, input) => commit('rotation', axis, input * DEG)}
           />
         </section>

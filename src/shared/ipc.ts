@@ -6,7 +6,8 @@ export const IPC = {
   chooseStepFile: 'cad:choose-step-file',
   openProject: 'project:open',
   saveProject: 'project:save',
-  readStepFile: 'cad:read-step-file',
+  readStepCached: 'cad:read-step-cached',
+  storeMeshCache: 'cad:store-mesh-cache',
   syncGeneratedFiles: 'teamcode:sync-generated-files',
   setDirty: 'app:set-dirty',
   closeRequested: 'app:close-requested',
@@ -23,6 +24,10 @@ export type OpenProjectResult = {
   content: string | null
 }
 
+// STEP 읽기 결과. 캐시가 있으면 model(변환 결과, 렌더러의 ImportedModel)을, 없으면 파일 내용을 준다.
+// 캐시가 없을 때 렌더러가 변환한 뒤 key로 storeMeshCache를 부른다.
+export type StepReadResult = { key: string; model: unknown | null; bytes: Uint8Array | null }
+
 // 렌더러에서 window.api로 쓰는 API (preload가 노출)
 export type SandbotApi = {
   // 드래그 앤 드롭이나 <input type="file">로 받은 파일의 디스크 경로. 디스크 파일이 아니면 빈 문자열.
@@ -35,8 +40,9 @@ export type SandbotApi = {
   chooseStepFile: (title: string, defaultPath?: string) => Promise<string | null>
   openProject: (root: string) => Promise<OpenProjectResult>
   saveProject: (root: string, content: string) => Promise<void>
-  // STEP 파일 내용. 파일이 없으면 null.
-  readStepFile: (path: string) => Promise<Uint8Array | null>
+  // STEP 파일을 읽고 메시 캐시를 찾는다(tag는 변환 형식 버전). 파일이 없으면 null.
+  readStepCached: (path: string, tag: string) => Promise<StepReadResult | null>
+  storeMeshCache: (key: string, model: unknown) => Promise<void>
   // 생성 코드(하드웨어 클래스·구성 XML)를 <root>/TeamCode에 맞춘다. 이번에 만들지 않은 이전 생성 파일은 지운다.
   syncGeneratedFiles: (root: string, files: GeneratedFile[]) => Promise<SyncGeneratedResult>
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다

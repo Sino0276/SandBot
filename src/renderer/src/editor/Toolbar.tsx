@@ -3,6 +3,9 @@ import { changeLanguage } from '../i18n'
 import { isLanguage, LANGUAGE_NAMES, SUPPORTED_LANGUAGES } from '../i18n/language'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
+import { useUnitStore } from '../units/unitStore'
+import { redo, undo, useHistoryStore } from './history'
+import { isLengthUnit, LENGTH_UNITS } from '../units/units'
 
 function Toolbar(): React.JSX.Element {
   const { t, i18n } = useTranslation()
@@ -10,6 +13,10 @@ function Toolbar(): React.JSX.Element {
   const name = useProjectStore((state) => state.name)
   const dirty = useProjectStore((state) => state.dirty)
   const busy = useProjectStore((state) => state.busy)
+  const canUndo = useHistoryStore((state) => state.canUndo)
+  const canRedo = useHistoryStore((state) => state.canRedo)
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  const setLengthUnit = useUnitStore((state) => state.setLengthUnit)
 
   return (
     <header className="toolbar">
@@ -37,22 +44,57 @@ function Toolbar(): React.JSX.Element {
         >
           {t('toolbar.save')}
         </button>
+        <button
+          type="button"
+          className="panel-button"
+          disabled={!canUndo}
+          title={t('toolbar.undoShortcut')}
+          onClick={() => undo()}
+        >
+          {t('toolbar.undo')}
+        </button>
+        <button
+          type="button"
+          className="panel-button"
+          disabled={!canRedo}
+          title={t('toolbar.redoShortcut')}
+          onClick={() => redo()}
+        >
+          {t('toolbar.redo')}
+        </button>
       </div>
-      <select
-        className="toolbar-select"
-        aria-label={t('toolbar.language')}
-        title={t('toolbar.language')}
-        value={i18n.language}
-        onChange={(event) => {
-          if (isLanguage(event.target.value)) void changeLanguage(event.target.value)
-        }}
-      >
-        {SUPPORTED_LANGUAGES.map((language) => (
-          <option key={language} value={language}>
-            {LANGUAGE_NAMES[language]}
-          </option>
-        ))}
-      </select>
+      <div className="toolbar-group">
+        <select
+          className="toolbar-select"
+          aria-label={t('toolbar.lengthUnit')}
+          title={t('toolbar.lengthUnit')}
+          value={lengthUnit}
+          onChange={(event) => {
+            if (isLengthUnit(event.target.value)) setLengthUnit(event.target.value)
+          }}
+        >
+          {LENGTH_UNITS.map((unit) => (
+            <option key={unit} value={unit}>
+              {t(`units.names.${unit}`)}
+            </option>
+          ))}
+        </select>
+        <select
+          className="toolbar-select"
+          aria-label={t('toolbar.language')}
+          title={t('toolbar.language')}
+          value={i18n.language}
+          onChange={(event) => {
+            if (isLanguage(event.target.value)) void changeLanguage(event.target.value)
+          }}
+        >
+          {SUPPORTED_LANGUAGES.map((language) => (
+            <option key={language} value={language}>
+              {LANGUAGE_NAMES[language]}
+            </option>
+          ))}
+        </select>
+      </div>
     </header>
   )
 }

@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { guardUnsavedChanges, registerProjectIpc } from './project'
+import { registerMeshCacheIpc } from './meshCache'
 import { registerTeamCodeIpc } from './teamCode'
 
 function createWindow(): void {
@@ -21,6 +22,10 @@ function createWindow(): void {
       sandbox: false
     }
   })
+
+  // Windows·Linux에서는 Alt를 누르면 숨긴 메뉴 막대가 나타나 씬 뷰의 Alt+드래그(Unity식 궤도 회전)를 방해한다.
+  // 메뉴는 쓰지 않으므로 없앤다(macOS는 Option 키가 메뉴를 열지 않고, 복사·붙여넣기에 앱 메뉴가 필요하다).
+  if (process.platform !== 'darwin') mainWindow.removeMenu()
 
   guardUnsavedChanges(mainWindow)
 
@@ -58,6 +63,7 @@ app.whenReady().then(() => {
 
   registerProjectIpc()
   registerTeamCodeIpc()
+  registerMeshCacheIpc()
   createWindow()
 
   app.on('activate', function () {

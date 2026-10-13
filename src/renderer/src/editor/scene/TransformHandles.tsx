@@ -4,13 +4,14 @@ import { Matrix4, Object3D, Quaternion } from 'three'
 import { frameMatrix, localTransformFromWorld, worldMatrix } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { markHandleInteraction, useEditorStore } from '../editorStore'
+import { beginChange, endChange } from '../history'
 
 // 이동·회전 핸들. 핸들 축을 보기 기준 좌표계(필드/로봇)에 맞추기 위해, 선택한 오브젝트 대신
 // "오브젝트 위치 + 기준 좌표계 방향"을 가진 대리 객체에 TransformControls를 붙이고 변화량을 오브젝트에 옮긴다.
 function TransformHandles(): React.JSX.Element | null {
   const selectedId = useEditorStore((state) => state.selectedId)
   const frame = useEditorStore((state) => state.frame)
-  const mode = useEditorStore((state) => state.transformMode)
+  const tool = useEditorStore((state) => state.tool)
   const objects = useSceneStore((state) => state.objects)
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
 
@@ -31,7 +32,9 @@ function TransformHandles(): React.JSX.Element | null {
   }, [objects, selectedId, frame, proxy, syncCount])
 
   const object = selectedId ? objects[selectedId] : undefined
-  if (!selectedId || !object) return null
+  // 손 도구(Q)에서는 핸들을 숨긴다
+  if (!selectedId || !object || tool === 'view') return null
+  const mode = tool
 
   const isRobotRoot = object.kind === 'robot' && object.parentId === null
 
@@ -50,6 +53,8 @@ function TransformHandles(): React.JSX.Element | null {
         showY={!(isRobotRoot && mode === 'rotate')}
         onMouseDown={() => {
           markHandleInteraction()
+          // 드래그 한 번을 실행 취소 한 단계로 묶는다
+          beginChange()
           dragging.current = true
           proxy.updateMatrix()
           proxyToObject.current = proxy.matrix
@@ -60,6 +65,7 @@ function TransformHandles(): React.JSX.Element | null {
         onMouseUp={() => {
           markHandleInteraction()
           dragging.current = false
+          endChange()
           setSyncCount((count) => count + 1)
         }}
         onObjectChange={() => {

@@ -12,7 +12,8 @@ const api: SandbotApi = {
     ipcRenderer.invoke(IPC.chooseStepFile, title, defaultPath),
   openProject: (root) => ipcRenderer.invoke(IPC.openProject, root),
   saveProject: (root, content) => ipcRenderer.invoke(IPC.saveProject, root, content),
-  readStepFile: (path) => ipcRenderer.invoke(IPC.readStepFile, path),
+  readStepCached: (path, tag) => ipcRenderer.invoke(IPC.readStepCached, path, tag),
+  storeMeshCache: (key, model) => ipcRenderer.invoke(IPC.storeMeshCache, key, model),
   syncGeneratedFiles: (root, files) => ipcRenderer.invoke(IPC.syncGeneratedFiles, root, files),
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
   onCloseRequested: (callback) => {

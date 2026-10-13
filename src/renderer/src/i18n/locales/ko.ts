@@ -5,11 +5,16 @@ const ko = {
   },
   toolbar: {
     language: '언어',
+    lengthUnit: '길이 단위',
     noProject: '저장 안 된 씬',
     open: '열기',
     openShortcut: 'FtcRobotController 폴더 열기 (Ctrl+O)',
     save: '저장',
-    saveShortcut: '저장 (Ctrl+S)'
+    saveShortcut: '저장 (Ctrl+S)',
+    undo: '실행 취소',
+    undoShortcut: '실행 취소 (Ctrl+Z)',
+    redo: '다시 실행',
+    redoShortcut: '다시 실행 (Ctrl+Shift+Z 또는 Ctrl+Y)'
   },
   project: {
     chooseFolderTitle: 'FtcRobotController 폴더 선택',
@@ -17,6 +22,7 @@ const ko = {
   },
   dialog: {
     unsavedChanges: '저장하지 않은 변경 사항이 있습니다. 저장할까요?',
+    chooseLengthUnit: '길이를 어떤 단위로 볼까요? 툴바에서 언제든 바꿀 수 있습니다.',
     overwriteProject: '{{name}} 폴더에 이미 SandBot 프로젝트가 있습니다. 지금 씬으로 덮어쓸까요?',
     save: '저장',
     discard: '저장 안 함',
@@ -46,6 +52,24 @@ const ko = {
       '생성 파일 이름의 대소문자가 바뀌었습니다({{files}}). Windows·macOS의 git은 이 변경을 기록하지 않으니 커밋할 때 git mv -f로 이름을 바꾸세요.',
     codegenFailed: 'TeamCode에 생성 코드를 쓰지 못했습니다 ({{detail}}).'
   },
+  units: {
+    // 툴바·입력칸 옆에 쓰는 기호
+    symbols: {
+      mm: 'mm',
+      cm: 'cm',
+      m: 'm',
+      in: 'in'
+    },
+    names: {
+      mm: 'mm (밀리미터)',
+      cm: 'cm (센티미터)',
+      m: 'm (미터)',
+      in: 'in (인치)'
+    },
+    lengthInputHint:
+      '단위를 붙여 입력할 수 있습니다 (예: 12in, 30cm, 150mm). 없으면 {{unit}}로 읽습니다.',
+    angleInputHint: '도(°) 단위입니다. rad를 붙여 라디안으로 입력할 수도 있습니다.'
+  },
   panels: {
     hierarchy: '하이어라키',
     scene: '씬',
@@ -57,9 +81,13 @@ const ko = {
     part: '파트'
   },
   scene: {
-    transformMode: '조작 모드',
-    translate: '이동',
-    rotate: '회전',
+    tool: '도구',
+    tools: {
+      view: '손 도구: 왼쪽 드래그로 화면 이동 (Q)',
+      translate: '이동 (W)',
+      rotate: '회전 (E)'
+    },
+    flySpeed: '비행 속도 {{speed}} {{unit}}/s · 휠로 조절, Shift로 빠르게',
     frame: '기준 좌표계',
     field: '필드',
     robot: '로봇'
@@ -249,7 +277,7 @@ const ko = {
       }
     },
     hints: {
-      imu: '허브의 REV 로고와 USB 포트가 로봇의 어느 쪽을 향하는지 고릅니다.',
+      imu: '허브의 REV 로고와 USB 포트가 로봇의 어느 쪽을 향하는지 고릅니다. 씬에서 보라 화살표는 로고 방향, 주황 화살표는 USB 방향입니다.',
       webcam:
         'Driver Station의 Configure Robot에서 스캔하면 보이는 USB 시리얼을 넣으세요. 비어 있으면 구성 XML에 넣지 않습니다.',
       limelight:

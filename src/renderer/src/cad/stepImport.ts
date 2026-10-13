@@ -29,6 +29,33 @@ export type ImportedNode = {
 
 export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[] }
 
+// 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
+// 올리면 기존 캐시는 쓰지 않고 다시 변환한다.
+export const MESH_CACHE_TAG = 'model-v1'
+
+function isFloat32OrNull(value: unknown): boolean {
+  return value === null || value instanceof Float32Array
+}
+
+// 캐시에서 읽은 값이 변환 결과 형식인지(깨진 캐시를 형상으로 쓰지 않게) 가볍게 확인한다
+export function isImportedModel(value: unknown): value is ImportedModel {
+  if (!value || typeof value !== 'object') return false
+  const model = value as Partial<ImportedModel>
+  return (
+    !!model.root &&
+    typeof model.root === 'object' &&
+    Array.isArray(model.meshes) &&
+    model.meshes.every(
+      (mesh) =>
+        !!mesh &&
+        mesh.positions instanceof Float32Array &&
+        mesh.indices instanceof Uint32Array &&
+        isFloat32OrNull(mesh.normals) &&
+        isFloat32OrNull(mesh.colors)
+    )
+  )
+}
+
 export const DEFAULT_PART_COLOR: Vec3 = [0.62, 0.64, 0.68]
 
 function srgbToLinear(value: number): number {
