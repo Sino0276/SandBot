@@ -25,7 +25,9 @@ export default defineConfig(
     },
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
-      ...eslintPluginReactRefresh.configs.vite.rules
+      ...eslintPluginReactRefresh.configs.vite.rules,
+      // R3F(Three.js) 요소의 속성을 DOM 속성으로 오인한다. JSX 속성은 TypeScript가 이미 검사한다.
+      'react/no-unknown-property': 'off'
     }
   },
   eslintConfigPrettier

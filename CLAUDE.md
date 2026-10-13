@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** electron-vite `react-ts` 템플릿으로 만든 최소 골격만 있다. 렌더러 화면(`App.tsx`, `Versions.tsx`)은 템플릿 데모이고 영어 문자열이 하드코딩되어 있으므로, 에디터 UI를 구현할 때 통째로 교체한다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대만 있다. 툴바(언어 선택)와 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터)이 있고 i18n이 적용되어 있다. 씬 뷰는 그리드·카메라 조작·축 기즈모만 있고, 하이어라키와 인스펙터는 빈 상태 문구만 표시한다. 씬 데이터 모델, CAD 임포트, 사이드카는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 ## 확정된 설계 결정
 
@@ -88,6 +88,15 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - `src/main`(메인 프로세스), `src/preload`(contextBridge로 렌더러에 API 노출, 타입은 `src/preload/index.d.ts`), `src/renderer/src`(React)로 나뉜다. 렌더러는 Node API에 직접 접근하지 않고 preload를 거친 IPC만 쓴다.
 - 타입 검사는 `tsconfig.node.json`(main/preload/설정 파일)과 `tsconfig.web.json`(renderer) 두 갈래다. 새 최상위 설정 파일을 추가하면 `tsconfig.node.json`의 `include`에도 넣는다.
 - `@renderer` 경로 별칭은 `electron.vite.config.ts`, `tsconfig.web.json`, `vitest.config.ts` 세 곳에 정의되어 있다. 별칭을 추가·변경할 때는 세 곳을 함께 고친다.
+- 렌더러 UI는 `src/renderer/src/editor/`에 있다. `EditorLayout`이 툴바와 react-resizable-panels(v4: `Group`/`Panel`/`Separator`)의 3패널을 구성한다. 각 패널(`editor/panels/`)은 `PanelFrame`으로 헤더와 본문을 감싼다.
+- 씬 뷰는 @react-three/fiber + drei다. `Canvas`가 `frameloop="demand"`이므로 R3F 바깥에서 Three.js 객체를 직접 바꾸면 `invalidate()`를 호출해야 다시 그려진다. drei 컴포넌트 중 CDN에서 리소스를 받는 것(`Environment` 프리셋, `Text` 기본 폰트 등)은 `index.html`의 CSP에 막힌다.
+- i18n은 `src/renderer/src/i18n/`(react-i18next)에 있다.
+  - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.
+  - 문자열을 추가할 때는 `ko.ts`와 `en.ts`에 같은 키를 넣고 `t('그룹.키')`로 쓴다.
+  - 언어 이름(`LANGUAGE_NAMES`)과 제품명 "SandBot"은 의도적으로 번역하지 않는다.
+- 개인 UI 설정(언어 `sandbot:language`, 패널 크기 `react-resizable-panels:editor-main`)은 렌더러 `localStorage`에 저장된다.
+- 렌더러에서만 쓰는 라이브러리는 Vite가 번들하므로 `devDependencies`에 넣는다. `dependencies`는 main/preload가 런타임에 쓰는 것만 둔다(electron-builder가 패키지에 포함).
+- ESLint의 `react/no-unknown-property`는 R3F 요소 속성을 오인해서 껐다. JSX 속성은 TypeScript가 검사한다.
 - 테스트는 `src/**/*.test.{ts,tsx}`에 소스와 나란히 두고 `vitest`에서 명시적으로 import한다(globals 미사용). Vitest는 electron-vite 설정이 아니라 `vitest.config.ts`를 읽는다.
 - pnpm 10은 의존성의 빌드 스크립트를 기본으로 막는다. 설치 스크립트가 필요한 패키지(네이티브 모듈 등)를 추가하면 `package.json`의 `pnpm.onlyBuiltDependencies`에 넣는다.
 - `.gitignore`의 Java 항목은 원래 템플릿에서 온 것이다. 나중에 만들 JVM 사이드카에 필요하므로 유지한다.
