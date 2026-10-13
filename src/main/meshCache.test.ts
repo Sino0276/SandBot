@@ -45,6 +45,9 @@ describe('메시 캐시', () => {
     const mesh = (second!.model as typeof model).meshes[0]
     expect(mesh.positions).toBeInstanceOf(Float32Array)
     expect(mesh.indices).toBeInstanceOf(Uint32Array)
+    // 렌더러로 보낼 때 파일 전체가 배열마다 복사되지 않도록 배열마다 제 크기 버퍼를 가진다
+    for (const array of [mesh.positions, mesh.indices])
+      expect(array.buffer.byteLength).toBe(array.byteLength)
   })
 
   it('내용·형식 태그가 바뀌면 다른 키다', async () => {
@@ -72,6 +75,22 @@ describe('메시 캐시', () => {
     expect(read?.model).toBeNull()
     expect(read?.bytes).not.toBeNull()
     expect(await readdir(cache)).toEqual([])
+  })
+
+  it('쓰다 멈춘 오래된 임시 파일을 지운다', async () => {
+    const cache = join(dir, 'cache')
+    await storeMeshCache(cache, 'c'.repeat(64), model)
+    const stale = join(cache, `${'d'.repeat(64)}.bin.123.tmp`)
+    const fresh = join(cache, `${'e'.repeat(64)}.bin.456.tmp`)
+    await writeFile(stale, 'partial')
+    await writeFile(fresh, 'partial')
+    const old = new Date(Date.now() - 60 * 60 * 1000)
+    await utimes(stale, old, old)
+    await pruneCache(cache, 1024 * 1024)
+    expect((await readdir(cache)).sort()).toEqual([
+      `${'c'.repeat(64)}.bin`,
+      `${'e'.repeat(64)}.bin.456.tmp`
+    ])
   })
 
   it('용량을 넘으면 오래 쓰지 않은 캐시부터 지운다', async () => {

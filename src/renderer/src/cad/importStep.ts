@@ -62,10 +62,12 @@ export async function loadStepModel(path: string, fileName: string): Promise<Imp
       ? (bytes.buffer as ArrayBuffer)
       : bytes.slice().buffer
   const model = await parseStep(buffer, fileName)
-  // 캐시 저장이 실패해도 불러오기는 계속한다
-  window.api.storeMeshCache(result.key, model).catch((error) => {
-    console.warn('메시 캐시 저장 실패', error)
-  })
+  // 캐시 저장(모델 전체를 메인 프로세스로 복사)은 화면에 먼저 보여 준 뒤에 한다. 실패해도 불러오기는 계속한다.
+  setTimeout(() => {
+    window.api.storeMeshCache(result.key, model).catch((error) => {
+      console.warn('메시 캐시 저장 실패', error)
+    })
+  }, 500)
   return model
 }
 

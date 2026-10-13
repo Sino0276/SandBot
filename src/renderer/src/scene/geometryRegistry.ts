@@ -17,6 +17,12 @@ export function disposeGeometry(id: string): void {
   geometries.delete(id)
 }
 
+// 프로젝트를 새로 열 때 이전 씬의 형상을 모두 해제한다(같은 id로 다시 읽지 못한 형상이 남지 않게)
+export function disposeAllGeometry(): void {
+  for (const geometry of geometries.values()) geometry.dispose()
+  geometries.clear()
+}
+
 export function geometryIds(): string[] {
   return [...geometries.keys()]
 }

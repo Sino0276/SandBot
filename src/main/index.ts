@@ -15,7 +15,9 @@ function createWindow(): void {
     minHeight: 600,
     backgroundColor: '#1e1f22',
     show: false,
-    autoHideMenuBar: true,
+    // 메뉴 막대는 숨기되 메뉴는 남긴다(F11 전체 화면, 개발 중 Ctrl+Shift+I·Ctrl+R). autoHideMenuBar를 켜면
+    // Windows·Linux에서 Alt를 누를 때 메뉴 막대가 나타나 씬 뷰의 Alt+드래그(Unity식 궤도 회전)를 방해한다.
+    autoHideMenuBar: false,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -23,9 +25,7 @@ function createWindow(): void {
     }
   })
 
-  // Windows·Linux에서는 Alt를 누르면 숨긴 메뉴 막대가 나타나 씬 뷰의 Alt+드래그(Unity식 궤도 회전)를 방해한다.
-  // 메뉴는 쓰지 않으므로 없앤다(macOS는 Option 키가 메뉴를 열지 않고, 복사·붙여넣기에 앱 메뉴가 필요하다).
-  if (process.platform !== 'darwin') mainWindow.removeMenu()
+  mainWindow.setMenuBarVisibility(false)
 
   guardUnsavedChanges(mainWindow)
 

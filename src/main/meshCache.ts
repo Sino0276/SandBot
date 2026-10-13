@@ -51,7 +51,7 @@ export async function readStepWithCache(
   const key = cacheKey(bytes, basename(path), tag)
   const file = cacheFile(dir, key)
   try {
-    const model = deserialize(await readFile(file))
+    const model = ownBuffers(deserialize(await readFile(file)))
     // 최근에 쓴 캐시로 표시한다(용량을 넘으면 오래된 것부터 지운다)
     const now = new Date()
     await utimes(file, now, now).catch(() => undefined)
@@ -66,6 +66,24 @@ export async function readStepWithCache(
       bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     }
   }
+}
+
+// v8.deserialize는 타입 배열을 캐시 파일 전체 버퍼를 가리키는 뷰로 돌려준다. 그대로 렌더러로 보내면
+// contextBridge가 배열마다 그 전체 버퍼를 복사하므로(메시 수 × 파일 크기), 배열마다 제 크기 버퍼로 복사한다.
+function ownBuffers(value: unknown, depth = 0): unknown {
+  if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    const view = value as unknown as {
+      slice: () => unknown
+      byteLength: number
+      buffer: ArrayBufferLike
+    }
+    return view.byteLength === view.buffer.byteLength ? value : view.slice()
+  }
+  if (depth > 64 || !value || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map((item) => ownBuffers(item, depth + 1))
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, ownBuffers(item, depth + 1)])
+  )
 }
 
 export async function storeMeshCache(
@@ -88,10 +106,20 @@ export async function storeMeshCache(
   await pruneCache(dir, maxBytes)
 }
 
+// 쓰다 멈춘 임시 파일(앱이 쓰는 도중 꺼진 경우)은 이 시간이 지나면 지운다
+const STALE_TEMP_MS = 10 * 60 * 1000
+
 // 용량을 넘으면 가장 오래 쓰지 않은 캐시부터 지운다(가장 최근 하나는 남긴다)
 export async function pruneCache(dir: string, maxBytes: number): Promise<void> {
+  const names = await readdir(dir)
+  const now = Date.now()
+  for (const name of names.filter((n) => n.endsWith('.tmp'))) {
+    const info = await stat(join(dir, name)).catch(() => null)
+    if (info && now - info.mtimeMs > STALE_TEMP_MS)
+      await unlink(join(dir, name)).catch(() => undefined)
+  }
   const entries = await Promise.all(
-    (await readdir(dir))
+    names
       .filter((name) => name.endsWith('.bin'))
       .map(async (name) => {
         const info = await stat(join(dir, name)).catch(() => null)

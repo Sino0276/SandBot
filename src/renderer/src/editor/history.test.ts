@@ -4,13 +4,18 @@ import { geometryIds, registerGeometry } from '../scene/geometryRegistry'
 import type { SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { useEditorStore } from './editorStore'
+import { withCadFile } from '../scene/sceneStore'
 import {
   beginChange,
   clearHistory,
   collectGeometry,
   endChange,
   initHistory,
+  isChangeOpen,
   redo,
+  resumeHistory,
+  rewriteHistory,
+  suspendHistory,
   undo,
   useHistoryStore
 } from './history'
@@ -93,5 +98,55 @@ describe('실행 취소', () => {
     move(3)
     collectGeometry()
     expect(geometryIds()).toContain('loading')
+  })
+
+  it('프로젝트를 여는 동안에는 기록하지 않고 실행 취소도 막는다', () => {
+    move(1)
+    suspendHistory()
+    expect(useHistoryStore.getState().canUndo).toBe(false)
+    move(2)
+    expect(undo()).toBe(false)
+    expect(x()).toBe(2)
+    resumeHistory()
+    // 여는 동안의 변경(2)은 기록되지 않았으므로 되돌리면 그 전(0)으로 간다
+    expect(undo()).toBe(true)
+    expect(x()).toBe(0)
+  })
+
+  it('기록 전체 고치기: 되돌려도 다시 찾은 CAD 경로가 유지된다', () => {
+    useSceneStore.getState().replaceObjects({
+      ...robot,
+      c: {
+        id: 'c',
+        name: 'c',
+        kind: 'assembly',
+        parentId: 'r',
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+        cad: {
+          fileName: 'old.step',
+          absolutePath: '/gone/old.step',
+          upAxis: '+Y',
+          forwardAxis: '+Z',
+          bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          meshCount: 1
+        }
+      }
+    })
+    clearHistory()
+    move(1)
+    rewriteHistory((objects) => withCadFile(objects, 'c', '/new/new.step', 'new.step'))
+    // 다시 찾기는 실행 취소 단계가 아니다: 한 번 되돌리면 이동만 되돌아간다
+    expect(undo()).toBe(true)
+    expect(x()).toBe(0)
+    expect(useSceneStore.getState().objects.c.cad?.absolutePath).toBe('/new/new.step')
+    expect(undo()).toBe(false)
+  })
+
+  it('드래그 묶음이 열려 있는지 알 수 있다', () => {
+    expect(isChangeOpen()).toBe(false)
+    beginChange()
+    expect(isChangeOpen()).toBe(true)
+    endChange()
+    expect(isChangeOpen()).toBe(false)
   })
 })

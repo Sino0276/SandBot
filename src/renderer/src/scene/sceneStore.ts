@@ -39,6 +39,18 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
   )
 }
 
+// CAD 원본 위치를 바꾼 objects. CAD 루트가 없으면 그대로 돌려준다(실행 취소 기록 전체에도 적용한다).
+export function withCadFile(
+  objects: SceneObjects,
+  id: string,
+  absolutePath: string,
+  fileName: string
+): SceneObjects {
+  const object = objects[id]
+  if (!object?.cad) return objects
+  return { ...objects, [id]: { ...object, cad: { ...object.cad, absolutePath, fileName } } }
+}
+
 // 오브젝트 하나만 바꾼 새 objects. 없는 오브젝트면 null.
 function updateObject(
   objects: SceneObjects,
@@ -86,14 +98,8 @@ export const useSceneStore = create<SceneState>()((set) => ({
   replaceObjects: (objects) => set({ objects }),
   setCadFile: (id, absolutePath, fileName) =>
     set((state) => {
-      const object = state.objects[id]
-      if (!object?.cad) return state
-      return {
-        objects: {
-          ...state.objects,
-          [id]: { ...object, cad: { ...object.cad, absolutePath, fileName } }
-        }
-      }
+      const objects = withCadFile(state.objects, id, absolutePath, fileName)
+      return objects === state.objects ? state : { objects }
     }),
   setLocalTransform: (id, transform) =>
     set((state) => {

@@ -2,7 +2,7 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, type ComponentRef } from 'react'
 import { MOUSE, Quaternion, Vector3 } from 'three'
-import { useEditorStore } from '../editorStore'
+import { getActiveGizmo, useEditorStore } from '../editorStore'
 import { MAX_FLY_SPEED, MIN_FLY_SPEED, useFlyStore } from '../flyStore'
 
 // Unity 씬 뷰와 같은 카메라 조작.
@@ -23,13 +23,21 @@ const MIN_POLAR = 0.02
 
 const UP = new Vector3(0, 0, 1)
 
+// 키 위치(event.code)로 받는다. 한글 입력 상태나 다른 자판 배열에서도 같은 자리의 키가 움직인다.
 const FLY_KEYS: Record<string, Vector3> = {
-  w: new Vector3(0, 0, -1),
-  s: new Vector3(0, 0, 1),
-  a: new Vector3(-1, 0, 0),
-  d: new Vector3(1, 0, 0),
-  q: new Vector3(0, -1, 0),
-  e: new Vector3(0, 1, 0)
+  KeyW: new Vector3(0, 0, -1),
+  KeyS: new Vector3(0, 0, 1),
+  KeyA: new Vector3(-1, 0, 0),
+  KeyD: new Vector3(1, 0, 0),
+  KeyQ: new Vector3(0, -1, 0),
+  KeyE: new Vector3(0, 1, 0)
+}
+
+// 휠 한 칸(약 100px)마다 비행 속도를 WHEEL_SPEED_STEP배. 터치패드처럼 작은 값이 많이 오는 장치도 같은 비율로 바뀐다.
+function wheelPixels(event: WheelEvent): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 16
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * 100
+  return event.deltaY
 }
 
 function EditorCameraControls(): React.JSX.Element {
@@ -47,6 +55,13 @@ function EditorCameraControls(): React.JSX.Element {
     const element = (events.connected ?? gl.domElement) as HTMLElement
     const fly = useFlyStore
     let flyPointer: number | null = null
+    // Alt+드래그 동안 잠시 끈 변환 핸들
+    let suppressedGizmo: { enabled: boolean } | null = null
+
+    const restoreGizmo = (): void => {
+      if (suppressedGizmo) suppressedGizmo.enabled = true
+      suppressedGizmo = null
+    }
 
     const stopFlying = (): void => {
       if (flyPointer !== null && element.hasPointerCapture(flyPointer))
@@ -64,6 +79,13 @@ function EditorCameraControls(): React.JSX.Element {
       orbit.mouseButtons.LEFT = event.altKey ? MOUSE.ROTATE : hand ? MOUSE.PAN : NONE
       orbit.mouseButtons.MIDDLE = MOUSE.PAN
       orbit.mouseButtons.RIGHT = event.altKey ? MOUSE.DOLLY : NONE
+      // Unity처럼 Alt+드래그는 기즈모 위에서 시작해도 카메라만 움직인다. 핸들은 같은 pointerdown을
+      // 이 리스너 다음에 받으므로, 그 전에 끄고 버튼을 놓으면 다시 켠다.
+      const gizmo = getActiveGizmo()
+      if (event.altKey && gizmo?.enabled) {
+        gizmo.enabled = false
+        suppressedGizmo = gizmo
+      }
       if (event.button === 2 && !event.altKey) {
         flyPointer = event.pointerId
         element.setPointerCapture(event.pointerId)
@@ -75,6 +97,11 @@ function EditorCameraControls(): React.JSX.Element {
     const onPointerMove = (event: PointerEvent): void => {
       const orbit = controls.current
       if (!orbit || flyPointer !== event.pointerId) return
+      // 여러 버튼을 함께 누르면 오른쪽 버튼을 놓아도 pointerup 없이 pointermove만 온다
+      if ((event.buttons & 2) === 0) {
+        stopFlying()
+        return
+      }
       const offset = orbit.target.clone().sub(camera.position)
       const distance = offset.length() || 1
       const direction = offset.divideScalar(distance)
@@ -98,6 +125,7 @@ function EditorCameraControls(): React.JSX.Element {
 
     // 여러 버튼을 같이 누르면 마지막 버튼을 놓을 때만 pointerup이 온다
     const onPointerUp = (event: PointerEvent): void => {
+      restoreGizmo()
       if (event.pointerId === flyPointer) stopFlying()
     }
 
@@ -106,7 +134,7 @@ function EditorCameraControls(): React.JSX.Element {
       if (!fly.getState().flying) return
       event.preventDefault()
       event.stopImmediatePropagation()
-      const factor = event.deltaY < 0 ? WHEEL_SPEED_STEP : 1 / WHEEL_SPEED_STEP
+      const factor = Math.pow(WHEEL_SPEED_STEP, -wheelPixels(event) / 100)
       const speed = Math.min(MAX_FLY_SPEED, Math.max(MIN_FLY_SPEED, fly.getState().speed * factor))
       fly.setState({ speed })
     }
@@ -114,17 +142,17 @@ function EditorCameraControls(): React.JSX.Element {
     const onKey = (event: KeyboardEvent): void => {
       shift.current = event.shiftKey
       if (!fly.getState().flying) return
-      const key = event.key.toLowerCase()
-      if (!(key in FLY_KEYS)) return
+      if (!(event.code in FLY_KEYS)) return
       event.preventDefault()
-      if (event.type === 'keydown') pressed.current.add(key)
-      else pressed.current.delete(key)
+      if (event.type === 'keydown') pressed.current.add(event.code)
+      else pressed.current.delete(event.code)
       invalidate()
     }
 
     element.addEventListener('pointerdown', onPointerDown, { capture: true })
     element.addEventListener('pointermove', onPointerMove)
-    element.addEventListener('pointerup', onPointerUp)
+    // 핸들을 다시 켜는 것은 캔버스 밖에서 놓아도 해야 하므로 창에서 받는다
+    window.addEventListener('pointerup', onPointerUp)
     element.addEventListener('lostpointercapture', stopFlying)
     element.addEventListener('wheel', onWheel, { capture: true, passive: false })
     window.addEventListener('keydown', onKey)
@@ -134,7 +162,8 @@ function EditorCameraControls(): React.JSX.Element {
       stopFlying()
       element.removeEventListener('pointerdown', onPointerDown, { capture: true })
       element.removeEventListener('pointermove', onPointerMove)
-      element.removeEventListener('pointerup', onPointerUp)
+      restoreGizmo()
+      window.removeEventListener('pointerup', onPointerUp)
       element.removeEventListener('lostpointercapture', stopFlying)
       element.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('keydown', onKey)

@@ -39,3 +39,15 @@ export function markHandleInteraction(): void {
 export function isRecentHandleInteraction(): boolean {
   return performance.now() - lastHandleInteraction < 300
 }
+
+// 지금 보이는 변환 핸들(TransformControls). 카메라 조작이 Alt+드래그 동안 잠시 끄는 데 쓴다.
+type Gizmo = { enabled: boolean }
+let activeGizmo: Gizmo | null = null
+
+export function setActiveGizmo(gizmo: Gizmo | null): void {
+  activeGizmo = gizmo
+}
+
+export function getActiveGizmo(): Gizmo | null {
+  return activeGizmo
+}

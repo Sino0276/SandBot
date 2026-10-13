@@ -3,11 +3,12 @@ import { fileNameOf, loadCadGeometry } from '../cad/importStep'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
-import { clearHistory } from '../editor/history'
+import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../editor/history'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import type { SceneObjects } from '../scene/model'
-import { isPlaceholderScene, useSceneStore } from '../scene/sceneStore'
+import { disposeAllGeometry } from '../scene/geometryRegistry'
+import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
 import { parseProject, ProjectFileError, serializeProject } from './projectFile'
 import { useProjectStore, type GenerationResult } from './projectStore'
 
@@ -168,6 +169,9 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
   return withBusy(async () => {
     const progress = showNotice('progress', 'openingProject', { name: fileNameOf(root) })
     loading = true
+    // 여는 동안의 변경은 기록하지 않고, 실행 취소도 막는다
+    suspendHistory()
+    let replaced = false
     try {
       const info = await window.api.openProject(root)
       const { objects, cadFiles } = info.content
@@ -175,6 +179,9 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         : { objects: {}, cadFiles: new Map() }
 
       useSceneStore.getState().replaceObjects(objects)
+      replaced = true
+      // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
+      disposeAllGeometry()
       useEditorStore.getState().select(null)
       useProjectStore.setState({ root, name: info.name, missingCad: [], generation: null })
       replaceGenerationNotices([])
@@ -211,8 +218,9 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       }
     } finally {
       loading = false
-      // 이전 씬과 여는 동안의 변경은 실행 취소 대상이 아니다
-      clearHistory()
+      resumeHistory()
+      // 씬을 바꿨으면 이전 씬의 기록은 버린다. 열기에 실패해 씬이 그대로면 기록도 그대로 둔다.
+      if (replaced) clearHistory()
       dismissNotice(progress)
     }
   })
@@ -234,7 +242,8 @@ export async function relinkCad(cadRootId: string): Promise<void> {
       showNotice('error', 'importReadFailed', { fileName })
       return
     }
-    useSceneStore.getState().setCadFile(cadRootId, path, fileName)
+    // 형상은 새 파일에서 읽었으므로, 실행 취소로 경로만 되돌아가지 않게 기록 전체에 적용한다
+    rewriteHistory((objects) => withCadFile(objects, cadRootId, path, fileName))
     const missing = useProjectStore.getState().missingCad.filter((id) => id !== cadRootId)
     useProjectStore.setState({ missingCad: missing })
     replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)

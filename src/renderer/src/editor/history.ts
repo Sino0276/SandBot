@@ -23,14 +23,16 @@ let applying = false
 let changeDepth = 0
 let changeStart: SceneObjects | null = null
 let initialized = false
+// 프로젝트를 여는 중: 기록하지 않고 실행 취소도 막는다(여는 도중 되돌리면 이전 프로젝트 씬이 새 프로젝트에 들어간다)
+let suspended = false
 
 function current(): SceneObjects {
   return useSceneStore.getState().objects
 }
 
 function syncFlags(): void {
-  const canUndo = past.length > 0
-  const canRedo = future.length > 0
+  const canUndo = !suspended && past.length > 0
+  const canRedo = !suspended && future.length > 0
   const flags = useHistoryStore.getState()
   if (flags.canUndo !== canUndo || flags.canRedo !== canRedo)
     useHistoryStore.setState({ canUndo, canRedo })
@@ -84,7 +86,7 @@ export function initHistory(): void {
   if (initialized) return
   initialized = true
   useSceneStore.subscribe((state, previous) => {
-    if (applying || state.objects === previous.objects) return
+    if (applying || suspended || state.objects === previous.objects) return
     if (changeDepth > 0) {
       changeStart ??= previous.objects
       return
@@ -126,7 +128,39 @@ function apply(objects: SceneObjects): void {
   syncFlags()
 }
 
+// 핸들 드래그처럼 묶는 중인 변경이 있는지(이때는 실행 취소·삭제·도구 전환 단축키를 쓰지 않는다)
+export function isChangeOpen(): boolean {
+  return changeDepth > 0
+}
+
+export function suspendHistory(): void {
+  suspended = true
+  syncFlags()
+}
+
+export function resumeHistory(): void {
+  suspended = false
+  syncFlags()
+}
+
+// 기록 전체(현재 씬과 모든 스냅샷)에 같은 수정을 적용한다. 실행 취소 단계가 아니라 사실 자체가 바뀐 경우에 쓴다.
+// 예: CAD 파일 다시 찾기. 형상은 파일에서 다시 읽어 바뀌므로, 경로만 되돌리면 화면과 저장 내용이 어긋난다.
+export function rewriteHistory(update: (objects: SceneObjects) => SceneObjects): void {
+  past = past.map(update)
+  future = future.map(update)
+  if (changeStart) changeStart = update(changeStart)
+  const next = update(current())
+  if (next === current()) return
+  applying = true
+  try {
+    useSceneStore.setState({ objects: next })
+  } finally {
+    applying = false
+  }
+}
+
 export function undo(): boolean {
+  if (suspended) return false
   closeOpenChange()
   const previous = past.pop()
   if (!previous) return false
@@ -136,6 +170,7 @@ export function undo(): boolean {
 }
 
 export function redo(): boolean {
+  if (suspended) return false
   closeOpenChange()
   const next = future.pop()
   if (!next) return false

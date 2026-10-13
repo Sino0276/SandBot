@@ -115,11 +115,12 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기, Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행(입력칸 안에서는 입력칸의 실행 취소).
   - F는 선택한 오브젝트에 카메라 맞추기(하이어라키 더블클릭, 임포트 직후도 같은 동작), Delete/Backspace는 선택 삭제, Q/W/E는 손·이동·회전 도구.
   - 창에 STEP 파일을 끌어다 놓아도 불러온다.
-  - 앱 안 대화상자(`editor/dialogStore.ts`)가 떠 있거나 비행 중(`editor/flyStore.ts`)이면 단축키를 무시한다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다.
+  - 문자 키는 `event.code`로 받는다(한글 입력 상태에서도 동작). 누르고 있어 반복되는 입력은 도구를 바꾸지 않는다.
+  - 앱 안 대화상자(`editor/dialogStore.ts`)가 떠 있거나 비행 중(`editor/flyStore.ts`)이면 단축키를 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
-  - STEP은 `readStepCached`로 읽는다(STEP 확장자만). 메인 프로세스(`src/main/meshCache.ts`)가 내용을 SHA-256으로 해시해 캐시에 변환 결과가 있으면 그것을, 없으면 파일 내용을 돌려준다. 렌더러(`cad/importStep.ts`의 `loadStepModel`)가 워커로 변환한 뒤 `storeMeshCache`로 저장한다(v8 직렬화, 2 GB를 넘으면 오래 쓰지 않은 것부터 지움). 캐시 값은 `isImportedModel`로 확인하고 쓴다.
+  - STEP은 `readStepCached`로 읽는다(STEP 확장자만). 메인 프로세스(`src/main/meshCache.ts`)가 내용을 SHA-256으로 해시해 캐시에 변환 결과가 있으면 그것을, 없으면 파일 내용을 돌려준다. 렌더러(`cad/importStep.ts`의 `loadStepModel`)가 워커로 변환한 뒤 `storeMeshCache`로 저장한다(v8 직렬화, 2 GB를 넘으면 오래 쓰지 않은 것부터 지움). 저장은 형상을 먼저 보여 준 뒤 한다. 캐시에서 읽은 타입 배열은 배열마다 제 크기 버퍼로 복사해 보낸다(contextBridge가 배열마다 바탕 버퍼 전체를 복사하므로). 캐시 값은 `isImportedModel`로 확인하고 쓴다.
 - 프로젝트 흐름은 `project/projectActions.ts`에 있다.
   - 열기는 `project.json`을 검증(`project/projectFile.ts`)한 뒤 씬을 바꾸고, CAD를 상대 경로 → 절대 경로 순으로 찾아 형상을 등록한다. 못 찾은 CAD는 인스펙터의 [파일 다시 찾기]로 연결한다.
   - 저장할 때 프로젝트가 없으면 폴더를 고르게 한다.
@@ -139,9 +140,10 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 검증 결과는 `sceneIssues.ts`가 씬마다 한 번 계산해 하이어라키(문제 표시, 상위 오브젝트에도 흐리게 표시)와 인스펙터(카드별·로봇별 목록)가 같이 쓴다.
 - 인스펙터 입력칸(`TextField`, `NumberField`)은 Enter나 포커스 이동 때 확정한다. 확정 전 초안이 있으면 `useDraft`가 `projectStore.pendingEdit`를 켜고, 창을 닫을 때 초안을 먼저 확정한 뒤 저장 여부를 묻는다. 인스펙터 내용은 선택한 오브젝트 id로 key를 걸어, 선택이 바뀌면 초안을 버린다.
 - 표시 단위는 `units/`에 있다. `units.ts`가 변환·입력 파싱(`parseLength`는 `12in`, `30 cm`, `6"`, `1ft`를 받고 단위가 없으면 표시 단위로 읽는다, `parseAngle`은 °·rad)·형식을 맡고, `unitStore.ts`가 개인 설정과 첫 실행 질문을 맡는다. 길이를 보여 주거나 받는 입력칸은 `NumberField`의 `parse`로 이 함수들을 쓴다. 하드웨어 카드의 오프셋 계산값은 생성 코드 값이라 코드 단위(mm·in)로 보여 준다.
-- 실행 취소(`editor/history.ts`)는 sceneStore 변경을 구독해 이전 `objects`를 쌓는다(최대 200단계). 핸들 드래그는 `beginChange`/`endChange`로 한 단계로 묶는다. 프로젝트를 열면 기록을 지운다. 선택은 기록하지 않고, 되돌린 씬에 없는 오브젝트의 선택만 푼다. 저장한 씬과 같아지면 dirty를 끈다(`projectActions`의 `savedObjects`).
-- 씬 뷰 카메라는 `editor/scene/EditorCameraControls.tsx`다. drei OrbitControls를 그대로 두고, 누를 때마다(캡처 단계) 버튼 배정을 바꿔 궤도·팬·줌을 쓰고, 우클릭 둘러보기와 WASD/QE 비행은 직접 처리한다. 다른 코드(포커스, 보기 기준 전환)는 계속 OrbitControls의 `target`을 중심점으로 쓴다. 우클릭을 놓을 때의 contextmenu는 빗나간 클릭(선택 해제)으로 치지 않는다. Windows·Linux에서는 Alt가 숨긴 메뉴 막대를 열어 Alt+드래그를 방해하므로 메인 창의 메뉴를 없앴다. Linux 데스크톱 환경에 따라 Alt+드래그가 창 이동으로 먼저 잡힐 수 있다.
+- 실행 취소(`editor/history.ts`)는 sceneStore 변경을 구독해 이전 `objects`를 쌓는다(최대 200단계). 핸들 드래그는 `beginChange`/`endChange`로 한 단계로 묶고, 드래그 도중 선택·도구가 바뀌면 `TransformHandles`가 묶음을 닫고 카메라 조작을 다시 켠다. 프로젝트를 여는 동안에는 기록과 실행 취소를 멈추고(`suspendHistory`), 씬을 바꿨으면 기록과 이전 형상을 지운다. CAD 다시 찾기처럼 형상 자체가 바뀌는 수정은 `rewriteHistory`로 기록 전체에 적용해 실행 취소로 경로만 되돌아가지 않게 한다. 선택은 기록하지 않고, 되돌린 씬에 없는 오브젝트의 선택만 푼다. 저장한 씬과 같아지면 dirty를 끈다(`projectActions`의 `savedObjects`).
+- 씬 뷰 카메라는 `editor/scene/EditorCameraControls.tsx`다. drei OrbitControls를 그대로 두고, 누를 때마다(캡처 단계) 버튼 배정을 바꿔 궤도·팬·줌을 쓰고, 우클릭 둘러보기와 WASD/QE 비행은 직접 처리한다. 다른 코드(포커스, 보기 기준 전환)는 계속 OrbitControls의 `target`을 중심점으로 쓴다. 우클릭을 놓을 때의 contextmenu는 빗나간 클릭(선택 해제)으로 치지 않는다. Alt+드래그는 기즈모 위에서 시작해도 카메라만 움직이도록 그 동안 핸들(`getActiveGizmo`)을 끈다. `autoHideMenuBar`를 켜면 Windows·Linux에서 Alt가 숨긴 메뉴 막대를 열어 Alt+드래그를 방해하므로, 끄고 `setMenuBarVisibility(false)`로 숨긴다(메뉴 단축키 F11 등은 남는다). 비행 키와 문자 단축키는 한글 입력 상태에서도 동작하도록 `event.code`(키 위치)로 받는다. Linux 데스크톱 환경에 따라 Alt+드래그가 창 이동으로 먼저 잡힐 수 있다.
 - IMU 컴포넌트가 있는 오브젝트(또는 그 상위)를 선택하면 씬에 방향을 그린다(`editor/scene/ImuIndicators.tsx`, 로고 보라·USB 주황, 축 색과 겹치지 않게).
+- drei `TransformControls`는 내려갈 때 three-stdlib 인스턴스를 해제하지 않으므로(캔버스 리스너가 남는다) `TransformHandles`가 직접 `dispose()`한다.
 - 이동·회전 핸들(`editor/scene/TransformHandles.tsx`)은 선택한 오브젝트가 아니라 대리 객체에 붙는다. 대리 객체는 "오브젝트 위치 + 보기 기준 좌표계 방향"을 갖고, 드래그한 변화량을 오브젝트에 옮긴다. 그래야 로봇 안의 파트도 로봇 축 방향으로 끌 수 있다. 핸들 클릭이 R3F에서는 빗나간 클릭(선택 해제)으로 처리되므로 `markHandleInteraction`으로 막는다.
 - 오른쪽 위 축 표시(`ViewGizmo`)는 drei `GizmoHelper`의 HUD만 쓰고 축은 직접 그린다. drei `GizmoViewport`는 회전된 축을 클릭했을 때 시점 방향을 잘못 계산한다.
 - 씬 뷰는 @react-three/fiber + drei다. `Canvas`가 `frameloop="demand"`이므로 R3F 바깥에서 Three.js 객체를 직접 바꾸면 `invalidate()`를 호출해야 다시 그려진다. drei 컴포넌트 중 CDN에서 리소스를 받는 것(`Environment` 프리셋, `Text` 기본 폰트 등)은 `index.html`의 CSP에 막힌다.
