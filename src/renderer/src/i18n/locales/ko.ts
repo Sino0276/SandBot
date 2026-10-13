@@ -40,6 +40,10 @@ const ko = {
     codegenNoTeamCode: 'TeamCode 폴더가 없어 하드웨어 코드를 만들지 못했습니다.',
     codegenSkipped:
       '직접 만든 파일과 이름이 겹쳐 덮어쓰지 않았습니다: {{files}}. 로봇 하드웨어의 클래스 이름을 바꾸세요.',
+    codegenModified:
+      '고친 생성 파일이라 덮어쓰지 않았습니다: {{files}}. SandBot이 다시 만들게 하려면 그 파일을 지우세요.',
+    codegenCaseRenamed:
+      '생성 파일 이름의 대소문자가 바뀌었습니다({{files}}). Windows·macOS의 git은 이 변경을 기록하지 않으니 커밋할 때 git mv -f로 이름을 바꾸세요.',
     codegenFailed: 'TeamCode에 생성 코드를 쓰지 못했습니다 ({{detail}}).'
   },
   panels: {
@@ -94,6 +98,10 @@ const ko = {
     severity: {
       error: '하드웨어 오류',
       warning: '하드웨어 경고'
+    },
+    severityBelow: {
+      error: '하위 오브젝트에 하드웨어 오류',
+      warning: '하위 오브젝트에 하드웨어 경고'
     },
     title: '하드웨어 컴포넌트',
     add: '컴포넌트 추가…',
@@ -248,7 +256,7 @@ const ko = {
         'Driver Station 스캔으로 확인한 시리얼을 EthernetOverUsb:<인터페이스>:<IP> 형식으로 넣으세요.',
       pinpoint:
         'X 포드는 앞뒤, Y 포드는 좌우 이동을 잽니다. 오프셋은 고른 파트의 위치로 계산합니다.',
-      otos: '오프셋은 이 파트의 위치와 방향, 장착 각도로 계산합니다.',
+      otos: '오프셋 위치는 이 파트의 위치로 계산합니다. 방향은 센서 화살표가 로봇 앞에서 돌아간 각도(장착 각도, 반시계 +)로 정합니다.',
       deadWheel:
         '위치는 이 파트에서 계산합니다. 같은 번호 모터 포트에 모터가 있으면 그 모터 이름으로 엔코더를 읽습니다.'
     },
@@ -273,11 +281,18 @@ const ko = {
     },
     generation: {
       notSaved: '저장(Ctrl+S)하면 생성합니다.',
-      blocked: '마지막 저장: 오류가 {{count}}개 있어 만들지 않았습니다.',
+      blocked:
+        '마지막 저장: 프로젝트에 하드웨어 오류가 {{count}}개 있어 아무 파일도 만들지 않았습니다.',
       failed: '마지막 저장: 파일을 쓰지 못했습니다 ({{detail}}).',
       noTeamCode: '마지막 저장: TeamCode 폴더가 없습니다.',
-      synced: '마지막 저장: {{written}}개 씀, {{unchanged}}개 그대로, {{deleted}}개 지움',
-      skipped: '직접 만든 파일이라 건너뜀: {{files}}'
+      deleted: '마지막 저장에서 지운 이전 생성 파일: {{files}}',
+      fileStates: {
+        written: '저장함',
+        unchanged: '변경 없음',
+        skipped: '직접 만든 파일이 있어 건너뜀',
+        modified: '고친 파일이라 덮어쓰지 않음',
+        missing: '아직 만들지 않음'
+      }
     },
     issues: {
       emptyName: '장치 이름이 비어 있습니다.',
@@ -297,7 +312,8 @@ const ko = {
         '{{name}}: 엔코더 포트 {{port}}은(는) 빠른 회전에서 값을 놓칠 수 있습니다. 앞뒤 포드는 0번이나 3번에 다세요.',
       expansionHubDisabled:
         '{{name}}이(가) 꺼진 Expansion Hub에 있습니다. 로봇 하드웨어에서 Expansion Hub를 켜세요.',
-      serialMissing: '{{name}}: 시리얼이 없어 구성 XML에 넣지 않습니다.',
+      serialMissing:
+        '{{name}}: 시리얼이 없어 구성 XML에 넣지 않고, 하드웨어 클래스의 이 필드는 null이 됩니다.',
       limelightSerialInvalid:
         '{{name}}: 시리얼이 EthernetOverUsb:<인터페이스>:<IP> 형식이 아닙니다.',
       pinpointPodMissing:
@@ -307,6 +323,13 @@ const ko = {
       duplicateClassName: '다른 로봇과 생성 파일 이름이 겹칩니다 ({{className}}).',
       emptyConfigName: '로봇 구성 이름이 비어 있습니다.',
       duplicateConfigName: '다른 로봇과 구성 이름 "{{configName}}"이(가) 겹칩니다.',
+      expansionHubAddressReserved:
+        'Expansion Hub 주소 {{address}}은(는) SDK가 시스템용으로 남겨 둔 범위입니다(보통 1–10). 허브의 실제 주소와 같은지 확인하세요.',
+      servoScaleInvalid:
+        '{{name}}: 범위 최소가 범위 최대보다 작아야 합니다. 서보를 반대로 돌리려면 방향을 바꾸세요.',
+      imuChipHub: '{{name}}: Expansion Hub의 내장 IMU는 BNO055입니다. IMU 칩을 BNO055로 바꾸세요.',
+      constantNameCollision:
+        '{{names}}이(가) 같은 상수 {{constant}}을(를) 만듭니다. 이름을 바꾸세요.',
       expansionHubAddressInvalid:
         'Expansion Hub 주소 {{address}}은(는) 쓸 수 없습니다 (1–254, 173 제외).'
     }

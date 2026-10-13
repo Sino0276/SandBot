@@ -17,6 +17,8 @@ type ProjectState = {
   busy: boolean
   // 이 프로젝트에서 마지막으로 저장했을 때의 코드 생성 결과. 아직 저장하지 않았으면 null.
   generation: GenerationResult | null
+  // 입력칸에 확정하지 않은 초안이 있다(창을 닫을 때 저장 확인을 거친다)
+  pendingEdit: boolean
 }
 
 export const useProjectStore = create<ProjectState>()(() => ({
@@ -25,5 +27,6 @@ export const useProjectStore = create<ProjectState>()(() => ({
   dirty: false,
   missingCad: [],
   busy: false,
-  generation: null
+  generation: null,
+  pendingEdit: false
 }))

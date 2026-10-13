@@ -1,6 +1,11 @@
 import type { HardwareComponent, SceneObjects } from '../scene/model'
 import { componentDef, isComponentType, type ComponentType } from './catalog'
-import { robotComponents, robotHardwareSettings, type ComponentEntry } from './components'
+import {
+  isInConfiguration,
+  robotComponents,
+  robotHardwareSettings,
+  type ComponentEntry
+} from './components'
 import {
   INCH_PER_METER,
   MM_PER_METER,
@@ -26,9 +31,13 @@ export function javaDouble(value: number, digits: number): string {
   return trimmed === '-0.0' ? '0.0' : trimmed
 }
 
-// Javadoc 주석 안에 넣는 문자열이 주석을 닫지 않게 한다
+// 주석 안에 넣는 문자열이 주석을 닫거나 줄을 끊지 않게 한다. javac는 주석 안의 \u 이스케이프도
+// 먼저 해석하므로(잘못된 \u는 컴파일 오류, \u000a는 줄바꿈) 역슬래시를 두 번 써서 이스케이프가 되지 않게 한다.
 function commentText(value: string): string {
-  return value.replace(/\*\//g, '* /').replace(/[\r\n]+/g, ' ')
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\*\//g, '* /')
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
 }
 
 const DIRECTION_ENUM: Record<string, string> = { forward: 'FORWARD', reverse: 'REVERSE' }
@@ -63,6 +72,7 @@ function generateComponent(
   const type = component.type as ComponentType
   const def = componentDef(type)
   const field = javaIdentifier(component.name)
+  // 상수 이름은 검증(constantNameCollision)과 같은 규칙(naming.generatedConstantNames)으로 만든다
   const constant = constantName(field)
   const props = component.props
   const get = (javaType: string, name = component.name): string =>
@@ -187,8 +197,20 @@ function generateComponent(
       init.push(get(def.javaType, deadWheelDeviceName(entry, entries)))
       break
     }
+    case 'webcam':
+    case 'limelight':
+      if (isInConfiguration(component)) {
+        init.push(get(def.javaType))
+      } else {
+        // 시리얼이 없어 구성 XML에 넣지 않은 장치. get()은 장치가 없으면 예외를 던져 클래스 전체를 못 쓰게 하므로 null로 둔다.
+        init.push(
+          '// Not in the generated configuration until its serial number is set in SandBot: null until then.',
+          `${field} = hardwareMap.tryGet(${def.javaType}.class, ${javaString(component.name)});`
+        )
+      }
+      break
     default:
-      // 설정할 속성이 없는 장치(거리·터치·아날로그·LED·Blinkin·웹캠·Limelight·HuskyLens·OctoQuad)
+      // 설정할 속성이 없는 장치(거리·터치·아날로그·LED·Blinkin·HuskyLens·OctoQuad)
       init.push(get(def.javaType))
   }
   return { constants, init }
@@ -213,7 +235,7 @@ export function generateHardwareJava(objects: SceneObjects, robotId: string): st
   const constants = generated.flatMap((g) => g.constants)
   const init = generated.flatMap((g, i) => [
     ...(i > 0 ? [''] : []),
-    `// ${entries[i].component.name}`.replace(/[\r\n]+/g, ' '),
+    `// ${commentText(entries[i].component.name)}`,
     ...g.init
   ])
 

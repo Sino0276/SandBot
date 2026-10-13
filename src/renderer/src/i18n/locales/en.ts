@@ -43,6 +43,10 @@ const en: Messages = {
     codegenNoTeamCode: 'There is no TeamCode folder, so the hardware code was not generated.',
     codegenSkipped:
       'Not overwritten because a hand-written file has the same name: {{files}}. Change the class name under Robot hardware.',
+    codegenModified:
+      'Not overwritten because these generated files were edited: {{files}}. Delete a file to let SandBot generate it again.',
+    codegenCaseRenamed:
+      'Only the letter case of generated file names changed ({{files}}). Git on Windows and macOS does not record this, so rename them with git mv -f when you commit.',
     codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).'
   },
   panels: {
@@ -97,6 +101,10 @@ const en: Messages = {
     severity: {
       error: 'Hardware error',
       warning: 'Hardware warning'
+    },
+    severityBelow: {
+      error: 'Hardware error in a child object',
+      warning: 'Hardware warning in a child object'
     },
     title: 'Hardware components',
     add: 'Add component…',
@@ -251,7 +259,7 @@ const en: Messages = {
         'Enter the serial from the Driver Station scan, in the form EthernetOverUsb:<interface>:<IP>.',
       pinpoint:
         'The X pod measures forward/back motion and the Y pod left/right. Offsets come from the chosen parts.',
-      otos: "Offsets come from this part's position and heading plus the mounting angle.",
+      otos: "The offset position comes from this part's position. The heading is the angle the sensor's arrow is turned from the robot's front (mounting angle, CCW +).",
       deadWheel:
         'The position comes from this part. If a motor uses the motor port with the same number, the encoder is read through that motor.'
     },
@@ -276,11 +284,18 @@ const en: Messages = {
     },
     generation: {
       notSaved: 'Generated when you save (Ctrl+S).',
-      blocked: 'Last save: not generated because of {{count}} error(s).',
+      blocked:
+        'Last save: no files were generated because the project has {{count}} hardware error(s).',
       failed: 'Last save: could not write files ({{detail}}).',
       noTeamCode: 'Last save: there is no TeamCode folder.',
-      synced: 'Last save: {{written}} written, {{unchanged}} unchanged, {{deleted}} deleted',
-      skipped: 'Skipped hand-written files: {{files}}'
+      deleted: 'Old generated files deleted on the last save: {{files}}',
+      fileStates: {
+        written: 'Written',
+        unchanged: 'Unchanged',
+        skipped: 'Skipped: a hand-written file exists',
+        modified: 'Not overwritten: edited by hand',
+        missing: 'Not generated yet'
+      }
     },
     issues: {
       emptyName: 'The device name is empty.',
@@ -301,7 +316,8 @@ const en: Messages = {
         '{{name}}: encoder port {{port}} can miss counts at high speed. Put forward/back pods on port 0 or 3.',
       expansionHubDisabled:
         '{{name}} is on the Expansion Hub, which is turned off. Turn it on under Robot hardware.',
-      serialMissing: '{{name}}: no serial, so it is left out of the configuration XML.',
+      serialMissing:
+        '{{name}}: no serial, so it is left out of the configuration XML and this field of the hardware class is null.',
       limelightSerialInvalid:
         '{{name}}: the serial is not in the form EthernetOverUsb:<interface>:<IP>.',
       pinpointPodMissing:
@@ -312,6 +328,14 @@ const en: Messages = {
       duplicateClassName: 'The generated file name clashes with another robot ({{className}}).',
       emptyConfigName: 'The robot configuration name is empty.',
       duplicateConfigName: 'The configuration name "{{configName}}" is also used by another robot.',
+      expansionHubAddressReserved:
+        'Expansion Hub address {{address}} is in the range the SDK reserves for system use (usually 1–10). Check that it matches the hub.',
+      servoScaleInvalid:
+        '{{name}}: scale min must be less than scale max. To run the servo the other way, change its direction.',
+      imuChipHub:
+        "{{name}}: an Expansion Hub's built-in IMU is a BNO055. Set the IMU chip to BNO055.",
+      constantNameCollision:
+        '{{names}} produce the same constant {{constant}}. Rename one of them.',
       expansionHubAddressInvalid:
         'Expansion Hub address {{address}} cannot be used (1–254, except 173).'
     }

@@ -215,7 +215,13 @@ function ComponentCard({
               className="field-select"
               aria-label={t('hardware.hub')}
               value={component.hub}
-              onChange={(event) => update({ hub: event.target.value as HubId })}
+              onChange={(event) => {
+                const hub = event.target.value as HubId
+                // Expansion Hub의 내장 IMU는 BNO055뿐이다
+                if (type === 'imu' && hub === 'expansionHub')
+                  update({ hub, props: { chip: 'bno055' } })
+                else update({ hub })
+              }}
             >
               {HUBS.map((hub) => (
                 <option key={hub} value={hub}>

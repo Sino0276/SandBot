@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   COMPONENT_CATEGORIES,
@@ -32,15 +33,20 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   const expansionHubEnabled = robotId
     ? robotHardwareSettings(objects, robotId).expansionHub.enabled
     : false
-  // 포드로 고를 수 있는 파트: 같은 로봇의 파트·어셈블리(깊이만큼 들여 쓴다)
-  const pickableObjects = robotId
-    ? subtreeIds(objects, robotId)
-        .filter((id) => id !== robotId)
-        .map((id) => ({
-          id,
-          label: `${'\u00a0\u00a0'.repeat(ancestorIds(objects, id).length - 1)}${objects[id].name}`
-        }))
-    : []
+  // 포드로 고를 수 있는 파트: 같은 로봇의 파트·어셈블리(깊이만큼 들여 쓴다). Pinpoint 카드만 쓴다.
+  const needsPicker = components.some((component) => component.type === 'pinpoint')
+  const pickableObjects = useMemo(
+    () =>
+      robotId && needsPicker
+        ? subtreeIds(objects, robotId)
+            .filter((id) => id !== robotId)
+            .map((id) => ({
+              id,
+              label: `${'\u00a0\u00a0'.repeat(ancestorIds(objects, id).length - 1)}${objects[id].name}`
+            }))
+        : [],
+    [objects, robotId, needsPicker]
+  )
 
   const add = (type: string): void => {
     if (!isComponentType(type)) return
@@ -81,7 +87,11 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
         className="field-select hw-add"
         aria-label={t('hardware.add')}
         value=""
-        onChange={(event) => add(event.target.value)}
+        onChange={(event) => {
+          add(event.target.value)
+          // 포커스가 남아 있으면 방향키가 값을 바꿔 컴포넌트가 또 추가된다
+          event.currentTarget.blur()
+        }}
       >
         <option value="" disabled>
           {t('hardware.add')}

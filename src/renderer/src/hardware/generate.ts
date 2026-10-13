@@ -1,4 +1,4 @@
-import type { GeneratedFile } from '../../../shared/generatedFiles'
+import { stampGenerated, type GeneratedFile } from '../../../shared/generatedFiles'
 import { childrenOf, type SceneObjects } from '../scene/model'
 import { robotComponents, robotHardwareSettings } from './components'
 import { generateConfigXml } from './configXml'
@@ -20,10 +20,14 @@ export function generateTeamCodeFiles(objects: SceneObjects): {
   for (const robot of childrenOf(objects, null)) {
     if (robot.kind !== 'robot' || robotComponents(objects, robot.id).length === 0) continue
     const { className } = robotHardwareSettings(objects, robot.id)
-    files.push({ path: javaFilePath(className), content: generateHardwareJava(objects, robot.id) })
+    // 표식 뒤에 내용 해시를 붙여, 팀이 고친 파일과 도구가 쓴 그대로인 파일을 구별한다
+    files.push({
+      path: javaFilePath(className),
+      content: stampGenerated(generateHardwareJava(objects, robot.id))
+    })
     files.push({
       path: configXmlFilePath(className),
-      content: generateConfigXml(objects, robot.id)
+      content: stampGenerated(generateConfigXml(objects, robot.id))
     })
   }
   return { files, issues, blocked: false }

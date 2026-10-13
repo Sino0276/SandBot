@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DEG } from '../../scene/coordinates'
 import {
@@ -96,41 +97,44 @@ function InspectorPanel(): React.JSX.Element {
 
   return (
     <PanelFrame title={t('panels.inspector')} localKeys>
-      <div className="inspector-object">
-        <span className="inspector-name">{object.name}</span>
-        <span className="inspector-kind">{t(`objectKind.${object.kind}`)}</span>
-      </div>
-      <section className="inspector-section">
-        <header className="inspector-section-header">
-          <span>{t('inspector.transform')}</span>
-          <span className="frame-badge">
-            {shownFrame === 'robot' ? t('inspector.frameRobot') : t('inspector.frameField')}
-          </span>
-        </header>
-        {frame === 'robot' && !inRobot && (
-          <p className="inspector-note">{t('inspector.notInRobot')}</p>
-        )}
-        {isFrameOrigin && <p className="inspector-note">{t('inspector.robotOrigin')}</p>}
-        <VectorRow
-          label={t('inspector.position')}
-          values={value.position}
-          unit="m"
-          digits={3}
-          disabled={[isFrameOrigin, isFrameOrigin, isFrameOrigin || isRobotRoot]}
-          onCommit={(axis, input) => commit('position', axis, input)}
-        />
-        <VectorRow
-          label={t('inspector.rotation')}
-          values={value.rotation.map((radians) => radians / DEG) as Vec3}
-          unit="°"
-          digits={1}
-          disabled={[isFrameOrigin || isRobotRoot, isFrameOrigin || isRobotRoot, isFrameOrigin]}
-          onCommit={(axis, input) => commit('rotation', axis, input * DEG)}
-        />
-      </section>
-      {cadObjectId && <CadAlignmentSection cadObject={objects[cadObjectId]} />}
-      {isRobotRoot && <RobotHardwareSection robot={object} />}
-      <HardwareComponentsSection object={object} />
+      {/* 선택이 바뀌면 입력칸을 새로 만든다. 그래야 이전 오브젝트에 쓰던 초안이 새 오브젝트에 확정되지 않는다. */}
+      <Fragment key={object.id}>
+        <div className="inspector-object">
+          <span className="inspector-name">{object.name}</span>
+          <span className="inspector-kind">{t(`objectKind.${object.kind}`)}</span>
+        </div>
+        <section className="inspector-section">
+          <header className="inspector-section-header">
+            <span>{t('inspector.transform')}</span>
+            <span className="frame-badge">
+              {shownFrame === 'robot' ? t('inspector.frameRobot') : t('inspector.frameField')}
+            </span>
+          </header>
+          {frame === 'robot' && !inRobot && (
+            <p className="inspector-note">{t('inspector.notInRobot')}</p>
+          )}
+          {isFrameOrigin && <p className="inspector-note">{t('inspector.robotOrigin')}</p>}
+          <VectorRow
+            label={t('inspector.position')}
+            values={value.position}
+            unit="m"
+            digits={3}
+            disabled={[isFrameOrigin, isFrameOrigin, isFrameOrigin || isRobotRoot]}
+            onCommit={(axis, input) => commit('position', axis, input)}
+          />
+          <VectorRow
+            label={t('inspector.rotation')}
+            values={value.rotation.map((radians) => radians / DEG) as Vec3}
+            unit="°"
+            digits={1}
+            disabled={[isFrameOrigin || isRobotRoot, isFrameOrigin || isRobotRoot, isFrameOrigin]}
+            onCommit={(axis, input) => commit('rotation', axis, input * DEG)}
+          />
+        </section>
+        {cadObjectId && <CadAlignmentSection cadObject={objects[cadObjectId]} />}
+        {isRobotRoot && <RobotHardwareSection robot={object} />}
+        <HardwareComponentsSection object={object} />
+      </Fragment>
     </PanelFrame>
   )
 }

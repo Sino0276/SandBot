@@ -7,10 +7,16 @@ import {
   type ComponentType,
   type PortKind
 } from './catalog'
-import { robotComponents, robotHardwareSettings, type ComponentEntry } from './components'
+import {
+  isInConfiguration,
+  LIMELIGHT_SERIAL_PATTERN,
+  robotComponents,
+  robotHardwareSettings,
+  usbSerial,
+  type ComponentEntry
+} from './components'
 import { GENERATED_MARKER } from '../../../shared/generatedFiles'
 import { xmlAttribute } from './naming'
-import { LIMELIGHT_SERIAL_PATTERN } from './validation'
 
 // 로봇 구성 XML(TeamCode/src/main/res/xml). 앱에 넣으면 Driver Station 구성 목록에 읽기 전용으로 나타난다.
 // 형식은 FTC SDK의 ReadXMLFileHandler/WriteXMLFileHandler를 따른다.
@@ -62,6 +68,13 @@ function deviceTag(type: ComponentType, props: Record<string, string | number>):
     case 'limelight':
       return null
   }
+}
+
+// Limelight의 주소. 시리얼의 IP는 Control Hub 자신의 주소이고, SDK는 마지막 자리를 1로 바꾼 주소를
+// 장치 주소로 쓴다(EthernetOverUsbConfiguration.swapFourthOctet, LIMELIGHT_DEFAULT_INDEX = 1).
+export function limelightAddress(serial: string): string {
+  const ip = LIMELIGHT_SERIAL_PATTERN.exec(serial)?.[1] ?? ''
+  return [...ip.split('.').slice(0, 3), '1'].join('.')
 }
 
 const PORT_ORDER: PortKind[] = ['motor', 'encoder', 'servo', 'digital', 'analog', 'i2c']
@@ -153,8 +166,9 @@ export function generateConfigXml(objects: SceneObjects, robotId: string): strin
   // 웹캠·Limelight는 허브 밖, <Robot> 바로 아래. 시리얼이 없으면 연결되지 않으므로 넣지 않는다(검증 경고).
   const usbDevices: string[] = []
   for (const { component } of entries) {
-    const serial = String(component.props.serialNumber ?? '').trim()
-    if (component.type === 'webcam' && serial) {
+    if (!isInConfiguration(component)) continue
+    const serial = usbSerial(component)
+    if (component.type === 'webcam') {
       usbDevices.push(
         pad(
           1,
@@ -165,15 +179,14 @@ export function generateConfigXml(objects: SceneObjects, robotId: string): strin
         )
       )
     }
-    const limelight = component.type === 'limelight' ? LIMELIGHT_SERIAL_PATTERN.exec(serial) : null
-    if (limelight) {
+    if (component.type === 'limelight') {
       usbDevices.push(
         pad(
           1,
           element('EthernetDevice', [
             ['name', component.name],
             ['serialNumber', serial],
-            ['ipAddress', limelight[1]]
+            ['ipAddress', limelightAddress(serial)]
           ])
         )
       )

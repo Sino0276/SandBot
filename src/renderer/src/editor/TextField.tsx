@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
+import { useDraft } from './useDraft'
 
 type TextFieldProps = {
   value: string
@@ -18,7 +19,7 @@ function TextField({
   invalid = false,
   onCommit
 }: TextFieldProps): React.JSX.Element {
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraft] = useDraft()
   const cancelled = useRef(false)
 
   const commit = (): void => {

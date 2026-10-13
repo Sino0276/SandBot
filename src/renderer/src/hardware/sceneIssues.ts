@@ -1,4 +1,4 @@
-import type { SceneObjects } from '../scene/model'
+import { ancestorIds, type SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { validateScene, type Issue, type IssueSeverity } from './validation'
 
@@ -14,12 +14,27 @@ export function useSceneIssues(): Issue[] {
   return sceneIssues(useSceneStore((state) => state.objects))
 }
 
-// 오브젝트별 가장 심각한 문제(하이어라키 표시용)
-export function worstSeverityByObject(issues: Issue[]): Map<string, IssueSeverity> {
-  const result = new Map<string, IssueSeverity>()
+export type ObjectSeverity = { severity: IssueSeverity; own: boolean }
+
+// 오브젝트별 가장 심각한 문제(하이어라키 표시용). 접힌 어셈블리 안의 파트도 찾을 수 있게
+// 상위 오브젝트에도 표시한다(own=false: 하위에 문제가 있음).
+export function severityByObject(
+  objects: SceneObjects,
+  issues: Issue[]
+): Map<string, ObjectSeverity> {
+  const result = new Map<string, ObjectSeverity>()
+  const mark = (id: string, severity: IssueSeverity, own: boolean): void => {
+    const current = result.get(id)
+    result.set(id, {
+      severity: current?.severity === 'error' ? 'error' : severity,
+      own: (current?.own ?? false) || own
+    })
+  }
   for (const issue of issues) {
-    if (!issue.objectId) continue
-    if (result.get(issue.objectId) !== 'error') result.set(issue.objectId, issue.severity)
+    if (!issue.objectId || !objects[issue.objectId]) continue
+    mark(issue.objectId, issue.severity, true)
+    for (const ancestor of ancestorIds(objects, issue.objectId))
+      mark(ancestor, issue.severity, false)
   }
   return result
 }

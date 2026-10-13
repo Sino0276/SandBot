@@ -12,7 +12,7 @@ import {
 import { IPC } from '../shared/ipc'
 
 // 렌더러가 만든 생성 코드를 팀의 TeamCode 폴더에 쓴다. 경로는 generatedFiles의 규칙으로만 허용하고,
-// 표식(@sandbot-generated)이 없는 파일은 덮어쓰거나 지우지 않는다.
+// 도구가 쓴 그대로인(표식과 해시가 맞는) 파일만 덮어쓰거나 지운다.
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
@@ -73,7 +73,9 @@ export async function syncGeneratedFiles(
     written: plan.write.map((file) => file.path),
     unchanged: plan.unchanged,
     deleted: plan.delete,
-    skipped: plan.skipped
+    skipped: plan.skipped,
+    modified: plan.modified,
+    caseRenamed: plan.caseRenamed
   }
 }
 

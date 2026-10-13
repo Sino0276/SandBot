@@ -719,3 +719,24 @@ body {
 .hw-issue-link:hover {
   text-decoration: underline;
 }
+
+.tree-issue.is-below {
+  opacity: 0.55;
+}
+
+.hw-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
+
+.hw-file-state {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.hw-file-state.is-skipped,
+.hw-file-state.is-modified {
+  color: #e0b341;
+}

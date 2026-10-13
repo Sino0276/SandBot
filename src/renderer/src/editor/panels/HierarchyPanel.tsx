@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { importStepFile } from '../../cad/importStep'
-import { useSceneIssues, worstSeverityByObject } from '../../hardware/sceneIssues'
-import type { IssueSeverity } from '../../hardware/validation'
+import { severityByObject, useSceneIssues, type ObjectSeverity } from '../../hardware/sceneIssues'
 import { ancestorIds, childrenOf, type SceneObject, type SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
@@ -12,8 +11,8 @@ import PanelFrame from '../PanelFrame'
 
 type TreeContext = {
   objects: SceneObjects
-  // 오브젝트별 가장 심각한 하드웨어 문제
-  severities: Map<string, IssueSeverity>
+  // 오브젝트별 가장 심각한 하드웨어 문제(하위 오브젝트의 문제 포함)
+  severities: Map<string, ObjectSeverity>
   isOpen: (id: string, depth: number) => boolean
   toggle: (id: string, depth: number) => void
 }
@@ -69,10 +68,18 @@ function TreeItem({
         <span className="tree-name">{object.name}</span>
         {severity && (
           <span
-            className={`tree-issue is-${severity}`}
+            className={`tree-issue is-${severity.severity}${severity.own ? '' : ' is-below'}`}
             role="img"
-            aria-label={t(`hardware.severity.${severity}`)}
-            title={t(`hardware.severity.${severity}`)}
+            aria-label={
+              severity.own
+                ? t(`hardware.severity.${severity.severity}`)
+                : t(`hardware.severityBelow.${severity.severity}`)
+            }
+            title={
+              severity.own
+                ? t(`hardware.severity.${severity.severity}`)
+                : t(`hardware.severityBelow.${severity.severity}`)
+            }
           >
             !
           </span>
@@ -108,7 +115,7 @@ function HierarchyPanel(): React.JSX.Element {
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({})
 
   const issues = useSceneIssues()
-  const severities = useMemo(() => worstSeverityByObject(issues), [issues])
+  const severities = useMemo(() => severityByObject(objects, issues), [objects, issues])
   const selectedAncestors = useMemo(
     () => new Set(selectedId && objects[selectedId] ? ancestorIds(objects, selectedId) : []),
     [objects, selectedId]

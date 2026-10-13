@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
+import { useDraft } from './useDraft'
 
 type NumberFieldProps = {
   // 입력칸 앞에 붙는 짧은 글자(X·Y·Z). 없으면 ariaLabel로 이름만 붙인다.
@@ -27,7 +28,7 @@ function NumberField({
   disabled = false,
   onCommit
 }: NumberFieldProps): React.JSX.Element {
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraft] = useDraft()
   const cancelled = useRef(false)
 
   const commit = (): void => {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { hasGeneratedMarker, isAllowedGeneratedPath } from '../../../shared/generatedFiles'
+import {
+  GENERATED_MARKER,
+  generatedState,
+  isAllowedGeneratedPath
+} from '../../../shared/generatedFiles'
+import { ALIGNMENT_PRESETS, cadRootTransform } from '../cad/alignment'
 import type { HardwareComponent, SceneObjects } from '../scene/model'
 import { propertyDefaults, type ComponentType } from './catalog'
 import { createComponent, uniqueName } from './components'
@@ -12,8 +17,15 @@ import {
   otosOffsetInchDeg,
   pinpointOffsetsMm
 } from './mounting'
-import { configXmlFilePath, constantName, javaFilePath, javaIdentifier, javaString } from './naming'
-import { validateScene, type IssueCode } from './validation'
+import {
+  configXmlFilePath,
+  constantName,
+  generatedConstantNames,
+  javaFilePath,
+  javaIdentifier,
+  javaString
+} from './naming'
+import { uniqueIssues, validateScene, type IssueCode } from './validation'
 
 const DEG = Math.PI / 180
 const INCH = 0.0254
@@ -363,7 +375,7 @@ describe('코드 생성', () => {
 
   it('하드웨어 클래스(Java)', () => {
     const java = generateHardwareJava(objects, 'robot')
-    expect(hasGeneratedMarker(java)).toBe(true)
+    expect(java).toContain(`// ${GENERATED_MARKER}`)
     expect(java).toContain('package org.firstinspires.ftc.teamcode.sandbot;')
     expect(java).toContain('public class MyBotHardware {')
     expect(java).toContain('public static final String CONFIGURATION_NAME = "My Bot";')
@@ -390,7 +402,7 @@ describe('코드 생성', () => {
 
   it('로봇 구성 XML', () => {
     const xml = generateConfigXml(objects, 'robot')
-    expect(hasGeneratedMarker(xml)).toBe(true)
+    expect(xml).toContain(GENERATED_MARKER)
     expect(xml).toContain('<Robot type="FirstInspires-FTC" name="My Bot">')
     expect(xml).toContain(
       '<LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">'
@@ -427,13 +439,164 @@ describe('코드 생성', () => {
 
   it('오류가 있으면 파일을 만들지 않고, 없으면 로봇마다 Java와 XML 두 개', () => {
     expect(generateTeamCodeFiles(objects)).toMatchObject({ blocked: false })
-    expect(generateTeamCodeFiles(objects).files.map((f) => f.path)).toEqual([
+    const { files } = generateTeamCodeFiles(objects)
+    expect(files.map((f) => f.path)).toEqual([
       'src/main/java/org/firstinspires/ftc/teamcode/sandbot/MyBotHardware.java',
       'src/main/res/xml/sandbot_my_bot_hardware.xml'
     ])
+    // 메인 프로세스가 도구가 쓴 그대로인지 확인할 수 있게 해시를 붙인다
+    expect(files.map((f) => generatedState(f.content))).toEqual(['pristine', 'pristine'])
     const broken = scene({
       a: { position: [0, 0, 0], components: [component('a', 'motor', '', 0)] }
     })
     expect(generateTeamCodeFiles(broken)).toMatchObject({ blocked: true, files: [] })
+  })
+})
+
+describe('리뷰에서 찾은 경우', () => {
+  it('이름 규칙: 숫자로 시작하는 상수, 한글 이름, 생성 코드가 쓰는 이름', () => {
+    expect(constantName(javaIdentifier('포드1'))).toBe('포드1')
+    expect(constantName(javaIdentifier('1번 포드'))).toBe('_1번포드')
+    expect(constantName(javaIdentifier('2wheel odo'))).toBe('_2WHEEL_ODO')
+    expect(javaIdentifier('왼쪽 모터')).toBe('왼쪽모터')
+    expect(javaIdentifier('!!!')).toBe('device')
+    expect(javaIdentifier('hardware map')).toBe('hardwareMap_')
+    expect(javaIdentifier('x²')).toBe('x')
+    expect(generatedConstantNames('deadWheel', '1')).toContain('_1_X_MM')
+  })
+
+  it('Java 주석에 들어가는 이름의 역슬래시는 \\u 이스케이프가 되지 않는다', () => {
+    const objects = scene({
+      a: { position: [0, 0, 0], components: [component('a', 'motor', 'C:\\users', 0)] }
+    })
+    objects.robot.name = 'bot \\u000a evil'
+    const java = generateHardwareJava(objects, 'robot')
+    expect(java).toContain('// C:\\\\users')
+    expect(java).toContain('"bot \\\\u000a evil"')
+    expect(java).not.toMatch(/(^|[^\\])(\\\\)*\\u/)
+  })
+
+  it('시리얼 없는 웹캠은 XML에 없으므로 Java는 tryGet으로 null을 허용한다', () => {
+    const objects = scene({
+      cam: { position: [0, 0, 0], components: [component('w', 'webcam', 'Webcam 1', 0)] }
+    })
+    expect(codes(objects)).toEqual(['serialMissing'])
+    const java = generateHardwareJava(objects, 'robot')
+    expect(java).toContain('webcam1 = hardwareMap.tryGet(WebcamName.class, "Webcam 1");')
+    expect(java).not.toContain('hardwareMap.get(WebcamName.class')
+    expect(generateConfigXml(objects, 'robot')).not.toContain('<Webcam')
+  })
+
+  it('Limelight 주소는 시리얼(Control Hub 주소)의 마지막 자리를 1로 바꾼다', () => {
+    const objects = scene({
+      ll: {
+        position: [0, 0, 0],
+        components: [
+          component('l', 'limelight', 'limelight', 0, {
+            serialNumber: 'EthernetOverUsb:eth0:172.29.0.25'
+          })
+        ]
+      }
+    })
+    expect(generateConfigXml(objects, 'robot')).toContain(
+      '<EthernetDevice name="limelight" serialNumber="EthernetOverUsb:eth0:172.29.0.25" ipAddress="172.29.0.1" />'
+    )
+    expect(generateHardwareJava(objects, 'robot')).toContain(
+      'limelight = hardwareMap.get(Limelight3A.class, "limelight");'
+    )
+  })
+
+  it.each(Object.entries(ALIGNMENT_PRESETS))(
+    'OTOS 방향은 CAD 정렬 회전과 관계없이 장착 각도다 (%s)',
+    (_, alignment) => {
+      const objects = scene({})
+      objects.cad = {
+        id: 'cad',
+        name: 'cad',
+        kind: 'assembly',
+        parentId: 'robot',
+        transform: cadRootTransform({ min: [-0.2, -0.2, -0.2], max: [0.2, 0.2, 0.2] }, alignment)
+      }
+      objects.sensor = {
+        id: 'sensor',
+        name: 'sensor',
+        kind: 'part',
+        parentId: 'cad',
+        transform: { position: [0, 0, 0.1], rotation: [0, 0, 0] }
+      }
+      expect(otosOffsetInchDeg(objects, 'sensor', 0)!.h).toBeCloseTo(0, 9)
+      expect(otosOffsetInchDeg(objects, 'sensor', -90)!.h).toBeCloseTo(-90, 9)
+    }
+  )
+
+  it('서보 범위·Expansion Hub의 BHI260AP·상수 이름 충돌·import 타입과 같은 클래스 이름은 오류', () => {
+    const objects = scene({
+      a: {
+        position: [0, 0, 0],
+        components: [
+          component('s', 'servo', 'claw', 0, { scaleMin: 0.8, scaleMax: 0.2 }),
+          component('i', 'imu', 'imu', 0, {}, 'expansionHub'),
+          component('p', 'deadWheel', 'leftPod', 0),
+          component('q', 'deadWheel', 'leftPOD', 3)
+        ]
+      }
+    })
+    objects.robot.hardware = {
+      className: 'Servo',
+      configName: 'Bot',
+      expansionHub: { enabled: true, address: 2 }
+    }
+    const found = codes(objects)
+    expect(found).toContain('servoScaleInvalid')
+    expect(found).toContain('imuChipHub')
+    // 데드휠 둘은 상수 여섯 개가 겹치지만 장치마다 한 번만 알린다
+    expect(found.filter((c) => c === 'constantNameCollision')).toHaveLength(2)
+    expect(found).toContain('invalidClassName')
+  })
+
+  it('Expansion Hub 주소 11 이상은 경고, 구성 이름 중복은 대소문자를 무시한다', () => {
+    const objects = scene({
+      a: { position: [0, 0, 0], components: [component('a', 'motor', 'm', 0)] }
+    })
+    objects.robot.hardware = {
+      className: 'RobotHardware',
+      configName: 'Robot',
+      expansionHub: { enabled: true, address: 42 }
+    }
+    expect(validateScene(objects).map((i) => [i.code, i.severity])).toEqual([
+      ['expansionHubAddressReserved', 'warning']
+    ])
+    objects.r2 = {
+      id: 'r2',
+      name: 'r2',
+      kind: 'robot',
+      parentId: null,
+      transform: { position: [1, 0, 0], rotation: [0, 0, 0] },
+      components: [component('b', 'motor', 'm', 0)],
+      hardware: {
+        className: 'Other',
+        configName: 'robot',
+        expansionHub: { enabled: false, address: 2 }
+      }
+    }
+    expect(codes(objects)).toContain('duplicateConfigName')
+  })
+
+  it('이름이 빈 컴포넌트 둘은 문제 목록에서 하나로 합치지 않는다', () => {
+    const objects = scene({
+      a: {
+        position: [0, 0, 0],
+        components: [component('a', 'motor', '', 0), component('b', 'motor', '', 1)]
+      }
+    })
+    const issues = validateScene(objects).filter((i) => i.code === 'emptyName')
+    expect(uniqueIssues(issues)).toHaveLength(2)
+  })
+
+  it('새 터치 센서는 동작하는 홀수 채널을 고른다', () => {
+    const id = (): string => 't'
+    const first = createComponent('touchSensor', [], id)
+    expect(first.port).toBe(1)
+    expect(createComponent('touchSensor', [first], id).port).toBe(3)
   })
 })

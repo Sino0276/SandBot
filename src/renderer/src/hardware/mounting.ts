@@ -6,7 +6,6 @@ import type { HUB_DIRECTIONS } from './catalog'
 
 export const MM_PER_METER = 1000
 export const INCH_PER_METER = 1 / 0.0254
-const RAD_TO_DEG = 180 / Math.PI
 
 // 오브젝트(파트 피벗)의 로봇 기준 위치(미터)와 요(라디안). 로봇에 속하지 않으면 null.
 export function robotFramePose(
@@ -52,6 +51,8 @@ export function pinpointComponentOffsetsMm(
 // SparkFun OTOS setOffset(new Pose2D(x, y, h)) 값. 드라이버 기본 단위(인치, 도)로 낸다.
 // SDK 샘플 규약: X는 로봇 오른쪽 +, Y는 앞 +, h는 반시계 +.
 // (예: 왼쪽 5 in, 앞 10 in, 시계 방향 90° → {-5, 10, -90})
+// 위치는 파트 피벗에서 구하지만, 방향은 장착 각도만 쓴다. CAD 파트의 축은 CAD 파일의 축(정렬 회전)일 뿐
+// 센서 화살표 방향과 관계가 없기 때문이다.
 export function otosOffsetInchDeg(
   objects: SceneObjects,
   objectId: string,
@@ -62,7 +63,7 @@ export function otosOffsetInchDeg(
   return {
     x: -pose.y * INCH_PER_METER,
     y: pose.x * INCH_PER_METER,
-    h: normalizeDegrees(pose.yaw * RAD_TO_DEG + mountingAngleDeg)
+    h: normalizeDegrees(mountingAngleDeg)
   }
 }
 

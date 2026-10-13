@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { GENERATED_MARKER } from '../shared/generatedFiles'
+import { GENERATED_MARKER, stampGenerated } from '../shared/generatedFiles'
 import { syncGeneratedFiles } from './teamCode'
 
 const JAVA = 'src/main/java/org/firstinspires/ftc/teamcode/sandbot'
 const XML = 'src/main/res/xml'
-const generated = (body: string): string => `// ${GENERATED_MARKER}\n${body}`
+const generated = (body: string): string => stampGenerated(`// ${GENERATED_MARKER}\n${body}`)
 
 describe('syncGeneratedFiles', () => {
   let root: string
@@ -47,7 +47,9 @@ describe('syncGeneratedFiles', () => {
       written: [`${JAVA}/RobotHardware.java`, `${XML}/sandbot_robot_hardware.xml`],
       unchanged: [],
       deleted: [`${JAVA}/OldHardware.java`, `${XML}/sandbot_old_hardware.xml`],
-      skipped: [`${JAVA}/Manual.java`]
+      skipped: [`${JAVA}/Manual.java`],
+      modified: [],
+      caseRenamed: []
     })
     expect((await readdir(teamCode(JAVA))).sort()).toEqual(['Manual.java', 'RobotHardware.java'])
     expect((await readdir(teamCode(XML))).sort()).toEqual([

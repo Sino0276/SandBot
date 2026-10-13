@@ -27,17 +27,19 @@ function replaceProjectNotice(
 }
 
 // 코드 생성 알림은 저장할 때마다 새로 띄운다(이전 저장의 알림을 지운다)
-let generationNotice = 0
+let generationNotices: number[] = []
 
-function replaceGenerationNotice(notice: Parameters<typeof showNotice> | null): void {
-  dismissNotice(generationNotice)
-  generationNotice = notice ? showNotice(...notice) : 0
+function replaceGenerationNotices(notices: Parameters<typeof showNotice>[]): void {
+  for (const id of generationNotices) dismissNotice(id)
+  generationNotices = notices.map((notice) => showNotice(...notice))
 }
 
+const fileNames = (paths: string[]): string => paths.map(fileNameOf).join(', ')
+
+// 메인 프로세스에는 initProjectSession의 구독이 알린다(확정하지 않은 입력칸 초안도 포함)
 function setDirty(dirty: boolean): void {
   if (useProjectStore.getState().dirty === dirty) return
   useProjectStore.setState({ dirty })
-  window.api.setDirty(dirty)
 }
 
 function errorDetail(error: unknown): string {
@@ -61,22 +63,30 @@ async function syncTeamCode(root: string, objects: SceneObjects): Promise<void> 
   if (blocked) {
     const errors = uniqueIssues(issues).filter((i) => i.severity === 'error').length
     generation = { status: 'blocked', errors }
-    replaceGenerationNotice(['warning', 'codegenBlocked', { count: errors }])
+    replaceGenerationNotices([['warning', 'codegenBlocked', { count: errors }]])
   } else {
     try {
       generation = await window.api.syncGeneratedFiles(root, files)
+      const notices: Parameters<typeof showNotice>[] = []
       if (generation.status === 'noTeamCode') {
         // 만들 파일이 없으면(컴포넌트 없음) TeamCode가 없어도 알릴 것이 없다
-        replaceGenerationNotice(files.length > 0 ? ['warning', 'codegenNoTeamCode'] : null)
-      } else if (generation.skipped.length > 0) {
-        const names = generation.skipped.map(fileNameOf).join(', ')
-        replaceGenerationNotice(['warning', 'codegenSkipped', { files: names }])
+        if (files.length > 0) notices.push(['warning', 'codegenNoTeamCode'])
       } else {
-        replaceGenerationNotice(null)
+        if (generation.skipped.length > 0)
+          notices.push(['warning', 'codegenSkipped', { files: fileNames(generation.skipped) }])
+        if (generation.modified.length > 0)
+          notices.push(['warning', 'codegenModified', { files: fileNames(generation.modified) }])
+        if (generation.caseRenamed.length > 0) {
+          const renames = generation.caseRenamed
+            .map(({ from, to }) => `${fileNameOf(from)} → ${fileNameOf(to)}`)
+            .join(', ')
+          notices.push(['warning', 'codegenCaseRenamed', { files: renames }])
+        }
       }
+      replaceGenerationNotices(notices)
     } catch (error) {
       generation = { status: 'failed', detail: errorDetail(error) }
-      replaceGenerationNotice(['error', 'codegenFailed', { detail: generation.detail }])
+      replaceGenerationNotices([['error', 'codegenFailed', { detail: generation.detail }]])
     }
   }
   useProjectStore.setState({ generation })
@@ -162,7 +172,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useSceneStore.getState().replaceObjects(objects)
       useEditorStore.getState().select(null)
       useProjectStore.setState({ root, name: info.name, missingCad: [], generation: null })
-      replaceGenerationNotice(null)
+      replaceGenerationNotices([])
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
 
@@ -246,7 +256,18 @@ export function initProjectSession(): void {
   useProjectStore.subscribe(updateTitle)
   updateTitle()
 
+  // 창을 닫을 때 확인이 필요한지(저장 안 한 변경, 또는 아직 확정하지 않은 입력칸 초안)
+  let needsConfirm = false
+  useProjectStore.subscribe(({ dirty, pendingEdit }) => {
+    if (needsConfirm === (dirty || pendingEdit)) return
+    needsConfirm = dirty || pendingEdit
+    window.api.setDirty(needsConfirm)
+  })
+
   window.api.onCloseRequested(async () => {
+    // 입력 중인 초안을 먼저 확정해 변경으로 반영한 뒤 묻는다
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     if (await confirmDiscardChanges()) window.api.confirmClose()
   })
 

@@ -1,5 +1,6 @@
 import { childrenOf, findRobotId, type HardwareComponent, type SceneObjects } from '../scene/model'
 import {
+  COMPONENT_TYPE_KEYS,
   CONTROL_HUB_ADDRESS,
   componentDef,
   isComponentType,
@@ -7,13 +8,20 @@ import {
   type ComponentTypeDef
 } from './catalog'
 import {
+  LIMELIGHT_SERIAL_PATTERN,
   orphanComponents,
   robotComponents,
   robotHardwareSettings,
   type ComponentEntry
 } from './components'
 import { isValidHubOrientation, type HubDirection } from './mounting'
-import { configXmlFilePath, isValidJavaClassName, javaFilePath, javaIdentifier } from './naming'
+import {
+  configXmlFilePath,
+  generatedConstantNames,
+  isValidJavaClassName,
+  javaFilePath,
+  javaIdentifier
+} from './naming'
 
 // error는 코드 생성을 막고, warning은 생성은 하되 알린다. 문구는 표시할 때 code로 번역한다(hardware.issues.*).
 export type IssueSeverity = 'error' | 'warning'
@@ -40,6 +48,10 @@ export type IssueCode =
   | 'emptyConfigName'
   | 'duplicateConfigName'
   | 'expansionHubAddressInvalid'
+  | 'expansionHubAddressReserved'
+  | 'servoScaleInvalid'
+  | 'imuChipHub'
+  | 'constantNameCollision'
 
 export type Issue = {
   severity: IssueSeverity
@@ -50,6 +62,17 @@ export type Issue = {
   objectId?: string
   componentId?: string
 }
+
+// 10보다 큰 허브 주소는 SDK가 시스템용으로 남겨 둔다(MAX_UNRESERVED_MODULE_ADDRESS)
+const MAX_UNRESERVED_HUB_ADDRESS = 10
+
+// 생성 클래스가 import하는 타입 이름. 클래스 이름이 이와 같으면 컴파일되지 않는다.
+const RESERVED_CLASS_NAMES = new Set(
+  [
+    'com.qualcomm.robotcore.hardware.HardwareMap',
+    ...COMPONENT_TYPE_KEYS.flatMap((type) => componentDef(type).imports)
+  ].map((name) => name.slice(name.lastIndexOf('.') + 1))
+)
 
 const SEVERITY: Record<IssueCode, IssueSeverity> = {
   emptyName: 'error',
@@ -72,11 +95,12 @@ const SEVERITY: Record<IssueCode, IssueSeverity> = {
   duplicateClassName: 'error',
   emptyConfigName: 'error',
   duplicateConfigName: 'error',
-  expansionHubAddressInvalid: 'error'
+  expansionHubAddressInvalid: 'error',
+  expansionHubAddressReserved: 'warning',
+  servoScaleInvalid: 'error',
+  imuChipHub: 'error',
+  constantNameCollision: 'error'
 }
-
-// 구성 XML의 Limelight 시리얼 형식(SDK EthernetOverUsbSerialNumber): EthernetOverUsb:<인터페이스>:<IPv4>
-export const LIMELIGHT_SERIAL_PATTERN = /^EthernetOverUsb:[^:]+:(\d{1,3}(?:\.\d{1,3}){3})$/
 
 function issue(
   code: IssueCode,
@@ -165,7 +189,17 @@ function checkComponent(
   }
 
   switch (component.type) {
+    case 'servo': {
+      // 생성 코드는 소수 셋째 자리까지 쓰고, SDK scaleRange는 min < max가 아니면 예외를 던진다
+      const round = (value: string | number): number => Math.round(Number(value) * 1000) / 1000
+      if (!(round(component.props.scaleMin) < round(component.props.scaleMax)))
+        issues.push(issue('servoScaleInvalid', { name }, where))
+      break
+    }
     case 'imu':
+      // Expansion Hub에는 BHI260AP가 없다(SDK는 Control Hub의 버스 0에서만 이 종류를 고르게 한다)
+      if (component.props.chip === 'bhi260ap' && component.hub !== 'controlHub')
+        issues.push(issue('imuChipHub', { name }, where))
       if (
         !isValidHubOrientation(
           component.props.logoFacing as HubDirection,
@@ -244,6 +278,12 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
     (!Number.isInteger(address) || address < 1 || address > 254 || address === CONTROL_HUB_ADDRESS)
   ) {
     issues.push(issue('expansionHubAddressInvalid', { address }, robotWhere))
+  } else if (settings.expansionHub.enabled && address > MAX_UNRESERVED_HUB_ADDRESS) {
+    // SDK와 REV Hardware Client는 10보다 큰 주소를 시스템용으로 남겨 둔다
+    issues.push(issue('expansionHubAddressReserved', { address }, robotWhere))
+  }
+  if (RESERVED_CLASS_NAMES.has(settings.className)) {
+    issues.push(issue('invalidClassName', { className: settings.className }, robotWhere))
   }
 
   for (const entry of entries) {
@@ -282,6 +322,32 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
     }
   }
 
+  // 상수 이름은 이름의 대소문자를 지워 만들므로(leftPod·leftPOD → LEFT_POD) 필드가 달라도 겹칠 수 있다
+  const byConstant = new Map<string, ComponentEntry[]>()
+  for (const entry of entries) {
+    if (!entry.component.name.trim()) continue
+    for (const constant of generatedConstantNames(entry.component.type, entry.component.name)) {
+      byConstant.set(constant, [...(byConstant.get(constant) ?? []), entry])
+    }
+  }
+  // 같은 장치들이 상수 여러 개에서 겹치면(데드휠 둘이면 여섯 개) 첫 상수 하나로만 알린다
+  const reportedGroups = new Set<string>()
+  for (const [constant, group] of byConstant) {
+    const groupKey = group.map((e) => e.component.id).join('|')
+    if (group.length < 2 || reportedGroups.has(groupKey)) continue
+    reportedGroups.add(groupKey)
+    const names = group.map((e) => e.component.name).join(', ')
+    for (const { objectId, component } of group) {
+      issues.push(
+        issue(
+          'constantNameCollision',
+          { names, constant },
+          { robotId, objectId, componentId: component.id }
+        )
+      )
+    }
+  }
+
   checkPortConflicts(robotId, entries, issues)
   checkI2cConflicts(robotId, entries, issues)
   return issues
@@ -306,6 +372,8 @@ function pushGroupIssues(
 
 // 씬 전체: 로봇마다 검사하고, 로봇 간 이름 중복과 로봇 밖 컴포넌트를 더한다.
 export function validateScene(objects: SceneObjects): Issue[] {
+  // 컴포넌트가 하나도 없으면 검사할 것이 없다(씬을 끌 때마다 불리므로 빨리 끝낸다)
+  if (!Object.values(objects).some((object) => object.components?.length)) return []
   const robots = childrenOf(objects, null).filter(
     (object) => object.kind === 'robot' && robotComponents(objects, object.id).length > 0
   )
@@ -322,7 +390,8 @@ export function validateScene(objects: SceneObjects): Issue[] {
       `xml:${configXmlFilePath(className)}`
     ])
       byFile.set(key, [...(byFile.get(key) ?? []), robot.id])
-    const config = configName.trim()
+    // Driver Station은 구성 이름을 대소문자 구분 없이 하나로 본다(RobotConfigFile.containedIn)
+    const config = configName.trim().toLowerCase()
     if (config) byConfig.set(config, [...(byConfig.get(config) ?? []), robot.id])
   }
   pushGroupIssues(
@@ -346,11 +415,20 @@ export function validateScene(objects: SceneObjects): Issue[] {
   return issues
 }
 
-// 같은 문제를 여러 컴포넌트가 함께 받는 경우(포트 충돌 등) 목록·개수에서 한 번만 센다
+// 여러 컴포넌트가 함께 받는 문제(포트 충돌 등). 목록·개수에서 한 번만 센다.
+const SHARED_CODES = new Set<IssueCode>([
+  'duplicateName',
+  'fieldNameCollision',
+  'constantNameCollision',
+  'portConflict',
+  'i2cAddressConflict'
+])
+
 export function uniqueIssues(issues: Issue[]): Issue[] {
   const seen = new Set<string>()
   return issues.filter((issue) => {
-    const key = `${issue.robotId ?? ''}|${issue.code}|${JSON.stringify(issue.params)}`
+    const owner = SHARED_CODES.has(issue.code) ? '' : (issue.componentId ?? issue.objectId ?? '')
+    const key = `${issue.robotId ?? ''}|${owner}|${issue.code}|${JSON.stringify(issue.params)}`
     if (seen.has(key)) return false
     seen.add(key)
     return true

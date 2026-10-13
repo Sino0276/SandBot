@@ -4,51 +4,71 @@ import { robotComponents, robotHardwareSettings } from '../../hardware/component
 import { configXmlFilePath, isValidJavaClassName, javaFilePath } from '../../hardware/naming'
 import { useSceneIssues } from '../../hardware/sceneIssues'
 import { uniqueIssues } from '../../hardware/validation'
-import { useProjectStore } from '../../project/projectStore'
+import { useProjectStore, type GenerationResult } from '../../project/projectStore'
 import type { RobotHardwareSettings, SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
 import IssueList from './IssueList'
 
-function GenerationStatus(): React.JSX.Element {
+type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
+
+// 마지막 저장에서 이 파일이 어떻게 되었는지(생성 결과는 프로젝트 전체에 하나다)
+function fileState(generation: GenerationResult | null, path: string): FileState | null {
+  if (generation?.status !== 'synced') return null
+  if (generation.written.includes(path)) return 'written'
+  if (generation.unchanged.includes(path)) return 'unchanged'
+  if (generation.skipped.includes(path)) return 'skipped'
+  if (generation.modified.includes(path)) return 'modified'
+  // 마지막 저장 뒤에 클래스 이름을 바꿨다
+  return 'missing'
+}
+
+function GeneratedFiles({ paths }: { paths: string[] }): React.JSX.Element {
   const { t } = useTranslation()
   const generation = useProjectStore((state) => state.generation)
-  if (!generation) return <p className="inspector-note">{t('hardware.generation.notSaved')}</p>
-  switch (generation.status) {
+  const fileName = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
+
+  let status: string | null = null
+  switch (generation?.status) {
+    case undefined:
+      status = t('hardware.generation.notSaved')
+      break
     case 'blocked':
-      return (
-        <p className="inspector-note">
-          {t('hardware.generation.blocked', { count: generation.errors })}
-        </p>
-      )
+      status = t('hardware.generation.blocked', { count: generation.errors })
+      break
     case 'failed':
-      return (
-        <p className="inspector-note">
-          {t('hardware.generation.failed', { detail: generation.detail })}
-        </p>
-      )
+      status = t('hardware.generation.failed', { detail: generation.detail })
+      break
     case 'noTeamCode':
-      return <p className="inspector-note">{t('hardware.generation.noTeamCode')}</p>
+      status = t('hardware.generation.noTeamCode')
+      break
     case 'synced':
-      return (
-        <p className="inspector-note">
-          {t('hardware.generation.synced', {
-            written: generation.written.length,
-            unchanged: generation.unchanged.length,
-            deleted: generation.deleted.length
-          })}
-          {generation.skipped.length > 0 && (
-            <>
-              <br />
-              {t('hardware.generation.skipped', {
-                files: generation.skipped.map((path) => path.split('/').pop()).join(', ')
-              })}
-            </>
-          )}
-        </p>
-      )
+      if (generation.deleted.length > 0)
+        status = t('hardware.generation.deleted', {
+          files: generation.deleted.map(fileName).join(', ')
+        })
   }
+
+  return (
+    <div className="hw-files">
+      <span className="hw-row-label">{t('hardware.robot.files')}</span>
+      {paths.map((path) => {
+        const state = fileState(generation, path)
+        return (
+          <div key={path} className="hw-file">
+            <code className="hw-path">{path}</code>
+            {state && (
+              <span className={`hw-file-state is-${state}`}>
+                {t(`hardware.generation.fileStates.${state}`)}
+              </span>
+            )}
+          </div>
+        )
+      })}
+      {status && <p className="inspector-note">{status}</p>}
+    </div>
+  )
 }
 
 // 로봇 하나의 생성 설정(하드웨어 클래스 이름, DS 구성 이름, Expansion Hub)과 생성 파일·문제 목록
@@ -130,16 +150,15 @@ function RobotHardwareSection({ robot }: { robot: SceneObject }): React.JSX.Elem
         <p className="inspector-note">{t('hardware.robot.noComponents')}</p>
       ) : (
         <>
+          <GeneratedFiles
+            paths={[javaFilePath(settings.className), configXmlFilePath(settings.className)]}
+          />
           <div className="hw-files">
-            <span className="hw-row-label">{t('hardware.robot.files')}</span>
-            <code className="hw-path">{javaFilePath(settings.className)}</code>
-            <code className="hw-path">{configXmlFilePath(settings.className)}</code>
             <span className="hw-row-label">{t('hardware.robot.usage')}</span>
             <code className="hw-path">
               {`${settings.className} robot = new ${settings.className}(hardwareMap);`}
             </code>
           </div>
-          <GenerationStatus />
         </>
       )}
       {issues.length > 0 && (
