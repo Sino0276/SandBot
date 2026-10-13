@@ -12,10 +12,13 @@ import Toolbar from './Toolbar'
 
 const LAYOUT_ID = 'editor-main'
 
-function isTextInput(target: EventTarget | null): boolean {
+// 입력칸이나 인스펙터처럼 키를 직접 쓰는 곳에 포커스가 있으면 씬 단축키를 쓰지 않는다
+function handlesOwnKeys(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+    (target.isContentEditable ||
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+      target.closest('[data-local-keys]') !== null)
   )
 }
 
@@ -32,7 +35,7 @@ function useEditorShortcuts(): void {
         void (event.key === 's' ? saveProject() : openProjectFolder())
         return
       }
-      if (isTextInput(event.target) || command || event.altKey) return
+      if (handlesOwnKeys(event.target) || command || event.altKey) return
       // F: 선택한 오브젝트에 카메라 맞추기 (Unity와 같은 키)
       if (event.key === 'f' || event.key === 'F') {
         const { selectedId, focus } = useEditorStore.getState()

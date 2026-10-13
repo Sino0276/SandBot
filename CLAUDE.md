@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 필드/로봇 기준 좌표계 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트와 사이드카는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 필드/로봇 기준 좌표계 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성)가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 ## 확정된 설계 결정
 
@@ -62,6 +62,9 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **최상위 로봇은 바닥 평면에만 있다(높이·롤·피치 0).** `constrainTransform`이 강제하고, 핸들과 인스펙터도 해당 축을 막는다.
 - **CAD 메시 형상 id는 `cadGeometryId(CAD 루트 id, 메시 인덱스)`이고 프로젝트 파일에 저장된다.** 프로젝트를 열면 STEP을 다시 읽어 같은 id로 등록한다. 따라서 `convertOcctResult`가 메시를 나열하는 순서를 바꾸면 기존 프로젝트의 파트와 형상 연결이 깨진다.
 - **프로젝트 파일 형식을 바꾸면 `PROJECT_VERSION`을 올리고 이전 버전을 읽는 경로를 남긴다.** `parseProject`가 형식을 검증한다. 더 새 버전의 파일은 열지 않는다.
+- **TeamCode에는 도구가 만든 파일만 쓰고 지운다.** 생성 파일은 앞부분에 `@sandbot-generated` 표식을 넣는다. 메인 프로세스는 표식이 있는 파일만 덮어쓰거나 지우고, 경로는 `src/shared/generatedFiles.ts`의 허용 규칙(생성 패키지 폴더의 `.java`, `res/xml`의 `sandbot_*.xml`)으로만 받는다. 사람이 만든 파일과 경로가 겹치면 건너뛰고 알린다.
+- **하드웨어 카탈로그(`hardware/catalog.ts`)에는 FTC SDK 소스에서 확인한 값만 넣는다.** 구성 XML 태그는 대소문자를 구분하고, 틀린 태그는 SDK가 오류 없이 장치를 버린다. Java 타입·메서드·I2C 주소도 SDK 소스로 확인한다. 가짜 SDK는 카탈로그의 Java 타입을 모두 지원해야 한다.
+- **하드웨어 검증 오류가 하나라도 있으면 아무 파일도 생성하지 않는다.** 이전 생성 파일도 그대로 둔다. 경고는 생성을 막지 않는다(`hardware/validation.ts`의 심각도).
 
 ## 미결정 사항
 
@@ -107,7 +110,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 정렬 계산은 `cad/alignment.ts`의 `cadRootTransform`이 한다. CAD 위축을 로봇 +Z, 앞축을 +X로 돌리고, 바닥 면 중심을 로봇 원점에 둔다.
 - occt-import-js는 어셈블리 계층을 **최상위 컴포넌트 한 단계까지만** 노드로 준다. 그 아래 서브어셈블리는 솔리드 목록으로 평탄화되고, 이름 없는 솔리드는 `노드 이름 + 순번`이 된다. 더 깊은 계층이 필요하면 OCCT XCAF를 직접 순회하는 다른 빌드가 필요하다.
 - OCCT WASM 때문에 `index.html` CSP의 script-src에 `'wasm-unsafe-eval'`이 있다. 렌더러 워커는 ES 모듈 형식으로 번들한다(`electron.vite.config.ts`의 `worker.format`). STEP 테스트는 occt-import-js 패키지에 들어 있는 CAx-IF 샘플(`node_modules/occt-import-js/test/testfiles/`)을 쓴다.
-- 단축키(`EditorLayout`): Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기. F는 선택한 오브젝트에 카메라 맞추기(하이어라키 더블클릭, 임포트 직후도 같은 동작), Delete/Backspace는 선택 삭제. 창에 STEP 파일을 끌어다 놓아도 불러온다. 앱 안 대화상자(`editor/dialogStore.ts`)가 떠 있으면 단축키를 무시한다.
+- 단축키(`EditorLayout`): Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기. F는 선택한 오브젝트에 카메라 맞추기(하이어라키 더블클릭, 임포트 직후도 같은 동작), Delete/Backspace는 선택 삭제. 창에 STEP 파일을 끌어다 놓아도 불러온다. 앱 안 대화상자(`editor/dialogStore.ts`)가 떠 있으면 단축키를 무시한다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete를 쓰지 않는다.
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
@@ -119,6 +122,14 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 창을 닫을 때 dirty면 메인 프로세스가 닫기를 막고 렌더러에 묻는다. 렌더러가 i18n 대화상자를 띄운 뒤 `confirmClose`로 닫는다.
   - 앱을 시작하면 마지막 프로젝트(`sandbot:lastProject`)를 다시 연다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
+- 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.
+  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다.
+  - 종류는 `catalog.ts`의 데이터로 정의한다(포트 종류, Java 타입·import, I2C 주소, 속성 정의). 인스펙터의 입력칸과 번역 키는 속성 정의에서 만든다. 카탈로그에서 나온 번역 키는 `t()` 타입 검사를 받지 못하므로 `labels.test.ts`가 ko·en에 키가 있는지 확인한다.
+  - 저장(`saveProject`)하면 `generate.ts`가 검증(`validation.ts`) 후 컴포넌트가 있는 로봇마다 Java 하드웨어 클래스(`javaCodegen.ts`, 패키지 `org.firstinspires.ftc.teamcode.sandbot`)와 로봇 구성 XML(`configXml.ts`, `TeamCode/src/main/res/xml/sandbot_<클래스>.xml`)을 만든다. 메인 프로세스(`src/main/teamCode.ts`)가 내용이 바뀐 파일만 쓰고, 이번에 만들지 않은 이전 생성 파일은 지운다. 결과는 `projectStore.generation`과 알림으로 보여 준다.
+  - 생성 Java의 주석은 팀이 Android Studio에서 읽으므로 영어로 쓴다.
+  - 오프셋 계산은 `mounting.ts`가 파트의 로봇 기준 위치로 한다. Pinpoint `setOffsets`는 X 포드의 옆 위치(왼쪽 +)와 Y 포드의 앞 위치(mm)다. OTOS `setOffset`은 SDK 샘플 규약(X 오른쪽 +, Y 앞 +, 반시계 +, in·deg)이고, Road Runner·Pedro Pathing은 자체 오프셋을 쓴다. 데드휠은 같은 번호 모터 포트의 장치 이름으로 엔코더를 읽는다.
+  - 코드 단위 프로젝트 설정이 생기기 전까지 생성 코드는 SDK API가 받는 단위를 쓰고, 상수 이름에 단위를 붙인다(`_MM`, `_IN`, `_DEG`).
+  - 검증 결과는 `sceneIssues.ts`가 씬마다 한 번 계산해 하이어라키(문제 표시)와 인스펙터(카드별·로봇별 목록)가 같이 쓴다.
 - 이동·회전 핸들(`editor/scene/TransformHandles.tsx`)은 선택한 오브젝트가 아니라 대리 객체에 붙는다. 대리 객체는 "오브젝트 위치 + 보기 기준 좌표계 방향"을 갖고, 드래그한 변화량을 오브젝트에 옮긴다. 그래야 로봇 안의 파트도 로봇 축 방향으로 끌 수 있다. 핸들 클릭이 R3F에서는 빗나간 클릭(선택 해제)으로 처리되므로 `markHandleInteraction`으로 막는다.
 - 오른쪽 위 축 표시(`ViewGizmo`)는 drei `GizmoHelper`의 HUD만 쓰고 축은 직접 그린다. drei `GizmoViewport`는 회전된 축을 클릭했을 때 시점 방향을 잘못 계산한다.
 - 씬 뷰는 @react-three/fiber + drei다. `Canvas`가 `frameloop="demand"`이므로 R3F 바깥에서 Three.js 객체를 직접 바꾸면 `invalidate()`를 호출해야 다시 그려진다. drei 컴포넌트 중 CDN에서 리소스를 받는 것(`Environment` 프리셋, `Text` 기본 폰트 등)은 `index.html`의 CSP에 막힌다.

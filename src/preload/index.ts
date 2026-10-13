@@ -13,6 +13,7 @@ const api: SandbotApi = {
   openProject: (root) => ipcRenderer.invoke(IPC.openProject, root),
   saveProject: (root, content) => ipcRenderer.invoke(IPC.saveProject, root, content),
   readStepFile: (path) => ipcRenderer.invoke(IPC.readStepFile, path),
+  syncGeneratedFiles: (root, files) => ipcRenderer.invoke(IPC.syncGeneratedFiles, root, files),
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
   onCloseRequested: (callback) => {
     const listener = (): void => callback()

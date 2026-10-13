@@ -11,6 +11,8 @@ import {
 import { useSceneStore } from '../../scene/sceneStore'
 import CadAlignmentSection from '../CadAlignmentSection'
 import { useEditorStore } from '../editorStore'
+import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
+import RobotHardwareSection from '../hardware/RobotHardwareSection'
 import NumberField from '../NumberField'
 import PanelFrame from '../PanelFrame'
 
@@ -65,7 +67,7 @@ function InspectorPanel(): React.JSX.Element {
   const object = selectedId ? objects[selectedId] : undefined
   if (!object) {
     return (
-      <PanelFrame title={t('panels.inspector')}>
+      <PanelFrame title={t('panels.inspector')} localKeys>
         <p className="panel-empty">{t('inspector.empty')}</p>
       </PanelFrame>
     )
@@ -93,7 +95,7 @@ function InspectorPanel(): React.JSX.Element {
   }
 
   return (
-    <PanelFrame title={t('panels.inspector')}>
+    <PanelFrame title={t('panels.inspector')} localKeys>
       <div className="inspector-object">
         <span className="inspector-name">{object.name}</span>
         <span className="inspector-kind">{t(`objectKind.${object.kind}`)}</span>
@@ -127,6 +129,8 @@ function InspectorPanel(): React.JSX.Element {
         />
       </section>
       {cadObjectId && <CadAlignmentSection cadObject={objects[cadObjectId]} />}
+      {isRobotRoot && <RobotHardwareSection robot={object} />}
+      <HardwareComponentsSection object={object} />
     </PanelFrame>
   )
 }

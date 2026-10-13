@@ -1,9 +1,18 @@
 import { AXIS_DIRECTIONS } from '../cad/alignment'
-import type { CadSource, SceneObject, SceneObjects, Vec3 } from '../scene/model'
+import { componentDef, isComponentType } from '../hardware/catalog'
+import type {
+  CadSource,
+  HardwareComponent,
+  RobotHardwareSettings,
+  SceneObject,
+  SceneObjects,
+  Vec3
+} from '../scene/model'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
 export const PROJECT_FORMAT = 'sandbot-project'
-export const PROJECT_VERSION = 1
+// 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가. 1은 그대로 읽힌다.
+export const PROJECT_VERSION = 2
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -58,9 +67,73 @@ function invalid(index: number, field: string): never {
   throw new ProjectFileError('invalidData', `objects[${index}].${field}`)
 }
 
+// 컴포넌트 속성: 카탈로그에 있는 키만 남기고, 없거나 범위를 벗어난 값은 기본값으로 채운다(속성이 늘어도 예전 파일이 열린다)
+function parseProps(
+  type: HardwareComponent['type'],
+  value: Record<string, unknown>
+): HardwareComponent['props'] {
+  if (!isComponentType(type)) return {}
+  const props: HardwareComponent['props'] = {}
+  for (const def of componentDef(type).properties) {
+    const raw = value[def.key]
+    const valid =
+      def.kind === 'enum'
+        ? typeof raw === 'string' && def.options.includes(raw)
+        : def.kind === 'number'
+          ? isFiniteNumber(raw)
+          : typeof raw === 'string'
+    props[def.key] = valid ? (raw as string | number) : def.default
+  }
+  return props
+}
+
+function parseComponents(value: unknown, index: number): HardwareComponent[] {
+  if (!Array.isArray(value)) invalid(index, 'components')
+  return value.map((component, i) => {
+    if (
+      !isRecord(component) ||
+      typeof component.id !== 'string' ||
+      !component.id ||
+      !isComponentType(component.type) ||
+      typeof component.name !== 'string' ||
+      (component.hub !== 'controlHub' && component.hub !== 'expansionHub') ||
+      !Number.isInteger(component.port) ||
+      !isRecord(component.props)
+    ) {
+      invalid(index, `components[${i}]`)
+    }
+    return {
+      id: component.id,
+      type: component.type,
+      name: component.name,
+      hub: component.hub,
+      port: component.port as number,
+      props: parseProps(component.type, component.props)
+    }
+  })
+}
+
+function parseHardware(value: unknown, index: number): RobotHardwareSettings {
+  if (
+    !isRecord(value) ||
+    typeof value.className !== 'string' ||
+    typeof value.configName !== 'string' ||
+    !isRecord(value.expansionHub) ||
+    typeof value.expansionHub.enabled !== 'boolean' ||
+    !isFiniteNumber(value.expansionHub.address)
+  ) {
+    invalid(index, 'hardware')
+  }
+  return {
+    className: value.className,
+    configName: value.configName,
+    expansionHub: { enabled: value.expansionHub.enabled, address: value.expansionHub.address }
+  }
+}
+
 function parseObject(value: unknown, index: number): SceneObject & { file?: StoredCadFile } {
   if (!isRecord(value)) invalid(index, '')
-  const { id, name, kind, parentId, transform, visual, cad } = value
+  const { id, name, kind, parentId, transform, visual, cad, components, hardware } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
   if (kind !== 'robot' && kind !== 'assembly' && kind !== 'part') invalid(index, 'kind')
@@ -117,6 +190,12 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
     }
     object.file = { relativePath: cad.file.relativePath, absolutePath: cad.file.absolutePath }
   }
+
+  if (components !== undefined) object.components = parseComponents(components, index)
+  if (hardware !== undefined) {
+    if (kind !== 'robot') invalid(index, 'hardware')
+    object.hardware = parseHardware(hardware, index)
+  }
   return object
 }
 
@@ -139,9 +218,14 @@ export function parseProject(content: string): {
 
   const objects: SceneObjects = {}
   const cadFiles = new Map<string, StoredCadFile>()
+  const componentIds = new Set<string>()
   data.objects.forEach((value, index) => {
     const { file, ...object } = parseObject(value, index)
     if (objects[object.id]) invalid(index, 'id')
+    for (const component of object.components ?? []) {
+      if (componentIds.has(component.id)) invalid(index, 'components')
+      componentIds.add(component.id)
+    }
     objects[object.id] = object
     if (file) cadFiles.set(object.id, file)
   })

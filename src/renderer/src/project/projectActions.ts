@@ -3,9 +3,12 @@ import { fileNameOf, loadCadGeometry } from '../cad/importStep'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
+import { generateTeamCodeFiles } from '../hardware/generate'
+import { uniqueIssues } from '../hardware/validation'
+import type { SceneObjects } from '../scene/model'
 import { isPlaceholderScene, useSceneStore } from '../scene/sceneStore'
 import { parseProject, ProjectFileError, serializeProject } from './projectFile'
-import { useProjectStore } from './projectStore'
+import { useProjectStore, type GenerationResult } from './projectStore'
 
 const LAST_PROJECT_KEY = 'sandbot:lastProject'
 
@@ -21,6 +24,14 @@ function replaceProjectNotice(
 ): void {
   dismissNotice(projectNotices[key])
   projectNotices[key] = params ? showNotice('warning', key, params) : 0
+}
+
+// 코드 생성 알림은 저장할 때마다 새로 띄운다(이전 저장의 알림을 지운다)
+let generationNotice = 0
+
+function replaceGenerationNotice(notice: Parameters<typeof showNotice> | null): void {
+  dismissNotice(generationNotice)
+  generationNotice = notice ? showNotice(...notice) : 0
 }
 
 function setDirty(dirty: boolean): void {
@@ -40,6 +51,35 @@ async function withBusy<T>(work: () => Promise<T>): Promise<T> {
   } finally {
     useProjectStore.setState({ busy: false })
   }
+}
+
+// 저장한 씬으로 TeamCode의 생성 코드(하드웨어 클래스·구성 XML)를 맞춘다.
+// 프로젝트 파일은 이미 저장했으므로, 여기서 실패해도 저장은 성공으로 친다.
+async function syncTeamCode(root: string, objects: SceneObjects): Promise<void> {
+  const { files, issues, blocked } = generateTeamCodeFiles(objects)
+  let generation: GenerationResult
+  if (blocked) {
+    const errors = uniqueIssues(issues).filter((i) => i.severity === 'error').length
+    generation = { status: 'blocked', errors }
+    replaceGenerationNotice(['warning', 'codegenBlocked', { count: errors }])
+  } else {
+    try {
+      generation = await window.api.syncGeneratedFiles(root, files)
+      if (generation.status === 'noTeamCode') {
+        // 만들 파일이 없으면(컴포넌트 없음) TeamCode가 없어도 알릴 것이 없다
+        replaceGenerationNotice(files.length > 0 ? ['warning', 'codegenNoTeamCode'] : null)
+      } else if (generation.skipped.length > 0) {
+        const names = generation.skipped.map(fileNameOf).join(', ')
+        replaceGenerationNotice(['warning', 'codegenSkipped', { files: names }])
+      } else {
+        replaceGenerationNotice(null)
+      }
+    } catch (error) {
+      generation = { status: 'failed', detail: errorDetail(error) }
+      replaceGenerationNotice(['error', 'codegenFailed', { detail: generation.detail }])
+    }
+  }
+  useProjectStore.setState({ generation })
 }
 
 // 저장 안 된 변경이 있으면 저장할지 묻는다. 계속 진행해도 되면 true.
@@ -85,9 +125,9 @@ export function saveProject(): Promise<boolean> {
     }
 
     const projectRoot = root
-    const content = serializeProject(useSceneStore.getState().objects, (path) =>
-      window.api.relativePath(projectRoot, path)
-    )
+    // 저장하는 동안 바뀐 내용은 다음 저장 몫이다. 프로젝트 파일과 생성 코드는 같은 씬으로 만든다.
+    const objects = useSceneStore.getState().objects
+    const content = serializeProject(objects, (path) => window.api.relativePath(projectRoot, path))
     try {
       await window.api.saveProject(projectRoot, content)
     } catch (error) {
@@ -95,7 +135,8 @@ export function saveProject(): Promise<boolean> {
       return false
     }
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
-    setDirty(false)
+    setDirty(useSceneStore.getState().objects !== objects)
+    await syncTeamCode(projectRoot, objects)
     return true
   })
 }
@@ -120,7 +161,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
 
       useSceneStore.getState().replaceObjects(objects)
       useEditorStore.getState().select(null)
-      useProjectStore.setState({ root, name: info.name, missingCad: [] })
+      useProjectStore.setState({ root, name: info.name, missingCad: [], generation: null })
+      replaceGenerationNotice(null)
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
 

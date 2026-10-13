@@ -1,4 +1,5 @@
 // 메인 프로세스 ↔ preload ↔ 렌더러가 함께 쓰는 IPC 채널과 API 타입
+import type { GeneratedFile, SyncGeneratedResult } from './generatedFiles'
 
 export const IPC = {
   chooseProjectFolder: 'project:choose-folder',
@@ -6,6 +7,7 @@ export const IPC = {
   openProject: 'project:open',
   saveProject: 'project:save',
   readStepFile: 'cad:read-step-file',
+  syncGeneratedFiles: 'teamcode:sync-generated-files',
   setDirty: 'app:set-dirty',
   closeRequested: 'app:close-requested',
   confirmClose: 'app:confirm-close'
@@ -35,6 +37,8 @@ export type SandbotApi = {
   saveProject: (root: string, content: string) => Promise<void>
   // STEP 파일 내용. 파일이 없으면 null.
   readStepFile: (path: string) => Promise<Uint8Array | null>
+  // 생성 코드(하드웨어 클래스·구성 XML)를 <root>/TeamCode에 맞춘다. 이번에 만들지 않은 이전 생성 파일은 지운다.
+  syncGeneratedFiles: (root: string, files: GeneratedFile[]) => Promise<SyncGeneratedResult>
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다
   setDirty: (dirty: boolean) => void
   onCloseRequested: (callback: () => void) => () => void

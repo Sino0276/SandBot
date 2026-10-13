@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { guardUnsavedChanges, registerProjectIpc } from './project'
+import { registerTeamCodeIpc } from './teamCode'
 
 function createWindow(): void {
   // Create the browser window.
@@ -56,6 +57,7 @@ app.whenReady().then(() => {
   })
 
   registerProjectIpc()
+  registerTeamCodeIpc()
   createWindow()
 
   app.on('activate', function () {

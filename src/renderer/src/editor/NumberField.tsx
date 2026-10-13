@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react'
 
 type NumberFieldProps = {
-  label: string
-  axis: 'x' | 'y' | 'z'
+  // 입력칸 앞에 붙는 짧은 글자(X·Y·Z). 없으면 ariaLabel로 이름만 붙인다.
+  label?: string
+  ariaLabel?: string
+  axis?: 'x' | 'y' | 'z'
   value: number
   digits: number
   disabled?: boolean
@@ -18,6 +20,7 @@ function format(value: number, digits: number): string {
 // 입력 중에는 초안을 보여 주고, Enter나 포커스 이동으로 확정한다. Esc는 취소.
 function NumberField({
   label,
+  ariaLabel,
   axis,
   value,
   digits,
@@ -37,10 +40,11 @@ function NumberField({
   }
 
   return (
-    <label className={`number-field axis-${axis}`}>
-      <span className="number-field-label">{label}</span>
+    <label className={axis ? `number-field axis-${axis}` : 'number-field'}>
+      {label && <span className="number-field-label">{label}</span>}
       <input
         type="text"
+        aria-label={ariaLabel}
         inputMode="decimal"
         value={draft ?? format(value, digits)}
         disabled={disabled}

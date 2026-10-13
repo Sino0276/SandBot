@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { importStepFile } from '../../cad/importStep'
+import { useSceneIssues, worstSeverityByObject } from '../../hardware/sceneIssues'
+import type { IssueSeverity } from '../../hardware/validation'
 import { ancestorIds, childrenOf, type SceneObject, type SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
@@ -10,6 +12,8 @@ import PanelFrame from '../PanelFrame'
 
 type TreeContext = {
   objects: SceneObjects
+  // 오브젝트별 가장 심각한 하드웨어 문제
+  severities: Map<string, IssueSeverity>
   isOpen: (id: string, depth: number) => boolean
   toggle: (id: string, depth: number) => void
 }
@@ -30,6 +34,8 @@ function TreeItem({
   const rowRef = useRef<HTMLDivElement>(null)
   const children = childrenOf(context.objects, object.id)
   const open = context.isOpen(object.id, depth)
+  const severity = context.severities.get(object.id)
+  const componentCount = object.components?.length ?? 0
 
   // 씬에서 선택하면 하이어라키에서도 보이게 스크롤한다
   useEffect(() => {
@@ -61,6 +67,24 @@ function TreeItem({
           <span className="tree-twisty" />
         )}
         <span className="tree-name">{object.name}</span>
+        {severity && (
+          <span
+            className={`tree-issue is-${severity}`}
+            role="img"
+            aria-label={t(`hardware.severity.${severity}`)}
+            title={t(`hardware.severity.${severity}`)}
+          >
+            !
+          </span>
+        )}
+        {componentCount > 0 && (
+          <span
+            className="tree-components"
+            title={object.components!.map((component) => component.name).join(', ')}
+          >
+            {t('hardware.badge', { count: componentCount })}
+          </span>
+        )}
         <span className="tree-kind">{t(`objectKind.${object.kind}`)}</span>
       </div>
       {open && children.length > 0 && (
@@ -83,6 +107,8 @@ function HierarchyPanel(): React.JSX.Element {
   // 사용자가 직접 접거나 편 항목. 나머지는 깊이 2 미만만 펼친다.
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({})
 
+  const issues = useSceneIssues()
+  const severities = useMemo(() => worstSeverityByObject(issues), [issues])
   const selectedAncestors = useMemo(
     () => new Set(selectedId && objects[selectedId] ? ancestorIds(objects, selectedId) : []),
     [objects, selectedId]
@@ -90,6 +116,7 @@ function HierarchyPanel(): React.JSX.Element {
 
   const context: TreeContext = {
     objects,
+    severities,
     // 선택한 오브젝트의 상위 항목은 항상 펼친다
     isOpen: (id, depth) => selectedAncestors.has(id) || (openOverrides[id] ?? depth < 2),
     toggle: (id, depth) =>

@@ -8,7 +8,12 @@ const objects: SceneObjects = {
     name: 'Robot',
     kind: 'robot',
     parentId: null,
-    transform: { position: [0.5, -1, 0], rotation: [0, 0, 1.2] }
+    transform: { position: [0.5, -1, 0], rotation: [0, 0, 1.2] },
+    hardware: {
+      className: 'RobotHardware',
+      configName: 'My Bot',
+      expansionHub: { enabled: true, address: 2 }
+    }
   },
   cad: {
     id: 'cad',
@@ -31,7 +36,22 @@ const objects: SceneObjects = {
     kind: 'part',
     parentId: 'cad',
     transform: { position: [0.1, 0, 0], rotation: [0, 0, 0] },
-    visual: { type: 'mesh', geometryId: 'cad:0', color: [0.5, 0.5, 0.5] }
+    visual: { type: 'mesh', geometryId: 'cad:0', color: [0.5, 0.5, 0.5] },
+    components: [
+      {
+        id: 'm1',
+        type: 'motor',
+        name: 'frontLeft',
+        hub: 'controlHub',
+        port: 0,
+        props: {
+          motorModel: 'goBilda5202',
+          direction: 'reverse',
+          runMode: 'usingEncoder',
+          zeroPowerBehavior: 'brake'
+        }
+      }
+    ]
   }
 }
 
@@ -49,7 +69,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 1 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 2 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -64,6 +84,39 @@ describe('프로젝트 파일', () => {
     }
     const { cadFiles } = parseProject(serializeProject(withoutPath, relativize))
     expect(cadFiles.get('cad')).toEqual({ relativePath: null, absolutePath: '' })
+  })
+})
+
+describe('버전과 하위 호환', () => {
+  it('버전 1 파일(컴포넌트 없음)도 열린다', () => {
+    const v1 = JSON.stringify({
+      format: 'sandbot-project',
+      version: 1,
+      objects: [
+        {
+          id: 'robot',
+          name: 'Robot',
+          kind: 'robot',
+          parentId: null,
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+        }
+      ]
+    })
+    const { objects: loaded } = parseProject(v1)
+    expect(loaded.robot.components).toBeUndefined()
+    expect(loaded.robot.hardware).toBeUndefined()
+  })
+
+  it('컴포넌트 속성은 카탈로그 키만 남기고, 없거나 잘못된 값은 기본값으로 채운다', () => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.objects[2].components[0].props = { direction: 'sideways', extra: 1 }
+    const { objects: loaded } = parseProject(JSON.stringify(data))
+    expect(loaded.plate.components![0].props).toEqual({
+      motorModel: 'goBilda5202',
+      direction: 'forward',
+      runMode: 'withoutEncoder',
+      zeroPowerBehavior: 'brake'
+    })
   })
 })
 
@@ -91,6 +144,17 @@ describe('잘못된 프로젝트 파일', () => {
     const dangling = valid()
     ;(dangling.objects as { parentId: string }[])[2].parentId = 'missing'
     expect(codeOf(JSON.stringify(dangling))).toBe('invalidData')
+
+    const unknownType = valid()
+    ;(unknownType.objects as { components: { type: string }[] }[])[2].components[0].type =
+      'warpDrive'
+    expect(codeOf(JSON.stringify(unknownType))).toBe('invalidData')
+
+    const hardwareOnPart = valid()
+    ;(hardwareOnPart.objects as { hardware?: unknown }[])[2].hardware = (
+      hardwareOnPart.objects as { hardware?: unknown }[]
+    )[0].hardware
+    expect(codeOf(JSON.stringify(hardwareOnPart))).toBe('invalidData')
 
     const broken = valid()
     ;(broken.objects as { transform: unknown }[])[0].transform = { position: [0, 0], rotation: [] }

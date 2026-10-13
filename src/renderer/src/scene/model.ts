@@ -30,6 +30,32 @@ export type CadSource = {
   meshCount: number
 }
 
+// 장치를 꽂는 허브. Control Hub(주소 173)와 RS485로 연결한 Expansion Hub.
+export type HubId = 'controlHub' | 'expansionHub'
+
+// 파트에 붙이는 하드웨어 컴포넌트(모터, 서보, 센서 등). 종류별 정의는 hardware/catalog.ts에 있다.
+export type HardwareComponent = {
+  id: string
+  // 카탈로그의 ComponentType
+  type: string
+  // 로봇 구성(Configuration) 이름. hardwareMap.get(..., name)과 구성 XML에 그대로 쓴다.
+  name: string
+  hub: HubId
+  // 모터·서보·디지털·아날로그·엔코더 포트 번호, I2C 장치는 버스 번호. USB 장치는 쓰지 않는다.
+  port: number
+  // 종류별 속성(방향, 런 모드 등). 키와 값의 범위는 카탈로그가 정한다.
+  props: Record<string, string | number>
+}
+
+// 로봇(최상위 robot 오브젝트)의 코드 생성 설정
+export type RobotHardwareSettings = {
+  // 생성할 Java 클래스 이름
+  className: string
+  // Driver Station에 보이는 로봇 구성 이름
+  configName: string
+  expansionHub: { enabled: boolean; address: number }
+}
+
 export type SceneObject = {
   id: string
   name: string
@@ -39,6 +65,9 @@ export type SceneObject = {
   transform: Transform
   visual?: ObjectVisual
   cad?: CadSource
+  components?: HardwareComponent[]
+  // robot 오브젝트에만 있다. 없으면 기본값(robotHardwareSettings)을 쓴다.
+  hardware?: RobotHardwareSettings
 }
 
 export type SceneObjects = Record<string, SceneObject>

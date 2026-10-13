@@ -2,7 +2,15 @@ import { create } from 'zustand'
 import { cadRootTransform, isValidAlignment, type CadAlignment } from '../cad/alignment'
 import { DEG, ROBOT_SIZE, TILE_SIZE } from './coordinates'
 import { disposeGeometry } from './geometryRegistry'
-import { constrainTransform, subtreeIds, type SceneObjects, type Transform } from './model'
+import {
+  constrainTransform,
+  subtreeIds,
+  type HardwareComponent,
+  type RobotHardwareSettings,
+  type SceneObject,
+  type SceneObjects,
+  type Transform
+} from './model'
 
 // CAD를 불러오기 전까지 보여 주는 임시 씬: 18 in 상자 로봇과 앞쪽에 달린 웹캠
 const PLACEHOLDER_SCENE: SceneObjects = {
@@ -24,8 +32,22 @@ const PLACEHOLDER_SCENE: SceneObjects = {
   }
 }
 
+// 임시 씬(임시 모양만 있고 하드웨어를 붙이지 않은 상태). 이때만 첫 STEP 임포트가 씬을 비우고, 변경도 저장 대상으로 치지 않는다.
 export function isPlaceholderScene(objects: SceneObjects): boolean {
-  return Object.values(objects).every((object) => object.visual?.type === 'placeholder')
+  return Object.values(objects).every(
+    (object) =>
+      object.visual?.type === 'placeholder' && !object.components?.length && !object.hardware
+  )
+}
+
+// 오브젝트 하나만 바꾼 새 objects. 없는 오브젝트면 null.
+function updateObject(
+  objects: SceneObjects,
+  id: string,
+  update: (object: SceneObject) => SceneObject
+): SceneObjects | null {
+  const object = objects[id]
+  return object ? { ...objects, [id]: update(object) } : null
 }
 
 function disposeMeshes(objects: SceneObjects, ids: string[]): void {
@@ -52,6 +74,15 @@ type SceneState = {
   removeObject: (id: string) => void
   // CAD 루트의 방향(위·앞 축)을 바꾸고 바닥 중심 맞춤을 다시 계산한다.
   setCadAlignment: (id: string, alignment: CadAlignment) => void
+  // 하드웨어 컴포넌트. 변경할 때마다 새 objects를 만들어야 변경 추적(dirty)과 다시 그리기가 동작한다.
+  addComponent: (objectId: string, component: HardwareComponent) => void
+  updateComponent: (
+    objectId: string,
+    componentId: string,
+    patch: Partial<HardwareComponent>
+  ) => void
+  removeComponent: (objectId: string, componentId: string) => void
+  setRobotHardware: (robotId: string, settings: RobotHardwareSettings) => void
 }
 
 export const useSceneStore = create<SceneState>()((set) => ({
@@ -112,5 +143,40 @@ export const useSceneStore = create<SceneState>()((set) => ({
           }
         }
       }
+    }),
+  addComponent: (objectId, component) =>
+    set((state) => {
+      const objects = updateObject(state.objects, objectId, (object) => ({
+        ...object,
+        components: [...(object.components ?? []), component]
+      }))
+      return objects ? { objects } : state
+    }),
+  updateComponent: (objectId, componentId, patch) =>
+    set((state) => {
+      const objects = updateObject(state.objects, objectId, (object) => ({
+        ...object,
+        components: (object.components ?? []).map((component) =>
+          component.id === componentId
+            ? { ...component, ...patch, props: { ...component.props, ...patch.props } }
+            : component
+        )
+      }))
+      return objects ? { objects } : state
+    }),
+  removeComponent: (objectId, componentId) =>
+    set((state) => {
+      const objects = updateObject(state.objects, objectId, (object) => ({
+        ...object,
+        components: (object.components ?? []).filter((component) => component.id !== componentId)
+      }))
+      return objects ? { objects } : state
+    }),
+  setRobotHardware: (robotId, settings) =>
+    set((state) => {
+      const objects = updateObject(state.objects, robotId, (object) =>
+        object.kind === 'robot' ? { ...object, hardware: settings } : object
+      )
+      return objects ? { objects } : state
     })
 }))

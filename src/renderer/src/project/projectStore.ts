@@ -1,4 +1,10 @@
 import { create } from 'zustand'
+import type { SyncGeneratedResult } from '../../../shared/generatedFiles'
+
+// 저장할 때 TeamCode에 생성 코드를 맞춘 결과
+export type GenerationResult =
+  // 하드웨어 설정에 오류가 있어 만들지 않았다(이전 생성 파일도 그대로 둔다)
+  { status: 'blocked'; errors: number } | { status: 'failed'; detail: string } | SyncGeneratedResult
 
 type ProjectState = {
   // 열린 FtcRobotController 폴더. 없으면 아직 저장하지 않은 씬이다.
@@ -9,6 +15,8 @@ type ProjectState = {
   missingCad: string[]
   // 열기·저장 중
   busy: boolean
+  // 이 프로젝트에서 마지막으로 저장했을 때의 코드 생성 결과. 아직 저장하지 않았으면 null.
+  generation: GenerationResult | null
 }
 
 export const useProjectStore = create<ProjectState>()(() => ({
@@ -16,5 +24,6 @@ export const useProjectStore = create<ProjectState>()(() => ({
   name: null,
   dirty: false,
   missingCad: [],
-  busy: false
+  busy: false,
+  generation: null
 }))
