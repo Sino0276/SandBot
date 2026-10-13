@@ -1,0 +1,9 @@
+# pnpm 설정. pnpm 11은 package.json의 "pnpm" 필드를 읽지 않는다.
+# 설치 스크립트를 실행할지 의존성마다 정한다(pnpm 11은 정하지 않은 스크립트가 있으면 설치를 실패시킨다).
+allowBuilds:
+  # Electron 실행 파일을 내려받는다
+  electron: true
+  # 플랫폼에 맞는 바이너리를 고른다
+  esbuild: true
+  # electron-builder의 Windows 설치 파일(Squirrel)용. 스크립트 없이도 빌드된다.
+  electron-winstaller: false

@@ -144,6 +144,8 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - 렌더러에서만 쓰는 라이브러리는 Vite가 번들하므로 `devDependencies`에 넣는다. `dependencies`는 main/preload가 런타임에 쓰는 것만 둔다(electron-builder가 패키지에 포함).
 - ESLint의 `react/no-unknown-property`는 R3F 요소 속성을 오인해서 껐다. JSX 속성은 TypeScript가 검사한다.
 - 테스트는 `src/**/*.test.{ts,tsx}`에 소스와 나란히 두고 `vitest`에서 명시적으로 import한다(globals 미사용). Vitest는 electron-vite 설정이 아니라 `vitest.config.ts`를 읽는다.
-- pnpm 10은 의존성의 빌드 스크립트를 기본으로 막는다. 설치 스크립트가 필요한 패키지(네이티브 모듈 등)를 추가하면 `package.json`의 `pnpm.onlyBuiltDependencies`에 넣는다.
+- pnpm은 11을 쓴다(`package.json`의 `packageManager`). pnpm 설정은 `pnpm-workspace.yaml`에 둔다(pnpm 11은 `package.json`의 `pnpm` 필드를 읽지 않는다).
+  - 설치 스크립트가 있는 의존성은 `allowBuilds`에 실행 여부(`true`/`false`)를 적는다. 정하지 않은 스크립트가 있으면 설치가 실패한다.
+  - pnpm 11은 배포된 지 하루가 안 된 패키지를 lockfile에 두면 설치를 막는다(`minimumReleaseAge`). 의존성을 올릴 때 너무 새 버전이 잡히면 하루 지난 버전으로 지정한다.
 - `.gitignore`의 Java 항목은 원래 템플릿에서 온 것이다. 나중에 만들 JVM 사이드카에 필요하므로 유지한다.
 - `.mcp.json`은 sequential-thinking MCP 서버를 등록한다.
