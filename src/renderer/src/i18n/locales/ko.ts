@@ -88,7 +88,7 @@ const ko = {
       rotate: '회전 (E)'
     },
     flySpeed: '비행 속도 {{speed}} {{unit}}/s · 휠로 조절, Shift로 빠르게',
-    frame: '기준 좌표계',
+    frame: '핸들·카메라 기준 좌표계',
     field: '필드',
     robot: '로봇'
   },
@@ -105,9 +105,14 @@ const ko = {
     position: '위치',
     rotation: '회전',
     frameField: '필드 기준',
-    frameRobot: '로봇 기준',
-    robotOrigin: '로봇 기준 좌표계의 원점이라 값이 항상 0입니다.',
-    notInRobot: '로봇에 속하지 않은 오브젝트라 필드 기준으로 표시합니다.',
+    frameFieldHint: '필드 좌표계 값입니다. 원점은 필드 중앙 바닥이고 Z가 위입니다.',
+    frameParent: '부모 기준',
+    frameParentHint:
+      '부모 오브젝트 ‘{{name}}’의 위치와 축을 기준으로 한 값입니다. 부모가 움직이면 함께 움직입니다.',
+    cadAxes: 'CAD 파일의 축 방향으로 표시합니다 (위 {{up}} · 앞 {{forward}}).',
+    robotCenter: '로봇 중심 기준',
+    robotCenterHint:
+      '로봇 원점(중심 바닥)에서 본 위치입니다. X 앞 · Y 왼쪽 · Z 위. 계산한 값이라 고칠 수 없습니다.',
     cad: {
       title: 'CAD 정렬',
       hint: 'CAD의 위·앞 축을 로봇의 위(Z)·앞(X)에 맞추고, 바닥 면 중심을 로봇 원점에 둡니다.',

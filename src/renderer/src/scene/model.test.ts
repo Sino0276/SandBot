@@ -4,7 +4,6 @@ import {
   constrainTransform,
   findRobotId,
   getTransformInFrame,
-  localTransformFromFrame,
   type SceneObjects,
   type Transform
 } from './model'
@@ -66,27 +65,6 @@ describe('getTransformInFrame', () => {
 
   it('로봇에 속하지 않은 오브젝트는 로봇 기준이어도 필드 좌표를 준다', () => {
     expectTransform(getTransformInFrame(objects, 'cone', 'robot'), objects.cone.transform)
-  })
-})
-
-describe('localTransformFromFrame', () => {
-  it('필드 기준으로 입력한 값을 부모(로봇) 기준 로컬 값으로 바꾼다', () => {
-    // 필드 +X로 0.5 m 옮긴 위치는 90° 돌아 있는 로봇에게는 오른쪽(-Y) 0.5 m다
-    const local = localTransformFromFrame(objects, 'webcam', 'field', {
-      position: [1.5, 2, 0.3],
-      rotation: [0, 0, 90 * DEG]
-    })
-    expectTransform(local, { position: [0, -0.5, 0.3], rotation: [0, 0, 0] })
-  })
-
-  it('읽은 값을 그대로 다시 쓰면 변하지 않는다', () => {
-    for (const frame of ['field', 'robot'] as const) {
-      const value = getTransformInFrame(objects, 'webcam', frame)
-      expectTransform(
-        localTransformFromFrame(objects, 'webcam', frame, value),
-        objects.webcam.transform
-      )
-    }
   })
 })
 

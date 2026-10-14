@@ -132,20 +132,7 @@ export function getTransformInFrame(
   return matrixToTransform(relative)
 }
 
-// 기준 좌표계로 표현한 변환을 저장용 로컬 변환으로 바꾼다.
-export function localTransformFromFrame(
-  objects: SceneObjects,
-  id: string,
-  frame: ReferenceFrame,
-  value: Transform
-): Transform {
-  return localTransformFromWorld(
-    objects,
-    id,
-    frameMatrix(objects, id, frame).multiply(transformToMatrix(value))
-  )
-}
-
+// 필드 기준 행렬을 저장용(부모 기준) 로컬 변환으로 바꾼다
 export function localTransformFromWorld(
   objects: SceneObjects,
   id: string,

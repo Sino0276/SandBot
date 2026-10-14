@@ -259,6 +259,24 @@ body {
   gap: 4px;
 }
 
+.robot-center {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.robot-center-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* 위치·회전 입력칸과 열을 맞춘다(.vector-row의 이름 칸 52px + 간격 6px) */
+.robot-center .vector-row-fields {
+  margin-left: 58px;
+}
+
 .number-field {
   display: flex;
   align-items: center;
@@ -313,6 +331,22 @@ body {
 
 .number-field input:disabled {
   color: var(--color-text-muted);
+}
+.number-field.is-readonly {
+  background: none;
+  border-style: dashed;
+}
+.number-field output {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
 }
 
 .panel-button {

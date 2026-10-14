@@ -91,7 +91,7 @@ const en: Messages = {
       rotate: 'Rotate (E)'
     },
     flySpeed: 'Fly speed {{speed}} {{unit}}/s · scroll to change, Shift for faster',
-    frame: 'Reference frame',
+    frame: 'Handle and camera frame',
     field: 'Field',
     robot: 'Robot'
   },
@@ -108,9 +108,14 @@ const en: Messages = {
     position: 'Position',
     rotation: 'Rotation',
     frameField: 'Field frame',
-    frameRobot: 'Robot frame',
-    robotOrigin: 'This is the origin of the robot frame, so its values are always 0.',
-    notInRobot: 'Not part of a robot, so values are shown in the field frame.',
+    frameFieldHint: 'Field coordinates. The origin is the field center on the floor, and Z is up.',
+    frameParent: 'Parent frame',
+    frameParentHint:
+      "Relative to the position and axes of the parent '{{name}}'. Moves along with the parent.",
+    cadAxes: 'Shown in the CAD file axes (up {{up}} · forward {{forward}}).',
+    robotCenter: 'From robot center',
+    robotCenterHint:
+      'Position seen from the robot origin (center, on the floor): X forward · Y left · Z up. It is calculated, so it cannot be edited.',
     cad: {
       title: 'CAD alignment',
       hint: "Maps the CAD's up/forward axes to the robot's up (Z) and forward (X), and puts the bottom center at the robot origin.",
