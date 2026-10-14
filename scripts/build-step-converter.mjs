@@ -109,6 +109,14 @@ function binaryArch(path) {
   return null
 }
 
+// 64비트 x64·arm64만 만든다. 32비트(ia32, arm)는 주소 공간이 WASM의 2 GB 한도와 비슷해 변환기를 쓰는 이유가 없고,
+// Node·electron-builder·CMake의 CPU 이름도 서로 달라(ia32/x86/Win32, arm/armv7l) 앱이 찾는 폴더와 맞지 않는다.
+const target = option('target') ?? `${process.platform}-${process.arch}`
+const targetArch = target.slice(target.lastIndexOf('-') + 1)
+if (targetArch !== 'x64' && targetArch !== 'arm64') {
+  throw new Error(`unsupported target ${target}: only x64 and arm64 are supported`)
+}
+
 let sourceDir
 if (option('source')) {
   sourceDir = resolve(option('source'))
@@ -120,8 +128,6 @@ if (option('source')) {
   checkout(version.occt, join(sourceDir, 'occt'))
 }
 
-const target = option('target') ?? `${process.platform}-${process.arch}`
-const targetArch = target.slice(target.lastIndexOf('-') + 1)
 const buildDir = join(cacheDir, `build-${target}`)
 const firstConfigure = !existsSync(join(buildDir, 'CMakeCache.txt'))
 const configure = [
@@ -140,7 +146,7 @@ const devShellArch = process.env.VSCMD_ARG_TGT_ARCH?.toLowerCase()
 const useNinja = hasCommand('ninja') && (!windowsNative || devShellArch === targetArch)
 if (firstConfigure && useNinja) configure.push('-G', 'Ninja')
 if (firstConfigure && windowsNative && !useNinja) {
-  configure.push('-A', { x64: 'x64', arm64: 'ARM64' }[targetArch] ?? targetArch)
+  configure.push('-A', targetArch === 'arm64' ? 'ARM64' : 'x64')
 }
 if (option('toolchain')) configure.push(`-DCMAKE_TOOLCHAIN_FILE=${resolve(option('toolchain'))}`)
 if (process.platform === 'darwin' && !option('toolchain')) {

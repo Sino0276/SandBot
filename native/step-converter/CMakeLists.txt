@@ -43,7 +43,9 @@ if (MINGW)
 	target_compile_options (OcctImportJS PRIVATE -Wa,-mbig-obj)
 endif ()
 if (MSVC)
-	target_compile_options (OcctImportJS PRIVATE /bigobj /w)
+	# OCCT 전체가 프로젝트 하나라, Visual Studio 생성기(MSBuild)는 /MP 없이는 파일을 하나씩 컴파일한다.
+	# Ninja는 파일마다 cl을 따로 부르므로 /MP가 있어도 같다
+	target_compile_options (OcctImportJS PRIVATE /bigobj /w /MP)
 endif ()
 
 add_executable (sandbot-step-converter src/main.cpp)
