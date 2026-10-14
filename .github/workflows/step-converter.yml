@@ -35,6 +35,10 @@ jobs:
     env:
       TARGET: win32-x64
       ASSET: sandbot-step-converter-win32-x64.exe
+    # shell을 적으면 bash가 -eo pipefail로 돈다(적지 않으면 -e만이라 파이프 앞 명령의 실패를 놓친다)
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -58,9 +62,11 @@ jobs:
           fi
 
       # 받은 OCCT 소스와 빌드 폴더. main.cpp만 바뀌면 OCCT를 다시 컴파일하지 않는다.
-      - name: Cache sources and build
+      # 빌드가 끝나면 바로 저장한다(뒤 검증이 실패해도 다음 실행이 OCCT를 다시 컴파일하지 않게).
+      - name: Restore sources and build
+        id: cache
         if: steps.tag.outputs.exists != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: native/step-converter/.cache
           key: step-converter-${{ env.TARGET }}-${{ hashFiles('native/step-converter/version.json', 'native/step-converter/CMakeLists.txt', 'native/step-converter/cmake/**') }}-${{ steps.tag.outputs.tag }}
@@ -76,6 +82,13 @@ jobs:
       - name: Build
         if: steps.tag.outputs.exists != 'true'
         run: node scripts/build-step-converter.mjs --toolchain native/step-converter/cmake/mingw-w64-x86_64.cmake --target "$TARGET"
+
+      - name: Save sources and build
+        if: steps.tag.outputs.exists != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/step-converter/.cache
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - uses: pnpm/action-setup@v4
         if: steps.tag.outputs.exists != 'true'
@@ -105,10 +118,15 @@ jobs:
           chmod +x "$wrapper"
           /usr/lib/wine/wine64 wineboot --init > /dev/null 2>&1 || true
           "$wrapper" --version
-          SANDBOT_STEP_CONVERTER="$wrapper" pnpm vitest run --testTimeout=120000 src/renderer/src/cad/nativeParity.test.ts | tee parity.log
-          # 변환기를 찾지 못해 건너뛴 것이 아니라 실제로 비교했는지 확인한다
-          grep -Eq "Tests +[0-9]+ passed" parity.log
-          if grep -q "skipped" parity.log; then echo "parity tests were skipped"; exit 1; fi
+          SANDBOT_STEP_CONVERTER="$wrapper" pnpm vitest run --testTimeout=120000 \
+            --reporter=default --reporter=json --outputFile.json=parity.json \
+            src/renderer/src/cad/nativeParity.test.ts
+          # 변환기를 찾지 못해 건너뛴 것이 아니라 실제로 비교해 모두 통과했는지 확인한다(출력 문구는 CI에서 색이 섞인다)
+          node -e '
+            const r = require("./parity.json")
+            console.log("parity: " + r.numPassedTests + "/" + r.numTotalTests + " passed, " + r.numPendingTests + " skipped")
+            if (!r.success || r.numTotalTests === 0 || r.numPassedTests !== r.numTotalTests) process.exit(1)
+          '
 
       - name: Upload artifact
         if: steps.tag.outputs.exists != 'true'
