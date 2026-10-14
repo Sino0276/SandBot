@@ -160,6 +160,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - effect 정리에서 외부 객체를 해제·변경할 때는 StrictMode의 정리→재실행을 견뎌야 한다. 배포 빌드(`pnpm build`)로만 확인하면 이런 문제가 드러나지 않으므로, 씬 상호작용은 `pnpm dev`에서도 확인한다.
 - 이동·회전 핸들(`editor/scene/TransformHandles.tsx`)은 선택한 오브젝트가 아니라 대리 객체에 붙는다. 대리 객체는 "오브젝트 위치 + 핸들 축 방향(전역이면 필드 축, 로컬이면 오브젝트의 월드 회전)"을 갖고, 드래그한 변화량을 오브젝트에 옮긴다. 그래야 부모가 회전해 있어도 전역 축으로 끌 수 있다. 핸들 클릭이 R3F에서는 빗나간 클릭(선택 해제)으로 처리되므로 `markHandleInteraction`으로 막는다.
 - 오른쪽 위 축 표시(`ViewGizmo`)는 drei `GizmoHelper`의 HUD만 쓰고 축은 직접 그린다. drei `GizmoViewport`는 회전된 축을 클릭했을 때 시점 방향을 잘못 계산한다.
+- 큰 CAD(goBILDA 예제: 메시 1761개, 삼각형 860만 개)를 위해, 씬 뷰·하이어라키·`subtreeIds`는 자식을 `childrenInDocument`(불변 씬 문서마다 한 번 만드는 부모→자식 목록)로 찾는다. CAD 메시는 `scene/meshBvh.ts`의 `cadMeshRaycast`(three-mesh-bvh, `indirect`라 인덱스 순서를 바꾸지 않음)로 클릭을 검사하고, BVH는 형상을 등록할 때 쉬는 시간에 미리 만든다.
 - 씬 뷰는 @react-three/fiber + drei다. `Canvas`가 `frameloop="demand"`이므로 R3F 바깥에서 Three.js 객체를 직접 바꾸면 `invalidate()`를 호출해야 다시 그려진다. drei 컴포넌트 중 CDN에서 리소스를 받는 것(`Environment` 프리셋, `Text` 기본 폰트 등)은 `index.html`의 CSP에 막힌다.
 - i18n은 `src/renderer/src/i18n/`(react-i18next)에 있다.
   - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.

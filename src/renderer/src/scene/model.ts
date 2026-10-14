@@ -175,9 +175,9 @@ export function constrainTransform(object: SceneObject, transform: Transform): T
   }
 }
 
-// 자기 자신과 모든 하위 오브젝트의 id
+// 자기 자신과 모든 하위 오브젝트의 id(불변 씬 문서에만. childrenInDocument 참고)
 export function subtreeIds(objects: SceneObjects, id: string): string[] {
-  return [id, ...childrenOf(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
+  return [id, ...childrenInDocument(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
 }
 
 // 부모부터 최상위까지의 id(자기 자신 제외)

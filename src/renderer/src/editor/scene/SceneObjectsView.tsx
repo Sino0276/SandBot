@@ -5,6 +5,7 @@ import { Color, SRGBColorSpace } from 'three'
 import { useShallow } from 'zustand/react/shallow'
 import { ROBOT_SIZE } from '../../scene/coordinates'
 import { getGeometry } from '../../scene/geometryRegistry'
+import { cadMeshRaycast } from '../../scene/meshBvh'
 import { childrenInDocument, type ObjectVisual, type Vec3 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
@@ -69,7 +70,7 @@ function CadMesh({
   const baseColor = useMemo(() => new Color().setRGB(...color, SRGBColorSpace), [color])
   if (!geometry) return null
   return (
-    <mesh geometry={geometry} onClick={onClick}>
+    <mesh geometry={geometry} raycast={cadMeshRaycast} onClick={onClick}>
       <meshStandardMaterial
         color={baseColor}
         vertexColors={geometry.hasAttribute('color')}
