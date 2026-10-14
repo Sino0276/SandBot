@@ -5,7 +5,8 @@
 // 사용법: node scripts/fetch-step-converter.mjs [--target <platform-arch>] [--repo <owner/name>] [--optional]
 //   --target   받을 대상(기본: 이 PC). 예: win32-x64
 //   --repo     Release를 찾을 저장소(기본: package.json의 repository)
-//   --optional 받지 못해도 실패하지 않고 경고만 한다(설치 파일 빌드에서 씀. 앱은 변환기가 없으면 WASM으로 읽는다)
+//   --optional 받지 못해도 실패하지 않고 경고만 한다(설치 파일 빌드에서 씀. 앱은 변환기가 없으면 WASM으로 읽는다).
+//              이때 남아 있던 다른 소스의 실행 파일은 지운다(설치 파일에 들어가지 않게)
 //   --out-dir  넣을 폴더(기본: resources/step-converter/<target>)
 // 환경 변수: GITHUB_TOKEN 또는 GH_TOKEN(API 호출 한도), SANDBOT_GITHUB_API(테스트용 API 주소)
 // 프록시 뒤에서는 NODE_USE_ENV_PROXY=1로 HTTPS_PROXY를 쓰게 한다(Node 22.21 이상).
@@ -82,25 +83,16 @@ async function download(asset) {
   const url = asset.url ?? asset.browser_download_url
   const response = await request(url, 'application/octet-stream')
   if (!response.ok) throw new FetchError(`download failed: ${response.status} ${url}`)
-  return Buffer.from(await response.arrayBuffer())
+  try {
+    return Buffer.from(await response.arrayBuffer())
+  } catch (error) {
+    throw new FetchError(`download was cut off (${error.cause?.code ?? error.message}): ${url}`)
+  }
 }
 
-async function main() {
-  const target = option('target') ?? `${process.platform}-${process.arch}`
+async function install(target, tag, outDir, outPath) {
   const repo = option('repo') ?? defaultRepo()
-  const tag = releaseTag()
   const exe = converterExe(target)
-  const outDir = option('out-dir')
-    ? resolve(option('out-dir'))
-    : join(repoRoot, 'resources', 'step-converter', target)
-  const outPath = join(outDir, exe)
-
-  const provenance = readProvenance(outDir)
-  if (existsSync(outPath) && provenance?.tag === tag) {
-    console.log(`STEP converter is up to date (${tag}, ${provenance.origin}): ${outPath}`)
-    return
-  }
-
   const api = (process.env.SANDBOT_GITHUB_API ?? 'https://api.github.com').replace(/\/$/, '')
   const releaseUrl = `${api}/repos/${repo}/releases/tags/${tag}`
   const response = await request(releaseUrl, 'application/vnd.github+json')
@@ -112,7 +104,12 @@ async function main() {
     )
   }
   if (!response.ok) throw new FetchError(`GitHub API ${response.status}: ${releaseUrl}`)
-  const release = await response.json()
+  let release
+  try {
+    release = await response.json()
+  } catch {
+    throw new FetchError(`GitHub API answered with something that is not JSON: ${releaseUrl}`)
+  }
   const assets = Array.isArray(release.assets) ? release.assets : []
   const assetName = releaseAssetName(target)
   const asset = assets.find((item) => item.name === assetName)
@@ -193,13 +190,51 @@ function checkIdentity(path) {
   }
 }
 
-main().catch((error) => {
-  if (!(error instanceof FetchError)) throw error
-  if (process.argv.includes('--optional')) {
-    console.warn(`warning: ${error.message}`)
-    console.warn('the app will read STEP files with the built-in WASM converter instead')
+async function main() {
+  const optional = process.argv.includes('--optional')
+  const target = option('target') ?? `${process.platform}-${process.arch}`
+  const tag = releaseTag()
+  const outDir = option('out-dir')
+    ? resolve(option('out-dir'))
+    : join(repoRoot, 'resources', 'step-converter', target)
+  const outPath = join(outDir, converterExe(target))
+
+  const provenance = readProvenance(outDir)
+  if (existsSync(outPath) && provenance?.tag === tag) {
+    console.log(`STEP converter is up to date (${tag}, ${provenance.origin}): ${outPath}`)
     return
   }
-  console.error(`error: ${error.message}`)
-  process.exitCode = 1
-})
+  try {
+    await install(target, tag, outDir, outPath)
+  } catch (error) {
+    if (!(error instanceof FetchError)) throw error
+    // 있던 실행 파일은 지금 소스의 것이 아니다(같으면 위에서 끝났다)
+    const stale = existsSync(outPath)
+    const staleTag = provenance?.tag ?? 'unknown sources'
+    if (!optional) {
+      console.error(`error: ${error.message}`)
+      if (stale) console.error(`${outPath} is still the converter from ${staleTag}`)
+      process.exitCode = 1
+      return
+    }
+    console.warn(`warning: ${error.message}`)
+    // 설치 파일에 다른 소스로 만든 변환기를 넣지 않는다. 앱은 --version이 같으면 그대로 쓰기 때문이다.
+    if (stale) {
+      try {
+        rmSync(outPath, { force: true })
+        rmSync(join(outDir, PROVENANCE_FILE), { force: true })
+      } catch (removeError) {
+        console.error(
+          `error: cannot remove ${outPath} (${removeError.code}), which is from ${staleTag}. ` +
+            'Close SandBot and try again'
+        )
+        process.exitCode = 1
+        return
+      }
+      console.warn(`removed ${outPath}: it was built from ${staleTag}, not the current sources`)
+    }
+    console.warn('the app will read STEP files with the built-in WASM converter instead')
+  }
+}
+
+await main()

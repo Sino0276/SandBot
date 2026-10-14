@@ -87,8 +87,14 @@ describe('변환기 소스 해시(Release 태그)', () => {
   })
 })
 
-// Windows x64 실행 파일처럼 보이는 최소 PE 헤더
-function fakeExe(machine = 0x8664): Buffer {
+// 받을 대상. 이 PC용이면 받기 스크립트가 --version으로 실행해 보므로(가짜 실행 파일은 실행되지 않는다)
+// 이 PC가 아닌 Windows CPU를 고른다.
+const TARGET =
+  process.platform === 'win32' && process.arch === 'arm64' ? 'win32-x64' : 'win32-arm64'
+const MACHINE = TARGET === 'win32-x64' ? 0x8664 : 0xaa64
+
+// 대상 CPU의 Windows 실행 파일처럼 보이는 최소 PE 헤더
+function fakeExe(machine = MACHINE): Buffer {
   const bytes = Buffer.alloc(512)
   bytes.write('MZ', 0, 'latin1')
   bytes.writeUInt32LE(0x80, 0x3c)
@@ -98,13 +104,13 @@ function fakeExe(machine = 0x8664): Buffer {
 }
 
 describe('pnpm fetch:step-converter', () => {
-  const ASSET = 'sandbot-step-converter-win32-x64.exe'
+  const ASSET = `sandbot-step-converter-${TARGET}.exe`
   let server: Server
   let api: string
   let tag: string
   let exe: Buffer
   let sums: string
-  let release: 'ok' | 'missing'
+  let release: 'ok' | 'missing' | 'cut'
   let requests: string[]
   let out: string
 
@@ -112,7 +118,7 @@ describe('pnpm fetch:step-converter', () => {
     tag = await tagOf()
     server = createServer((req, res) => {
       requests.push(req.url ?? '')
-      if (req.url === `/repos/o/r/releases/tags/${tag}` && release === 'ok') {
+      if (req.url === `/repos/o/r/releases/tags/${tag}` && release !== 'missing') {
         res.setHeader('Content-Type', 'application/json')
         res.end(
           JSON.stringify({
@@ -123,6 +129,13 @@ describe('pnpm fetch:step-converter', () => {
           })
         )
       } else if (req.url === '/assets/1' && req.headers.accept === 'application/octet-stream') {
+        if (release === 'cut') {
+          // 받는 중에 연결이 끊긴다
+          res.writeHead(200, { 'Content-Length': String(exe.length * 100) })
+          res.write(exe)
+          setTimeout(() => res.destroy(), 50)
+          return
+        }
         res.end(exe)
       } else if (req.url === '/assets/2') {
         res.end(sums)
@@ -154,7 +167,7 @@ describe('pnpm fetch:step-converter', () => {
       [
         'scripts/fetch-step-converter.mjs',
         '--target',
-        'win32-x64',
+        TARGET,
         '--repo',
         'o/r',
         '--out-dir',
@@ -194,7 +207,7 @@ describe('pnpm fetch:step-converter', () => {
     sums = `${createHash('sha256').update(exe).digest('hex')}  ${ASSET}\n`
     const run = await fetchConverter()
     expect(run.code).toBe(1)
-    expect(run.stderr).toMatch(/win32-ia32, not win32-x64/)
+    expect(run.stderr).toContain(`win32-ia32, not ${TARGET}`)
     expect(readFileSync(join(out, 'sandbot-step-converter.exe'), 'utf8')).toBe('old')
     expect(readdirSync(out)).toEqual(['sandbot-step-converter.exe'])
   })
@@ -205,6 +218,39 @@ describe('pnpm fetch:step-converter', () => {
     expect(run.code).toBe(1)
     expect(run.stderr).toContain(tag)
     expect(run.stderr).toMatch(/pnpm build:step-converter/)
+
+    const optional = await fetchConverter('--optional')
+    expect(optional.code).toBe(0)
+    expect(optional.stderr).toMatch(/WASM/)
+  })
+
+  it('받지 못하면 다른 소스의 실행 파일은 --optional(설치 파일 빌드)에서 지우고, 아니면 두고 알린다', async () => {
+    release = 'missing'
+    const write = (): void => {
+      writeFileSync(join(out, 'sandbot-step-converter.exe'), 'old')
+      writeFileSync(
+        join(out, 'source.json'),
+        JSON.stringify({ tag: 'step-converter-0', origin: 'release' })
+      )
+    }
+    write()
+    const strict = await fetchConverter()
+    expect(strict.code).toBe(1)
+    expect(strict.stderr).toContain('step-converter-0')
+    expect(readFileSync(join(out, 'sandbot-step-converter.exe'), 'utf8')).toBe('old')
+
+    const optional = await fetchConverter('--optional')
+    expect(optional.code).toBe(0)
+    expect(optional.stderr).toMatch(/removed/)
+    expect(readdirSync(out)).toEqual([])
+  })
+
+  it('받다가 끊기면 스택 대신 알리고, --optional이면 경고만 한다', async () => {
+    release = 'cut'
+    const run = await fetchConverter()
+    expect(run.code).toBe(1)
+    expect(run.stderr).toMatch(/^error: download was cut off/m)
+    expect(existsSync(join(out, 'sandbot-step-converter.exe'))).toBe(false)
 
     const optional = await fetchConverter('--optional')
     expect(optional.code).toBe(0)
