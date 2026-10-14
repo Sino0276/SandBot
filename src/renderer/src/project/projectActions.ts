@@ -2,7 +2,6 @@ import i18n from 'i18next'
 import {
   confirmLargeImport,
   fileNameOf,
-  hasNativeConverter,
   LARGE_STEP_BYTES,
   loadCadWithProgress,
   type CadLoadStatus
@@ -175,9 +174,6 @@ export async function openProjectFolder(): Promise<void> {
 }
 
 export function openProjectAt(root: string, options: { quiet?: boolean } = {}): Promise<void> {
-  // 이전 프로젝트의 불러오기(새 STEP, CAD 형상 읽기)는 멈춘다. 끝나기를 기다렸다 결과를 버리지 않고 바로 멈춰
-  // 큰 STEP 변환기가 메모리를 계속 쓰지 않게 한다.
-  cancelAllImports()
   let cads: { id: string; path: string }[] = []
   let session = 0
   return withBusy(async () => {
@@ -192,12 +188,17 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         ? parseProject(info.content)
         : { objects: {}, cadFiles: new Map() }
 
+      // 새 프로젝트를 읽었으니 이전 프로젝트의 불러오기(새 STEP, CAD 형상 읽기)를 멈춘다(열기에 실패하면 그대로 둔다).
+      // 세션을 먼저 바꿔, 취소되어 끝나는 이전 작업이 결과·상태를 반영하거나 다음 CAD로 넘어가지 않게 한다.
+      session = useProjectStore.getState().session + 1
+      useProjectStore.setState({ session })
+      cancelAllImports()
+
       useSceneStore.getState().replaceObjects(objects)
       replaced = true
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
       useEditorStore.getState().select(null)
-      session = useProjectStore.getState().session + 1
       useProjectStore.setState({
         root,
         name: info.name,
@@ -323,12 +324,15 @@ export async function relinkCad(cadRootId: string): Promise<void> {
   if (!path || !canStartImport()) return
   const fileName = fileNameOf(path)
   const session = useProjectStore.getState().session
-  // 캐시에 없는 큰 파일은 묻는다(크기는 메인 프로세스가 알려 줌)
-  const lookup = await window.api.readStepCached(
-    path,
-    MESH_CACHE_TAG,
-    !(await hasNativeConverter())
-  )
+  // 캐시에 없는 큰 파일은 묻는다(크기는 메인 프로세스가 알려 줌, 내용은 받지 않음)
+  let lookup
+  try {
+    lookup = await window.api.readStepCached(path, MESH_CACHE_TAG, false)
+  } catch (error) {
+    console.error('STEP 확인 실패', error)
+    showNotice('error', 'importFailed', { fileName })
+    return
+  }
   if (!lookup) {
     showNotice('error', 'importReadFailed', { fileName })
     return

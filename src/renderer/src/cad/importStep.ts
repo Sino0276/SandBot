@@ -161,8 +161,8 @@ async function convertNative(
   }
   onPhase?.('build')
   const model = await parseStep('native', ownBuffer(result.bytes), fileName, signal)
-  // OCCT가 예외로 건너뛴 형상이 있으면(대개 메모리 부족) 캐시하지 않는다(다음에 다시 시도하게)
-  if (result.untranslated === 0) storeCacheLater(result.key, model)
+  // OCCT가 예외로 건너뛰었거나 삼각형을 만들지 못한 형상이 있으면(대개 메모리 부족) 캐시하지 않는다(다음에 다시 시도하게)
+  if (result.untranslated === 0 && droppedMeshCount(model) === 0) storeCacheLater(result.key, model)
   return { model, engine: 'native', untranslated: result.untranslated }
 }
 
@@ -178,9 +178,10 @@ export async function loadStepModel(
   if (!options.lookup) onPhase?.('checking')
   // 네이티브는 파일을 직접 읽으므로 내용을 렌더러로 보내지 않는다
   const lookup = options.lookup ?? (await window.api.readStepCached(path, MESH_CACHE_TAG, !native))
+  // 캐시를 찾는 동안(큰 파일은 몇 초) 취소했으면 결과를 쓰지 않는다
+  if (signal?.aborted) throw cancelled(native ? 'native' : 'wasm')
   if (!lookup) return null
   if (isImportedModel(lookup.model)) return { model: lookup.model, engine: 'cache' }
-  if (signal?.aborted) throw cancelled(native ? 'native' : 'wasm')
 
   if (native) {
     const converted = await convertNative(path, fileName, options)
@@ -190,6 +191,7 @@ export async function loadStepModel(
   }
 
   const read = lookup.bytes ? lookup : await window.api.readStepCached(path, MESH_CACHE_TAG, true)
+  if (signal?.aborted) throw cancelled('wasm')
   if (!read) return null
   if (isImportedModel(read.model)) return { model: read.model, engine: 'cache' }
   if (!read.bytes) throw new StepImportError('unknown', 'empty read result', 'wasm')
@@ -314,15 +316,21 @@ export async function importStepFiles(files: File[]): Promise<void> {
   const { signal } = controller
   try {
     setNoticePhase(progress, 'checking')
-    const native = await hasNativeConverter()
-    // 큰 파일은 캐시부터 찾는다(캐시에 있으면 금방 끝나므로 묻지 않는다)
+    // 큰 파일은 캐시부터 찾는다(캐시에 있으면 금방 끝나므로 묻지 않는다). 내용은 받지 않는다
+    // (메인이 해시와 크기만 알려 주고, WASM으로 변환할 때 그 파일만 읽는다).
     const pending: PendingImport[] = []
     for (const file of files) {
       const path = window.api.getPathForFile(file)
-      const lookup =
-        path && file.size > LARGE_STEP_BYTES
-          ? await window.api.readStepCached(path, MESH_CACHE_TAG, !native)
-          : null
+      let lookup: StepReadResult | null = null
+      if (path && file.size > LARGE_STEP_BYTES) {
+        try {
+          lookup = await window.api.readStepCached(path, MESH_CACHE_TAG, false)
+        } catch (error) {
+          // 읽을 수 없는 파일(권한, 잠김 등)은 알리고 건너뛴다
+          notifyError(error, file.name)
+          continue
+        }
+      }
       pending.push({ file, path, lookup })
       if (signal.aborted) return
     }
@@ -417,6 +425,10 @@ export async function loadCadGeometry(
     notifyError(error, fileName)
     return 'failed'
   }
+  // 다른 프로젝트를 열어 취소됐으면 형상을 등록하지 않는다
+  if (options.signal?.aborted) return 'cancelled'
+  // 다른 프로젝트를 열어 취소됐으면 형상을 등록하지 않는다
+  if (options.signal?.aborted) return 'cancelled'
   if (!loaded) return 'missing'
   const { model } = loaded
   const cad = useSceneStore.getState().objects[cadRootId]?.cad

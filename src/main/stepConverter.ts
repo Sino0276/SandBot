@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { app, ipcMain, type WebContents } from 'electron'
 import { createReadStream } from 'fs'
-import { mkdir, mkdtemp, readFile, rm } from 'fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'fs/promises'
 import { basename, join } from 'path'
 import converterVersion from '../../native/step-converter/version.json'
 import {
@@ -335,9 +335,19 @@ export function cancelAllConversions(): void {
   for (const conversion of conversions.values()) cancelConversion(conversion)
 }
 
-// 지난 실행이 비정상 종료로 남긴 출력 폴더를 지운다(앱 시작 때는 실행 중인 변환이 없다)
+// 지난 실행이 비정상 종료로 남긴 출력 폴더를 지운다. 다른 SandBot 창(같은 userData)이 변환 중일 수 있으므로
+// 하루 넘게 지난 것만 지운다(변환 하나가 그렇게 오래 걸리지 않는다).
+const STALE_OUTPUT_MS = 24 * 60 * 60 * 1000
+
 async function sweepOutputs(outputRoot: string): Promise<void> {
-  await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined)
+  const names = await readdir(outputRoot).catch(() => [] as string[])
+  const now = Date.now()
+  for (const name of names.filter((n) => n.startsWith('sandbot-step-'))) {
+    const path = join(outputRoot, name)
+    const info = await stat(path).catch(() => null)
+    if (info && now - info.mtimeMs > STALE_OUTPUT_MS)
+      await rm(path, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 export function registerStepConverterIpc(): void {
