@@ -64,6 +64,9 @@ if (WIN32)
 	if (MINGW)
 		# wmain(한글 경로) 사용, 런타임 DLL 없이 실행되게 정적 링크
 		target_link_options (sandbot-step-converter PRIVATE -municode -static -Wl,--stack,16777216)
+		# OCCT의 OSD_Host·OSD_File이 Winsock을 쓴다. MSVC는 OCCT 소스의 #pragma comment(lib)로 링크하지만
+		# MinGW는 그 지시를 따르지 않으므로 직접 넣는다
+		target_link_libraries (sandbot-step-converter PRIVATE ws2_32)
 	elseif (MSVC)
 		target_link_options (sandbot-step-converter PRIVATE /STACK:16777216)
 	endif ()

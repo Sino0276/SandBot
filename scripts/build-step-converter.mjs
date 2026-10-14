@@ -8,7 +8,17 @@
 //   --toolchain 교차 컴파일(예: MinGW로 Windows용). --target으로 출력 폴더 이름을 정한다(예: win32-x64)
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync
+} from 'node:fs'
 import { cpus } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,6 +79,36 @@ function hasCommand(command) {
   return !result.error && result.status === 0
 }
 
+// 실행 파일 헤더의 CPU(PE·ELF·Mach-O). 다른 CPU용으로 빌드된 것을 그 이름의 폴더에 넣지 않게 확인한다.
+function binaryArch(path) {
+  const header = Buffer.alloc(4096)
+  const fd = openSync(path, 'r')
+  try {
+    readSync(fd, header, 0, header.length, 0)
+  } finally {
+    closeSync(fd)
+  }
+  if (header.toString('latin1', 0, 2) === 'MZ') {
+    const pe = header.readUInt32LE(0x3c)
+    if (pe + 6 > header.length || header.toString('latin1', pe, pe + 4) !== 'PE\0\0') return null
+    const machine = header.readUInt16LE(pe + 4)
+    return (
+      { 0x8664: 'x64', 0xaa64: 'arm64', 0x14c: 'ia32' }[machine] ?? `pe-${machine.toString(16)}`
+    )
+  }
+  if (header.toString('latin1', 0, 4) === '\x7fELF') {
+    const machine = header[5] === 2 ? header.readUInt16BE(18) : header.readUInt16LE(18)
+    return { 0x3e: 'x64', 0xb7: 'arm64', 0x03: 'ia32', 0x28: 'arm' }[machine] ?? `elf-${machine}`
+  }
+  const magic = header.readUInt32LE(0)
+  if (magic === 0xfeedfacf) {
+    const cpu = header.readUInt32LE(4)
+    return { 0x01000007: 'x64', 0x0100000c: 'arm64' }[cpu] ?? `macho-${cpu.toString(16)}`
+  }
+  // 여러 CPU를 묶은 Mach-O(universal)는 한 CPU 폴더에 넣지 않는다
+  return null
+}
+
 let sourceDir
 if (option('source')) {
   sourceDir = resolve(option('source'))
@@ -81,7 +121,9 @@ if (option('source')) {
 }
 
 const target = option('target') ?? `${process.platform}-${process.arch}`
+const targetArch = target.slice(target.lastIndexOf('-') + 1)
 const buildDir = join(cacheDir, `build-${target}`)
+const firstConfigure = !existsSync(join(buildDir, 'CMakeCache.txt'))
 const configure = [
   '-S',
   converterDir,
@@ -90,15 +132,19 @@ const configure = [
   '-DCMAKE_BUILD_TYPE=Release',
   `-DOCCT_IMPORT_JS_DIR=${sourceDir}`
 ]
-// Ninja는 PATH의 컴파일러를 쓴다. Windows에서는 Visual Studio 개발자 환경(cl.exe가 PATH에 있음)일 때만 쓰고,
-// 아니면 CMake가 Visual Studio 생성기로 MSVC를 찾게 둔다.
-const windowsDevShell = Boolean(process.env.VCINSTALLDIR || process.env.VSCMD_VER)
-const useNinja =
-  hasCommand('ninja') && (process.platform !== 'win32' || windowsDevShell || option('toolchain'))
-if (useNinja && !existsSync(join(buildDir, 'CMakeCache.txt'))) configure.push('-G', 'Ninja')
+// Ninja는 PATH의 컴파일러를 쓴다. Windows에서는 대상 CPU용 Visual Studio 개발자 환경(cl.exe가 PATH에 있음)일
+// 때만 쓴다. 시작 메뉴의 "Developer Command Prompt"는 기본이 x86(32비트, WASM과 같은 2 GB 한도)이므로,
+// 대상 CPU가 다르면 Visual Studio 생성기에 CPU를 지정해 MSVC를 찾게 한다.
+const windowsNative = process.platform === 'win32' && !option('toolchain')
+const devShellArch = process.env.VSCMD_ARG_TGT_ARCH?.toLowerCase()
+const useNinja = hasCommand('ninja') && (!windowsNative || devShellArch === targetArch)
+if (firstConfigure && useNinja) configure.push('-G', 'Ninja')
+if (firstConfigure && windowsNative && !useNinja) {
+  configure.push('-A', { x64: 'x64', arm64: 'ARM64' }[targetArch] ?? targetArch)
+}
 if (option('toolchain')) configure.push(`-DCMAKE_TOOLCHAIN_FILE=${resolve(option('toolchain'))}`)
 if (process.platform === 'darwin' && !option('toolchain')) {
-  configure.push(`-DCMAKE_OSX_ARCHITECTURES=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`)
+  configure.push(`-DCMAKE_OSX_ARCHITECTURES=${targetArch === 'arm64' ? 'arm64' : 'x86_64'}`)
 }
 run('cmake', configure, root)
 run(
@@ -120,6 +166,14 @@ const exe = target.startsWith('win32') ? 'sandbot-step-converter.exe' : 'sandbot
 // 단일 구성 생성기(Ninja, Makefile)는 빌드 폴더에, 다중 구성(Visual Studio, Xcode)은 Release 아래에 만든다
 const built = [join(buildDir, exe), join(buildDir, 'Release', exe)].find((path) => existsSync(path))
 if (!built) throw new Error(`built converter not found in ${buildDir}`)
+const builtArch = binaryArch(built)
+if (builtArch !== targetArch) {
+  throw new Error(
+    `${built} is built for ${builtArch ?? 'an unknown CPU'}, not ${targetArch} (${target}). ` +
+      `Remove ${buildDir} and build again with a ${targetArch} compiler ` +
+      `(on Windows: the "x64 Native Tools Command Prompt" or a plain shell)`
+  )
+}
 const outDir = join(root, 'resources', 'step-converter', target)
 mkdirSync(outDir, { recursive: true })
 copyFileSync(built, join(outDir, exe))

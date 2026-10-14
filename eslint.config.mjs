@@ -6,7 +6,16 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  {
+    // 변환기 빌드가 받은 occt-import-js·OCCT 소스와 빌드 결과는 검사하지 않는다(flat config는 .gitignore를 읽지 않음)
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      'native/step-converter/.cache',
+      'resources/step-converter'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
