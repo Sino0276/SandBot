@@ -118,7 +118,8 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - occt-import-js 0.0.23의 C++ 가져오기 코드와 OCCT 7.6.1을 고치지 않고 빌드하고, `src/main.cpp`가 같은 순서로 결과를 쓴다(SBSTEP01: 메시 배열들 + 끝의 JSON). GCC 13은 `<cstdint>` 누락이라 C++ 파일만 `-include cstdint`로 빌드한다. 빌드는 `scripts/build-step-converter.mjs`가 태그를 얕게 받아 커밋을 확인한 뒤 CMake로 하고, 결과를 `resources/step-converter/<platform>-<arch>/`에 둔다(gitignore). 배포 앱에는 electron-builder `extraResources`로 그 OS용 하나만 들어간다.
   - 앱은 처음 쓸 때 `--version`으로 실행되는지·같은 소스인지 확인하고, 아니면 WASM으로 읽는다. 변환은 한 번에 하나씩(대기 중이면 queued), STEP 내용은 캐시 키 해시와 함께 표준 입력으로 흘려보낸다(두 번 읽다 파일이 바뀌어 다른 내용이 그 키로 캐시되지 않게). OCCT 환경 변수(CSF_* 등)는 넘기지 않는다. 출력은 `userData/step-convert/`에 쓰고 읽은 뒤 지운다.
   - 변환기는 stderr에 `phase`, `progress`, `warning untranslated`, 마지막에 `result <ok|readFailed|outOfMemory|failed>` 줄을 쓴다. 앱은 result 줄로 결과를 판단한다(없으면 비정상 종료). 네이티브 실패(메모리 부족 등) 뒤에는 WASM으로 다시 읽지 않는다(실행 파일이 없거나 실행되지 않을 때만 WASM).
-  - 메모리 한도로 일부 메시가 빠진 WASM 결과와 OCCT가 엔티티를 건너뛴 네이티브 결과는 캐시하지 않는다.
+  - 메모리 한도로 일부 메시가 빠졌거나 OCCT가 엔티티를 건너뛴 결과는 캐시하지 않는다. 엔티티를 건너뛰면 솔리드가 통째로 빠져 뒤 메시 순번이 밀리므로, 프로젝트를 열거나 다시 읽을 때는 그 결과를 등록하지 않고 실패로 알린다.
+  - CAD 형상을 등록할 때 그 CAD의 이전 형상 id 중 새 결과에 없는 것은 지운다(다시 찾기 뒤 이전 파일 모양이 남지 않게). 형상 id 방식은 읽기 시작할 때의 CAD 정보로 정한다.
 - 불러오기 진행은 `cad/importStore.ts`가 센다(한 번에 하나, [STEP 불러오기]·드롭·다시 찾기·다시 불러오기를 막음, 창을 닫을 때 확인). 진행 알림은 단계(`importPhase.*`)·진행률·경과 시간·[취소]를 보인다(`noticeStore`의 `startedAt`·`phase`·`cancellable`, 취소 처리기는 스토어 밖). 캐시에 없는 100 MB 넘는 파일은 시작 전에 묻는다(드롭 묶음당 한 번, 네이티브가 없으면 실패할 수 있다고 알림).
 - OCCT WASM 때문에 `index.html` CSP의 script-src에 `'wasm-unsafe-eval'`이 있다. 렌더러 워커는 ES 모듈 형식으로 번들한다(`electron.vite.config.ts`의 `worker.format`). STEP 테스트는 occt-import-js 패키지에 들어 있는 CAx-IF 샘플(`node_modules/occt-import-js/test/testfiles/`)을 쓴다.
 - 단축키(`EditorLayout`):
