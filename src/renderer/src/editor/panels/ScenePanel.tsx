@@ -1,10 +1,8 @@
 import { Canvas } from '@react-three/fiber'
 import { useTranslation } from 'react-i18next'
-import type { ReferenceFrame } from '../../scene/model'
-import { isRecentHandleInteraction, useEditorStore } from '../editorStore'
+import { isRecentHandleInteraction, useEditorStore, type HandleSpace } from '../editorStore'
 import { useFlyStore } from '../flyStore'
 import PanelFrame from '../PanelFrame'
-import CameraRig from '../scene/CameraRig'
 import FieldFloor from '../scene/FieldFloor'
 import EditorCameraControls from '../scene/EditorCameraControls'
 import FocusController from '../scene/FocusController'
@@ -21,8 +19,8 @@ import { formatLength } from '../../units/units'
 
 function ScenePanel(): React.JSX.Element {
   const { t } = useTranslation()
-  const frame = useEditorStore((state) => state.frame)
-  const setFrame = useEditorStore((state) => state.setFrame)
+  const handleSpace = useEditorStore((state) => state.handleSpace)
+  const setHandleSpace = useEditorStore((state) => state.setHandleSpace)
   const tool = useEditorStore((state) => state.tool)
   const flying = useFlyStore((state) => state.flying)
   const flySpeed = useFlyStore((state) => state.speed)
@@ -32,14 +30,14 @@ function ScenePanel(): React.JSX.Element {
   const actions = (
     <>
       <ToolButtons />
-      <SegmentedControl<ReferenceFrame>
-        label={t('scene.frame')}
-        value={frame}
+      <SegmentedControl<HandleSpace>
+        label={t('scene.handleSpace')}
+        value={handleSpace}
         options={[
-          { value: 'field', label: t('scene.field') },
-          { value: 'robot', label: t('scene.robot') }
+          { value: 'global', label: t('scene.global') },
+          { value: 'local', label: t('scene.local') }
         ]}
-        onChange={setFrame}
+        onChange={setHandleSpace}
       />
     </>
   )
@@ -66,7 +64,6 @@ function ScenePanel(): React.JSX.Element {
         <ImuIndicators />
         <TransformHandles />
         <EditorCameraControls />
-        <CameraRig />
         <FocusController />
         <ViewGizmo />
       </Canvas>

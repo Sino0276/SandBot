@@ -1,8 +1,8 @@
 import { GizmoHelper } from '@react-three/drei'
 import { useThree, type ThreeEvent } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo } from 'react'
-import { CanvasTexture, Quaternion, Vector3 } from 'three'
-import { isOrbitControls, useViewFrameMatrix } from './frameHooks'
+import { CanvasTexture, Vector3 } from 'three'
+import { isOrbitControls } from './frameHooks'
 
 const AXES = [
   { label: 'X', color: '#ff3653', direction: new Vector3(1, 0, 0) },
@@ -54,34 +54,30 @@ function AxisHead({ color, label, position, onSelect }: AxisHeadProps): React.JS
   )
 }
 
-// 오른쪽 위 축 표시. 보기 기준 좌표계(필드/로봇)의 축 방향을 보여 주고, 축을 클릭하면 그 축 방향에서 보는 시점으로 바꾼다.
+// 오른쪽 위 축 표시. 필드 축 방향을 보여 주고, 축을 클릭하면 그 축 방향에서 보는 시점으로 바꾼다.
 // drei GizmoViewport는 회전된 축을 클릭했을 때 방향을 잘못 계산하므로 축은 직접 그린다.
 function ViewGizmo(): React.JSX.Element {
   const get = useThree((state) => state.get)
-  const matrix = useViewFrameMatrix()
-  const frameQuaternion = useMemo(() => new Quaternion().setFromRotationMatrix(matrix), [matrix])
 
   const lookFrom = useCallback(
     (localDirection: Vector3) => {
       const { camera, controls, invalidate } = get()
       if (!isOrbitControls(controls)) return
-      const direction = localDirection.clone().applyQuaternion(frameQuaternion)
+      const direction = localDirection.clone()
       const distance = camera.position.distanceTo(controls.target)
       const offset = direction.multiplyScalar(distance)
-      // 바로 위·아래에서 볼 때 시선이 위 방향(Z)과 평행해지지 않도록 기준 좌표계의 -X 쪽으로 살짝 비켜 둔다(화면 위쪽이 +X)
-      if (Math.abs(offset.z) > distance * 0.999) {
-        offset.add(new Vector3(-distance * 1e-3, 0, 0).applyQuaternion(frameQuaternion))
-      }
+      // 바로 위·아래에서 볼 때 시선이 위 방향(Z)과 평행해지지 않도록 -X 쪽으로 살짝 비켜 둔다(화면 위쪽이 +X)
+      if (Math.abs(offset.z) > distance * 0.999) offset.x -= distance * 1e-3
       camera.position.copy(controls.target).add(offset)
       controls.update()
       invalidate()
     },
-    [get, frameQuaternion]
+    [get]
   )
 
   return (
     <GizmoHelper alignment="top-right" margin={[64, 64]}>
-      <group scale={40} quaternion={frameQuaternion}>
+      <group scale={40}>
         {AXES.map(({ label, color, direction }) => (
           <group key={label}>
             <mesh position={direction.clone().multiplyScalar(0.4)}>

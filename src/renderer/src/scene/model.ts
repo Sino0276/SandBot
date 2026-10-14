@@ -72,7 +72,7 @@ export type SceneObject = {
 
 export type SceneObjects = Record<string, SceneObject>
 
-// 보기 기준 좌표계. 로봇 좌표계는 X 앞, Y 왼쪽, Z 위이고 원점은 로봇 중심 바닥이다.
+// 계산용 기준 좌표계(로봇 중심 기준 위치, 센서 오프셋). 로봇 좌표계는 X 앞, Y 왼쪽, Z 위이고 원점은 로봇 중심 바닥이다.
 export type ReferenceFrame = 'field' | 'robot'
 
 const EULER_ORDER = 'ZYX'
@@ -109,12 +109,6 @@ export function findRobotId(objects: SceneObjects, id: string): string | null {
     current = current.parentId ? objects[current.parentId] : undefined
   }
   return null
-}
-
-// 로봇 기준 보기에서 따라갈 로봇: 선택한 오브젝트의 로봇, 없으면 씬의 첫 로봇.
-export function activeRobotId(objects: SceneObjects, selectedId: string | null): string | null {
-  const fromSelection = selectedId && objects[selectedId] ? findRobotId(objects, selectedId) : null
-  return fromSelection ?? Object.values(objects).find((o) => o.kind === 'robot')?.id ?? null
 }
 
 // 기준 좌표계의 필드 기준 행렬. 로봇 기준인데 로봇에 속하지 않은 오브젝트는 필드 기준으로 대신한다.

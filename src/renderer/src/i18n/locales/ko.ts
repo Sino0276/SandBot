@@ -88,9 +88,9 @@ const ko = {
       rotate: '회전 (E)'
     },
     flySpeed: '비행 속도 {{speed}} {{unit}}/s · 휠로 조절, Shift로 빠르게',
-    frame: '핸들·카메라 기준 좌표계',
-    field: '필드',
-    robot: '로봇'
+    handleSpace: '핸들 축: 전역(필드 축) · 로컬(오브젝트 자신의 축) (X)',
+    global: '전역',
+    local: '로컬'
   },
   hierarchy: {
     empty: '씬에 오브젝트가 없습니다',

@@ -91,9 +91,9 @@ const en: Messages = {
       rotate: 'Rotate (E)'
     },
     flySpeed: 'Fly speed {{speed}} {{unit}}/s · scroll to change, Shift for faster',
-    frame: 'Handle and camera frame',
-    field: 'Field',
-    robot: 'Robot'
+    handleSpace: "Handle axes: Global (field axes) · Local (the object's own axes) (X)",
+    global: 'Global',
+    local: 'Local'
   },
   hierarchy: {
     empty: 'No objects in the scene',

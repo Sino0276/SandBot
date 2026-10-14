@@ -83,6 +83,12 @@ function useEditorShortcuts(): void {
         useEditorStore.getState().setTool(tool)
         return
       }
+      // X: 핸들 축 전역/로컬 전환 (Unity와 같은 키)
+      if (code === 'KeyX' && !event.shiftKey) {
+        const { handleSpace, setHandleSpace } = useEditorStore.getState()
+        setHandleSpace(handleSpace === 'global' ? 'local' : 'global')
+        return
+      }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         const { selectedId, select } = useEditorStore.getState()
         if (!selectedId) return

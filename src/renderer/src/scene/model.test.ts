@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  activeRobotId,
   constrainTransform,
   findRobotId,
   getTransformInFrame,
@@ -72,12 +71,6 @@ describe('로봇 찾기', () => {
   it('파트가 속한 로봇을 찾는다', () => {
     expect(findRobotId(objects, 'webcam')).toBe('robot')
     expect(findRobotId(objects, 'cone')).toBeNull()
-  })
-
-  it('선택이 없거나 로봇 밖이면 씬의 첫 로봇을 쓴다', () => {
-    expect(activeRobotId(objects, null)).toBe('robot')
-    expect(activeRobotId(objects, 'cone')).toBe('robot')
-    expect(activeRobotId({ cone: objects.cone }, null)).toBeNull()
   })
 })
 

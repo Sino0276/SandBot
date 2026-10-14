@@ -1,8 +1,8 @@
 import { TransformControls } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from 'react'
-import { Matrix4, Object3D, Quaternion } from 'three'
-import { frameMatrix, localTransformFromWorld, worldMatrix } from '../../scene/model'
+import { Matrix4, Object3D, Quaternion, Vector3 } from 'three'
+import { localTransformFromWorld, worldMatrix } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import {
   markHandleInteraction,
@@ -78,11 +78,11 @@ function Handles({
   )
 }
 
-// 이동·회전 핸들. 핸들 축을 보기 기준 좌표계(필드/로봇)에 맞추기 위해, 선택한 오브젝트 대신
-// "오브젝트 위치 + 기준 좌표계 방향"을 가진 대리 객체에 TransformControls를 붙이고 변화량을 오브젝트에 옮긴다.
+// 이동·회전 핸들. 핸들 축을 전역(필드)·로컬(오브젝트) 중에서 고를 수 있게, 선택한 오브젝트 대신
+// "오브젝트 위치 + 핸들 축 방향"을 가진 대리 객체에 TransformControls를 붙이고 변화량을 오브젝트에 옮긴다.
 function TransformHandles(): React.JSX.Element | null {
   const selectedId = useEditorStore((state) => state.selectedId)
-  const frame = useEditorStore((state) => state.frame)
+  const handleSpace = useEditorStore((state) => state.handleSpace)
   const tool = useEditorStore((state) => state.tool)
   const objects = useSceneStore((state) => state.objects)
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
@@ -94,15 +94,14 @@ function TransformHandles(): React.JSX.Element | null {
   const proxyToObject = useRef(new Matrix4())
   const [syncCount, setSyncCount] = useState(0)
 
-  // 드래그 중이 아닐 때 대리 객체를 오브젝트 위치와 기준 좌표계 방향에 맞춘다
+  // 드래그 중이 아닐 때 대리 객체를 오브젝트 위치에 두고, 방향은 전역이면 필드 축, 로컬이면 오브젝트 자신의 축에 맞춘다
   useLayoutEffect(() => {
     if (!selectedId || !objects[selectedId] || dragging.current) return
-    proxy.position.setFromMatrixPosition(worldMatrix(objects, selectedId))
-    proxy.quaternion.copy(
-      new Quaternion().setFromRotationMatrix(frameMatrix(objects, selectedId, frame))
-    )
+    const rotation = new Quaternion()
+    worldMatrix(objects, selectedId).decompose(proxy.position, rotation, new Vector3())
+    proxy.quaternion.copy(handleSpace === 'local' ? rotation : new Quaternion())
     proxy.updateMatrix()
-  }, [objects, selectedId, frame, proxy, syncCount])
+  }, [objects, selectedId, handleSpace, proxy, syncCount])
 
   // 드래그 도중 선택이나 도구가 바뀌거나 핸들이 사라지면(예: STEP 불러오기가 끝나 새 로봇을 선택) 드래그를 끝낸다.
   // TransformControls가 끈 카메라 조작을 다시 켜고, 실행 취소 묶음을 닫는다.
