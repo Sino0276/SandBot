@@ -12,6 +12,9 @@ import {
 } from '../editorStore'
 import { beginChange, endChange } from '../history'
 
+// 내려간 핸들의 해제 예약(StrictMode가 곧바로 다시 붙이면 취소한다)
+const pendingDispose = new WeakMap<object, ReturnType<typeof setTimeout>>()
+
 type HandlesProps = {
   proxy: Object3D
   mode: Exclude<EditorTool, 'view'>
@@ -35,12 +38,25 @@ function Handles({
 
   useEffect(() => {
     const instance = controls.current
+    // 개발 모드의 StrictMode는 effect를 정리했다가 같은 인스턴스로 곧바로 다시 실행한다.
+    // 그 사이에 해제하면 핸들의 마우스 리스너가 사라져 보이기만 하고 끌리지 않으므로, 해제는 미뤘다가 취소한다.
+    if (instance) {
+      clearTimeout(pendingDispose.get(instance))
+      pendingDispose.delete(instance)
+    }
     // Alt+드래그(카메라 궤도)가 기즈모 위에서 시작해도 오브젝트를 움직이지 않게 카메라 조작이 잠시 끌 수 있게 한다
     // three-stdlib 타입은 enabled를 private으로 적었지만 실제로는 공개 필드다(drei도 prop으로 바꾼다)
     setActiveGizmo(instance as unknown as { enabled: boolean } | null)
     return () => {
       setActiveGizmo(null)
-      instance?.dispose()
+      if (!instance) return
+      pendingDispose.set(
+        instance,
+        setTimeout(() => {
+          pendingDispose.delete(instance)
+          instance.dispose()
+        }, 0)
+      )
     }
   }, [])
 
