@@ -101,6 +101,29 @@ export function childrenOf(objects: SceneObjects, parentId: string | null): Scen
   return Object.values(objects).filter((object) => object.parentId === parentId)
 }
 
+// 씬 문서마다 한 번 만드는 부모 id → 자식 목록(childrenOf와 같은 순서). 씬 뷰·하이어라키가 오브젝트마다
+// childrenOf로 전체를 훑으면 큰 CAD(파트 수천 개)에서 씬이 바뀔 때마다 N²이 된다.
+// 스토어의 objects처럼 바꾸지 않는(불변) 문서에만 쓴다. 만든 뒤 고친 문서에는 고치기 전 목록이 남는다.
+const childIndexes = new WeakMap<SceneObjects, Map<string | null, SceneObject[]>>()
+const NO_CHILDREN: readonly SceneObject[] = []
+
+export function childrenInDocument(
+  objects: SceneObjects,
+  parentId: string | null
+): readonly SceneObject[] {
+  let index = childIndexes.get(objects)
+  if (!index) {
+    index = new Map()
+    for (const object of Object.values(objects)) {
+      const siblings = index.get(object.parentId)
+      if (siblings) siblings.push(object)
+      else index.set(object.parentId, [object])
+    }
+    childIndexes.set(objects, index)
+  }
+  return index.get(parentId) ?? NO_CHILDREN
+}
+
 export function worldMatrix(objects: SceneObjects, id: string): Matrix4 {
   const object = objects[id]
   const local = transformToMatrix(object.transform)

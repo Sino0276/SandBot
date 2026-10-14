@@ -4,7 +4,12 @@ import { importStepFiles } from '../../cad/importStep'
 import { useImportStore } from '../../cad/importStore'
 import { useProjectStore } from '../../project/projectStore'
 import { severityByObject, useSceneIssues, type ObjectSeverity } from '../../hardware/sceneIssues'
-import { ancestorIds, childrenOf, type SceneObject, type SceneObjects } from '../../scene/model'
+import {
+  ancestorIds,
+  childrenInDocument,
+  type SceneObject,
+  type SceneObjects
+} from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import NoticeList from '../NoticeList'
@@ -32,7 +37,7 @@ function TreeItem({
   const select = useEditorStore((state) => state.select)
   const focus = useEditorStore((state) => state.focus)
   const rowRef = useRef<HTMLDivElement>(null)
-  const children = childrenOf(context.objects, object.id)
+  const children = childrenInDocument(context.objects, object.id)
   const open = context.isOpen(object.id, depth)
   const severity = context.severities.get(object.id)
   const componentCount = object.components?.length ?? 0
@@ -133,7 +138,7 @@ function HierarchyPanel(): React.JSX.Element {
       setOpenOverrides((current) => ({ ...current, [id]: !(current[id] ?? depth < 2) }))
   }
 
-  const roots = childrenOf(objects, null)
+  const roots = childrenInDocument(objects, null)
 
   const actions = (
     <>
