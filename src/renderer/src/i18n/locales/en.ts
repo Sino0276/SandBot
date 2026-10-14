@@ -58,7 +58,9 @@ const en: Messages = {
     importPartial:
       '{{count}} part(s) of {{fileName}} could not be turned into geometry and are not shown.',
     importIncomplete:
-      'Some shapes of {{fileName}} could not be converted and may be missing. Try exporting it again from your CAD program.',
+      'Some shapes of {{fileName}} could not be converted and may be missing (the PC may have run out of memory). Close other programs and import it again, or export it again from your CAD program.',
+    cadLoadIncomplete:
+      'Some shapes of {{fileName}} could not be converted, so it was not loaded (the PC may have run out of memory). Close other programs and click [Reload] in the inspector.',
     cadLoadCancelled:
       'Stopped importing {{fileName}}. Use [Reload] in the inspector to import it again.',
     openingProject: 'Opening {{name}}…',

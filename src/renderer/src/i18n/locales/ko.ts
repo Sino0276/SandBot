@@ -55,7 +55,9 @@ const ko = {
       '{{fileName}}은(는) 내장 변환기로 읽기에 너무 큽니다. CAD(Onshape, Fusion 360 등)에서 나사 같은 작은 부품이나 필요 없는 부분을 빼고 다시 내보내 보세요.',
     importPartial: '{{fileName}}의 파트 {{count}}개는 형상을 만들지 못해 보이지 않습니다.',
     importIncomplete:
-      '{{fileName}}의 일부 형상을 변환하지 못해 빠졌을 수 있습니다. CAD에서 다시 내보내 보세요.',
+      '{{fileName}}의 일부 형상을 변환하지 못해 빠졌을 수 있습니다(메모리가 부족했을 수 있음). 다른 프로그램을 닫고 다시 불러오거나, CAD에서 다시 내보내 보세요.',
+    cadLoadIncomplete:
+      '{{fileName}}의 일부 형상을 변환하지 못해 불러오지 않았습니다(메모리가 부족했을 수 있음). 다른 프로그램을 닫고 인스펙터의 [다시 불러오기]를 눌러 보세요.',
     cadLoadCancelled:
       '{{fileName}} 불러오기를 취소했습니다. 인스펙터의 [다시 불러오기]로 다시 불러올 수 있습니다.',
     openingProject: '{{name}} 여는 중…',

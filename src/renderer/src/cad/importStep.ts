@@ -11,7 +11,7 @@ import {
 } from '../editor/noticeStore'
 import i18n from 'i18next'
 import { useProjectStore } from '../project/projectStore'
-import { registerGeometry } from '../scene/geometryRegistry'
+import { disposeGeometry, geometryIds, registerGeometry } from '../scene/geometryRegistry'
 import type { MeshIndexing } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { loadAlignmentPreference } from './alignmentPreference'
@@ -221,6 +221,12 @@ export function registerModelGeometries(
 ): void {
   const ids = meshGeometryIds(cadRootId, model, indexing)
   model.meshes.forEach((mesh, index) => registerGeometry(ids[index], createGeometry(mesh)))
+  // 이 CAD의 이전 형상 중 새 결과에 없는 id(다시 찾기로 바꾼 파일에 없는 파트 등)는 지운다.
+  // 남겨 두면 그 파트가 이전 파일의 모양으로 보인다.
+  const current = new Set(ids)
+  for (const id of geometryIds()) {
+    if (id.startsWith(`${cadRootId}:`) && !current.has(id)) disposeGeometry(id)
+  }
   useSceneStore.getState().bumpGeometryRevision()
 }
 
@@ -417,6 +423,9 @@ export async function loadCadGeometry(
   options: LoadStepOptions = {}
 ): Promise<CadLoadStatus> {
   const fileName = fileNameOf(path)
+  // 형상 id 방식은 읽기 시작할 때의 CAD 정보로 정한다. 읽는 동안 CAD를 지웠다가 실행 취소로 되살려도 맞게 연결되도록,
+  // 지워졌어도 형상은 등록한다(기록이 그 id를 쓴다).
+  const cad = useSceneStore.getState().objects[cadRootId]?.cad
   let loaded: LoadedStep | null
   try {
     loaded = await loadStepModel(path, fileName, options)
@@ -427,11 +436,14 @@ export async function loadCadGeometry(
   }
   // 다른 프로젝트를 열어 취소됐으면 형상을 등록하지 않는다
   if (options.signal?.aborted) return 'cancelled'
-  // 다른 프로젝트를 열어 취소됐으면 형상을 등록하지 않는다
-  if (options.signal?.aborted) return 'cancelled'
   if (!loaded) return 'missing'
+  // OCCT가 엔티티를 건너뛰었으면(대개 메모리 부족) 솔리드가 통째로 빠져 뒤 메시 순번이 밀린다.
+  // 저장한 형상 id와 맞지 않으므로 등록하지 않는다(다시 불러오기로 재시도).
+  if ((loaded.untranslated ?? 0) > 0) {
+    showNotice('error', 'cadLoadIncomplete', { fileName })
+    return 'failed'
+  }
   const { model } = loaded
-  const cad = useSceneStore.getState().objects[cadRootId]?.cad
   const indexing = cad ? reloadIndexing(cad, model) : 'source'
   registerModelGeometries(cadRootId, model, indexing)
   if (cad && cadStructureChanged(cad, model, indexing)) {
