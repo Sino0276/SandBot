@@ -9,8 +9,18 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # 네이티브 STEP 변환기의 소스·빌드 폴더와 빌드 스크립트는 앱에 넣지 않는다
+  - '!native{,/**/*}'
+  - '!scripts{,/**/*}'
+  # 변환기 실행 파일은 OS·CPU별로 하나만 extraResources로 넣는다(아래)
+  - '!resources/step-converter{,/**/*}'
 asarUnpack:
   - resources/**
+# 이 OS·CPU용 STEP 변환기(scripts/build-step-converter.mjs가 만든 것). 없으면 앱은 내장 WASM 변환기로 읽는다.
+# 배포 앱에서는 process.resourcesPath/step-converter에 있다(src/main/stepConverter.ts).
+extraResources:
+  - from: resources/step-converter/${platform}-${arch}
+    to: step-converter
 win:
   executableName: sandbot
 nsis:

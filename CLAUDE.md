@@ -6,25 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작이 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, 네이티브 STEP 변환기(시험 단계, 배포 방식 미정)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 ## 확정된 설계 결정
 
-| 항목        | 결정                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 플랫폼      | Electron 데스크톱 앱 · TypeScript · React · Three.js · Monaco 에디터                                                                                                                                                                                                                                                                                                           |
-| 인스펙터    | Unity 방식. 파트에 하드웨어 컴포넌트(DcMotorEx, Servo, 센서 등)를 붙여 속성(설정 이름, 허브/포트, 방향, 런 모드 등)을 편집하고, 동작 로직은 붙어 있는 Java 스크립트로 작성                                                                                                                                                                                                     |
-| CAD         | STEP(.step/.stp)만 지원. occt-import-js(OpenCascade WASM, LGPL-2.1)로 워커에서 읽는다. CAD 프로그램마다 위·앞 축이 달라서(팀이 여러 CAD를 섞어 씀) 파일마다 방향을 고른다. 기본값은 마지막에 고른 방향이고, 처음에는 Y-up(Fusion 360 기본)                                                                                                                                     |
-| 시뮬레이션  | 운동학 수준. 드라이브트레인/메커니즘을 OpMode 코드와 게임패드로 구동하고, 충돌·물리는 단순화                                                                                                                                                                                                                                                                                   |
-| OpMode 실행 | JVM 사이드카 + 가짜 FTC SDK. 팀의 실제 Java OpMode를 수정 없이 실행                                                                                                                                                                                                                                                                                                            |
-| 배포        | 팀의 FtcRobotController 프로젝트 `TeamCode`에 Java 파일을 직접 저장. 빌드/설치는 Android Studio에서 함 (도구 내 ADB 배포, OnBot Java 업로드는 범위 밖)                                                                                                                                                                                                                         |
-| 언어        | UI는 i18n(한국어 기본, 영어). CLAUDE.md·코드 주석·커밋 메시지는 한국어                                                                                                                                                                                                                                                                                                         |
-| 툴체인      | pnpm · electron-vite(빌드) · electron-builder(패키징) · ESLint + Prettier · Vitest                                                                                                                                                                                                                                                                                             |
-| 단위        | 세 층으로 분리. 내부(저장·계산)는 미터·라디안으로 고정. 표시·입력 단위는 사용자 개인 앱 설정(mm·cm·m·in, 각도는 °). 첫 실행 때 묻는다. 생성 Java 코드의 단위는 프로젝트(팀) 설정                                                                                                                                                                                               |
-| 좌표계      | 저장은 FTC 필드 좌표계(원점 필드 중앙 바닥, Z 위). 로봇 좌표계는 X 앞·Y 왼쪽·Z 위, 원점 로봇 중심 바닥. 인스펙터는 Unity처럼 부모 기준 값을 편집하고(최상위의 부모는 필드), 로봇 안 오브젝트에는 로봇 중심 기준 위치를 읽기 전용으로 함께 보여 준다. 이동·회전 핸들 축은 Unity처럼 전역(필드 축)·로컬(오브젝트 자신의 축) 중에서 고른다. STEP 파트의 자기 축은 CAD 파일 축이다 |
-| 씬 뷰 조작  | Unity 씬 뷰와 같다. 우클릭 드래그로 둘러보기, 우클릭+W/A/S/D·Q/E로 비행(Shift 빠르게, 휠로 속도), 가운데 드래그 팬, Alt+왼쪽 궤도, Alt+오른쪽·휠 줌, F 포커스. 도구는 Q 손·W 이동·E 회전, X로 핸들 축 전역/로컬 전환(버튼과 단축키)                                                                                                                                            |
-| 메시 캐시   | STEP 변환 결과를 개인 PC의 앱 데이터 폴더(`userData/mesh-cache`)에 둔다. 키는 STEP 내용·파일 이름·형식 태그의 해시라 파일이 바뀌면 다시 변환한다. 프로젝트 폴더·git에는 넣지 않는다                                                                                                                                                                                            |
-| 프로젝트    | 팀의 FtcRobotController 폴더가 곧 프로젝트다. 도구 데이터는 `sandbot/project.json`에 둔다. STEP은 복사하지 않고 원래 위치를 프로젝트 루트 기준 상대 경로와 절대 경로로 함께 기억한다. 저장은 수동(Ctrl+S)이다                                                                                                                                                                  |
+| 항목        | 결정                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 플랫폼      | Electron 데스크톱 앱 · TypeScript · React · Three.js · Monaco 에디터                                                                                                                                                                                                                                                                                                                                 |
+| 인스펙터    | Unity 방식. 파트에 하드웨어 컴포넌트(DcMotorEx, Servo, 센서 등)를 붙여 속성(설정 이름, 허브/포트, 방향, 런 모드 등)을 편집하고, 동작 로직은 붙어 있는 Java 스크립트로 작성                                                                                                                                                                                                                           |
+| CAD         | STEP(.step/.stp)만 지원. occt-import-js(OpenCascade WASM, LGPL-2.1)로 워커에서 읽는다. 같은 C++ 코드를 네이티브로 빌드한 변환기(`native/step-converter`)가 이 PC에서 실행되면 메인 프로세스가 그것으로 변환한다(WASM의 2 GB 메모리 한도가 없음). CAD 프로그램마다 위·앞 축이 달라서(팀이 여러 CAD를 섞어 씀) 파일마다 방향을 고른다. 기본값은 마지막에 고른 방향이고, 처음에는 Y-up(Fusion 360 기본) |
+| 시뮬레이션  | 운동학 수준. 드라이브트레인/메커니즘을 OpMode 코드와 게임패드로 구동하고, 충돌·물리는 단순화                                                                                                                                                                                                                                                                                                         |
+| OpMode 실행 | JVM 사이드카 + 가짜 FTC SDK. 팀의 실제 Java OpMode를 수정 없이 실행                                                                                                                                                                                                                                                                                                                                  |
+| 배포        | 팀의 FtcRobotController 프로젝트 `TeamCode`에 Java 파일을 직접 저장. 빌드/설치는 Android Studio에서 함 (도구 내 ADB 배포, OnBot Java 업로드는 범위 밖)                                                                                                                                                                                                                                               |
+| 언어        | UI는 i18n(한국어 기본, 영어). CLAUDE.md·코드 주석·커밋 메시지는 한국어                                                                                                                                                                                                                                                                                                                               |
+| 툴체인      | pnpm · electron-vite(빌드) · electron-builder(패키징) · ESLint + Prettier · Vitest                                                                                                                                                                                                                                                                                                                   |
+| 단위        | 세 층으로 분리. 내부(저장·계산)는 미터·라디안으로 고정. 표시·입력 단위는 사용자 개인 앱 설정(mm·cm·m·in, 각도는 °). 첫 실행 때 묻는다. 생성 Java 코드의 단위는 프로젝트(팀) 설정                                                                                                                                                                                                                     |
+| 좌표계      | 저장은 FTC 필드 좌표계(원점 필드 중앙 바닥, Z 위). 로봇 좌표계는 X 앞·Y 왼쪽·Z 위, 원점 로봇 중심 바닥. 인스펙터는 Unity처럼 부모 기준 값을 편집하고(최상위의 부모는 필드), 로봇 안 오브젝트에는 로봇 중심 기준 위치를 읽기 전용으로 함께 보여 준다. 이동·회전 핸들 축은 Unity처럼 전역(필드 축)·로컬(오브젝트 자신의 축) 중에서 고른다. STEP 파트의 자기 축은 CAD 파일 축이다                       |
+| 씬 뷰 조작  | Unity 씬 뷰와 같다. 우클릭 드래그로 둘러보기, 우클릭+W/A/S/D·Q/E로 비행(Shift 빠르게, 휠로 속도), 가운데 드래그 팬, Alt+왼쪽 궤도, Alt+오른쪽·휠 줌, F 포커스. 도구는 Q 손·W 이동·E 회전, X로 핸들 축 전역/로컬 전환(버튼과 단축키)                                                                                                                                                                  |
+| 메시 캐시   | STEP 변환 결과를 개인 PC의 앱 데이터 폴더(`userData/mesh-cache`)에 둔다. 키는 STEP 내용·파일 이름·형식 태그의 해시라 파일이 바뀌면 다시 변환한다. 프로젝트 폴더·git에는 넣지 않는다                                                                                                                                                                                                                  |
+| 프로젝트    | 팀의 FtcRobotController 폴더가 곧 프로젝트다. 도구 데이터는 `sandbot/project.json`에 둔다. STEP은 복사하지 않고 원래 위치를 프로젝트 루트 기준 상대 경로와 절대 경로로 함께 기억한다. 저장은 수동(Ctrl+S)이다                                                                                                                                                                                        |
 
 ## 아키텍처
 
@@ -51,7 +51,8 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **로봇 코드의 원본은 `TeamCode`의 Java 파일이다.** 도구는 스크립트의 별도 사본을 두지 않고, 같은 파일을 편집·실행·저장한다.
 - **생성 코드와 사용자 코드를 분리한다.** 인스펙터 속성에서 만들어지는 코드(hardwareMap 매핑 등)는 다시 생성해도 사용자가 작성한 스크립트를 덮어쓰지 않아야 한다.
 - **가짜 FTC SDK는 실제 SDK의 API 표면을 그대로 따른다.** 패키지·클래스·메서드 시그니처(`com.qualcomm.robotcore.hardware.*`, `com.qualcomm.robotcore.eventloop.opmode.*` 등)가 같아야 한다. 같은 소스가 Android Studio(실제 SDK)와 사이드카(가짜 SDK) 양쪽에서 수정 없이 컴파일되어야 한다.
-- **STEP 파싱은 UI 스레드에서 하지 않는다.** OCCT WASM은 무거우므로 워커에서 돌리고 결과 메시만 넘긴다.
+- **STEP 파싱은 UI 스레드에서 하지 않는다.** OCCT WASM은 무거우므로 워커에서 돌리고 결과 메시만 넘긴다. 네이티브 변환기는 별도 프로세스다.
+- **네이티브 STEP 변환기는 렌더러 WASM과 같은 소스로 빌드한다.** occt-import-js와 OCCT의 버전·커밋은 `native/step-converter/version.json`에 있고, 빌드 스크립트·앱(`--version` 확인)·테스트가 이 파일을 쓴다. occt-import-js를 올리면 version.json도 맞춰 올린다(테스트가 확인한다). 소스(`occt-import-js/src`, OCCT)는 고치지 않는다. 그래야 노드 계층·메시 순서가 WASM과 같다.
 - **UI 문자열을 하드코딩하지 않는다.** 모든 문자열은 i18n 리소스(ko 기본, en)를 거친다.
 - **단위 변환은 경계에서만 한다.** 씬 파일·씬 그래프·시뮬레이터 등 내부 값은 항상 미터·라디안이다. 변환은 세 곳에서만 일어난다.
   - STEP 임포트: 파일에 선언된 단위에서 미터로 변환
@@ -62,7 +63,7 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **회전은 X(롤)·Y(피치)·Z(요) 라디안이고, 적용 순서는 Three.js Euler `'ZYX'`다.** 렌더링(`rotation={[rx, ry, rz, 'ZYX']}`)과 계산이 같은 순서를 써야 한다.
 - **Z-up은 `scene/coordinates.ts`가 `Object3D.DEFAULT_UP`을 바꿔서 적용한다.** 이 모듈은 `main.tsx`에서 가장 먼저 import해야 한다.
 - **최상위 로봇은 바닥 평면에만 있다(높이·롤·피치 0).** `constrainTransform`이 강제하고, 핸들과 인스펙터도 해당 축을 막는다.
-- **CAD 메시 형상 id는 `cadGeometryId(CAD 루트 id, 메시 인덱스)`이고 프로젝트 파일에 저장된다.** 프로젝트를 열면 STEP을 다시 읽어 같은 id로 등록한다. 따라서 `convertOcctResult`가 메시를 나열하는 순서를 바꾸면 기존 프로젝트의 파트와 형상 연결이 깨진다. `convertOcctResult`의 출력이나 occt-import-js 버전을 바꾸면 메시 캐시 형식 태그(`MESH_CACHE_TAG`)도 올린다.
+- **CAD 메시 형상 id는 `cadGeometryId(CAD 루트 id, 메시 순번)`이고 프로젝트 파일에 저장된다.** 프로젝트를 열면 STEP을 다시 읽어 같은 id로 등록한다. 새로 불러온 CAD(`cad.meshIndexing: 'source'`, `PROJECT_VERSION` 3)의 순번은 occt-import-js 결과의 원래 메시 순번(`ImportedMesh.sourceIndex`)이라, 삼각형을 만들지 못해 빠진 메시가 있어도 다른 파트의 id가 밀리지 않는다. 예전 프로젝트(meshIndexing 없음)는 빈 메시를 빼고 다시 매긴 순번이고, 저장한 메시 수가 지금 전체 수와 같으면 두 순번이 같다(`reloadIndexing`). `convertOcctResult`가 메시를 나열하는 순서를 바꾸면 기존 프로젝트의 파트와 형상 연결이 깨진다. `convertOcctResult`의 출력이나 occt-import-js 버전을 바꾸면 메시 캐시 형식 태그(`MESH_CACHE_TAG`)도 올린다.
 - **씬 문서는 바꿀 때마다 새 객체를 만든다(불변).** 실행 취소(`editor/history.ts`)가 바뀌기 전 `objects`를 그대로 스냅샷으로 쌓기 때문이다. 형상(`geometryRegistry`) 해제도 기록에서 쓰지 않게 된 것만 history가 한다. sceneStore에서 직접 해제하지 않는다.
 - **프로젝트 파일 형식을 바꾸면 `PROJECT_VERSION`을 올리고 이전 버전을 읽는 경로를 남긴다.** `parseProject`가 형식을 검증한다. 더 새 버전의 파일은 열지 않는다.
 - **TeamCode에는 도구가 만든 파일만 쓰고 지운다.** 생성 파일은 앞부분에 `@sandbot-generated <내용 해시>` 표식을 넣는다(`stampGenerated`). 메인 프로세스는 표식과 해시가 맞는, 도구가 쓴 그대로인 파일만 덮어쓰거나 지운다. 팀이 고쳤거나 복사·이름 변경한 생성 파일(해시 불일치)과 사람이 만든 파일은 건너뛰고 알린다. 경로는 `src/shared/generatedFiles.ts`의 허용 규칙(생성 패키지 폴더의 `.java`, `res/xml`의 `sandbot_*.xml`)으로만 받는다.
@@ -77,6 +78,7 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - 사이드카 IPC 방식(stdio JSON-RPC 또는 WebSocket)과 시뮬레이션 동기화 방식(lockstep 또는 실시간)
 - JDK를 앱에 번들할지 여부
 - 지원할 FTC 라이브러리 범위(Road Runner, Pedro Pathing 등)와 시즌별 필드 모델
+- 네이티브 STEP 변환기 배포 방식: 실행 파일을 어디서 OS별로 빌드해 앱에 넣을지(CI·릴리스, git에 넣을지), macOS 서명, Linux는 오래된 glibc 환경에서 빌드할지. 지금은 개발자가 `pnpm build:step-converter`로 직접 빌드한다.
 
 ## 개발 명령어
 
@@ -92,6 +94,7 @@ pnpm test -t "테스트 이름"        # 이름으로 필터
 pnpm build                   # typecheck 후 out/에 빌드
 pnpm start                   # 빌드 결과 미리보기 실행
 pnpm build:win | build:mac | build:linux   # electron-builder로 설치 파일 생성 (dist/)
+pnpm build:step-converter    # 네이티브 STEP 변환기 빌드(git·CMake·C++ 컴파일러 필요, OCCT 전체 컴파일로 오래 걸림)
 ```
 
 root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm start --noSandbox`로 실행해야 한다.
@@ -104,12 +107,19 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - 렌더러 UI는 `src/renderer/src/editor/`에 있다. `EditorLayout`이 툴바와 react-resizable-panels(v4: `Group`/`Panel`/`Separator`)의 3패널을 구성한다. 각 패널(`editor/panels/`)은 `PanelFrame`으로 헤더와 본문을 감싼다.
 - 씬 상태는 zustand 스토어 두 개로 나뉜다. `scene/sceneStore.ts`는 문서 데이터(오브젝트 트리)를, `editor/editorStore.ts`는 편집기 상태(선택, 도구, 핸들 축 전역/로컬, 카메라 포커스 요청)를 맡는다. 스토어에는 직렬화할 수 있는 값만 둔다. CAD 메시 형상(`BufferGeometry`)은 `scene/geometryRegistry.ts`에 id로 보관하고, 오브젝트의 `visual.geometryId`가 그것을 가리킨다.
 - STEP 임포트 흐름은 다음 순서다.
-  - `cad/stepWorker.ts`(웹 워커)가 occt-import-js로 미터 단위로 읽고 `convertOcctResult`로 계층과 피벗 중심 메시로 바꾼다.
+  - `cad/importStep.ts`의 `loadStepModel`이 메시 캐시를 먼저 찾는다. 없으면 네이티브 변환기(쓸 수 있을 때) 또는 WASM으로 변환한다.
+  - `cad/stepWorker.ts`(웹 워커)가 WASM이면 occt-import-js로 미터 단위로 읽고, 네이티브면 변환기 출력(SBSTEP01, `cad/nativeResult.ts`)을 읽어, 둘 다 `convertOcctResult`로 계층과 피벗 중심 메시로 바꾼다.
   - `cad/importStep.ts`(메인 스레드)가 `buildSceneObjects`로 오브젝트를 만들고, 형상을 등록해 스토어에 넣는다.
   - 오브젝트 구조는 로봇 → CAD 루트(`cad` 메타데이터, transform이 곧 정렬) → 어셈블리·파트다.
   - 각 노드의 피벗은 CAD 경계 상자의 중심이다. CAD 루트 아래 노드는 회전 없이 위치만 가진다.
   - 정렬 계산은 `cad/alignment.ts`의 `cadRootTransform`이 한다. CAD 위축을 로봇 +Z, 앞축을 +X로 돌리고, 바닥 면 중심을 로봇 원점에 둔다.
 - occt-import-js는 어셈블리 계층을 **최상위 컴포넌트 한 단계까지만** 노드로 준다. 그 아래 서브어셈블리는 솔리드 목록으로 평탄화되고, 이름 없는 솔리드는 `노드 이름 + 순번`이 된다. 더 깊은 계층이 필요하면 OCCT XCAF를 직접 순회하는 다른 빌드가 필요하다.
+- 네이티브 STEP 변환기(`native/step-converter`, 메인 쪽은 `src/main/stepConverter.ts`):
+  - occt-import-js 0.0.23의 C++ 가져오기 코드와 OCCT 7.6.1을 고치지 않고 빌드하고, `src/main.cpp`가 같은 순서로 결과를 쓴다(SBSTEP01: 메시 배열들 + 끝의 JSON). GCC 13은 `<cstdint>` 누락이라 C++ 파일만 `-include cstdint`로 빌드한다. 빌드는 `scripts/build-step-converter.mjs`가 태그를 얕게 받아 커밋을 확인한 뒤 CMake로 하고, 결과를 `resources/step-converter/<platform>-<arch>/`에 둔다(gitignore). 배포 앱에는 electron-builder `extraResources`로 그 OS용 하나만 들어간다.
+  - 앱은 처음 쓸 때 `--version`으로 실행되는지·같은 소스인지 확인하고, 아니면 WASM으로 읽는다. 변환은 한 번에 하나씩(대기 중이면 queued), STEP 내용은 캐시 키 해시와 함께 표준 입력으로 흘려보낸다(두 번 읽다 파일이 바뀌어 다른 내용이 그 키로 캐시되지 않게). OCCT 환경 변수(CSF_* 등)는 넘기지 않는다. 출력은 `userData/step-convert/`에 쓰고 읽은 뒤 지운다.
+  - 변환기는 stderr에 `phase`, `progress`, `warning untranslated`, 마지막에 `result <ok|readFailed|outOfMemory|failed>` 줄을 쓴다. 앱은 result 줄로 결과를 판단한다(없으면 비정상 종료). 네이티브 실패(메모리 부족 등) 뒤에는 WASM으로 다시 읽지 않는다(실행 파일이 없거나 실행되지 않을 때만 WASM).
+  - 메모리 한도로 일부 메시가 빠진 WASM 결과와 OCCT가 엔티티를 건너뛴 네이티브 결과는 캐시하지 않는다.
+- 불러오기 진행은 `cad/importStore.ts`가 센다(한 번에 하나, [STEP 불러오기]·드롭·다시 찾기·다시 불러오기를 막음, 창을 닫을 때 확인). 진행 알림은 단계(`importPhase.*`)·진행률·경과 시간·[취소]를 보인다(`noticeStore`의 `startedAt`·`phase`·`cancellable`, 취소 처리기는 스토어 밖). 캐시에 없는 100 MB 넘는 파일은 시작 전에 묻는다(드롭 묶음당 한 번, 네이티브가 없으면 실패할 수 있다고 알림).
 - OCCT WASM 때문에 `index.html` CSP의 script-src에 `'wasm-unsafe-eval'`이 있다. 렌더러 워커는 ES 모듈 형식으로 번들한다(`electron.vite.config.ts`의 `worker.format`). STEP 테스트는 occt-import-js 패키지에 들어 있는 CAx-IF 샘플(`node_modules/occt-import-js/test/testfiles/`)을 쓴다.
 - 단축키(`EditorLayout`):
   - Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기, Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행(입력칸 안에서는 입력칸의 실행 취소).
@@ -120,12 +130,13 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
-  - STEP은 `readStepCached`로 읽는다(STEP 확장자만). 메인 프로세스(`src/main/meshCache.ts`)가 내용을 SHA-256으로 해시해 캐시에 변환 결과가 있으면 그것을, 없으면 파일 내용을 돌려준다. 렌더러(`cad/importStep.ts`의 `loadStepModel`)가 워커로 변환한 뒤 `storeMeshCache`로 저장한다(v8 직렬화, 2 GB를 넘으면 오래 쓰지 않은 것부터 지움). 저장은 형상을 먼저 보여 준 뒤 한다. 캐시에서 읽은 타입 배열은 배열마다 제 크기 버퍼로 복사해 보낸다(contextBridge가 배열마다 바탕 버퍼 전체를 복사하므로). 캐시 값은 `isImportedModel`로 확인하고 쓴다.
+  - STEP은 `readStepCached`로 읽는다(STEP 확장자만). 메인 프로세스(`src/main/meshCache.ts`)가 내용을 SHA-256으로 해시해 캐시에 변환 결과가 있으면 그것을, 없으면 파일 내용을 돌려준다(네이티브 변환기를 쓸 때는 내용 없이 해시만 스트림으로). 파일 크기도 함께 준다. 렌더러(`cad/importStep.ts`의 `loadStepModel`)가 워커로 변환한 뒤 `storeMeshCache`로 저장한다(v8 직렬화, 2 GB를 넘으면 오래 쓰지 않은 것부터 지움). 저장은 형상을 먼저 보여 준 뒤 한다. 캐시에서 읽은 타입 배열은 배열마다 제 크기 버퍼로 복사해 보낸다(contextBridge가 배열마다 바탕 버퍼 전체를 복사하므로). 캐시 값은 `isImportedModel`로 확인하고 쓴다.
 - 프로젝트 흐름은 `project/projectActions.ts`에 있다.
-  - 열기는 `project.json`을 검증(`project/projectFile.ts`)한 뒤 씬을 바꾸고, CAD를 상대 경로 → 절대 경로 순으로 찾아 형상을 등록한다. 못 찾은 CAD는 인스펙터의 [파일 다시 찾기]로 연결한다.
+  - 열기는 `project.json`을 검증(`project/projectFile.ts`)한 뒤 씬을 바꾸고, CAD를 상대 경로 → 절대 경로 순으로 찾는다(`statStepFile`, 내용은 읽지 않음). 고친 경로까지 연 상태(`savedObjects`)로 삼고 실행 취소 기록을 다시 켠 뒤, 바쁨(busy)을 풀고 CAD 형상을 하나씩 읽는다. 그동안에도 편집·저장할 수 있다(형상은 씬 문서를 바꾸지 않는다). 다른 프로젝트를 열면 읽던 것을 취소하고(`cancelAllImports`), 늦게 끝난 결과는 `projectStore.session`으로 버린다.
+  - CAD 형상 상태(`projectStore.cadStatus`: loading·failed·cancelled)를 인스펙터가 보여 주고, 실패·취소면 [다시 불러오기](저장된 경로)를 띄운다. 못 찾은 CAD는 [파일 다시 찾기]로 연결한다. 다시 찾기는 새 파일을 다 읽었을 때만 경로를 바꾼다.
   - 저장할 때 프로젝트가 없으면 폴더를 고르게 한다.
   - 씬 변경을 구독해 dirty를 표시한다(창 제목 `*`). 프로젝트를 여는 동안의 변경과, 프로젝트 없이 임시 씬만 만진 것은 제외한다.
-  - 창을 닫을 때 dirty면 메인 프로세스가 닫기를 막고 렌더러에 묻는다. 렌더러가 i18n 대화상자를 띄운 뒤 `confirmClose`로 닫는다.
+  - 창을 닫을 때 dirty거나 STEP을 불러오는 중이면 메인 프로세스가 닫기를 막고 렌더러에 묻는다. 렌더러가 i18n 대화상자를 띄운 뒤 `confirmClose`로 닫는다.
   - 앱을 시작하면 마지막 프로젝트(`sandbot:lastProject`)를 다시 연다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
 - 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.

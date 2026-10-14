@@ -27,8 +27,14 @@ export type CadSource = {
   // CAD 좌표(미터)의 전체 경계 상자. 노드의 피벗은 이 상자의 중심이다.
   bounds: { min: Vec3; max: Vec3 }
   // 불러왔을 때의 메시 수. 다시 읽은 파일과 다르면 CAD가 바뀐 것이다.
+  // meshIndexing이 'source'면 occt-import-js의 전체 메시 수(빈 메시 포함), 없으면 삼각형이 있는 메시 수.
   meshCount: number
+  // 형상 id(cadGeometryId)의 메시 순번 방식. 'source'는 원래 순번(PROJECT_VERSION 3부터 새로 불러온 CAD).
+  // 없으면 예전 방식(빈 메시를 빼고 다시 매긴 순번)이다.
+  meshIndexing?: MeshIndexing
 }
+
+export type MeshIndexing = 'source' | 'packed'
 
 // 장치를 꽂는 허브. Control Hub(주소 173)와 RS485로 연결한 Expansion Hub.
 export type HubId = 'controlHub' | 'expansionHub'

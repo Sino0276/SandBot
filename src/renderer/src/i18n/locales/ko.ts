@@ -1,7 +1,8 @@
 // 기준 로케일. 키 구조는 여기서 정의하고, 다른 로케일은 같은 구조(Messages)를 따라야 타입 검사를 통과한다.
 const ko = {
   common: {
-    dismiss: '닫기'
+    dismiss: '닫기',
+    cancel: '취소'
   },
   toolbar: {
     language: '언어',
@@ -27,13 +28,36 @@ const ko = {
     save: '저장',
     discard: '저장 안 함',
     overwrite: '덮어쓰기',
-    cancel: '취소'
+    cancel: '취소',
+    importLarge:
+      '{{fileName}}은(는) {{size}}입니다. 처음 불러올 때는 몇 분 걸릴 수 있습니다. 불러올까요?',
+    importLargeMany:
+      '큰 STEP 파일 {{count}}개(모두 {{size}})를 불러옵니다. 처음 불러올 때는 몇 분 걸릴 수 있습니다. 불러올까요?',
+    importLargeWasm:
+      '{{fileName}}은(는) {{size}}입니다. 이 PC에는 빠른 변환기가 없어 내장 변환기로 읽는데, 내장 변환기는 이렇게 큰 파일을 읽지 못하거나 아주 오래 걸릴 수 있습니다. 그래도 불러올까요?',
+    importLargeManyWasm:
+      '큰 STEP 파일 {{count}}개(모두 {{size}})를 불러옵니다. 이 PC에는 빠른 변환기가 없어 내장 변환기로 읽는데, 내장 변환기는 이렇게 큰 파일을 읽지 못하거나 아주 오래 걸릴 수 있습니다. 그래도 불러올까요?',
+    import: '불러오기',
+    closeWhileImporting:
+      'STEP 파일을 불러오는 중입니다. 지금 닫으면 불러오기가 취소됩니다. 닫을까요?',
+    close: '닫기'
   },
   notice: {
     importing: '{{fileName}} 불러오는 중…',
     importReadFailed: '{{fileName}}을(를) STEP 파일로 읽지 못했습니다.',
     importEmpty: '{{fileName}}에 불러올 형상이 없습니다.',
     importFailed: '{{fileName}}을(를) 불러오는 중 오류가 발생했습니다.',
+    importMeshFailed:
+      '{{fileName}}의 형상(삼각형)을 만들지 못했습니다. CAD에서 다시 내보내 보세요.',
+    importOutOfMemory:
+      '{{fileName}}을(를) 불러오다 메모리가 부족했습니다. 다른 프로그램을 닫고 다시 해 보세요. 그래도 안 되면 CAD에서 나사 같은 작은 부품을 빼고 다시 내보내 보세요.',
+    importTooLarge:
+      '{{fileName}}은(는) 내장 변환기로 읽기에 너무 큽니다. CAD(Onshape, Fusion 360 등)에서 나사 같은 작은 부품이나 필요 없는 부분을 빼고 다시 내보내 보세요.',
+    importPartial: '{{fileName}}의 파트 {{count}}개는 형상을 만들지 못해 보이지 않습니다.',
+    importIncomplete:
+      '{{fileName}}의 일부 형상을 변환하지 못해 빠졌을 수 있습니다. CAD에서 다시 내보내 보세요.',
+    cadLoadCancelled:
+      '{{fileName}} 불러오기를 취소했습니다. 인스펙터의 [다시 불러오기]로 다시 불러올 수 있습니다.',
     openingProject: '{{name}} 여는 중…',
     openFailed: '프로젝트를 열지 못했습니다 ({{detail}}).',
     saveFailed: '저장하지 못했습니다 ({{detail}}).',
@@ -51,6 +75,17 @@ const ko = {
     codegenCaseRenamed:
       '생성 파일 이름의 대소문자가 바뀌었습니다({{files}}). Windows·macOS의 git은 이 변경을 기록하지 않으니 커밋할 때 git mv -f로 이름을 바꾸세요.',
     codegenFailed: 'TeamCode에 생성 코드를 쓰지 못했습니다 ({{detail}}).'
+  },
+  // 진행 알림에 덧붙이는 STEP 불러오기 단계
+  importPhase: {
+    checking: '파일 확인 중',
+    queued: '다른 파일이 끝나기를 기다리는 중',
+    read: '파일 읽는 중',
+    transfer: '형상 변환 중',
+    mesh: '삼각형 만드는 중',
+    write: '결과 정리 중',
+    build: '화면에 올리는 중',
+    wasm: '내장 변환기로 읽는 중'
   },
   units: {
     // 툴바·입력칸 옆에 쓰는 기호
@@ -123,7 +158,11 @@ const ko = {
       upAxis: '위쪽 축',
       forwardAxis: '앞쪽 축',
       missing: '파일을 찾을 수 없음',
-      relink: '파일 다시 찾기'
+      loading: '불러오는 중',
+      failed: '형상을 불러오지 못함',
+      cancelled: '불러오기 취소됨',
+      relink: '파일 다시 찾기',
+      reload: '다시 불러오기'
     }
   },
   hardware: {

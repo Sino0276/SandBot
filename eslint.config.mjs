@@ -30,5 +30,12 @@ export default defineConfig(
       'react/no-unknown-property': 'off'
     }
   },
+  {
+    // 빌드 스크립트(Node .mjs)는 타입 표기를 쓸 수 없다
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
   eslintConfigPrettier
 )

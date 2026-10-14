@@ -1,0 +1,13 @@
+{
+  "format": "SBSTEP01",
+  "occtImportJs": {
+    "url": "https://github.com/kovacsv/occt-import-js.git",
+    "tag": "0.0.23",
+    "commit": "c2148e54b456b571238d35cac037d304053d64b2"
+  },
+  "occt": {
+    "url": "https://github.com/Open-Cascade-SAS/OCCT.git",
+    "tag": "V7_6_1",
+    "commit": "d2abb6d844231cb8f29be6894440874a4700e4a5"
+  }
+}

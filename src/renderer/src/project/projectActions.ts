@@ -1,5 +1,14 @@
 import i18n from 'i18next'
-import { fileNameOf, loadCadGeometry } from '../cad/importStep'
+import {
+  confirmLargeImport,
+  fileNameOf,
+  hasNativeConverter,
+  LARGE_STEP_BYTES,
+  loadCadWithProgress,
+  type CadLoadStatus
+} from '../cad/importStep'
+import { cancelAllImports, isImporting, useImportStore } from '../cad/importStore'
+import { isImportedModel, MESH_CACHE_TAG } from '../cad/stepImport'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
@@ -10,7 +19,7 @@ import type { SceneObjects } from '../scene/model'
 import { disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
 import { parseProject, ProjectFileError, serializeProject } from './projectFile'
-import { useProjectStore, type GenerationResult } from './projectStore'
+import { setCadStatus, useProjectStore, type GenerationResult } from './projectStore'
 
 const LAST_PROJECT_KEY = 'sandbot:lastProject'
 
@@ -166,10 +175,15 @@ export async function openProjectFolder(): Promise<void> {
 }
 
 export function openProjectAt(root: string, options: { quiet?: boolean } = {}): Promise<void> {
+  // 이전 프로젝트의 불러오기(새 STEP, CAD 형상 읽기)는 멈춘다. 끝나기를 기다렸다 결과를 버리지 않고 바로 멈춰
+  // 큰 STEP 변환기가 메모리를 계속 쓰지 않게 한다.
+  cancelAllImports()
+  let cads: { id: string; path: string }[] = []
+  let session = 0
   return withBusy(async () => {
     const progress = showNotice('progress', 'openingProject', { name: fileNameOf(root) })
     loading = true
-    // 여는 동안의 변경은 기록하지 않고, 실행 취소도 막는다
+    // 여는 동안(씬 교체, CAD 위치 찾기)의 변경은 기록하지 않고, 실행 취소도 막는다
     suspendHistory()
     let replaced = false
     try {
@@ -183,12 +197,21 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
       useEditorStore.getState().select(null)
-      useProjectStore.setState({ root, name: info.name, missingCad: [], generation: null })
+      session = useProjectStore.getState().session + 1
+      useProjectStore.setState({
+        root,
+        name: info.name,
+        missingCad: [],
+        cadStatus: {},
+        generation: null,
+        session
+      })
       replaceGenerationNotices([])
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
 
-      // CAD 원본은 프로젝트 기준 상대 경로 → 저장 당시 절대 경로 순으로 찾는다
+      // CAD 원본은 프로젝트 기준 상대 경로 → 저장 당시 절대 경로 순으로 찾는다. 여기서는 위치만 찾고(내용은 읽지 않음)
+      // 경로를 고쳐 둔다. 고친 경로는 연 상태(savedObjects)에 들어가므로 변경으로 치지 않는다.
       const missing: string[] = []
       for (const [id, file] of cadFiles) {
         const candidates = [
@@ -197,19 +220,25 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         ].filter((path): path is string => path !== null)
         let found: string | null = null
         for (const path of candidates) {
-          if (await loadCadGeometry(id, path)) {
+          if (await window.api.statStepFile(path)) {
             found = path
             break
           }
         }
-        if (found) useSceneStore.getState().setCadFile(id, found, fileNameOf(found))
-        else missing.push(id)
+        if (found) {
+          useSceneStore.getState().setCadFile(id, found, fileNameOf(found))
+          setCadStatus(id, 'loading')
+          cads.push({ id, path: found })
+        } else {
+          missing.push(id)
+        }
       }
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
       savedObjects = useSceneStore.getState().objects
       setDirty(false)
     } catch (error) {
+      cads = []
       if (options.quiet) {
         localStorage.removeItem(LAST_PROJECT_KEY)
       } else {
@@ -223,32 +252,103 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       if (replaced) clearHistory()
       dismissNotice(progress)
     }
+  }).then(() => {
+    // CAD 형상은 열기가 끝난 뒤 하나씩 읽는다. 큰 STEP은 몇 분 걸리므로 그동안에도 편집·저장할 수 있다
+    // (형상은 씬 문서를 바꾸지 않는다). 다른 프로젝트를 열면 멈춘다.
+    void loadProjectCads(cads, session)
   })
 }
 
+async function loadProjectCads(
+  cads: { id: string; path: string }[],
+  session: number
+): Promise<void> {
+  for (const { id, path } of cads) {
+    if (useProjectStore.getState().session !== session) return
+    const status = await loadCadWithProgress(id, path)
+    if (useProjectStore.getState().session !== session) return
+    applyCadStatus(id, path, status)
+  }
+}
+
+// 형상 읽기 결과를 CAD 상태와 알림에 반영한다
+function applyCadStatus(id: string, path: string, status: CadLoadStatus): void {
+  if (status === 'loaded') {
+    setCadStatus(id, null)
+    removeMissingCad(id)
+  } else if (status === 'missing') {
+    // 위치를 찾은 뒤에 파일이 사라졌다
+    setCadStatus(id, null)
+    const missing = [...new Set([...useProjectStore.getState().missingCad, id])]
+    useProjectStore.setState({ missingCad: missing })
+    replaceProjectNotice('cadMissing', { count: missing.length })
+  } else {
+    setCadStatus(id, status)
+    if (status === 'cancelled')
+      showNotice('warning', 'cadLoadCancelled', { fileName: fileNameOf(path) })
+  }
+}
+
+function removeMissingCad(id: string): void {
+  const missing = useProjectStore.getState().missingCad.filter((other) => other !== id)
+  useProjectStore.setState({ missingCad: missing })
+  replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
+}
+
+// 불러오기를 시작해도 되는지(한 번에 하나, 열기·저장 중이 아닐 때)
+function canStartImport(): boolean {
+  return !isImporting() && !useProjectStore.getState().busy
+}
+
+// 인스펙터의 [다시 불러오기]. 취소했거나 실패한 CAD를 저장된 경로에서 다시 읽는다(파일 선택 없이).
+export async function reloadCad(cadRootId: string): Promise<void> {
+  const cad = useSceneStore.getState().objects[cadRootId]?.cad
+  if (!cad?.absolutePath || !canStartImport()) return
+  const session = useProjectStore.getState().session
+  setCadStatus(cadRootId, 'loading')
+  const status = await loadCadWithProgress(cadRootId, cad.absolutePath)
+  if (useProjectStore.getState().session !== session) return
+  applyCadStatus(cadRootId, cad.absolutePath, status)
+}
+
 // 인스펙터의 [파일 다시 찾기]. 찾지 못한 CAD를 연결하거나, 바뀐 CAD 파일로 바꿔 끼운다.
+// 새 파일을 다 읽었을 때만 경로를 바꾼다. 실패하거나 취소하면 이전 파일과 형상을 그대로 둔다.
 export async function relinkCad(cadRootId: string): Promise<void> {
   const cad = useSceneStore.getState().objects[cadRootId]?.cad
-  if (!cad) return
+  if (!cad || !canStartImport()) return
   const path = await window.api.chooseStepFile(
     i18n.t('project.chooseStepTitle'),
     cad.absolutePath || undefined
   )
-  if (!path) return
+  if (!path || !canStartImport()) return
   const fileName = fileNameOf(path)
-  const progress = showNotice('progress', 'importing', { fileName })
-  try {
-    if (!(await loadCadGeometry(cadRootId, path))) {
-      showNotice('error', 'importReadFailed', { fileName })
-      return
-    }
+  const session = useProjectStore.getState().session
+  // 캐시에 없는 큰 파일은 묻는다(크기는 메인 프로세스가 알려 줌)
+  const lookup = await window.api.readStepCached(
+    path,
+    MESH_CACHE_TAG,
+    !(await hasNativeConverter())
+  )
+  if (!lookup) {
+    showNotice('error', 'importReadFailed', { fileName })
+    return
+  }
+  if (
+    !isImportedModel(lookup.model) &&
+    lookup.size > LARGE_STEP_BYTES &&
+    !(await confirmLargeImport([{ name: fileName, size: lookup.size }]))
+  )
+    return
+  if (useProjectStore.getState().session !== session || !canStartImport()) return
+  const status = await loadCadWithProgress(cadRootId, path, lookup)
+  if (useProjectStore.getState().session !== session) return
+  if (status === 'loaded') {
     // 형상은 새 파일에서 읽었으므로, 실행 취소로 경로만 되돌아가지 않게 기록 전체에 적용한다
     rewriteHistory((objects) => withCadFile(objects, cadRootId, path, fileName))
-    const missing = useProjectStore.getState().missingCad.filter((id) => id !== cadRootId)
-    useProjectStore.setState({ missingCad: missing })
-    replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
-  } finally {
-    dismissNotice(progress)
+    setCadStatus(cadRootId, null)
+    removeMissingCad(cadRootId)
+  } else if (status === 'missing') {
+    showNotice('error', 'importReadFailed', { fileName })
   }
 }
 
@@ -273,19 +373,36 @@ export function initProjectSession(): void {
   useProjectStore.subscribe(updateTitle)
   updateTitle()
 
-  // 창을 닫을 때 확인이 필요한지(저장 안 한 변경, 또는 아직 확정하지 않은 입력칸 초안)
+  // 창을 닫을 때 확인이 필요한지(저장 안 한 변경, 아직 확정하지 않은 입력칸 초안, 진행 중인 STEP 불러오기)
   let needsConfirm = false
-  useProjectStore.subscribe(({ dirty, pendingEdit }) => {
-    if (needsConfirm === (dirty || pendingEdit)) return
-    needsConfirm = dirty || pendingEdit
+  const updateCloseGuard = (): void => {
+    const { dirty, pendingEdit } = useProjectStore.getState()
+    const next = dirty || pendingEdit || isImporting()
+    if (needsConfirm === next) return
+    needsConfirm = next
     window.api.setDirty(needsConfirm)
-  })
+  }
+  useProjectStore.subscribe(updateCloseGuard)
+  useImportStore.subscribe(updateCloseGuard)
 
   window.api.onCloseRequested(async () => {
     // 입력 중인 초안을 먼저 확정해 변경으로 반영한 뒤 묻는다
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     await new Promise((resolve) => setTimeout(resolve, 0))
-    if (await confirmDiscardChanges()) window.api.confirmClose()
+    if (isImporting()) {
+      const answer = await showDialog({
+        message: i18n.t('dialog.closeWhileImporting'),
+        buttons: [
+          { id: 'close', label: i18n.t('dialog.close') },
+          { id: 'cancel', label: i18n.t('dialog.cancel'), primary: true }
+        ],
+        cancelId: 'cancel'
+      })
+      if (answer !== 'close') return
+    }
+    if (!(await confirmDiscardChanges())) return
+    cancelAllImports()
+    window.api.confirmClose()
   })
 
   const last = localStorage.getItem(LAST_PROJECT_KEY)

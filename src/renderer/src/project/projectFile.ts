@@ -11,8 +11,10 @@ import type {
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
 export const PROJECT_FORMAT = 'sandbot-project'
-// 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가. 1은 그대로 읽힌다.
-export const PROJECT_VERSION = 2
+// 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가,
+// 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수).
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식).
+export const PROJECT_VERSION = 3
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -174,6 +176,9 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
       !isVec3(cad.bounds.min) ||
       !isVec3(cad.bounds.max) ||
       !isFiniteNumber(cad.meshCount) ||
+      (cad.meshIndexing !== undefined &&
+        cad.meshIndexing !== 'source' &&
+        cad.meshIndexing !== 'packed') ||
       !isRecord(cad.file) ||
       (cad.file.relativePath !== null && typeof cad.file.relativePath !== 'string') ||
       typeof cad.file.absolutePath !== 'string'
@@ -186,7 +191,10 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
       upAxis: cad.upAxis as CadSource['upAxis'],
       forwardAxis: cad.forwardAxis as CadSource['forwardAxis'],
       bounds: { min: cad.bounds.min, max: cad.bounds.max },
-      meshCount: cad.meshCount
+      meshCount: cad.meshCount,
+      ...(cad.meshIndexing !== undefined
+        ? { meshIndexing: cad.meshIndexing as CadSource['meshIndexing'] }
+        : {})
     }
     object.file = { relativePath: cad.file.relativePath, absolutePath: cad.file.absolutePath }
   }

@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { guardUnsavedChanges, registerProjectIpc } from './project'
 import { registerMeshCacheIpc } from './meshCache'
+import { registerStepConverterIpc } from './stepConverter'
 import { registerTeamCodeIpc } from './teamCode'
 
 function createWindow(): void {
@@ -64,6 +65,7 @@ app.whenReady().then(() => {
   registerProjectIpc()
   registerTeamCodeIpc()
   registerMeshCacheIpc()
+  registerStepConverterIpc()
   createWindow()
 
   app.on('activate', function () {

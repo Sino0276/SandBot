@@ -2,7 +2,8 @@ import type { Messages } from './ko'
 
 const en: Messages = {
   common: {
-    dismiss: 'Dismiss'
+    dismiss: 'Dismiss',
+    cancel: 'Cancel'
   },
   toolbar: {
     language: 'Language',
@@ -30,13 +31,36 @@ const en: Messages = {
     save: 'Save',
     discard: "Don't save",
     overwrite: 'Overwrite',
-    cancel: 'Cancel'
+    cancel: 'Cancel',
+    importLarge: '{{fileName}} is {{size}}. The first import can take a few minutes. Import it?',
+    importLargeMany:
+      'You are importing {{count}} large STEP files ({{size}} in total). The first import can take a few minutes. Import them?',
+    importLargeWasm:
+      '{{fileName}} is {{size}}. This PC has no fast converter, so SandBot uses its built-in reader, which may fail or take a very long time on a file this large. Import it anyway?',
+    importLargeManyWasm:
+      'You are importing {{count}} large STEP files ({{size}} in total). This PC has no fast converter, so SandBot uses its built-in reader, which may fail or take a very long time on files this large. Import them anyway?',
+    import: 'Import',
+    closeWhileImporting:
+      'A STEP file is still being imported. Closing now cancels the import. Close anyway?',
+    close: 'Close'
   },
   notice: {
     importing: 'Importing {{fileName}}…',
     importReadFailed: 'Could not read {{fileName}} as a STEP file.',
     importEmpty: '{{fileName}} contains no geometry to import.',
     importFailed: 'Something went wrong while importing {{fileName}}.',
+    importMeshFailed:
+      'Could not create the geometry (triangles) of {{fileName}}. Try exporting it again from your CAD program.',
+    importOutOfMemory:
+      'Ran out of memory while importing {{fileName}}. Close other programs and try again. If it still fails, remove small parts such as screws in your CAD program and export again.',
+    importTooLarge:
+      '{{fileName}} is too large for the built-in reader. In your CAD program (Onshape, Fusion 360, …), remove small parts such as screws or anything you do not need, and export again.',
+    importPartial:
+      '{{count}} part(s) of {{fileName}} could not be turned into geometry and are not shown.',
+    importIncomplete:
+      'Some shapes of {{fileName}} could not be converted and may be missing. Try exporting it again from your CAD program.',
+    cadLoadCancelled:
+      'Stopped importing {{fileName}}. Use [Reload] in the inspector to import it again.',
     openingProject: 'Opening {{name}}…',
     openFailed: 'Could not open the project ({{detail}}).',
     saveFailed: 'Could not save ({{detail}}).',
@@ -55,6 +79,16 @@ const en: Messages = {
     codegenCaseRenamed:
       'Only the letter case of generated file names changed ({{files}}). Git on Windows and macOS does not record this, so rename them with git mv -f when you commit.',
     codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).'
+  },
+  importPhase: {
+    checking: 'checking the file',
+    queued: 'waiting for another file to finish',
+    read: 'reading the file',
+    transfer: 'converting shapes',
+    mesh: 'creating triangles',
+    write: 'finishing up',
+    build: 'adding to the scene',
+    wasm: 'reading with the built-in reader'
   },
   units: {
     symbols: {
@@ -126,7 +160,11 @@ const en: Messages = {
       upAxis: 'Up axis',
       forwardAxis: 'Forward axis',
       missing: 'File not found',
-      relink: 'Locate file'
+      loading: 'Loading',
+      failed: 'Could not load the geometry',
+      cancelled: 'Import stopped',
+      relink: 'Locate file',
+      reload: 'Reload'
     }
   },
   hardware: {

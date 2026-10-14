@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
-import { importStepFile, isStepFileName } from '../cad/importStep'
+import { importStepFiles, isStepFileName } from '../cad/importStep'
+import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
@@ -101,10 +102,14 @@ function useEditorShortcuts(): void {
     const onDragOver = (event: DragEvent): void => event.preventDefault()
     const onDrop = (event: DragEvent): void => {
       event.preventDefault()
+      // 대화상자가 떠 있거나 다른 STEP을 불러오는 중이면(큰 STEP은 메모리를 많이 쓴다) 받지 않는다.
+      // [STEP 불러오기] 버튼도 같은 조건으로 막힌다.
+      if (useDialogStore.getState().request || isImporting() || useProjectStore.getState().busy)
+        return
       const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
         isStepFileName(file.name)
       )
-      for (const file of files) void importStepFile(file)
+      void importStepFiles(files)
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('dragover', onDragOver)

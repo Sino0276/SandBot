@@ -1,5 +1,6 @@
-import { createHash } from 'crypto'
+import { createHash, type Hash } from 'crypto'
 import { app, ipcMain } from 'electron'
+import { createReadStream } from 'fs'
 import { mkdir, readdir, readFile, rename, stat, unlink, utimes, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { deserialize, serialize } from 'v8'
@@ -13,7 +14,7 @@ const CACHE_DIR = 'mesh-cache'
 // 이 크기를 넘으면 오래 쓰지 않은 캐시부터 지운다
 export const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024
 const KEY_PATTERN = /^[0-9a-f]{64}$/
-const TAG_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+export const TAG_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
 
 export function isStepPath(path: string): boolean {
   return /\.(step|stp)$/i.test(path)
@@ -23,39 +24,54 @@ function cacheFile(dir: string, key: string): string {
   return join(dir, `${key}.bin`)
 }
 
+// 캐시 키 해시. 이 뒤에 STEP 내용을 넣고 hex로 끝낸다(cacheKey와 같은 값).
+export function cacheKeyHash(fileName: string, tag: string): Hash {
+  return createHash('sha256').update(tag).update('\0').update(fileName).update('\0')
+}
+
 export function cacheKey(bytes: Uint8Array, fileName: string, tag: string): string {
-  return createHash('sha256')
-    .update(tag)
-    .update('\0')
-    .update(fileName)
-    .update('\0')
-    .update(bytes)
-    .digest('hex')
+  return cacheKeyHash(fileName, tag).update(bytes).digest('hex')
+}
+
+// 파일을 메모리에 다 올리지 않고 캐시 키를 계산한다(큰 STEP, 2 GiB 넘는 파일)
+async function streamCacheKey(path: string, tag: string): Promise<string> {
+  const hash = cacheKeyHash(basename(path), tag)
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+  return hash.digest('hex')
 }
 
 // STEP을 읽고 캐시를 찾는다. 파일이 없으면 null. 캐시가 있으면 변환 결과를, 없으면 파일 내용을 돌려준다.
+// includeBytes가 false면 캐시가 없어도 내용을 돌려주지 않는다(네이티브 변환기가 파일을 직접 읽는다).
 export async function readStepWithCache(
   dir: string,
   path: string,
-  tag: string
+  tag: string,
+  includeBytes = true
 ): Promise<StepReadResult | null> {
   if (!isStepPath(path)) throw new Error(`not a STEP file: ${path}`)
   if (!TAG_PATTERN.test(tag)) throw new Error(`invalid cache tag: ${tag}`)
-  let bytes: Buffer
+  let bytes: Buffer | null = null
+  let key: string
+  let size: number
   try {
-    bytes = await readFile(path)
+    size = (await stat(path)).size
+    if (includeBytes) {
+      bytes = await readFile(path)
+      key = cacheKey(bytes, basename(path), tag)
+    } else {
+      key = await streamCacheKey(path, tag)
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
-  const key = cacheKey(bytes, basename(path), tag)
   const file = cacheFile(dir, key)
   try {
     const model = ownBuffers(deserialize(await readFile(file)))
     // 최근에 쓴 캐시로 표시한다(용량을 넘으면 오래된 것부터 지운다)
     const now = new Date()
     await utimes(file, now, now).catch(() => undefined)
-    return { key, model, bytes: null }
+    return { key, model, bytes: null, size }
   } catch (error) {
     // 없거나 깨진 캐시는 다시 변환한다
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -63,7 +79,8 @@ export async function readStepWithCache(
     return {
       key,
       model: null,
-      bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      bytes: bytes ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null,
+      size
     }
   }
 }
@@ -140,9 +157,18 @@ export async function pruneCache(dir: string, maxBytes: number): Promise<void> {
 
 export function registerMeshCacheIpc(): void {
   const dir = join(app.getPath('userData'), CACHE_DIR)
-  ipcMain.handle(IPC.readStepCached, (_event, path: string, tag: string) =>
-    readStepWithCache(dir, path, tag)
+  ipcMain.handle(IPC.readStepCached, (_event, path: string, tag: string, includeBytes: unknown) =>
+    readStepWithCache(dir, path, tag, includeBytes !== false)
   )
+  ipcMain.handle(IPC.statStepFile, async (_event, path: unknown) => {
+    if (typeof path !== 'string' || !isStepPath(path)) return null
+    try {
+      const info = await stat(path)
+      return info.isFile() ? { size: info.size } : null
+    } catch {
+      return null
+    }
+  })
   ipcMain.handle(IPC.storeMeshCache, (_event, key: string, model: unknown) =>
     storeMeshCache(dir, key, model)
   )

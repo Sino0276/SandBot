@@ -8,8 +8,9 @@ import {
   type CadAlignment
 } from '../cad/alignment'
 import { saveAlignmentPreference } from '../cad/alignmentPreference'
-import { relinkCad } from '../project/projectActions'
-import { useProjectStore } from '../project/projectStore'
+import { useImportStore } from '../cad/importStore'
+import { relinkCad, reloadCad } from '../project/projectActions'
+import { useProjectStore, type CadGeometryStatus } from '../project/projectStore'
 import type { AxisDirection, SceneObject } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 
@@ -18,11 +19,22 @@ const PRESET_LABEL_KEYS = {
   zUp: 'inspector.cad.presetZUp'
 } as const satisfies Record<AlignmentPreset, string>
 
+const STATUS_LABEL_KEYS = {
+  loading: 'inspector.cad.loading',
+  failed: 'inspector.cad.failed',
+  cancelled: 'inspector.cad.cancelled'
+} as const satisfies Record<CadGeometryStatus, string>
+
 // CAD 루트의 방향 맞춤. 프로그램마다 위·앞 축이 달라서 파일마다 고른다.
 function CadAlignmentSection({ cadObject }: { cadObject: SceneObject }): React.JSX.Element | null {
   const { t } = useTranslation()
   const setCadAlignment = useSceneStore((state) => state.setCadAlignment)
   const missing = useProjectStore((state) => state.missingCad.includes(cadObject.id))
+  const status = useProjectStore((state) => state.cadStatus[cadObject.id])
+  // 불러오기는 한 번에 하나(큰 STEP은 메모리를 많이 쓴다)
+  const importing = useImportStore((state) => state.running > 0)
+  const busy = useProjectStore((state) => state.busy)
+  const blocked = importing || busy
   const cad = cadObject.cad
   if (!cad) return null
 
@@ -57,7 +69,27 @@ function CadAlignmentSection({ cadObject }: { cadObject: SceneObject }): React.J
           <bdi dir="ltr">{cad.absolutePath || cad.fileName}</bdi>
         </span>
         {missing && <span className="cad-file-missing">{t('inspector.cad.missing')}</span>}
-        <button type="button" className="panel-button" onClick={() => void relinkCad(cadObject.id)}>
+        {!missing && status && (
+          <span className={status === 'loading' ? 'cad-file-status' : 'cad-file-missing'}>
+            {t(STATUS_LABEL_KEYS[status])}
+          </span>
+        )}
+        {(status === 'failed' || status === 'cancelled') && (
+          <button
+            type="button"
+            className="panel-button"
+            disabled={blocked}
+            onClick={() => void reloadCad(cadObject.id)}
+          >
+            {t('inspector.cad.reload')}
+          </button>
+        )}
+        <button
+          type="button"
+          className="panel-button"
+          disabled={blocked}
+          onClick={() => void relinkCad(cadObject.id)}
+        >
           {t('inspector.cad.relink')}
         </button>
       </div>
