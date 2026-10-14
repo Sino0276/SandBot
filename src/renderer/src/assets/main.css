@@ -259,6 +259,24 @@ body {
   gap: 4px;
 }
 
+.robot-center {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.robot-center-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* 위치·회전 입력칸과 열을 맞춘다(.vector-row의 이름 칸 52px + 간격 6px) */
+.robot-center .vector-row-fields {
+  margin-left: 58px;
+}
+
 .number-field {
   display: flex;
   align-items: center;
@@ -314,6 +332,22 @@ body {
 .number-field input:disabled {
   color: var(--color-text-muted);
 }
+.number-field.is-readonly {
+  background: none;
+  border-style: dashed;
+}
+.number-field output {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
 
 .panel-button {
   height: 20px;
@@ -353,6 +387,22 @@ body {
 
 .status-banner.is-warning {
   background: #6b5418;
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.notice-phase {
+  opacity: 0.8;
+}
+
+.notice-elapsed {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .status-dismiss {
@@ -470,6 +520,12 @@ body {
 .cad-file-missing {
   flex: none;
   color: #ff8a8a;
+  font-size: 11px;
+}
+
+.cad-file-status {
+  flex: none;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 
@@ -739,4 +795,50 @@ body {
 .hw-file-state.is-skipped,
 .hw-file-state.is-modified {
   color: #e0b341;
+}
+
+.tool-buttons {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.tool-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  color: var(--color-text-muted);
+  background: var(--color-panel);
+  border: none;
+  cursor: pointer;
+}
+
+.tool-button + .tool-button {
+  border-left: 1px solid var(--color-border);
+}
+
+.tool-button:hover {
+  color: var(--color-text);
+}
+
+.tool-button.is-active {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.fly-hud {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  padding: 3px 10px;
+  color: var(--color-text);
+  background: rgb(0 0 0 / 55%);
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  transform: translateX(-50%);
 }

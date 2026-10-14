@@ -9,6 +9,9 @@ import {
   buildSceneObjects,
   cadGeometryId,
   convertOcctResult,
+  droppedMeshCount,
+  emptyResultReason,
+  meshGeometryIds,
   type ImportedModel
 } from './stepImport'
 
@@ -78,6 +81,56 @@ describe('convertOcctResult', () => {
   })
 })
 
+describe('삼각형을 만들지 못한 메시', () => {
+  const noTriangles = (source: OcctResult['meshes'][number]): OcctResult['meshes'][number] => ({
+    ...source,
+    attributes: { position: { array: [] } },
+    index: { array: [] }
+  })
+
+  it('빠진 메시가 있어도 다른 파트의 형상 id는 원래 순번이라 밀리지 않는다', () => {
+    const partial: OcctResult = {
+      ...synthetic,
+      meshes: [synthetic.meshes[0], noTriangles(synthetic.meshes[1]), synthetic.meshes[2]]
+    }
+    const model = convertOcctResult(partial, 'robot.step')!
+    expect(model.meshes.map((m) => m.sourceIndex)).toEqual([0, 2])
+    expect(model.sourceMeshCount).toBe(3)
+    expect(droppedMeshCount(model)).toBe(1)
+    // 하나만 남은 WHEEL_ASM 메시는 노드 자체가 파트가 된다
+    expect(model.root.children.map((c) => c.name)).toEqual(['PLATE', 'WHEEL_ASM'])
+
+    const { objects, cadRootId } = buildSceneObjects(model, {
+      fileName: 'robot.step',
+      absolutePath: '/cad/robot.step',
+      alignment: ALIGNMENT_PRESETS.zUp,
+      createId: counterIds()
+    })
+    const ids = Object.values(objects).flatMap((o) =>
+      o.visual?.type === 'mesh' ? [o.visual.geometryId] : []
+    )
+    expect(ids).toEqual([cadGeometryId(cadRootId, 0), cadGeometryId(cadRootId, 2)])
+    expect(objects[cadRootId].cad).toMatchObject({ meshCount: 3, meshIndexing: 'source' })
+
+    // 예전 프로젝트(packed)는 빈 메시를 빼고 다시 매긴 순번으로 등록한다
+    expect(meshGeometryIds('c', model, 'source')).toEqual(['c:0', 'c:2'])
+    expect(meshGeometryIds('c', model, 'packed')).toEqual(['c:0', 'c:1'])
+  })
+
+  it('모델을 만들지 못한 이유: 메시가 없으면 empty, 모두 삼각형이 없으면 meshFailed', () => {
+    const allEmpty: OcctResult = { ...synthetic, meshes: synthetic.meshes.map(noTriangles) }
+    expect(convertOcctResult(allEmpty, 'robot.step')).toBeNull()
+    expect(emptyResultReason(allEmpty)).toBe('meshFailed')
+    const noMeshes: OcctResult = {
+      success: true,
+      root: { name: '', meshes: [], children: [] },
+      meshes: []
+    }
+    expect(convertOcctResult(noMeshes, 'robot.step')).toBeNull()
+    expect(emptyResultReason(noMeshes)).toBe('empty')
+  })
+})
+
 function expectPivotsMatchCad(
   model: ImportedModel,
   objects: SceneObjects,
@@ -90,7 +143,7 @@ function expectPivotsMatchCad(
     new Vector3(...boundsCenter(model.root.bounds)).applyMatrix4(rotation)
   )
   for (let meshIndex = 0; meshIndex < model.meshes.length; meshIndex++) {
-    const geometryId = cadGeometryId(cadRootId, meshIndex)
+    const geometryId = cadGeometryId(cadRootId, model.meshes[meshIndex].sourceIndex)
     const object = Object.values(objects).find(
       (o) => o.visual?.type === 'mesh' && o.visual.geometryId === geometryId
     )!

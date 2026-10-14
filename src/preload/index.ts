@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { posix, relative, resolve, sep } from 'path'
-import { IPC, type SandbotApi } from '../shared/ipc'
+import { IPC, type SandbotApi, type StepConvertProgress } from '../shared/ipc'
 
 const api: SandbotApi = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
@@ -12,7 +12,23 @@ const api: SandbotApi = {
     ipcRenderer.invoke(IPC.chooseStepFile, title, defaultPath),
   openProject: (root) => ipcRenderer.invoke(IPC.openProject, root),
   saveProject: (root, content) => ipcRenderer.invoke(IPC.saveProject, root, content),
-  readStepFile: (path) => ipcRenderer.invoke(IPC.readStepFile, path),
+  readStepCached: (path, tag, includeBytes) =>
+    ipcRenderer.invoke(IPC.readStepCached, path, tag, includeBytes),
+  storeMeshCache: (key, model) => ipcRenderer.invoke(IPC.storeMeshCache, key, model),
+  statStepFile: (path) => ipcRenderer.invoke(IPC.statStepFile, path),
+  hasStepConverter: () => ipcRenderer.invoke(IPC.hasStepConverter),
+  convertStep: (path, tag, requestId) => ipcRenderer.invoke(IPC.convertStep, path, tag, requestId),
+  cancelStepConversion: (requestId) => ipcRenderer.send(IPC.cancelStepConversion, requestId),
+  onStepConvertProgress: (callback) => {
+    const listener = (
+      _: unknown,
+      requestId: string,
+      progress: StepConvertProgress,
+      fraction: number | null
+    ): void => callback(requestId, progress, fraction)
+    ipcRenderer.on(IPC.stepConvertProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.stepConvertProgress, listener)
+  },
   syncGeneratedFiles: (root, files) => ipcRenderer.invoke(IPC.syncGeneratedFiles, root, files),
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
   onCloseRequested: (callback) => {

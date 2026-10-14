@@ -1,16 +1,35 @@
 import { useEffect } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
-import { importStepFile, isStepFileName } from '../cad/importStep'
+import { importStepFiles, isStepFileName } from '../cad/importStep'
+import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
+import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
 import { useDialogStore } from './dialogStore'
-import { useEditorStore } from './editorStore'
+import { useEditorStore, type EditorTool } from './editorStore'
+import { isFlying } from './flyStore'
+import { isChangeOpen, redo, undo } from './history'
 import HierarchyPanel from './panels/HierarchyPanel'
 import InspectorPanel from './panels/InspectorPanel'
 import ScenePanel from './panels/ScenePanel'
 import Toolbar from './Toolbar'
 
 const LAYOUT_ID = 'editor-main'
+
+const TOOL_KEYS: Partial<Record<string, EditorTool>> = {
+  KeyQ: 'view',
+  KeyW: 'translate',
+  KeyE: 'rotate'
+}
+
+function isTextInput(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === 'TEXTAREA' ||
+      (target instanceof HTMLInputElement && target.type === 'text'))
+  )
+}
 
 // 입력칸이나 인스펙터처럼 키를 직접 쓰는 곳에 포커스가 있으면 씬 단축키를 쓰지 않는다
 function handlesOwnKeys(target: EventTarget | null): boolean {
@@ -26,20 +45,49 @@ function handlesOwnKeys(target: EventTarget | null): boolean {
 function useEditorShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (useDialogStore.getState().request) return
+      // 대화상자가 떠 있거나 씬 뷰에서 비행 중(우클릭+WASD/QE)이면 편집기 단축키를 쓰지 않는다
+      if (useDialogStore.getState().request || isFlying()) return
       const command = event.ctrlKey || event.metaKey
+      // 문자 단축키는 키 위치(event.code)로 받는다. 한글 입력 상태에서도 같은 키로 동작한다.
+      const code = event.code
       // Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기. 입력 중인 숫자칸이 있으면 먼저 확정(blur)시킨다.
-      if (command && !event.altKey && (event.key === 's' || event.key === 'o')) {
+      if (command && !event.altKey && (code === 'KeyS' || code === 'KeyO')) {
         event.preventDefault()
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-        void (event.key === 's' ? saveProject() : openProjectFolder())
+        void (code === 'KeyS' ? saveProject() : openProjectFolder())
         return
       }
-      if (handlesOwnKeys(event.target) || command || event.altKey) return
+      // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환을 하지 않는다(드래그가 어긋난다)
+      const dragging = isChangeOpen()
+      // Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행.
+      // 입력칸에 확정하지 않은 글자가 있을 때만 입력칸 자체의 실행 취소에 맡긴다.
+      if (command && !event.altKey && (code === 'KeyZ' || code === 'KeyY')) {
+        if (isTextInput(event.target) && useProjectStore.getState().pendingEdit) return
+        event.preventDefault()
+        if (dragging) return
+        if (code === 'KeyY' || event.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (handlesOwnKeys(event.target) || command || event.altKey || dragging) return
+      // 키를 누르고 있어 반복되는 입력(예: 비행 중 Q를 누른 채 우클릭을 먼저 놓은 경우)은 도구를 바꾸지 않는다
+      if (event.repeat && code !== 'Delete' && code !== 'Backspace') return
       // F: 선택한 오브젝트에 카메라 맞추기 (Unity와 같은 키)
-      if (event.key === 'f' || event.key === 'F') {
+      if (code === 'KeyF') {
         const { selectedId, focus } = useEditorStore.getState()
         if (selectedId) focus(selectedId)
+        return
+      }
+      // Q 손, W 이동, E 회전 (Unity와 같은 키)
+      const tool = TOOL_KEYS[code]
+      if (tool && !event.shiftKey) {
+        useEditorStore.getState().setTool(tool)
+        return
+      }
+      // X: 핸들 축 전역/로컬 전환 (Unity와 같은 키)
+      if (code === 'KeyX' && !event.shiftKey) {
+        const { handleSpace, setHandleSpace } = useEditorStore.getState()
+        setHandleSpace(handleSpace === 'global' ? 'local' : 'global')
         return
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -54,10 +102,14 @@ function useEditorShortcuts(): void {
     const onDragOver = (event: DragEvent): void => event.preventDefault()
     const onDrop = (event: DragEvent): void => {
       event.preventDefault()
+      // 대화상자가 떠 있거나 다른 STEP을 불러오는 중이면(큰 STEP은 메모리를 많이 쓴다) 받지 않는다.
+      // [STEP 불러오기] 버튼도 같은 조건으로 막힌다.
+      if (useDialogStore.getState().request || isImporting() || useProjectStore.getState().busy)
+        return
       const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
         isStepFileName(file.name)
       )
-      for (const file of files) void importStepFile(file)
+      void importStepFiles(files)
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('dragover', onDragOver)

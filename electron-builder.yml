@@ -9,10 +9,21 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # 네이티브 STEP 변환기의 소스·빌드 폴더와 빌드 스크립트는 앱에 넣지 않는다
+  - '!native{,/**/*}'
+  - '!scripts{,/**/*}'
+  # 변환기 실행 파일은 OS·CPU별로 하나만 extraResources로 넣는다(아래)
+  - '!resources/step-converter{,/**/*}'
 asarUnpack:
   - resources/**
+# 대상 OS·CPU용 STEP 변환기(scripts/build-step-converter.mjs가 만든 것)는 OS별 항목의 extraResources로 넣는다.
+# 없으면 앱은 내장 WASM 변환기로 읽는다. 배포 앱에서는 process.resourcesPath/step-converter에 있다(src/main/stepConverter.ts).
+# 폴더 이름의 OS는 직접 적는다. electron-builder의 ${platform}은 대상이 아니라 빌드하는 PC의 OS다(교차 빌드 때 틀림).
 win:
   executableName: sandbot
+  extraResources:
+    - from: resources/step-converter/win32-${arch}
+      to: step-converter
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -20,6 +31,9 @@ nsis:
   createDesktopShortcut: always
 mac:
   entitlementsInherit: build/entitlements.mac.plist
+  extraResources:
+    - from: resources/step-converter/darwin-${arch}
+      to: step-converter
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
@@ -35,6 +49,9 @@ linux:
     - deb
   maintainer: electronjs.org
   category: Utility
+  extraResources:
+    - from: resources/step-converter/linux-${arch}
+      to: step-converter
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false

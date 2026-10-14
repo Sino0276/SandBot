@@ -30,3 +30,7 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+# 네이티브 STEP 변환기: 받은 소스·빌드 폴더와 빌드한 실행 파일(scripts/build-step-converter.mjs)
+native/step-converter/.cache/
+resources/step-converter/

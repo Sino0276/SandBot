@@ -3,6 +3,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { guardUnsavedChanges, registerProjectIpc } from './project'
+import { registerMeshCacheIpc } from './meshCache'
+import { registerStepConverterIpc } from './stepConverter'
 import { registerTeamCodeIpc } from './teamCode'
 
 function createWindow(): void {
@@ -14,13 +16,17 @@ function createWindow(): void {
     minHeight: 600,
     backgroundColor: '#1e1f22',
     show: false,
-    autoHideMenuBar: true,
+    // 메뉴 막대는 숨기되 메뉴는 남긴다(F11 전체 화면, 개발 중 Ctrl+Shift+I·Ctrl+R). autoHideMenuBar를 켜면
+    // Windows·Linux에서 Alt를 누를 때 메뉴 막대가 나타나 씬 뷰의 Alt+드래그(Unity식 궤도 회전)를 방해한다.
+    autoHideMenuBar: false,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
+
+  mainWindow.setMenuBarVisibility(false)
 
   guardUnsavedChanges(mainWindow)
 
@@ -58,6 +64,8 @@ app.whenReady().then(() => {
 
   registerProjectIpc()
   registerTeamCodeIpc()
+  registerMeshCacheIpc()
+  registerStepConverterIpc()
   createWindow()
 
   app.on('activate', function () {

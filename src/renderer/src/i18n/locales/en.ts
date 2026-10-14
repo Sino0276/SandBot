@@ -2,15 +2,21 @@ import type { Messages } from './ko'
 
 const en: Messages = {
   common: {
-    dismiss: 'Dismiss'
+    dismiss: 'Dismiss',
+    cancel: 'Cancel'
   },
   toolbar: {
     language: 'Language',
+    lengthUnit: 'Length unit',
     noProject: 'Unsaved scene',
     open: 'Open',
     openShortcut: 'Open an FtcRobotController folder (Ctrl+O)',
     save: 'Save',
-    saveShortcut: 'Save (Ctrl+S)'
+    saveShortcut: 'Save (Ctrl+S)',
+    undo: 'Undo',
+    undoShortcut: 'Undo (Ctrl+Z)',
+    redo: 'Redo',
+    redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)'
   },
   project: {
     chooseFolderTitle: 'Choose the FtcRobotController folder',
@@ -18,18 +24,45 @@ const en: Messages = {
   },
   dialog: {
     unsavedChanges: 'You have unsaved changes. Save them?',
+    chooseLengthUnit:
+      'Which unit should lengths be shown in? You can change it in the toolbar at any time.',
     overwriteProject:
       '{{name}} already has a SandBot project. Overwrite it with the current scene?',
     save: 'Save',
     discard: "Don't save",
     overwrite: 'Overwrite',
-    cancel: 'Cancel'
+    cancel: 'Cancel',
+    importLarge: '{{fileName}} is {{size}}. The first import can take a few minutes. Import it?',
+    importLargeMany:
+      'You are importing {{count}} large STEP files ({{size}} in total). The first import can take a few minutes. Import them?',
+    importLargeWasm:
+      '{{fileName}} is {{size}}. This PC has no fast converter, so SandBot uses its built-in reader, which may fail or take a very long time on a file this large. Import it anyway?',
+    importLargeManyWasm:
+      'You are importing {{count}} large STEP files ({{size}} in total). This PC has no fast converter, so SandBot uses its built-in reader, which may fail or take a very long time on files this large. Import them anyway?',
+    import: 'Import',
+    closeWhileImporting:
+      'A STEP file is still being imported. Closing now cancels the import. Close anyway?',
+    close: 'Close'
   },
   notice: {
     importing: 'Importing {{fileName}}…',
     importReadFailed: 'Could not read {{fileName}} as a STEP file.',
     importEmpty: '{{fileName}} contains no geometry to import.',
     importFailed: 'Something went wrong while importing {{fileName}}.',
+    importMeshFailed:
+      'Could not create the geometry (triangles) of {{fileName}}. Try exporting it again from your CAD program.',
+    importOutOfMemory:
+      'Ran out of memory while importing {{fileName}}. Close other programs and try again. If it still fails, remove small parts such as screws in your CAD program and export again.',
+    importTooLarge:
+      '{{fileName}} is too large for the built-in reader. In your CAD program (Onshape, Fusion 360, …), remove small parts such as screws or anything you do not need, and export again.',
+    importPartial:
+      '{{count}} part(s) of {{fileName}} could not be turned into geometry and are not shown.',
+    importIncomplete:
+      'Some shapes of {{fileName}} could not be converted and may be missing (the PC may have run out of memory). Close other programs and import it again, or export it again from your CAD program.',
+    cadLoadIncomplete:
+      'Some shapes of {{fileName}} could not be converted, so it was not loaded (the PC may have run out of memory). Close other programs and click [Reload] in the inspector.',
+    cadLoadCancelled:
+      'Stopped importing {{fileName}}. Use [Reload] in the inspector to import it again.',
     openingProject: 'Opening {{name}}…',
     openFailed: 'Could not open the project ({{detail}}).',
     saveFailed: 'Could not save ({{detail}}).',
@@ -49,6 +82,33 @@ const en: Messages = {
       'Only the letter case of generated file names changed ({{files}}). Git on Windows and macOS does not record this, so rename them with git mv -f when you commit.',
     codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).'
   },
+  importPhase: {
+    checking: 'checking the file',
+    queued: 'waiting for another file to finish',
+    read: 'reading the file',
+    transfer: 'converting shapes',
+    mesh: 'creating triangles',
+    write: 'finishing up',
+    build: 'adding to the scene',
+    wasm: 'reading with the built-in reader'
+  },
+  units: {
+    symbols: {
+      mm: 'mm',
+      cm: 'cm',
+      m: 'm',
+      in: 'in'
+    },
+    names: {
+      mm: 'mm (millimeters)',
+      cm: 'cm (centimeters)',
+      m: 'm (meters)',
+      in: 'in (inches)'
+    },
+    lengthInputHint:
+      'You can type a unit (e.g. 12in, 30cm, 150mm). Without one, the value is read in {{unit}}.',
+    angleInputHint: 'Degrees (°). Add rad to enter radians.'
+  },
   panels: {
     hierarchy: 'Hierarchy',
     scene: 'Scene',
@@ -60,12 +120,16 @@ const en: Messages = {
     part: 'Part'
   },
   scene: {
-    transformMode: 'Tool',
-    translate: 'Move',
-    rotate: 'Rotate',
-    frame: 'Reference frame',
-    field: 'Field',
-    robot: 'Robot'
+    tool: 'Tool',
+    tools: {
+      view: 'Hand tool: drag with the left button to pan (Q)',
+      translate: 'Move (W)',
+      rotate: 'Rotate (E)'
+    },
+    flySpeed: 'Fly speed {{speed}} {{unit}}/s · scroll to change, Shift for faster',
+    handleSpace: "Handle axes: Global (field axes) · Local (the object's own axes) (X)",
+    global: 'Global',
+    local: 'Local'
   },
   hierarchy: {
     empty: 'No objects in the scene',
@@ -80,9 +144,14 @@ const en: Messages = {
     position: 'Position',
     rotation: 'Rotation',
     frameField: 'Field frame',
-    frameRobot: 'Robot frame',
-    robotOrigin: 'This is the origin of the robot frame, so its values are always 0.',
-    notInRobot: 'Not part of a robot, so values are shown in the field frame.',
+    frameFieldHint: 'Field coordinates. The origin is the field center on the floor, and Z is up.',
+    frameParent: 'Parent frame',
+    frameParentHint:
+      "Relative to the position and axes of the parent '{{name}}'. Moves along with the parent.",
+    cadAxes: 'Shown in the CAD file axes (up {{up}} · forward {{forward}}).',
+    robotCenter: 'From robot center',
+    robotCenterHint:
+      'Position seen from the robot origin (center, on the floor): X forward · Y left · Z up. It is calculated, so it cannot be edited.',
     cad: {
       title: 'CAD alignment',
       hint: "Maps the CAD's up/forward axes to the robot's up (Z) and forward (X), and puts the bottom center at the robot origin.",
@@ -93,7 +162,11 @@ const en: Messages = {
       upAxis: 'Up axis',
       forwardAxis: 'Forward axis',
       missing: 'File not found',
-      relink: 'Locate file'
+      loading: 'Loading',
+      failed: 'Could not load the geometry',
+      cancelled: 'Import stopped',
+      relink: 'Locate file',
+      reload: 'Reload'
     }
   },
   hardware: {
@@ -252,7 +325,7 @@ const en: Messages = {
       }
     },
     hints: {
-      imu: 'Choose which way the REV logo and the USB ports of the hub face on the robot.',
+      imu: 'Choose which way the REV logo and the USB ports of the hub face on the robot. In the scene, the purple arrow shows the logo direction and the orange arrow the USB direction.',
       webcam:
         'Enter the USB serial shown when you scan in Configure Robot on the Driver Station. Left empty, the webcam is not put in the configuration XML.',
       limelight:

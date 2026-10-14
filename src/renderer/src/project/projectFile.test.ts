@@ -27,7 +27,8 @@ const objects: SceneObjects = {
       upAxis: '+Y',
       forwardAxis: '+Z',
       bounds: { min: [0, 0, 0], max: [0.4, 0.4, 0.4] },
-      meshCount: 1
+      meshCount: 1,
+      meshIndexing: 'source'
     }
   },
   plate: {
@@ -69,7 +70,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 2 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 3 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -88,6 +89,15 @@ describe('프로젝트 파일', () => {
 })
 
 describe('버전과 하위 호환', () => {
+  it('버전 2 CAD(meshIndexing 없음)는 예전 형상 id 방식으로 읽고, 모르는 방식은 거부한다', () => {
+    const legacy = JSON.parse(serializeProject(objects, relativize))
+    legacy.version = 2
+    delete legacy.objects[1].cad.meshIndexing
+    expect(parseProject(JSON.stringify(legacy)).objects.cad.cad?.meshIndexing).toBeUndefined()
+    legacy.objects[1].cad.meshIndexing = 'sorted'
+    expect(() => parseProject(JSON.stringify(legacy))).toThrow(ProjectFileError)
+  })
+
   it('버전 1 파일(컴포넌트 없음)도 열린다', () => {
     const v1 = JSON.stringify({
       format: 'sandbot-project',

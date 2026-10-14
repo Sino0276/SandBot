@@ -20,7 +20,8 @@
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:step-converter": "node scripts/build-step-converter.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -52,6 +53,7 @@
     "react-i18next": "^17.0.16",
     "react-resizable-panels": "^4.14.4",
     "three": "^0.186.1",
+    "three-mesh-bvh": "^0.8.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vitest": "^5.0.4",

@@ -27,8 +27,14 @@ export type CadSource = {
   // CAD 좌표(미터)의 전체 경계 상자. 노드의 피벗은 이 상자의 중심이다.
   bounds: { min: Vec3; max: Vec3 }
   // 불러왔을 때의 메시 수. 다시 읽은 파일과 다르면 CAD가 바뀐 것이다.
+  // meshIndexing이 'source'면 occt-import-js의 전체 메시 수(빈 메시 포함), 없으면 삼각형이 있는 메시 수.
   meshCount: number
+  // 형상 id(cadGeometryId)의 메시 순번 방식. 'source'는 원래 순번(PROJECT_VERSION 3부터 새로 불러온 CAD).
+  // 없으면 예전 방식(빈 메시를 빼고 다시 매긴 순번)이다.
+  meshIndexing?: MeshIndexing
 }
+
+export type MeshIndexing = 'source' | 'packed'
 
 // 장치를 꽂는 허브. Control Hub(주소 173)와 RS485로 연결한 Expansion Hub.
 export type HubId = 'controlHub' | 'expansionHub'
@@ -72,7 +78,7 @@ export type SceneObject = {
 
 export type SceneObjects = Record<string, SceneObject>
 
-// 보기 기준 좌표계. 로봇 좌표계는 X 앞, Y 왼쪽, Z 위이고 원점은 로봇 중심 바닥이다.
+// 계산용 기준 좌표계(로봇 중심 기준 위치, 센서 오프셋). 로봇 좌표계는 X 앞, Y 왼쪽, Z 위이고 원점은 로봇 중심 바닥이다.
 export type ReferenceFrame = 'field' | 'robot'
 
 const EULER_ORDER = 'ZYX'
@@ -95,6 +101,29 @@ export function childrenOf(objects: SceneObjects, parentId: string | null): Scen
   return Object.values(objects).filter((object) => object.parentId === parentId)
 }
 
+// 씬 문서마다 한 번 만드는 부모 id → 자식 목록(childrenOf와 같은 순서). 씬 뷰·하이어라키가 오브젝트마다
+// childrenOf로 전체를 훑으면 큰 CAD(파트 수천 개)에서 씬이 바뀔 때마다 N²이 된다.
+// 스토어의 objects처럼 바꾸지 않는(불변) 문서에만 쓴다. 만든 뒤 고친 문서에는 고치기 전 목록이 남는다.
+const childIndexes = new WeakMap<SceneObjects, Map<string | null, SceneObject[]>>()
+const NO_CHILDREN: readonly SceneObject[] = []
+
+export function childrenInDocument(
+  objects: SceneObjects,
+  parentId: string | null
+): readonly SceneObject[] {
+  let index = childIndexes.get(objects)
+  if (!index) {
+    index = new Map()
+    for (const object of Object.values(objects)) {
+      const siblings = index.get(object.parentId)
+      if (siblings) siblings.push(object)
+      else index.set(object.parentId, [object])
+    }
+    childIndexes.set(objects, index)
+  }
+  return index.get(parentId) ?? NO_CHILDREN
+}
+
 export function worldMatrix(objects: SceneObjects, id: string): Matrix4 {
   const object = objects[id]
   const local = transformToMatrix(object.transform)
@@ -109,12 +138,6 @@ export function findRobotId(objects: SceneObjects, id: string): string | null {
     current = current.parentId ? objects[current.parentId] : undefined
   }
   return null
-}
-
-// 로봇 기준 보기에서 따라갈 로봇: 선택한 오브젝트의 로봇, 없으면 씬의 첫 로봇.
-export function activeRobotId(objects: SceneObjects, selectedId: string | null): string | null {
-  const fromSelection = selectedId && objects[selectedId] ? findRobotId(objects, selectedId) : null
-  return fromSelection ?? Object.values(objects).find((o) => o.kind === 'robot')?.id ?? null
 }
 
 // 기준 좌표계의 필드 기준 행렬. 로봇 기준인데 로봇에 속하지 않은 오브젝트는 필드 기준으로 대신한다.
@@ -132,20 +155,7 @@ export function getTransformInFrame(
   return matrixToTransform(relative)
 }
 
-// 기준 좌표계로 표현한 변환을 저장용 로컬 변환으로 바꾼다.
-export function localTransformFromFrame(
-  objects: SceneObjects,
-  id: string,
-  frame: ReferenceFrame,
-  value: Transform
-): Transform {
-  return localTransformFromWorld(
-    objects,
-    id,
-    frameMatrix(objects, id, frame).multiply(transformToMatrix(value))
-  )
-}
-
+// 필드 기준 행렬을 저장용(부모 기준) 로컬 변환으로 바꾼다
 export function localTransformFromWorld(
   objects: SceneObjects,
   id: string,
@@ -165,9 +175,9 @@ export function constrainTransform(object: SceneObject, transform: Transform): T
   }
 }
 
-// 자기 자신과 모든 하위 오브젝트의 id
+// 자기 자신과 모든 하위 오브젝트의 id(불변 씬 문서에만. childrenInDocument 참고)
 export function subtreeIds(objects: SceneObjects, id: string): string[] {
-  return [id, ...childrenOf(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
+  return [id, ...childrenInDocument(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
 }
 
 // 부모부터 최상위까지의 id(자기 자신 제외)

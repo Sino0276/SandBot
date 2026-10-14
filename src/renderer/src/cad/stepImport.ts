@@ -1,10 +1,13 @@
 import type { OcctMesh, OcctNode, OcctResult } from 'occt-import-js'
 import { boundsCenter, cadRootTransform, type CadAlignment } from './alignment'
-import type { SceneObject, SceneObjects, Transform, Vec3 } from '../scene/model'
+import type { MeshIndexing, SceneObject, SceneObjects, Transform, Vec3 } from '../scene/model'
 
 export type Bounds = { min: Vec3; max: Vec3 }
 
 export type ImportedMesh = {
+  // occt-import-js 결과(meshes)에서의 원래 순번. 새로 불러온 CAD의 형상 id는 이 순번으로 만든다
+  // (삼각형을 만들지 못해 빠진 메시가 있어도 다른 파트의 id가 밀리지 않게).
+  sourceIndex: number
   name: string
   // 피벗(경계 상자 중심) 기준 정점 좌표, 미터
   positions: Float32Array
@@ -27,7 +30,40 @@ export type ImportedNode = {
   children: ImportedNode[]
 }
 
-export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[] }
+// meshes에는 삼각형이 있는 메시만 있다. sourceMeshCount는 occt-import-js가 준 전체 메시 수(빈 메시 포함).
+export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[]; sourceMeshCount: number }
+
+// 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
+// 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가.
+export const MESH_CACHE_TAG = 'model-v2'
+
+function isFloat32OrNull(value: unknown): boolean {
+  return value === null || value instanceof Float32Array
+}
+
+// 캐시에서 읽은 값이 변환 결과 형식인지(깨진 캐시를 형상으로 쓰지 않게) 가볍게 확인한다
+export function isImportedModel(value: unknown): value is ImportedModel {
+  if (!value || typeof value !== 'object') return false
+  const model = value as Partial<ImportedModel>
+  const sourceMeshCount = model.sourceMeshCount
+  return (
+    !!model.root &&
+    typeof model.root === 'object' &&
+    Number.isSafeInteger(sourceMeshCount) &&
+    Array.isArray(model.meshes) &&
+    model.meshes.every(
+      (mesh) =>
+        !!mesh &&
+        Number.isSafeInteger(mesh.sourceIndex) &&
+        mesh.sourceIndex >= 0 &&
+        mesh.sourceIndex < sourceMeshCount! &&
+        mesh.positions instanceof Float32Array &&
+        mesh.indices instanceof Uint32Array &&
+        isFloat32OrNull(mesh.normals) &&
+        isFloat32OrNull(mesh.colors)
+    )
+  )
+}
 
 export const DEFAULT_PART_COLOR: Vec3 = [0.62, 0.64, 0.68]
 
@@ -55,7 +91,7 @@ function unionBounds(list: Bounds[]): Bounds {
   }
 }
 
-function convertMesh(mesh: OcctMesh): ImportedMesh | null {
+function convertMesh(mesh: OcctMesh, sourceIndex: number): ImportedMesh | null {
   const source = mesh.attributes.position.array
   if (source.length === 0 || mesh.index.array.length === 0) return null
 
@@ -85,6 +121,7 @@ function convertMesh(mesh: OcctMesh): ImportedMesh | null {
   }
 
   return {
+    sourceIndex,
     name: mesh.name,
     positions,
     normals: mesh.attributes.normal ? Float32Array.from(mesh.attributes.normal.array) : null,
@@ -129,7 +166,7 @@ function convertNode(node: OcctNode, meshes: (ImportedMesh | null)[]): ImportedN
 
 // occt-import-js 결과를 계층과 피벗 중심 메시로 바꾼다. 워커에서 실행한다.
 export function convertOcctResult(result: OcctResult, fileName: string): ImportedModel | null {
-  const meshes = result.meshes.map(convertMesh)
+  const meshes = result.meshes.map((mesh, index) => convertMesh(mesh, index))
   // occt 루트는 이름 없는 컨테이너다. 최상위 형상이 하나면 그것을 루트로 쓴다.
   const top =
     result.root.meshes.length === 0 && result.root.children.length === 1
@@ -148,7 +185,40 @@ export function convertOcctResult(result: OcctResult, fileName: string): Importe
     node.children.forEach(reindex)
   }
   reindex(root)
-  return { root, meshes: used }
+  return { root, meshes: used, sourceMeshCount: result.meshes.length }
+}
+
+function hasTriangles(mesh: OcctMesh): boolean {
+  return mesh.attributes.position.array.length > 0 && mesh.index.array.length > 0
+}
+
+// convertOcctResult가 모델을 만들지 못한 이유. 메시가 하나도 없으면 empty, 메시는 있는데 모두 삼각형이 없으면
+// meshFailed(삼각분할 실패: 대개 WASM 메모리 한도).
+export function emptyResultReason(result: OcctResult): 'empty' | 'meshFailed' {
+  return result.meshes.length > 0 && !result.meshes.some(hasTriangles) ? 'meshFailed' : 'empty'
+}
+
+// WASM 힙을 더 늘리지 못할 때 emscripten·브라우저가 내는 오류
+export function isOutOfMemoryError(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.name} ${error.message}` : String(error)
+  return /out of memory|\bOOM\b|Cannot enlarge memory|Array buffer allocation failed/i.test(text)
+}
+
+// 삼각형을 만들지 못해 빠진 메시 수
+export function droppedMeshCount(model: ImportedModel): number {
+  return model.sourceMeshCount - model.meshes.length
+}
+
+// 메시마다 등록할 형상 id. 새로 불러온 CAD(meshIndexing 'source')는 원래 순번, 예전 프로젝트(packed)는 빈 메시를
+// 빼고 다시 매긴 순번을 쓴다.
+export function meshGeometryIds(
+  cadRootId: string,
+  model: ImportedModel,
+  indexing: MeshIndexing
+): string[] {
+  return model.meshes.map((mesh, index) =>
+    cadGeometryId(cadRootId, indexing === 'source' ? mesh.sourceIndex : index)
+  )
 }
 
 export function transferablesOf(model: ImportedModel): ArrayBuffer[] {
@@ -197,10 +267,11 @@ export function buildSceneObjects(
   const add = (node: ImportedNode, parentId: string, transform: Transform, id: string): void => {
     const object: SceneObject = { id, name: node.name, kind: node.kind, parentId, transform }
     if (node.meshIndex !== undefined) {
+      const mesh = model.meshes[node.meshIndex]
       object.visual = {
         type: 'mesh',
-        geometryId: cadGeometryId(cadRootId, node.meshIndex),
-        color: model.meshes[node.meshIndex].color
+        geometryId: cadGeometryId(cadRootId, mesh.sourceIndex),
+        color: mesh.color
       }
     }
     objects[id] = object
@@ -227,7 +298,8 @@ export function buildSceneObjects(
     absolutePath,
     ...alignment,
     bounds: model.root.bounds,
-    meshCount: model.meshes.length
+    meshCount: model.sourceMeshCount,
+    meshIndexing: 'source'
   }
 
   return { objects, robotId, cadRootId }

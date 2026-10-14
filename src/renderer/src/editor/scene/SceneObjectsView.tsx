@@ -5,7 +5,8 @@ import { Color, SRGBColorSpace } from 'three'
 import { useShallow } from 'zustand/react/shallow'
 import { ROBOT_SIZE } from '../../scene/coordinates'
 import { getGeometry } from '../../scene/geometryRegistry'
-import { childrenOf, type ObjectVisual, type Vec3 } from '../../scene/model'
+import { cadMeshRaycast } from '../../scene/meshBvh'
+import { childrenInDocument, type ObjectVisual, type Vec3 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 
@@ -69,7 +70,7 @@ function CadMesh({
   const baseColor = useMemo(() => new Color().setRGB(...color, SRGBColorSpace), [color])
   if (!geometry) return null
   return (
-    <mesh geometry={geometry} onClick={onClick}>
+    <mesh geometry={geometry} raycast={cadMeshRaycast} onClick={onClick}>
       <meshStandardMaterial
         color={baseColor}
         vertexColors={geometry.hasAttribute('color')}
@@ -105,7 +106,7 @@ function ObjectNode({
 }): React.JSX.Element | null {
   const object = useSceneStore((state) => state.objects[id])
   const childIds = useSceneStore(
-    useShallow((state) => childrenOf(state.objects, id).map((child) => child.id))
+    useShallow((state) => childrenInDocument(state.objects, id).map((child) => child.id))
   )
   const selected = useEditorStore((state) => state.selectedId === id)
   const select = useEditorStore((state) => state.select)
@@ -134,7 +135,7 @@ function ObjectNode({
 
 function SceneObjectsView(): React.JSX.Element {
   const rootIds = useSceneStore(
-    useShallow((state) => childrenOf(state.objects, null).map((object) => object.id))
+    useShallow((state) => childrenInDocument(state.objects, null).map((object) => object.id))
   )
   return (
     <>

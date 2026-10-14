@@ -1,4 +1,5 @@
 // occt-import-js(OpenCascade WASM)는 타입을 제공하지 않아 쓰는 부분만 선언한다.
+// 배열은 WASM이 주는 number[]와 네이티브 변환기 결과(cad/nativeResult.ts)의 타입 배열을 모두 받는다.
 declare module 'occt-import-js' {
   export type OcctColor = [number, number, number]
 
@@ -7,10 +8,10 @@ declare module 'occt-import-js' {
     color?: OcctColor
     brep_faces: { first: number; last: number; color: OcctColor | null }[]
     attributes: {
-      position: { array: number[] }
-      normal?: { array: number[] }
+      position: { array: ArrayLike<number> }
+      normal?: { array: ArrayLike<number> }
     }
-    index: { array: number[] }
+    index: { array: ArrayLike<number> }
   }
 
   export type OcctNode = {

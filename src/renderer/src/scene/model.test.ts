@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  activeRobotId,
   constrainTransform,
   findRobotId,
   getTransformInFrame,
-  localTransformFromFrame,
   type SceneObjects,
   type Transform
 } from './model'
@@ -69,37 +67,10 @@ describe('getTransformInFrame', () => {
   })
 })
 
-describe('localTransformFromFrame', () => {
-  it('필드 기준으로 입력한 값을 부모(로봇) 기준 로컬 값으로 바꾼다', () => {
-    // 필드 +X로 0.5 m 옮긴 위치는 90° 돌아 있는 로봇에게는 오른쪽(-Y) 0.5 m다
-    const local = localTransformFromFrame(objects, 'webcam', 'field', {
-      position: [1.5, 2, 0.3],
-      rotation: [0, 0, 90 * DEG]
-    })
-    expectTransform(local, { position: [0, -0.5, 0.3], rotation: [0, 0, 0] })
-  })
-
-  it('읽은 값을 그대로 다시 쓰면 변하지 않는다', () => {
-    for (const frame of ['field', 'robot'] as const) {
-      const value = getTransformInFrame(objects, 'webcam', frame)
-      expectTransform(
-        localTransformFromFrame(objects, 'webcam', frame, value),
-        objects.webcam.transform
-      )
-    }
-  })
-})
-
 describe('로봇 찾기', () => {
   it('파트가 속한 로봇을 찾는다', () => {
     expect(findRobotId(objects, 'webcam')).toBe('robot')
     expect(findRobotId(objects, 'cone')).toBeNull()
-  })
-
-  it('선택이 없거나 로봇 밖이면 씬의 첫 로봇을 쓴다', () => {
-    expect(activeRobotId(objects, null)).toBe('robot')
-    expect(activeRobotId(objects, 'cone')).toBe('robot')
-    expect(activeRobotId({ cone: objects.cone }, null)).toBeNull()
   })
 })
 

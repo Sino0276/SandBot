@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { formatNumber } from '../units/units'
 import { useDraft } from './useDraft'
 
 type NumberFieldProps = {
@@ -9,13 +10,16 @@ type NumberFieldProps = {
   value: number
   digits: number
   disabled?: boolean
+  // 입력 문자열을 이 칸의 단위 값으로 읽는다(예: "12in" → 표시 단위 값). 없으면 숫자만 받는다.
+  // 읽을 수 없으면 null을 돌려주고, 그 입력은 버린다.
+  parse?: (text: string) => number | null
+  title?: string
   onCommit: (value: number) => void
 }
 
-function format(value: number, digits: number): string {
-  // -0.000 대신 0.000으로 보이게 한다
-  const rounded = Number(value.toFixed(digits))
-  return (rounded === 0 ? 0 : rounded).toFixed(digits)
+function parseNumber(text: string): number | null {
+  const value = Number(text.trim())
+  return text.trim() !== '' && Number.isFinite(value) ? value : null
 }
 
 // 입력 중에는 초안을 보여 주고, Enter나 포커스 이동으로 확정한다. Esc는 취소.
@@ -26,6 +30,8 @@ function NumberField({
   value,
   digits,
   disabled = false,
+  parse = parseNumber,
+  title,
   onCommit
 }: NumberFieldProps): React.JSX.Element {
   const [draft, setDraft] = useDraft()
@@ -33,8 +39,8 @@ function NumberField({
 
   const commit = (): void => {
     if (draft !== null && !cancelled.current) {
-      const parsed = Number(draft.trim())
-      if (draft.trim() !== '' && Number.isFinite(parsed)) onCommit(parsed)
+      const parsed = parse(draft)
+      if (parsed !== null && Number.isFinite(parsed)) onCommit(parsed)
     }
     cancelled.current = false
     setDraft(null)
@@ -46,8 +52,8 @@ function NumberField({
       <input
         type="text"
         aria-label={ariaLabel}
-        inputMode="decimal"
-        value={draft ?? format(value, digits)}
+        title={title}
+        value={draft ?? formatNumber(value, digits)}
         disabled={disabled}
         onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setDraft(event.target.value)}

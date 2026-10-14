@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { importStepFile } from '../../cad/importStep'
+import { importStepFiles } from '../../cad/importStep'
+import { useImportStore } from '../../cad/importStore'
+import { useProjectStore } from '../../project/projectStore'
 import { severityByObject, useSceneIssues, type ObjectSeverity } from '../../hardware/sceneIssues'
-import { ancestorIds, childrenOf, type SceneObject, type SceneObjects } from '../../scene/model'
+import {
+  ancestorIds,
+  childrenInDocument,
+  type SceneObject,
+  type SceneObjects
+} from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import NoticeList from '../NoticeList'
-import { useNoticeStore } from '../noticeStore'
 import PanelFrame from '../PanelFrame'
 
 type TreeContext = {
@@ -31,7 +37,7 @@ function TreeItem({
   const select = useEditorStore((state) => state.select)
   const focus = useEditorStore((state) => state.focus)
   const rowRef = useRef<HTMLDivElement>(null)
-  const children = childrenOf(context.objects, object.id)
+  const children = childrenInDocument(context.objects, object.id)
   const open = context.isOpen(object.id, depth)
   const severity = context.severities.get(object.id)
   const componentCount = object.components?.length ?? 0
@@ -109,7 +115,9 @@ function HierarchyPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const selectedId = useEditorStore((state) => state.selectedId)
-  const importing = useNoticeStore((state) => state.notices.some((n) => n.key === 'importing'))
+  // 한 번에 하나만 불러온다(큰 STEP은 메모리를 많이 쓴다). 창에 끌어다 놓기도 같은 조건으로 막힌다.
+  const importing = useImportStore((state) => state.running > 0)
+  const busy = useProjectStore((state) => state.busy)
   const fileInput = useRef<HTMLInputElement>(null)
   // 사용자가 직접 접거나 편 항목. 나머지는 깊이 2 미만만 펼친다.
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({})
@@ -130,14 +138,14 @@ function HierarchyPanel(): React.JSX.Element {
       setOpenOverrides((current) => ({ ...current, [id]: !(current[id] ?? depth < 2) }))
   }
 
-  const roots = childrenOf(objects, null)
+  const roots = childrenInDocument(objects, null)
 
   const actions = (
     <>
       <button
         type="button"
         className="panel-button"
-        disabled={importing}
+        disabled={importing || busy}
         onClick={() => fileInput.current?.click()}
       >
         {t('hierarchy.importStep')}
@@ -150,7 +158,7 @@ function HierarchyPanel(): React.JSX.Element {
         onChange={(event) => {
           const file = event.target.files?.[0]
           event.target.value = ''
-          if (file) void importStepFile(file)
+          if (file) void importStepFiles([file])
         }}
       />
     </>
