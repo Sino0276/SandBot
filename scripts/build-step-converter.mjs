@@ -2,6 +2,9 @@
 // 필요한 것: git, CMake 3.19+, C++ 컴파일러(Windows는 Visual Studio Build Tools, macOS는 Xcode 명령행 도구).
 // OCCT 전체를 컴파일하므로 처음 빌드는 오래 걸린다(4코어에서 2~3시간). 받은 소스와 빌드 폴더는 다시 쓴다.
 //
+// Windows x64용은 CI가 빌드해 Release에 올리므로 보통은 받아 쓴다(pnpm fetch:step-converter). 변환기 소스를 고쳤거나
+// 다른 OS·CPU용이 필요할 때 직접 빌드한다.
+//
 // 사용법: node scripts/build-step-converter.mjs [--source <occt-import-js 폴더>] [--toolchain <cmake 툴체인>]
 //                                              [--target <platform-arch>] [--jobs <n>]
 //   --source    이미 받아 둔 occt-import-js(occt 하위 폴더 포함)를 쓴다. 커밋은 version.json과 같아야 한다.
@@ -10,20 +13,23 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
-  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
-  readSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from 'node:fs'
 import { cpus } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {
+  converterExe,
+  PROVENANCE_FILE,
+  releaseTag,
+  repoRoot as root,
+  targetMismatch
+} from './step-converter-source.mjs'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const converterDir = join(root, 'native', 'step-converter')
 const cacheDir = join(converterDir, '.cache')
 // 렌더러의 occt-import-js와 같은 버전이어야 메시 순서가 같다(형상 id 호환). 앱도 같은 파일로 변환기를 확인한다.
@@ -77,36 +83,6 @@ function verifySource(source, dir) {
 function hasCommand(command) {
   const result = spawnSync(command, ['--version'], { stdio: 'ignore' })
   return !result.error && result.status === 0
-}
-
-// 실행 파일 헤더의 CPU(PE·ELF·Mach-O). 다른 CPU용으로 빌드된 것을 그 이름의 폴더에 넣지 않게 확인한다.
-function binaryArch(path) {
-  const header = Buffer.alloc(4096)
-  const fd = openSync(path, 'r')
-  try {
-    readSync(fd, header, 0, header.length, 0)
-  } finally {
-    closeSync(fd)
-  }
-  if (header.toString('latin1', 0, 2) === 'MZ') {
-    const pe = header.readUInt32LE(0x3c)
-    if (pe + 6 > header.length || header.toString('latin1', pe, pe + 4) !== 'PE\0\0') return null
-    const machine = header.readUInt16LE(pe + 4)
-    return (
-      { 0x8664: 'x64', 0xaa64: 'arm64', 0x14c: 'ia32' }[machine] ?? `pe-${machine.toString(16)}`
-    )
-  }
-  if (header.toString('latin1', 0, 4) === '\x7fELF') {
-    const machine = header[5] === 2 ? header.readUInt16BE(18) : header.readUInt16LE(18)
-    return { 0x3e: 'x64', 0xb7: 'arm64', 0x03: 'ia32', 0x28: 'arm' }[machine] ?? `elf-${machine}`
-  }
-  const magic = header.readUInt32LE(0)
-  if (magic === 0xfeedfacf) {
-    const cpu = header.readUInt32LE(4)
-    return { 0x01000007: 'x64', 0x0100000c: 'arm64' }[cpu] ?? `macho-${cpu.toString(16)}`
-  }
-  // 여러 CPU를 묶은 Mach-O(universal)는 한 CPU 폴더에 넣지 않는다
-  return null
 }
 
 // 64비트 x64·arm64만 만든다. 32비트(ia32, arm)는 주소 공간이 WASM의 2 GB 한도와 비슷해 변환기를 쓰는 이유가 없고,
@@ -168,14 +144,14 @@ run(
   root
 )
 
-const exe = target.startsWith('win32') ? 'sandbot-step-converter.exe' : 'sandbot-step-converter'
+const exe = converterExe(target)
 // 단일 구성 생성기(Ninja, Makefile)는 빌드 폴더에, 다중 구성(Visual Studio, Xcode)은 Release 아래에 만든다
 const built = [join(buildDir, exe), join(buildDir, 'Release', exe)].find((path) => existsSync(path))
 if (!built) throw new Error(`built converter not found in ${buildDir}`)
-const builtArch = binaryArch(built)
-if (builtArch !== targetArch) {
+const mismatch = targetMismatch(built, target)
+if (mismatch) {
   throw new Error(
-    `${built} is built for ${builtArch ?? 'an unknown CPU'}, not ${targetArch} (${target}). ` +
+    `${built} is ${mismatch}. ` +
       `Remove ${buildDir} and build again with a ${targetArch} compiler ` +
       `(on Windows: the "x64 Native Tools Command Prompt" or a plain shell)`
   )
@@ -184,6 +160,11 @@ const outDir = join(root, 'resources', 'step-converter', target)
 mkdirSync(outDir, { recursive: true })
 copyFileSync(built, join(outDir, exe))
 if (!target.startsWith('win32')) chmodSync(join(outDir, exe), 0o755)
+// 어느 소스로 만든 것인지 남긴다. 받기(fetch-step-converter.mjs)는 같은 소스의 것이면 덮어쓰지 않는다.
+writeFileSync(
+  join(outDir, PROVENANCE_FILE),
+  `${JSON.stringify({ tag: releaseTag(), origin: 'build' }, null, 2)}\n`
+)
 console.log(`STEP converter: ${join(outDir, exe)}`)
 
 // Linux 바이너리는 빌드한 PC의 glibc보다 오래된 배포판에서는 실행되지 않는다(앱은 그때 WASM으로 읽는다).
