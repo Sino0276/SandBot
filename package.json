@@ -5,6 +5,7 @@
   "main": "./out/main/index.js",
   "author": "Sino0276",
   "homepage": "https://github.com/Sino0276/SandBot",
+  "repository": "github:Sino0276/SandBot",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -18,10 +19,11 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win",
+    "build:win": "npm run build && node scripts/fetch-step-converter.mjs --target win32-x64 --optional && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
-    "build:step-converter": "node scripts/build-step-converter.mjs"
+    "build:step-converter": "node scripts/build-step-converter.mjs",
+    "fetch:step-converter": "node scripts/fetch-step-converter.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

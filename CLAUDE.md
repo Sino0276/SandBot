@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, 네이티브 STEP 변환기(시험 단계, 배포 방식 미정)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 ## 확정된 설계 결정
 
@@ -25,6 +25,7 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 | 씬 뷰 조작  | Unity 씬 뷰와 같다. 우클릭 드래그로 둘러보기, 우클릭+W/A/S/D·Q/E로 비행(Shift 빠르게, 휠로 속도), 가운데 드래그 팬, Alt+왼쪽 궤도, Alt+오른쪽·휠 줌, F 포커스. 카메라는 순간 이동하지 않는다(F·축 표시 클릭은 짧게 날아가고, 휠 줌은 부드럽게 따라가고, 비행은 가속·감속). 도구는 Q 손·W 이동·E 회전, X로 핸들 축 전역/로컬 전환(버튼과 단축키)                                                      |
 | 메시 캐시   | STEP 변환 결과를 개인 PC의 앱 데이터 폴더(`userData/mesh-cache`)에 둔다. 키는 STEP 내용·파일 이름·형식 태그의 해시라 파일이 바뀌면 다시 변환한다. 프로젝트 폴더·git에는 넣지 않는다                                                                                                                                                                                                                  |
 | 프로젝트    | 팀의 FtcRobotController 폴더가 곧 프로젝트다. 도구 데이터는 `sandbot/project.json`에 둔다. STEP은 복사하지 않고 원래 위치를 프로젝트 루트 기준 상대 경로와 절대 경로로 함께 기억한다. 저장은 수동(Ctrl+S)이다                                                                                                                                                                                        |
+| 변환기 배포 | 팀은 Windows를 쓴다. Windows x64 네이티브 STEP 변환기만 CI(GitHub Actions, Linux 러너에서 MinGW 교차 빌드, wine으로 WASM과 결과 비교)가 빌드해 GitHub Release에 올리고, 팀원은 `pnpm fetch:step-converter`로 받는다(`pnpm build:win`도 먼저 받는다). 실행 파일은 git에 넣지 않는다. 코드 서명(Windows·macOS)은 하지 않는다                                                                           |
 
 ## 아키텍처
 
@@ -78,7 +79,7 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - 사이드카 IPC 방식(stdio JSON-RPC 또는 WebSocket)과 시뮬레이션 동기화 방식(lockstep 또는 실시간)
 - JDK를 앱에 번들할지 여부
 - 지원할 FTC 라이브러리 범위(Road Runner, Pedro Pathing 등)와 시즌별 필드 모델
-- 네이티브 STEP 변환기 배포 방식: 실행 파일을 어디서 OS별로 빌드해 앱에 넣을지(CI·릴리스, git에 넣을지), macOS 서명, Linux는 오래된 glibc 환경에서 빌드할지. 지금은 개발자가 `pnpm build:step-converter`로 직접 빌드한다.
+- macOS·Linux용 네이티브 STEP 변환기 배포(macOS 서명, Linux는 오래된 glibc 환경에서 빌드할지). 쓰는 사람이 생기면 정한다. 그전까지는 직접 빌드한다(`pnpm build:step-converter`).
 
 ## 개발 명령어
 
@@ -94,7 +95,8 @@ pnpm test -t "테스트 이름"        # 이름으로 필터
 pnpm build                   # typecheck 후 out/에 빌드
 pnpm start                   # 빌드 결과 미리보기 실행
 pnpm build:win | build:mac | build:linux   # electron-builder로 설치 파일 생성 (dist/)
-pnpm build:step-converter    # 네이티브 STEP 변환기 빌드(git·CMake·C++ 컴파일러 필요, OCCT 전체 컴파일로 오래 걸림)
+pnpm fetch:step-converter    # 네이티브 STEP 변환기(Windows x64)를 GitHub Release에서 받기(지금 소스와 같은 빌드만)
+pnpm build:step-converter    # 네이티브 STEP 변환기 직접 빌드(git·CMake·C++ 컴파일러 필요, OCCT 전체 컴파일로 오래 걸림)
 ```
 
 root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm start --noSandbox`로 실행해야 한다.
@@ -116,6 +118,8 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - occt-import-js는 어셈블리 계층을 **최상위 컴포넌트 한 단계까지만** 노드로 준다. 그 아래 서브어셈블리는 솔리드 목록으로 평탄화되고, 이름 없는 솔리드는 `노드 이름 + 순번`이 된다. 더 깊은 계층이 필요하면 OCCT XCAF를 직접 순회하는 다른 빌드가 필요하다.
 - 네이티브 STEP 변환기(`native/step-converter`, 메인 쪽은 `src/main/stepConverter.ts`):
   - occt-import-js 0.0.23의 C++ 가져오기 코드와 OCCT 7.6.1을 고치지 않고 빌드하고, `src/main.cpp`가 같은 순서로 결과를 쓴다(SBSTEP01: 메시 배열들 + 끝의 JSON). GCC 13은 `<cstdint>` 누락이라 C++ 파일만 `-include cstdint`로 빌드한다. 빌드는 `scripts/build-step-converter.mjs`가 태그를 얕게 받아 커밋을 확인한 뒤 CMake로 하고, 결과를 `resources/step-converter/<platform>-<arch>/`에 둔다(gitignore). 64비트(x64·arm64)만 만든다. 빌드한 실행 파일의 CPU가 폴더 이름과 다르면 실패한다(Windows의 기본 개발자 프롬프트는 x86이라 그때는 Ninja 대신 Visual Studio 생성기에 CPU를 지정). 배포 앱에는 electron-builder의 OS별 `extraResources`로 대상 OS·CPU용 하나만 들어간다(`${platform}`은 빌드하는 PC의 OS라 쓰지 않는다).
+  - 배포(`.github/workflows/step-converter.yml`): 변환기 소스가 바뀌어 main에 들어오면 CI가 Windows x64용을 빌드·검증해 Release `step-converter-<소스 해시 16자리>`에 실행 파일과 `SHA256SUMS`를 올린다(PR에서는 빌드·검증과 아티팩트만). 소스 해시는 `scripts/step-converter-source.mjs`가 version.json·CMake·`native/step-converter/src`·빌드 스크립트의 내용(CR 뺀 것)으로 계산한다. 결과를 바꿀 수 있는 파일을 추가하면 그 목록(`SOURCE_PATHS`)과 워크플로의 `paths`에 넣는다.
+  - 받기(`scripts/fetch-step-converter.mjs`)는 지금 작업 폴더의 소스 해시로 Release를 찾고, SHA-256·실행 파일 CPU(이 PC용이면 `--version`까지)를 확인한 뒤 넣는다. 빌드·받기는 실행 파일 옆 `source.json`에 소스 해시를 남기고, 받기는 같은 해시면 다시 받지 않는다(직접 빌드한 것도 덮어쓰지 않음). 그 소스의 Release가 없으면(변환기 소스를 고친 뒤 main에 들어가기 전) 직접 빌드하라고 알린다. `--optional`(`pnpm build:win`)로 받지 못하면 남아 있던 다른 소스의 실행 파일을 지운다. 앱은 `--version`(version.json)만 확인하므로, 지우지 않으면 오래된 main.cpp로 만든 변환기가 설치 파일에 들어간다.
   - 앱은 처음 쓸 때 `--version`으로 실행되는지·같은 소스인지 확인하고, 아니면 WASM으로 읽는다. 변환은 한 번에 하나씩(대기 중이면 queued), STEP 내용은 캐시 키 해시와 함께 표준 입력으로 흘려보낸다(두 번 읽다 파일이 바뀌어 다른 내용이 그 키로 캐시되지 않게). OCCT 환경 변수(CSF_* 등)는 넘기지 않는다. 출력은 `userData/step-convert/`에 쓰고 읽은 뒤 지운다.
   - 변환기는 stderr에 `phase`, `progress`, `warning untranslated`, 마지막에 `result <ok|readFailed|outOfMemory|failed>` 줄을 쓴다. 앱은 result 줄로 결과를 판단한다(없으면 비정상 종료). 네이티브 실패(메모리 부족 등) 뒤에는 WASM으로 다시 읽지 않는다(실행 파일이 없거나 실행되지 않을 때만 WASM).
   - 메모리 한도로 일부 메시가 빠졌거나 OCCT가 엔티티를 건너뛴 결과는 캐시하지 않는다. 엔티티를 건너뛰면 솔리드가 통째로 빠져 뒤 메시 순번이 밀리므로, 프로젝트를 열거나 다시 읽을 때는 그 결과를 등록하지 않고 실패로 알린다.

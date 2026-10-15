@@ -1,0 +1,153 @@
+# 네이티브 STEP 변환기(Windows x64)를 빌드·검증해 GitHub Release에 올린다.
+# - 태그는 변환기 소스 해시(step-converter-<16자리>, scripts/step-converter-source.mjs). 같은 태그가 이미 있으면 건너뛴다.
+# - Linux 러너에서 MinGW로 교차 빌드하고, wine으로 실행해 렌더러 WASM(occt-import-js)과 결과를 비교한 뒤 올린다.
+# - PR에서는 빌드·검증만 하고, main에 들어온 것만 올린다.
+# 팀원은 pnpm fetch:step-converter로 받는다(scripts/fetch-step-converter.mjs).
+name: STEP converter
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - native/step-converter/**
+      - scripts/build-step-converter.mjs
+      - scripts/step-converter-source.mjs
+      - .github/workflows/step-converter.yml
+  pull_request:
+    paths:
+      - native/step-converter/**
+      - scripts/build-step-converter.mjs
+      - scripts/step-converter-source.mjs
+      - .github/workflows/step-converter.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: step-converter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win32-x64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      TARGET: win32-x64
+      ASSET: sandbot-step-converter-win32-x64.exe
+    # shell을 적으면 bash가 -eo pipefail로 돈다(적지 않으면 -e만이라 파이프 앞 명령의 실패를 놓친다)
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(node scripts/step-converter-source.mjs)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "release $tag already exists"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "will build $tag"
+          fi
+
+      # 받은 OCCT 소스와 빌드 폴더. main.cpp만 바뀌면 OCCT를 다시 컴파일하지 않는다.
+      # 빌드가 끝나면 바로 저장한다(뒤 검증이 실패해도 다음 실행이 OCCT를 다시 컴파일하지 않게).
+      - name: Restore sources and build
+        id: cache
+        if: steps.tag.outputs.exists != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: native/step-converter/.cache
+          key: step-converter-${{ env.TARGET }}-${{ hashFiles('native/step-converter/version.json', 'native/step-converter/CMakeLists.txt', 'native/step-converter/cmake/**') }}-${{ steps.tag.outputs.tag }}
+          restore-keys: |
+            step-converter-${{ env.TARGET }}-${{ hashFiles('native/step-converter/version.json', 'native/step-converter/CMakeLists.txt', 'native/step-converter/cmake/**') }}-
+
+      - name: Install toolchain
+        if: steps.tag.outputs.exists != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix wine64
+
+      - name: Build
+        if: steps.tag.outputs.exists != 'true'
+        run: node scripts/build-step-converter.mjs --toolchain native/step-converter/cmake/mingw-w64-x86_64.cmake --target "$TARGET"
+
+      - name: Save sources and build
+        if: steps.tag.outputs.exists != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/step-converter/.cache
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: pnpm/action-setup@v4
+        if: steps.tag.outputs.exists != 'true'
+
+      - name: Install dependencies
+        if: steps.tag.outputs.exists != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # wine으로 실행한다. 유닉스 절대 경로는 wine의 Z: 드라이브로 바꿔 넘긴다.
+      - name: Compare with WASM (wine)
+        if: steps.tag.outputs.exists != 'true'
+        env:
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+          WINEDEBUG: -all
+        run: |
+          exe="$PWD/resources/step-converter/$TARGET/sandbot-step-converter.exe"
+          wrapper="$RUNNER_TEMP/step-converter-wine.sh"
+          cat > "$wrapper" << EOF
+          #!/bin/bash
+          args=()
+          for a in "\$@"; do
+            if [[ "\$a" == /* ]]; then args+=("Z:\$a"); else args+=("\$a"); fi
+          done
+          exec /usr/lib/wine/wine64 "$exe" "\${args[@]}"
+          EOF
+          chmod +x "$wrapper"
+          /usr/lib/wine/wine64 wineboot --init > /dev/null 2>&1 || true
+          "$wrapper" --version
+          SANDBOT_STEP_CONVERTER="$wrapper" pnpm vitest run --testTimeout=120000 \
+            --reporter=default --reporter=json --outputFile.json=parity.json \
+            src/renderer/src/cad/nativeParity.test.ts
+          # 변환기를 찾지 못해 건너뛴 것이 아니라 실제로 비교해 모두 통과했는지 확인한다(출력 문구는 CI에서 색이 섞인다)
+          node -e '
+            const r = require("./parity.json")
+            console.log("parity: " + r.numPassedTests + "/" + r.numTotalTests + " passed, " + r.numPendingTests + " skipped")
+            if (!r.success || r.numTotalTests === 0 || r.numPassedTests !== r.numTotalTests) process.exit(1)
+          '
+
+      - name: Upload artifact
+        if: steps.tag.outputs.exists != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: resources/step-converter/${{ env.TARGET }}/sandbot-step-converter.exe
+
+      - name: Publish release
+        if: steps.tag.outputs.exists != 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p release
+          cp "resources/step-converter/$TARGET/sandbot-step-converter.exe" "release/$ASSET"
+          (cd release && sha256sum "$ASSET" > SHA256SUMS)
+          cat release/SHA256SUMS
+          gh release create "$TAG" release/"$ASSET" release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --latest=false \
+            --title "STEP converter ${TAG#step-converter-}" \
+            --notes "Native STEP converter (occt-import-js $(node -p "require('./native/step-converter/version.json').occtImportJs.tag"), OCCT $(node -p "require('./native/step-converter/version.json').occt.tag")) built from ${GITHUB_SHA}. Get it with: pnpm fetch:step-converter"
