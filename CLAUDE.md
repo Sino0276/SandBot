@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, Unity식 하이어라키 편집(다중 선택, Create Empty·Create Empty Parent, 드래그로 부모 바꾸기, 이름 바꾸기)과 메커니즘 그룹(생성 하드웨어 클래스의 중첩 클래스), 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 **설계 원칙:** Unity 환경을 최대한 그대로 가져온다. Unity를 써 본 사람이 익숙하게 바로 쓸 수 있는 것이 개발 효율과 직관성의 기준이다. 기능을 설계할 때 Unity에 대응하는 것이 있으면 그 이름·조작·동작을 먼저 따르고, FTC 구조와 맞지 않는 부분만 바꾼다.
 
@@ -67,6 +67,9 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **Z-up은 `scene/coordinates.ts`가 `Object3D.DEFAULT_UP`을 바꿔서 적용한다.** 이 모듈은 `main.tsx`에서 가장 먼저 import해야 한다.
 - **최상위 로봇은 바닥 평면에만 있다(높이·롤·피치 0).** `constrainTransform`이 강제하고, 핸들과 인스펙터도 해당 축을 막는다.
 - **CAD 메시 형상 id는 `cadGeometryId(CAD 루트 id, 메시 순번)`이고 프로젝트 파일에 저장된다.** 프로젝트를 열면 STEP을 다시 읽어 같은 id로 등록한다. 새로 불러온 CAD(`cad.meshIndexing: 'source'`, `PROJECT_VERSION` 3)의 순번은 occt-import-js 결과의 원래 메시 순번(`ImportedMesh.sourceIndex`)이라, 삼각형을 만들지 못해 빠진 메시가 있어도 다른 파트의 id가 밀리지 않는다. 예전 프로젝트(meshIndexing 없음)는 빈 메시를 빼고 다시 매긴 순번이고, 저장한 메시 수가 지금 전체 수와 같으면 두 순번이 같다(`reloadIndexing`). `convertOcctResult`가 메시를 나열하는 순서를 바꾸면 기존 프로젝트의 파트와 형상 연결이 깨진다. `convertOcctResult`의 출력이나 occt-import-js 버전을 바꾸면 메시 캐시 형식 태그(`MESH_CACHE_TAG`)도 올린다.
+- **형제 순서는 `objects`의 키 순서다.** 직렬화·파싱·실행 취소가 모두 이 순서를 지킨다. 오브젝트를 다시 만들 때 키 순서를 바꾸지 않는다(부모 바꾸기·순서 바꾸기는 `scene/hierarchy.ts`만 한다). 정수처럼 보이는 id는 JavaScript가 먼저 나열하므로 쓰지 않는다(앱은 UUID만 만든다).
+- **하이어라키 편집은 `scene/hierarchy.ts`의 순수 함수로만 한다.** 부모를 바꿔도 월드 자세를 지킨다. 로봇은 최상위에서만 순서를 바꾸고, CAD 루트는 지금 부모(로봇) 안에서만 순서를 바꾸며(CAD 루트 transform이 곧 정렬), 나머지는 소속 로봇이 바뀌지 않는 곳으로만 옮긴다(`moveRejection`).
+- **CAD 루트 밖으로 옮긴 CAD 노드는 `cadOrigin`(그 CAD 루트 id)을 갖는다.** group·robot·CAD 루트에는 두지 않고, 부모에게서 물려받는 출처와 다를 때만 둔다(`cadOriginOf`). CAD 루트를 지우면 옮긴 파트도 함께 지우고(하이어라키가 확인을 묻는다), CAD 루트의 변환(정렬 변경, 직접 편집)이 바뀌면 옮긴 파트도 같은 만큼 움직인다(`carryCadDependents`). 프로젝트를 열 때 끊긴 `cadOrigin`은 버리고, 메시 파트는 형상 id 접두어로 출처를 고친다.
 - **씬 문서는 바꿀 때마다 새 객체를 만든다(불변).** 실행 취소(`editor/history.ts`)가 바뀌기 전 `objects`를 그대로 스냅샷으로 쌓기 때문이다. 형상(`geometryRegistry`) 해제도 기록에서 쓰지 않게 된 것만 history가 한다. sceneStore에서 직접 해제하지 않는다.
 - **프로젝트 파일 형식을 바꾸면 `PROJECT_VERSION`을 올리고 이전 버전을 읽는 경로를 남긴다.** `parseProject`가 형식을 검증한다. 더 새 버전의 파일은 열지 않는다.
 - **TeamCode에는 도구가 만든 파일만 쓰고 지운다.** 생성 파일은 앞부분에 `@sandbot-generated <내용 해시>` 표식을 넣는다(`stampGenerated`). 메인 프로세스는 표식과 해시가 맞는, 도구가 쓴 그대로인 파일만 덮어쓰거나 지운다. 팀이 고쳤거나 복사·이름 변경한 생성 파일(해시 불일치)과 사람이 만든 파일은 건너뛰고 알린다. 경로는 `src/shared/generatedFiles.ts`의 허용 규칙(생성 패키지 폴더의 `.java`, `res/xml`의 `sandbot_*.xml`)으로만 받는다.
@@ -115,7 +118,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - `cad/stepWorker.ts`(웹 워커)가 WASM이면 occt-import-js로 미터 단위로 읽고, 네이티브면 변환기 출력(SBSTEP01, `cad/nativeResult.ts`)을 읽어, 둘 다 `convertOcctResult`로 계층과 피벗 중심 메시로 바꾼다.
   - `cad/importStep.ts`(메인 스레드)가 `buildSceneObjects`로 오브젝트를 만들고, 형상을 등록해 스토어에 넣는다.
   - 오브젝트 구조는 로봇 → CAD 루트(`cad` 메타데이터, transform이 곧 정렬) → 어셈블리·파트다.
-  - 각 노드의 피벗은 CAD 경계 상자의 중심이다. CAD 루트 아래 노드는 회전 없이 위치만 가진다.
+  - 각 노드의 피벗은 CAD 경계 상자의 중심이다. 불러올 때 CAD 루트 아래 노드는 회전 없이 위치만 가진다(그룹으로 옮기면 회전이 생길 수 있다).
   - 정렬 계산은 `cad/alignment.ts`의 `cadRootTransform`이 한다. CAD 위축을 로봇 +Z, 앞축을 +X로 돌리고, 바닥 면 중심을 로봇 원점에 둔다.
 - occt-import-js는 어셈블리 계층을 **최상위 컴포넌트 한 단계까지만** 노드로 준다. 그 아래 서브어셈블리는 솔리드 목록으로 평탄화되고, 이름 없는 솔리드는 `노드 이름 + 순번`이 된다. 더 깊은 계층이 필요하면 OCCT XCAF를 직접 순회하는 다른 빌드가 필요하다.
 - 네이티브 STEP 변환기(`native/step-converter`, 메인 쪽은 `src/main/stepConverter.ts`):
@@ -147,11 +150,12 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 앱을 시작하면 마지막 프로젝트(`sandbot:lastProject`)를 다시 연다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
 - 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.
-  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다.
+  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을 추가했다.
   - 종류는 `catalog.ts`의 데이터로 정의한다(포트 종류, Java 타입·import, I2C 주소, 속성 정의). 인스펙터의 입력칸과 번역 키는 속성 정의에서 만든다. 카탈로그에서 나온 번역 키는 `t()` 타입 검사를 받지 못하므로 `labels.test.ts`가 ko·en에 키가 있는지 확인한다.
   - 저장(`saveProject`)하면 `generate.ts`가 검증(`validation.ts`) 후 컴포넌트가 있는 로봇마다 Java 하드웨어 클래스(`javaCodegen.ts`, 패키지 `org.firstinspires.ftc.teamcode.sandbot`)와 로봇 구성 XML(`configXml.ts`, `TeamCode/src/main/res/xml/sandbot_<클래스>.xml`)을 만든다. 메인 프로세스(`src/main/teamCode.ts`)가 내용이 바뀐 파일만 쓰고, 이번에 만들지 않은 이전 생성 파일은 지운다. 결과는 `projectStore.generation`과 알림으로 보여 준다.
   - 생성 Java의 주석은 팀이 Android Studio에서 읽으므로 영어로 쓴다. 주석에 넣는 이름은 `commentText`로 거른다(javac는 주석 안의 `\u`도 해석한다).
-  - 필드 이름은 장치 이름에서 만든다(`naming.ts`). Java는 유니코드 글자를 식별자로 쓸 수 있으므로 한글 이름도 그대로 둔다. 숫자로 시작하면 `_`를 붙이고, 키워드와 `hardwareMap`은 뒤에 `_`를 붙인다. 상수 이름은 `generatedConstantNames`로 만들고, 겹치면 검증 오류다.
+  - 메커니즘 그룹(`kind: 'group'`, 하이어라키의 Create Empty)은 생성 클래스 안의 `public static final class`가 된다(`robot.lift.liftLeft`, 상수는 `RobotHardware.Lift.X`). 범위 트리와 클래스·필드·상수 이름은 `codeScopes.ts`가 한 번 정하고 코드 생성과 검증이 같이 읽는다. 하드웨어가 없는 그룹은 클래스를 만들지 않는다. 그룹 클래스 이름은 `codeClassName ?? javaClassName(이름)`이고 ASCII(`^[A-Z][A-Za-z0-9]*$`)여야 한다(중첩 클래스는 `.class` 파일 이름이 된다). 예약 형식(`RESERVED_TYPE_NAMES`: 카탈로그 import·HardwareMap·String 등)과 같거나, 감싸는 클래스와 같거나, 형제끼리 대소문자만 다르면 오류다. 그룹 필드는 클래스 이름의 lowerCamel이다. 그룹이 없으면 출력이 바이트 단위로 같아야 한다(`generatedOutput.test.ts`의 파일 스냅샷).
+  - 필드 이름은 장치 이름에서 만든다(`naming.ts`). 그룹 안에서도 같다(구성 이름 그대로). Java는 유니코드 글자를 식별자로 쓸 수 있으므로 한글 이름도 그대로 둔다. 숫자로 시작하면 `_`를 붙이고, 키워드와 `hardwareMap`은 뒤에 `_`를 붙인다. 상수 이름은 `generatedConstantNames`로 만들고, 겹치면 검증 오류다.
   - 구성 XML과 Java는 같은 장치 목록을 가져야 한다(`isInConfiguration`). 시리얼이 없어 XML에 넣지 않는 웹캠·Limelight는 Java에서 `tryGet`으로 null을 허용한다. `get`은 장치가 없으면 예외를 던져 클래스 전체를 못 쓰게 한다.
   - 오프셋 계산은 `mounting.ts`가 파트의 로봇 기준 위치로 한다. Pinpoint `setOffsets`는 X 포드의 옆 위치(왼쪽 +)와 Y 포드의 앞 위치(mm)다. OTOS `setOffset`은 SDK 샘플 규약(X 오른쪽 +, Y 앞 +, 반시계 +, in·deg)이고, Road Runner·Pedro Pathing은 자체 오프셋을 쓴다. OTOS 방향은 장착 각도 속성만 쓴다. CAD 파트의 회전은 CAD 파일 축의 정렬일 뿐 센서 방향과 관계없다. Limelight의 구성 XML 주소는 시리얼의 IP(Control Hub 주소)에서 마지막 자리를 1로 바꾼 값이다(SDK와 같음). 데드휠은 같은 번호 모터 포트의 장치 이름으로 엔코더를 읽는다.
   - 코드 단위 프로젝트 설정이 생기기 전까지 생성 코드는 SDK API가 받는 단위를 쓰고, 상수 이름에 단위를 붙인다(`_MM`, `_IN`, `_DEG`).
