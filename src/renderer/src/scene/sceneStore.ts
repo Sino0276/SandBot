@@ -51,6 +51,16 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
   )
 }
 
+// STEP 임포트가 씬을 비우는 경우: 기본 임시 씬(임시 모양이 남아 있음)이나 빈 씬일 때만.
+// 사용자가 만든 빈 그룹만 남은 씬(로봇을 모두 지운 뒤 등)은 비우지 않는다.
+function replacesOnImport(objects: SceneObjects): boolean {
+  const values = Object.values(objects)
+  return (
+    isPlaceholderScene(objects) &&
+    (values.length === 0 || values.some((object) => object.visual?.type === 'placeholder'))
+  )
+}
+
 // CAD 원본 위치를 바꾼 objects. CAD 루트가 없으면 그대로 돌려준다(실행 취소 기록 전체에도 적용한다).
 export function withCadFile(
   objects: SceneObjects,
@@ -153,7 +163,7 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
     }),
   addObjects: (objects) =>
     set((state) => ({
-      objects: { ...(isPlaceholderScene(state.objects) ? {} : state.objects), ...objects }
+      objects: { ...(replacesOnImport(state.objects) ? {} : state.objects), ...objects }
     })),
   removeObjects: (ids) =>
     set((state) => {

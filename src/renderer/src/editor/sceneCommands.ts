@@ -116,8 +116,20 @@ export async function deleteSelection(): Promise<boolean> {
   // 대화상자를 띄운 동안 씬이 바뀌었을 수 있다(형상 다시 찾기 등). 지금 씬에 남은 것만 지운다.
   const ids = selectionRoots(useSceneStore.getState().objects, plan.ids)
   if (ids.length === 0) return false
+  // 하이어라키에서 지웠으면 지운 행 대신 트리의 탭 위치 행으로 포커스를 옮겨 화살표 키가 계속 동작하게 한다(Unity와 같음)
+  const refocusTree =
+    typeof document !== 'undefined' &&
+    document.activeElement instanceof HTMLElement &&
+    document.activeElement.closest('[role="tree"]') !== null
   useEditorStore.getState().select(null)
   useSceneStore.getState().removeObjects(ids)
+  if (refocusTree) {
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>('[role="tree"] [role="treeitem"][tabindex="0"]')
+        ?.focus({ preventScroll: true })
+    )
+  }
   return true
 }
 

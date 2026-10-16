@@ -99,6 +99,21 @@ describe('임시 씬 판정', () => {
   it('CAD 메시가 있으면 임시 씬이 아니다', () => {
     expect(isPlaceholderScene(objects)).toBe(false)
   })
+
+  it('임시 씬의 빈 그룹은 첫 STEP 임포트 때 함께 사라진다', () => {
+    placeholder()
+    state().createGroup({ parentId: 'robot' })
+    state().addObjects({ r: { ...objects.robot, id: 'r' } })
+    expect(Object.keys(state().objects)).toEqual(['r'])
+  })
+
+  it('로봇을 모두 지운 뒤 만든 그룹은 STEP 임포트 때 지우지 않는다', () => {
+    state().replaceObjects({})
+    const group = state().createGroup({ parentId: null, name: 'Field Elements' })!
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().addObjects({ r: { ...objects.robot, id: 'r' } })
+    expect(Object.keys(state().objects)).toEqual([group, 'r'])
+  })
 })
 
 describe('하이어라키 편집 액션', () => {

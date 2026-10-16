@@ -135,6 +135,11 @@ function TransformHandles(): React.JSX.Element | null {
         isRobotRoot={object.kind === 'robot' && object.parentId === null}
         onDragStart={() => {
           markHandleInteraction()
+          // 확정하지 않은 입력칸(이름 바꾸기, 인스펙터 값)은 먼저 따로 확정한다. 브라우저가 포커스를 옮기는 것은
+          // 드래그가 시작된 뒤라 그대로 두면 그 수정이 드래그의 실행 취소 단계에 섞인다.
+          const active = document.activeElement
+          if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
+            active.blur()
           // 드래그 한 번을 실행 취소 한 단계로 묶는다
           beginChange()
           dragging.current = true

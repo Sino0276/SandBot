@@ -90,8 +90,9 @@ export function generatedConstantNames(type: string, name: string): string[] {
   return (CONSTANT_SUFFIXES[type] ?? []).map((suffix) => `${prefix}${suffix}`)
 }
 
+// 로봇 클래스 이름. `$`는 받지 않는다(그룹의 중첩 클래스는 `Bot$Lift` 같은 바이너리 이름이 되므로 다른 로봇의 클래스와 겹친다).
 export function isValidJavaClassName(name: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && !JAVA_KEYWORDS.has(name) && name !== '_'
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !JAVA_KEYWORDS.has(name) && name !== '_'
 }
 
 // Java 문자열 리터럴 안에 넣을 수 있게 이스케이프
