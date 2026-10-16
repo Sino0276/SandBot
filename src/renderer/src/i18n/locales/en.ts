@@ -411,7 +411,13 @@ const en: Messages = {
       constantNameCollision:
         '{{names}} produce the same constant {{constant}}. Rename one of them.',
       expansionHubAddressInvalid:
-        'Expansion Hub address {{address}} cannot be used (1–254, except 173).'
+        'Expansion Hub address {{address}} cannot be used (1–254, except 173).',
+      invalidGroupName:
+        'Group "{{name}}": "{{className}}" cannot be a Java class name. The group\'s hierarchy name becomes a class in the generated code, so use English letters and digits starting with a capital letter. To keep the name, set a "Java class name" in the group\'s inspector.',
+      reservedGroupName:
+        'Group "{{name}}": the class name {{className}} is a Java type the generated code uses. Choose another name.',
+      duplicateGroupClass:
+        '{{names}}: the Java class name {{className}} clashes. Groups in the same class must differ by more than letter case, and a group cannot share its name with a class that contains it (including the robot class).'
     }
   }
 }

@@ -2,8 +2,17 @@ import { create } from 'zustand'
 import { cadRootTransform, isValidAlignment, type CadAlignment } from '../cad/alignment'
 import { DEG, ROBOT_SIZE, TILE_SIZE } from './coordinates'
 import {
+  carryCadDependents,
+  createEmptyParent,
+  createGroup,
+  defaultGroupName,
+  moveObjects,
+  removeObjects,
+  renameObject
+} from './hierarchy'
+import {
   constrainTransform,
-  subtreeIds,
+  isCodeGroup,
   type HardwareComponent,
   type RobotHardwareSettings,
   type SceneObject,
@@ -31,11 +40,14 @@ const PLACEHOLDER_SCENE: SceneObjects = {
   }
 }
 
-// 임시 씬(임시 모양만 있고 하드웨어를 붙이지 않은 상태). 이때만 첫 STEP 임포트가 씬을 비우고, 변경도 저장 대상으로 치지 않는다.
+// 임시 씬(임시 모양과 빈 그룹만 있고 하드웨어를 붙이지 않은 상태). 이때만 첫 STEP 임포트가 씬을 비우고,
+// 변경도 저장 대상으로 치지 않는다.
 export function isPlaceholderScene(objects: SceneObjects): boolean {
   return Object.values(objects).every(
     (object) =>
-      object.visual?.type === 'placeholder' && !object.components?.length && !object.hardware
+      (object.visual?.type === 'placeholder' || isCodeGroup(object)) &&
+      !object.components?.length &&
+      !object.hardware
   )
 }
 
@@ -73,12 +85,37 @@ type SceneState = {
   // CAD 원본 파일 위치를 바꾼다(파일 다시 찾기).
   setCadFile: (id: string, absolutePath: string, fileName: string) => void
   // 저장용 로컬 변환을 설정한다. 오브젝트 종류별 제약(예: 로봇은 바닥 평면)을 적용한다.
+  // CAD 루트면 그 CAD에서 밖으로 옮긴 노드도 같은 만큼 따라 움직인다(carryCadDependents).
   setLocalTransform: (id: string, transform: Transform) => void
   // 오브젝트들을 추가한다. 씬에 임시 오브젝트만 있으면 그것들은 지운다.
   addObjects: (objects: SceneObjects) => void
-  // 오브젝트와 그 하위를 지운다(형상 해제는 editor/history.ts).
+  // 오브젝트들과 그 하위를 지운다. CAD 루트를 지우면 그 CAD에서 다른 곳으로 옮긴 노드도 지운다
+  // (scene/hierarchy.ts removalIds). 형상 해제는 editor/history.ts가 한다.
+  removeObjects: (ids: readonly string[]) => void
   removeObject: (id: string) => void
-  // CAD 루트의 방향(위·앞 축)을 바꾸고 바닥 중심 맞춤을 다시 계산한다.
+  // 하이어라키 편집(scene/hierarchy.ts). 각각 set() 한 번이라 실행 취소 한 단계다.
+  // ids를 parentId 아래 beforeId 앞(없으면 마지막)으로 옮긴다. 월드 자세는 유지한다. 옮겼으면 true.
+  moveObjects: (
+    ids: readonly string[],
+    parentId: string | null,
+    beforeId?: string | null
+  ) => boolean
+  // 빈 그룹(Create Empty)을 만들고 id를 돌려준다. 이름이 없으면 defaultGroupName. 만들지 못하면 null.
+  createGroup: (options: {
+    parentId: string | null
+    name?: string
+    afterId?: string | null
+    id?: string
+  }) => string | null
+  // 선택을 새 그룹으로 묶는다(Create Empty Parent). 새 그룹 id, 묶을 수 없으면 null.
+  createEmptyParent: (
+    ids: readonly string[],
+    activeId: string | null,
+    options?: { name?: string; id?: string }
+  ) => string | null
+  // 앞뒤 공백을 자른 이름으로 바꾼다. 빈 이름이면 바꾸지 않는다.
+  renameObject: (id: string, name: string) => void
+  // CAD 루트의 방향(위·앞 축)을 바꾸고 바닥 중심 맞춤을 다시 계산한다. 밖으로 옮긴 그 CAD의 노드도 따라 움직인다.
   setCadAlignment: (id: string, alignment: CadAlignment) => void
   // 하드웨어 컴포넌트. 변경할 때마다 새 objects를 만들어야 변경 추적(dirty)과 다시 그리기가 동작한다.
   addComponent: (objectId: string, component: HardwareComponent) => void
@@ -91,7 +128,7 @@ type SceneState = {
   setRobotHardware: (robotId: string, settings: RobotHardwareSettings) => void
 }
 
-export const useSceneStore = create<SceneState>()((set) => ({
+export const useSceneStore = create<SceneState>()((set, get) => ({
   objects: PLACEHOLDER_SCENE,
   geometryRevision: 0,
   bumpGeometryRevision: () => set((state) => ({ geometryRevision: state.geometryRevision + 1 })),
@@ -105,39 +142,73 @@ export const useSceneStore = create<SceneState>()((set) => ({
     set((state) => {
       const object = state.objects[id]
       if (!object) return state
-      return {
-        objects: {
-          ...state.objects,
-          [id]: { ...object, transform: constrainTransform(object, transform) }
-        }
+      const objects = {
+        ...state.objects,
+        [id]: { ...object, transform: constrainTransform(object, transform) }
       }
+      return { objects: object.cad ? carryCadDependents(state.objects, objects, id) : objects }
     }),
   addObjects: (objects) =>
     set((state) => ({
       objects: { ...(isPlaceholderScene(state.objects) ? {} : state.objects), ...objects }
     })),
-  removeObject: (id) =>
+  removeObjects: (ids) =>
     set((state) => {
-      if (!state.objects[id]) return state
-      const removed = subtreeIds(state.objects, id)
-      const objects = { ...state.objects }
-      for (const removedId of removed) delete objects[removedId]
-      return { objects }
+      const objects = removeObjects(state.objects, ids)
+      return objects === state.objects ? state : { objects }
+    }),
+  removeObject: (id) => get().removeObjects([id]),
+  moveObjects: (ids, parentId, beforeId = null) => {
+    const before = get().objects
+    const objects = moveObjects(before, ids, parentId, beforeId)
+    if (objects === before) return false
+    set({ objects })
+    return true
+  },
+  createGroup: ({ parentId, name, afterId = null, id = crypto.randomUUID() }) => {
+    const before = get().objects
+    const objects = createGroup(before, {
+      id,
+      parentId,
+      name: name ?? defaultGroupName(before, parentId),
+      afterId
+    })
+    if (objects === before) return null
+    set({ objects })
+    return id
+  },
+  createEmptyParent: (ids, activeId, { name, id = crypto.randomUUID() } = {}) => {
+    const before = get().objects
+    const parentId = ids.length > 0 ? (before[ids[0]]?.parentId ?? null) : null
+    const objects = createEmptyParent(
+      before,
+      ids,
+      activeId,
+      id,
+      name ?? defaultGroupName(before, parentId, undefined, ids)
+    )
+    if (objects === before) return null
+    set({ objects })
+    return id
+  },
+  renameObject: (id, name) =>
+    set((state) => {
+      const objects = renameObject(state.objects, id, name)
+      return objects === state.objects ? state : { objects }
     }),
   setCadAlignment: (id, alignment) =>
     set((state) => {
       const object = state.objects[id]
       if (!object?.cad || !isValidAlignment(alignment)) return state
-      return {
-        objects: {
-          ...state.objects,
-          [id]: {
-            ...object,
-            transform: cadRootTransform(object.cad.bounds, alignment),
-            cad: { ...object.cad, ...alignment }
-          }
+      const objects = {
+        ...state.objects,
+        [id]: {
+          ...object,
+          transform: cadRootTransform(object.cad.bounds, alignment),
+          cad: { ...object.cad, ...alignment }
         }
       }
+      return { objects: carryCadDependents(state.objects, objects, id) }
     }),
   addComponent: (objectId, component) =>
     set((state) => {

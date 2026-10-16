@@ -406,7 +406,13 @@ const ko = {
       constantNameCollision:
         '{{names}}이(가) 같은 상수 {{constant}}을(를) 만듭니다. 이름을 바꾸세요.',
       expansionHubAddressInvalid:
-        'Expansion Hub 주소 {{address}}은(는) 쓸 수 없습니다 (1–254, 173 제외).'
+        'Expansion Hub 주소 {{address}}은(는) 쓸 수 없습니다 (1–254, 173 제외).',
+      invalidGroupName:
+        '그룹 "{{name}}": "{{className}}"은(는) Java 클래스 이름으로 쓸 수 없습니다. 하이어라키의 그룹 이름이 생성 코드의 클래스 이름이 되므로 영문 대문자로 시작하고 영문·숫자만 쓰세요. 이름을 그대로 두려면 그룹 인스펙터에서 "Java 클래스 이름"을 정하세요.',
+      reservedGroupName:
+        '그룹 "{{name}}": 클래스 이름 {{className}}은(는) 생성 코드가 쓰는 Java 타입과 같아 쓸 수 없습니다. 다른 이름을 쓰세요.',
+      duplicateGroupClass:
+        '{{names}}: Java 클래스 이름 {{className}}이(가) 겹칩니다. 같은 클래스 안의 그룹은 대소문자만 달라서는 안 되고, 그룹을 감싸는 클래스(로봇 클래스 포함)와 같은 이름도 쓸 수 없습니다.'
     }
   }
 }

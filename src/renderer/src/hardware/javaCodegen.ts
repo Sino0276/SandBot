@@ -1,11 +1,12 @@
-import type { HardwareComponent, SceneObjects } from '../scene/model'
-import { componentDef, isComponentType, type ComponentType } from './catalog'
+import type { SceneObjects } from '../scene/model'
+import { componentDef, type ComponentType } from './catalog'
 import {
-  isInConfiguration,
-  robotComponents,
-  robotHardwareSettings,
-  type ComponentEntry
-} from './components'
+  buildCodeScopes,
+  type CodeScope,
+  type DeviceMember,
+  type RobotCodeScopes
+} from './codeScopes'
+import { isInConfiguration, robotHardwareSettings, type ComponentEntry } from './components'
 import {
   INCH_PER_METER,
   MM_PER_METER,
@@ -14,13 +15,7 @@ import {
   robotFramePose
 } from './mounting'
 import { GENERATED_MARKER } from '../../../shared/generatedFiles'
-import {
-  configXmlFilePath,
-  constantName,
-  GENERATED_JAVA_PACKAGE,
-  javaIdentifier,
-  javaString
-} from './naming'
+import { configXmlFilePath, constantName, GENERATED_JAVA_PACKAGE, javaString } from './naming'
 
 const INDENT = '    '
 
@@ -63,15 +58,15 @@ export function deadWheelDeviceName(entry: ComponentEntry, entries: ComponentEnt
   return motor ? motor.component.name : entry.component.name
 }
 
+// entries는 로봇 전체 장치다(데드휠의 모터가 다른 그룹에 있어도 찾는다)
 function generateComponent(
   objects: SceneObjects,
-  entry: ComponentEntry,
+  entry: DeviceMember,
   entries: ComponentEntry[]
 ): Generated {
-  const { component, objectId } = entry
+  const { component, objectId, field } = entry
   const type = component.type as ComponentType
   const def = componentDef(type)
-  const field = javaIdentifier(component.name)
   // 상수 이름은 검증(constantNameCollision)과 같은 규칙(naming.generatedConstantNames)으로 만든다
   const constant = constantName(field)
   const props = component.props
@@ -216,28 +211,78 @@ function generateComponent(
   return { constants, init }
 }
 
+const indent = (line: string): string => (line ? `${INDENT}${line}` : '')
+
+// 범위 하나의 클래스 본문(들여쓰기 전). 상수 → 필드(하이어라키 순서) → 생성자 → 중첩 클래스 묶음이고,
+// 묶음 사이에 빈 줄을 하나씩 둔다. 그룹이 없는 로봇은 예전 출력과 바이트 단위로 같아야 한다(generatedOutput.test.ts).
+function classBlocks(objects: SceneObjects, scopes: RobotCodeScopes, scope: CodeScope): string[][] {
+  const constants: string[] = []
+  const fields: string[] = []
+  const init: string[] = []
+  const nested: string[][] = []
+  for (const member of scope.members) {
+    if (init.length) init.push('')
+    if (member.kind === 'device') {
+      const generated = generateComponent(objects, member, scopes.entries)
+      const def = componentDef(member.component.type as ComponentType)
+      constants.push(...generated.constants)
+      fields.push(`public final ${def.javaType} ${member.field};`)
+      init.push(`// ${commentText(member.component.name)}`, ...generated.init)
+    } else {
+      const { className, name } = member.scope
+      fields.push(`public final ${className} ${member.field};`)
+      init.push(`// ${commentText(name)}`, `${member.field} = new ${className}(hardwareMap);`)
+      nested.push(nestedClass(objects, scopes, member.scope, member.field))
+    }
+  }
+  const constructor = [
+    `/** Call during OpMode init (hardwareMap.get must only be used in the init phase). */`,
+    `public ${scope.className}(HardwareMap hardwareMap) {`,
+    ...init.map(indent),
+    '}'
+  ]
+  return [constants, fields, constructor, ...nested].filter((block) => block.length > 0)
+}
+
+// 그룹의 중첩 클래스. 생성자가 public이라 그 메커니즘만 쓰는 OpMode에서 따로 만들 수 있다.
+function nestedClass(
+  objects: SceneObjects,
+  scopes: RobotCodeScopes,
+  scope: CodeScope,
+  field: string
+): string[] {
+  const typeName = scope.classPath.join('.')
+  const enclosing = scope.classPath.slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('.'))
+  // 둘 다 만들면 생성자의 초기화(엔코더 초기화, IMU initialize 등)가 두 번 일어난다
+  const once =
+    enclosing.length === 1
+      ? `Construct either ${enclosing[0]} or this group, not both: each one initializes this hardware.`
+      : `Construct only one of ${enclosing.join(', ')} or this group: each one initializes this hardware.`
+  return [
+    '/**',
+    ` * Group "${commentText(scope.name)}" in SandBot (robot.${scope.fieldPath.join('.')}). To use only this group in an OpMode:`,
+    ` *   ${typeName} ${field} = new ${typeName}(hardwareMap);`,
+    ` * ${once}`,
+    ' */',
+    `public static final class ${scope.className} {`,
+    ...classBlocks(objects, scopes, scope).flatMap((block, i) => [
+      ...(i > 0 ? [''] : []),
+      ...block.map(indent)
+    ]),
+    '}'
+  ]
+}
+
 // 로봇 하나의 하드웨어 클래스(Java 소스). 검증 오류가 없는 상태에서 부른다.
 export function generateHardwareJava(objects: SceneObjects, robotId: string): string {
   const settings = robotHardwareSettings(objects, robotId)
-  const entries = robotComponents(objects, robotId).filter((e) => isComponentType(e.component.type))
+  const scopes = buildCodeScopes(objects, robotId)
   const robotName = objects[robotId]?.name ?? ''
 
   const imports = new Set(['com.qualcomm.robotcore.hardware.HardwareMap'])
-  for (const { component } of entries) {
+  for (const { component } of scopes.entries) {
     for (const name of componentDef(component.type as ComponentType).imports) imports.add(name)
   }
-
-  const fields = entries.map(({ component }: { component: HardwareComponent }) => {
-    const def = componentDef(component.type as ComponentType)
-    return `public final ${def.javaType} ${javaIdentifier(component.name)};`
-  })
-  const generated = entries.map((entry) => generateComponent(objects, entry, entries))
-  const constants = generated.flatMap((g) => g.constants)
-  const init = generated.flatMap((g, i) => [
-    ...(i > 0 ? [''] : []),
-    `// ${commentText(entries[i].component.name)}`,
-    ...g.init
-  ])
 
   const lines = [
     `// Generated by SandBot. Do not edit: this file is overwritten every time the SandBot project is saved.`,
@@ -256,13 +301,7 @@ export function generateHardwareJava(objects: SceneObjects, robotId: string): st
     `public class ${settings.className} {`,
     `${INDENT}/** Robot configuration name to activate on the Driver Station. */`,
     `${INDENT}public static final String CONFIGURATION_NAME = ${javaString(settings.configName)};`,
-    ...(constants.length ? ['', ...constants.map((line) => `${INDENT}${line}`)] : []),
-    ...(fields.length ? ['', ...fields.map((line) => `${INDENT}${line}`)] : []),
-    '',
-    `${INDENT}/** Call during OpMode init (hardwareMap.get must only be used in the init phase). */`,
-    `${INDENT}public ${settings.className}(HardwareMap hardwareMap) {`,
-    ...init.map((line) => (line ? `${INDENT}${INDENT}${line}` : '')),
-    `${INDENT}}`,
+    ...classBlocks(objects, scopes, scopes.root).flatMap((block) => ['', ...block.map(indent)]),
     '}',
     ''
   ]

@@ -8,6 +8,14 @@ import {
   type ComponentTypeDef
 } from './catalog'
 import {
+  allScopes,
+  buildCodeScopes,
+  type CodeScope,
+  type DeviceMember,
+  type GroupMember,
+  type ScopeMember
+} from './codeScopes'
+import {
   LIMELIGHT_SERIAL_PATTERN,
   orphanComponents,
   robotComponents,
@@ -17,10 +25,9 @@ import {
 import { isValidHubOrientation, type HubDirection } from './mounting'
 import {
   configXmlFilePath,
-  generatedConstantNames,
+  isValidGroupClassName,
   isValidJavaClassName,
-  javaFilePath,
-  javaIdentifier
+  javaFilePath
 } from './naming'
 
 // error는 코드 생성을 막고, warning은 생성은 하되 알린다. 문구는 표시할 때 code로 번역한다(hardware.issues.*).
@@ -52,6 +59,9 @@ export type IssueCode =
   | 'servoScaleInvalid'
   | 'imuChipHub'
   | 'constantNameCollision'
+  | 'invalidGroupName'
+  | 'reservedGroupName'
+  | 'duplicateGroupClass'
 
 export type Issue = {
   severity: IssueSeverity
@@ -66,13 +76,23 @@ export type Issue = {
 // 10보다 큰 허브 주소는 SDK가 시스템용으로 남겨 둔다(MAX_UNRESERVED_MODULE_ADDRESS)
 const MAX_UNRESERVED_HUB_ADDRESS = 10
 
-// 생성 클래스가 import하는 타입 이름. 클래스 이름이 이와 같으면 컴파일되지 않는다.
-const RESERVED_CLASS_NAMES = new Set(
-  [
+// 생성 코드가 쓰는 타입 이름: 카탈로그의 모든 import(지금 쓰지 않는 종류 포함), HardwareMap, String.
+// 로봇 클래스나 그룹 클래스(모든 깊이)가 이 이름이면 그 클래스를 감싸는 클래스 전체에서 원래 타입을 가려
+// 컴파일되지 않는다(그룹 Servo가 옆 그룹의 Servo.Direction을, 그룹 String이 CONFIGURATION_NAME을 깨뜨린다).
+// 생성 코드가 나중에 쓸 수 있는 java.lang 이름도 함께 막는다.
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  ...[
     'com.qualcomm.robotcore.hardware.HardwareMap',
     ...COMPONENT_TYPE_KEYS.flatMap((type) => componentDef(type).imports)
-  ].map((name) => name.slice(name.lastIndexOf('.') + 1))
-)
+  ].map((name) => name.slice(name.lastIndexOf('.') + 1)),
+  'String',
+  'Object',
+  'Math',
+  'Double',
+  'Integer',
+  'Boolean',
+  'Override'
+])
 
 const SEVERITY: Record<IssueCode, IssueSeverity> = {
   emptyName: 'error',
@@ -99,7 +119,10 @@ const SEVERITY: Record<IssueCode, IssueSeverity> = {
   expansionHubAddressReserved: 'warning',
   servoScaleInvalid: 'error',
   imuChipHub: 'error',
-  constantNameCollision: 'error'
+  constantNameCollision: 'error',
+  invalidGroupName: 'error',
+  reservedGroupName: 'error',
+  duplicateGroupClass: 'error'
 }
 
 function issue(
@@ -260,6 +283,108 @@ function checkComponent(
   }
 }
 
+function pushMemberIssues(
+  code: 'fieldNameCollision' | 'constantNameCollision',
+  params: Record<string, string>,
+  robotId: string,
+  members: ScopeMember[],
+  issues: Issue[]
+): void {
+  for (const member of members) {
+    // 그룹이 받는 문제는 그룹 오브젝트에 붙인다(컴포넌트 없음)
+    const where =
+      member.kind === 'device'
+        ? { robotId, objectId: member.objectId, componentId: member.component.id }
+        : { robotId, objectId: member.objectId }
+    issues.push(issue(code, params, where))
+  }
+}
+
+const memberName = (member: ScopeMember): string =>
+  member.kind === 'device' ? member.component.name : member.scope.name
+
+// 클래스 하나(로봇 클래스 또는 그룹의 중첩 클래스) 안의 이름. 다른 클래스의 같은 이름은 Java에서 겹치지 않는다.
+function checkScope(robotId: string, scope: CodeScope, issues: Issue[]): void {
+  const devices = scope.members.filter((m): m is DeviceMember => m.kind === 'device')
+  const groups = scope.members.filter((m): m is GroupMember => m.kind === 'group')
+
+  // 중첩 클래스 이름: 규칙, 예약 타입, 감싸는 클래스(로봇 클래스 포함)와 같은 이름(JLS: 같으면 컴파일 오류)
+  const named: GroupMember[] = []
+  for (const member of groups) {
+    const { name, className } = member.scope
+    const where = { robotId, objectId: member.objectId }
+    if (!isValidGroupClassName(className)) {
+      issues.push(issue('invalidGroupName', { name, className }, where))
+      continue
+    }
+    named.push(member)
+    if (RESERVED_TYPE_NAMES.has(className))
+      issues.push(issue('reservedGroupName', { name, className }, where))
+    if (scope.classPath.includes(className))
+      issues.push(issue('duplicateGroupClass', { names: name, className }, where))
+  }
+  // 같은 클래스 안의 중첩 클래스끼리는 대소문자만 달라도 겹친다. RobotHardware$Lift.class와 RobotHardware$LIFT.class는
+  // Windows·macOS 파일 시스템에서 한 파일이고, javac는 기본 설정으로는 알리지 않는다.
+  const byClass = new Map<string, GroupMember[]>()
+  for (const member of named) {
+    const key = member.scope.className.toLowerCase()
+    byClass.set(key, [...(byClass.get(key) ?? []), member])
+  }
+  for (const same of byClass.values()) {
+    if (same.length < 2) continue
+    const names = same.map(memberName).join(', ')
+    const className = [...new Set(same.map((m) => m.scope.className))].join(', ')
+    for (const member of same) {
+      issues.push(
+        issue('duplicateGroupClass', { names, className }, { robotId, objectId: member.objectId })
+      )
+    }
+  }
+
+  // 필드: 장치 필드와 그룹 필드가 같은 이름 공간이다. 이름이 빈 장치와 클래스 이름을 쓸 수 없는 그룹은 이미 오류다.
+  const checked = new Set<ScopeMember>([
+    ...devices.filter((m) => m.component.name.trim()),
+    ...named
+  ])
+  const byField = new Map<string, ScopeMember[]>()
+  for (const member of scope.members) {
+    if (!checked.has(member)) continue
+    byField.set(member.field, [...(byField.get(member.field) ?? []), member])
+  }
+  for (const [field, same] of byField) {
+    if (same.length < 2) continue
+    // 장치끼리 구성 이름까지 같으면 duplicateName으로 이미 알렸다. 그룹이 끼면 duplicateName이 잡지 않으므로 항상 알린다.
+    const devicesOnly = same.every((m) => m.kind === 'device')
+    if (devicesOnly && new Set(same.map((m) => m.component.name.trim())).size < 2) continue
+    const names = same.map(memberName).join(', ')
+    pushMemberIssues('fieldNameCollision', { names, field }, robotId, same, issues)
+  }
+
+  // 상수 이름은 이름의 대소문자를 지워 만들므로(leftPod·leftPOD → LEFT_POD) 필드가 달라도 겹칠 수 있다.
+  // 상수는 자기 범위의 클래스에 있으므로 클래스마다 본다(필드·클래스 이름과는 _ 때문에 겹치지 않는다).
+  const byConstant = new Map<string, DeviceMember[]>()
+  for (const member of devices) {
+    if (!member.component.name.trim()) continue
+    for (const constant of member.constants) {
+      byConstant.set(constant, [...(byConstant.get(constant) ?? []), member])
+    }
+  }
+  // 같은 장치들이 상수 여러 개에서 겹치면(데드휠 둘이면 여섯 개) 첫 상수 하나로만 알린다
+  const reportedGroups = new Set<string>()
+  for (const [constant, same] of byConstant) {
+    const groupKey = same.map((m) => m.component.id).join('|')
+    if (same.length < 2 || reportedGroups.has(groupKey)) continue
+    reportedGroups.add(groupKey)
+    pushMemberIssues(
+      'constantNameCollision',
+      { names: same.map(memberName).join(', '), constant },
+      robotId,
+      same,
+      issues
+    )
+  }
+}
+
 // 컴포넌트가 없는 로봇은 생성할 파일이 없으므로 검사하지 않는다
 export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
   const entries = robotComponents(objects, robotId)
@@ -282,7 +407,7 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
     // SDK와 REV Hardware Client는 10보다 큰 주소를 시스템용으로 남겨 둔다
     issues.push(issue('expansionHubAddressReserved', { address }, robotWhere))
   }
-  if (RESERVED_CLASS_NAMES.has(settings.className)) {
+  if (RESERVED_TYPE_NAMES.has(settings.className)) {
     issues.push(issue('invalidClassName', { className: settings.className }, robotWhere))
   }
 
@@ -290,14 +415,12 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
     checkComponent(objects, robotId, entry, entries, settings.expansionHub.enabled, issues)
   }
 
+  // 구성 이름은 로봇 전체에서 겹치면 안 된다(구성 XML 하나에 들어간다)
   const byName = new Map<string, ComponentEntry[]>()
-  const byField = new Map<string, ComponentEntry[]>()
   for (const entry of entries) {
     const name = entry.component.name.trim()
     if (!name) continue
     byName.set(name, [...(byName.get(name) ?? []), entry])
-    const field = javaIdentifier(name)
-    byField.set(field, [...(byField.get(field) ?? []), entry])
   }
   for (const [name, group] of byName) {
     if (group.length < 2) continue
@@ -307,45 +430,11 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
       )
     }
   }
-  for (const [field, group] of byField) {
-    // 이름이 같은 경우는 duplicateName으로 이미 알렸다
-    if (group.length < 2 || new Set(group.map((e) => e.component.name.trim())).size < 2) continue
-    const names = group.map((e) => e.component.name).join(', ')
-    for (const { objectId, component } of group) {
-      issues.push(
-        issue(
-          'fieldNameCollision',
-          { names, field },
-          { robotId, objectId, componentId: component.id }
-        )
-      )
-    }
-  }
 
-  // 상수 이름은 이름의 대소문자를 지워 만들므로(leftPod·leftPOD → LEFT_POD) 필드가 달라도 겹칠 수 있다
-  const byConstant = new Map<string, ComponentEntry[]>()
-  for (const entry of entries) {
-    if (!entry.component.name.trim()) continue
-    for (const constant of generatedConstantNames(entry.component.type, entry.component.name)) {
-      byConstant.set(constant, [...(byConstant.get(constant) ?? []), entry])
-    }
-  }
-  // 같은 장치들이 상수 여러 개에서 겹치면(데드휠 둘이면 여섯 개) 첫 상수 하나로만 알린다
-  const reportedGroups = new Set<string>()
-  for (const [constant, group] of byConstant) {
-    const groupKey = group.map((e) => e.component.id).join('|')
-    if (group.length < 2 || reportedGroups.has(groupKey)) continue
-    reportedGroups.add(groupKey)
-    const names = group.map((e) => e.component.name).join(', ')
-    for (const { objectId, component } of group) {
-      issues.push(
-        issue(
-          'constantNameCollision',
-          { names, constant },
-          { robotId, objectId, componentId: component.id }
-        )
-      )
-    }
+  // Java 이름(그룹 클래스, 필드, 상수)은 생성 코드와 같은 범위 트리로 클래스마다 검사한다.
+  // 장치가 없어 클래스를 만들지 않는 그룹은 트리에 없으므로 검사하지 않는다.
+  for (const scope of allScopes(buildCodeScopes(objects, robotId).root)) {
+    checkScope(robotId, scope, issues)
   }
 
   checkPortConflicts(robotId, entries, issues)
@@ -420,6 +509,7 @@ const SHARED_CODES = new Set<IssueCode>([
   'duplicateName',
   'fieldNameCollision',
   'constantNameCollision',
+  'duplicateGroupClass',
   'portConflict',
   'i2cAddressConflict'
 ])
