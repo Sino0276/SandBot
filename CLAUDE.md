@@ -112,7 +112,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
 - 타입 검사는 `tsconfig.node.json`(main/preload/설정 파일)과 `tsconfig.web.json`(renderer) 두 갈래다. 새 최상위 설정 파일을 추가하면 `tsconfig.node.json`의 `include`에도 넣는다.
 - `@renderer` 경로 별칭은 `electron.vite.config.ts`, `tsconfig.web.json`, `vitest.config.ts` 세 곳에 정의되어 있다. 별칭을 추가·변경할 때는 세 곳을 함께 고친다.
 - 렌더러 UI는 `src/renderer/src/editor/`에 있다. `EditorLayout`이 툴바와 react-resizable-panels(v4: `Group`/`Panel`/`Separator`)의 3패널을 구성한다. 각 패널(`editor/panels/`)은 `PanelFrame`으로 헤더와 본문을 감싼다.
-- 씬 상태는 zustand 스토어 두 개로 나뉜다. `scene/sceneStore.ts`는 문서 데이터(오브젝트 트리)를, `editor/editorStore.ts`는 편집기 상태(선택, 도구, 핸들 축 전역/로컬, 카메라 포커스 요청)를 맡는다. 스토어에는 직렬화할 수 있는 값만 둔다. CAD 메시 형상(`BufferGeometry`)은 `scene/geometryRegistry.ts`에 id로 보관하고, 오브젝트의 `visual.geometryId`가 그것을 가리킨다.
+- 씬 상태는 zustand 스토어 두 개로 나뉜다. `scene/sceneStore.ts`는 문서 데이터(오브젝트 트리)를, `editor/editorStore.ts`는 편집기 상태(선택, 도구, 핸들 축 전역/로컬, 카메라 포커스 요청)를 맡는다. 선택은 Unity처럼 여러 개(`selectedIds`, Ctrl은 토글·Shift는 보이는 행 범위)와 활성 오브젝트(`selectedId`)다. 여러 개를 고르면 핸들을 숨기고 인스펙터는 요약(누르면 그 오브젝트로 좁힘)만 보인다(Unity의 다중 편집과 다른 임시 편차). 씬 뷰 클릭은 하나만 고른다. 스토어에는 직렬화할 수 있는 값만 둔다. CAD 메시 형상(`BufferGeometry`)은 `scene/geometryRegistry.ts`에 id로 보관하고, 오브젝트의 `visual.geometryId`가 그것을 가리킨다.
 - STEP 임포트 흐름은 다음 순서다.
   - `cad/importStep.ts`의 `loadStepModel`이 메시 캐시를 먼저 찾는다. 없으면 네이티브 변환기(쓸 수 있을 때) 또는 WASM으로 변환한다.
   - `cad/stepWorker.ts`(웹 워커)가 WASM이면 occt-import-js로 미터 단위로 읽고, 네이티브면 변환기 출력(SBSTEP01, `cad/nativeResult.ts`)을 읽어, 둘 다 `convertOcctResult`로 계층과 피벗 중심 메시로 바꾼다.
@@ -131,12 +131,15 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - CAD 형상을 등록할 때 그 CAD의 이전 형상 id 중 새 결과에 없는 것은 지운다(다시 찾기 뒤 이전 파일 모양이 남지 않게). 형상 id 방식은 읽기 시작할 때의 CAD 정보로 정한다.
 - 불러오기 진행은 `cad/importStore.ts`가 센다(한 번에 하나, [STEP 불러오기]·드롭·다시 찾기·다시 불러오기를 막음, 창을 닫을 때 확인). 진행 알림은 단계(`importPhase.*`)·진행률·경과 시간·[취소]를 보인다(`noticeStore`의 `startedAt`·`phase`·`cancellable`, 취소 처리기는 스토어 밖). 캐시에 없는 100 MB 넘는 파일은 시작 전에 묻는다(드롭 묶음당 한 번, 네이티브가 없으면 실패할 수 있다고 알림).
 - OCCT WASM 때문에 `index.html` CSP의 script-src에 `'wasm-unsafe-eval'`이 있다. 렌더러 워커는 ES 모듈 형식으로 번들한다(`electron.vite.config.ts`의 `worker.format`). STEP 테스트는 occt-import-js 패키지에 들어 있는 CAx-IF 샘플(`node_modules/occt-import-js/test/testfiles/`)을 쓴다.
-- 단축키(`EditorLayout`):
+- 단축키(`EditorLayout`, 키 → 명령 대응과 처리 순서는 `editor/shortcuts.ts`의 순수 함수 `shortcutCommand`, 메뉴·툴팁에 붙는 단축키 글자도 같은 표):
   - Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기, Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행(입력칸 안에서는 입력칸의 실행 취소).
-  - F는 선택한 오브젝트에 카메라 맞추기(하이어라키 더블클릭, 임포트 직후도 같은 동작), Delete/Backspace는 선택 삭제, Q/W/E는 손·이동·회전 도구, X는 핸들 축 전역/로컬 전환.
+  - F는 선택한 오브젝트에 카메라 맞추기(여러 개면 전체, 하이어라키 더블클릭, 임포트 직후도 같은 동작), Delete/Backspace는 선택 삭제(CAD 루트를 지우면 다른 그룹으로 옮긴 그 CAD의 파트도 함께 지워지므로 그때만 확인을 묻는다), Q/W/E는 손·이동·회전 도구, X는 핸들 축 전역/로컬 전환.
+  - Unity와 같은 하이어라키 명령(`editor/sceneCommands.ts`): Ctrl+Shift+N 빈 그룹(Create Empty, Unity의 Default Parent 자리는 활성 오브젝트의 로봇), Alt+Shift+N 활성 오브젝트의 자식, Ctrl+Shift+G 선택을 묶는 부모(Create Empty Parent), F2 이름 바꾸기(하나만 선택했을 때). 새 그룹은 바로 이름 바꾸기 상태다. 기본 이름은 `Group`, `Group (1)`…이다(Unity의 `GameObject` 대신. 이름이 곧 Java 클래스가 되므로).
+  - 하이어라키 행 우클릭 메뉴는 Unity 순서(이름 바꾸기, 삭제 | Create Empty(그 행의 자식), Create Empty Parent)다. Shift+F10·메뉴 키로도 연다. 행은 위/아래(Shift로 범위)·왼쪽/오른쪽(접기·펼치기)으로 움직인다.
+  - 하이어라키 드래그 앤 드롭(`editor/hierarchyDnd.ts`): 행 위·아래 4분의 1은 형제 앞·뒤, 가운데는 자식, 빈 공간은 로봇의 마지막 자식, 접힌 행 위에 머물면 펼친다. 내부 형식(`application/x-sandbot-object`)만 처리하고 파일 드래그는 창으로 올려 보낸다(막으면 Electron이 파일로 페이지를 옮긴다. 메인도 `will-navigate`를 막는다).
   - 창에 STEP 파일을 끌어다 놓아도 불러온다.
   - 문자 키는 `event.code`로 받는다(한글 입력 상태에서도 동작). 누르고 있어 반복되는 입력은 도구를 바꾸지 않는다.
-  - 앱 안 대화상자(`editor/dialogStore.ts`)가 떠 있거나 비행 중(`editor/flyStore.ts`)이면 단축키를 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
+  - 앱 안 대화상자나 우클릭 메뉴가 떠 있거나(`dialogStore.ts`의 `isModalOpen`) 비행 중(`editor/flyStore.ts`)이면 단축키와 파일 드롭을 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
