@@ -14,6 +14,10 @@ export const IPC = {
   cancelStepConversion: 'cad:cancel-step-conversion',
   stepConvertProgress: 'cad:step-convert-progress',
   syncGeneratedFiles: 'teamcode:sync-generated-files',
+  listJavaFiles: 'teamcode:list-java-files',
+  openJavaFile: 'teamcode:open-java-file',
+  getExternalEditor: 'editor:get-external-editor',
+  setExternalEditor: 'editor:set-external-editor',
   setDirty: 'app:set-dirty',
   closeRequested: 'app:close-requested',
   confirmClose: 'app:confirm-close'
@@ -60,6 +64,53 @@ export type StepConvertResult =
   | { ok: true; key: string; bytes: Uint8Array; untranslated: number }
   | { ok: false; code: StepConvertErrorCode; detail: string }
 
+// TeamCode의 Java 소스(TeamCode/src/main/java 아래). path는 TeamCode 기준 상대 경로('/' 구분, 예:
+// 'src/main/java/org/firstinspires/ftc/teamcode/Lift.java'). 규칙은 src/shared/teamCodePaths.ts.
+export type JavaFileEntry = { path: string; size: number; mtimeMs: number }
+
+// truncated: 파일 수 한도를 넘어 일부만 담았다. hasTeamCode: 프로젝트에 TeamCode 폴더가 있다.
+export type JavaFileList = { files: JavaFileEntry[]; truncated: boolean; hasTeamCode: boolean }
+
+// 외부 스크립트 편집기(Unity Preferences > External Tools > External Script Editor).
+// 설정은 실행 파일 경로를 담으므로 메인 프로세스가 userData에 갖고, 렌더러는 고르기만 한다(경로를 보내지 않는다).
+// - system: 운영체제에서 .java에 연결된 앱(Unity의 Open by file extension). 줄 번호는 넘기지 못한다.
+// - detected: 이 PC에서 찾은 편집기(Android Studio, IntelliJ IDEA, VS Code). 줄 번호로 연다.
+// - custom: 찾아보기로 고른 실행 파일과 인자 템플릿($(File) $(Line) $(Column) $(ProjectPath)).
+export type ExternalEditorKind = 'system' | 'detected' | 'custom'
+
+// name은 제품 이름이라 번역하지 않는다
+export type DetectedEditor = { id: string; name: string; exe: string }
+
+export type ExternalEditorState = {
+  kind: ExternalEditorKind
+  // detected일 때 고른 편집기 id
+  detectedId: string | null
+  // detected·custom일 때 실행 파일(표시용)
+  exe: string | null
+  // custom일 때 인자 템플릿
+  args: string | null
+  // 기본 인자 템플릿(custom의 [초기화] 값)
+  defaultArgs: string
+  detected: DetectedEditor[]
+}
+
+export type ExternalEditorChoice =
+  | { kind: 'system' }
+  | { kind: 'detected'; id: string }
+  // 메인이 파일 대화상자를 띄운다(제목은 렌더러가 번역해서 넘김). 취소하면 바뀌지 않는다.
+  | { kind: 'browse'; title: string }
+  | { kind: 'customArgs'; args: string }
+  | { kind: 'resetArgs' }
+
+// 실패 이유
+// - notAllowed: 열린 프로젝트가 아니거나 허용하지 않는 경로
+// - missing: 파일이 없다
+// - launchFailed: 편집기를 실행하지 못했다(detail에 이유)
+// - openFailed: 운영체제가 파일을 열지 못했다(연결된 앱이 없는 등, detail에 이유)
+export type OpenJavaFileResult =
+  | { ok: true }
+  | { ok: false; code: 'notAllowed' | 'missing' | 'launchFailed' | 'openFailed'; detail: string }
+
 // 렌더러에서 window.api로 쓰는 API (preload가 노출)
 export type SandbotApi = {
   // 드래그 앤 드롭이나 <input type="file">로 받은 파일의 디스크 경로. 디스크 파일이 아니면 빈 문자열.
@@ -92,6 +143,12 @@ export type SandbotApi = {
   ) => () => void
   // 생성 코드(하드웨어 클래스·구성 XML)를 <root>/TeamCode에 맞춘다. 이번에 만들지 않은 이전 생성 파일은 지운다.
   syncGeneratedFiles: (root: string, files: GeneratedFile[]) => Promise<SyncGeneratedResult>
+  // TeamCode Java 목록. root는 열거나 저장한 프로젝트여야 한다(메인이 확인한다).
+  listJavaFiles: (root: string) => Promise<JavaFileList>
+  // 외부 편집기로 연다. line은 1부터(없으면 파일만 연다).
+  openJavaFile: (root: string, path: string, line?: number) => Promise<OpenJavaFileResult>
+  getExternalEditor: () => Promise<ExternalEditorState>
+  setExternalEditor: (choice: ExternalEditorChoice) => Promise<ExternalEditorState>
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다
   setDirty: (dirty: boolean) => void
   onCloseRequested: (callback: () => void) => () => void
