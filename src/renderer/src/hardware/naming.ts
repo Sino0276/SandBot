@@ -28,7 +28,45 @@ export function javaIdentifier(name: string): string {
     })
     .join('')
   const safe = /^\p{Nd}/u.test(camel) ? `_${camel}` : camel
-  return JAVA_KEYWORDS.has(safe) || RESERVED_FIELDS.has(safe) ? `${safe}_` : safe
+  return avoidReserved(safe)
+}
+
+// 키워드나 생성 코드가 쓰는 이름이면 뒤에 _를 붙인다
+function avoidReserved(identifier: string): string {
+  return JAVA_KEYWORDS.has(identifier) || RESERVED_FIELDS.has(identifier)
+    ? `${identifier}_`
+    : identifier
+}
+
+// 그룹 이름 → 중첩 클래스 이름. "lift arm" → LiftArm, "Group (1)" → Group1, "LIFT" → LIFT.
+// 영문 소문자만 대문자로 바꾸므로 한글 등은 그대로 남아 isValidGroupClassName을 통과하지 못한다(invalidGroupName).
+export function javaClassName(name: string): string {
+  return name
+    .split(/[^\p{L}\p{Nd}\p{Nl}]+/u)
+    .filter(Boolean)
+    .map((word) => {
+      const [first, ...rest] = Array.from(word)
+      return (/^[a-z]$/.test(first) ? first.toUpperCase() : first) + rest.join('')
+    })
+    .join('')
+}
+
+// 그룹 클래스 이름 규칙: 영문 대문자로 시작하고 영문·숫자만 쓴다.
+// - 중첩 클래스는 RobotHardware$Lift.class 파일이 되므로 ASCII만 쓴다(한글 파일 이름은 javac 환경에 따라 실패한다).
+// - $는 다른 중첩 클래스와 바이너리 이름이 겹칠 수 있고(Lift$Claw와 Lift.Claw), _는 상수 이름과 구별하려고 뺀다.
+export function isValidGroupClassName(className: string): boolean {
+  return /^[A-Z][A-Za-z0-9]*$/.test(className)
+}
+
+// 그룹 클래스 이름 → 필드 이름. 앞의 대문자 묶음을 소문자로 바꾼다(Lift → lift, LIFT → lift, IMU2 → imu2,
+// HTTPServer → httpServer). 클래스는 대문자로, 필드는 소문자로 시작해 둘이 같아지지 않는다
+// (같으면 RobotHardware.Lift.X의 Lift를 Java가 필드로 읽어 상수에 접근하지 못한다).
+export function groupFieldName(className: string): string {
+  const run = /^[A-Z]+/.exec(className)?.[0] ?? ''
+  // 대문자 묶음 뒤에 소문자가 오면 묶음의 마지막 대문자는 다음 단어의 첫 글자다
+  const count =
+    run.length > 1 && /^[a-z]/.test(className.slice(run.length)) ? run.length - 1 : run.length
+  return avoidReserved(className.slice(0, count).toLowerCase() + className.slice(count))
 }
 
 // frontLeft → FRONT_LEFT, _2mSensor → _2M_SENSOR(숫자로 시작하지 않게 밑줄을 남긴다)
@@ -52,8 +90,9 @@ export function generatedConstantNames(type: string, name: string): string[] {
   return (CONSTANT_SUFFIXES[type] ?? []).map((suffix) => `${prefix}${suffix}`)
 }
 
+// 로봇 클래스 이름. `$`는 받지 않는다(그룹의 중첩 클래스는 `Bot$Lift` 같은 바이너리 이름이 되므로 다른 로봇의 클래스와 겹친다).
 export function isValidJavaClassName(name: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && !JAVA_KEYWORDS.has(name) && name !== '_'
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !JAVA_KEYWORDS.has(name) && name !== '_'
 }
 
 // Java 문자열 리터럴 안에 넣을 수 있게 이스케이프

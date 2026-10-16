@@ -14,6 +14,12 @@ export function useSceneIssues(): Issue[] {
   return sceneIssues(useSceneStore((state) => state.objects))
 }
 
+// 오브젝트 자신이 받은 문제 중 컴포넌트에 붙지 않은 것(그룹의 클래스 이름·필드 충돌, 로봇 설정 등).
+// 그룹 이슈는 objectId가 그룹이고 componentId가 없다.
+export function objectLevelIssues(issues: Issue[], objectId: string): Issue[] {
+  return issues.filter((issue) => issue.objectId === objectId && !issue.componentId)
+}
+
 export type ObjectSeverity = { severity: IssueSeverity; own: boolean }
 
 // 오브젝트별 가장 심각한 문제(하이어라키 표시용). 접힌 어셈블리 안의 파트도 찾을 수 있게

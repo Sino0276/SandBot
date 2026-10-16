@@ -40,7 +40,13 @@ const ko = {
     import: '불러오기',
     closeWhileImporting:
       'STEP 파일을 불러오는 중입니다. 지금 닫으면 불러오기가 취소됩니다. 닫을까요?',
-    close: '닫기'
+    close: '닫기',
+    // 하이어라키 삭제(editor/sceneCommands.ts). {{undo}}는 실행 취소 단축키
+    deleteWithCadParts:
+      '지우는 CAD에서 다른 그룹으로 옮긴 오브젝트 {{count}}개와 거기 붙은 하드웨어 컴포넌트 {{components}}개도 함께 삭제됩니다. {{undo}}로 되돌릴 수 있습니다. 삭제할까요?',
+    deleteWithCadPartsNoHardware:
+      '지우는 CAD에서 다른 그룹으로 옮긴 오브젝트 {{count}}개도 함께 삭제됩니다. {{undo}}로 되돌릴 수 있습니다. 삭제할까요?',
+    delete: '삭제'
   },
   notice: {
     importing: '{{fileName}} 불러오는 중…',
@@ -115,7 +121,8 @@ const ko = {
   objectKind: {
     robot: '로봇',
     assembly: '어셈블리',
-    part: '파트'
+    part: '파트',
+    group: '그룹'
   },
   scene: {
     tool: '도구',
@@ -134,7 +141,18 @@ const ko = {
     emptyHint: 'STEP 파일을 창에 끌어다 놓거나 [STEP 불러오기]를 누르세요.',
     importStep: 'STEP 불러오기',
     expand: '펼치기',
-    collapse: '접기'
+    collapse: '접기',
+    // 헤더 [+] 버튼(Unity의 Create Empty)
+    create: '빈 그룹 만들기',
+    createTooltip: '빈 그룹 만들기 ({{shortcut}})',
+    renameLabel: '오브젝트 이름',
+    menu: {
+      label: '하이어라키 메뉴',
+      rename: '이름 바꾸기',
+      delete: '삭제',
+      createEmpty: '빈 그룹 만들기',
+      createEmptyParent: '빈 부모 그룹 만들기'
+    }
   },
   inspector: {
     empty: '선택된 오브젝트가 없습니다',
@@ -165,9 +183,37 @@ const ko = {
       cancelled: '불러오기 취소됨',
       relink: '파일 다시 찾기',
       reload: '다시 불러오기'
+    },
+    // 메커니즘 그룹(1단계): 이름 칸, 다중 선택, 그룹 코드, CAD 밖으로 옮긴 파트
+    name: '이름',
+    multiple: '{{count}}개 선택됨',
+    multipleHint:
+      '여러 오브젝트를 함께 편집하는 기능은 아직 없습니다. 목록에서 하나를 누르면 그것만 선택합니다. Ctrl+클릭은 선택에서 뺍니다.',
+    multipleMore: '외 {{count}}개',
+    group: {
+      title: '메커니즘 그룹',
+      className: 'Java 클래스 이름',
+      classNameHint:
+        '생성 하드웨어 클래스 안의 중첩 클래스 이름입니다. 비워 두면 그룹 이름에서 만듭니다(흐린 글자). 영문 대문자로 시작하고 영문·숫자만 씁니다.',
+      access: '접근 경로',
+      accessHint: 'OpMode에서 이 그룹을 쓰는 식입니다. robot은 하드웨어 클래스 변수입니다.',
+      constants: '형식 이름',
+      constantsHint:
+        '이 그룹 장치의 상수(오프셋 등)는 이 형식 이름으로 씁니다. robot.…처럼 변수로 쓰면 Android Studio가 경고합니다.',
+      noHardware: '하드웨어가 없는 그룹은 클래스를 만들지 않습니다.'
+    },
+    cadOrigin: {
+      title: 'CAD 원본',
+      hint: 'CAD ‘{{name}}’ 밖으로 옮겼습니다. 그 CAD의 정렬을 바꾸면 함께 움직이고, CAD를 지우면 함께 지워집니다.',
+      select: 'CAD 루트 선택'
     }
   },
   hardware: {
+    // 생성 코드 경로(메커니즘 그룹 1단계)
+    javaPath: 'Java 필드',
+    javaPathHint:
+      'OpMode에서 이 장치를 쓰는 식입니다. robot은 하드웨어 클래스 변수입니다 ({{className}} robot = new {{className}}(hardwareMap);).',
+    javaConstants: 'Java 상수',
     badge: '⚙ {{count}}',
     severity: {
       error: '하드웨어 오류',
@@ -405,7 +451,13 @@ const ko = {
       constantNameCollision:
         '{{names}}이(가) 같은 상수 {{constant}}을(를) 만듭니다. 이름을 바꾸세요.',
       expansionHubAddressInvalid:
-        'Expansion Hub 주소 {{address}}은(는) 쓸 수 없습니다 (1–254, 173 제외).'
+        'Expansion Hub 주소 {{address}}은(는) 쓸 수 없습니다 (1–254, 173 제외).',
+      invalidGroupName:
+        '그룹 "{{name}}": "{{className}}"은(는) Java 클래스 이름으로 쓸 수 없습니다. 하이어라키의 그룹 이름이 생성 코드의 클래스 이름이 되므로 영문 대문자로 시작하고 영문·숫자만 쓰세요. 이름을 그대로 두려면 그룹 인스펙터에서 "Java 클래스 이름"을 정하세요.',
+      reservedGroupName:
+        '그룹 "{{name}}": 클래스 이름 {{className}}은(는) 생성 코드가 쓰는 Java 타입과 같아 쓸 수 없습니다. 다른 이름을 쓰세요.',
+      duplicateGroupClass:
+        '{{names}}: Java 클래스 이름 {{className}}이(가) 겹칩니다. 같은 클래스 안의 그룹은 대소문자만 달라서는 안 되고, 그룹을 감싸는 클래스(로봇 클래스 포함)와 같은 이름도 쓸 수 없습니다.'
     }
   }
 }

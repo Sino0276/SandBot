@@ -1,20 +1,24 @@
 import { AXIS_DIRECTIONS } from '../cad/alignment'
 import { componentDef, isComponentType } from '../hardware/catalog'
-import type {
-  CadSource,
-  HardwareComponent,
-  RobotHardwareSettings,
-  SceneObject,
-  SceneObjects,
-  Vec3
+import { cadOriginOf } from '../scene/hierarchy'
+import {
+  isCodeGroup,
+  isInSubtree,
+  type CadSource,
+  type HardwareComponent,
+  type RobotHardwareSettings,
+  type SceneObject,
+  type SceneObjects,
+  type Vec3
 } from '../scene/model'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
 export const PROJECT_FORMAT = 'sandbot-project'
 // 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가,
-// 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수).
-// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식).
-export const PROJECT_VERSION = 3
+// 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수),
+// 4: group 종류(Create Empty), CAD 밖으로 옮긴 노드의 cadOrigin, 그룹의 Java 클래스 이름 codeClassName.
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식). objects 배열의 순서가 형제 순서다.
+export const PROJECT_VERSION = 4
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -135,10 +139,24 @@ function parseHardware(value: unknown, index: number): RobotHardwareSettings {
 
 function parseObject(value: unknown, index: number): SceneObject & { file?: StoredCadFile } {
   if (!isRecord(value)) invalid(index, '')
-  const { id, name, kind, parentId, transform, visual, cad, components, hardware } = value
+  const {
+    id,
+    name,
+    kind,
+    parentId,
+    transform,
+    visual,
+    cad,
+    components,
+    hardware,
+    cadOrigin,
+    codeClassName
+  } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
-  if (kind !== 'robot' && kind !== 'assembly' && kind !== 'part') invalid(index, 'kind')
+  if (kind !== 'robot' && kind !== 'assembly' && kind !== 'part' && kind !== 'group') {
+    invalid(index, 'kind')
+  }
   if (parentId !== null && typeof parentId !== 'string') invalid(index, 'parentId')
   if (!isRecord(transform) || !isVec3(transform.position) || !isVec3(transform.rotation)) {
     invalid(index, 'transform')
@@ -204,7 +222,75 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
     if (kind !== 'robot') invalid(index, 'hardware')
     object.hardware = parseHardware(hardware, index)
   }
+  // 가리키는 CAD 루트는 모든 오브젝트를 읽은 뒤 확인한다(checkCadOrigins)
+  if (cadOrigin !== undefined) {
+    if (typeof cadOrigin !== 'string') invalid(index, 'cadOrigin')
+    if (cadOrigin) object.cadOrigin = cadOrigin
+  }
+  if (codeClassName !== undefined) {
+    if (typeof codeClassName !== 'string' || kind !== 'group') invalid(index, 'codeClassName')
+    if (codeClassName) object.codeClassName = codeClassName
+  }
   return object
+}
+
+// 부모 관계 검사(모든 버전): 없는 부모, 순환, 최상위가 아닌 로봇은 파일 오류다.
+function checkParents(objects: SceneObjects): void {
+  const list = Object.values(objects)
+  // 순환이 없다고 확인된 오브젝트(최상위까지 올라갈 수 있다)
+  const rooted = new Set<string>()
+  list.forEach((object, index) => {
+    if (object.parentId !== null && !objects[object.parentId]) invalid(index, 'parentId')
+    if (object.kind === 'robot' && object.parentId !== null) invalid(index, 'parentId')
+    const path = new Set<string>()
+    let current: SceneObject | undefined = object
+    while (current && !rooted.has(current.id)) {
+      if (path.has(current.id)) invalid(index, 'parentId')
+      path.add(current.id)
+      current = current.parentId === null ? undefined : objects[current.parentId]
+    }
+    for (const id of path) rooted.add(id)
+  })
+}
+
+// CAD 메시 파트의 형상 id(cadGeometryId: `<CAD 루트 id>:<순번>`)가 가리키는 CAD 루트
+function geometryCadRoot(objects: SceneObjects, object: SceneObject): string | null {
+  if (object.visual?.type !== 'mesh') return null
+  const { geometryId } = object.visual
+  const separator = geometryId.lastIndexOf(':')
+  if (separator <= 0 || !/^\d+$/.test(geometryId.slice(separator + 1))) return null
+  const rootId = geometryId.slice(0, separator)
+  return objects[rootId]?.cad ? rootId : null
+}
+
+// cadOrigin 검사(모든 버전, 모든 오브젝트를 읽은 뒤). cadOrigin은 부모 관계에서 나오는 보조 기록이라
+// git 병합 등으로 어긋나도 파일 전체를 거부하지 않는다.
+// - 없는 오브젝트나 CAD 루트가 아닌 것을 가리키거나 그룹·로봇·CAD 루트에 있으면 버리고 경고한다.
+// - CAD 메시 파트가 형상의 CAD 루트 밖에 있는데 그 CAD를 출처로 갖지 않으면 cadOrigin을 그 루트로 맞춘다
+//   (형상 id가 출처를 알려 준다. 없으면 그 CAD 루트를 지울 때 함께 지워지지 않는다).
+function checkCadOrigins(objects: SceneObjects): void {
+  for (const object of Object.values(objects)) {
+    if (object.cadOrigin === undefined) continue
+    const target = objects[object.cadOrigin]
+    if (target?.cad && !object.cad && !isCodeGroup(object) && object.kind !== 'robot') continue
+    console.warn(`project.json: ${object.id}의 cadOrigin(${object.cadOrigin})을 버린다`)
+    const dropped = { ...object }
+    delete dropped.cadOrigin
+    objects[object.id] = dropped
+  }
+  for (const object of Object.values(objects)) {
+    const rootId = geometryCadRoot(objects, object)
+    if (
+      rootId === null ||
+      isInSubtree(objects, object.id, rootId) ||
+      cadOriginOf(objects, object.id) === rootId
+    )
+      continue
+    console.warn(
+      `project.json: CAD 밖으로 옮긴 ${object.id}의 cadOrigin을 형상의 CAD 루트(${rootId})로 맞춘다`
+    )
+    objects[object.id] = { ...object, cadOrigin: rootId }
+  }
 }
 
 // 프로젝트 파일을 읽는다. CAD 파일 경로(상대·절대)는 따로 돌려주고, 경로 찾기는 호출한 쪽이 한다.
@@ -237,8 +323,7 @@ export function parseProject(content: string): {
     objects[object.id] = object
     if (file) cadFiles.set(object.id, file)
   })
-  for (const [index, object] of Object.values(objects).entries()) {
-    if (object.parentId !== null && !objects[object.parentId]) invalid(index, 'parentId')
-  }
+  checkParents(objects)
+  checkCadOrigins(objects)
   return { objects, cadFiles }
 }

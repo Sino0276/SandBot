@@ -5,7 +5,8 @@ export type Vec3 = [number, number, number]
 // 회전은 X(롤)·Y(피치)·Z(요) 라디안. 요 → 피치 → 롤 순으로 적용한다(Three.js Euler 순서 'ZYX').
 export type Transform = { position: Vec3; rotation: Vec3 }
 
-export type SceneObjectKind = 'robot' | 'assembly' | 'part'
+// group은 하이어라키에서 만든 빈 오브젝트(Unity의 Create Empty)다. 하드웨어가 있으면 생성 코드의 중첩 클래스가 된다.
+export type SceneObjectKind = 'robot' | 'assembly' | 'part' | 'group'
 
 // 씬에 그릴 모양. 없으면 보이지 않는 그룹이다.
 export type ObjectVisual =
@@ -74,6 +75,11 @@ export type SceneObject = {
   components?: HardwareComponent[]
   // robot 오브젝트에만 있다. 없으면 기본값(robotHardwareSettings)을 쓴다.
   hardware?: RobotHardwareSettings
+  // CAD에서 온 노드(assembly·part)를 그 CAD 루트 밖으로 옮겼을 때만 그 CAD 루트 id. group·robot에는 두지 않는다.
+  // CAD 루트를 지우면 함께 지우고, CAD 루트의 변환(정렬)이 바뀌면 함께 움직인다.
+  cadOrigin?: string
+  // group에만 있다. 생성 코드의 중첩 클래스 이름(없으면 이름에서 만든다). 한글 이름 그룹처럼 이름을 클래스로 바꿀 수 없을 때 쓴다.
+  codeClassName?: string
 }
 
 export type SceneObjects = Record<string, SceneObject>
@@ -89,12 +95,34 @@ export function transformToMatrix(transform: Transform): Matrix4 {
   return new Matrix4().compose(new Vector3(...transform.position), quaternion, new Vector3(1, 1, 1))
 }
 
+// cos(피치)가 이보다 작으면 피치가 ±90°(짐벌 잠금)라 롤과 요를 나눌 수 없으므로 롤을 0으로 둔다(Three.js와 같은 값).
+const GIMBAL_EPSILON = 1e-12
+
+// ZYX 오일러 각을 직접 구한다. Three.js Euler.setFromRotationMatrix는 |m31| ≥ 0.9999999이면 짐벌 식으로 바꿔
+// 피치 ±90° 근처에서 1.6e-4까지 틀린다(부모 바꾸기·CAD 정렬이 자주 지나는 영역).
+// - 피치는 asin 대신 atan2로 구해 극 근처에서도 정확하다.
+// - 요는 atan2(m21, m11)이다. 극 근처에서는 두 값이 작아 요가 덜 정확하지만, 롤을 "요를 되돌린 나머지 회전"
+//   Rz(-요)·R = Ry(피치)·Rx(롤)의 크기 1짜리 원소에서 구하므로 요의 오차를 롤이 메워 행렬은 정확히 되돌아온다.
+// 극에서 먼 곳에서는 Three.js와 반올림 오차 안에서 같은 값이다.
 export function matrixToTransform(matrix: Matrix4): Transform {
   const position = new Vector3()
   const quaternion = new Quaternion()
   matrix.decompose(position, quaternion, new Vector3())
-  const euler = new Euler().setFromQuaternion(quaternion, EULER_ORDER)
-  return { position: [position.x, position.y, position.z], rotation: [euler.x, euler.y, euler.z] }
+  // 열 우선 배열: m11 = e[0], m21 = e[1], m31 = e[2], m12 = e[4], m22 = e[5], m13 = e[8], m23 = e[9]
+  const e = new Matrix4().makeRotationFromQuaternion(quaternion).elements
+  const cosPitch = Math.hypot(e[0], e[1])
+  const pitch = Math.atan2(-e[2], cosPitch)
+  let rotation: Vec3
+  if (cosPitch < GIMBAL_EPSILON) {
+    rotation = [0, pitch, Math.atan2(-e[4], e[5])]
+  } else {
+    const yaw = Math.atan2(e[1], e[0])
+    const cosYaw = Math.cos(yaw)
+    const sinYaw = Math.sin(yaw)
+    const roll = Math.atan2(sinYaw * e[8] - cosYaw * e[9], cosYaw * e[5] - sinYaw * e[4])
+    rotation = [roll, pitch, yaw]
+  }
+  return { position: [position.x, position.y, position.z], rotation }
 }
 
 export function childrenOf(objects: SceneObjects, parentId: string | null): SceneObject[] {
@@ -131,10 +159,13 @@ export function worldMatrix(objects: SceneObjects, id: string): Matrix4 {
 }
 
 // 오브젝트가 속한 로봇(자기 자신 포함)의 id. 로봇에 속하지 않으면 null.
+// 부모 순환은 프로젝트 파일 검증이 막지만, 여기서도 같은 오브젝트를 두 번 지나지 않는다.
 export function findRobotId(objects: SceneObjects, id: string): string | null {
+  const visited = new Set<string>()
   let current: SceneObject | undefined = objects[id]
-  while (current) {
+  while (current && !visited.has(current.id)) {
     if (current.kind === 'robot') return current.id
+    visited.add(current.id)
     current = current.parentId ? objects[current.parentId] : undefined
   }
   return null
@@ -180,8 +211,25 @@ export function subtreeIds(objects: SceneObjects, id: string): string[] {
   return [id, ...childrenInDocument(objects, id).flatMap((child) => subtreeIds(objects, child.id))]
 }
 
-// 부모부터 최상위까지의 id(자기 자신 제외)
+// 부모부터 최상위까지의 id(자기 자신 제외). 순환이 있으면 처음 다시 만나는 곳에서 멈춘다.
 export function ancestorIds(objects: SceneObjects, id: string): string[] {
-  const parentId = objects[id]?.parentId
-  return parentId ? [parentId, ...ancestorIds(objects, parentId)] : []
+  const ids: string[] = []
+  const visited = new Set([id])
+  let parentId = objects[id]?.parentId
+  while (parentId && !visited.has(parentId)) {
+    ids.push(parentId)
+    visited.add(parentId)
+    parentId = objects[parentId]?.parentId
+  }
+  return ids
+}
+
+// id가 rootId 자신이거나 그 하위인지(부모를 따라 올라가며 확인하므로 childrenInDocument가 필요 없다)
+export function isInSubtree(objects: SceneObjects, id: string, rootId: string): boolean {
+  return id === rootId || ancestorIds(objects, id).includes(rootId)
+}
+
+// 생성 코드의 범위(중첩 클래스)가 되는 오브젝트인지. 지금은 group뿐이고, 나중에 어셈블리도 켤 수 있게 한곳에서 정한다.
+export function isCodeGroup(object: SceneObject): boolean {
+  return object.kind === 'group'
 }

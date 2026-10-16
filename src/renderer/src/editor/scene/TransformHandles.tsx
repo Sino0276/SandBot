@@ -82,6 +82,9 @@ function Handles({
 // "오브젝트 위치 + 핸들 축 방향"을 가진 대리 객체에 TransformControls를 붙이고 변화량을 오브젝트에 옮긴다.
 function TransformHandles(): React.JSX.Element | null {
   const selectedId = useEditorStore((state) => state.selectedId)
+  // 둘 이상 선택하면 핸들을 숨긴다. 여러 오브젝트를 함께 옮기는 편집은 아직 없어서, 활성 오브젝트 하나만
+  // 움직이면 선택 전체가 강조된 채 하나만 끌려 오류처럼 보인다(Unity는 선택 전체를 옮긴다).
+  const multiple = useEditorStore((state) => state.selectedIds.length > 1)
   const handleSpace = useEditorStore((state) => state.handleSpace)
   const tool = useEditorStore((state) => state.tool)
   const objects = useSceneStore((state) => state.objects)
@@ -103,7 +106,8 @@ function TransformHandles(): React.JSX.Element | null {
     proxy.updateMatrix()
   }, [objects, selectedId, handleSpace, proxy, syncCount])
 
-  // 드래그 도중 선택이나 도구가 바뀌거나 핸들이 사라지면(예: STEP 불러오기가 끝나 새 로봇을 선택) 드래그를 끝낸다.
+  // 드래그 도중 선택이나 도구가 바뀌거나 핸들이 사라지면(예: STEP 불러오기가 끝나 새 로봇을 선택, Ctrl+클릭으로
+  // 다중 선택) 드래그를 끝낸다.
   // TransformControls가 끈 카메라 조작을 다시 켜고, 실행 취소 묶음을 닫는다.
   useEffect(
     () => () => {
@@ -114,12 +118,12 @@ function TransformHandles(): React.JSX.Element | null {
       if (controls) controls.enabled = true
       setSyncCount((count) => count + 1)
     },
-    [selectedId, tool, get]
+    [selectedId, multiple, tool, get]
   )
 
   const object = selectedId ? objects[selectedId] : undefined
-  // 손 도구(Q)에서는 핸들을 숨긴다
-  if (!selectedId || !object || tool === 'view') return null
+  // 손 도구(Q)와 다중 선택에서는 핸들을 숨긴다
+  if (!selectedId || !object || tool === 'view' || multiple) return null
 
   return (
     <>
@@ -131,6 +135,11 @@ function TransformHandles(): React.JSX.Element | null {
         isRobotRoot={object.kind === 'robot' && object.parentId === null}
         onDragStart={() => {
           markHandleInteraction()
+          // 확정하지 않은 입력칸(이름 바꾸기, 인스펙터 값)은 먼저 따로 확정한다. 브라우저가 포커스를 옮기는 것은
+          // 드래그가 시작된 뒤라 그대로 두면 그 수정이 드래그의 실행 취소 단계에 섞인다.
+          const active = document.activeElement
+          if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
+            active.blur()
           // 드래그 한 번을 실행 취소 한 단계로 묶는다
           beginChange()
           dragging.current = true

@@ -123,8 +123,8 @@ function apply(objects: SceneObjects): void {
   } finally {
     applying = false
   }
-  const { selectedId, select } = useEditorStore.getState()
-  if (selectedId && !objects[selectedId]) select(null)
+  // 되돌린 씬에 없는 오브젝트만 선택·이름 바꾸기에서 뺀다(남은 선택은 그대로 둔다)
+  useEditorStore.getState().pruneSelection((id) => !!objects[id])
   syncFlags()
 }
 

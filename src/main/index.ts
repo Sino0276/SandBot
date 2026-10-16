@@ -39,6 +39,12 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // 앱은 페이지를 이동하지 않는다. 렌더러가 파일 드롭을 막지 못해도 그 파일로 이동해 작업이 날아가지 않게 막는다
+  // (이중 방어). 같은 주소(개발 모드 HMR의 새로 고침)는 그대로 둔다.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== mainWindow.webContents.getURL()) event.preventDefault()
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

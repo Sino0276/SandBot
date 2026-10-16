@@ -42,7 +42,12 @@ const en: Messages = {
     import: 'Import',
     closeWhileImporting:
       'A STEP file is still being imported. Closing now cancels the import. Close anyway?',
-    close: 'Close'
+    close: 'Close',
+    deleteWithCadParts:
+      'This also deletes {{count}} object(s) from the deleted CAD that you moved to other groups, and the {{components}} hardware component(s) on them. You can undo it with {{undo}}. Delete?',
+    deleteWithCadPartsNoHardware:
+      'This also deletes {{count}} object(s) from the deleted CAD that you moved to other groups. You can undo it with {{undo}}. Delete?',
+    delete: 'Delete'
   },
   notice: {
     importing: 'Importing {{fileName}}…',
@@ -117,7 +122,8 @@ const en: Messages = {
   objectKind: {
     robot: 'Robot',
     assembly: 'Assembly',
-    part: 'Part'
+    part: 'Part',
+    group: 'Group'
   },
   scene: {
     tool: 'Tool',
@@ -136,7 +142,17 @@ const en: Messages = {
     emptyHint: 'Drop a STEP file onto the window or click [Import STEP].',
     importStep: 'Import STEP',
     expand: 'Expand',
-    collapse: 'Collapse'
+    collapse: 'Collapse',
+    create: 'Create Empty',
+    createTooltip: 'Create Empty ({{shortcut}})',
+    renameLabel: 'Object name',
+    menu: {
+      label: 'Hierarchy menu',
+      rename: 'Rename',
+      delete: 'Delete',
+      createEmpty: 'Create Empty',
+      createEmptyParent: 'Create Empty Parent'
+    }
   },
   inspector: {
     empty: 'No object selected',
@@ -167,9 +183,37 @@ const en: Messages = {
       cancelled: 'Import stopped',
       relink: 'Locate file',
       reload: 'Reload'
+    },
+    // 메커니즘 그룹(1단계): 이름 칸, 다중 선택, 그룹 코드, CAD 밖으로 옮긴 파트
+    name: 'Name',
+    multiple: '{{count}} objects selected',
+    multipleHint:
+      'Editing several objects at once is not available yet. Click an object in the list to select only it. Ctrl+click removes it from the selection.',
+    multipleMore: '{{count}} more',
+    group: {
+      title: 'Mechanism group',
+      className: 'Java class name',
+      classNameHint:
+        'Name of the nested class inside the generated hardware class. Leave it empty to derive it from the group name (shown dimmed). Start with a capital English letter and use only English letters and digits.',
+      access: 'Access path',
+      accessHint: 'How an OpMode reaches this group. robot is the hardware class variable.',
+      constants: 'Type name',
+      constantsHint:
+        'Constants of the devices in this group (offsets and so on) are reached through this type name. Reaching them through robot.… makes Android Studio warn.',
+      noHardware: 'A group without hardware does not generate a class.'
+    },
+    cadOrigin: {
+      title: 'CAD source',
+      hint: "Moved out of the CAD '{{name}}'. It moves when that CAD's alignment changes and is deleted with that CAD.",
+      select: 'Select CAD root'
     }
   },
   hardware: {
+    // 생성 코드 경로(메커니즘 그룹 1단계)
+    javaPath: 'Java field',
+    javaPathHint:
+      'How an OpMode reaches this device. robot is the hardware class variable ({{className}} robot = new {{className}}(hardwareMap);).',
+    javaConstants: 'Java constants',
     badge: '⚙ {{count}}',
     severity: {
       error: 'Hardware error',
@@ -410,7 +454,13 @@ const en: Messages = {
       constantNameCollision:
         '{{names}} produce the same constant {{constant}}. Rename one of them.',
       expansionHubAddressInvalid:
-        'Expansion Hub address {{address}} cannot be used (1–254, except 173).'
+        'Expansion Hub address {{address}} cannot be used (1–254, except 173).',
+      invalidGroupName:
+        'Group "{{name}}": "{{className}}" cannot be a Java class name. The group\'s hierarchy name becomes a class in the generated code, so use English letters and digits starting with a capital letter. To keep the name, set a "Java class name" in the group\'s inspector.',
+      reservedGroupName:
+        'Group "{{name}}": the class name {{className}} is a Java type the generated code uses. Choose another name.',
+      duplicateGroupClass:
+        '{{names}}: the Java class name {{className}} clashes. Groups in the same class must differ by more than letter case, and a group cannot share its name with a class that contains it (including the robot class).'
     }
   }
 }

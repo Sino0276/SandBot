@@ -23,14 +23,16 @@ type Indicator = {
   usb: Vector3
 }
 
-// 선택한 오브젝트와 그 하위에 붙은 IMU. 로봇을 고르면 로봇의 IMU가 모두 보인다.
-function indicatorsFor(objects: SceneObjects, selectedId: string | null): Indicator[] {
-  if (!selectedId || !objects[selectedId]) return []
+// 선택한 오브젝트들과 그 하위에 붙은 IMU. 로봇을 고르면 로봇의 IMU가 모두 보인다.
+function indicatorsFor(objects: SceneObjects, selectedIds: readonly string[]): Indicator[] {
+  const selected = new Set(selectedIds.filter((id) => objects[id]))
+  if (selected.size === 0) return []
   const indicators: Indicator[] = []
   for (const object of Object.values(objects)) {
     const imus = (object.components ?? []).filter((component) => component.type === 'imu')
     if (imus.length === 0) continue
-    if (object.id !== selectedId && !ancestorIds(objects, object.id).includes(selectedId)) continue
+    if (!selected.has(object.id) && !ancestorIds(objects, object.id).some((id) => selected.has(id)))
+      continue
     const robotId = findRobotId(objects, object.id)
     if (!robotId) continue
     const robotRotation = new Quaternion().setFromRotationMatrix(worldMatrix(objects, robotId))
@@ -90,8 +92,8 @@ function HubPlate({ logo, usb }: { logo: Vector3; usb: Vector3 }): React.JSX.Ele
 
 function ImuIndicators(): React.JSX.Element {
   const objects = useSceneStore((state) => state.objects)
-  const selectedId = useEditorStore((state) => state.selectedId)
-  const indicators = useMemo(() => indicatorsFor(objects, selectedId), [objects, selectedId])
+  const selectedIds = useEditorStore((state) => state.selectedIds)
+  const indicators = useMemo(() => indicatorsFor(objects, selectedIds), [objects, selectedIds])
   return (
     <>
       {indicators.map((indicator) => (

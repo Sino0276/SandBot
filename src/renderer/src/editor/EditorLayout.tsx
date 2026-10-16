@@ -4,22 +4,31 @@ import { importStepFiles, isStepFileName } from '../cad/importStep'
 import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
-import { useSceneStore } from '../scene/sceneStore'
-import { useDialogStore } from './dialogStore'
+import ContextMenu from './ContextMenu'
+import { isModalOpen } from './dialogStore'
 import { useEditorStore, type EditorTool } from './editorStore'
 import { isFlying } from './flyStore'
+import { OBJECT_DRAG_TYPE } from './hierarchyDnd'
 import { isChangeOpen, redo, undo } from './history'
 import HierarchyPanel from './panels/HierarchyPanel'
 import InspectorPanel from './panels/InspectorPanel'
 import ScenePanel from './panels/ScenePanel'
+import {
+  createEmpty,
+  createEmptyChild,
+  createEmptyParent,
+  deleteSelection,
+  renameSelection
+} from './sceneCommands'
+import { shortcutCommand, type ShortcutCommand } from './shortcuts'
 import Toolbar from './Toolbar'
 
 const LAYOUT_ID = 'editor-main'
 
-const TOOL_KEYS: Partial<Record<string, EditorTool>> = {
-  KeyQ: 'view',
-  KeyW: 'translate',
-  KeyE: 'rotate'
+const TOOLS: Partial<Record<ShortcutCommand, EditorTool>> = {
+  toolView: 'view',
+  toolTranslate: 'translate',
+  toolRotate: 'rotate'
 }
 
 function isTextInput(target: EventTarget | null): boolean {
@@ -41,71 +50,80 @@ function handlesOwnKeys(target: EventTarget | null): boolean {
   )
 }
 
+// 단축키 명령 실행(키 → 명령 대응은 editor/shortcuts.ts의 shortcutCommand)
+function runShortcut(command: ShortcutCommand): void {
+  const editor = useEditorStore.getState()
+  const tool = TOOLS[command]
+  if (tool) {
+    editor.setTool(tool)
+    return
+  }
+  switch (command) {
+    case 'save':
+    case 'open':
+      // 입력 중인 칸이 있으면 먼저 확정(blur)시킨다
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      void (command === 'save' ? saveProject() : openProjectFolder())
+      return
+    case 'undo':
+      undo()
+      return
+    case 'redo':
+      redo()
+      return
+    case 'createEmpty':
+      createEmpty()
+      return
+    case 'createEmptyChild':
+      createEmptyChild()
+      return
+    case 'createEmptyParent':
+      createEmptyParent()
+      return
+    case 'rename':
+      renameSelection()
+      return
+    case 'focus':
+      // F: 선택 전체에 카메라 맞추기 (Unity와 같은 키)
+      editor.focusSelection()
+      return
+    case 'toggleHandleSpace':
+      editor.setHandleSpace(editor.handleSpace === 'global' ? 'local' : 'global')
+      return
+    case 'delete':
+      void deleteSelection()
+      return
+  }
+}
+
 // 창 전체 단축키와 파일 드래그 앤 드롭
 function useEditorShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      // 대화상자가 떠 있거나 씬 뷰에서 비행 중(우클릭+WASD/QE)이면 편집기 단축키를 쓰지 않는다
-      if (useDialogStore.getState().request || isFlying()) return
-      const command = event.ctrlKey || event.metaKey
-      // 문자 단축키는 키 위치(event.code)로 받는다. 한글 입력 상태에서도 같은 키로 동작한다.
-      const code = event.code
-      // Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기. 입력 중인 숫자칸이 있으면 먼저 확정(blur)시킨다.
-      if (command && !event.altKey && (code === 'KeyS' || code === 'KeyO')) {
-        event.preventDefault()
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-        void (code === 'KeyS' ? saveProject() : openProjectFolder())
-        return
-      }
-      // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환을 하지 않는다(드래그가 어긋난다)
-      const dragging = isChangeOpen()
-      // Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행.
-      // 입력칸에 확정하지 않은 글자가 있을 때만 입력칸 자체의 실행 취소에 맡긴다.
-      if (command && !event.altKey && (code === 'KeyZ' || code === 'KeyY')) {
-        if (isTextInput(event.target) && useProjectStore.getState().pendingEdit) return
-        event.preventDefault()
-        if (dragging) return
-        if (code === 'KeyY' || event.shiftKey) redo()
-        else undo()
-        return
-      }
-      if (handlesOwnKeys(event.target) || command || event.altKey || dragging) return
-      // 키를 누르고 있어 반복되는 입력(예: 비행 중 Q를 누른 채 우클릭을 먼저 놓은 경우)은 도구를 바꾸지 않는다
-      if (event.repeat && code !== 'Delete' && code !== 'Backspace') return
-      // F: 선택한 오브젝트에 카메라 맞추기 (Unity와 같은 키)
-      if (code === 'KeyF') {
-        const { selectedId, focus } = useEditorStore.getState()
-        if (selectedId) focus(selectedId)
-        return
-      }
-      // Q 손, W 이동, E 회전 (Unity와 같은 키)
-      const tool = TOOL_KEYS[code]
-      if (tool && !event.shiftKey) {
-        useEditorStore.getState().setTool(tool)
-        return
-      }
-      // X: 핸들 축 전역/로컬 전환 (Unity와 같은 키)
-      if (code === 'KeyX' && !event.shiftKey) {
-        const { handleSpace, setHandleSpace } = useEditorStore.getState()
-        setHandleSpace(handleSpace === 'global' ? 'local' : 'global')
-        return
-      }
-      if (event.key === 'Delete' || event.key === 'Backspace') {
-        const { selectedId, select } = useEditorStore.getState()
-        if (!selectedId) return
-        event.preventDefault()
-        select(null)
-        useSceneStore.getState().removeObject(selectedId)
-      }
+      const result = shortcutCommand(event, {
+        // 대화상자·우클릭 메뉴가 떠 있거나 씬 뷰에서 비행 중(우클릭+WASD/QE)이면 편집기 단축키를 쓰지 않는다
+        blocked: isModalOpen() || isFlying(),
+        handlesOwnKeys: handlesOwnKeys(event.target),
+        pendingTextEdit: isTextInput(event.target) && useProjectStore.getState().pendingEdit,
+        // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환·만들기를 하지 않는다(드래그가 어긋난다)
+        dragging: isChangeOpen()
+      })
+      if (result.preventDefault) event.preventDefault()
+      if (result.command) runShortcut(result.command)
     }
-    // 파일을 창에 놓으면 Electron은 기본으로 그 파일로 페이지를 이동하므로 막는다
-    const onDragOver = (event: DragEvent): void => event.preventDefault()
+    // 파일을 창에 놓으면 Electron은 기본으로 그 파일로 페이지를 이동하므로 막는다.
+    // 하이어라키 행 드래그(내부 형식)는 하이어라키만 받는다. 다른 곳에서는 놓을 수 없게 둔다.
+    const isObjectDrag = (event: DragEvent): boolean =>
+      event.dataTransfer?.types.includes(OBJECT_DRAG_TYPE) ?? false
+    const onDragOver = (event: DragEvent): void => {
+      if (!isObjectDrag(event)) event.preventDefault()
+    }
     const onDrop = (event: DragEvent): void => {
       event.preventDefault()
-      // 대화상자가 떠 있거나 다른 STEP을 불러오는 중이면(큰 STEP은 메모리를 많이 쓴다) 받지 않는다.
+      if (isObjectDrag(event)) return
+      // 대화상자·메뉴가 떠 있거나 다른 STEP을 불러오는 중이면(큰 STEP은 메모리를 많이 쓴다) 받지 않는다.
       // [STEP 불러오기] 버튼도 같은 조건으로 막힌다.
-      if (useDialogStore.getState().request || isImporting() || useProjectStore.getState().busy)
-        return
+      if (isModalOpen() || isImporting() || useProjectStore.getState().busy) return
       const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
         isStepFileName(file.name)
       )
@@ -152,6 +170,7 @@ function EditorLayout(): React.JSX.Element {
           <InspectorPanel />
         </Panel>
       </Group>
+      <ContextMenu />
     </div>
   )
 }

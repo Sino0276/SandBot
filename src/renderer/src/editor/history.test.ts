@@ -142,6 +142,62 @@ describe('실행 취소', () => {
     expect(undo()).toBe(false)
   })
 
+  it('부모 바꾸기·정렬 변경은 각각 한 단계이고, 되돌리면 사라진 오브젝트만 다중 선택에서 뺀다', () => {
+    const cadScene: SceneObjects = {
+      ...robot,
+      c: {
+        id: 'c',
+        name: 'c',
+        kind: 'assembly',
+        parentId: 'r',
+        transform: { position: [0, 0, 0.1], rotation: [Math.PI / 2, 0, Math.PI / 2] },
+        cad: {
+          fileName: 'robot.step',
+          absolutePath: '/cad/robot.step',
+          upAxis: '+Y',
+          forwardAxis: '+Z',
+          bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          meshCount: 1,
+          meshIndexing: 'source'
+        }
+      },
+      q: {
+        id: 'q',
+        name: 'q',
+        kind: 'part',
+        parentId: 'c',
+        transform: { position: [0.1, 0, 0], rotation: [0, 0, 0] },
+        visual: { type: 'mesh', geometryId: 'c:0', color: [0.5, 0.5, 0.5] }
+      }
+    }
+    useSceneStore.getState().replaceObjects(cadScene)
+    clearHistory()
+    const scene = useSceneStore.getState()
+    const groupId = scene.createGroup({ parentId: 'r', id: 'g' })
+    expect(groupId).toBe('g')
+    expect(useSceneStore.getState().moveObjects(['q', 'p'], 'g')).toBe(true)
+    const moved = useSceneStore.getState().objects
+    useSceneStore.getState().setCadAlignment('c', { upAxis: '+Z', forwardAxis: '-Y' })
+    // 정렬 변경과 옮긴 파트가 따라간 것이 한 단계다
+    expect(useSceneStore.getState().objects.q).not.toBe(moved.q)
+    expect(undo()).toBe(true)
+    expect(useSceneStore.getState().objects).toBe(moved)
+
+    useEditorStore.getState().setSelection(['p', 'g', 'q'], 'g')
+    useEditorStore.getState().setRenaming('g')
+    // 옮기기를 되돌린다(그룹은 남는다)
+    expect(undo()).toBe(true)
+    expect(useSceneStore.getState().objects.q.parentId).toBe('c')
+    expect(useEditorStore.getState().selectedIds).toEqual(['p', 'g', 'q'])
+    // 그룹 만들기를 되돌리면 그룹만 선택에서 빠지고 남은 것 중 마지막이 활성이 된다
+    expect(undo()).toBe(true)
+    expect(useSceneStore.getState().objects).toBe(cadScene)
+    expect(useEditorStore.getState().selectedIds).toEqual(['p', 'q'])
+    expect(useEditorStore.getState().selectedId).toBe('q')
+    expect(useEditorStore.getState().renamingId).toBeNull()
+    expect(undo()).toBe(false)
+  })
+
   it('드래그 묶음이 열려 있는지 알 수 있다', () => {
     expect(isChangeOpen()).toBe(false)
     beginChange()
