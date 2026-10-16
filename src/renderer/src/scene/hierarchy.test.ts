@@ -313,7 +313,7 @@ describe('Create Empty·Create Empty Parent', () => {
 
   it('Create Empty Parent: 공통 부모 원점의 새 그룹이 활성 오브젝트 자리에 들어가고, 선택이 형제 순서로 그 아래로 간다', () => {
     const base = scene()
-    const before = deepFreeze({
+    const before: SceneObjects = deepFreeze({
       ...base,
       P4: node('P4', 'part', 'A', [0, 0.03, 0], SHARED_ROTATION, { visual: mesh('C:3') })
     })

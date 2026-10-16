@@ -170,7 +170,7 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
     const objects = createGroup(before, {
       id,
       parentId,
-      name: name ?? defaultGroupName(before, parentId),
+      name: name?.trim() || defaultGroupName(before, parentId),
       afterId
     })
     if (objects === before) return null
@@ -185,7 +185,7 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       ids,
       activeId,
       id,
-      name ?? defaultGroupName(before, parentId, undefined, ids)
+      name?.trim() || defaultGroupName(before, parentId, undefined, ids)
     )
     if (objects === before) return null
     set({ objects })
