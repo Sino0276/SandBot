@@ -117,7 +117,8 @@ const en: Messages = {
   objectKind: {
     robot: 'Robot',
     assembly: 'Assembly',
-    part: 'Part'
+    part: 'Part',
+    group: 'Group'
   },
   scene: {
     tool: 'Tool',

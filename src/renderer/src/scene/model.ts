@@ -5,7 +5,8 @@ export type Vec3 = [number, number, number]
 // 회전은 X(롤)·Y(피치)·Z(요) 라디안. 요 → 피치 → 롤 순으로 적용한다(Three.js Euler 순서 'ZYX').
 export type Transform = { position: Vec3; rotation: Vec3 }
 
-export type SceneObjectKind = 'robot' | 'assembly' | 'part'
+// group은 하이어라키에서 만든 빈 오브젝트(Unity의 Create Empty)다. 하드웨어가 있으면 생성 코드의 중첩 클래스가 된다.
+export type SceneObjectKind = 'robot' | 'assembly' | 'part' | 'group'
 
 // 씬에 그릴 모양. 없으면 보이지 않는 그룹이다.
 export type ObjectVisual =
@@ -74,6 +75,11 @@ export type SceneObject = {
   components?: HardwareComponent[]
   // robot 오브젝트에만 있다. 없으면 기본값(robotHardwareSettings)을 쓴다.
   hardware?: RobotHardwareSettings
+  // CAD에서 온 노드(assembly·part)를 그 CAD 루트 밖으로 옮겼을 때만 그 CAD 루트 id. group·robot에는 두지 않는다.
+  // CAD 루트를 지우면 함께 지우고, CAD 루트의 변환(정렬)이 바뀌면 함께 움직인다.
+  cadOrigin?: string
+  // group에만 있다. 생성 코드의 중첩 클래스 이름(없으면 이름에서 만든다). 한글 이름 그룹처럼 이름을 클래스로 바꿀 수 없을 때 쓴다.
+  codeClassName?: string
 }
 
 export type SceneObjects = Record<string, SceneObject>

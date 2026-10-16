@@ -115,7 +115,8 @@ const ko = {
   objectKind: {
     robot: '로봇',
     assembly: '어셈블리',
-    part: '파트'
+    part: '파트',
+    group: '그룹'
   },
   scene: {
     tool: '도구',
