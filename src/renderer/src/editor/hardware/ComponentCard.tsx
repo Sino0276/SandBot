@@ -7,7 +7,12 @@ import {
   type ComponentType,
   type PropertyDef
 } from '../../hardware/catalog'
-import { sharesPortClass, type ComponentEntry } from '../../hardware/components'
+import { componentCodePath } from '../../hardware/codeScopes'
+import {
+  robotHardwareSettings,
+  sharesPortClass,
+  type ComponentEntry
+} from '../../hardware/components'
 import { hasHint, looseT, optionLabelKey, propertyLabelKey } from '../../hardware/labels'
 import {
   MM_PER_METER,
@@ -16,7 +21,12 @@ import {
   robotFramePose
 } from '../../hardware/mounting'
 import type { Issue } from '../../hardware/validation'
-import type { HardwareComponent, HubId, SceneObjects } from '../../scene/model'
+import {
+  findRobotId,
+  type HardwareComponent,
+  type HubId,
+  type SceneObjects
+} from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
@@ -181,6 +191,11 @@ function ComponentCard({
 
   const derived = derivedText(tl, objects, objectId, component)
   const typeLabel = t(`hardware.types.${type}`)
+  // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
+  // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
+  const codePath = componentCodePath(objects, objectId, component.id)
+  const robotId = codePath ? findRobotId(objects, objectId) : null
+  const robotClassName = robotId ? robotHardwareSettings(objects, robotId).className : ''
 
   return (
     <li className="hw-card" data-component-type={type}>
@@ -204,6 +219,12 @@ function ComponentCard({
           onCommit={(name) => update({ name })}
         />
       </FieldRow>
+      {codePath && (
+        <div className="hw-row" title={t('hardware.javaPathHint', { className: robotClassName })}>
+          <span className="hw-row-label">{t('hardware.javaPath')}</span>
+          <code className="hw-path hw-code">{['robot', ...codePath.fieldPath].join('.')}</code>
+        </div>
+      )}
       {def.portKind === 'usb' ? (
         <FieldRow label={t('hardware.portKinds.usb')}>
           <span className="hw-static">{t('hardware.usb')}</span>
@@ -255,6 +276,18 @@ function ComponentCard({
           {propertyControl(property)}
         </FieldRow>
       ))}
+      {codePath && codePath.constants.length > 0 && (
+        <div className="hw-row">
+          <span className="hw-row-label">{t('hardware.javaConstants')}</span>
+          <span className="hw-code-list">
+            {codePath.constants.map((constant) => (
+              <code key={constant} className="hw-path hw-code">
+                {`${codePath.typeName}.${constant}`}
+              </code>
+            ))}
+          </span>
+        </div>
+      )}
       {derived && <p className="hw-derived">{derived}</p>}
       {hasHint(type) && <p className="inspector-note">{t(`hardware.hints.${type}`)}</p>}
       <IssueList issues={issues} />

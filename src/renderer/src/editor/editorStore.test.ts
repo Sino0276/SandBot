@@ -76,3 +76,26 @@ describe('다중 선택(Unity 방식)', () => {
     expect(state().renamingId).toBe('b')
   })
 })
+
+describe('카메라 포커스 요청', () => {
+  beforeEach(() => {
+    state().select(null)
+    useEditorStore.setState({ focusRequest: null })
+  })
+
+  it('focus(id)는 그 오브젝트 하나, 같은 대상도 매번 새 요청이다', () => {
+    state().focus('a')
+    const first = state().focusRequest
+    expect(first).toEqual({ ids: ['a'] })
+    state().focus('a')
+    expect(state().focusRequest).not.toBe(first)
+  })
+
+  it('focusSelection은 선택 전체를 맞추고, 선택이 없으면 요청하지 않는다', () => {
+    state().focusSelection()
+    expect(state().focusRequest).toBeNull()
+    state().setSelection(['a', 'b', 'c'], 'b')
+    state().focusSelection()
+    expect(state().focusRequest).toEqual({ ids: ['a', 'b', 'c'] })
+  })
+})

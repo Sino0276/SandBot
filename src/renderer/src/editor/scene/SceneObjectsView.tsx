@@ -14,6 +14,19 @@ const SELECTED_COLOR = '#4c8dff'
 const HIGHLIGHT_EMISSIVE = new Color('#1d4ed8')
 const NO_EMISSIVE = new Color('#000000')
 
+// 선택 id 집합. 큰 CAD(노드 수천 개)에서 노드마다 선택 배열을 훑지 않게 선택 배열마다 한 번 만든다
+// (editorStore는 선택이 바뀔 때만 새 배열을 만든다).
+const selectionSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+function selectionSet(ids: readonly string[]): ReadonlySet<string> {
+  let set = selectionSets.get(ids)
+  if (!set) {
+    set = new Set(ids)
+    selectionSets.set(ids, set)
+  }
+  return set
+}
+
 type VisualProps = {
   // 이 오브젝트 또는 상위 오브젝트가 선택되었는지
   highlighted: boolean
@@ -108,7 +121,8 @@ function ObjectNode({
   const childIds = useSceneStore(
     useShallow((state) => childrenInDocument(state.objects, id).map((child) => child.id))
   )
-  const selected = useEditorStore((state) => state.selectedId === id)
+  // 선택 전체를 같은 색으로 강조한다(Unity도 다중 선택을 모두 외곽선으로 보인다). 씬 뷰 클릭은 하나만 선택한다.
+  const selected = useEditorStore((state) => selectionSet(state.selectedIds).has(id))
   const select = useEditorStore((state) => state.select)
 
   if (!object) return null

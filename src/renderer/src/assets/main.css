@@ -191,8 +191,9 @@ body {
 
 .inspector-object {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--color-border);
 }
@@ -841,4 +842,207 @@ body {
   font-size: 12px;
   pointer-events: none;
   transform: translateX(-50%);
+}
+
+/* 인스펙터(메커니즘 그룹 1단계): 이름 칸, 다중 선택 목록, 생성 코드 경로 */
+.inspector-name-field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.inspector-name-field > .text-field {
+  flex: 1;
+  width: 100%;
+  font-weight: 600;
+}
+
+.inspector-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspector-selection-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  color: var(--color-text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-selection-item:hover {
+  background: var(--color-panel-header);
+}
+
+.inspector-selection-item.is-active {
+  border-color: var(--color-accent-muted);
+}
+
+.inspector-selection-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 생성 코드 식은 한 번 눌러 통째로 골라 복사한다 */
+.hw-code {
+  cursor: text;
+  user-select: all;
+}
+
+.hw-code-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 하이어라키(메커니즘 그룹 1단계): 다중 선택·활성 행, 이름 바꾸기, 드래그 앤 드롭 표시, 우클릭 메뉴 */
+/* 트리 아래 빈 공간이 패널 끝까지 차도록 패널 본문을 세로 flex로 둔다(알림 목록은 그 위에 그대로) */
+.panel-body:has(> .hierarchy-area) {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-body:has(> .hierarchy-area) > * {
+  flex-shrink: 0;
+}
+
+.hierarchy-area {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+}
+
+.tree-row {
+  position: relative;
+  outline: none;
+}
+
+.tree-row.is-active {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.tree-row:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.tree-row.is-drop-into {
+  background: var(--color-accent-muted);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.tree-drop-line {
+  position: absolute;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.tree-drop-line.is-before {
+  top: -1px;
+}
+
+.tree-drop-line.is-after {
+  bottom: -1px;
+}
+
+/* 행 아래 빈 공간(클릭하면 선택 해제, 놓으면 로봇의 마지막 자식, 우클릭하면 만들기 메뉴) */
+.tree-filler {
+  position: relative;
+  flex: 1 0 24px;
+}
+
+.tree-filler.is-drop-end::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 4px;
+  height: 2px;
+  background: var(--color-accent);
+  content: '';
+}
+
+.tree-icon {
+  flex: none;
+  margin-right: 4px;
+  color: var(--color-text-muted);
+}
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+}
+
+.panel-icon-button {
+  min-width: 20px;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 24px;
+  padding: 0 12px;
+  color: var(--color-text);
+  outline: none;
+  cursor: default;
+}
+
+.context-menu-item:focus {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.context-menu-item.is-disabled {
+  color: var(--color-text-muted);
+}
+
+.context-menu-item.is-disabled:focus {
+  color: var(--color-text-muted);
+  background: var(--color-panel-header);
+}
+
+.context-menu-shortcut {
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border);
 }

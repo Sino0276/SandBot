@@ -139,6 +139,23 @@ describe('하이어라키 편집 액션', () => {
     expect(Object.keys(state().objects)).toEqual(['R'])
   })
 
+  it('그룹의 Java 클래스 이름: 공백을 자르고, 비우면 필드를 지우며, 그룹에만 쓴다', () => {
+    state().setCodeClassName('G', '  Lift ')
+    expect(state().objects.G.codeClassName).toBe('Lift')
+    const before = state().objects
+    state().setCodeClassName('G', 'Lift')
+    expect(state().objects).toBe(before)
+    state().setCodeClassName('G', '   ')
+    expect('codeClassName' in state().objects.G).toBe(false)
+    state().setCodeClassName('G', 'Arm')
+    state().setCodeClassName('G', null)
+    expect('codeClassName' in state().objects.G).toBe(false)
+    const unchanged = state().objects
+    state().setCodeClassName('C', 'Lift')
+    state().setCodeClassName('nope', 'Lift')
+    expect(state().objects).toBe(unchanged)
+  })
+
   it('정렬을 바꾸면 밖으로 옮긴 파트도 CAD 안 자리를 지키며 따라간다', () => {
     state().moveObjects(['P1'], 'G')
     const before = state().objects

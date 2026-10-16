@@ -6,8 +6,9 @@ export type EditorTool = 'view' | 'translate' | 'rotate'
 export type HandleSpace = 'global' | 'local'
 
 // 선택은 Unity 모델을 따른다. selectedIds는 선택 전체(선택한 순서), selectedId는 활성 오브젝트
-// (Unity Selection.activeGameObject)다. 인스펙터·핸들·F·IMU 표시는 활성 오브젝트에만 적용한다.
-// 선택이 있으면 활성 오브젝트는 항상 그 안에 있고, 선택이 비면 null이다.
+// (Unity Selection.activeGameObject)다. 선택이 있으면 활성 오브젝트는 항상 그 안에 있고, 선택이 비면 null이다.
+// 하나만 선택하면 인스펙터·핸들이 그 오브젝트에 적용된다. 둘 이상이면(다중 편집은 아직 없음) 핸들을 숨기고,
+// 인스펙터는 선택 목록만 보여 준다. 씬 뷰 강조·IMU 표시·F(focusSelection)는 선택 전체에 적용한다.
 type Selection = {
   selectedId: string | null
   selectedIds: readonly string[]
@@ -21,8 +22,9 @@ type EditorState = Selection & {
   // 핸들 방향에만 적용되고 저장 데이터·인스펙터 값은 바꾸지 않는다.
   handleSpace: HandleSpace
   tool: EditorTool
-  // 카메라를 이 오브젝트에 맞추라는 요청. 같은 오브젝트를 다시 요청해도 반응하도록 매번 새 객체를 만든다.
-  focusRequest: { id: string } | null
+  // 카메라를 이 오브젝트들(둘 이상이면 합친 경계)에 맞추라는 요청. 같은 대상을 다시 요청해도 반응하도록
+  // 매번 새 객체를 만든다.
+  focusRequest: { ids: readonly string[] } | null
   // 하나만 선택한다(null이면 선택 해제)
   select: (id: string | null) => void
   // Ctrl+클릭: 선택에 넣거나 뺀다. 넣으면 활성 오브젝트가 되고, 활성 오브젝트를 빼면 남은 것 중 마지막이 활성이 된다.
@@ -34,7 +36,10 @@ type EditorState = Selection & {
   // 없어진 오브젝트를 선택·이름 바꾸기에서 뺀다(실행 취소로 씬이 바뀐 뒤 등)
   pruneSelection: (exists: (id: string) => boolean) => void
   setRenaming: (id: string | null) => void
-  focus: (id: string) => void
+  // 오브젝트 하나(하이어라키 더블클릭, 임포트 직후)나 여러 개에 카메라를 맞춘다
+  focus: (target: string | readonly string[]) => void
+  // 선택 전체에 카메라를 맞춘다(F 키). 선택이 없으면 아무것도 하지 않는다.
+  focusSelection: () => void
   setHandleSpace: (space: HandleSpace) => void
   setTool: (tool: EditorTool) => void
 }
@@ -105,7 +110,12 @@ export const useEditorStore = create<EditorState>()((set) => ({
       )
     }),
   setRenaming: (renamingId) => set({ renamingId }),
-  focus: (id) => set({ focusRequest: { id } }),
+  focus: (target) =>
+    set({ focusRequest: { ids: typeof target === 'string' ? [target] : [...target] } }),
+  focusSelection: () =>
+    set((state) =>
+      state.selectedIds.length > 0 ? { focusRequest: { ids: state.selectedIds } } : state
+    ),
   setHandleSpace: (handleSpace) => set({ handleSpace }),
   setTool: (tool) => set({ tool })
 }))

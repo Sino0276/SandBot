@@ -115,6 +115,9 @@ type SceneState = {
   ) => string | null
   // 앞뒤 공백을 자른 이름으로 바꾼다. 빈 이름이면 바꾸지 않는다.
   renameObject: (id: string, name: string) => void
+  // 그룹의 Java 클래스 이름 덮어쓰기(codeClassName). 앞뒤 공백을 자르고, 비었거나 null이면 지워 이름에서 만든다.
+  // 그룹이 아니거나 바뀐 것이 없으면 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  setCodeClassName: (id: string, className: string | null) => void
   // CAD 루트의 방향(위·앞 축)을 바꾸고 바닥 중심 맞춤을 다시 계산한다. 밖으로 옮긴 그 CAD의 노드도 따라 움직인다.
   setCadAlignment: (id: string, alignment: CadAlignment) => void
   // 하드웨어 컴포넌트. 변경할 때마다 새 objects를 만들어야 변경 추적(dirty)과 다시 그리기가 동작한다.
@@ -195,6 +198,15 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
     set((state) => {
       const objects = renameObject(state.objects, id, name)
       return objects === state.objects ? state : { objects }
+    }),
+  setCodeClassName: (id, className) =>
+    set((state) => {
+      const object = state.objects[id]
+      const trimmed = className?.trim() || undefined
+      if (!object || !isCodeGroup(object) || object.codeClassName === trimmed) return state
+      const next: SceneObject = { ...object, codeClassName: trimmed }
+      if (trimmed === undefined) delete next.codeClassName
+      return { objects: { ...state.objects, [id]: next } }
     }),
   setCadAlignment: (id, alignment) =>
     set((state) => {
