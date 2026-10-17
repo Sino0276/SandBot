@@ -523,9 +523,18 @@ export async function openInExternalEditor(
       const found = (await detectFresh(deps)).find((editor) => editor.id === settings.id)
       if (!found) return { ok: false, code: 'launchFailed', detail: `${product.name}: ${exe}` }
       exe = found.exe
-      await serialized(() =>
-        writeEditorSettings(deps.settingsFile, { kind: 'detected', id: product.id, exe })
-      ).catch(() => undefined)
+      const stale = settings.exe
+      const moved = found.exe
+      // 새 위치를 기억한다. 찾는 동안 설정 창에서 다른 편집기를 골랐으면 덮어쓰지 않는다.
+      await serialized(async () => {
+        const current = await readEditorSettings(deps.settingsFile)
+        if (current.kind === 'detected' && current.id === product.id && current.exe === stale)
+          await writeEditorSettings(deps.settingsFile, {
+            kind: 'detected',
+            id: product.id,
+            exe: moved
+          })
+      }).catch(() => undefined)
     }
     args = presetArgs(product.family, line !== undefined)
   } else {

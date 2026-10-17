@@ -254,6 +254,29 @@ describe('스크립트 연결', () => {
     expect(state().objects.G.scripts).toEqual([ARM])
   })
 
+  it('연결할 수 없는 경로는 연결하지 않고, 경로는 NFC로 둔다', () => {
+    state().addScriptLink('G', LIFT)
+    const before = state().objects
+    for (const path of [
+      '../Lift.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/sandbot/RobotHardware.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/CON.java',
+      'src/main/java/Lift.txt'
+    ]) {
+      state().addScriptLink('G', { path, className: 'X' })
+      state().relinkScript('G', LIFT.path, { path, className: 'X' })
+    }
+    expect(state().objects).toBe(before)
+    state().removeScriptLink('G', LIFT.path)
+    const korean = 'src/main/java/org/firstinspires/ftc/teamcode/리프트.java'.normalize('NFC')
+    state().addScriptLink('G', { path: korean.normalize('NFD'), className: 'x.리프트' })
+    expect(state().objects.G.scripts).toEqual([{ path: korean, className: 'x.리프트' }])
+    // 이미 있는 경로는 NFD로 와도 같은 경로다
+    const linked = state().objects
+    state().addScriptLink('G', { path: korean.normalize('NFD'), className: 'x.리프트' })
+    expect(state().objects).toBe(linked)
+  })
+
   it('하이어라키로 옮기거나 묶어도 연결은 오브젝트를 따라간다', () => {
     state().addScriptLink('P1', LIFT)
     state().moveObjects(['P1'], 'G')

@@ -450,6 +450,23 @@ describe('openInExternalEditor·setEditor', () => {
     expect(spawned.calls).toHaveLength(1)
   })
 
+  it('다시 찾는 동안 다른 편집기를 골랐으면 찾은 위치로 덮어쓰지 않는다', async () => {
+    const moved = 'C:\\Users\\me\\AppData\\Local\\Programs\\Android Studio\\bin\\studio64.exe'
+    await writeEditorSettings(settingsFile, { kind: 'detected', id: 'android-studio', exe: STUDIO })
+    executables = new Set([moved])
+    const racing: EditorDeps = {
+      ...deps(),
+      detect: async () => {
+        // 설정 창에서 확장자로 열기를 고른 것
+        await writeEditorSettings(settingsFile, { kind: 'system' })
+        return [{ id: 'android-studio', name: 'Android Studio', exe: moved }]
+      }
+    }
+    expect(await openInExternalEditor(FILE, PROJECT, 2, racing)).toEqual({ ok: true })
+    expect(spawned.calls[0]).toMatchObject({ exe: moved })
+    expect(await readEditorSettings(settingsFile)).toEqual({ kind: 'system' })
+  })
+
   it('찾아보기: .exe가 아니면 받지 않고 설정을 그대로 둔다', async () => {
     for (const file of [
       'C:\\Android\\bin\\studio.bat',

@@ -4,7 +4,14 @@ import { dirname, join, posix, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { OpenJavaFileResult } from '../shared/ipc'
 import { clearTrustedRoots, trustRoot } from './projectRoots'
-import { containedIn, listJavaFiles, openJavaFile, type EditorOpener } from './teamCodeJava'
+import {
+  classifyEntry,
+  containedIn,
+  listJavaFiles,
+  listTrustedJavaFiles,
+  openJavaFile,
+  type EditorOpener
+} from './teamCodeJava'
 
 const PKG = 'src/main/java/org/firstinspires/ftc/teamcode'
 
@@ -91,6 +98,41 @@ describe('TeamCode Java', () => {
       ])
       expect(list.files[0].size).toBe('public class Lift {}'.length)
       expect(list.files[0].mtimeMs).toBeGreaterThan(0)
+    })
+
+    it('열거나 저장하지 않은 프로젝트는 목록을 주지 않는다', async () => {
+      await put(java('Lift.java'))
+      await expect(listTrustedJavaFiles(root)).rejects.toThrow(/notAllowed/)
+      await expect(listTrustedJavaFiles(42)).rejects.toThrow(/notAllowed/)
+      trustRoot(root)
+      expect((await listTrustedJavaFiles(root)).files.map((file) => file.path)).toEqual([
+        `${PKG}/Lift.java`
+      ])
+    })
+
+    it('링크로 나온 항목은 lstat로 다시 본다(Windows 재분석 지점은 보통 파일·폴더, 진짜 링크는 건너뜀)', async () => {
+      // Windows의 readdir는 OneDrive 주문형 파일 같은 재분석 지점도 링크로 알려 준다. 그런 항목을 흉내 낸다.
+      const asLink = (name: string): Parameters<typeof classifyEntry>[1] => ({
+        name,
+        isSymbolicLink: () => true,
+        isDirectory: () => false,
+        isFile: () => false
+      })
+      await put(java('Placeholder.java'), 'class Placeholder {}')
+      await mkdir(java('cloudpkg'), { recursive: true })
+      await put(join(outside, 'Evil.java'))
+      await symlink(join(outside, 'Evil.java'), java('Linked.java'))
+      expect(await classifyEntry(java(), asLink('Placeholder.java'))).toMatchObject({
+        name: 'Placeholder.java',
+        kind: 'file'
+      })
+      expect(await classifyEntry(java(), asLink('cloudpkg'))).toMatchObject({
+        name: 'cloudpkg',
+        kind: 'dir'
+      })
+      expect(await classifyEntry(java(), asLink('Linked.java'))).toBeNull()
+      // 그사이 없어진 항목
+      expect(await classifyEntry(java(), asLink('Gone.java'))).toBeNull()
     })
 
     it('한도를 넘으면 앞의 것만 담고 truncated로 알린다', async () => {

@@ -3,9 +3,11 @@ import type { JavaFileList } from '../../../shared/ipc'
 import { useProjectStore } from '../project/projectStore'
 import {
   buildJavaIndex,
+  FOCUS_REFRESH_DELAY,
   refreshJavaIndex,
   relinkCandidate,
   scriptChoices,
+  scheduleFocusRefresh,
   scriptLinkStatus,
   useJavaIndexStore
 } from './javaIndex'
@@ -206,5 +208,48 @@ describe('다시 읽기', () => {
     expect(useJavaIndexStore.getState()).toMatchObject({ status: 'failed' })
     expect(useJavaIndexStore.getState().files).toHaveLength(1)
     error.mockRestore()
+  })
+})
+
+describe('창 포커스로 다시 읽기', () => {
+  const listJavaFiles = vi.fn((): Promise<JavaFileList> =>
+    Promise.resolve({ files: [file(`${P}Lift.java`)], truncated: false, hasTeamCode: true })
+  )
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    listJavaFiles.mockClear()
+    vi.stubGlobal('window', { api: { listJavaFiles } })
+    useProjectStore.setState({ root: '/p', session: 1, busy: false })
+    useJavaIndexStore.setState(useJavaIndexStore.getInitialState())
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    useProjectStore.setState(useProjectStore.getInitialState())
+  })
+
+  it('짧은 사이에 여러 번 온 포커스는 마지막 뒤 한 번만 읽는다', async () => {
+    scheduleFocusRefresh()
+    await vi.advanceTimersByTimeAsync(FOCUS_REFRESH_DELAY - 50)
+    scheduleFocusRefresh()
+    await vi.advanceTimersByTimeAsync(FOCUS_REFRESH_DELAY - 50)
+    scheduleFocusRefresh()
+    expect(listJavaFiles).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(FOCUS_REFRESH_DELAY)
+    expect(listJavaFiles).toHaveBeenCalledTimes(1)
+    expect(useJavaIndexStore.getState()).toMatchObject({ status: 'ready', root: '/p' })
+  })
+
+  it('열기·저장 중(busy)이면 건너뛰고, 프로젝트가 없으면 읽지 않는다', async () => {
+    useProjectStore.setState({ busy: true })
+    scheduleFocusRefresh()
+    await vi.advanceTimersByTimeAsync(FOCUS_REFRESH_DELAY * 2)
+    expect(listJavaFiles).not.toHaveBeenCalled()
+    useProjectStore.setState({ busy: false, root: null })
+    scheduleFocusRefresh()
+    await vi.advanceTimersByTimeAsync(FOCUS_REFRESH_DELAY * 2)
+    expect(listJavaFiles).not.toHaveBeenCalled()
+    expect(useJavaIndexStore.getState().status).toBe('none')
   })
 })

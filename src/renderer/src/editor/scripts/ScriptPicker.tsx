@@ -204,7 +204,11 @@ function PickerPopup({ request }: { request: ScriptPickerRequest }): React.JSX.E
               title={entry.path}
               // 검색 입력칸의 포커스를 지킨다
               onMouseDown={(event) => event.preventDefault()}
-              onPointerEnter={() => setActive(index)}
+              // 마우스를 실제로 움직였을 때만 고른다(키보드로 고른 항목이 보이게 스크롤하면 그 아래 항목에
+              // pointerenter가 와서 키보드 선택을 빼앗지 않게)
+              onPointerMove={() => {
+                if (index !== activeIndex) setActive(index)
+              }}
               onClick={() => choose(index)}
             >
               <span className="script-picker-name">{entry.simpleName}</span>

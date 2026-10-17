@@ -58,12 +58,15 @@ async function mapLimit<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<
   return results
 }
 
-type Classified = { name: string; kind: 'dir' | 'file'; stats: Stats | null }
+export type Classified = { name: string; kind: 'dir' | 'file'; stats: Stats | null }
 
 // 링크라고 나온 항목은 lstat로 다시 본다. Windows의 readdir는 모든 재분석 지점(OneDrive 주문형 파일 등)을 링크로
 // 알려 주지만, lstat는 진짜 심볼릭 링크·정션만 링크로 보고 나머지는 보통 파일·폴더로 본다. 진짜 링크는 따라가지 않는다
 // (TeamCode 밖을 가리킬 수 있고 순환할 수 있다).
-async function classify(dir: string, entry: Dirent): Promise<Classified | null> {
+export async function classifyEntry(
+  dir: string,
+  entry: Pick<Dirent, 'name' | 'isSymbolicLink' | 'isDirectory' | 'isFile'>
+): Promise<Classified | null> {
   if (entry.isSymbolicLink()) {
     let stats: Stats
     try {
@@ -113,7 +116,7 @@ export async function listJavaFiles(
         isLinkableJavaPath(childRel(entry.name)) ||
         (entry.name !== 'build' && isLinkableJavaFolder(childRel(entry.name)))
     )
-    const classified = (await mapLimit(candidates, (entry) => classify(dir, entry)))
+    const classified = (await mapLimit(candidates, (entry) => classifyEntry(dir, entry)))
       .filter((item): item is Classified => item !== null)
       .sort(byName)
 
@@ -214,11 +217,15 @@ export async function openJavaFile(
   return open(file, projectRoot, validLine)
 }
 
+// 렌더러가 보낸 root(믿지 않는 입력)의 목록. 열거나 저장한 프로젝트가 아니면 거부한다(JavaFileList에는 실패를 담을
+// 자리가 없으므로 예외로 알린다).
+export async function listTrustedJavaFiles(root: unknown): Promise<JavaFileList> {
+  if (!isTrustedRoot(root)) throw new Error(`notAllowed: not an opened project: ${String(root)}`)
+  return listJavaFiles(root)
+}
+
 export function registerTeamCodeJavaIpc(): void {
-  ipcMain.handle(IPC.listJavaFiles, (_event, root: unknown) => {
-    if (!isTrustedRoot(root)) throw new Error(`notAllowed: not an opened project: ${String(root)}`)
-    return listJavaFiles(root)
-  })
+  ipcMain.handle(IPC.listJavaFiles, (_event, root: unknown) => listTrustedJavaFiles(root))
   ipcMain.handle(IPC.openJavaFile, (_event, root: unknown, relPath: unknown, line: unknown) =>
     openJavaFile(root, relPath, line)
   )

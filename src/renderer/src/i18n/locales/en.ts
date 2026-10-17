@@ -98,7 +98,7 @@ const en: Messages = {
     scriptNotAllowed:
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
     scriptLinksDropped:
-      '{{count}} script links in project.json point to paths that are not allowed and were dropped. Saving removes them from the file too.',
+      '{{count}} script links in project.json were dropped because their paths are not allowed or repeat on the same object. Saving removes them from the file too.',
     externalEditorFailed: 'Could not change the external script editor setting ({{detail}}).',
     externalEditorUnsupportedFile:
       'The chosen file cannot be run as the external script editor. Choose the editor executable (.exe on Windows); .bat, .cmd, .lnk and .ps1 files cannot be used.',
@@ -293,7 +293,8 @@ const en: Messages = {
         'An editor found on this PC. It opens with the project folder and the line number.',
       noneDetected:
         'Android Studio, IntelliJ IDEA and VS Code were not found on this PC. Choose another editor with [Browse…].',
-      loading: 'Loading…'
+      loading: 'Loading…',
+      loadFailed: 'Could not read the external script editor setting. Close and reopen this window.'
     }
   },
   hardware: {

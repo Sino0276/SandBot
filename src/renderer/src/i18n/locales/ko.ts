@@ -95,7 +95,7 @@ const ko = {
     scriptNotAllowed:
       '{{fileName}}은(는) 열 수 없는 경로입니다. TeamCode/src/main/java 안의 Java 파일만 엽니다.',
     scriptLinksDropped:
-      'project.json의 스크립트 연결 {{count}}개는 허용하지 않는 경로라 버렸습니다. 저장하면 파일에서도 빠집니다.',
+      'project.json의 스크립트 연결 {{count}}개는 허용하지 않는 경로이거나 같은 오브젝트에 겹친 경로라 버렸습니다. 저장하면 파일에서도 빠집니다.',
     externalEditorFailed: '외부 스크립트 편집기 설정을 바꾸지 못했습니다 ({{detail}}).',
     externalEditorUnsupportedFile:
       '고른 파일은 외부 스크립트 편집기로 실행할 수 없습니다. 편집기의 실행 파일(Windows는 .exe)을 고르세요. .bat·.cmd·.lnk·.ps1은 쓸 수 없습니다.',
@@ -292,7 +292,8 @@ const ko = {
       detectedHint: '이 PC에서 찾은 편집기입니다. 프로젝트 폴더와 줄 번호를 함께 넘겨 엽니다.',
       noneDetected:
         '이 PC에서 Android Studio, IntelliJ IDEA, VS Code를 찾지 못했습니다. 다른 편집기는 [찾아보기…]로 고르세요.',
-      loading: '불러오는 중…'
+      loading: '불러오는 중…',
+      loadFailed: '외부 스크립트 편집기 설정을 읽지 못했습니다. 창을 닫았다 다시 열어 보세요.'
     }
   },
   hardware: {

@@ -5,31 +5,27 @@ import type {
   ExternalEditorError,
   ExternalEditorState
 } from '../../../shared/ipc'
-import { fileNameOf } from '../cad/importStep'
 import { ipcErrorDetail } from '../java/openScript'
 import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
-import { showNotice, type NoticeKey } from './noticeStore'
+import {
+  EXTERNAL_EDITOR_ERROR_NOTICES,
+  externalEditorChoice,
+  externalEditorOptions,
+  externalEditorValue
+} from './externalEditorOptions'
+import { dismissNotice, showNotice } from './noticeStore'
 import TextField from './TextField'
 
 // 창 안에서 Tab으로 도는 요소
 const FOCUSABLE =
   'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-// 외부 스크립트 편집기 선택 상자의 값
-const SYSTEM = 'system'
-const CUSTOM = 'custom'
-const BROWSE = 'browse'
-const DETECTED_PREFIX = 'detected:'
+// 외부 편집기 설정의 마지막 알림. 다음에 고르면 지운다(고친 뒤에도 이전 오류가 남지 않게).
+let lastNotice = 0
 
-// 메인이 선택을 받지 않은 이유 → 알림 문구
-const ERROR_NOTICES: Record<ExternalEditorError, NoticeKey> = {
-  unsupportedFile: 'externalEditorUnsupportedFile',
-  invalidArgs: 'externalEditorInvalidArgs'
-}
-
-function selectValue(state: ExternalEditorState): string {
-  if (state.kind === 'detected' && state.detectedId) return DETECTED_PREFIX + state.detectedId
-  return state.kind === 'custom' ? CUSTOM : SYSTEM
+function replacePreferencesNotice(...args: Parameters<typeof showNotice>): void {
+  dismissNotice(lastNotice)
+  lastNotice = showNotice(...args)
 }
 
 // Unity Preferences > External Tools > External Script Editor. 설정은 실행 파일 경로를 담으므로 메인 프로세스가
@@ -37,6 +33,8 @@ function selectValue(state: ExternalEditorState): string {
 function ExternalToolsPage(): React.JSX.Element {
   const { t } = useTranslation()
   const [state, setState] = useState<ExternalEditorState | null>(null)
+  // 설정을 읽지 못했다(창 안에 알린다. 알림 목록은 창 뒤에 가려진다)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [pending, setPending] = useState(false)
   // 마지막 선택을 메인이 받지 않은 이유. 창 안에도 보인다(알림 목록은 창 뒤에 가려진다).
   const [error, setError] = useState<ExternalEditorError | null>(null)
@@ -52,9 +50,10 @@ function ExternalToolsPage(): React.JSX.Element {
       .then((next) => {
         if (mounted.current) setState(next)
       })
-      .catch((error: unknown) =>
-        showNotice('error', 'externalEditorFailed', { detail: ipcErrorDetail(error) })
-      )
+      .catch((error: unknown) => {
+        replacePreferencesNotice('error', 'externalEditorFailed', { detail: ipcErrorDetail(error) })
+        if (mounted.current) setLoadFailed(true)
+      })
     return () => {
       mounted.current = false
     }
@@ -64,16 +63,18 @@ function ExternalToolsPage(): React.JSX.Element {
     if (pendingRef.current) return
     pendingRef.current = true
     setPending(true)
+    dismissNotice(lastNotice)
+    lastNotice = 0
     try {
       const next = await window.api.setExternalEditor(choice)
       // 받지 않았으면 설정은 그대로이고 이유가 붙어 온다
-      if (next.error) showNotice('warning', ERROR_NOTICES[next.error])
+      if (next.error) replacePreferencesNotice('warning', EXTERNAL_EDITOR_ERROR_NOTICES[next.error])
       if (mounted.current) {
         setState(next)
         setError(next.error ?? null)
       }
     } catch (error) {
-      showNotice('error', 'externalEditorFailed', { detail: ipcErrorDetail(error) })
+      replacePreferencesNotice('error', 'externalEditorFailed', { detail: ipcErrorDetail(error) })
     } finally {
       pendingRef.current = false
       if (mounted.current) setPending(false)
@@ -81,11 +82,8 @@ function ExternalToolsPage(): React.JSX.Element {
   }
 
   const onSelect = (value: string): void => {
-    if (value === BROWSE)
-      void apply({ kind: 'browse', title: t('preferences.externalTools.browseTitle') })
-    else if (value === SYSTEM) void apply({ kind: 'system' })
-    else if (value.startsWith(DETECTED_PREFIX))
-      void apply({ kind: 'detected', id: value.slice(DETECTED_PREFIX.length) })
+    const choice = externalEditorChoice(value, t('preferences.externalTools.browseTitle'))
+    if (choice) void apply(choice)
   }
 
   return (
@@ -94,7 +92,11 @@ function ExternalToolsPage(): React.JSX.Element {
         {t('preferences.externalTools.title')}
       </h2>
       {!state ? (
-        <p className="inspector-note">{t('preferences.externalTools.loading')}</p>
+        <p className={loadFailed ? 'preferences-error' : 'inspector-note'}>
+          {loadFailed
+            ? t('preferences.externalTools.loadFailed')
+            : t('preferences.externalTools.loading')}
+        </p>
       ) : (
         <>
           <label className="preferences-row">
@@ -103,33 +105,23 @@ function ExternalToolsPage(): React.JSX.Element {
             </span>
             <select
               className="field-select"
-              value={selectValue(state)}
+              value={externalEditorValue(state)}
               aria-busy={pending || undefined}
               onChange={(event) => onSelect(event.target.value)}
             >
-              <option value={SYSTEM}>{t('preferences.externalTools.openByExtension')}</option>
-              {state.detected.map((editor) => (
-                <option key={editor.id} value={DETECTED_PREFIX + editor.id}>
-                  {editor.name}
+              {/* 편집기 제품 이름과 실행 파일 이름은 번역하지 않는다 */}
+              {externalEditorOptions(state).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {'labelKey' in option
+                    ? t(`preferences.externalTools.${option.labelKey}`)
+                    : option.text}
                 </option>
               ))}
-              {/* 저장된 편집기를 이번에 찾지 못했으면(지웠거나 옮김) 실행 파일 이름으로 보인다 */}
-              {state.kind === 'detected' &&
-                state.detectedId &&
-                !state.detected.some((editor) => editor.id === state.detectedId) && (
-                  <option value={DETECTED_PREFIX + state.detectedId}>
-                    {state.exe ? fileNameOf(state.exe) : state.detectedId}
-                  </option>
-                )}
-              {state.kind === 'custom' && state.exe && (
-                <option value={CUSTOM}>{fileNameOf(state.exe)}</option>
-              )}
-              <option value={BROWSE}>{t('preferences.externalTools.browse')}</option>
             </select>
           </label>
           {error && (
             <p className="preferences-error" role="alert">
-              {t(`notice.${ERROR_NOTICES[error]}`)}
+              {t(`notice.${EXTERNAL_EDITOR_ERROR_NOTICES[error]}`)}
             </p>
           )}
           {state.kind === 'system' && (
@@ -203,6 +195,13 @@ function PreferencesDialog(): React.JSX.Element {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (dialogOnTop()) return
       if (event.key === 'Escape') {
+        // 입력칸의 Esc는 그 칸의 편집 취소다(TextField가 초안을 버리고 포커스를 놓는다). 한 번 더 누르면 닫는다.
+        if (
+          event.target instanceof HTMLInputElement &&
+          event.target.type === 'text' &&
+          dialogRef.current?.contains(event.target)
+        )
+          return
         event.preventDefault()
         closePreferences()
         return
