@@ -14,6 +14,7 @@ import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../editor/history'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
+import { refreshJavaIndex, scheduleFocusRefresh } from '../java/javaIndex'
 import type { SceneObjects } from '../scene/model'
 import { disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
@@ -28,8 +29,8 @@ let loading = false
 // 마지막으로 저장하거나 연 씬. 실행 취소로 이 상태로 돌아오면 저장할 변경이 없는 것으로 본다.
 let savedObjects: SceneObjects | null = null
 
-// 열린 프로젝트에 딸린 알림(TeamCode 없음, CAD 못 찾음). 다른 프로젝트를 열면 지운다.
-const projectNotices = { noTeamCode: 0, cadMissing: 0 }
+// 열린 프로젝트에 딸린 알림(TeamCode 없음, CAD 못 찾음, 버린 스크립트 연결). 다른 프로젝트를 열면 지운다.
+const projectNotices = { noTeamCode: 0, cadMissing: 0, scriptLinksDropped: 0 }
 
 function replaceProjectNotice(
   key: keyof typeof projectNotices,
@@ -162,6 +163,10 @@ export function saveProject(): Promise<boolean> {
     setDirty(useSceneStore.getState().objects !== savedObjects)
     await syncTeamCode(projectRoot, objects)
     return true
+  }).then((saved) => {
+    // 처음 저장해 프로젝트가 생겼거나 생성 파일이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
+    if (saved) void refreshJavaIndex()
+    return saved
   })
 }
 
@@ -176,6 +181,7 @@ export async function openProjectFolder(): Promise<void> {
 export function openProjectAt(root: string, options: { quiet?: boolean } = {}): Promise<void> {
   let cads: { id: string; path: string }[] = []
   let session = 0
+  let opened = false
   return withBusy(async () => {
     const progress = showNotice('progress', 'openingProject', { name: fileNameOf(root) })
     loading = true
@@ -184,9 +190,9 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
     let replaced = false
     try {
       const info = await window.api.openProject(root)
-      const { objects, cadFiles } = info.content
+      const { objects, cadFiles, droppedScripts } = info.content
         ? parseProject(info.content)
-        : { objects: {}, cadFiles: new Map() }
+        : { objects: {}, cadFiles: new Map(), droppedScripts: [] }
 
       // 새 프로젝트를 읽었으니 이전 프로젝트의 불러오기(새 STEP, CAD 형상 읽기)를 멈춘다(열기에 실패하면 그대로 둔다).
       // 세션을 먼저 바꿔, 취소되어 끝나는 이전 작업이 결과·상태를 반영하거나 다음 CAD로 넘어가지 않게 한다.
@@ -210,6 +216,10 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       replaceGenerationNotices([])
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
+      replaceProjectNotice(
+        'scriptLinksDropped',
+        droppedScripts.length > 0 ? { count: droppedScripts.length } : null
+      )
 
       // CAD 원본은 프로젝트 기준 상대 경로 → 저장 당시 절대 경로 순으로 찾는다. 여기서는 위치만 찾고(내용은 읽지 않음)
       // 경로를 고쳐 둔다. 고친 경로는 연 상태(savedObjects)에 들어가므로 변경으로 치지 않는다.
@@ -238,6 +248,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
       savedObjects = useSceneStore.getState().objects
       setDirty(false)
+      opened = true
     } catch (error) {
       cads = []
       if (options.quiet) {
@@ -254,6 +265,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       dismissNotice(progress)
     }
   }).then(() => {
+    // 스크립트 연결의 선택창·다시 연결에 쓰는 TeamCode Java 목록(열기에 실패하면 이전 목록을 그대로 둔다)
+    if (opened) void refreshJavaIndex()
     // CAD 형상은 열기가 끝난 뒤 하나씩 읽는다. 큰 STEP은 몇 분 걸리므로 그동안에도 편집·저장할 수 있다
     // (형상은 씬 문서를 바꾸지 않는다). 다른 프로젝트를 열면 멈춘다.
     void loadProjectCads(cads, session)
@@ -408,6 +421,9 @@ export function initProjectSession(): void {
     cancelAllImports()
     window.api.confirmClose()
   })
+
+  // Android Studio 등에서 Java 파일을 옮기거나 이름을 바꾸고 돌아오면 TeamCode Java 목록을 다시 읽는다
+  window.addEventListener('focus', scheduleFocusRefresh)
 
   const last = localStorage.getItem(LAST_PROJECT_KEY)
   if (last) void openProjectAt(last, { quiet: true })

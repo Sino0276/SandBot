@@ -80,7 +80,15 @@ export type SceneObject = {
   cadOrigin?: string
   // group에만 있다. 생성 코드의 중첩 클래스 이름(없으면 이름에서 만든다). 한글 이름 그룹처럼 이름을 클래스로 바꿀 수 없을 때 쓴다.
   codeClassName?: string
+  // 연결한 TeamCode Java 파일(Unity의 스크립트 컴포넌트처럼 인스펙터 카드가 된다). 탐색용 연결이라 생성 코드는
+  // 이 파일을 참조하지 않는다. 한 오브젝트에 여럿을 둘 수 있고 같은 경로는 한 번만 둔다. 비면 필드를 지운다.
+  scripts?: ScriptLink[]
 }
+
+// 스크립트 연결. path는 TeamCode 기준 상대 경로('/' 구분, src/shared/teamCodePaths.ts의 isLinkableJavaPath),
+// className은 연결할 때의 패키지까지 붙인 클래스 이름(파일 이름 = public 최상위 클래스 이름)이다.
+// Android Studio에서 이름을 바꾸거나 옮겨 경로를 못 찾으면 className으로 새 위치를 찾는다(다시 연결은 사용자가 누른다).
+export type ScriptLink = { path: string; className: string }
 
 export type SceneObjects = Record<string, SceneObject>
 

@@ -1,3 +1,4 @@
+import { isWindowsReservedName } from '../../../shared/teamCodePaths'
 import { childrenOf, findRobotId, type HardwareComponent, type SceneObjects } from '../scene/model'
 import {
   COMPONENT_TYPE_KEYS,
@@ -62,6 +63,7 @@ export type IssueCode =
   | 'invalidGroupName'
   | 'reservedGroupName'
   | 'duplicateGroupClass'
+  | 'reservedFileName'
 
 export type Issue = {
   severity: IssueSeverity
@@ -122,7 +124,8 @@ const SEVERITY: Record<IssueCode, IssueSeverity> = {
   constantNameCollision: 'error',
   invalidGroupName: 'error',
   reservedGroupName: 'error',
-  duplicateGroupClass: 'error'
+  duplicateGroupClass: 'error',
+  reservedFileName: 'error'
 }
 
 function issue(
@@ -393,7 +396,11 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
   const settings = robotHardwareSettings(objects, robotId)
   const robotWhere = { robotId, objectId: robotId }
 
-  if (!isValidJavaClassName(settings.className)) {
+  // 로봇 클래스 이름이 곧 생성 파일 이름이다. Aux.java 같은 Windows 장치 이름은 디스크 파일이 아니라
+  // 쓰기가 실패하거나 javac가 .class를 쓰지 못한다(그룹의 중첩 클래스는 Bot$Aux.class라 괜찮다).
+  if (isWindowsReservedName(settings.className)) {
+    issues.push(issue('reservedFileName', { className: settings.className }, robotWhere))
+  } else if (!isValidJavaClassName(settings.className)) {
     issues.push(issue('invalidClassName', { className: settings.className }, robotWhere))
   }
   if (!settings.configName.trim()) issues.push(issue('emptyConfigName', {}, robotWhere))

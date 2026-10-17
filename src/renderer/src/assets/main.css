@@ -1046,3 +1046,276 @@ body {
   margin: 4px 0;
   background: var(--color-border);
 }
+
+/* 스크립트 연결(2단계): 하이어라키 표시, 인스펙터 카드, 선택창 */
+.tree-scripts {
+  flex: none;
+  margin-left: 6px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.script-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.script-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-tag {
+  flex: none;
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.script-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Unity의 회색 Script 칸: 읽기 전용, 더블클릭으로 연다 */
+.script-field {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.script-field.is-disabled {
+  opacity: 0.6;
+}
+
+.script-status {
+  margin: 4px 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.script-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.script-relink {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+/* 경로는 끝(파일 이름)이 보이도록 앞쪽을 줄인다 */
+.script-relink-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.script-picker {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.script-picker-search {
+  flex: none;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.script-picker-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.script-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  cursor: default;
+}
+
+.script-picker-option.is-active {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.script-picker-name {
+  flex: none;
+}
+
+.script-picker-package {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-picker-option.is-active .script-picker-package {
+  color: rgb(255 255 255 / 75%);
+}
+
+.script-picker-message {
+  flex: none;
+  margin: 4px 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* 환경 설정 창(Unity의 Edit > Preferences) */
+.dialog.preferences {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  height: min(420px, calc(100vh - 32px));
+  padding: 0;
+}
+
+.preferences-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 12px;
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 6px 6px 0 0;
+}
+
+.preferences-title {
+  font-weight: 600;
+}
+
+.preferences-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.preferences-categories {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 150px;
+  padding: 6px 0;
+  border-right: 1px solid var(--color-border);
+}
+
+.preferences-category {
+  height: 24px;
+  padding: 0 12px;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preferences-category:hover {
+  background: var(--color-panel-header);
+}
+
+.preferences-category.is-active {
+  color: #fff;
+  background: var(--color-accent-muted);
+}
+
+.preferences-page {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+
+.preferences-page-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.preferences-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 40%) 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.preferences-row > .field-select {
+  width: 100%;
+}
+
+.preferences-row-label {
+  color: var(--color-text-muted);
+}
+
+.preferences-exe {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preferences-args {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preferences-args > .text-field {
+  flex: 1;
+}
+
+.dialog.preferences > .dialog-buttons {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.preferences-error {
+  margin: 0 0 6px;
+  color: #ff8a8a;
+  font-size: 11px;
+  line-height: 1.4;
+}

@@ -10,6 +10,7 @@ import {
   type SyncGeneratedResult
 } from '../shared/generatedFiles'
 import { IPC } from '../shared/ipc'
+import { isTrustedRoot } from './projectRoots'
 
 // 렌더러가 만든 생성 코드를 팀의 TeamCode 폴더에 쓴다. 경로는 generatedFiles의 규칙으로만 허용하고,
 // 도구가 쓴 그대로인(표식과 해시가 맞는) 파일만 덮어쓰거나 지운다.
@@ -80,7 +81,9 @@ export async function syncGeneratedFiles(
 }
 
 export function registerTeamCodeIpc(): void {
-  ipcMain.handle(IPC.syncGeneratedFiles, (_event, root: string, files: GeneratedFile[]) =>
-    syncGeneratedFiles(root, files)
-  )
+  ipcMain.handle(IPC.syncGeneratedFiles, (_event, root: string, files: GeneratedFile[]) => {
+    // 렌더러는 저장(saveProject)한 뒤에 맞추므로 root는 이미 믿는 폴더다(projectRoots.ts)
+    if (!isTrustedRoot(root)) throw new Error(`notAllowed: not an opened project: ${root}`)
+    return syncGeneratedFiles(root, files)
+  })
 }

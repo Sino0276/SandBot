@@ -198,6 +198,26 @@ describe('실행 취소', () => {
     expect(undo()).toBe(false)
   })
 
+  it('스크립트 연결·다시 연결·제거는 각각 한 단계이고, 바뀐 것이 없으면 기록하지 않는다', () => {
+    const scene = useSceneStore.getState()
+    const lift = { path: 'src/main/java/a/Lift.java', className: 'a.Lift' }
+    const moved = { path: 'src/main/java/b/Lift.java', className: 'b.Lift' }
+    const scripts = (): unknown => useSceneStore.getState().objects.p.scripts
+    scene.addScriptLink('p', lift)
+    scene.addScriptLink('p', lift)
+    scene.relinkScript('p', lift.path, moved)
+    scene.removeScriptLink('p', moved.path)
+    scene.removeScriptLink('p', moved.path)
+    expect(scripts()).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(scripts()).toEqual([moved])
+    expect(undo()).toBe(true)
+    expect(scripts()).toEqual([lift])
+    expect(undo()).toBe(true)
+    expect(scripts()).toBeUndefined()
+    expect(undo()).toBe(false)
+  })
+
   it('드래그 묶음이 열려 있는지 알 수 있다', () => {
     expect(isChangeOpen()).toBe(false)
     beginChange()

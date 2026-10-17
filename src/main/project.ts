@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { mkdir, readFile, rename, stat, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { IPC, type OpenProjectResult } from '../shared/ipc'
+import { trustRoot } from './projectRoots'
 
 // 프로젝트 = 팀의 FtcRobotController 폴더. 도구 데이터는 그 안의 sandbot/project.json에 둔다.
 const DATA_DIR = 'sandbot'
@@ -52,12 +53,15 @@ export function registerProjectIpc(): void {
 
   ipcMain.handle(IPC.openProject, async (_event, root: string): Promise<OpenProjectResult> => {
     if (!(await isDirectory(root))) throw new Error(`not a folder: ${root}`)
-    return {
+    const result = {
       root,
       name: basename(root),
       hasTeamCode: await isDirectory(join(root, 'TeamCode')),
       content: await readTextIfExists(join(root, DATA_DIR, PROJECT_FILE))
     }
+    // 사용자가 연 폴더만 TeamCode IPC가 받는다(projectRoots.ts)
+    trustRoot(root)
+    return result
   })
 
   ipcMain.handle(IPC.saveProject, async (_event, root: string, content: string) => {
@@ -69,6 +73,7 @@ export function registerProjectIpc(): void {
     const temp = `${target}.tmp`
     await writeFile(temp, content, 'utf8')
     await rename(temp, target)
+    trustRoot(root)
   })
 }
 

@@ -30,6 +30,10 @@ const api: SandbotApi = {
     return () => ipcRenderer.removeListener(IPC.stepConvertProgress, listener)
   },
   syncGeneratedFiles: (root, files) => ipcRenderer.invoke(IPC.syncGeneratedFiles, root, files),
+  listJavaFiles: (root) => ipcRenderer.invoke(IPC.listJavaFiles, root),
+  openJavaFile: (root, path, line) => ipcRenderer.invoke(IPC.openJavaFile, root, path, line),
+  getExternalEditor: () => ipcRenderer.invoke(IPC.getExternalEditor),
+  setExternalEditor: (choice) => ipcRenderer.invoke(IPC.setExternalEditor, choice),
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
   onCloseRequested: (callback) => {
     const listener = (): void => callback()

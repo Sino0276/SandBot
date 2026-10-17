@@ -455,6 +455,22 @@ describe('그룹 검증', () => {
     ])
   })
 
+  it('로봇 클래스 이름이 Windows 장치 이름이면 오류(생성 파일 Aux.java는 디스크 파일이 아니다)', () => {
+    const objects = scene(motor('m', 'm', 0))
+    for (const className of ['Aux', 'Con', 'Nul', 'PRN', 'Com1', 'LPT9']) {
+      const hardware = { ...objects.robot.hardware!, className }
+      const renamed = { ...objects, robot: { ...objects.robot, hardware } }
+      expect(codes(renamed), className).toEqual(['reservedFileName'])
+      expect(generateTeamCodeFiles(renamed), className).toMatchObject({ blocked: true, files: [] })
+    }
+    // 그룹의 중첩 클래스는 Bot$Aux.class가 되므로 괜찮다
+    const grouped = scene(
+      group('g', 'robot', 'Aux'),
+      part('p', 'g', component('n', 'motor', 'm', 0))
+    )
+    expect(codes(grouped)).toEqual([])
+  })
+
   it('로봇 클래스 이름의 $는 오류(다른 로봇의 중첩 클래스 Bot$Lift와 겹칠 수 있다)', () => {
     const objects = scene(motor('m', 'm', 0))
     const hardware = { ...objects.robot.hardware!, className: 'Bot$Lift' }

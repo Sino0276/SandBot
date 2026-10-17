@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 동작 로직은 Java 스크립트로 작성한다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
+SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 하이어라키에서 메커니즘을 묶는다(생성 하드웨어 클래스의 중첩 클래스). 동작 로직은 팀의 일반 FTC Java(TeamCode)로 작성하고, 오브젝트에 그 파일을 연결해 외부 편집기로 연다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, Unity식 하이어라키 편집(다중 선택, Create Empty·Create Empty Parent, 드래그로 부모 바꾸기, 이름 바꾸기)과 메커니즘 그룹(생성 하드웨어 클래스의 중첩 클래스), 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 에디터, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, Unity식 하이어라키 편집(다중 선택, Create Empty·Create Empty Parent, 드래그로 부모 바꾸기, 이름 바꾸기)과 메커니즘 그룹(생성 하드웨어 클래스의 중첩 클래스), 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 연결(오브젝트 → TeamCode Java 파일, Unity식 외부 스크립트 편집기로 열기)이 있다. 튜닝 값(FTC Dashboard `@Config` 규칙), 사용처 표시, 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 **설계 원칙:** Unity 환경을 최대한 그대로 가져온다. Unity를 써 본 사람이 익숙하게 바로 쓸 수 있는 것이 개발 효율과 직관성의 기준이다. 기능을 설계할 때 Unity에 대응하는 것이 있으면 그 이름·조작·동작을 먼저 따르고, FTC 구조와 맞지 않는 부분만 바꾼다.
 
@@ -14,8 +14,8 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 
 | 항목        | 결정                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 플랫폼      | Electron 데스크톱 앱 · TypeScript · React · Three.js · Monaco 에디터                                                                                                                                                                                                                                                                                                                                 |
-| 인스펙터    | Unity 방식. 파트에 하드웨어 컴포넌트(DcMotorEx, Servo, 센서 등)를 붙여 속성(설정 이름, 허브/포트, 방향, 런 모드 등)을 편집하고, 동작 로직은 붙어 있는 Java 스크립트로 작성                                                                                                                                                                                                                           |
+| 플랫폼      | Electron 데스크톱 앱 · TypeScript · React · Three.js. 스크립트는 외부 편집기로 연다(앱 안 편집기는 범위 밖)                                                                                                                                                                                                                                                                                          |
+| 인스펙터    | Unity 방식. 파트에 하드웨어 컴포넌트(DcMotorEx, Servo, 센서 등)를 붙여 속성(설정 이름, 허브/포트, 방향, 런 모드 등)을 편집한다. 동작 로직은 일반 FTC Java로 쓰고(SandBot 전용 런타임·생명주기 없음), 스크립트 카드는 그 파일로 가는 연결이다. 생성 코드는 연결 파일을 참조하지 않는다                                                                                                                |
 | CAD         | STEP(.step/.stp)만 지원. occt-import-js(OpenCascade WASM, LGPL-2.1)로 워커에서 읽는다. 같은 C++ 코드를 네이티브로 빌드한 변환기(`native/step-converter`)가 이 PC에서 실행되면 메인 프로세스가 그것으로 변환한다(WASM의 2 GB 메모리 한도가 없음). CAD 프로그램마다 위·앞 축이 달라서(팀이 여러 CAD를 섞어 씀) 파일마다 방향을 고른다. 기본값은 마지막에 고른 방향이고, 처음에는 Y-up(Fusion 360 기본) |
 | 시뮬레이션  | 운동학 수준. 드라이브트레인/메커니즘을 OpMode 코드와 게임패드로 구동하고, 충돌·물리는 단순화                                                                                                                                                                                                                                                                                                         |
 | OpMode 실행 | JVM 사이드카 + 가짜 FTC SDK. 팀의 실제 Java OpMode를 수정 없이 실행                                                                                                                                                                                                                                                                                                                                  |
@@ -34,24 +34,25 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 세 개의 프로세스로 구성한다.
 
 - **Electron main**: 파일 시스템 접근, 프로젝트 열기/저장, `TeamCode`에 Java 파일 쓰기, JVM 사이드카의 시작·종료를 맡는다.
-- **Renderer (React)**: 씬 뷰(Three.js), 하이어라키, 인스펙터, 스크립트 에디터(Monaco), 운동학 시뮬레이터를 둔다.
+- **Renderer (React)**: 씬 뷰(Three.js), 하이어라키, 인스펙터, 운동학 시뮬레이터를 둔다. 스크립트는 메인 프로세스가 외부 편집기(Unity의 External Script Editor처럼 고른 앱)로 연다.
 - **JVM 사이드카**: 가짜 FTC SDK 위에서 OpMode를 실행한다. `hardwareMap`은 가상 하드웨어를 반환한다. 한 방향으로는 모터 출력·서보 위치를 시뮬레이터로 보내고, 반대 방향으로는 엔코더·IMU 등 센서 값을 받는다.
 
 데이터 흐름:
 
 ```
-STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그래프
+STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그래프(메커니즘 그룹)
                                                   │
-                         노드에 하드웨어 컴포넌트·스크립트 부착 (인스펙터)
+              노드에 하드웨어 컴포넌트 부착, TeamCode Java 파일 연결 (인스펙터)
                                                   │
-                 ┌────────────────────────────────┴───────────────┐
-                 ▼                                                ▼
-   TeamCode에 Java 저장 (생성 코드 + 사용자 스크립트)    JVM 사이드카 ◀─IPC─▶ 운동학 시뮬레이터
+        ┌─────────────────────────┬───────────────┴───────────────────────┐
+        ▼                         ▼                                       ▼
+ 생성 코드(하드웨어 클래스·   사용자 코드(TeamCode Java):             JVM 사이드카 ◀─IPC─▶ 운동학 시뮬레이터
+ 구성 XML)를 TeamCode에 저장   외부 편집기로 열기·연결 표시
 ```
 
 ## 지켜야 할 불변 조건
 
-- **로봇 코드의 원본은 `TeamCode`의 Java 파일이다.** 도구는 스크립트의 별도 사본을 두지 않고, 같은 파일을 편집·실행·저장한다.
+- **로봇 코드의 원본은 `TeamCode`의 Java 파일이다.** 도구는 스크립트의 별도 사본을 두지 않는다. 스크립트 연결(`SceneObject.scripts`)은 TeamCode 기준 경로와 클래스 이름만 기억하고, 파일은 외부 편집기로 연다.
 - **생성 코드와 사용자 코드를 분리한다.** 인스펙터 속성에서 만들어지는 코드(hardwareMap 매핑 등)는 다시 생성해도 사용자가 작성한 스크립트를 덮어쓰지 않아야 한다.
 - **가짜 FTC SDK는 실제 SDK의 API 표면을 그대로 따른다.** 패키지·클래스·메서드 시그니처(`com.qualcomm.robotcore.hardware.*`, `com.qualcomm.robotcore.eventloop.opmode.*` 등)가 같아야 한다. 같은 소스가 Android Studio(실제 SDK)와 사이드카(가짜 SDK) 양쪽에서 수정 없이 컴파일되어야 한다.
 - **STEP 파싱은 UI 스레드에서 하지 않는다.** OCCT WASM은 무거우므로 워커에서 돌리고 결과 메시만 넘긴다. 네이티브 변환기는 별도 프로세스다.
@@ -72,6 +73,7 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **CAD 루트 밖으로 옮긴 CAD 노드는 `cadOrigin`(그 CAD 루트 id)을 갖는다.** group·robot·CAD 루트에는 두지 않고, 부모에게서 물려받는 출처와 다를 때만 둔다(`cadOriginOf`). CAD 루트를 지우면 옮긴 파트도 함께 지우고(하이어라키가 확인을 묻는다), CAD 루트의 변환(정렬 변경, 직접 편집)이 바뀌면 옮긴 파트도 같은 만큼 움직인다(`carryCadDependents`). 프로젝트를 열 때 끊긴 `cadOrigin`은 버리고, 메시 파트는 형상 id 접두어로 출처를 고친다.
 - **씬 문서는 바꿀 때마다 새 객체를 만든다(불변).** 실행 취소(`editor/history.ts`)가 바뀌기 전 `objects`를 그대로 스냅샷으로 쌓기 때문이다. 형상(`geometryRegistry`) 해제도 기록에서 쓰지 않게 된 것만 history가 한다. sceneStore에서 직접 해제하지 않는다.
 - **프로젝트 파일 형식을 바꾸면 `PROJECT_VERSION`을 올리고 이전 버전을 읽는 경로를 남긴다.** `parseProject`가 형식을 검증한다. 더 새 버전의 파일은 열지 않는다.
+- **TeamCode 접근은 열거나 저장한 프로젝트 루트에만 한다.** 메인 프로세스(`src/main/projectRoots.ts`)가 `openProject`·`saveProject`로 받은 루트를 기억하고, TeamCode IPC(생성 파일 맞추기, Java 목록, 외부 편집기로 열기)는 다른 루트를 거부한다. 사용자 Java 경로는 `src/shared/teamCodePaths.ts`의 규칙(`src/main/java/` 아래 Java 식별자 세그먼트, 소문자 `.java`, Windows 장치 이름 제외, 생성 폴더는 대소문자 무시로 제외, NFC)으로만 받고, 실제 경로가 그 폴더 안인지(`containedIn`, 다른 드라이브 포함) 확인한다. project.json의 스크립트 경로도 git에서 온 값이라 같은 규칙으로 검사한다.
 - **TeamCode에는 도구가 만든 파일만 쓰고 지운다.** 생성 파일은 앞부분에 `@sandbot-generated <내용 해시>` 표식을 넣는다(`stampGenerated`). 메인 프로세스는 표식과 해시가 맞는, 도구가 쓴 그대로인 파일만 덮어쓰거나 지운다. 팀이 고쳤거나 복사·이름 변경한 생성 파일(해시 불일치)과 사람이 만든 파일은 건너뛰고 알린다. 경로는 `src/shared/generatedFiles.ts`의 허용 규칙(생성 패키지 폴더의 `.java`, `res/xml`의 `sandbot_*.xml`)으로만 받는다.
 - **하드웨어 카탈로그(`hardware/catalog.ts`)에는 FTC SDK 소스에서 확인한 값만 넣는다.** 구성 XML 태그는 대소문자를 구분하고, 틀린 태그는 SDK가 오류 없이 장치를 버린다. Java 타입·메서드·I2C 주소도 SDK 소스로 확인한다. 가짜 SDK는 카탈로그의 Java 타입을 모두 지원해야 한다.
 - **하드웨어 검증 오류가 하나라도 있으면 아무 파일도 생성하지 않는다.** 이전 생성 파일도 그대로 둔다. 경고는 생성을 막지 않는다(`hardware/validation.ts`의 심각도).
@@ -139,7 +141,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 하이어라키 드래그 앤 드롭(`editor/hierarchyDnd.ts`): 행 위·아래 4분의 1은 형제 앞·뒤, 가운데는 자식, 빈 공간은 로봇의 마지막 자식, 접힌 행 위에 머물면 펼친다. 내부 형식(`application/x-sandbot-object`)만 처리하고 파일 드래그는 창으로 올려 보낸다(막으면 Electron이 파일로 페이지를 옮긴다. 메인도 `will-navigate`를 막는다).
   - 창에 STEP 파일을 끌어다 놓아도 불러온다.
   - 문자 키는 `event.code`로 받는다(한글 입력 상태에서도 동작). 누르고 있어 반복되는 입력은 도구를 바꾸지 않는다.
-  - 앱 안 대화상자나 우클릭 메뉴가 떠 있거나(`dialogStore.ts`의 `isModalOpen`) 비행 중(`editor/flyStore.ts`)이면 단축키와 파일 드롭을 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
+  - 앱 안 대화상자·우클릭 메뉴·환경 설정 창·스크립트 선택창이 떠 있거나(`dialogStore.ts`의 `isModalOpen`) 비행 중(`editor/flyStore.ts`)이면 단축키와 파일 드롭을 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
@@ -151,9 +153,12 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 씬 변경을 구독해 dirty를 표시한다(창 제목 `*`). 프로젝트를 여는 동안의 변경과, 프로젝트 없이 임시 씬만 만진 것은 제외한다.
   - 창을 닫을 때 dirty거나 STEP을 불러오는 중이면 메인 프로세스가 닫기를 막고 렌더러에 묻는다. 렌더러가 i18n 대화상자를 띄운 뒤 `confirmClose`로 닫는다.
   - 앱을 시작하면 마지막 프로젝트(`sandbot:lastProject`)를 다시 연다.
+- 스크립트 연결(`SceneObject.scripts`: `{path, className}`, `PROJECT_VERSION` 5)은 Unity의 스크립트 컴포넌트처럼 인스펙터의 컴포넌트 목록 안 카드다(`editor/scripts/`). Add Component의 "TeamCode 스크립트…"가 검색 선택창을 열고, 카드의 "Script: Lift.java" 줄을 더블클릭하거나 [열기]로 외부 편집기에서 연다. 연결은 탐색용이라 생성 코드는 참조하지 않는다. 파일을 못 찾으면 같은 클래스나 같은 파일 이름이 하나뿐일 때만 [다시 연결]을 보인다(자동으로 바꾸지 않음). project.json의 허용되지 않는 스크립트 경로는 열 때 버리고 알린다(파일 전체를 거부하지 않음).
+  - TeamCode Java 목록은 메인(`src/main/teamCodeJava.ts`)이 `TeamCode/src/main/java`만 훑어 준다(점 폴더·`build` 제외, 5000개 한도, 진짜 링크·정션은 건너뛰고 Windows 재분석 지점은 lstat로 다시 분류). 렌더러(`java/javaIndex.ts`)는 프로젝트를 열 때, 저장 뒤, 창 포커스 때(300 ms 묶음, 바쁠 때 건너뜀) 다시 읽고, 다른 세션·루트의 늦은 결과는 버린다. 클래스 이름은 파일 이름이다(렉서는 아직 없다).
+  - 외부 스크립트 편집기(Unity Preferences > External Tools)는 툴바의 [환경 설정] 창에서 고른다. 확장자로 열기(`shell.openPath`, 기본값), 이 PC에서 찾은 Android Studio·IntelliJ IDEA·VS Code(줄 번호로 열기), 찾아보기 + 인자 템플릿(`$(File)` `$(Line)` `$(Column)` `$(ProjectPath)`). 설정은 실행 파일 경로를 담으므로 개인 설정 중 이것만 렌더러 localStorage가 아니라 메인의 `userData/external-editor.json`에 둔다. 렌더러는 고르기만 하고 경로를 보내지 않는다. 메인(`src/main/externalEditor.ts`)은 템플릿을 셸 없이 나누고 `.exe`만 실행한다(`.bat`·`.cmd`는 Node가 셸 없이 실행하지 못한다). JetBrains는 프로젝트 루트를 먼저 넘겨 LightEdit 대신 열린 프로젝트에서 연다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
 - 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.
-  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을 추가했다.
+  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을, 5에서 `scripts`를 추가했다.
   - 종류는 `catalog.ts`의 데이터로 정의한다(포트 종류, Java 타입·import, I2C 주소, 속성 정의). 인스펙터의 입력칸과 번역 키는 속성 정의에서 만든다. 카탈로그에서 나온 번역 키는 `t()` 타입 검사를 받지 못하므로 `labels.test.ts`가 ko·en에 키가 있는지 확인한다.
   - 저장(`saveProject`)하면 `generate.ts`가 검증(`validation.ts`) 후 컴포넌트가 있는 로봇마다 Java 하드웨어 클래스(`javaCodegen.ts`, 패키지 `org.firstinspires.ftc.teamcode.sandbot`)와 로봇 구성 XML(`configXml.ts`, `TeamCode/src/main/res/xml/sandbot_<클래스>.xml`)을 만든다. 메인 프로세스(`src/main/teamCode.ts`)가 내용이 바뀐 파일만 쓰고, 이번에 만들지 않은 이전 생성 파일은 지운다. 결과는 `projectStore.generation`과 알림으로 보여 준다.
   - 생성 Java의 주석은 팀이 Android Studio에서 읽으므로 영어로 쓴다. 주석에 넣는 이름은 `commentText`로 거른다(javac는 주석 안의 `\u`도 해석한다).
@@ -179,7 +184,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.
   - 문자열을 추가할 때는 `ko.ts`와 `en.ts`에 같은 키를 넣고 `t('그룹.키')`로 쓴다.
   - 언어 이름(`LANGUAGE_NAMES`)과 제품명 "SandBot"은 의도적으로 번역하지 않는다.
-- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`)은 렌더러 `localStorage`에 저장된다.
+- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`)은 렌더러 `localStorage`에 저장된다. 외부 스크립트 편집기만 메인의 `userData/external-editor.json`이다(실행 파일 경로라서).
 - 렌더러에서만 쓰는 라이브러리는 Vite가 번들하므로 `devDependencies`에 넣는다. `dependencies`는 main/preload가 런타임에 쓰는 것만 둔다(electron-builder가 패키지에 포함).
 - ESLint의 `react/no-unknown-property`는 R3F 요소 속성을 오인해서 껐다. JSX 속성은 TypeScript가 검사한다.
 - 테스트는 `src/**/*.test.{ts,tsx}`에 소스와 나란히 두고 `vitest`에서 명시적으로 import한다(globals 미사용). Vitest는 electron-vite 설정이 아니라 `vitest.config.ts`를 읽는다.

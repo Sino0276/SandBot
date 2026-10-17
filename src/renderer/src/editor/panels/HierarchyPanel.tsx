@@ -4,6 +4,7 @@ import { importStepFiles } from '../../cad/importStep'
 import { useImportStore } from '../../cad/importStore'
 import { severityByObject, useSceneIssues } from '../../hardware/sceneIssues'
 import type { IssueSeverity } from '../../hardware/validation'
+import { simpleNameOfPath } from '../../java/javaIndex'
 import { useProjectStore } from '../../project/projectStore'
 import { childrenInDocument, subtreeIds, type SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
@@ -195,6 +196,8 @@ const TreeRowView = memo(function TreeRowView({
   })
   const rowRef = useRef<HTMLDivElement>(null)
   const componentCount = object.components?.length ?? 0
+  // 연결한 스크립트(행이 이미 받는 오브젝트에서 읽으므로 따로 구독하지 않는다)
+  const scripts = object.scripts ?? []
 
   // 활성 오브젝트가 되면(씬에서 선택, 새 그룹 등) 하이어라키에서도 보이게 스크롤한다
   useEffect(() => {
@@ -263,6 +266,16 @@ const TreeRowView = memo(function TreeRowView({
           title={object.components!.map((component) => component.name).join(', ')}
         >
           {t('hardware.badge', { count: componentCount })}
+        </span>
+      )}
+      {scripts.length > 0 && (
+        <span
+          className="tree-scripts"
+          title={t('scripts.badgeTitle', {
+            names: scripts.map((script) => simpleNameOfPath(script.path)).join(', ')
+          })}
+        >
+          {t('scripts.badge')}
         </span>
       )}
       <span className="tree-kind">{t(`objectKind.${object.kind}`)}</span>

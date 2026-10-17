@@ -71,7 +71,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 4 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 5 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -200,6 +200,100 @@ describe('메커니즘 그룹(버전 4)', () => {
     const wrongType = JSON.parse(serializeProject(objects, relativize))
     wrongType.objects[2].cadOrigin = 3
     expect(() => parseProject(JSON.stringify(wrongType))).toThrow(ProjectFileError)
+  })
+})
+
+describe('스크립트 연결(버전 5)', () => {
+  const LIFT = {
+    path: 'src/main/java/org/firstinspires/ftc/teamcode/mech/Lift.java',
+    className: 'org.firstinspires.ftc.teamcode.mech.Lift'
+  }
+  const ARM = {
+    path: 'src/main/java/org/firstinspires/ftc/teamcode/Arm.java',
+    className: 'org.firstinspires.ftc.teamcode.Arm'
+  }
+  const linked = (): SceneObjects => ({
+    ...objects,
+    plate: { ...objects.plate, scripts: [LIFT, ARM] },
+    robot: { ...objects.robot, scripts: [LIFT] }
+  })
+  // 저장한 파일의 plate에 scripts를 넣는다
+  const withScripts = (scripts: unknown): string => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.objects[2].scripts = scripts
+    return JSON.stringify(data)
+  }
+
+  it('연결 목록(순서 포함)을 저장하고 그대로 읽는다', () => {
+    const content = serializeProject(linked(), relativize)
+    const { objects: loaded, droppedScripts } = parseProject(content)
+    expect(loaded).toEqual(linked())
+    expect(droppedScripts).toEqual([])
+    expect(serializeProject(loaded, relativize)).toBe(content)
+  })
+
+  it('연결이 없으면 scripts를 쓰지 않고, 빈 목록도 쓰지 않는다', () => {
+    const empty: SceneObjects = { ...objects, plate: { ...objects.plate, scripts: [] } }
+    for (const object of JSON.parse(serializeProject(empty, relativize)).objects) {
+      expect(object).not.toHaveProperty('scripts')
+    }
+    expect(parseProject(withScripts([])).objects.plate).not.toHaveProperty('scripts')
+  })
+
+  it('형식이 틀린 연결은 invalidData', () => {
+    for (const scripts of [
+      'Lift.java',
+      [LIFT.path],
+      [{ path: LIFT.path }],
+      [{ path: 3, className: LIFT.className }],
+      [{ ...LIFT, className: null }]
+    ]) {
+      expect(() => parseProject(withScripts(scripts))).toThrow(ProjectFileError)
+    }
+  })
+
+  it('연결할 수 없는 경로(git에서 온 믿을 수 없는 값)는 버리고 알리며, 나머지는 읽는다', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const bad = [
+      '../../../etc/passwd.java',
+      'src/main/java/../../build.gradle',
+      'C:/Windows/System32/calc.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/sandbot/RobotHardware.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/SandBot/RobotHardware.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/CON.java',
+      'src/main/java/org/firstinspires/ftc/teamcode/Lift.java.',
+      'src/main/java/org/firstinspires/ftc/teamcode/Lift.exe',
+      'src/main/java\\org\\Lift.java'
+    ]
+    const { objects: loaded, droppedScripts } = parseProject(
+      withScripts([...bad.map((path) => ({ path, className: 'X' })), LIFT, { ...LIFT }])
+    )
+    expect(loaded.plate.scripts).toEqual([LIFT])
+    // 같은 경로를 두 번 둔 것도 하나만 남기고 센다
+    expect(droppedScripts).toEqual([...bad, LIFT.path])
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
+  })
+
+  it('경로는 NFC로 바꿔 읽고, 이름 형식이 아닌 className은 경로에서 만든다', () => {
+    const korean = 'src/main/java/org/firstinspires/ftc/teamcode/리프트.java'
+    const { objects: loaded } = parseProject(
+      withScripts([
+        { path: korean.normalize('NFD'), className: 'org.firstinspires.ftc.teamcode.리프트' },
+        { path: ARM.path, className: 'not a class; rm -rf' }
+      ])
+    )
+    expect(loaded.plate.scripts).toEqual([
+      { path: korean.normalize('NFC'), className: 'org.firstinspires.ftc.teamcode.리프트' },
+      ARM
+    ])
+  })
+
+  it('버전 4 파일은 연결 없이 그대로 읽는다', () => {
+    const v4 = JSON.parse(serializeProject(objects, relativize))
+    v4.version = 4
+    const { objects: loaded } = parseProject(JSON.stringify(v4))
+    expect(loaded).toEqual(objects)
   })
 })
 
