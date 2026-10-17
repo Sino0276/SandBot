@@ -11,7 +11,8 @@ import type { NoticeKey } from './noticeStore'
 
 const SYSTEM = 'system'
 const CUSTOM = 'custom'
-const BROWSE = 'browse'
+// 찾아보기 항목의 값(선택 상자가 키 입력으로 이 값에 닿았는지 볼 때도 쓴다)
+export const EXTERNAL_EDITOR_BROWSE = 'browse'
 const DETECTED_PREFIX = 'detected:'
 
 // labelKey는 preferences.externalTools.* 번역 키, text는 번역하지 않는 이름(편집기 제품 이름, 실행 파일 이름)
@@ -47,7 +48,7 @@ export function externalEditorOptions(state: ExternalEditorState): ExternalEdito
     })
   if (state.kind === 'custom' && state.exe)
     options.push({ value: CUSTOM, text: fileNameOf(state.exe) })
-  options.push({ value: BROWSE, labelKey: 'browse' })
+  options.push({ value: EXTERNAL_EDITOR_BROWSE, labelKey: 'browse' })
   return options
 }
 
@@ -57,7 +58,7 @@ export function externalEditorChoice(
   value: string,
   browseTitle: string
 ): ExternalEditorChoice | null {
-  if (value === BROWSE) return { kind: 'browse', title: browseTitle }
+  if (value === EXTERNAL_EDITOR_BROWSE) return { kind: 'browse', title: browseTitle }
   if (value === SYSTEM) return { kind: 'system' }
   if (value.startsWith(DETECTED_PREFIX) && value.length > DETECTED_PREFIX.length)
     return { kind: 'detected', id: value.slice(DETECTED_PREFIX.length) }

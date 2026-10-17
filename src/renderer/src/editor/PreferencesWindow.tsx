@@ -8,6 +8,7 @@ import type {
 import { ipcErrorDetail } from '../java/openScript'
 import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
 import {
+  EXTERNAL_EDITOR_BROWSE,
   EXTERNAL_EDITOR_ERROR_NOTICES,
   externalEditorChoice,
   externalEditorOptions,
@@ -15,6 +16,18 @@ import {
 } from './externalEditorOptions'
 import { dismissNotice, showNotice } from './noticeStore'
 import TextField from './TextField'
+
+// 닫힌 선택 상자에서 값을 바로 바꾸는 키(Windows)
+const SELECT_MOVE_KEYS = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown'
+])
 
 // 창 안에서 Tab으로 도는 요소
 const FOCUSABLE =
@@ -81,7 +94,13 @@ function ExternalToolsPage(): React.JSX.Element {
     }
   }
 
+  // Windows의 닫힌 select는 화살표·글자 키마다 change를 낸다. 키로 [찾아보기…]에 닿았을 때 파일 대화상자가 열리지 않게
+  // 마우스나 펼친 목록(Alt+↓·F4)에서 고른 것만 찾아보기로 친다.
+  const keyChange = useRef(false)
   const onSelect = (value: string): void => {
+    const byKey = keyChange.current
+    keyChange.current = false
+    if (value === EXTERNAL_EDITOR_BROWSE && byKey) return
     const choice = externalEditorChoice(value, t('preferences.externalTools.browseTitle'))
     if (choice) void apply(choice)
   }
@@ -107,6 +126,9 @@ function ExternalToolsPage(): React.JSX.Element {
               className="field-select"
               value={externalEditorValue(state)}
               aria-busy={pending || undefined}
+              onKeyDown={(event) => {
+                keyChange.current = event.key.length === 1 || SELECT_MOVE_KEYS.has(event.key)
+              }}
               onChange={(event) => onSelect(event.target.value)}
             >
               {/* 편집기 제품 이름과 실행 파일 이름은 번역하지 않는다 */}
@@ -179,10 +201,14 @@ function PreferencesDialog(): React.JSX.Element {
   const { t } = useTranslation()
   const [category, setCategory] = useState<Category>('externalTools')
   const dialogRef = useRef<HTMLDivElement>(null)
+  // 연 곳(툴바 버튼). StrictMode가 effect를 다시 실행하면 그때는 포커스가 이미 창 안이므로 처음 값을 ref에 지킨다.
+  const previousFocus = useRef<HTMLElement | null>(null)
 
   // 포커스: 열 때 창 안으로 옮기고, Tab은 창 안에서만 돌고, Esc로 닫으며, 닫으면 연 곳으로 돌려준다(DialogHost와 같음)
   useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const active = document.activeElement
+    if (active instanceof HTMLElement && !dialogRef.current?.contains(active))
+      previousFocus.current = active
     const focusable = (): HTMLElement[] =>
       Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
     // 처음에는 고른 분류에 둔다
@@ -233,6 +259,8 @@ function PreferencesDialog(): React.JSX.Element {
       document.removeEventListener('focusin', onFocusIn)
       // StrictMode의 정리→재실행에서는 아직 열려 있으므로 포커스를 돌려주지 않는다
       if (usePreferencesStore.getState().open) return
+      const previous = previousFocus.current
+      previousFocus.current = null
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
@@ -241,8 +269,10 @@ function PreferencesDialog(): React.JSX.Element {
     <div
       className="dialog-backdrop"
       onPointerDown={(event) => {
-        // 바깥(어두운 배경)을 누르면 닫는다
-        if (event.target === event.currentTarget) closePreferences()
+        // 바깥(어두운 배경)을 누르면 닫는다. 입력 중인 칸은 먼저 확정한다(닫기 버튼을 누를 때 포커스가 옮겨 확정되는 것과 같게).
+        if (event.target !== event.currentTarget) return
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+        closePreferences()
       }}
     >
       <div

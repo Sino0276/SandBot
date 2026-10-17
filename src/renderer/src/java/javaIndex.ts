@@ -176,14 +176,31 @@ export function scriptLinkStatus(
   return { kind: 'missing', candidate: relinkCandidate(index.files, link) }
 }
 
-// 선택창 항목: 이미 연결한 경로는 빼고, 검색어(대소문자 무시)가 클래스 이름에 있는 것을 먼저, 그다음 패키지·경로에
-// 있는 것을 보인다. 같은 무리 안에서는 클래스 이름으로 시작하는 것을 먼저, 그다음 클래스 이름·경로 순이다.
+// 모든 파일에 공통인 앞쪽 패키지 세그먼트 수(예: org.firstinspires.ftc.teamcode → 4)
+function commonPackageSegments(files: readonly JavaIndexEntry[]): number {
+  if (files.length === 0) return 0
+  const first = files[0].packageName.split('.')
+  let count = first.length
+  for (const entry of files) {
+    const parts = entry.packageName.split('.')
+    let i = 0
+    while (i < count && i < parts.length && parts[i] === first[i]) i++
+    count = i
+  }
+  return count
+}
+
+// 선택창 항목: 이미 연결한 경로는 빼고, 검색어(대소문자 무시)가 클래스 이름에 있는 것을 먼저, 그다음 패키지에 있는 것을
+// 보인다. 패키지는 모든 파일에 공통인 앞부분(org.firstinspires.ftc.teamcode 등)과 'src/main/java/'·'.java'를 빼고 본다
+// (그대로 보면 짧은 검색어가 모든 파일에 맞는다). 같은 무리 안에서는 클래스 이름으로 시작하는 것을 먼저, 그다음
+// 클래스 이름·경로 순이다.
 export function scriptChoices(
   files: readonly JavaIndexEntry[],
   excludedPaths: ReadonlySet<string>,
   query: string
 ): JavaIndexEntry[] {
   const needle = query.trim().toLowerCase()
+  const common = needle ? commonPackageSegments(files) : 0
   const ranked: { entry: JavaIndexEntry; rank: number }[] = []
   for (const entry of files) {
     if (excludedPaths.has(entry.path)) continue
@@ -192,7 +209,13 @@ export function scriptChoices(
     if (!needle) rank = 0
     else if (name.startsWith(needle)) rank = 0
     else if (name.includes(needle)) rank = 1
-    else if (entry.path.toLowerCase().includes(needle)) rank = 2
+    else if (
+      entry.packageName
+        .split('.')
+        .slice(common)
+        .some((segment) => segment.toLowerCase().includes(needle))
+    )
+      rank = 2
     else continue
     ranked.push({ entry, rank })
   }

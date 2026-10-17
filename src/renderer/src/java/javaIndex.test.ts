@@ -138,6 +138,14 @@ describe('선택창 항목', () => {
     ])
     expect(names(scriptChoices(files, new Set(), 'nope'))).toEqual([])
   })
+
+  it('모든 파일에 공통인 패키지 앞부분·src/main/java·.java로는 맞추지 않는다', () => {
+    for (const query of ['te', 'java', 'org', 'first', 'src'])
+      expect(
+        names(scriptChoices(files, new Set(), query)).filter((n) => n !== 'TeleOpLift')
+      ).toEqual([])
+    expect(names(scriptChoices(files, new Set(), 'op'))).toEqual(['TeleOpLift'])
+  })
 })
 
 describe('다시 읽기', () => {
