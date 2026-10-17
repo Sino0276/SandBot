@@ -1,13 +1,10 @@
 import { fileNameOf } from '../cad/importStep'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { useProjectStore } from '../project/projectStore'
+import { ipcErrorDetail } from './ipcError'
 import { refreshJavaIndex } from './javaIndex'
 
-// ipcRenderer.invoke의 거부 메시지 앞에 붙는 "Error invoking remote method '<채널>': " 을 뗀다
-export function ipcErrorDetail(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
-}
+export { ipcErrorDetail }
 
 // 마지막 열기 실패 알림. 다시 열 때 지워 같은 알림이 쌓이지 않게 한다.
 let lastNotice = 0

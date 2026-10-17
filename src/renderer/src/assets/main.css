@@ -1204,6 +1204,101 @@ body {
   font-size: 11px;
 }
 
+/* 튜닝 값(3단계): 스크립트 카드 안의 @Config 묶음 */
+.tunables {
+  margin-top: 6px;
+}
+
+.tunable-block {
+  margin: 6px 0;
+  padding-top: 4px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.tunable-block-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.tunable-block-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tunable-label {
+  cursor: default;
+}
+
+/* 저장하지 않은 값: Unity가 프리팹에서 바꾼 속성을 보이듯 굵은 이름과 왼쪽 막대 */
+.tunable-row.is-pending {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.tunable-label.is-pending {
+  padding-left: 4px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* 객체 필드(RR 1.0 PARAMS)의 자식은 들여 쓴다 */
+.tunable-children {
+  margin-left: 12px;
+}
+
+.tunable-code {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.tunable-type {
+  color: var(--color-text-muted);
+}
+
+.tunable-readonly {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tunable-readonly > .tunable-code {
+  flex: none;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tunable-reason {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.tunable-file-changed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: -2px 0 4px;
+  color: #e0b341;
+  font-size: 11px;
+}
+
+.tunable-file-changed > .panel-button {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
 /* 환경 설정 창(Unity의 Edit > Preferences) */
 .dialog.preferences {
   display: flex;

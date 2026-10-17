@@ -9,6 +9,7 @@ import {
 } from '../../../shared/teamCodePaths'
 import { useProjectStore } from '../project/projectStore'
 import type { ScriptLink } from '../scene/model'
+import { refreshJavaSources } from './javaSources'
 
 // 열린 프로젝트의 TeamCode Java 파일 목록(스크립트 연결의 선택창·못 찾은 연결의 다시 연결에 쓴다).
 // 파일 내용은 읽지 않는다. 클래스 이름은 파일 이름이다(public 최상위 클래스 이름 = 파일 이름, javac가 강제한다).
@@ -238,6 +239,7 @@ let again = false
 
 // 열린 프로젝트의 목록을 다시 읽는다. 이미 읽는 중이면 그것이 끝난 뒤 한 번 더 읽고(요청을 모은다), 같은 약속을 돌려준다.
 // 읽는 사이 다른 프로젝트를 열었으면(projectStore.session·root) 결과를 버린다.
+// 연결한 파일의 내용(튜닝 값, java/javaSources.ts)도 함께 다시 읽는다. 크기·수정 시각이 같아도 값이 바뀌었을 수 있다.
 export function refreshJavaIndex(): Promise<void> {
   if (inFlight) {
     again = true
@@ -247,7 +249,7 @@ export function refreshJavaIndex(): Promise<void> {
     try {
       do {
         again = false
-        await refreshOnce()
+        await Promise.all([refreshOnce(), refreshJavaSources()])
       } while (again)
     } finally {
       inFlight = null

@@ -100,7 +100,16 @@ const ko = {
     externalEditorUnsupportedFile:
       '고른 파일은 외부 스크립트 편집기로 실행할 수 없습니다. 편집기의 실행 파일(Windows는 .exe)을 고르세요. .bat·.cmd·.lnk·.ps1은 쓸 수 없습니다.',
     externalEditorInvalidArgs:
-      '인자를 바꾸지 않았습니다. $(File)을 넣고, 큰따옴표를 닫고, 줄바꿈 없이 너무 길지 않게 쓰세요.'
+      '인자를 바꾸지 않았습니다. $(File)을 넣고, 큰따옴표를 닫고, 줄바꿈 없이 너무 길지 않게 쓰세요.',
+    // 튜닝 값 저장(3단계). 값은 Java 리터럴 글자다.
+    tunableConflict:
+      '{{file}}의 {{field}} 값이 SandBot 밖에서 바뀌어(파일 값 {{fileValue}}) SandBot 값 {{value}}을(를) 저장하지 않고 파일 값을 따랐습니다.',
+    tunableMissing:
+      '{{file}}에서 튜닝 값을 쓸 파일이나 필드를 찾지 못해(지워졌거나 이름이 바뀜) 저장하지 않았습니다: {{fields}}',
+    tunableWriteFailed:
+      '{{file}}에 튜닝 값을 쓰지 못했습니다 ({{detail}}). 값은 저장하지 않은 채로 남아 있으니 다시 저장해 보세요.',
+    tunableFileBusy:
+      '{{file}}이(가) 저장하는 동안 계속 바뀌어 튜닝 값을 쓰지 못했습니다. 값은 저장하지 않은 채로 남아 있으니 잠시 뒤 다시 저장하세요.'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {
@@ -227,7 +236,50 @@ const ko = {
     },
     // 컴포넌트 목록(하드웨어 컴포넌트와 스크립트 연결 카드, Unity의 컴포넌트 목록)
     components: '컴포넌트',
-    componentsEmpty: '붙은 컴포넌트가 없습니다.'
+    componentsEmpty: '붙은 컴포넌트가 없습니다.',
+    // 튜닝 값(3단계): 스크립트 카드 안의 FTC Dashboard @Config 필드
+    tunables: {
+      loading: '튜닝 값을 읽는 중…',
+      readFailed: '파일을 읽지 못해 튜닝 값을 보이지 못합니다.',
+      configTag: '@Config',
+      blockLabel: '튜닝 값 {{name}}',
+      blockHint: 'FTC Dashboard에 ‘{{name}}’ 묶음으로 보이는 클래스 {{classPath}}입니다.',
+      fieldHint:
+        '{{declaration}} · {{line}}번째 줄. 더블클릭하면 이 줄을 외부 스크립트 편집기로 엽니다.',
+      pending: '저장하지 않은 값입니다. 저장(Ctrl+S)할 때 Java 파일에 씁니다.',
+      fileChanged: '파일 값: {{value}}',
+      fileChangedHint:
+        'SandBot 밖(Android Studio 등)에서 파일의 이 값이 바뀌었습니다. 이대로 저장하면 SandBot 값은 쓰지 않고 파일 값을 따릅니다. [SandBot 값 쓰기]를 누르거나 값을 새로 입력하면 저장할 때 파일 값 대신 그 값을 씁니다.',
+      keepValue: 'SandBot 값 쓰기',
+      keepValueHint: '저장할 때 바뀐 파일 값 대신 SandBot 값을 씁니다(실행 취소할 수 있음).',
+      useFileValue: '파일 값 따르기',
+      useFileValueHint: '저장하지 않은 SandBot 값을 버리고 파일 값을 씁니다(실행 취소할 수 있음).',
+      noConfig: 'FTC Dashboard의 @Config를 붙이면 public static 필드를 여기서 고칠 수 있습니다.',
+      sharedHint:
+        'static 값이라 이 파일을 연결한 모든 오브젝트가 같은 값을 봅니다. 저장(Ctrl+S)할 때 Java 파일에 씁니다.',
+      dashboardHint:
+        '로봇에서 FTC Dashboard로 바꾼 값은 로봇 메모리에만 있어 여기에 보이지 않습니다.',
+      // 고칠 수 없는 칸의 이유
+      readOnly: {
+        expression: '식이라 고칠 수 없음',
+        noInitializer: '초기값이 없어 고칠 수 없음',
+        textBlock: '텍스트 블록이나 \\u가 든 문자열이라 고칠 수 없음',
+        unicodeEscape: '파일에 \\u 이스케이프가 있어 고칠 수 없음',
+        null: 'null이라 고칠 수 없음',
+        enum: 'enum 값은 아직 고칠 수 없음',
+        object: '같은 파일의 new 형식()이 아니라 펼칠 수 없음',
+        unsupportedType: '고칠 수 없는 형식',
+        file: '파일을 고칠 수 없음'
+      },
+      // 파일 전체를 보기만 하는 이유
+      fileReadOnly: {
+        encoding: '이 파일은 UTF-8로 그대로 되돌릴 수 없어(다른 인코딩) 튜닝 값을 보기만 합니다.',
+        generated: 'SandBot이 만든 파일이라 튜닝 값을 고치지 않습니다.',
+        tooLarge: '파일이 1 MB를 넘어 튜닝 값을 보기만 합니다.',
+        unicodeEscape:
+          '파일에 \\u 이스케이프가 있어(javac가 먼저 바꾸므로 위치를 믿을 수 없음) 튜닝 값을 보기만 합니다.'
+      }
+    }
   },
   // 스크립트 연결(Unity의 스크립트 컴포넌트처럼 보이는 탐색용 연결, 2단계)
   scripts: {
