@@ -73,6 +73,7 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **CAD 루트 밖으로 옮긴 CAD 노드는 `cadOrigin`(그 CAD 루트 id)을 갖는다.** group·robot·CAD 루트에는 두지 않고, 부모에게서 물려받는 출처와 다를 때만 둔다(`cadOriginOf`). CAD 루트를 지우면 옮긴 파트도 함께 지우고(하이어라키가 확인을 묻는다), CAD 루트의 변환(정렬 변경, 직접 편집)이 바뀌면 옮긴 파트도 같은 만큼 움직인다(`carryCadDependents`). 프로젝트를 열 때 끊긴 `cadOrigin`은 버리고, 메시 파트는 형상 id 접두어로 출처를 고친다.
 - **씬 문서는 바꿀 때마다 새 객체를 만든다(불변).** 실행 취소(`editor/history.ts`)가 바뀌기 전 `objects`를 그대로 스냅샷으로 쌓기 때문이다. 형상(`geometryRegistry`) 해제도 기록에서 쓰지 않게 된 것만 history가 한다. sceneStore에서 직접 해제하지 않는다.
 - **프로젝트 파일 형식을 바꾸면 `PROJECT_VERSION`을 올리고 이전 버전을 읽는 경로를 남긴다.** `parseProject`가 형식을 검증한다. 더 새 버전의 파일은 열지 않는다.
+- **TeamCode 접근은 열거나 저장한 프로젝트 루트에만 한다.** 메인 프로세스(`src/main/projectRoots.ts`)가 `openProject`·`saveProject`로 받은 루트를 기억하고, TeamCode IPC(생성 파일 맞추기, Java 목록, 외부 편집기로 열기)는 다른 루트를 거부한다. 사용자 Java 경로는 `src/shared/teamCodePaths.ts`의 규칙(`src/main/java/` 아래 Java 식별자 세그먼트, 소문자 `.java`, Windows 장치 이름 제외, 생성 폴더는 대소문자 무시로 제외, NFC)으로만 받고, 실제 경로가 그 폴더 안인지(`containedIn`, 다른 드라이브 포함) 확인한다. project.json의 스크립트 경로도 git에서 온 값이라 같은 규칙으로 검사한다.
 - **TeamCode에는 도구가 만든 파일만 쓰고 지운다.** 생성 파일은 앞부분에 `@sandbot-generated <내용 해시>` 표식을 넣는다(`stampGenerated`). 메인 프로세스는 표식과 해시가 맞는, 도구가 쓴 그대로인 파일만 덮어쓰거나 지운다. 팀이 고쳤거나 복사·이름 변경한 생성 파일(해시 불일치)과 사람이 만든 파일은 건너뛰고 알린다. 경로는 `src/shared/generatedFiles.ts`의 허용 규칙(생성 패키지 폴더의 `.java`, `res/xml`의 `sandbot_*.xml`)으로만 받는다.
 - **하드웨어 카탈로그(`hardware/catalog.ts`)에는 FTC SDK 소스에서 확인한 값만 넣는다.** 구성 XML 태그는 대소문자를 구분하고, 틀린 태그는 SDK가 오류 없이 장치를 버린다. Java 타입·메서드·I2C 주소도 SDK 소스로 확인한다. 가짜 SDK는 카탈로그의 Java 타입을 모두 지원해야 한다.
 - **하드웨어 검증 오류가 하나라도 있으면 아무 파일도 생성하지 않는다.** 이전 생성 파일도 그대로 둔다. 경고는 생성을 막지 않는다(`hardware/validation.ts`의 심각도).
@@ -140,7 +141,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 하이어라키 드래그 앤 드롭(`editor/hierarchyDnd.ts`): 행 위·아래 4분의 1은 형제 앞·뒤, 가운데는 자식, 빈 공간은 로봇의 마지막 자식, 접힌 행 위에 머물면 펼친다. 내부 형식(`application/x-sandbot-object`)만 처리하고 파일 드래그는 창으로 올려 보낸다(막으면 Electron이 파일로 페이지를 옮긴다. 메인도 `will-navigate`를 막는다).
   - 창에 STEP 파일을 끌어다 놓아도 불러온다.
   - 문자 키는 `event.code`로 받는다(한글 입력 상태에서도 동작). 누르고 있어 반복되는 입력은 도구를 바꾸지 않는다.
-  - 앱 안 대화상자나 우클릭 메뉴가 떠 있거나(`dialogStore.ts`의 `isModalOpen`) 비행 중(`editor/flyStore.ts`)이면 단축키와 파일 드롭을 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
+  - 앱 안 대화상자·우클릭 메뉴·환경 설정 창·스크립트 선택창이 떠 있거나(`dialogStore.ts`의 `isModalOpen`) 비행 중(`editor/flyStore.ts`)이면 단축키와 파일 드롭을 무시한다. 핸들을 드래그하는 중(`isChangeOpen`)에는 실행 취소·삭제·도구 전환을 하지 않는다. 입력칸이나 `PanelFrame`의 `localKeys` 패널(인스펙터) 안에 포커스가 있으면 F·Delete·Q/W/E를 쓰지 않는다. Ctrl+Z는 입력칸에 확정하지 않은 글자가 있을 때만 입력칸에 맡긴다.
 - 파일 접근은 메인 프로세스만 한다.
   - IPC 채널 이름과 `window.api` 타입(`SandbotApi`)은 `src/shared/ipc.ts`에 있다. preload(`src/preload/index.ts`)가 이를 구현해 노출하고, 메인(`src/main/project.ts`)이 대화상자와 파일 읽기·쓰기를 처리한다.
   - 렌더러는 fs를 직접 쓰지 않는다. 경로 계산(`relativePath`, `resolvePath`)과 드롭한 파일의 경로(`getPathForFile`)는 preload가 Node `path`·`webUtils`로 처리한다.
@@ -152,9 +153,12 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 씬 변경을 구독해 dirty를 표시한다(창 제목 `*`). 프로젝트를 여는 동안의 변경과, 프로젝트 없이 임시 씬만 만진 것은 제외한다.
   - 창을 닫을 때 dirty거나 STEP을 불러오는 중이면 메인 프로세스가 닫기를 막고 렌더러에 묻는다. 렌더러가 i18n 대화상자를 띄운 뒤 `confirmClose`로 닫는다.
   - 앱을 시작하면 마지막 프로젝트(`sandbot:lastProject`)를 다시 연다.
+- 스크립트 연결(`SceneObject.scripts`: `{path, className}`, `PROJECT_VERSION` 5)은 Unity의 스크립트 컴포넌트처럼 인스펙터의 컴포넌트 목록 안 카드다(`editor/scripts/`). Add Component의 "TeamCode 스크립트…"가 검색 선택창을 열고, 카드의 "Script: Lift.java" 줄을 더블클릭하거나 [열기]로 외부 편집기에서 연다. 연결은 탐색용이라 생성 코드는 참조하지 않는다. 파일을 못 찾으면 같은 클래스나 같은 파일 이름이 하나뿐일 때만 [다시 연결]을 보인다(자동으로 바꾸지 않음). project.json의 허용되지 않는 스크립트 경로는 열 때 버리고 알린다(파일 전체를 거부하지 않음).
+  - TeamCode Java 목록은 메인(`src/main/teamCodeJava.ts`)이 `TeamCode/src/main/java`만 훑어 준다(점 폴더·`build` 제외, 5000개 한도, 진짜 링크·정션은 건너뛰고 Windows 재분석 지점은 lstat로 다시 분류). 렌더러(`java/javaIndex.ts`)는 프로젝트를 열 때, 저장 뒤, 창 포커스 때(300 ms 묶음, 바쁠 때 건너뜀) 다시 읽고, 다른 세션·루트의 늦은 결과는 버린다. 클래스 이름은 파일 이름이다(렉서는 아직 없다).
+  - 외부 스크립트 편집기(Unity Preferences > External Tools)는 툴바의 [환경 설정] 창에서 고른다. 확장자로 열기(`shell.openPath`, 기본값), 이 PC에서 찾은 Android Studio·IntelliJ IDEA·VS Code(줄 번호로 열기), 찾아보기 + 인자 템플릿(`$(File)` `$(Line)` `$(Column)` `$(ProjectPath)`). 설정은 실행 파일 경로를 담으므로 개인 설정 중 이것만 렌더러 localStorage가 아니라 메인의 `userData/external-editor.json`에 둔다. 렌더러는 고르기만 하고 경로를 보내지 않는다. 메인(`src/main/externalEditor.ts`)은 템플릿을 셸 없이 나누고 `.exe`만 실행한다(`.bat`·`.cmd`는 Node가 셸 없이 실행하지 못한다). JetBrains는 프로젝트 루트를 먼저 넘겨 LightEdit 대신 열린 프로젝트에서 연다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
 - 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.
-  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을 추가했다.
+  - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을, 5에서 `scripts`를 추가했다.
   - 종류는 `catalog.ts`의 데이터로 정의한다(포트 종류, Java 타입·import, I2C 주소, 속성 정의). 인스펙터의 입력칸과 번역 키는 속성 정의에서 만든다. 카탈로그에서 나온 번역 키는 `t()` 타입 검사를 받지 못하므로 `labels.test.ts`가 ko·en에 키가 있는지 확인한다.
   - 저장(`saveProject`)하면 `generate.ts`가 검증(`validation.ts`) 후 컴포넌트가 있는 로봇마다 Java 하드웨어 클래스(`javaCodegen.ts`, 패키지 `org.firstinspires.ftc.teamcode.sandbot`)와 로봇 구성 XML(`configXml.ts`, `TeamCode/src/main/res/xml/sandbot_<클래스>.xml`)을 만든다. 메인 프로세스(`src/main/teamCode.ts`)가 내용이 바뀐 파일만 쓰고, 이번에 만들지 않은 이전 생성 파일은 지운다. 결과는 `projectStore.generation`과 알림으로 보여 준다.
   - 생성 Java의 주석은 팀이 Android Studio에서 읽으므로 영어로 쓴다. 주석에 넣는 이름은 `commentText`로 거른다(javac는 주석 안의 `\u`도 해석한다).
@@ -180,7 +184,7 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.
   - 문자열을 추가할 때는 `ko.ts`와 `en.ts`에 같은 키를 넣고 `t('그룹.키')`로 쓴다.
   - 언어 이름(`LANGUAGE_NAMES`)과 제품명 "SandBot"은 의도적으로 번역하지 않는다.
-- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`)은 렌더러 `localStorage`에 저장된다.
+- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`)은 렌더러 `localStorage`에 저장된다. 외부 스크립트 편집기만 메인의 `userData/external-editor.json`이다(실행 파일 경로라서).
 - 렌더러에서만 쓰는 라이브러리는 Vite가 번들하므로 `devDependencies`에 넣는다. `dependencies`는 main/preload가 런타임에 쓰는 것만 둔다(electron-builder가 패키지에 포함).
 - ESLint의 `react/no-unknown-property`는 R3F 요소 속성을 오인해서 껐다. JSX 속성은 TypeScript가 검사한다.
 - 테스트는 `src/**/*.test.{ts,tsx}`에 소스와 나란히 두고 `vitest`에서 명시적으로 import한다(globals 미사용). Vitest는 electron-vite 설정이 아니라 `vitest.config.ts`를 읽는다.
