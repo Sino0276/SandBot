@@ -32,6 +32,9 @@ const api: SandbotApi = {
   syncGeneratedFiles: (root, files) => ipcRenderer.invoke(IPC.syncGeneratedFiles, root, files),
   listJavaFiles: (root) => ipcRenderer.invoke(IPC.listJavaFiles, root),
   openJavaFile: (root, path, line) => ipcRenderer.invoke(IPC.openJavaFile, root, path, line),
+  readJavaFile: (root, path) => ipcRenderer.invoke(IPC.readJavaFile, root, path),
+  writeJavaLiterals: (root, path, expectedHash, edits) =>
+    ipcRenderer.invoke(IPC.writeJavaLiterals, root, path, expectedHash, edits),
   getExternalEditor: () => ipcRenderer.invoke(IPC.getExternalEditor),
   setExternalEditor: (choice) => ipcRenderer.invoke(IPC.setExternalEditor, choice),
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
