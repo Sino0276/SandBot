@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { JavaFileEntry } from '../../../shared/ipc'
 import {
+  foldCase,
   isLinkableJavaPath,
   JAVA_SOURCE_PREFIX,
   javaClassNameOfPath,
@@ -93,6 +94,8 @@ type JavaIndexLookup = {
   byPath: Map<string, JavaIndexEntry>
   byClassName: Map<string, JavaIndexEntry[]>
   byFileName: Map<string, JavaIndexEntry[]>
+  // 대소문자를 무시한 경로(Windows에서 대소문자만 바꾼 이름 바꾸기·git mv)
+  byFoldedPath: Map<string, JavaIndexEntry[]>
 }
 
 const lookups = new WeakMap<readonly JavaIndexEntry[], JavaIndexLookup>()
@@ -106,9 +109,15 @@ function push(map: Map<string, JavaIndexEntry[]>, key: string, entry: JavaIndexE
 export function javaIndexLookup(files: readonly JavaIndexEntry[]): JavaIndexLookup {
   let lookup = lookups.get(files)
   if (!lookup) {
-    lookup = { byPath: new Map(), byClassName: new Map(), byFileName: new Map() }
+    lookup = {
+      byPath: new Map(),
+      byClassName: new Map(),
+      byFileName: new Map(),
+      byFoldedPath: new Map()
+    }
     for (const entry of files) {
       lookup.byPath.set(entry.path, entry)
+      push(lookup.byFoldedPath, foldCase(entry.path), entry)
       push(lookup.byClassName, entry.className, entry)
       push(lookup.byFileName, entry.simpleName, entry)
     }
@@ -128,14 +137,17 @@ export function displayJavaPath(path: string): string {
   return path.startsWith(JAVA_SOURCE_PREFIX) ? path.slice(JAVA_SOURCE_PREFIX.length) : path
 }
 
-// 경로를 못 찾은 연결의 새 위치 후보. 같은 클래스 이름(패키지 포함)의 파일이 하나뿐이면 그것, 아니면 같은 파일 이름이
-// 하나뿐이면 그것이다. 둘 이상이거나 없으면 null(어느 것인지 모르므로 고르지 않는다). 자동으로 바꾸지는 않는다.
+// 경로를 못 찾은 연결의 새 위치 후보. 대소문자만 다른 경로(Android Studio에서 대소문자만 바꾼 이름)가 하나뿐이면 그것,
+// 아니면 같은 클래스 이름(패키지 포함)의 파일이 하나뿐이면 그것, 아니면 같은 파일 이름이 하나뿐이면 그것이다. 둘 이상이거나 없으면 null(어느 것인지 모르므로 고르지 않는다). 자동으로 바꾸지는 않는다.
 export function relinkCandidate(
   files: readonly JavaIndexEntry[],
   link: ScriptLink
 ): JavaIndexEntry | null {
   const lookup = javaIndexLookup(files)
-  if (lookup.byPath.has(normalizeLinkPath(link.path))) return null
+  const path = normalizeLinkPath(link.path)
+  if (lookup.byPath.has(path)) return null
+  const sameFolded = lookup.byFoldedPath.get(foldCase(path)) ?? []
+  if (sameFolded.length === 1) return sameFolded[0]
   const sameClass = lookup.byClassName.get(link.className) ?? []
   if (sameClass.length === 1) return sameClass[0]
   const sameName = lookup.byFileName.get(simpleNameOfPath(link.path)) ?? []

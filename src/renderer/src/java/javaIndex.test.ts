@@ -70,6 +70,19 @@ describe('다시 연결 후보', () => {
     expect(relinkCandidate(files, moved)?.path).toBe(`${P}a/Claw.java`)
   })
 
+  it('대소문자만 바꾼 이름(파일·폴더)은 그 경로를 먼저 고른다', () => {
+    const renamed = buildJavaIndex([
+      file(`${P}LiftSubsystem.java`),
+      file(`${P}subsystems/Arm.java`)
+    ])
+    expect(relinkCandidate(renamed, link(`${P}Liftsubsystem.java`))?.path).toBe(
+      `${P}LiftSubsystem.java`
+    )
+    expect(relinkCandidate(renamed, link(`${P}Subsystems/Arm.java`))?.path).toBe(
+      `${P}subsystems/Arm.java`
+    )
+  })
+
   it('후보가 여럿이거나 없으면 고르지 않고, 파일이 있으면 후보가 없다', () => {
     expect(relinkCandidate(files, link(`${P}c/Claw.java`))).toBeNull()
     expect(relinkCandidate(files, link(`${P}Intake.java`))).toBeNull()

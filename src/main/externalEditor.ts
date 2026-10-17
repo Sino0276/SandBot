@@ -394,19 +394,72 @@ async function isExecutableFile(path: string): Promise<boolean> {
   }
 }
 
-// reg.exe는 PATH가 아니라 시스템 폴더에서 찾는다(현재 폴더의 reg.exe를 실행하지 않게). 콘솔 프로그램이라 창을 숨긴다.
-// 출력은 콘솔 코드 페이지(한국어 Windows는 CP949)라 한글 경로가 깨질 수 있다. 깨진 경로는 파일 확인에서 빠지고,
-// 사용자 폴더(%LOCALAPPDATA%)의 기본 위치는 환경 변수로 따로 찾는다.
-function queryRegistry(key: string): Promise<string> {
+// 콘솔 코드 페이지 → TextDecoder 이름. 한국어 Windows의 OEM 코드 페이지는 949다(WHATWG의 euc-kr이 CP949를 담는다).
+const CODE_PAGE_LABELS: Record<number, string> = {
+  437: 'ibm866',
+  866: 'ibm866',
+  874: 'windows-874',
+  932: 'shift_jis',
+  936: 'gbk',
+  949: 'euc-kr',
+  950: 'big5',
+  65001: 'utf-8'
+}
+
+// reg.exe 출력 바이트를 문자열로. 파이프로 받으면 OEM 코드 페이지로 쓰므로 UTF-8로 읽으면 한글 경로가 깨진다.
+export function decodeConsoleOutput(bytes: Uint8Array, codePage: number | null): string {
+  const label =
+    codePage === null
+      ? 'utf-8'
+      : (CODE_PAGE_LABELS[codePage] ??
+        (codePage >= 1250 && codePage <= 1258 ? `windows-${codePage}` : 'utf-8'))
+  try {
+    return new TextDecoder(label).decode(bytes)
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes)
+  }
+}
+
+// `reg query ...\CodePage /v OEMCP` 출력에서 코드 페이지 번호(숫자라 어느 코드 페이지로 읽어도 같다)
+export function parseOemCodePage(output: string): number | null {
+  const match = /OEMCP\s+REG_SZ\s+(\d+)/i.exec(output)
+  return match ? Number(match[1]) : null
+}
+
+function runReg(args: string[]): Promise<Buffer | null> {
+  // reg.exe는 PATH가 아니라 시스템 폴더에서 찾는다(현재 폴더의 reg.exe를 실행하지 않게). 콘솔 프로그램이라 창을 숨긴다.
   const reg = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe')
   return new Promise((resolve) => {
     execFile(
       reg,
-      ['query', key, '/s'],
-      { shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => resolve(error ? '' : String(stdout))
+      args,
+      {
+        shell: false,
+        windowsHide: true,
+        timeout: 10_000,
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: 'buffer'
+      },
+      (error, stdout) => resolve(error ? null : stdout)
     )
   })
+}
+
+let oemCodePage: Promise<number | null> | null = null
+
+function consoleCodePage(): Promise<number | null> {
+  oemCodePage ??= runReg([
+    'query',
+    'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage',
+    '/v',
+    'OEMCP'
+  ]).then((out) => (out ? parseOemCodePage(out.toString('latin1')) : null))
+  return oemCodePage
+}
+
+async function queryRegistry(key: string): Promise<string> {
+  const [out, codePage] = await Promise.all([runReg(['query', key, '/s']), consoleCodePage()])
+  return out ? decodeConsoleOutput(out, codePage) : ''
 }
 
 function defaultDetectDeps(): DetectDeps {
@@ -553,17 +606,25 @@ export async function openInExternalEditor(
 
 // ───────────────────────── 설정 창(IPC) ─────────────────────────
 
+// storedRunnable: 저장한 실행 파일이 아직 있다(그러면 실행도 그것으로 하므로 그것을 보여 준다. 없으면 실행할 때
+// 같은 id로 다시 찾으므로 지금 찾은 것을 보여 준다)
 function toState(
   settings: StoredEditor,
   detected: DetectedEditor[],
-  error?: ExternalEditorError
+  error?: ExternalEditorError,
+  storedRunnable = true
 ): ExternalEditorState {
   const current =
     settings.kind === 'detected' ? detected.find((editor) => editor.id === settings.id) : undefined
   return {
     kind: settings.kind,
     detectedId: settings.kind === 'detected' ? settings.id : null,
-    exe: settings.kind === 'system' ? null : (current?.exe ?? settings.exe),
+    exe:
+      settings.kind === 'system'
+        ? null
+        : settings.kind === 'detected' && !storedRunnable
+          ? (current?.exe ?? settings.exe)
+          : settings.exe,
     args: settings.kind === 'custom' ? settings.args : null,
     defaultArgs: DEFAULT_CUSTOM_ARGS,
     detected,
@@ -573,7 +634,9 @@ function toState(
 
 export async function getEditorState(deps: EditorDeps): Promise<ExternalEditorState> {
   const detected = await detectFresh(deps)
-  return toState(await serialized(() => readEditorSettings(deps.settingsFile)), detected)
+  const settings = await serialized(() => readEditorSettings(deps.settingsFile))
+  const storedRunnable = settings.kind !== 'detected' || (await deps.isExecutable(settings.exe))
+  return toState(settings, detected, undefined, storedRunnable)
 }
 
 // macOS 앱 번들(.app)을 고르면 그 안의 실행 파일을 쓴다(Info.plist의 CFBundleExecutable)

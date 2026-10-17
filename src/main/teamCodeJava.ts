@@ -172,6 +172,29 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+// NFC로 받은 경로의 디스크 이름을 찾는다. 목록은 디스크 이름을 NFC로 바꿔 주지만, NTFS·ext4는 이름을 정규화하지
+// 않으므로 NFD로 저장된 이름(macOS에서 압축한 한글 폴더 등)은 NFC 경로로 열리지 않는다. 세그먼트마다 정확히 같은
+// 이름이 없으면 NFC로 같은 이름 하나를 고른다(둘 이상이면 고를 수 없다).
+async function resolveOnDisk(base: string, segments: readonly string[]): Promise<string | null> {
+  let current = base
+  for (const segment of segments) {
+    let names: string[]
+    try {
+      names = await readdir(current)
+    } catch {
+      return null
+    }
+    if (names.includes(segment)) {
+      current = join(current, segment)
+      continue
+    }
+    const matches = names.filter((name) => name.normalize('NFC') === segment)
+    if (matches.length !== 1) return null
+    current = join(current, matches[0])
+  }
+  return current
+}
+
 // 렌더러가 보낸 값(믿지 않는 입력)을 확인한 뒤 외부 편집기로 연다.
 // 열린 프로젝트이고, 연결 경로 규칙에 맞고, 보통 파일이고, 링크를 풀어도 TeamCode/src/main/java 안의 .java여야 한다.
 export async function openJavaFile(
@@ -185,16 +208,20 @@ export async function openJavaFile(
     return notAllowed('not a TeamCode Java source path')
   const projectRoot = resolve(root)
   const javaRoot = join(projectRoot, TEAMCODE_DIR, ...JAVA_DIR_SEGMENTS)
-  const file = join(projectRoot, TEAMCODE_DIR, ...relPath.split('/'))
+  let file = join(projectRoot, TEAMCODE_DIR, ...relPath.split('/'))
 
   let info: Stats
   try {
     info = await stat(file)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT' || code === 'ENOTDIR')
-      return { ok: false, code: 'missing', detail: relPath }
-    return { ok: false, code: 'openFailed', detail: errorText(error) }
+    if (code !== 'ENOENT' && code !== 'ENOTDIR')
+      return { ok: false, code: 'openFailed', detail: errorText(error) }
+    const onDisk = await resolveOnDisk(join(projectRoot, TEAMCODE_DIR), relPath.split('/'))
+    const found = onDisk ? await stat(onDisk).catch(() => null) : null
+    if (!onDisk || !found) return { ok: false, code: 'missing', detail: relPath }
+    file = onDisk
+    info = found
   }
   if (!info.isFile()) return notAllowed('not a regular file')
 

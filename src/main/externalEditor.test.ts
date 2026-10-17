@@ -7,13 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DetectedEditor } from '../shared/ipc'
 import {
   buildEditorCommand,
+  decodeConsoleOutput,
   DEFAULT_CUSTOM_ARGS,
   detectEditors,
   editorEnv,
+  getEditorState,
   isLaunchableExePath,
   launchEditorProcess,
   openInExternalEditor,
   parseArgsTemplate,
+  parseOemCodePage,
   parseStoredEditor,
   parseUninstallEntries,
   presetArgs,
@@ -218,6 +221,26 @@ const REG_OUTPUT = [
   ''
 ].join('\r\n')
 
+describe('reg.exe 출력 읽기', () => {
+  it('한국어 Windows(OEM 949)의 한글 설치 경로를 깨지 않고 읽는다', () => {
+    const line = Buffer.concat([
+      Buffer.from('    InstallLocation    REG_SZ    D:\\', 'latin1'),
+      Buffer.from([0xb0, 0xb3, 0xb9, 0xdf]),
+      Buffer.from('\\Android Studio\r\n', 'latin1')
+    ])
+    expect(decodeConsoleOutput(line, 949)).toContain('D:\\개발\\Android Studio')
+    expect(decodeConsoleOutput(line, null)).not.toContain('개발')
+    expect(decodeConsoleOutput(Buffer.from('abc'), 12345)).toBe('abc')
+  })
+
+  it('OEM 코드 페이지 번호를 읽는다', () => {
+    const output =
+      '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage\r\n    OEMCP    REG_SZ    949\r\n'
+    expect(parseOemCodePage(output)).toBe(949)
+    expect(parseOemCodePage('')).toBeNull()
+  })
+})
+
 describe('편집기 찾기', () => {
   const env = {
     LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
@@ -401,6 +424,17 @@ describe('openInExternalEditor·setEditor', () => {
   })
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true })
+  })
+
+  it('환경 설정에는 실제로 실행할 실행 파일을 보인다(저장한 것이 있으면 그것, 없으면 다시 찾은 것)', async () => {
+    const OTHER = 'D:\\Android Studio Preview\\bin\\studio64.exe'
+    await writeEditorSettings(settingsFile, { kind: 'detected', id: 'android-studio', exe: STUDIO })
+    detected = [{ id: 'android-studio', name: 'Android Studio', exe: OTHER }]
+    executables = new Set([STUDIO, OTHER])
+    expect((await getEditorState(deps())).exe).toBe(STUDIO)
+    resetDetectedEditors()
+    executables = new Set([OTHER])
+    expect((await getEditorState(deps())).exe).toBe(OTHER)
   })
 
   it('기본(system)은 .java만 운영체제에 맡기고, 실패 문구를 돌려준다', async () => {

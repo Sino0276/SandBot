@@ -19,7 +19,7 @@ const MAX_PATH_LENGTH = 1024
 
 // 대소문자를 구분하지 않는 파일 시스템(Windows·macOS)에서 같은 이름인지 볼 때 쓴다. 대문자로 바꾼 뒤
 // 소문자로 바꾸면 'ſ'(→ S)·'K'(켈빈 기호, → k)처럼 한쪽으로만 바뀌는 글자도 같은 글자로 모인다.
-function foldCase(text: string): string {
+export function foldCase(text: string): string {
   return text.toUpperCase().toLowerCase()
 }
 

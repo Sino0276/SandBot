@@ -174,6 +174,18 @@ describe('TeamCode Java', () => {
       expect(opened).toEqual([[java('Lift.java'), root, 12]])
     })
 
+    it('디스크 이름이 NFD여도(macOS에서 압축한 한글 이름) 목록의 NFC 경로로 연다', async () => {
+      trustRoot(root)
+      const folder = '리프트'.normalize('NFD')
+      const name = `${'팔'.normalize('NFD')}.java`
+      await put(java(folder, name))
+      const listed = (await listJavaFiles(root)).files.map((file) => file.path)
+      const nfcPath = `${PKG}/리프트/팔.java`
+      expect(listed).toContain(nfcPath)
+      expect(await openJavaFile(root, nfcPath, undefined, opener)).toEqual({ ok: true })
+      expect(opened).toEqual([[java(folder, name), root, undefined]])
+    })
+
     it('줄 번호는 1 이상 정수만 넘긴다', async () => {
       trustRoot(root)
       await put(java('Lift.java'))
