@@ -6,6 +6,16 @@ import { guardUnsavedChanges, registerProjectIpc } from './project'
 import { registerMeshCacheIpc } from './meshCache'
 import { registerStepConverterIpc } from './stepConverter'
 import { registerTeamCodeIpc } from './teamCode'
+import { registerTeamCodeJavaIpc } from './teamCodeJava'
+import { registerExternalEditorIpc } from './externalEditor'
+
+function isHttpsUrl(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -34,8 +44,9 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // 새 창은 열지 않는다. https 링크만 기본 브라우저로 넘긴다(file:·다른 프로토콜은 프로그램을 실행할 수 있다).
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isHttpsUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -70,6 +81,8 @@ app.whenReady().then(() => {
 
   registerProjectIpc()
   registerTeamCodeIpc()
+  registerTeamCodeJavaIpc()
+  registerExternalEditorIpc()
   registerMeshCacheIpc()
   registerStepConverterIpc()
   createWindow()

@@ -4,6 +4,7 @@ import { isLanguage, LANGUAGE_NAMES, SUPPORTED_LANGUAGES } from '../i18n/languag
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useUnitStore } from '../units/unitStore'
+import { openPreferences } from './dialogStore'
 import { redo, undo, useHistoryStore } from './history'
 import { isLengthUnit, LENGTH_UNITS } from '../units/units'
 
@@ -64,6 +65,16 @@ function Toolbar(): React.JSX.Element {
         </button>
       </div>
       <div className="toolbar-group">
+        <button
+          type="button"
+          className="panel-button"
+          title={t('toolbar.preferencesTooltip')}
+          aria-haspopup="dialog"
+          // 창이 포커스를 가져가고, 닫으면 이 버튼으로 돌려준다
+          onClick={openPreferences}
+        >
+          {t('toolbar.preferences')}
+        </button>
         <select
           className="toolbar-select"
           aria-label={t('toolbar.lengthUnit')}

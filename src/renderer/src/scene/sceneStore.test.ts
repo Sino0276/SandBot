@@ -198,3 +198,81 @@ describe('하이어라키 편집 액션', () => {
     expect(state().objects.P1).toBe(after.P1)
   })
 })
+
+describe('스크립트 연결', () => {
+  beforeEach(() => state().replaceObjects(objects))
+
+  const LIFT = {
+    path: 'src/main/java/org/firstinspires/ftc/teamcode/Lift.java',
+    className: 'org.firstinspires.ftc.teamcode.Lift'
+  }
+  const ARM = {
+    path: 'src/main/java/org/firstinspires/ftc/teamcode/Arm.java',
+    className: 'org.firstinspires.ftc.teamcode.Arm'
+  }
+  const MOVED = {
+    path: 'src/main/java/org/firstinspires/ftc/teamcode/mech/Lift.java',
+    className: 'org.firstinspires.ftc.teamcode.mech.Lift'
+  }
+
+  it('한 오브젝트에 여럿을 연결하고, 같은 경로는 한 번만 둔다', () => {
+    state().addScriptLink('G', LIFT)
+    state().addScriptLink('G', ARM)
+    const before = state().objects
+    state().addScriptLink('G', { ...LIFT })
+    state().addScriptLink('nope', LIFT)
+    expect(state().objects).toBe(before)
+    expect(state().objects.G.scripts).toEqual([LIFT, ARM])
+    // 다른 오브젝트는 같은 파일을 따로 연결할 수 있다
+    state().addScriptLink('P1', LIFT)
+    expect(state().objects.P1.scripts).toEqual([LIFT])
+    expect(state().objects.G).toBe(before.G)
+  })
+
+  it('지우면 그 연결만 빠지고, 마지막 연결을 지우면 필드를 지운다', () => {
+    state().addScriptLink('G', LIFT)
+    state().addScriptLink('G', ARM)
+    state().removeScriptLink('G', LIFT.path)
+    expect(state().objects.G.scripts).toEqual([ARM])
+    const before = state().objects
+    state().removeScriptLink('G', LIFT.path)
+    expect(state().objects).toBe(before)
+    state().removeScriptLink('G', ARM.path)
+    expect('scripts' in state().objects.G).toBe(false)
+  })
+
+  it('다시 연결은 같은 자리에서 바꾸고, 새 경로가 이미 있으면 이전 연결만 지운다', () => {
+    state().addScriptLink('G', LIFT)
+    state().addScriptLink('G', ARM)
+    state().relinkScript('G', LIFT.path, MOVED)
+    expect(state().objects.G.scripts).toEqual([MOVED, ARM])
+    const before = state().objects
+    state().relinkScript('G', MOVED.path, MOVED)
+    state().relinkScript('G', LIFT.path, MOVED)
+    expect(state().objects).toBe(before)
+    state().relinkScript('G', MOVED.path, ARM)
+    expect(state().objects.G.scripts).toEqual([ARM])
+  })
+
+  it('하이어라키로 옮기거나 묶어도 연결은 오브젝트를 따라간다', () => {
+    state().addScriptLink('P1', LIFT)
+    state().moveObjects(['P1'], 'G')
+    expect(state().objects.P1.scripts).toEqual([LIFT])
+    const group = state().createEmptyParent(['P1'], 'P1')!
+    expect(state().objects[group].scripts).toBeUndefined()
+    expect(state().objects.P1.scripts).toEqual([LIFT])
+  })
+
+  it('스크립트를 연결한 씬은 임시 씬이 아니다', () => {
+    useSceneStore.setState({ objects: useSceneStore.getInitialState().objects })
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().addScriptLink('webcam', LIFT)
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+    const group = state().createGroup({ parentId: 'robot' })!
+    state().removeScriptLink('webcam', LIFT.path)
+    state().addScriptLink(group, LIFT)
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+    state().removeScriptLink(group, LIFT.path)
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+  })
+})

@@ -92,7 +92,13 @@ export type ExternalEditorState = {
   // 기본 인자 템플릿(custom의 [초기화] 값)
   defaultArgs: string
   detected: DetectedEditor[]
+  // setExternalEditor가 이번 선택을 받지 않은 이유(설정은 그대로다). 렌더러가 번역해 보여 준다.
+  error?: ExternalEditorError
 }
+
+// - unsupportedFile: 찾아보기로 고른 파일을 실행할 수 없다(Windows는 .exe만. .bat·.cmd·.lnk·.ps1은 셸이 필요하다)
+// - invalidArgs: 인자 템플릿에 $(File)이 없거나, 따옴표가 닫히지 않았거나, 줄바꿈 등 쓸 수 없는 글자가 있거나, 너무 길다
+export type ExternalEditorError = 'unsupportedFile' | 'invalidArgs'
 
 export type ExternalEditorChoice =
   | { kind: 'system' }

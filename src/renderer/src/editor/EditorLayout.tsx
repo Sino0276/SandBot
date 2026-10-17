@@ -13,6 +13,8 @@ import { isChangeOpen, redo, undo } from './history'
 import HierarchyPanel from './panels/HierarchyPanel'
 import InspectorPanel from './panels/InspectorPanel'
 import ScenePanel from './panels/ScenePanel'
+import PreferencesWindow from './PreferencesWindow'
+import ScriptPicker from './scripts/ScriptPicker'
 import {
   createEmpty,
   createEmptyChild,
@@ -171,6 +173,8 @@ function EditorLayout(): React.JSX.Element {
         </Panel>
       </Group>
       <ContextMenu />
+      <ScriptPicker />
+      <PreferencesWindow />
     </div>
   )
 }

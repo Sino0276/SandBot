@@ -16,7 +16,10 @@ const en: Messages = {
     undo: 'Undo',
     undoShortcut: 'Undo (Ctrl+Z)',
     redo: 'Redo',
-    redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)'
+    redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)',
+    // Preferences window (Unity's Edit > Preferences)
+    preferences: 'Preferences',
+    preferencesTooltip: 'Preferences (external script editor)'
   },
   project: {
     chooseFolderTitle: 'Choose the FtcRobotController folder',
@@ -85,7 +88,22 @@ const en: Messages = {
       'Not overwritten because these generated files were edited: {{files}}. Delete a file to let SandBot generate it again.',
     codegenCaseRenamed:
       'Only the letter case of generated file names changed ({{files}}). Git on Windows and macOS does not record this, so rename them with git mv -f when you commit.',
-    codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).'
+    codegenFailed: 'Could not write the generated code to TeamCode ({{detail}}).',
+    // Script links and the external editor (phase 2)
+    scriptOpenFailed:
+      'Could not open {{fileName}} ({{detail}}). No app may be associated with .java files. Choose an External Script Editor in the toolbar [Preferences] > External Tools.',
+    scriptLaunchFailed:
+      'The external script editor could not open {{fileName}} ({{detail}}). Check the editor in the toolbar [Preferences] > External Tools.',
+    scriptMissing: '{{fileName}} is not in TeamCode. Check the link in the Inspector.',
+    scriptNotAllowed:
+      '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
+    scriptLinksDropped:
+      '{{count}} script links in project.json point to paths that are not allowed and were dropped. Saving removes them from the file too.',
+    externalEditorFailed: 'Could not change the external script editor setting ({{detail}}).',
+    externalEditorUnsupportedFile:
+      'The chosen file cannot be run as the external script editor. Choose the editor executable (.exe on Windows); .bat, .cmd, .lnk and .ps1 files cannot be used.',
+    externalEditorInvalidArgs:
+      'The arguments were not changed. Include $(File), close every double quote, and keep them on one line and not too long.'
   },
   importPhase: {
     checking: 'checking the file',
@@ -206,6 +224,76 @@ const en: Messages = {
       title: 'CAD source',
       hint: "Moved out of the CAD '{{name}}'. It moves when that CAD's alignment changes and is deleted with that CAD.",
       select: 'Select CAD root'
+    },
+    // Component list (hardware component and script link cards, like Unity's component list)
+    components: 'Components',
+    componentsEmpty: 'No components attached.'
+  },
+  // Script links (navigation links shown like Unity script components, phase 2)
+  scripts: {
+    tag: 'Script',
+    field: 'Script',
+    fieldHint:
+      'Double-click to open in the External Script Editor. Choose the editor in the toolbar [Preferences].',
+    open: 'Open',
+    openLabel: 'Open {{name}}',
+    remove: 'Remove',
+    removeLabel: 'Remove link to {{name}}',
+    navigationHint:
+      'A navigation link. The generated hardware code does not reference this file, and its code runs as before.',
+    missing: 'File not found',
+    checking: 'Checking…',
+    relink: 'Relink:',
+    relinkHint:
+      'Found exactly one file with the same class (or the same name) at this location in TeamCode. Click to link to it instead (undoable).',
+    notFound:
+      'No single file with the same class or the same name was found in TeamCode. Remove the link and link the file again from [Add Component].',
+    unknown:
+      'Could not read the whole TeamCode file list, so SandBot cannot tell whether this file exists.',
+    noProject: 'Open or save a project to find and open this file in TeamCode.',
+    noTeamCode: 'The project has no TeamCode folder, so this file cannot be opened.',
+    addGroup: 'Scripts',
+    addOption: 'TeamCode script…',
+    badge: '{ }',
+    badgeTitle: 'Linked scripts: {{names}}',
+    picker: {
+      label: 'Choose a TeamCode script',
+      placeholder: 'Search by class name',
+      loading: 'Reading the TeamCode file list…',
+      empty: 'There are no Java files that can be linked.',
+      allLinked: 'Every Java file in TeamCode is already linked.',
+      noMatch: 'No files match ‘{{query}}’.',
+      noProject: 'Open or save a project to choose TeamCode scripts.',
+      noTeamCode: 'The project has no TeamCode folder.',
+      failed: 'Could not read the TeamCode file list.',
+      truncated: 'There are too many files; only some are shown.',
+      more: '{{count}} more · type to narrow down',
+      defaultPackage: '(default package)'
+    }
+  },
+  // Preferences window (Unity's Edit > Preferences). Editor product names (Android Studio etc.) are not translated.
+  preferences: {
+    title: 'Preferences',
+    close: 'Close',
+    categories: 'Categories',
+    externalTools: {
+      title: 'External Tools',
+      scriptEditor: 'External Script Editor',
+      openByExtension: 'Open by file extension',
+      browse: 'Browse…',
+      browseTitle: 'Choose the External Script Editor',
+      exe: 'Executable',
+      args: 'External Script Editor Args',
+      argsHint:
+        '$(File) file path · $(Line) line · $(Column) column · $(ProjectPath) project folder. Wrap values that may contain spaces in double quotes.',
+      reset: 'Reset',
+      resetHint: 'Reset the arguments to the default ({{args}}).',
+      systemHint: 'Opens with the app associated with .java files. Line numbers cannot be passed.',
+      detectedHint:
+        'An editor found on this PC. It opens with the project folder and the line number.',
+      noneDetected:
+        'Android Studio, IntelliJ IDEA and VS Code were not found on this PC. Choose another editor with [Browse…].',
+      loading: 'Loading…'
     }
   },
   hardware: {
@@ -223,11 +311,9 @@ const en: Messages = {
       error: 'Hardware error in a child object',
       warning: 'Hardware warning in a child object'
     },
-    title: 'Hardware components',
     add: 'Add component…',
     remove: 'Remove',
     removeLabel: 'Remove {{name}}',
-    empty: 'No components attached.',
     orphan: 'Not part of a robot, so no code is generated.',
     deviceName: 'Device name',
     hub: 'Hub',
@@ -460,7 +546,9 @@ const en: Messages = {
       reservedGroupName:
         'Group "{{name}}": the class name {{className}} is a Java type the generated code uses. Choose another name.',
       duplicateGroupClass:
-        '{{names}}: the Java class name {{className}} clashes. Groups in the same class must differ by more than letter case, and a group cannot share its name with a class that contains it (including the robot class).'
+        '{{names}}: the Java class name {{className}} clashes. Groups in the same class must differ by more than letter case, and a group cannot share its name with a class that contains it (including the robot class).',
+      reservedFileName:
+        'The class name {{className}} is a Windows device name, so it cannot be a file name ({{className}}.java). Choose another name.'
     }
   }
 }

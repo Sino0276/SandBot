@@ -65,8 +65,46 @@ export function closeContextMenu(restoreFocus = false): void {
   if (restoreFocus && menu.returnFocus?.isConnected) menu.returnFocus.focus({ preventScroll: true })
 }
 
-// 대화상자나 메뉴처럼 화면 위에 떠서 키보드를 차지하는 것이 있는지. 창 단축키와 파일 드롭은 이때 쓰지 않는다
+// 환경 설정 창(Unity의 Edit > Preferences, editor/PreferencesWindow.tsx). 툴바 버튼으로 연다.
+type PreferencesState = { open: boolean }
+
+export const usePreferencesStore = create<PreferencesState>()(() => ({ open: false }))
+
+export function openPreferences(): void {
+  usePreferencesStore.setState({ open: true })
+}
+
+export function closePreferences(): void {
+  usePreferencesStore.setState({ open: false })
+}
+
+// 스크립트 선택창(인스펙터 Add Component의 TeamCode 스크립트, editor/scripts/ScriptPicker.tsx).
+// 위치는 연 컨트롤의 화면(client) 좌표 상자다. 선택창은 그 아래(자리가 없으면 위)에 뜬다.
+export type ScriptPickerRequest = {
+  objectId: string
+  anchor: { left: number; top: number; bottom: number; width: number }
+}
+
+type ScriptPickerState = { request: ScriptPickerRequest | null }
+
+export const useScriptPickerStore = create<ScriptPickerState>()(() => ({ request: null }))
+
+export function openScriptPicker(request: ScriptPickerRequest): void {
+  useScriptPickerStore.setState({ request })
+}
+
+export function closeScriptPicker(): void {
+  if (useScriptPickerStore.getState().request) useScriptPickerStore.setState({ request: null })
+}
+
+// 대화상자나 메뉴처럼 화면 위에 떠서 키보드를 차지하는 것이 있는지(확인 대화상자, 우클릭 메뉴, 환경 설정 창,
+// 스크립트 선택창). 창 단축키와 파일 드롭은 이때 쓰지 않는다
 // (메뉴가 떠 있는 동안 Delete가 뒤의 선택을 지우거나 Ctrl+Z가 메뉴 뒤에서 되돌리지 않게).
 export function isModalOpen(): boolean {
-  return useDialogStore.getState().request !== null || useContextMenuStore.getState().menu !== null
+  return (
+    useDialogStore.getState().request !== null ||
+    useContextMenuStore.getState().menu !== null ||
+    usePreferencesStore.getState().open ||
+    useScriptPickerStore.getState().request !== null
+  )
 }

@@ -1,3 +1,8 @@
+import {
+  isLinkableJavaPath,
+  javaClassNameOfPath,
+  normalizeLinkPath
+} from '../../../shared/teamCodePaths'
 import { AXIS_DIRECTIONS } from '../cad/alignment'
 import { componentDef, isComponentType } from '../hardware/catalog'
 import { cadOriginOf } from '../scene/hierarchy'
@@ -9,6 +14,7 @@ import {
   type RobotHardwareSettings,
   type SceneObject,
   type SceneObjects,
+  type ScriptLink,
   type Vec3
 } from '../scene/model'
 
@@ -16,9 +22,10 @@ import {
 export const PROJECT_FORMAT = 'sandbot-project'
 // 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가,
 // 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수),
-// 4: group 종류(Create Empty), CAD 밖으로 옮긴 노드의 cadOrigin, 그룹의 Java 클래스 이름 codeClassName.
+// 4: group 종류(Create Empty), CAD 밖으로 옮긴 노드의 cadOrigin, 그룹의 Java 클래스 이름 codeClassName,
+// 5: 오브젝트에 연결한 TeamCode Java 파일 scripts([{ path, className }]).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식). objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 4
+export const PROJECT_VERSION = 5
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -50,11 +57,14 @@ export function serializeProject(
   const data: ProjectFileData = {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
-    objects: Object.values(objects).map(({ cad, ...object }) => {
+    objects: Object.values(objects).map(({ cad, ...stored }) => {
+      // 빈 연결 목록은 쓰지 않는다(스토어도 비면 필드를 지운다)
+      const { scripts, ...rest } = stored
+      const object = scripts?.length ? stored : rest
       if (!cad) return object
-      const { absolutePath, ...rest } = cad
+      const { absolutePath, ...cadRest } = cad
       const relativePath = absolutePath ? relativize(absolutePath) : null
-      return { ...object, cad: { ...rest, file: { relativePath, absolutePath } } }
+      return { ...object, cad: { ...cadRest, file: { relativePath, absolutePath } } }
     })
   }
   return JSON.stringify(data, null, 2) + '\n'
@@ -137,7 +147,44 @@ function parseHardware(value: unknown, index: number): RobotHardwareSettings {
   }
 }
 
-function parseObject(value: unknown, index: number): SceneObject & { file?: StoredCadFile } {
+// 패키지까지 붙인 클래스 이름(점으로 이은 Java 식별자)
+const QUALIFIED_CLASS =
+  /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*(\.[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*)*$/u
+const MAX_CLASS_NAME_LENGTH = 1024
+
+// 스크립트 연결(v5). 형식이 틀리면(배열·객체·문자열이 아님) 다른 필드처럼 파일 오류다.
+// 형식은 맞지만 연결할 수 없는 경로(TeamCode/src/main/java 밖, 생성 파일 폴더, Java 식별자가 아닌 폴더, Windows
+// 장치 이름 등)는 버리고 dropped에 센다. project.json은 git에서 오는 믿을 수 없는 입력이지만, 연결은 탐색용
+// 보조 기록이라(생성 코드가 참조하지 않음) 하나 때문에 프로젝트 전체를 열지 못하게 하지 않는다. 경로 규칙이
+// 나중에 엄격해져도 예전 파일이 열린다. 같은 경로는 한 번만 둔다. className이 이름 형식이 아니면 경로에서 만든다.
+function parseScripts(value: unknown, index: number, dropped: string[]): ScriptLink[] {
+  if (!Array.isArray(value)) invalid(index, 'scripts')
+  const scripts: ScriptLink[] = []
+  value.forEach((link, i) => {
+    if (!isRecord(link) || typeof link.path !== 'string' || typeof link.className !== 'string')
+      invalid(index, `scripts[${i}]`)
+    const path = normalizeLinkPath(link.path)
+    if (!isLinkableJavaPath(path) || scripts.some((script) => script.path === path)) {
+      dropped.push(link.path)
+      return
+    }
+    const className = normalizeLinkPath(link.className)
+    scripts.push({
+      path,
+      className:
+        className.length <= MAX_CLASS_NAME_LENGTH && QUALIFIED_CLASS.test(className)
+          ? className
+          : javaClassNameOfPath(path)
+    })
+  })
+  return scripts
+}
+
+function parseObject(
+  value: unknown,
+  index: number,
+  droppedScripts: string[]
+): SceneObject & { file?: StoredCadFile } {
   if (!isRecord(value)) invalid(index, '')
   const {
     id,
@@ -150,7 +197,8 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
     components,
     hardware,
     cadOrigin,
-    codeClassName
+    codeClassName,
+    scripts
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -231,6 +279,10 @@ function parseObject(value: unknown, index: number): SceneObject & { file?: Stor
     if (typeof codeClassName !== 'string' || kind !== 'group') invalid(index, 'codeClassName')
     if (codeClassName) object.codeClassName = codeClassName
   }
+  if (scripts !== undefined) {
+    const links = parseScripts(scripts, index, droppedScripts)
+    if (links.length > 0) object.scripts = links
+  }
   return object
 }
 
@@ -294,9 +346,11 @@ function checkCadOrigins(objects: SceneObjects): void {
 }
 
 // 프로젝트 파일을 읽는다. CAD 파일 경로(상대·절대)는 따로 돌려주고, 경로 찾기는 호출한 쪽이 한다.
+// droppedScripts는 연결할 수 없는 경로라 버린 스크립트 연결의 경로다(호출한 쪽이 알린다).
 export function parseProject(content: string): {
   objects: SceneObjects
   cadFiles: Map<string, StoredCadFile>
+  droppedScripts: string[]
 } {
   let data: unknown
   try {
@@ -313,8 +367,9 @@ export function parseProject(content: string): {
   const objects: SceneObjects = {}
   const cadFiles = new Map<string, StoredCadFile>()
   const componentIds = new Set<string>()
+  const droppedScripts: string[] = []
   data.objects.forEach((value, index) => {
-    const { file, ...object } = parseObject(value, index)
+    const { file, ...object } = parseObject(value, index, droppedScripts)
     if (objects[object.id]) invalid(index, 'id')
     for (const component of object.components ?? []) {
       if (componentIds.has(component.id)) invalid(index, 'components')
@@ -325,5 +380,9 @@ export function parseProject(content: string): {
   })
   checkParents(objects)
   checkCadOrigins(objects)
-  return { objects, cadFiles }
+  if (droppedScripts.length > 0)
+    console.warn(
+      `project.json: 연결할 수 없는 스크립트 경로를 버린다: ${droppedScripts.join(', ')}`
+    )
+  return { objects, cadFiles, droppedScripts }
 }

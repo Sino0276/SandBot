@@ -15,7 +15,10 @@ const ko = {
     undo: '실행 취소',
     undoShortcut: '실행 취소 (Ctrl+Z)',
     redo: '다시 실행',
-    redoShortcut: '다시 실행 (Ctrl+Shift+Z 또는 Ctrl+Y)'
+    redoShortcut: '다시 실행 (Ctrl+Shift+Z 또는 Ctrl+Y)',
+    // 환경 설정 창(Unity의 Edit > Preferences)
+    preferences: '환경 설정',
+    preferencesTooltip: '환경 설정 (외부 스크립트 편집기)'
   },
   project: {
     chooseFolderTitle: 'FtcRobotController 폴더 선택',
@@ -82,7 +85,22 @@ const ko = {
       '고친 생성 파일이라 덮어쓰지 않았습니다: {{files}}. SandBot이 다시 만들게 하려면 그 파일을 지우세요.',
     codegenCaseRenamed:
       '생성 파일 이름의 대소문자가 바뀌었습니다({{files}}). Windows·macOS의 git은 이 변경을 기록하지 않으니 커밋할 때 git mv -f로 이름을 바꾸세요.',
-    codegenFailed: 'TeamCode에 생성 코드를 쓰지 못했습니다 ({{detail}}).'
+    codegenFailed: 'TeamCode에 생성 코드를 쓰지 못했습니다 ({{detail}}).',
+    // 스크립트 연결·외부 편집기(2단계)
+    scriptOpenFailed:
+      '{{fileName}}을(를) 열지 못했습니다 ({{detail}}). .java 파일에 연결된 앱이 없을 수 있습니다. 툴바의 [환경 설정] > 외부 도구에서 외부 스크립트 편집기를 고르세요.',
+    scriptLaunchFailed:
+      '외부 스크립트 편집기로 {{fileName}}을(를) 열지 못했습니다 ({{detail}}). 툴바의 [환경 설정] > 외부 도구에서 편집기를 확인하세요.',
+    scriptMissing: '{{fileName}}이(가) TeamCode에 없습니다. 인스펙터에서 연결을 확인하세요.',
+    scriptNotAllowed:
+      '{{fileName}}은(는) 열 수 없는 경로입니다. TeamCode/src/main/java 안의 Java 파일만 엽니다.',
+    scriptLinksDropped:
+      'project.json의 스크립트 연결 {{count}}개는 허용하지 않는 경로라 버렸습니다. 저장하면 파일에서도 빠집니다.',
+    externalEditorFailed: '외부 스크립트 편집기 설정을 바꾸지 못했습니다 ({{detail}}).',
+    externalEditorUnsupportedFile:
+      '고른 파일은 외부 스크립트 편집기로 실행할 수 없습니다. 편집기의 실행 파일(Windows는 .exe)을 고르세요. .bat·.cmd·.lnk·.ps1은 쓸 수 없습니다.',
+    externalEditorInvalidArgs:
+      '인자를 바꾸지 않았습니다. $(File)을 넣고, 큰따옴표를 닫고, 줄바꿈 없이 너무 길지 않게 쓰세요.'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {
@@ -206,6 +224,75 @@ const ko = {
       title: 'CAD 원본',
       hint: 'CAD ‘{{name}}’ 밖으로 옮겼습니다. 그 CAD의 정렬을 바꾸면 함께 움직이고, CAD를 지우면 함께 지워집니다.',
       select: 'CAD 루트 선택'
+    },
+    // 컴포넌트 목록(하드웨어 컴포넌트와 스크립트 연결 카드, Unity의 컴포넌트 목록)
+    components: '컴포넌트',
+    componentsEmpty: '붙은 컴포넌트가 없습니다.'
+  },
+  // 스크립트 연결(Unity의 스크립트 컴포넌트처럼 보이는 탐색용 연결, 2단계)
+  scripts: {
+    tag: '스크립트',
+    field: '스크립트',
+    fieldHint:
+      '더블클릭하면 외부 스크립트 편집기로 엽니다. 편집기는 툴바의 [환경 설정]에서 고릅니다.',
+    open: '열기',
+    openLabel: '{{name}} 열기',
+    remove: '제거',
+    removeLabel: '{{name}} 연결 제거',
+    navigationHint:
+      '탐색용 연결입니다. 생성 하드웨어 코드는 이 파일을 참조하지 않고, 파일의 코드는 그대로 실행됩니다.',
+    missing: '파일을 찾을 수 없음',
+    checking: '확인 중…',
+    relink: '다시 연결:',
+    relinkHint:
+      'TeamCode에서 같은 클래스(또는 같은 이름)의 파일을 이 위치에서 하나 찾았습니다. 누르면 연결을 이 파일로 바꿉니다(실행 취소할 수 있음).',
+    notFound:
+      'TeamCode에서 같은 클래스나 같은 이름의 파일을 하나로 찾지 못했습니다. 연결을 지우고 [컴포넌트 추가]에서 다시 연결하세요.',
+    unknown: 'TeamCode 파일 목록을 다 읽지 못해 이 파일이 있는지 확인하지 못했습니다.',
+    noProject: '프로젝트를 열거나 저장하면 TeamCode에서 이 파일을 찾아 열 수 있습니다.',
+    noTeamCode: '프로젝트에 TeamCode 폴더가 없어 이 파일을 열 수 없습니다.',
+    // Add Component 선택 상자의 항목
+    addGroup: '스크립트',
+    addOption: 'TeamCode 스크립트…',
+    badge: '{ }',
+    badgeTitle: '연결한 스크립트: {{names}}',
+    picker: {
+      label: 'TeamCode 스크립트 선택',
+      placeholder: '클래스 이름으로 검색',
+      loading: 'TeamCode 파일 목록을 읽는 중…',
+      empty: '연결할 수 있는 Java 파일이 없습니다.',
+      allLinked: 'TeamCode의 Java 파일을 모두 연결했습니다.',
+      noMatch: '‘{{query}}’와 맞는 파일이 없습니다.',
+      noProject: '프로젝트를 열거나 저장하면 TeamCode 스크립트를 고를 수 있습니다.',
+      noTeamCode: '프로젝트에 TeamCode 폴더가 없습니다.',
+      failed: 'TeamCode 파일 목록을 읽지 못했습니다.',
+      truncated: '파일이 너무 많아 일부만 보입니다.',
+      more: '외 {{count}}개 · 검색어로 좁히세요',
+      defaultPackage: '(기본 패키지)'
+    }
+  },
+  // 환경 설정 창(Unity의 Edit > Preferences). 편집기 제품 이름(Android Studio 등)은 번역하지 않는다.
+  preferences: {
+    title: '환경 설정',
+    close: '닫기',
+    categories: '분류',
+    externalTools: {
+      title: '외부 도구',
+      scriptEditor: '외부 스크립트 편집기',
+      openByExtension: '확장자로 열기',
+      browse: '찾아보기…',
+      browseTitle: '외부 스크립트 편집기 선택',
+      exe: '실행 파일',
+      args: '외부 스크립트 편집기 인자',
+      argsHint:
+        '$(File) 파일 경로 · $(Line) 줄 · $(Column) 열 · $(ProjectPath) 프로젝트 폴더. 공백이 들어갈 수 있는 값은 큰따옴표로 감싸세요.',
+      reset: '초기화',
+      resetHint: '인자를 기본값({{args}})으로 되돌립니다.',
+      systemHint: '운영체제에서 .java 파일에 연결된 앱으로 엽니다. 줄 번호는 넘기지 못합니다.',
+      detectedHint: '이 PC에서 찾은 편집기입니다. 프로젝트 폴더와 줄 번호를 함께 넘겨 엽니다.',
+      noneDetected:
+        '이 PC에서 Android Studio, IntelliJ IDEA, VS Code를 찾지 못했습니다. 다른 편집기는 [찾아보기…]로 고르세요.',
+      loading: '불러오는 중…'
     }
   },
   hardware: {
@@ -223,11 +310,9 @@ const ko = {
       error: '하위 오브젝트에 하드웨어 오류',
       warning: '하위 오브젝트에 하드웨어 경고'
     },
-    title: '하드웨어 컴포넌트',
     add: '컴포넌트 추가…',
     remove: '제거',
     removeLabel: '{{name}} 제거',
-    empty: '붙은 컴포넌트가 없습니다.',
     orphan: '로봇에 속하지 않은 오브젝트라 코드를 만들지 않습니다.',
     deviceName: '장치 이름',
     hub: '허브',
@@ -457,7 +542,9 @@ const ko = {
       reservedGroupName:
         '그룹 "{{name}}": 클래스 이름 {{className}}은(는) 생성 코드가 쓰는 Java 타입과 같아 쓸 수 없습니다. 다른 이름을 쓰세요.',
       duplicateGroupClass:
-        '{{names}}: Java 클래스 이름 {{className}}이(가) 겹칩니다. 같은 클래스 안의 그룹은 대소문자만 달라서는 안 되고, 그룹을 감싸는 클래스(로봇 클래스 포함)와 같은 이름도 쓸 수 없습니다.'
+        '{{names}}: Java 클래스 이름 {{className}}이(가) 겹칩니다. 같은 클래스 안의 그룹은 대소문자만 달라서는 안 되고, 그룹을 감싸는 클래스(로봇 클래스 포함)와 같은 이름도 쓸 수 없습니다.',
+      reservedFileName:
+        '클래스 이름 {{className}}은(는) Windows의 장치 이름이라 파일 이름({{className}}.java)으로 쓸 수 없습니다. 다른 이름을 쓰세요.'
     }
   }
 }

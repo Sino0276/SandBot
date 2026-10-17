@@ -15,9 +15,15 @@ import {
 import { useSceneIssues } from '../../hardware/sceneIssues'
 import { ancestorIds, findRobotId, subtreeIds, type SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import { openScriptPicker } from '../dialogStore'
+import ScriptCard from '../scripts/ScriptCard'
 import ComponentCard from './ComponentCard'
 
-// 선택한 오브젝트에 붙은 하드웨어 컴포넌트(Unity의 컴포넌트 목록과 같은 방식)
+// Add Component 선택 상자에서 스크립트 선택창을 여는 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)
+const SCRIPT_OPTION = '#script'
+
+// 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 연결한
+// 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류나 TeamCode 스크립트(검색 선택창)를 고른다.
 function HardwareComponentsSection({ object }: { object: SceneObject }): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
@@ -26,6 +32,7 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
 
   const robotId = findRobotId(objects, object.id)
   const components = object.components ?? []
+  const scripts = object.scripts ?? []
   // 이름·포트는 로봇 전체에서 겹치지 않아야 한다
   const siblings: ComponentEntry[] = robotId
     ? robotComponents(objects, robotId)
@@ -58,15 +65,15 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   }
 
   return (
-    <section className="inspector-section" aria-label={t('hardware.title')}>
+    <section className="inspector-section" aria-label={t('inspector.components')}>
       <header className="inspector-section-header">
-        <span>{t('hardware.title')}</span>
+        <span>{t('inspector.components')}</span>
       </header>
       {!robotId && components.length > 0 && (
         <p className="inspector-note">{t('hardware.orphan')}</p>
       )}
-      {components.length === 0 ? (
-        <p className="inspector-note">{t('hardware.empty')}</p>
+      {components.length === 0 && scripts.length === 0 ? (
+        <p className="inspector-note">{t('inspector.componentsEmpty')}</p>
       ) : (
         <ul className="hw-cards">
           {components.map((component) => (
@@ -81,6 +88,9 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               issues={issues.filter((issue) => issue.componentId === component.id)}
             />
           ))}
+          {scripts.map((link) => (
+            <ScriptCard key={link.path} objectId={object.id} link={link} />
+          ))}
         </ul>
       )}
       <select
@@ -88,9 +98,19 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
         aria-label={t('hardware.add')}
         value=""
         onChange={(event) => {
+          const select = event.currentTarget
+          if (event.target.value === SCRIPT_OPTION) {
+            // 선택창이 검색 입력칸으로 포커스를 가져간다
+            const rect = select.getBoundingClientRect()
+            openScriptPicker({
+              objectId: object.id,
+              anchor: { left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width }
+            })
+            return
+          }
           add(event.target.value)
           // 포커스가 남아 있으면 방향키가 값을 바꿔 컴포넌트가 또 추가된다
-          event.currentTarget.blur()
+          select.blur()
         }}
       >
         <option value="" disabled>
@@ -107,6 +127,9 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             )}
           </optgroup>
         ))}
+        <optgroup label={t('scripts.addGroup')}>
+          <option value={SCRIPT_OPTION}>{t('scripts.addOption')}</option>
+        </optgroup>
       </select>
     </section>
   )

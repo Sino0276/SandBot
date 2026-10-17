@@ -1,4 +1,5 @@
 // 렌더러(코드 생성)와 메인 프로세스(TeamCode 쓰기)가 함께 쓰는 생성 파일 규칙
+import { isWindowsReservedName } from './windowsNames'
 
 // 생성 파일 앞부분에 넣는 표식. 뒤에 파일 내용의 해시가 붙는다(`@sandbot-generated 1a2b…`).
 // 메인 프로세스는 표식과 해시가 맞는(도구가 쓴 그대로인) 파일만 덮어쓰거나 지운다.
@@ -14,11 +15,13 @@ export const GENERATED_XML_DIR = 'src/main/res/xml'
 const JAVA_FILE = /^[A-Za-z_$][A-Za-z0-9_$]*\.java$/
 const XML_FILE = /^sandbot_[a-z0-9_]+\.xml$/
 
-// 도구가 쓸 수 있는 경로는 생성 패키지의 .java와 res/xml의 sandbot_*.xml뿐이다('..' 등은 정규식에서 걸러진다)
+// 도구가 쓸 수 있는 경로는 생성 패키지의 .java와 res/xml의 sandbot_*.xml뿐이다('..' 등은 정규식에서 걸러진다).
+// Windows 장치 이름(Aux.java 등)은 디스크 파일이 아니므로 받지 않는다.
 export function isAllowedGeneratedPath(path: string): boolean {
   const slash = path.lastIndexOf('/')
   const dir = path.slice(0, slash)
   const file = path.slice(slash + 1)
+  if (isWindowsReservedName(file)) return false
   return (
     (dir === GENERATED_JAVA_DIR && JAVA_FILE.test(file)) ||
     (dir === GENERATED_XML_DIR && XML_FILE.test(file))

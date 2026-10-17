@@ -17,6 +17,7 @@ import {
   type RobotHardwareSettings,
   type SceneObject,
   type SceneObjects,
+  type ScriptLink,
   type Transform
 } from './model'
 
@@ -47,8 +48,16 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
     (object) =>
       (object.visual?.type === 'placeholder' || isCodeGroup(object)) &&
       !object.components?.length &&
+      !object.scripts?.length &&
       !object.hardware
   )
+}
+
+// 스크립트 연결 목록을 바꾼 오브젝트. 목록이 비면 필드를 지운다(프로젝트 파일에 빈 배열을 쓰지 않게).
+function withScripts(object: SceneObject, scripts: ScriptLink[]): SceneObject {
+  const next: SceneObject = { ...object, scripts }
+  if (scripts.length === 0) delete next.scripts
+  return next
 }
 
 // STEP 임포트가 씬을 비우는 경우: 기본 임시 씬(임시 모양이 남아 있음)이나 빈 씬일 때만.
@@ -139,6 +148,13 @@ type SceneState = {
   ) => void
   removeComponent: (objectId: string, componentId: string) => void
   setRobotHardware: (robotId: string, settings: RobotHardwareSettings) => void
+  // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
+  // (없는 오브젝트, 이미 있는 경로, 없는 연결) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  // 같은 경로를 이미 연결했으면 더하지 않는다.
+  addScriptLink: (objectId: string, link: ScriptLink) => void
+  removeScriptLink: (objectId: string, path: string) => void
+  // 경로를 못 찾은 연결을 새 파일로 바꾼다(같은 자리). 새 경로가 이미 다른 연결에 있으면 이전 연결만 지운다.
+  relinkScript: (objectId: string, oldPath: string, link: ScriptLink) => void
 }
 
 export const useSceneStore = create<SceneState>()((set, get) => ({
@@ -266,5 +282,40 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
         object.kind === 'robot' ? { ...object, hardware: settings } : object
       )
       return objects ? { objects } : state
+    }),
+  addScriptLink: (objectId, link) =>
+    set((state) => {
+      const object = state.objects[objectId]
+      const scripts = object?.scripts ?? []
+      if (!object || scripts.some((script) => script.path === link.path)) return state
+      const next = withScripts(object, [...scripts, { path: link.path, className: link.className }])
+      return { objects: { ...state.objects, [objectId]: next } }
+    }),
+  removeScriptLink: (objectId, path) =>
+    set((state) => {
+      const object = state.objects[objectId]
+      const scripts = object?.scripts ?? []
+      if (!object || !scripts.some((script) => script.path === path)) return state
+      const next = withScripts(
+        object,
+        scripts.filter((script) => script.path !== path)
+      )
+      return { objects: { ...state.objects, [objectId]: next } }
+    }),
+  relinkScript: (objectId, oldPath, link) =>
+    set((state) => {
+      const object = state.objects[objectId]
+      const scripts = object?.scripts ?? []
+      const index = scripts.findIndex((script) => script.path === oldPath)
+      if (!object || index < 0) return state
+      const current = scripts[index]
+      if (current.path === link.path && current.className === link.className) return state
+      const duplicate = scripts.some((script, i) => i !== index && script.path === link.path)
+      const updated = duplicate
+        ? scripts.filter((_, i) => i !== index)
+        : scripts.map((script, i) =>
+            i === index ? { path: link.path, className: link.className } : script
+          )
+      return { objects: { ...state.objects, [objectId]: withScripts(object, updated) } }
     })
 }))
