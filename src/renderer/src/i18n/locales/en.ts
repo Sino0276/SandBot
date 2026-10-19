@@ -276,6 +276,8 @@ const en: Messages = {
         expression: 'Expression, read-only',
         noInitializer: 'No initial value, read-only',
         textBlock: 'Text block or string with \\u, read-only',
+        lineBreak: 'String with a line break, read-only',
+        initializedInType: 'Set by a constructor or initializer block, read-only',
         unicodeEscape: 'The file has \\u escapes, read-only',
         null: 'null, read-only',
         enum: 'Enum values cannot be edited yet',

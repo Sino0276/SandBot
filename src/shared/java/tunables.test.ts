@@ -33,6 +33,15 @@ function value(text: string, id: string): Extract<TunableNode, { kind: 'value' }
   return found
 }
 
+// 노드마다 [id, 값이면 고칠 수 있는지·아니면 종류, 이유](자식 포함, 평평하게)
+function states(text: string): [string, boolean | string, string | null][] {
+  return nodes(parseTunables(text)).map((item) => [
+    item.id,
+    item.kind === 'value' ? item.editable : item.kind,
+    item.reason ?? null
+  ])
+}
+
 // road-runner-quickstart(1.0) MecanumDrive.java 54-94행에서 줄인 것
 const MECANUM_DRIVE = `package org.firstinspires.ftc.teamcode;
 
@@ -476,6 +485,31 @@ public class Outer {
       }
     })
 
+    it('줄바꿈(CR·LF, 8진 이스케이프 포함)이 든 문자열은 읽기 전용이다(한 줄 입력칸이 지운다)', () => {
+      for (const literal of ['"x=%.2f\\ny=%.2f"', '"a\\rb"', '"a\\r\\n"', '"a\\12b"', '"\\015"']) {
+        expect(value(wrap(`public static String a = ${literal};`), 'A#a'), literal).toMatchObject({
+          editable: false,
+          reason: 'lineBreak',
+          literal
+        })
+      }
+      // 탭·이스케이프한 역슬래시 뒤의 n은 줄바꿈이 아니다
+      for (const literal of ['"a\\tb"', '"a\\\\nb"', '"\\0"']) {
+        expect(value(wrap(`public static String a = ${literal};`), 'A#a').editable, literal).toBe(
+          true
+        )
+      }
+    })
+
+    it('줄바꿈 문자열보다 먼저 보는 이유(식, 파일의 \\u)는 그대로다', () => {
+      expect(value(wrap('public static String a = "a\\n" + "b";'), 'A#a').reason).toBe('expression')
+      const unsafe = `${CONFIG}@Config public class A {
+  public static String a = "a\\nb";
+  // \\u000a
+}`
+      expect(value(unsafe, 'A#a').reason).toBe('unicodeEscape')
+    })
+
     it('텍스트 블록 뒤의 필드도 읽는다', () => {
       const text = wrap(
         'public static String t = """\n    a "b" c\n    """; public static int n = 3;'
@@ -527,7 +561,7 @@ public class Outer {
   })
 
   describe('객체 펼치기', () => {
-    it('같은 파일의 new T()만 펼친다(생성자·초기화 블록·인자·익명·다른 파일 형식은 펼치지 않는다)', () => {
+    it('같은 파일의 new T()만 펼친다(인자·익명·다른 파일 형식은 펼치지 않고, 생성자·초기화 블록이 있으면 자식이 읽기 전용)', () => {
       const text = `${CONFIG}@Config public class A {
   public static class P { public double k = 1; }
   public static class WithCtor { public double k = 1; public WithCtor() { k = 2; } }
@@ -557,10 +591,19 @@ public class Outer {
         ['anon', 0, 'object'],
         ['none', 0, 'noInitializer'],
         ['nul', 0, 'object'],
-        ['ctor', 0, 'object'],
-        ['init', 0, 'object'],
+        ['ctor', 1, null],
+        ['init', 1, null],
         ['other', 0, 'object']
       ])
+      expect(value(text, 'A.WithCtor#k')).toMatchObject({
+        editable: false,
+        reason: 'initializedInType'
+      })
+      expect(value(text, 'A.WithInit#k')).toMatchObject({
+        editable: false,
+        reason: 'initializedInType'
+      })
+      expect(value(text, 'A.P#k').editable).toBe(true)
     })
 
     it('자식은 public 인스턴스 필드(final 포함, static·private 제외)이고 같은 형식은 자식 id를 나눠 쓴다', () => {
@@ -660,6 +703,433 @@ class Params { public double outside = 1; }
     })
   })
 
+  describe('생성자·초기화 블록이 정하는 값(initializedInType)', () => {
+    it('생성자가 있는 형식도 펼치고(Dashboard와 같음), 값 자식은 이유와 관계없이 모두 읽기 전용이다', () => {
+      const text = `${CONFIG}@Config public class A {
+  public enum Mode { ON, OFF }
+  public static class Pid {
+    public double kP = 1, kI;
+    public double kD = kP * 2;
+    public String label = "x";
+    public Mode mode = Mode.ON;
+    public Pid() { kI = 2; }
+  }
+  public static Pid pid = new Pid();
+}`
+      expect(states(text)).toEqual([
+        ['A#pid', 'object', null],
+        ['A.Pid#kP', false, 'initializedInType'],
+        ['A.Pid#kI', false, 'initializedInType'],
+        ['A.Pid#kD', false, 'initializedInType'],
+        ['A.Pid#label', false, 'initializedInType'],
+        ['A.Pid#mode', 'other', 'enum']
+      ])
+      // 원래 글자와 위치는 그대로 보인다
+      const kP = value(text, 'A.Pid#kP')
+      expect(text.slice(kP.span?.start, kP.span?.end)).toBe('1')
+      expect(value(text, 'A.Pid#kI')).toMatchObject({ literal: null, span: null })
+    })
+
+    it('본문이 비거나 super();뿐인 생성자, new T()가 부르지 않는 생성자는 세지 않는다', () => {
+      const trivial = [
+        'public P() {}',
+        'public P() { /* nothing */ }',
+        'P() { super(); }',
+        'public P() {} public P(double k) { this.k = k; }',
+        'public P(double k, int n) { this.k = k * n; }'
+      ]
+      for (const ctor of trivial) {
+        const text = `${CONFIG}@Config public class A {
+  public static class P { public double k = 1; ${ctor} }
+  public static P p = new P();
+}`
+        expect(states(text), ctor).toEqual([
+          ['A#p', 'object', null],
+          ['A.P#k', true, null]
+        ])
+      }
+      const nonTrivial = [
+        'public P() { k = 2; }',
+        'public P() { super(); k = 2; }',
+        'public P() { this(1); } public P(double k) { this.k = k; }',
+        'public P(double... ks) { k = ks.length; }',
+        'public P() throws Exception { init(); }',
+        '{ k = 3; }'
+      ]
+      for (const member of nonTrivial) {
+        const text = `${CONFIG}@Config public class A {
+  public static class P { public double k = 1; ${member} }
+  public static P p = new P();
+}`
+        expect(value(text, 'A.P#k').reason, member).toBe('initializedInType')
+      }
+    })
+
+    it('같은 파일 상위 클래스의 생성자·초기화 블록도 센다(new T()가 실행한다)', () => {
+      const text = `${CONFIG}@Config public class A {
+  public static class Base { public double x = 1; public Base() { x = 2; } }
+  public static class InitBase { public double z = 1; { z = 4; } }
+  public static class P extends Base { public double y = 1; }
+  public static class Q extends InitBase { public double w = 1; }
+  public static P p = new P();
+  public static Q q = new Q();
+}`
+      expect(states(text)).toEqual([
+        ['A#p', 'object', null],
+        ['A.P#y', false, 'initializedInType'],
+        ['A.Base#x', false, 'initializedInType'],
+        ['A#q', 'object', null],
+        ['A.Q#w', false, 'initializedInType'],
+        ['A.InitBase#z', false, 'initializedInType']
+      ])
+    })
+
+    it('그 안의 객체 자식도 같고, 같은 id는 다른 경로에서도 읽기 전용이다', () => {
+      const shared = `public static class Inner { public double x = 1; }
+  public static class Outer {
+    public Inner inner = new Inner();
+    public Inner unset;
+    public Outer() { inner.x = 5; unset = new Inner(); }
+  }`
+      const text = `${CONFIG}@Config public class A {
+  ${shared}
+  public static Outer O = new Outer();
+  public static Inner I = new Inner();
+}`
+      expect(states(text)).toEqual([
+        ['A#O', 'object', null],
+        ['A.Outer#inner', 'object', null],
+        ['A.Inner#x', false, 'initializedInType'],
+        ['A.Outer#unset', 'object', 'initializedInType'],
+        // 생성자가 없는 Inner를 바로 쓴 경로도 같은 리터럴이라 읽기 전용
+        ['A#I', 'object', null],
+        ['A.Inner#x', false, 'initializedInType']
+      ])
+      // 생성자가 정하는 경로가 없으면 고칠 수 있다
+      const alone = `${CONFIG}@Config public class A {
+  ${shared}
+  public static Inner I = new Inner();
+}`
+      expect(states(alone)).toEqual([
+        ['A#I', 'object', null],
+        ['A.Inner#x', true, null]
+      ])
+    })
+
+    it('펼칠 수 없는 경우(인자·다른 파일 형식)는 그대로 object다', () => {
+      const text = `${CONFIG}@Config public class A {
+  public static class P { public double k = 1; public P() { k = 2; } public P(int n) {} }
+  public static P args = new P(1);
+  public static PIDFCoefficients other = new PIDFCoefficients();
+}`
+      expect(states(text)).toEqual([
+        ['A#args', 'object', 'object'],
+        ['A#other', 'object', 'object']
+      ])
+    })
+  })
+
+  describe('static 블록이 정하는 값(initializedInType)', () => {
+    // Lift의 static 블록에 body를 넣는다
+    const lift = (body: string, members = ''): string => `${CONFIG}@Config public class Lift {
+  public static double kP = 1;
+  public static int n = 0;
+  public static double kI = 2;${members}
+  static { ${body} }
+}`
+    const kP = (text: string): Extract<TunableNode, { kind: 'value' }> => value(text, 'Lift#kP')
+
+    it('대입·복합 대입·증감(한정자 Lift.·Outer.Lift.·패키지, 괄호, 람다·익명 클래스 안)은 읽기 전용', () => {
+      const assigning = [
+        'kP = 2;',
+        'kP += 0.5;',
+        'kP -= 1;',
+        'kP *= 2;',
+        'kP /= 2;',
+        'kP %= 2;',
+        'kP++;',
+        '++kP;',
+        'kP--;',
+        'n = (int) --kP;',
+        '(kP) = 3;',
+        '++(kP);',
+        'Lift.kP = 2;',
+        'org.firstinspires.ftc.teamcode.Lift.kP = 2;',
+        'if (n > 0) kP = 1; else n = 1;',
+        'Runnable r = () -> kP = 3; r.run();',
+        'Runnable r = () -> { kP = 3; };',
+        'new Thread() { public void run() { kP = 2; } }.start();',
+        'make().kP = 2;',
+        // 지역 변수의 범위는 따지지 않는다(애매하면 읽기 전용)
+        'double kP = 2; kP = 3;'
+      ]
+      for (const body of assigning) {
+        expect(kP(lift(body)), body).toMatchObject({
+          editable: false,
+          reason: 'initializedInType',
+          literal: '1'
+        })
+        // 다른 필드는 그대로
+        expect(value(lift(body), 'Lift#kI').editable, body).toBe(true)
+      }
+      for (const body of ['n <<= 1;', 'n >>= 1;', 'n >>>= 1;', 'n &= 1;', 'n |= 1;', 'n ^= 1;']) {
+        expect(value(lift(body), 'Lift#n').reason, body).toBe('initializedInType')
+      }
+    })
+
+    it('중첩 형식의 이름으로 한정한 것(Outer.Lift.kP)도 센다', () => {
+      const text = `${CONFIG}public class Outer {
+  @Config public static class Lift {
+    public static double kP = 1;
+    static { Outer.Lift.kP = 2; }
+  }
+}`
+      expect(value(text, 'Outer.Lift#kP').reason).toBe('initializedInType')
+    })
+
+    it('읽기·같은 이름의 지역 변수 선언·다른 이름으로 한정한 것은 세지 않는다', () => {
+      const untouched = [
+        'double kP = 2;',
+        'final double kP = 2, other = 3;',
+        'for (double kP : new double[] {1}) {}',
+        'double x = kP * 2;',
+        'System.out.println(kP);',
+        'boolean b = kP == 1 || kP >= 1 || kP > 0 || kP <= 2 || kP != 3 || kP < 1;',
+        'n = kP > 1 ? 1 : 0;',
+        'Runnable r = () -> System.out.println(kP);',
+        'Helper other = new Helper(); other.kP = 2;',
+        'Helper.kP = 2;',
+        'new Helper().run(kP);'
+      ]
+      for (const body of untouched) {
+        const text = lift(
+          body,
+          '\n  public static class Helper { public static double kP; void run(double v) {} }'
+        )
+        expect(kP(text), body).toMatchObject({ editable: true })
+      }
+    })
+
+    it('static 블록이 있다는 것만으로는 읽기 전용이 아니다', () => {
+      expect(kP(lift('System.loadLibrary("x");')).editable).toBe(true)
+      expect(kP(lift('')).editable).toBe(true)
+    })
+
+    it('다른 중첩 형식의 static 블록은 그 형식의 필드만 정한다', () => {
+      const inner = `${CONFIG}@Config public class Outer {
+  public static double kP = 1;
+  @Config public static class Inner {
+    public static double kP = 1;
+    static { kP = 2; }
+  }
+}`
+      expect(states(inner)).toEqual([
+        ['Outer#kP', true, null],
+        ['Outer.Inner#kP', false, 'initializedInType']
+      ])
+      const outer = `${CONFIG}@Config public class Outer {
+  public static double kP = 1;
+  static { kP = 2; }
+  @Config public static class Inner { public static double kP = 1; }
+}`
+      expect(states(outer)).toEqual([
+        ['Outer#kP', false, 'initializedInType'],
+        ['Outer.Inner#kP', true, null]
+      ])
+      // 한계: 선언한 형식이 아닌 형식의 static 블록이 하는 대입은 보지 않는다
+      const elsewhere = `${CONFIG}@Config public class Outer {
+  public static double kP = 1;
+  static class Helper { static { Outer.kP = 2; } }
+}`
+      expect(value(elsewhere, 'Outer#kP').editable).toBe(true)
+    })
+
+    it('객체 필드는 static 블록에 나오기만 해도 자식이 읽기 전용이다(같은 형식의 다른 필드도)', () => {
+      const params = (body: string): string =>
+        lift(
+          body,
+          `
+  public static class Params { public double kS = 0; }
+  public static Params PARAMS = new Params();
+  public static Params SPARE;`
+        )
+      for (const body of [
+        'PARAMS.kS = 2;',
+        'PARAMS = new Params();',
+        'Lift.PARAMS.kS++;',
+        'configure(PARAMS);'
+      ]) {
+        const text = params(body)
+        expect(node(text, 'Lift#PARAMS'), body).toMatchObject({ kind: 'object' })
+        expect(value(text, 'Lift.Params#kS'), body).toMatchObject({
+          editable: false,
+          reason: 'initializedInType'
+        })
+      }
+      expect(value(params('double kS = 1; other.PARAMS = null;'), 'Lift.Params#kS').editable).toBe(
+        true
+      )
+      // 초기값 없이 static 블록이 만드는 객체
+      expect(node(params('SPARE = new Params();'), 'Lift#SPARE')).toMatchObject({
+        kind: 'object',
+        children: [],
+        reason: 'initializedInType'
+      })
+      expect(node(params(''), 'Lift#SPARE')).toMatchObject({ reason: 'noInitializer' })
+    })
+  })
+
+  describe('같은 파일의 상위 클래스(extends)', () => {
+    it('맨 위 필드: 자기 필드 뒤에 상위 클래스들의 public static 필드, id는 선언한 형식', () => {
+      // 리뷰의 Inherit2.java(Dashboard: Child는 OWN·BASE_GAIN, Child2는 OWN2·OWN·BASE_GAIN)
+      const text = `${CONFIG}public class Consts {
+    public static class Base { public static double BASE_GAIN = 0.75; public double inst = 1; }
+    @Config
+    public static class Child extends Base { public static double OWN = 1.5; }
+    @Config
+    public static class Child2 extends Child { public static double OWN2 = 2.5; }
+}`
+      const file = parseTunables(text)
+      expect(file.blocks.map((block) => [block.name, block.fields.map((f) => f.id)])).toEqual([
+        ['Child', ['Consts.Child#OWN', 'Consts.Base#BASE_GAIN']],
+        ['Child2', ['Consts.Child2#OWN2', 'Consts.Child#OWN', 'Consts.Base#BASE_GAIN']]
+      ])
+      const gain = value(text, 'Consts.Base#BASE_GAIN')
+      expect(text.slice(gain.span?.start, gain.span?.end)).toBe('0.75')
+      expect(gain.editable).toBe(true)
+    })
+
+    it('최상위 형식, 형식 인자, 형식 매개변수의 extends, implements', () => {
+      const text = `${CONFIG}
+@Config
+public class Inherit<T extends Other> extends InheritBase<Double> implements Iface {
+    public static double OWN = 2.5;
+}
+class InheritBase<V> { public static double BASE_GAIN = 0.75; public double baseInst = 1; }
+class Other { public static double NOT_SUPER = 1; }
+interface Iface { double X = 1; }`
+      expect(ids(text)).toEqual(['Inherit#OWN', 'InheritBase#BASE_GAIN'])
+    })
+
+    it('extends는 선언을 감싼 범위에서 푼다(자신의 중첩 형식이 아닌 형제 형식)', () => {
+      const text = `${CONFIG}public class Holder {
+    public static class Base { public static double OUTER = 1; }
+    @Config public static class Child extends Base {
+        public static class Base { public static double INNER = 2; }
+        public static double OWN = 3;
+    }
+}`
+      expect(ids(text)).toEqual(['Holder.Child#OWN', 'Holder.Base#OUTER'])
+    })
+
+    it('다른 파일의 상위 클래스는 보이지 않고, 순환(컴파일 오류)에도 멈춘다', () => {
+      expect(
+        ids(
+          `${CONFIG}@Config public class Tele extends LinearOpMode { public static double S = 1; }`
+        )
+      ).toEqual(['Tele#S'])
+      const cyclic = `${CONFIG}
+@Config class A extends B { public static double a = 1; }
+@Config class B extends A { public static double b = 2; }`
+      expect(ids(cyclic)).toEqual(['A#a', 'B#b', 'B#b', 'A#a'])
+    })
+
+    it('상위 클래스의 static 블록이 정한 필드는 하위 클래스 묶음에서도 읽기 전용이다', () => {
+      const text = `${CONFIG}public class H {
+    public static class Base { public static double G = 1; static { G = 2; } }
+    @Config public static class Child extends Base { public static double OWN = 1; }
+}`
+      expect(states(text)).toEqual([
+        ['H.Child#OWN', true, null],
+        ['H.Base#G', false, 'initializedInType']
+      ])
+    })
+
+    it('객체 자식: 상위 클래스의 public 인스턴스 필드도 펼친다(다른 파일의 상위 클래스는 아는 필드만)', () => {
+      // 리뷰의 Inherit.java(Dashboard: PARAMS.kS·PARAMS.kA)
+      const text = `${CONFIG}@Config public class Inherit {
+    public static class ParamsBase { public double kA = 0.1; public static double kStatic = 1; }
+    public static class Params extends ParamsBase { public double kS = 0.2; }
+    public static class Remote extends RemoteBase { public double kR = 0.3; }
+    public static Params PARAMS = new Params();
+    public static Remote REMOTE = new Remote();
+}`
+      expect(states(text)).toEqual([
+        ['Inherit#PARAMS', 'object', null],
+        ['Inherit.Params#kS', true, null],
+        ['Inherit.ParamsBase#kA', true, null],
+        ['Inherit#REMOTE', 'object', null],
+        ['Inherit.Remote#kR', true, null]
+      ])
+    })
+
+    it('가린 필드(같은 이름)는 Dashboard처럼 걸러진 것 중 가장 위 상위 클래스의 것만 보인다', () => {
+      // javac + Dashboard 0.6.0 ReflectionConfig로 확인한 값: Child.kP = 1.0(Base), Child2.kP = 1.0(Base),
+      // FinalChild.kF = 12.0·kI = 13.0(자기 것), PARAMS.kS = 0.1(PBase)·kV = 0.6(Params), QQ.q = 7.0(QBase)
+      const text = `${CONFIG}public class Hidden {
+    public static class Base { public static double kP = 1.0; public static double ONLY_BASE = 9.0; }
+    @Config
+    public static class Child extends Base { public static double kP = 2.0; public static double OWN = 3.0; }
+    @Config
+    public static class Child2 extends Child { public static double kP = 4.0; }
+    public static class FinalBase { public static final double kF = 10.0; public double kI = 11.0; }
+    @Config
+    public static class FinalChild extends FinalBase { public static double kF = 12.0; public static double kI = 13.0; }
+    public static class PBase { public double kS = 0.1; public double kA = 0.2; public static double kV = 0.3; }
+    public static class Params extends PBase { public double kS = 0.5; public double kV = 0.6; }
+    @Config
+    public static class Holder { public static Params PARAMS = new Params(); }
+    public static class QBase { public double q = 7.0; }
+    public static class Q extends QBase { public static double q = 8.0; }
+    @Config
+    public static class QHolder { public static Q QQ = new Q(); }
+}`
+      const file = parseTunables(text)
+      const literals = (fields: TunableNode[]): [string, string | null][] =>
+        fields.flatMap((field) =>
+          field.kind === 'value'
+            ? [[field.id, field.literal]]
+            : field.kind === 'object'
+              ? literals(field.children)
+              : []
+        )
+      expect(file.blocks.map((block) => [block.name, literals(block.fields)])).toEqual([
+        [
+          'Child',
+          [
+            ['Hidden.Child#OWN', '3.0'],
+            ['Hidden.Base#kP', '1.0'],
+            ['Hidden.Base#ONLY_BASE', '9.0']
+          ]
+        ],
+        [
+          'Child2',
+          [
+            ['Hidden.Child#OWN', '3.0'],
+            ['Hidden.Base#kP', '1.0'],
+            ['Hidden.Base#ONLY_BASE', '9.0']
+          ]
+        ],
+        [
+          'FinalChild',
+          [
+            ['Hidden.FinalChild#kF', '12.0'],
+            ['Hidden.FinalChild#kI', '13.0']
+          ]
+        ],
+        [
+          'Holder',
+          [
+            ['Hidden.Params#kV', '0.6'],
+            ['Hidden.PBase#kS', '0.1'],
+            ['Hidden.PBase#kA', '0.2']
+          ]
+        ],
+        ['QHolder', [['Hidden.QBase#q', '7.0']]]
+      ])
+    })
+  })
+
   it('위치: CRLF·BOM이 있어도 span은 받은 글자의 오프셋이고 줄은 1부터다', () => {
     const text = `\uFEFF${CONFIG}// 한국어 주석\r\n@Config\r\npublic class Lift {\r\n    public static double kP = 0.5;\r\n}\r\n`
     const kP = value(text, 'Lift#kP')
@@ -685,8 +1155,19 @@ class Params { public double outside = 1; }
   })
 
   it('잘린 파일·잡음에도 예외를 던지지 않는다', () => {
-    for (let end = 0; end <= MECANUM_DRIVE.length; end += 7) {
-      expect(() => parseTunables(MECANUM_DRIVE.slice(0, end))).not.toThrow()
+    // 상위 클래스·생성자·static 블록이 있는 파일
+    const busy = `${CONFIG}@Config public class A<T extends B> extends B<T> {
+  public static class P extends Q { public double k = 1; public P() throws X { super(); k = 2; } }
+  public static class Q { public double q = 1; { q = 2; } }
+  public static P p = new P();
+  public static double kP = 1;
+  static { kP >>>= 1; (kP) = 2; Runnable r = () -> { A.kP++; }; p.k = 3; }
+}
+class B<V> { public static double G = 1; }`
+    for (const text of [MECANUM_DRIVE, busy]) {
+      for (let end = 0; end <= text.length; end += 3) {
+        expect(() => parseTunables(text.slice(0, end))).not.toThrow()
+      }
     }
     for (const text of [
       '',
@@ -698,7 +1179,15 @@ class Params { public double outside = 1; }
       'enum E {',
       '<<<>>>',
       'public static double = ;',
-      'class A { int x = new ; }'
+      'class A { int x = new ; }',
+      'class A extends',
+      'class A extends {',
+      'class A<T extends> extends B {',
+      'class A { A( { } }',
+      'class A { A() throws',
+      'class A { static {',
+      'class A { static { kP',
+      'class A { static { .kP = 1; } public static double kP = 1; }'
     ]) {
       expect(() => parseTunables(text), text).not.toThrow()
     }

@@ -4,20 +4,29 @@
 //   name = altName". 중첩 클래스도 따로 본다(Config는 @Inherited가 아니다). 메서드 안·익명 클래스는 보지 않는다.
 // - 필드: ReflectionConfig의 "for (Field field : configClass.getFields()) { if (!isStatic || isFinal) continue;"
 //   (public static이고 final이 아닌 것). 선언 하나에 이름이 여럿이면(a = 1, b = 2) 줄마다 따로 둔다.
+//   getFields()라 같은 파일의 상위 클래스(extends) 필드도 자기 필드 뒤에 둔다(id는 선언한 형식, Base#K). 가린 필드(같은
+//   이름)는 getFields()가 둘 다 주고(HotSpot·ART 모두 자기 필드 다음 상위 클래스 순) Dashboard가 이름으로 HashMap에 넣으므로,
+//   걸러진 것 중 가장 위 상위 클래스의 것이 남는다(javac + Dashboard 0.6.0 반사로 확인).
 // - 값 형식: VariableType.fromClass의 boolean·int·long·float·double(박싱 포함)·String·enum. 그 밖(short·byte·char·
-//   배열·제네릭 포함)은 CUSTOM이고, 그 형식의 public 인스턴스 필드를 펼친다(ReflectionConfig 104-133). 펼친 자식은
-//   바깥 필드가 final인지만 보므로 자식의 final 필드도 보인다(Dashboard의 특이점, 그대로 따른다).
+//   배열·제네릭 포함)은 CUSTOM이고, 그 형식의 public 인스턴스 필드(상위 클래스 것 포함)를 펼친다(ReflectionConfig
+//   104-133). 펼친 자식은 바깥 필드가 final인지만 보므로 자식의 final 필드도 보인다(Dashboard의 특이점, 그대로 따른다).
 //
 // SandBot에서만 정한 것(고칠 수 있는 범위):
-// - 고칠 수 있는 것은 초기값이 부호 하나와 리터럴 하나뿐인 필드다. 식·초기값 없음·null·텍스트 블록·문자열 안의 \u는
-//   이유와 원래 글자를 붙여 읽기 전용으로 둔다. 리터럴 밖에 \u 이스케이프가 있으면 파일 전체가 읽기 전용이다.
-// - 객체는 초기값이 정확히 `new T()`이고 T가 이 파일에 선언되고 생성자·인스턴스 초기화 블록이 없을 때만 펼친다
-//   (그래야 필드 초기값이 실제 값이다). 자식 id는 T의 선언 위치로 짓는다(같은 형식의 static 필드 둘은 자식을 나눠 쓴다).
-//   깊이는 4단계까지, 같은 형식이 다시 나오면 멈춘다.
+// - 고칠 수 있는 것은 초기값이 부호 하나와 리터럴 하나뿐인 필드다. 식·초기값 없음·null·텍스트 블록·문자열 안의 \u·
+//   줄바꿈이 든 문자열(한 줄 입력칸이 지운다)은 이유와 원래 글자를 붙여 읽기 전용으로 둔다. 리터럴 밖에 \u 이스케이프가
+//   있으면 파일 전체가 읽기 전용이다.
+// - 객체는 초기값이 정확히 `new T()`이고 T가 이 파일의 class일 때만 펼친다. 자식 id는 그 필드를 선언한 형식으로 짓는다
+//   (같은 형식의 static 필드 둘은 자식을 나눠 쓴다). 깊이는 4단계까지, 같은 형식이 다시 나오면 멈춘다.
+// - T나 같은 파일의 상위 클래스에 new T()가 부르는 생성자(매개변수 없음·가변 인자, 본문이 비거나 super();뿐이면 뺀다)나
+//   인스턴스 초기화 블록이 있으면 필드 초기값이 실제 값이 아닐 수 있으므로, 펼치되 자식 값은 모두 읽기 전용이다
+//   (initializedInType, 그 안의 객체도 같다). 같은 id는 렌더러가 처음 것만 보므로 한 경로에서라도 그러면 모두 그렇게 둔다.
+// - 선언한 형식의 static 블록이 대입·증감하는 필드(객체 필드는 블록에 나오기만 해도 그 자식)도 읽기 전용이다
+//   (initializedInType). Dashboard는 클래스를 초기화한 뒤의 값을 보이므로 초기값을 고쳐도 소용이 없다. 람다·익명 클래스
+//   안도 보고, 같은 이름의 지역 변수 선언과 다른 이름으로 한정한 것(other.kP)은 뺀다. 애매하면 읽기 전용으로 둔다.
 // - enum은 읽기 전용이다(SDK enum의 상수 목록은 SDK 소스 없이 알 수 없다).
 //
-// 한계: 다른 파일의 상위 클래스에서 물려받은 public static 필드는 보이지 않는다(Dashboard는 getFields로 보인다).
-// 다른 파일에 선언된 형식은 펼치지 않는다. static 블록에서 다시 대입하는 필드도 초기값만 보인다.
+// 한계: 다른 파일의 상위 클래스 필드는 보이지 않는다(Dashboard는 getFields로 보인다. 객체는 아는 필드만 펼친다).
+// 다른 파일에 선언된 형식은 펼치지 않는다. 다른 형식(하위 클래스, 중첩 클래스 등)의 static 블록이 하는 대입은 보지 않는다.
 import { decodeJavaQuoted, lexJava, lineAt, type JavaToken } from './lexer'
 import { isLiteralSpanText } from './javaLiteral'
 import type {
@@ -91,8 +100,14 @@ type TypeDecl = {
   parent: TypeDecl | null
   nested: TypeDecl[]
   fields: FieldDecl[]
+  // class의 extends 형식 토큰 범위 [start, end)(없으면 null). implements·interface의 extends는 두지 않는다.
+  superclass: { start: number; end: number } | null
+  // new T()(하위 클래스의 암묵적 super() 포함)가 부를 수 있는 생성자(매개변수 없음·가변 인자) 중 본문이 비거나
+  // super();뿐이 아닌 것이 있다
   hasConstructor: boolean
   hasInstanceInit: boolean
+  // static 블록의 토큰 범위 [start, end)('{' 다음부터 닫는 '}'까지)
+  staticBlocks: { start: number; end: number }[]
 }
 
 type FieldDecl = {
@@ -354,15 +369,30 @@ class Parser {
       parent,
       nested: [],
       fields: [],
+      superclass: null,
       hasConstructor: false,
-      hasInstanceInit: false
+      hasInstanceInit: false,
+      staticBlocks: []
     }
     j++
-    // 머리(형식 매개변수, extends·implements, record 성분)를 건너뛴다
+    // 형식 매개변수(<T extends A>의 extends는 상위 클래스가 아니다). 읽지 못하면 extends를 두지 않는다.
+    let headerKnown = true
+    if (this.isOp(j, '<')) {
+      const end = this.tryTypeArgs(j)
+      headerKnown = end !== null
+      j = end ?? j + 1
+    }
+    // 머리(extends·implements·permits, record 성분)를 건너뛴다. class의 extends 형식은 범위를 둔다.
     while (j < this.length && !this.isOp(j, '{')) {
       if (this.isOp(j, ';') || this.isOp(j, '}')) return { next: j, decl }
       if (this.isOp(j, '(')) {
         j = this.skipBalanced(j)
+        continue
+      }
+      if (kind === 'class' && headerKnown && !decl.superclass && this.isKeyword(j, 'extends')) {
+        const end = this.skipType(j + 1)
+        if (end > j + 1) decl.superclass = { start: j + 1, end }
+        j = Math.max(end, j + 1)
         continue
       }
       j++
@@ -386,7 +416,9 @@ class Parser {
         continue
       }
       if (this.isKeyword(i, 'static') && this.isOp(i + 1, '{')) {
-        i = this.skipBalanced(i + 1)
+        const end = this.skipBalanced(i + 1)
+        decl.staticBlocks.push({ start: i + 2, end })
+        i = end
         continue
       }
       const { next, modifiers } = this.parseModifiers(i)
@@ -405,8 +437,13 @@ class Parser {
         this.tx(j) === decl.name &&
         (this.isOp(j + 1, '(') || (decl.kind === 'record' && this.isOp(j + 1, '{')))
       ) {
-        decl.hasConstructor = true
-        i = this.isOp(j + 1, '(') ? this.skipMethodRest(j + 1) : this.skipBalanced(j + 1)
+        if (this.isOp(j + 1, '(')) {
+          if (this.constructorRunsOnNew(j + 1)) decl.hasConstructor = true
+          i = this.skipMethodRest(j + 1)
+        } else {
+          decl.hasConstructor = true
+          i = this.skipBalanced(j + 1)
+        }
         continue
       }
       const typeStart = j
@@ -491,6 +528,31 @@ class Parser {
       j++
     }
     return j
+  }
+
+  // 생성자('(' 위치)를 new T()(또는 하위 클래스의 super())가 부르고 무언가 하는지: 매개변수가 없거나 가변 인자이고,
+  // 본문이 비거나 super();뿐이 아니다
+  constructorRunsOnNew(open: number): boolean {
+    const close = this.skipBalanced(open)
+    let noArgs = close === open + 2
+    for (let j = open + 1; j < close - 1 && !noArgs; j++) noArgs = this.isOp(j, '...')
+    if (!noArgs) return false
+    // throws 절을 지나 본문을 찾는다
+    let body = close
+    while (body < this.length && !this.isOp(body, '{')) {
+      if (this.isOp(body, ';') || this.isOp(body, '}')) return false
+      body++
+    }
+    const start = body + 1
+    const count = this.skipBalanced(body) - 1 - start
+    if (count <= 0) return false
+    return !(
+      count === 4 &&
+      this.isKeyword(start, 'super') &&
+      this.isOp(start + 1, '(') &&
+      this.isOp(start + 2, ')') &&
+      this.isOp(start + 3, ';')
+    )
   }
 
   // 알 수 없는 멤버: ';'까지(먹는다) 또는 본문을 닫는 '}'까지(먹지 않는다)
@@ -614,6 +676,13 @@ function typeNameSegments(parser: Parser, start: number, end: number): string[] 
       j++
       continue
     }
+    // 형식 인자(extends Base<Double>)는 이름이 아니다. 필드 형식은 typeInfoOf가 제네릭을 먼저 거른다.
+    if (parser.isOp(j, '<')) {
+      const close = parser.tryTypeArgs(j)
+      if (close === null) return null
+      j = close
+      continue
+    }
     return null
   }
   return segments.length > 0 ? segments : null
@@ -660,6 +729,49 @@ function resolveType(
     found = findNested(found, name)
   }
   return found
+}
+
+// 같은 파일의 상위 클래스(extends). 이 파일에서 풀리지 않거나 class가 아니면 null. 선언마다 한 번 푼다.
+const superclasses = new WeakMap<TypeDecl, TypeDecl | null>()
+
+function superclassOf(ctx: Context, decl: TypeDecl): TypeDecl | null {
+  const cached = superclasses.get(decl)
+  if (cached !== undefined) return cached
+  let found: TypeDecl | null = null
+  if (decl.superclass) {
+    const segments = typeNameSegments(ctx.parser, decl.superclass.start, decl.superclass.end)
+    // extends 절은 선언을 감싼 범위에서 푼다(자신의 중첩 형식은 보지 않고, 같은 범위의 형제 형식은 본다)
+    const resolved = segments ? resolveType(segments, decl.parent, ctx.topLevel) : null
+    if (resolved?.kind === 'class') found = resolved
+  }
+  superclasses.set(decl, found)
+  return found
+}
+
+// 형식과 같은 파일의 상위 클래스들(가까운 것부터). 순환(컴파일 오류)이면 멈춘다.
+function classChain(ctx: Context, decl: TypeDecl): TypeDecl[] {
+  const chain = [decl]
+  for (
+    let next = superclassOf(ctx, decl);
+    next && !chain.includes(next);
+    next = superclassOf(ctx, next)
+  )
+    chain.push(next)
+  return chain
+}
+
+// Dashboard가 보는 필드(keep으로 거른 것). getFields()는 자기 필드, 그다음 상위 클래스의 필드 순이고, Dashboard는 이름을
+// 키로 HashMap에 넣으므로 같은 이름이면 나중에 넣은 것(가장 위 상위 클래스의 것)이 남는다. 순서는 자기 필드부터다.
+function chainFields(chain: readonly TypeDecl[], keep: (field: FieldDecl) => boolean): FieldDecl[] {
+  const byName = new Map<string, FieldDecl>()
+  for (const decl of chain) {
+    for (const field of decl.fields) {
+      if (!keep(field)) continue
+      byName.delete(field.name)
+      byName.set(field.name, field)
+    }
+  }
+  return [...byName.values()]
 }
 
 // 형식 선언에 붙은 어노테이션의 단순 이름을 이 파일의 형식이 가리는지. 선언 자신의 어노테이션은 선언을 감싼 범위에서
@@ -813,7 +925,93 @@ function analyzeValue(
   if (!isLiteralSpanText(ctx.text.slice(span.start, span.end)))
     return { editable: false, reason: 'expression' }
   if (ctx.unsafeFile) return { editable: false, reason: 'unicodeEscape' }
+  // 한 줄 입력칸은 CR·LF를 지우므로, 고치면 어떤 편집이든 줄바꿈이 빠진 문자열을 쓴다
+  if (type === 'String' && /[\r\n]/.test(decodeJavaQuoted(parser.tx(last)) ?? ''))
+    return { editable: false, reason: 'lineBreak' }
   return { editable: true }
+}
+
+// --- static 블록 ---
+
+const ASSIGNMENT_OPERATORS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<='])
+
+// 한정자 이름 조각(a.b)이 owner를 가리킬 수 있는지: 이 파일의 형식으로 풀리면 그것이 owner인지, 풀리지 않으면 마지막
+// 조각이 owner의 이름인지(패키지로 한정한 이름). 지역 변수·다른 형식(other.kP)은 아니다.
+function namesOwner(ctx: Context, owner: TypeDecl, segments: readonly string[]): boolean {
+  const resolved = resolveType(segments, owner, ctx.topLevel)
+  return resolved ? resolved === owner : segments[segments.length - 1] === owner.name
+}
+
+// 이름 토큰(i)이 지역 변수·매개변수 선언의 이름인지: 앞이 형식의 끝(이름, 기본형, '>', ']')이고 뒤가 선언이 이어지는 글자
+function declaresLocal(parser: Parser, i: number): boolean {
+  const before = i - 1
+  const typeEnd =
+    (parser.isIdent(before) && parser.tx(before) !== 'yield') ||
+    (parser.kind(before) === 'keyword' && PRIMITIVES.has(parser.tx(before))) ||
+    parser.isOp(before, '>') ||
+    parser.isOp(before, ']')
+  return typeEnd && ['=', ';', ',', ':', ')'].some((op) => parser.isOp(i + 1, op))
+}
+
+// 한정자 시작(start)부터 이름(i)까지가 대입·증감의 대상인지(괄호로 감싼 (kP) = 1 포함). 렉서는 '>'를 한 글자씩 내므로
+// '>>='·'>>>='는 '>' 뒤의 '>='다.
+function assignedAt(parser: Parser, start: number, i: number): boolean {
+  let before = start - 1
+  let after = i + 1
+  while (parser.isOp(before, '(') && parser.isOp(after, ')')) {
+    before--
+    after++
+  }
+  if (parser.isOp(before, '++') || parser.isOp(before, '--')) return true
+  if (parser.kind(after) !== 'operator') return false
+  const op = parser.tx(after)
+  if (ASSIGNMENT_OPERATORS.has(op) || op === '++' || op === '--') return true
+  return (
+    op === '>' &&
+    (parser.isOp(after + 1, '>=') || (parser.isOp(after + 1, '>') && parser.isOp(after + 2, '>=')))
+  )
+}
+
+// 필드를 선언한 형식의 static 블록이 그 필드를 정하는지. 값 필드는 대입·증감, 객체 필드(anyUse)는 블록에 나오기만 해도
+// (PARAMS.kS = 1, f(PARAMS)) 정하는 것으로 본다. 람다·익명 클래스 안도 같다. 같은 이름의 지역 변수 선언과 다른 이름으로
+// 한정한 것(other.kP)은 빼고, 식으로 한정한 것(f().kP)은 알 수 없으므로 넣는다. 지역 변수의 범위는 따지지 않으므로 그
+// 지역 변수에 대입한 것도 필드로 본다(애매하면 읽기 전용).
+function setInStaticBlock(ctx: Context, field: FieldDecl, anyUse: boolean): boolean {
+  const { parser } = ctx
+  for (const i of staticBlockNames(parser, field.owner).get(field.name) ?? []) {
+    let start = i
+    const qualifier: string[] = []
+    while (parser.isOp(start - 1, '.') && parser.isIdent(start - 2)) {
+      qualifier.unshift(parser.tx(start - 2))
+      start -= 2
+    }
+    if (!parser.isOp(start - 1, '.')) {
+      if (qualifier.length > 0 && !namesOwner(ctx, field.owner, qualifier)) continue
+      if (qualifier.length === 0 && declaresLocal(parser, i)) continue
+    }
+    if (anyUse || assignedAt(parser, start, i)) return true
+  }
+  return false
+}
+
+// 형식의 static 블록에 나오는 이름 → 토큰 위치들(형식마다 한 번 만든 표)
+const staticNameTables = new WeakMap<TypeDecl, Map<string, number[]>>()
+
+function staticBlockNames(parser: Parser, decl: TypeDecl): Map<string, number[]> {
+  let table = staticNameTables.get(decl)
+  if (table) return table
+  table = new Map()
+  for (const block of decl.staticBlocks) {
+    for (let i = block.start; i < block.end; i++) {
+      if (!parser.isIdent(i)) continue
+      const name = parser.tx(i)
+      const list = table.get(name)
+      if (list) list.push(i)
+      else table.set(name, [i])
+    }
+  }
+  staticNameTables.set(decl, table)
+  return table
 }
 
 // 초기값이 정확히 `new T()`이면 T의 이름 토큰들
@@ -833,11 +1031,13 @@ function newNoArgs(parser: Parser, range: { start: number; end: number }): strin
   return (range.end - 2 - (range.start + 1)) % 2 === 1 ? names : null
 }
 
+// forced: 바깥 객체 형식의 생성자·초기화 블록이나 static 블록이 값을 정할 수 있다(자식 값을 모두 읽기 전용으로 둔다)
 function makeNode(
   ctx: Context,
   field: FieldDecl,
   depth: number,
-  stack: readonly TypeDecl[]
+  stack: readonly TypeDecl[],
+  forced: boolean
 ): TunableNode {
   const { parser, text } = ctx
   const id = `${field.owner.path}#${field.name}`
@@ -853,6 +1053,10 @@ function makeNode(
 
   if (info.kind === 'leaf') {
     const base = { kind: 'value' as const, id, name, type: info.type, boxed: info.boxed, line }
+    // 초기값을 고쳐도 실행할 때의 값이 바뀌지 않는다(다른 이유보다 먼저 보인다)
+    if (forced || (isStatic(field) && setInStaticBlock(ctx, field, false))) {
+      return { ...base, literal: initText, span, editable: false, reason: 'initializedInType' }
+    }
     if (!field.init || !span) {
       return { ...base, literal: null, span: null, editable: false, reason: 'noInitializer' }
     }
@@ -869,7 +1073,11 @@ function makeNode(
     return { kind: 'other', id, name, typeText, text: initText, reason: 'enum', line }
   }
   const object = { kind: 'object' as const, id, name, typeName: typeText, text: initText, line }
-  if (!field.init || !span) return { ...object, children: [], reason: 'noInitializer' }
+  // 바깥 객체의 생성자 등이나 static 블록이 이 객체를 바꾸거나 만들 수 있다
+  const initialized = forced || (isStatic(field) && setInStaticBlock(ctx, field, true))
+  if (!field.init || !span) {
+    return { ...object, children: [], reason: initialized ? 'initializedInType' : 'noInitializer' }
+  }
   if (info.kind !== 'declared') return { ...object, children: [], reason: 'object' }
   const decl = info.decl
   const created = newNoArgs(parser, field.init)
@@ -880,15 +1088,37 @@ function makeNode(
     resolveType(created, field.owner, ctx.topLevel) === decl &&
     decl.kind === 'class' &&
     !decl.modifiers.keywords.has('abstract') &&
-    !decl.hasConstructor &&
-    !decl.hasInstanceInit &&
     depth < MAX_OBJECT_DEPTH &&
     !stack.includes(decl)
   if (!expandable) return { ...object, children: [], reason: 'object' }
-  const children = decl.fields
-    .filter((child) => child.modifiers.keywords.has('public') && !isStatic(child))
-    .map((child) => makeNode(ctx, child, depth + 1, [...stack, decl]))
+  const chain = classChain(ctx, decl)
+  // 생성자·인스턴스 초기화 블록이 필드를 다시 정할 수 있다(new T()는 상위 클래스의 것도 실행한다)
+  const childrenForced =
+    initialized || chain.some((type) => type.hasConstructor || type.hasInstanceInit)
+  const children = chainFields(
+    chain,
+    (child) => child.modifiers.keywords.has('public') && !isStatic(child)
+  ).map((child) => makeNode(ctx, child, depth + 1, [...stack, decl], childrenForced))
   return { ...object, children }
+}
+
+// 같은 id는 같은 선언이고 렌더러는 처음 것만 본다(tunableNodes). 생성자 등이 정하는 경로가 하나라도 있으면 그 값 칸을
+// 모든 경로에서 읽기 전용으로 둔다(그 리터럴을 고쳐도 그 경로의 값은 바뀌지 않고, 칸마다 고칠 수 있는지가 달라지지 않게).
+function unifyForced(blocks: TunableBlock[]): TunableBlock[] {
+  const forcedIds = new Set<string>()
+  const collect = (node: TunableNode): void => {
+    if (node.kind === 'value' && node.reason === 'initializedInType') forcedIds.add(node.id)
+    if (node.kind === 'object') node.children.forEach(collect)
+  }
+  blocks.forEach((block) => block.fields.forEach(collect))
+  if (forcedIds.size === 0) return blocks
+  const apply = (node: TunableNode): TunableNode => {
+    if (node.kind === 'object') return { ...node, children: node.children.map(apply) }
+    if (node.kind !== 'value' || !forcedIds.has(node.id) || node.reason === 'initializedInType')
+      return node
+    return { ...node, editable: false, reason: 'initializedInType' }
+  }
+  return blocks.map((block) => ({ ...block, fields: block.fields.map(apply) }))
 }
 
 // 인터페이스·어노테이션 형식의 필드는 public static final이다
@@ -938,12 +1168,18 @@ export function parseTunables(text: string): TunableFile {
     )
     if (disabled) continue
     const alternative = configValue(parser, config)
+    // 자기 필드 뒤에 같은 파일의 상위 클래스 필드(getFields)
+    const fields = chainFields(classChain(ctx, decl), isTopLevelTunable)
     blocks.push({
       classPath: decl.path,
       name: alternative ? alternative : decl.name,
       line: lineAt(ctx.lineStarts, parser.tokens[decl.nameToken].start),
-      fields: tunableFields.map((field) => makeNode(ctx, field, 0, []))
+      fields: fields.map((field) => makeNode(ctx, field, 0, [], false))
     })
   }
-  return { blocks, unicodeEscapes: lexed.unsafeUnicodeEscape, staticFieldsWithoutConfig }
+  return {
+    blocks: unifyForced(blocks),
+    unicodeEscapes: lexed.unsafeUnicodeEscape,
+    staticFieldsWithoutConfig
+  }
 }

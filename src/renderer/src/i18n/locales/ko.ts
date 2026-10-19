@@ -278,6 +278,8 @@ const ko = {
         expression: '식이라 고칠 수 없음',
         noInitializer: '초기값이 없어 고칠 수 없음',
         textBlock: '텍스트 블록이나 \\u가 든 문자열이라 고칠 수 없음',
+        lineBreak: '줄바꿈이 든 문자열이라 고칠 수 없음',
+        initializedInType: '생성자·초기화 블록이 값을 정할 수 있어 고칠 수 없음',
         unicodeEscape: '파일에 \\u 이스케이프가 있어 고칠 수 없음',
         null: 'null이라 고칠 수 없음',
         enum: 'enum 값은 아직 고칠 수 없음',
