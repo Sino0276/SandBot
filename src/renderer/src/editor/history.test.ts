@@ -13,8 +13,10 @@ import {
   initHistory,
   isChangeOpen,
   redo,
+  replaceCurrentTunables,
   resumeHistory,
   rewriteHistory,
+  rewriteTunableHistory,
   suspendHistory,
   undo,
   useHistoryStore
@@ -224,5 +226,108 @@ describe('실행 취소', () => {
     expect(isChangeOpen()).toBe(true)
     endChange()
     expect(isChangeOpen()).toBe(false)
+  })
+})
+
+describe('실행 취소: 튜닝 값', () => {
+  const LIFT = 'src/main/java/a/Lift.java'
+  const kP = (): string | undefined => useSceneStore.getState().tunables[LIFT]?.['Lift#kP']?.value
+  const setKp = (value: string): void =>
+    useSceneStore.getState().setTunable(LIFT, 'Lift#kP', value, '0.1')
+
+  beforeEach(() => {
+    initHistory()
+    useSceneStore.getState().replaceObjects(robot)
+    clearHistory()
+  })
+
+  it('씬 편집과 튜닝 값 편집이 한 기록에서 고친 순서대로 되돌아가고 다시 실행된다', () => {
+    move(1)
+    setKp('0.2')
+    move(2)
+    // 바뀐 것이 없는 편집은 기록하지 않는다
+    setKp('0.2')
+    expect(undo()).toBe(true)
+    expect([x(), kP()]).toEqual([1, '0.2'])
+    expect(undo()).toBe(true)
+    expect([x(), kP()]).toEqual([1, undefined])
+    expect(undo()).toBe(true)
+    expect([x(), kP()]).toEqual([0, undefined])
+    expect(undo()).toBe(false)
+    expect(redo()).toBe(true)
+    expect(redo()).toBe(true)
+    expect([x(), kP()]).toEqual([1, '0.2'])
+    expect(redo()).toBe(true)
+    expect([x(), kP()]).toEqual([2, '0.2'])
+    expect(redo()).toBe(false)
+  })
+
+  it('튜닝 값만 바꾼 단계는 objects를 공유한다(저장한 씬과 같은 참조로 남는다)', () => {
+    const objects = useSceneStore.getState().objects
+    setKp('0.2')
+    setKp('0.3')
+    expect(useSceneStore.getState().objects).toBe(objects)
+    undo()
+    undo()
+    expect(useSceneStore.getState().objects).toBe(objects)
+    expect(kP()).toBeUndefined()
+  })
+
+  it('드래그 묶음 안의 튜닝 값 편집도 한 단계다', () => {
+    beginChange()
+    move(0.5)
+    setKp('0.2')
+    setKp('0.3')
+    endChange()
+    expect(undo()).toBe(true)
+    expect([x(), kP()]).toEqual([0, undefined])
+    expect(undo()).toBe(false)
+  })
+
+  it('기록 전체 고치기(튜닝 값)는 기록하지 않고, 공유하던 값은 한 번만 고쳐 계속 공유한다', () => {
+    setKp('0.2')
+    move(1)
+    move(2)
+    const before = useHistoryStore.getState()
+    const seen: unknown[] = []
+    rewriteTunableHistory((tunables) => {
+      seen.push(tunables)
+      return tunables[LIFT]
+        ? { [LIFT]: { 'Lift#kP': { value: tunables[LIFT]['Lift#kP'].value, base: '0.9' } } }
+        : tunables
+    })
+    // 현재 문서와 두 스냅샷이 같은 tunables를 공유했다: update는 서로 다른 값마다 한 번(빈 문서, 0.2 편집)
+    expect(seen).toHaveLength(2)
+    expect(useHistoryStore.getState()).toEqual(before)
+    expect(useSceneStore.getState().tunables[LIFT]['Lift#kP'].base).toBe('0.9')
+    const current = useSceneStore.getState().tunables
+    expect(undo()).toBe(true)
+    expect(useSceneStore.getState().tunables).toBe(current)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(kP()).toBeUndefined()
+    expect(undo()).toBe(false)
+  })
+
+  it('지금 문서의 튜닝 값만 바꾸는 것은 기록하지 않는다', () => {
+    move(1)
+    setKp('0.2')
+    replaceCurrentTunables({})
+    expect(kP()).toBeUndefined()
+    // 되돌리면 편집 전으로 가고, 다시 실행하면 바꾼 지금 문서로 온다(뺀 편집은 되살아나지 않는다)
+    expect(undo()).toBe(true)
+    expect([x(), kP()]).toEqual([1, undefined])
+    expect(redo()).toBe(true)
+    expect([x(), kP()]).toEqual([1, undefined])
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(x()).toBe(0)
+    expect(undo()).toBe(false)
+  })
+
+  it('씬을 바꾸면(프로젝트 열기) 저장하지 않은 튜닝 값도 버린다', () => {
+    setKp('0.2')
+    useSceneStore.getState().replaceObjects(robot)
+    expect(useSceneStore.getState().tunables).toEqual({})
   })
 })

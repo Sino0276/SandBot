@@ -15,6 +15,14 @@ import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import { refreshJavaIndex, scheduleFocusRefresh } from '../java/javaIndex'
+import { initJavaSources } from '../java/javaSources'
+import { hasTunableEdits, type TunableEdits } from '../java/tunableEdits'
+import {
+  applyTunableSaveOutcome,
+  isCompleteTunableSave,
+  replaceTunableNotices,
+  saveTunables
+} from '../java/tunableSave'
 import type { SceneObjects } from '../scene/model'
 import { disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
@@ -49,6 +57,15 @@ function replaceGenerationNotices(notices: Parameters<typeof showNotice>[]): voi
 }
 
 const fileNames = (paths: string[]): string => paths.map(fileNameOf).join(', ')
+
+// 저장할 변경이 있는지. 저장하지 않은 튜닝 값은 디스크와 다른 것만 담으므로 비어 있지 않으면 변경이다.
+// 씬은 마지막으로 저장하거나 연 objects와 같은 참조인지로 본다(실행 취소로 돌아오면 변경이 없다).
+// 프로젝트 없이 임시 씬만 만지는 것은 저장할 변경으로 치지 않는다(튜닝 값은 TeamCode 연결이 있어야 생긴다).
+function computeDirty(state: { objects: SceneObjects; tunables: TunableEdits }): boolean {
+  if (hasTunableEdits(state.tunables)) return true
+  if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) return false
+  return state.objects !== savedObjects
+}
 
 // 메인 프로세스에는 initProjectSession의 구독이 알린다(확정하지 않은 입력칸 초안도 포함)
 function setDirty(dirty: boolean): void {
@@ -122,10 +139,14 @@ export async function confirmDiscardChanges(): Promise<boolean> {
   return answer === 'discard'
 }
 
-// Ctrl+S. 프로젝트가 없으면 저장할 FtcRobotController 폴더를 고르게 한다. 저장했으면 true.
+// Ctrl+S. 프로젝트가 없으면 저장할 FtcRobotController 폴더를 고르게 한다.
+// 순서: project.json → 튜닝 값(Java 파일) → 생성 코드. project.json을 쓰지 못하면 나머지는 하지 않는다.
+// 다 저장했으면 true. 튜닝 값에 충돌·없음·실패가 하나라도 있으면 false라, 창 닫기·다른 프로젝트 열기가 멈추고
+// 알림이 보인다(충돌은 파일 값을 따라 지금 문서에서 빠지므로 다시 닫으면 넘어간다. 실패는 dirty로 남는다).
 export function saveProject(): Promise<boolean> {
   // 열기·저장 중에는 단축키로 또 시작하지 않는다
   if (useProjectStore.getState().busy) return Promise.resolve(false)
+  let wrote = false
   return withBusy(async () => {
     let { root } = useProjectStore.getState()
     if (!root) {
@@ -150,7 +171,8 @@ export function saveProject(): Promise<boolean> {
 
     const projectRoot = root
     // 저장하는 동안 바뀐 내용은 다음 저장 몫이다. 프로젝트 파일과 생성 코드는 같은 씬으로 만든다.
-    const objects = useSceneStore.getState().objects
+    // 튜닝 값도 여기서 잡은 것만 쓴다(저장하는 동안 고친 값은 rebase가 저장하지 않은 값으로 남긴다).
+    const { objects, tunables } = useSceneStore.getState()
     const content = serializeProject(objects, (path) => window.api.relativePath(projectRoot, path))
     try {
       await window.api.saveProject(projectRoot, content)
@@ -158,14 +180,19 @@ export function saveProject(): Promise<boolean> {
       showNotice('error', 'saveFailed', { detail: errorDetail(error) })
       return false
     }
+    wrote = true
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
     savedObjects = objects
-    setDirty(useSceneStore.getState().objects !== savedObjects)
+    setDirty(computeDirty(useSceneStore.getState()))
+    // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
+    const tunableOutcome = await saveTunables(projectRoot, tunables)
+    applyTunableSaveOutcome(projectRoot, tunableOutcome)
+    setDirty(computeDirty(useSceneStore.getState()))
     await syncTeamCode(projectRoot, objects)
-    return true
+    return isCompleteTunableSave(tunableOutcome)
   }).then((saved) => {
-    // 처음 저장해 프로젝트가 생겼거나 생성 파일이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
-    if (saved) void refreshJavaIndex()
+    // 처음 저장해 프로젝트가 생겼거나 생성 파일·튜닝 값이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
+    if (wrote) void refreshJavaIndex()
     return saved
   })
 }
@@ -214,6 +241,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         session
       })
       replaceGenerationNotices([])
+      replaceTunableNotices([])
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
       replaceProjectNotice(
@@ -377,11 +405,12 @@ export function initProjectSession(): void {
   initialized = true
 
   useSceneStore.subscribe((state, previous) => {
-    if (loading || state.objects === previous.objects) return
-    // 프로젝트 없이 임시 씬만 만지는 것은 저장할 변경으로 치지 않는다
-    if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) setDirty(false)
-    else setDirty(state.objects !== savedObjects)
+    if (loading) return
+    if (state.objects === previous.objects && state.tunables === previous.tunables) return
+    setDirty(computeDirty(state))
   })
+  // 연결을 더하면 그 Java 파일을 읽어 튜닝 값을 보인다
+  initJavaSources()
 
   const updateTitle = (): void => {
     const { name, dirty } = useProjectStore.getState()
@@ -422,7 +451,8 @@ export function initProjectSession(): void {
     window.api.confirmClose()
   })
 
-  // Android Studio 등에서 Java 파일을 옮기거나 이름을 바꾸고 돌아오면 TeamCode Java 목록을 다시 읽는다
+  // Android Studio 등에서 Java 파일을 옮기거나 이름을 바꾸거나 값을 고치고 돌아오면 TeamCode Java 목록과
+  // 연결한 파일의 내용(튜닝 값)을 다시 읽는다
   window.addEventListener('focus', scheduleFocusRefresh)
 
   const last = localStorage.getItem(LAST_PROJECT_KEY)

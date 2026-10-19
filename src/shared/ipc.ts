@@ -16,6 +16,8 @@ export const IPC = {
   syncGeneratedFiles: 'teamcode:sync-generated-files',
   listJavaFiles: 'teamcode:list-java-files',
   openJavaFile: 'teamcode:open-java-file',
+  readJavaFile: 'teamcode:read-java-file',
+  writeJavaLiterals: 'teamcode:write-java-literals',
   getExternalEditor: 'editor:get-external-editor',
   setExternalEditor: 'editor:set-external-editor',
   setDirty: 'app:set-dirty',
@@ -117,6 +119,38 @@ export type OpenJavaFileResult =
   | { ok: true }
   | { ok: false; code: 'notAllowed' | 'missing' | 'launchFailed' | 'openFailed'; detail: string }
 
+// 튜닝 값을 쓸 수 없는 파일 상태: encoding(UTF-8로 그대로 되돌릴 수 없음), generated(생성 표식),
+// readOnly(읽기 전용: 쓰기 비트 없음, Windows 읽기 전용 속성, 이 사용자가 파일이나 그 폴더에 쓸 수 없음),
+// tooLarge(1 MB 초과).
+// 쓰기(writeJavaLiterals)의 refused reason도 같은 글자다(읽은 뒤 파일 상태가 바뀌었을 때).
+export type JavaFileProblem = 'encoding' | 'generated' | 'readOnly' | 'tooLarge'
+
+// TeamCode Java 파일 읽기(튜닝 값). 메인이 Buffer.toString('utf8')로 읽는다(BOM을 남겨 오프셋이 쓰기와 같다).
+// editable이 false면 보여 주기만 하고 reason에 이유(JavaFileProblem)가 있다. tooLarge면 text·hash가 빈 글자다.
+// hash는 디스크 바이트의 SHA-256(쓰기의 expectedHash).
+export type ReadJavaFileResult =
+  | {
+      ok: true
+      text: string
+      hash: string
+      editable: boolean
+      reason?: JavaFileProblem
+    }
+  | { ok: false; code: 'notAllowed' | 'missing' | 'failed'; detail: string }
+
+// 리터럴 한 곳 바꾸기. start·end는 text의 오프셋, expected는 지금 그 자리의 글자, text는 새 리터럴
+// (src/shared/java/javaLiteral.ts의 isWritableLiteral에 맞아야 한다).
+export type JavaLiteralEdit = { start: number; end: number; expected: string; text: string }
+
+// written: 썼다(새 내용과 해시). changed: 읽은 뒤 파일이 바뀌었다(다시 읽고 한 번 더 해 본다).
+// missing: 파일이 없다. refused: 확인에 걸려 쓰지 않았다(reason에 이유. 파일 상태면 JavaFileProblem 글자,
+// 그 밖에는 'notAllowed: …'나 편집 확인 이유).
+export type WriteJavaLiteralsResult =
+  | { status: 'written'; text: string; hash: string }
+  | { status: 'changed' }
+  | { status: 'missing' }
+  | { status: 'refused'; reason: string }
+
 // 렌더러에서 window.api로 쓰는 API (preload가 노출)
 export type SandbotApi = {
   // 드래그 앤 드롭이나 <input type="file">로 받은 파일의 디스크 경로. 디스크 파일이 아니면 빈 문자열.
@@ -153,6 +187,14 @@ export type SandbotApi = {
   listJavaFiles: (root: string) => Promise<JavaFileList>
   // 외부 편집기로 연다. line은 1부터(없으면 파일만 연다).
   openJavaFile: (root: string, path: string, line?: number) => Promise<OpenJavaFileResult>
+  // 튜닝 값: 연결한 Java 파일을 읽고, 저장(Ctrl+S) 때 리터럴만 바꿔 쓴다
+  readJavaFile: (root: string, path: string) => Promise<ReadJavaFileResult>
+  writeJavaLiterals: (
+    root: string,
+    path: string,
+    expectedHash: string,
+    edits: JavaLiteralEdit[]
+  ) => Promise<WriteJavaLiteralsResult>
   getExternalEditor: () => Promise<ExternalEditorState>
   setExternalEditor: (choice: ExternalEditorChoice) => Promise<ExternalEditorState>
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다

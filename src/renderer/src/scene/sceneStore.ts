@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { isLinkableJavaPath, normalizeLinkPath } from '../../../shared/teamCodePaths'
 import { cadRootTransform, isValidAlignment, type CadAlignment } from '../cad/alignment'
+import { NO_TUNABLE_EDITS, withTunable, type TunableEdits } from '../java/tunableEdits'
 import { DEG, ROBOT_SIZE, TILE_SIZE } from './coordinates'
 import {
   carryCadDependents,
@@ -101,13 +102,21 @@ function updateObject(
 
 type SceneState = {
   objects: SceneObjects
+  // 저장하지 않은 튜닝 값(java/tunableEdits.ts). 씬 문서의 일부라 실행 취소·dirty에 들어가지만 project.json에는
+  // 쓰지 않는다(원본은 Java 파일이고, 저장할 때 그 파일에 쓴다). 연결을 지우거나 오브젝트를 지워도 남긴다
+  // (실행 취소로 되살아날 수 있고, 저장이 없는 파일·필드를 처리한다).
+  tunables: TunableEdits
   // geometryRegistry에 형상이 새로 등록될 때마다 올린다. CAD 메시가 이 값을 구독해 다시 그린다.
   geometryRevision: number
   bumpGeometryRevision: () => void
-  // 씬 전체를 바꾼다(프로젝트 열기).
+  // 씬 전체를 바꾼다(프로젝트 열기). 저장하지 않은 튜닝 값도 같은 set()에서 버린다.
   // 형상(geometryRegistry)은 여기서 해제하지 않는다. 실행 취소 기록이 지운 오브젝트를 되살릴 수 있으므로
   // 어떤 기록에서도 쓰지 않게 된 형상을 editor/history.ts가 해제한다.
   replaceObjects: (objects: SceneObjects) => void
+  // 튜닝 값 하나를 바꾼다(인스펙터). value는 쓸 리터럴, diskLiteral은 인스펙터가 보여 준 지금 디스크 리터럴이고
+  // 편집의 base가 된다(둘 다 normalizeLiteral로 맞춘 글자). value가 디스크 값과 같으면 항목을 지운다.
+  // 바뀐 것이 없으면 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  setTunable: (path: string, fieldId: string, value: string, diskLiteral: string) => void
   // CAD 원본 파일 위치를 바꾼다(파일 다시 찾기).
   setCadFile: (id: string, absolutePath: string, fileName: string) => void
   // 저장용 로컬 변환을 설정한다. 오브젝트 종류별 제약(예: 로봇은 바닥 평면)을 적용한다.
@@ -166,9 +175,15 @@ type SceneState = {
 
 export const useSceneStore = create<SceneState>()((set, get) => ({
   objects: PLACEHOLDER_SCENE,
+  tunables: NO_TUNABLE_EDITS,
   geometryRevision: 0,
   bumpGeometryRevision: () => set((state) => ({ geometryRevision: state.geometryRevision + 1 })),
-  replaceObjects: (objects) => set({ objects }),
+  replaceObjects: (objects) => set({ objects, tunables: NO_TUNABLE_EDITS }),
+  setTunable: (path, fieldId, value, diskLiteral) =>
+    set((state) => {
+      const tunables = withTunable(state.tunables, path, fieldId, value, diskLiteral)
+      return tunables === state.tunables ? state : { tunables }
+    }),
   setCadFile: (id, absolutePath, fileName) =>
     set((state) => {
       const objects = withCadFile(state.objects, id, absolutePath, fileName)
