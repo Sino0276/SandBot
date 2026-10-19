@@ -24,8 +24,12 @@ const LONG_MAX = 2n ** 63n - 1n
 
 const BOOLEAN = /^(?:true|false)$/
 // 따옴표 안: 따옴표·역슬래시·제어 문자(Cc: C0·DEL·C1, 줄바꿈 포함)가 아닌 글자, 또는 \b \t \n \f \r \" \' \\ 와
-// 8진 이스케이프. \u와 \s(Java 15)는 받지 않는다.
-const STRING = /^"(?:[^"\\\p{Cc}]|\\[btnfr"'\\]|\\[0-3][0-7]{0,2}|\\[4-7][0-7]?)*"$/u
+// 8진 이스케이프. \u와 \s(Java 15)는 받지 않는다. 8진 이스케이프는 javac처럼 가장 길게 한 가지로만 읽는다(앞보기로 잡은
+// 것을 \1로 먹는다). 뒤 숫자를 일반 글자로도 읽을 수 있게 두면 맞지 않는 글자가 끝에 있을 때 이스케이프마다 길이 세
+// 가지를 모두 되짚어 시간이 3^n으로 는다.
+const STRING = /^"(?:[^"\\\p{Cc}]|\\[btnfr"'\\]|\\(?=([0-3][0-7]{0,2}|[4-7][0-7]?))\1)*"$/u
+// 문자열 상수는 클래스 파일에 modified UTF-8로 65535바이트까지 들어간다(넘으면 javac가 "too long for the constant pool")
+const MAX_STRING_BYTES = 65535
 
 // 숫자 리터럴(JLS 3.10.1·3.10.2). 밑줄은 숫자 사이에만 온다(1_, 0x_1, 1._5, 1_.5는 오류).
 const DIGITS = '[0-9](?:_*[0-9])*'
@@ -60,8 +64,20 @@ function isWellFormedText(text: string): boolean {
   return true
 }
 
+// 값의 modified UTF-8 길이: UTF-16 단위마다 U+0000은 2, U+0001~007F는 1, U+07FF까지는 2, 나머지(서로게이트 하나씩)는 3
+function modifiedUtf8Length(value: string): number {
+  let bytes = 0
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    bytes += code === 0 ? 2 : code < 0x80 ? 1 : code < 0x800 ? 2 : 3
+  }
+  return bytes
+}
+
 function isWritableString(text: string): boolean {
-  return STRING.test(text) && isWellFormedText(text)
+  if (!STRING.test(text) || !isWellFormedText(text)) return false
+  const value = decodeJavaQuoted(text)
+  return value !== null && modifiedUtf8Length(value) <= MAX_STRING_BYTES
 }
 
 const clean = (digits: string): string => digits.replace(/_/g, '')
@@ -100,12 +116,12 @@ function floatingFits(m: bigint, exp2: number, exp10: number, single: boolean): 
 
 type NumericLiteralType = 'int' | 'long' | 'float' | 'double'
 
-// 부호 하나(바로 붙은 '-'·'+')와 숫자 리터럴 토큰 하나로 된 글자가 javac에서 컴파일되면 그 리터럴의 형식, 아니면 null.
-// 정수의 범위: 10진은 부호 있는 범위(2147483648·9223372036854775808L은 '-' 뒤에서만), 16진·8진·2진은 32·64비트에
-// 들어가면 된다. 부동소수는 floatingFits.
+// 부호 하나('-'·'+', 숫자와의 사이에 줄바꿈 없는 공백만 올 수 있다: '- 5')와 숫자 리터럴 토큰 하나로 된 글자가 javac에서
+// 컴파일되면 그 리터럴의 형식, 아니면 null. 정수의 범위: 10진은 부호 있는 범위(2147483648·9223372036854775808L은 '-'
+// 뒤에서만, '- 2147483648'도 된다), 16진·8진·2진은 32·64비트에 들어가면 된다. 부동소수는 floatingFits.
 function numericLiteralType(text: string): NumericLiteralType | null {
   const sign = text[0] === '-' || text[0] === '+' ? text[0] : ''
-  const body = text.slice(sign.length)
+  const body = sign ? text.slice(1).replace(/^[ \t\f]+/, '') : text
   const integer = INTEGER_LITERAL.exec(body)
   if (integer) {
     const [, decimal, hex, octal, binary, suffix] = integer
@@ -156,10 +172,10 @@ function numericLiteralType(text: string): NumericLiteralType | null {
 // 박싱 형식은 형식이 정확히 맞는 리터럴만 받는다(Double에 1, Long에 5, Float에 2·2.5는 오류).
 const WIDENING: readonly NumericLiteralType[] = ['int', 'long', 'float', 'double']
 
-// 글자(normalizeLiteral로 맞춘 것)가 리터럴 토큰 하나(정수·부동소수는 바로 붙은 '-'·'+' 하나를 받는다)이고,
-// javac(--release 8)가 그 형식(기본형 또는 박싱) 필드의 초기값으로 받는지. 디스크의 원래 리터럴(0, 5, 0x10, 1_000.5,
-// +5, 1.5F, .5, 010)도 받아, 저장 뒤 실행 취소한 값을 원래 글자 그대로 되돌려 쓸 수 있다. 문자열은 쓸 수 있는 모양만
-// 받는다(\u·제어 문자 없음, isWritableString). 렌더러(저장 계획)와 메인(쓰기 전)이 같이 쓴다.
+// 글자가 리터럴 토큰 하나(정수·부동소수는 앞에 '-'·'+' 하나와 그 뒤 공백·탭을 받는다)이고, javac(--release 8)가 그
+// 형식(기본형 또는 박싱) 필드의 초기값으로 받는지. 디스크의 원래 리터럴(0, 5, 0x10, 1_000.5, +5, - 5, 1.5F, .5, 010)도
+// 받아, 저장 뒤 실행 취소한 값을 원래 글자 그대로 되돌려 쓸 수 있다. 문자열은 쓸 수 있는 모양만 받는다(\u·제어 문자
+// 없음, 상수 풀 한도 안, isWritableString). 렌더러(저장 계획)와 메인(쓰기 전)이 같이 쓴다.
 export function literalFitsType(type: TunableValueType, text: string, boxed = false): boolean {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_LITERAL_LENGTH)
     return false
@@ -280,7 +296,7 @@ export function formatTunableLiteral(type: TunableValueType, input: string): str
   if (typeof input !== 'string') return null
   if (type === 'String') {
     const literal = javaString(input)
-    return literal !== null && literal.length <= MAX_LITERAL_LENGTH ? literal : null
+    return literal !== null && literalFitsType('String', literal) ? literal : null
   }
   const trimmed = input.trim()
   if (trimmed.length === 0 || trimmed.length > MAX_NUMBER_LENGTH) return null
@@ -347,12 +363,45 @@ function shortestFloat(value: number): string {
   return String(value)
 }
 
+const bitLength = (value: bigint): number => value.toString(2).length
+
+// m × 2^exp2 × 10^exp10(m > 0)을 float(single)·double로 한 번에 반올림한 값(가장 가까운 짝수로, javac와 같다). JS
+// 숫자를 거치면 double을 거친 두 번 반올림이 float 중간값·긴 16진 가수에서 한 ulp 틀리므로, 남길 자리로 정확히 나눠
+// 나머지로 반올림한다(비정규 범위는 가장 작은 비정규 값의 자리까지만 남긴다).
+function roundExact(m: bigint, exp2: number, exp10: number, single: boolean): number {
+  const precision = single ? 24 : 53
+  const minExp = single ? -149 : -1074
+  const maxExp = single ? 128 : 1024
+  // 대략의 크기로 먼저 거른다(큰 지수로 큰 수를 만들지 않게)
+  const log2 = bitLength(m) - 1 + exp2 + exp10 * Math.log2(10)
+  if (!(log2 <= maxExp + 1)) return Infinity
+  if (!(log2 >= minExp - 2)) return 0
+  let num = m
+  let den = 1n
+  if (exp10 >= 0) num *= 10n ** BigInt(exp10)
+  else den = 10n ** BigInt(-exp10)
+  if (exp2 >= 0) num <<= BigInt(exp2)
+  else den <<= BigInt(-exp2)
+  // 맨 윗자리 floor(log2(num / den))
+  let top = bitLength(num) - bitLength(den)
+  if (top >= 0 ? num < den << BigInt(top) : num << BigInt(-top) < den) top--
+  const lsb = Math.max(top - precision + 1, minExp)
+  const scaledNum = lsb < 0 ? num << BigInt(-lsb) : num
+  const scaledDen = lsb > 0 ? den << BigInt(lsb) : den
+  let q = scaledNum / scaledDen
+  const twice = (scaledNum - q * scaledDen) * 2n
+  if (twice > scaledDen || (twice === scaledDen && (q & 1n) === 1n)) q++
+  // q는 precision 자리 안이고 2^lsb는 double로 정확하므로 곱도 정확하다
+  const value = Number(q) * 2 ** lsb
+  return value >= 2 ** maxExp ? Infinity : value
+}
+
 // 리터럴 → 입력칸에 보일 글자(형식 접미사 L·f 없이, 문자열은 풀어서). 정수는 10진 값으로 보인다(16진·8진·2진도).
 // 리터럴의 형식이 필드 형식과 다르면 Java처럼 넓힌 값을 보인다(Dashboard·로봇이 쓰는 값과 같게):
 // - 정수 리터럴의 형식은 접미사로 정해진다(L이 없으면 int라 long 필드의 0xFFFFFFFF도 -1).
 // - float 필드의 정수는 float로 반올림한 값(16777217 → 16777216), double 필드의 2^53을 넘는 long은 double로 반올림한 값.
 // - double 필드의 float 리터럴(0.1f)은 float 값을 넓힌 값(0.10000000149011612).
-// 리터럴이 아니면(식 등) 정규화한 글자 그대로다.
+// 반올림은 모두 정확한 값에서 한 번 한다(roundExact). 리터럴이 아니면(식 등) 정규화한 글자 그대로다.
 export function displayTunableLiteral(type: TunableValueType, literal: string): string {
   const normalized = normalizeLiteral(literal)
   if (type === 'boolean') return normalized
@@ -366,7 +415,13 @@ export function displayTunableLiteral(type: TunableValueType, literal: string): 
   if (number.token.kind === 'integer') {
     const value = integerValue(`${sign}${number.body}`, /[lL]$/.test(number.body) ? 64 : 32)
     if (value === null) return normalized
-    if (type === 'float') return shortestFloat(Math.fround(Number(value)))
+    if (type === 'float') {
+      const integer = BigInt(value)
+      const magnitude =
+        integer === 0n ? 0 : roundExact(integer < 0n ? -integer : integer, 0, 0, true)
+      return shortestFloat(integer < 0n ? -magnitude : magnitude)
+    }
+    // 10진 글자를 Number로 읽는 것은 한 번 반올림이다
     if (type === 'double' && !Number.isSafeInteger(Number(value))) return String(Number(value))
     return value
   }
@@ -379,7 +434,12 @@ export function displayTunableLiteral(type: TunableValueType, literal: string): 
     return `${sign}${type === 'float' ? shortestFloat(Math.fround(value)) : String(value)}`
   }
   if (type === 'double' && single) {
-    const value = Math.fround(Number(body))
+    const match = /^([0-9]*)(?:\.([0-9]*))?(?:[eE]([-+]?[0-9]+))?$/.exec(body)
+    if (!match || match[1] + (match[2] ?? '') === '') return normalized
+    const fraction = match[2] ?? ''
+    const digits = BigInt(match[1] + fraction)
+    const exp10 = Number(match[3] ?? '0') - fraction.length
+    const value = digits === 0n ? 0 : roundExact(digits, 0, exp10, true)
     return Number.isFinite(value) ? `${sign}${String(value)}` : normalized
   }
   return `${sign}${body}`
@@ -390,28 +450,10 @@ function hexFloatValue(body: string, single: boolean): number | null {
   const match = /^0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([-+]?[0-9]+)$/.exec(body)
   if (!match || (match[1] + (match[2] ?? '')).length === 0) return null
   const fraction = match[2] ?? ''
-  let mantissa = BigInt(`0x${match[1]}${fraction}`)
+  const mantissa = BigInt(`0x${match[1]}${fraction}`)
   if (mantissa === 0n) return 0
-  let exponent = Number(match[3]) - 4 * fraction.length
-  // 표시용이라 53비트를 넘는 가수는 반올림돼도 된다(64비트로 자른다). 2의 거듭제곱은 나눠 곱해 지수만 따로 넘치거나
-  // 0이 되지 않게 한다(0xF0p-1078: 2^-1078만 구하면 0이지만 값은 7.4e-323이다).
-  const extra = mantissa.toString(2).length - 64
-  if (extra > 0) {
-    mantissa >>= BigInt(extra)
-    exponent += extra
-  }
-  let value = Number(mantissa)
-  while (exponent > 960 && Number.isFinite(value)) {
-    value *= 2 ** 960
-    exponent -= 960
-  }
-  while (exponent < -960 && value !== 0) {
-    value *= 2 ** -960
-    exponent += 960
-  }
-  value *= 2 ** exponent
-  const rounded = single ? Math.fround(value) : value
-  return Number.isFinite(rounded) ? rounded : null
+  const value = roundExact(mantissa, Number(match[3]) - 4 * fraction.length, 0, single)
+  return Number.isFinite(value) ? value : null
 }
 
 function isWordToken(token: JavaToken): boolean {

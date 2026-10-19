@@ -5,7 +5,7 @@ import {
   normalizeLiteral
 } from '../../../shared/java/javaLiteral'
 import { parseTunables } from '../../../shared/java/tunables'
-import type { TunableNode } from '../../../shared/java/tunableTypes'
+import type { TunableFile, TunableNode } from '../../../shared/java/tunableTypes'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { replaceCurrentTunables, rewriteTunableHistory } from '../editor/history'
 import { useProjectStore } from '../project/projectStore'
@@ -15,6 +15,7 @@ import { putJavaSource } from './javaSources'
 import {
   isEditableValue,
   rebaseAfterWrite,
+  sameLiteralKey,
   tunableFieldLabel,
   tunableInputLiteral,
   tunableNodes,
@@ -30,8 +31,8 @@ import {
 // 있지만 튜닝 값은 사용자 값이다). 하드웨어 검증 오류와 관계없이 쓴다.
 // 파일마다: 다시 읽고 파싱해 필드마다 편집할 때 본 값(base)과 지금 디스크 값을 비교한다. 다른 줄의 변경은 상관없다
 // (필드를 위치가 아니라 이름으로 찾는다). 그 필드의 값이 SandBot 밖에서 바뀌었으면 쓰지 않고 파일 값을 따른다(알림).
-// 파일 자체를 쓸 수 없는 상태(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식)면 그 파일의 편집은 모두 저장하지 않은
-// 채로 남긴다(실패. 파일을 고친 뒤 다시 저장하면 쓴다).
+// 파일 자체를 쓸 수 없는 상태(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식, 리터럴 밖의 \u, TeamCode 밖을 가리키는
+// 링크 등)면 그 파일의 편집은 모두 저장하지 않은 채로 남긴다(실패. 파일을 고친 뒤 다시 저장하면 쓴다).
 // 쓰기는 파일 하나씩 원자적이다(메인이 해시·바꿀 자리 글자를 확인하고 임시 파일에 쓴 뒤 바꿔치기). 여러 파일을 함께
 // 묶지는 못한다.
 
@@ -45,8 +46,9 @@ export type TunableMissing = {
 }
 // 쓰지 못한 파일(편집은 저장하지 않은 채로 남긴다)
 export type TunableFailure =
-  // 파일 상태 때문에 쓸 수 없다(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식). 사용자가 파일을 바꿔야 풀린다.
-  | { path: string; reason: JavaFileProblem }
+  // 파일 상태 때문에 쓸 수 없다(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식, 리터럴 밖의 \u, 메인이 받지 않는
+  // 경로: 밖을 가리키는 링크·보통 파일 아님). 사용자가 파일을 바꿔야 풀린다.
+  | { path: string; reason: JavaFileProblem | 'unicodeEscape' | 'notAllowed' }
   // 저장하는 동안 파일이 계속 바뀌었다
   | { path: string; reason: 'changed' }
   // 그 밖의 입출력 오류·거부(detail은 메인이 준 이유 그대로)
@@ -103,21 +105,23 @@ type FilePlan = {
   missingFields: TunableMissing['fields']
 }
 
-// 저장 뒤 실행 취소하면 되돌려 쓸 리터럴(TunableWrite.restore). base(편집할 때 본 디스크 글자)를 그 필드에 쓸 수
-// 있으면 그대로(원래 글자로 돌아간다), 아니면 같은 값의 정규 리터럴이다.
-function restoreLiteral(node: TunableValueNode, base: string): string {
-  if (literalFitsType(node.type, base, node.boxed)) return base
-  return tunableInputLiteral(node.type, displayTunableLiteral(node.type, base)) ?? base
+// 저장 뒤 실행 취소하면 되돌려 쓸 리터럴(TunableWrite.restore). 쓰기 직전 디스크 글자(raw: 바꿀 자리의 원래 글자,
+// 모르면 base)를 그 필드에 쓸 수 있으면 그대로(원래 글자로 돌아간다. '- 5'처럼 비교용 글자와 다른 것도), 아니면 같은
+// 값의 정규 리터럴이다.
+function restoreLiteral(node: TunableValueNode, raw: string): string {
+  if (literalFitsType(node.type, raw, node.boxed)) return raw
+  return tunableInputLiteral(node.type, displayTunableLiteral(node.type, raw)) ?? raw
 }
 
-// 읽은 내용으로 필드마다 할 일을 정한다(파일을 쓸 수 있을 때만 부른다)
+// 읽은 내용(file은 그 파싱 결과)으로 필드마다 할 일을 정한다(파일을 쓸 수 있을 때만 부른다)
 function planFile(
   path: string,
   read: Extract<ReadJavaFileResult, { ok: true }>,
+  file: TunableFile,
   entries: TunableFileEdits
 ): FilePlan {
   const plan: FilePlan = { edits: [], writes: [], drops: [], conflicts: [], missingFields: [] }
-  const nodes = tunableNodes(parseTunables(read.text))
+  const nodes = tunableNodes(file)
   for (const [fieldId, entry] of Object.entries(entries)) {
     const node = nodes.get(fieldId)
     const drop = (): void => {
@@ -136,12 +140,12 @@ function planFile(
     }
     const literal = normalizeLiteral(node.literal)
     // 이미 그 값이다(다른 편집기에서 같은 값으로 고침): 쓰지 않고 기록만 새 디스크 값 기준으로 옮긴다
-    if (literal === entry.value) {
+    if (sameLiteralKey(entry.value, literal)) {
       plan.writes.push({
         path,
         fieldId,
         before: entry.base,
-        after: entry.value,
+        after: literal,
         restore: restoreLiteral(node, entry.base)
       })
       continue
@@ -157,8 +161,9 @@ function planFile(
       path,
       fieldId,
       before: entry.base,
-      after: entry.value,
-      restore: restoreLiteral(node, entry.base)
+      after: normalizeLiteral(entry.value),
+      // 지금 디스크 글자가 base 그대로이므로 그 글자를 되돌린다
+      restore: restoreLiteral(node, node.literal)
     })
   }
   plan.edits.sort((a, b) => a.start - b.start)
@@ -200,6 +205,7 @@ async function saveFile(
     outcome.sources.push({ path, result: read })
     if (!read.ok) {
       if (read.code === 'missing') fileMissing(outcome, path, entries)
+      else if (read.code === 'notAllowed') outcome.failed.push({ path, reason: 'notAllowed' })
       else outcome.failed.push({ path, reason: 'error', detail: read.detail || read.code })
       return
     }
@@ -211,7 +217,13 @@ async function saveFile(
     }
     let plan: FilePlan
     try {
-      plan = planFile(path, read, entries)
+      const file = parseTunables(read.text)
+      // 리터럴 밖에 \u가 생겼으면 모든 값이 읽기 전용이다. 필드가 바뀐 것(충돌)이 아니라 파일 상태라 편집을 남긴다.
+      if (file.unicodeEscapes) {
+        outcome.failed.push({ path, reason: 'unicodeEscape' })
+        return
+      }
+      plan = planFile(path, read, file, entries)
     } catch (error) {
       console.error('튜닝 값을 읽지 못했다', error)
       outcome.failed.push({ path, reason: 'error', detail: ipcErrorDetail(error) })
@@ -247,7 +259,9 @@ async function saveFile(
         outcome.failed.push(
           isFileProblem(result.reason)
             ? { path, reason: result.reason }
-            : { path, reason: 'error', detail: result.reason }
+            : result.reason.startsWith('notAllowed')
+              ? { path, reason: 'notAllowed' }
+              : { path, reason: 'error', detail: result.reason }
         )
         return
     }
@@ -284,6 +298,8 @@ const FAILURE_NOTICES = {
   tooLarge: 'tunableFileTooLarge',
   encoding: 'tunableFileEncoding',
   generated: 'tunableFileGenerated',
+  unicodeEscape: 'tunableFileUnicodeEscape',
+  notAllowed: 'tunableFileNotAllowed',
   changed: 'tunableFileBusy'
 } as const satisfies Record<Exclude<TunableFailure['reason'], 'error'>, string>
 

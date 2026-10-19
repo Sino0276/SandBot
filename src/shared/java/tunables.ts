@@ -17,16 +17,20 @@
 //   있으면 파일 전체가 읽기 전용이다.
 // - 객체는 초기값이 정확히 `new T()`이고 T가 이 파일의 class일 때만 펼친다. 자식 id는 그 필드를 선언한 형식으로 짓는다
 //   (같은 형식의 static 필드 둘은 자식을 나눠 쓴다). 깊이는 4단계까지, 같은 형식이 다시 나오면 멈춘다.
-// - T나 같은 파일의 상위 클래스에 new T()가 부르는 생성자(매개변수 없음·가변 인자, 본문이 비거나 super();뿐이면 뺀다)나
-//   인스턴스 초기화 블록이 있으면 필드 초기값이 실제 값이 아닐 수 있으므로, 펼치되 자식 값은 모두 읽기 전용이다
-//   (initializedInType, 그 안의 객체도 같다). 같은 id는 렌더러가 처음 것만 보므로 한 경로에서라도 그러면 모두 그렇게 둔다.
-// - 선언한 형식의 static 블록이 대입·증감하는 필드(객체 필드는 블록에 나오기만 해도 그 자식)도 읽기 전용이다
-//   (initializedInType). Dashboard는 클래스를 초기화한 뒤의 값을 보이므로 초기값을 고쳐도 소용이 없다. 람다·익명 클래스
-//   안도 보고, 같은 이름의 지역 변수 선언과 다른 이름으로 한정한 것(other.kP)은 뺀다. 애매하면 읽기 전용으로 둔다.
+// - new T()가 부르는 생성자(매개변수 없음·가변 인자, 본문이 비거나 super();뿐이면 뺀다)나 인스턴스 초기화 블록이 자식을
+//   선언한 클래스나 그 아래(T 쪽 하위 클래스)에 있으면 그 자식의 초기값이 실제 값이 아닐 수 있으므로, 펼치되 그 자식 값은
+//   읽기 전용이다(initializedInType, 그 안의 객체도 같다). 위(상위 클래스)의 것은 자식 필드 초기값보다 먼저 돌아 세지 않는다.
+//   같은 id는 렌더러가 처음 것만 보므로 한 경로에서라도 그러면 모두 그렇게 둔다.
+// - 클래스를 초기화할 때 도는 코드가 대입·증감하는 필드(객체 필드는 나오기만 해도 그 자식)도 읽기 전용이다
+//   (initializedInType). Dashboard는 클래스를 초기화한 뒤의 값을 보이므로 초기값을 고쳐도 소용이 없다. 보는 코드는 선언한
+//   형식과, 묶음의 클래스에서 선언한 형식까지의 하위 클래스들의 static 블록, 그리고 그 static 블록·static 필드 초기값이
+//   부르는 같은 형식의 static 메서드(그 메서드가 부르는 것도)다. 람다·익명 클래스 안도 보고, 같은 이름의 지역 변수 선언과
+//   다른 이름으로 한정한 것(other.kP), 하위 클래스가 같은 이름의 필드로 가린 것은 뺀다. 애매하면 읽기 전용으로 둔다.
 // - enum은 읽기 전용이다(SDK enum의 상수 목록은 SDK 소스 없이 알 수 없다).
 //
 // 한계: 다른 파일의 상위 클래스 필드는 보이지 않는다(Dashboard는 getFields로 보인다. 객체는 아는 필드만 펼친다).
-// 다른 파일에 선언된 형식은 펼치지 않는다. 다른 형식(하위 클래스, 중첩 클래스 등)의 static 블록이 하는 대입은 보지 않는다.
+// 다른 파일에 선언된 형식은 펼치지 않는다. 그 밖의 형식(묶음 사슬 밖의 하위 클래스, 중첩 클래스 등)의 static 블록과 다른
+// 형식의 메서드(상위 클래스의 static 메서드, 메서드 참조 Lift::apply 포함)가 하는 대입은 보지 않는다.
 import { decodeJavaQuoted, lexJava, lineAt, type JavaToken } from './lexer'
 import { isLiteralSpanText } from './javaLiteral'
 import type {
@@ -108,6 +112,8 @@ type TypeDecl = {
   hasInstanceInit: boolean
   // static 블록의 토큰 범위 [start, end)('{' 다음부터 닫는 '}'까지)
   staticBlocks: { start: number; end: number }[]
+  // static 메서드 이름 → 본문의 토큰 범위들(오버로드는 여럿, 범위는 static 블록과 같은 모양)
+  staticMethods: Map<string, { start: number; end: number }[]>
 }
 
 type FieldDecl = {
@@ -372,7 +378,8 @@ class Parser {
       superclass: null,
       hasConstructor: false,
       hasInstanceInit: false,
-      staticBlocks: []
+      staticBlocks: [],
+      staticMethods: new Map()
     }
     j++
     // 형식 매개변수(<T extends A>의 extends는 상위 클래스가 아니다). 읽지 못하면 extends를 두지 않는다.
@@ -453,7 +460,13 @@ class Parser {
         continue
       }
       if (this.isIdent(typeEnd) && this.isOp(typeEnd + 1, '(')) {
-        i = this.skipMethodRest(typeEnd + 1)
+        const name = this.tx(typeEnd)
+        i = this.skipMethodRest(typeEnd + 1, (body) => {
+          if (!modifiers.keywords.has('static')) return
+          const bodies = decl.staticMethods.get(name)
+          if (bodies) bodies.push(body)
+          else decl.staticMethods.set(name, [body])
+        })
         continue
       }
       if (this.isIdent(typeEnd)) {
@@ -513,11 +526,16 @@ class Parser {
     return j
   }
 
-  // 메서드의 나머지('(' 위치부터): 매개변수, throws, 본문이나 ';'(어노테이션 형식의 default 값 포함)
-  skipMethodRest(i: number): number {
+  // 메서드의 나머지('(' 위치부터): 매개변수, throws, 본문이나 ';'(어노테이션 형식의 default 값 포함).
+  // 본문이 있으면 그 토큰 범위('{' 다음부터 닫는 '}'까지)를 onBody에 넘긴다.
+  skipMethodRest(i: number, onBody?: (body: { start: number; end: number }) => void): number {
     let j = this.skipBalanced(i)
     while (j < this.length) {
-      if (this.isOp(j, '{')) return this.skipBalanced(j)
+      if (this.isOp(j, '{')) {
+        const end = this.skipBalanced(j)
+        onBody?.({ start: j + 1, end })
+        return end
+      }
       if (this.isOp(j, ';')) return j + 1
       if (this.isOp(j, '}')) return j
       if (this.isKeyword(j, 'default')) return this.skipStatement(j)
@@ -935,11 +953,32 @@ function analyzeValue(
 
 const ASSIGNMENT_OPERATORS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<='])
 
-// 한정자 이름 조각(a.b)이 owner를 가리킬 수 있는지: 이 파일의 형식으로 풀리면 그것이 owner인지, 풀리지 않으면 마지막
-// 조각이 owner의 이름인지(패키지로 한정한 이름). 지역 변수·다른 형식(other.kP)은 아니다.
-function namesOwner(ctx: Context, owner: TypeDecl, segments: readonly string[]): boolean {
-  const resolved = resolveType(segments, owner, ctx.topLevel)
-  return resolved ? resolved === owner : segments[segments.length - 1] === owner.name
+// 한정자 이름 조각(a.b, scope 안에서 푼다)이 가리킬 수 있는 targets의 순번(없으면 -1): 이 파일의 형식으로 풀리면 그
+// 형식, 풀리지 않으면 마지막 조각과 이름이 같은 것(패키지로 한정한 이름). 지역 변수·다른 형식(other.kP)은 아니다.
+function qualifierTarget(
+  ctx: Context,
+  scope: TypeDecl,
+  targets: readonly TypeDecl[],
+  segments: readonly string[]
+): number {
+  const resolved = resolveType(segments, scope, ctx.topLevel)
+  if (resolved) return targets.indexOf(resolved)
+  return targets.findIndex((target) => target.name === segments[segments.length - 1])
+}
+
+// 이름 토큰(i) 앞의 한정자(a.b.)를 모은다. start는 한정자의 첫 토큰이고, expression은 식으로 한정한 것(f().kP,
+// a[0].kP)이라 무엇을 가리키는지 알 수 없다는 뜻이다.
+function qualifierOf(
+  parser: Parser,
+  i: number
+): { start: number; segments: string[]; expression: boolean } {
+  let start = i
+  const segments: string[] = []
+  while (parser.isOp(start - 1, '.') && parser.isIdent(start - 2)) {
+    segments.unshift(parser.tx(start - 2))
+    start -= 2
+  }
+  return { start, segments, expression: parser.isOp(start - 1, '.') }
 }
 
 // 이름 토큰(i)이 지역 변수·매개변수 선언의 이름인지: 앞이 형식의 끝(이름, 기본형, '>', ']')이고 뒤가 선언이 이어지는 글자
@@ -972,36 +1011,88 @@ function assignedAt(parser: Parser, start: number, i: number): boolean {
   )
 }
 
-// 필드를 선언한 형식의 static 블록이 그 필드를 정하는지. 값 필드는 대입·증감, 객체 필드(anyUse)는 블록에 나오기만 해도
-// (PARAMS.kS = 1, f(PARAMS)) 정하는 것으로 본다. 람다·익명 클래스 안도 같다. 같은 이름의 지역 변수 선언과 다른 이름으로
+const declaresField = (decl: TypeDecl, name: string): boolean =>
+  decl.fields.some((field) => field.name === name)
+
+// 클래스를 초기화할 때 도는 코드(staticBlockNames)가 그 필드를 정하는지. 값 필드는 대입·증감, 객체 필드(anyUse)는 나오기만
+// 해도(PARAMS.kS = 1, f(PARAMS)) 정하는 것으로 본다. 람다·익명 클래스 안도 같다. 같은 이름의 지역 변수 선언과 다른 이름으로
 // 한정한 것(other.kP)은 빼고, 식으로 한정한 것(f().kP)은 알 수 없으므로 넣는다. 지역 변수의 범위는 따지지 않으므로 그
 // 지역 변수에 대입한 것도 필드로 본다(애매하면 읽기 전용).
-function setInStaticBlock(ctx: Context, field: FieldDecl, anyUse: boolean): boolean {
+// below는 선언한 형식의 하위 클래스들(묶음의 클래스부터 선언한 형식 바로 아래까지, classChain 순서)이고 그 static 블록도
+// 본다. 하위 클래스 블록의 단순 이름은 그 클래스에서 선언한 형식까지 사이의 클래스가 같은 이름의 필드(static 여부·접근
+// 한정자와 관계없음)로 가리지 않을 때만 이 필드다. 한정한 이름도 같다(DriveConstants.X, CompBot.X).
+function setInStaticBlock(
+  ctx: Context,
+  field: FieldDecl,
+  anyUse: boolean,
+  below: readonly TypeDecl[] = []
+): boolean {
   const { parser } = ctx
-  for (const i of staticBlockNames(parser, field.owner).get(field.name) ?? []) {
-    let start = i
-    const qualifier: string[] = []
-    while (parser.isOp(start - 1, '.') && parser.isIdent(start - 2)) {
-      qualifier.unshift(parser.tx(start - 2))
-      start -= 2
+  const owner = field.owner
+  for (let level = 0; level <= below.length; level++) {
+    // 블록이 있는 형식부터 선언한 형식까지(가까운 것부터)
+    const targets = [...below.slice(level), owner]
+    const scope = targets[0]
+    const hiddenFrom = (index: number): boolean =>
+      targets.slice(index, -1).some((type) => declaresField(type, field.name))
+    for (const i of staticBlockNames(ctx, scope).get(field.name) ?? []) {
+      const { start, segments, expression } = qualifierOf(parser, i)
+      if (!expression) {
+        if (segments.length > 0) {
+          const target = qualifierTarget(ctx, scope, targets, segments)
+          if (target < 0 || hiddenFrom(target)) continue
+        } else if (hiddenFrom(0) || declaresLocal(parser, i)) continue
+      }
+      if (anyUse || assignedAt(parser, start, i)) return true
     }
-    if (!parser.isOp(start - 1, '.')) {
-      if (qualifier.length > 0 && !namesOwner(ctx, field.owner, qualifier)) continue
-      if (qualifier.length === 0 && declaresLocal(parser, i)) continue
-    }
-    if (anyUse || assignedAt(parser, start, i)) return true
   }
   return false
 }
 
-// 형식의 static 블록에 나오는 이름 → 토큰 위치들(형식마다 한 번 만든 표)
+// 호출 이름 토큰(i, 뒤가 '(')이 decl의 메서드를 부를 수 있는지: 한정자가 없거나(new T()는 뺀다) decl로 한정한 것
+function callsOwnMethod(ctx: Context, decl: TypeDecl, i: number): boolean {
+  const { parser } = ctx
+  const { segments, expression } = qualifierOf(parser, i)
+  if (expression) return false
+  if (segments.length === 0) return !parser.isKeyword(i - 1, 'new')
+  return qualifierTarget(ctx, decl, [decl], segments) === 0
+}
+
+// 클래스를 초기화할 때 도는 코드의 토큰 범위: static 블록과, static 블록·static 필드 초기값이 부르는 같은 형식의 static
+// 메서드 본문(그 본문이 부르는 것도 차례로 따라간다). 오버로드는 이름이 같으면 모두 본다.
+function staticInitRanges(ctx: Context, decl: TypeDecl): { start: number; end: number }[] {
+  const { parser } = ctx
+  const ranges = [...decl.staticBlocks]
+  if (decl.staticMethods.size === 0) return ranges
+  const seeds = [
+    ...decl.staticBlocks,
+    ...decl.fields.flatMap((field) => (isStatic(field) && field.init ? [field.init] : []))
+  ]
+  const followed = new Set<string>()
+  for (let k = 0; k < seeds.length; k++) {
+    const { start, end } = seeds[k]
+    for (let i = start; i < end; i++) {
+      if (!parser.isIdent(i) || !parser.isOp(i + 1, '(')) continue
+      const name = parser.tx(i)
+      const bodies = decl.staticMethods.get(name)
+      if (!bodies || followed.has(name) || !callsOwnMethod(ctx, decl, i)) continue
+      followed.add(name)
+      ranges.push(...bodies)
+      seeds.push(...bodies)
+    }
+  }
+  return ranges
+}
+
+// 클래스를 초기화할 때 도는 코드(staticInitRanges)에 나오는 이름 → 토큰 위치들(형식마다 한 번 만든 표)
 const staticNameTables = new WeakMap<TypeDecl, Map<string, number[]>>()
 
-function staticBlockNames(parser: Parser, decl: TypeDecl): Map<string, number[]> {
+function staticBlockNames(ctx: Context, decl: TypeDecl): Map<string, number[]> {
+  const { parser } = ctx
   let table = staticNameTables.get(decl)
   if (table) return table
   table = new Map()
-  for (const block of decl.staticBlocks) {
+  for (const block of staticInitRanges(ctx, decl)) {
     for (let i = block.start; i < block.end; i++) {
       if (!parser.isIdent(i)) continue
       const name = parser.tx(i)
@@ -1031,13 +1122,15 @@ function newNoArgs(parser: Parser, range: { start: number; end: number }): strin
   return (range.end - 2 - (range.start + 1)) % 2 === 1 ? names : null
 }
 
-// forced: 바깥 객체 형식의 생성자·초기화 블록이나 static 블록이 값을 정할 수 있다(자식 값을 모두 읽기 전용으로 둔다)
+// forced: 바깥 객체 형식의 생성자·초기화 블록이나 static 블록이 값을 정할 수 있다(자식 값을 모두 읽기 전용으로 둔다).
+// below: 맨 위 필드를 보이는 묶음의 클래스 사슬에서 선언한 형식 아래의 클래스들(그 static 블록도 본다, setInStaticBlock)
 function makeNode(
   ctx: Context,
   field: FieldDecl,
   depth: number,
   stack: readonly TypeDecl[],
-  forced: boolean
+  forced: boolean,
+  below: readonly TypeDecl[] = []
 ): TunableNode {
   const { parser, text } = ctx
   const id = `${field.owner.path}#${field.name}`
@@ -1054,7 +1147,7 @@ function makeNode(
   if (info.kind === 'leaf') {
     const base = { kind: 'value' as const, id, name, type: info.type, boxed: info.boxed, line }
     // 초기값을 고쳐도 실행할 때의 값이 바뀌지 않는다(다른 이유보다 먼저 보인다)
-    if (forced || (isStatic(field) && setInStaticBlock(ctx, field, false))) {
+    if (forced || (isStatic(field) && setInStaticBlock(ctx, field, false, below))) {
       return { ...base, literal: initText, span, editable: false, reason: 'initializedInType' }
     }
     if (!field.init || !span) {
@@ -1074,7 +1167,7 @@ function makeNode(
   }
   const object = { kind: 'object' as const, id, name, typeName: typeText, text: initText, line }
   // 바깥 객체의 생성자 등이나 static 블록이 이 객체를 바꾸거나 만들 수 있다
-  const initialized = forced || (isStatic(field) && setInStaticBlock(ctx, field, true))
+  const initialized = forced || (isStatic(field) && setInStaticBlock(ctx, field, true, below))
   if (!field.init || !span) {
     return { ...object, children: [], reason: initialized ? 'initializedInType' : 'noInitializer' }
   }
@@ -1092,13 +1185,17 @@ function makeNode(
     !stack.includes(decl)
   if (!expandable) return { ...object, children: [], reason: 'object' }
   const chain = classChain(ctx, decl)
-  // 생성자·인스턴스 초기화 블록이 필드를 다시 정할 수 있다(new T()는 상위 클래스의 것도 실행한다)
-  const childrenForced =
-    initialized || chain.some((type) => type.hasConstructor || type.hasInstanceInit)
+  // 생성자·인스턴스 초기화 블록이 필드를 다시 정할 수 있다. new T()는 가장 위 상위 클래스부터 클래스마다 인스턴스
+  // 초기화(필드 초기값·초기화 블록)와 생성자 본문을 차례로 돌리므로, 자식을 선언한 클래스와 그 아래(T 쪽) 클래스의 것만
+  // 그 자식의 초기값을 덮어쓸 수 있다(위 클래스 생성자가 하위 메서드를 불러 정해도 뒤의 필드 초기값이 이긴다).
   const children = chainFields(
     chain,
     (child) => child.modifiers.keywords.has('public') && !isStatic(child)
-  ).map((child) => makeNode(ctx, child, depth + 1, [...stack, decl], childrenForced))
+  ).map((child) => {
+    const upToOwner = chain.slice(0, chain.indexOf(child.owner) + 1)
+    const byInit = upToOwner.some((type) => type.hasConstructor || type.hasInstanceInit)
+    return makeNode(ctx, child, depth + 1, [...stack, decl], initialized || byInit)
+  })
   return { ...object, children }
 }
 
@@ -1168,13 +1265,16 @@ export function parseTunables(text: string): TunableFile {
     )
     if (disabled) continue
     const alternative = configValue(parser, config)
-    // 자기 필드 뒤에 같은 파일의 상위 클래스 필드(getFields)
-    const fields = chainFields(classChain(ctx, decl), isTopLevelTunable)
+    // 자기 필드 뒤에 같은 파일의 상위 클래스 필드(getFields). 물려받은 필드는 그 아래 클래스들의 static 블록도 본다.
+    const chain = classChain(ctx, decl)
+    const fields = chainFields(chain, isTopLevelTunable)
     blocks.push({
       classPath: decl.path,
       name: alternative ? alternative : decl.name,
       line: lineAt(ctx.lineStarts, parser.tokens[decl.nameToken].start),
-      fields: fields.map((field) => makeNode(ctx, field, 0, [], false))
+      fields: fields.map((field) =>
+        makeNode(ctx, field, 0, [], false, chain.slice(0, chain.indexOf(field.owner)))
+      )
     })
   }
   return {

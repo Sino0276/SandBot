@@ -765,22 +765,61 @@ class Params { public double outside = 1; }
       }
     })
 
-    it('같은 파일 상위 클래스의 생성자·초기화 블록도 센다(new T()가 실행한다)', () => {
+    it('같은 파일 상위 클래스의 생성자·초기화 블록은 그 클래스와 위의 필드만 정한다(하위 필드 초기값이 뒤에 돈다)', () => {
+      // javac + Dashboard 0.6.0으로 확인: x = 2.0, z = 4.0(상위가 정함), y = 1.0, w = 1.0, v = 6.0(초기값 그대로)
       const text = `${CONFIG}@Config public class A {
   public static class Base { public double x = 1; public Base() { x = 2; } }
   public static class InitBase { public double z = 1; { z = 4; } }
   public static class P extends Base { public double y = 1; }
   public static class Q extends InitBase { public double w = 1; }
+  public static class VBase { public VBase() { init(); } void init() {} }
+  public static class V extends VBase { public double v = 6; @Override void init() { v = 7; } }
   public static P p = new P();
   public static Q q = new Q();
+  public static V vv = new V();
 }`
       expect(states(text)).toEqual([
         ['A#p', 'object', null],
-        ['A.P#y', false, 'initializedInType'],
+        ['A.P#y', true, null],
         ['A.Base#x', false, 'initializedInType'],
         ['A#q', 'object', null],
-        ['A.Q#w', false, 'initializedInType'],
-        ['A.InitBase#z', false, 'initializedInType']
+        ['A.Q#w', true, null],
+        ['A.InitBase#z', false, 'initializedInType'],
+        ['A#vv', 'object', null],
+        ['A.V#v', true, null]
+      ])
+      // 하위 클래스의 생성자는 상위 클래스 필드도 정할 수 있다
+      const sub = `${CONFIG}@Config public class A {
+  public static class Base { public double x = 1; }
+  public static class P extends Base { public double y = 1; public P() { x = 2; } }
+  public static P p = new P();
+}`
+      expect(states(sub)).toEqual([
+        ['A#p', 'object', null],
+        ['A.P#y', false, 'initializedInType'],
+        ['A.Base#x', false, 'initializedInType']
+      ])
+    })
+
+    it('공용 상위 클래스의 생성자가 같은 형식의 다른 객체를 읽기 전용으로 만들지 않는다', () => {
+      // 리뷰의 Cascade.java(Dashboard: LIFT.name = "LiftParams", 나머지는 초기값 그대로)
+      const text = `${CONFIG}@Config public class Cascade {
+  public static class Pid { public double kP = 0.5; public double kD = 0.01; }
+  public static class Mechanism { public String name = "m"; public Mechanism() { name = getClass().getSimpleName(); } }
+  public static class LiftParams extends Mechanism { public Pid pid = new Pid(); public double maxHeight = 30; }
+  public static LiftParams LIFT = new LiftParams();
+  public static Pid TURRET_PID = new Pid();
+}`
+      expect(states(text)).toEqual([
+        ['Cascade#LIFT', 'object', null],
+        ['Cascade.LiftParams#pid', 'object', null],
+        ['Cascade.Pid#kP', true, null],
+        ['Cascade.Pid#kD', true, null],
+        ['Cascade.LiftParams#maxHeight', true, null],
+        ['Cascade.Mechanism#name', false, 'initializedInType'],
+        ['Cascade#TURRET_PID', 'object', null],
+        ['Cascade.Pid#kP', true, null],
+        ['Cascade.Pid#kD', true, null]
       ])
     })
 
@@ -977,6 +1016,52 @@ class Params { public double outside = 1; }
       })
       expect(node(params(''), 'Lift#SPARE')).toMatchObject({ reason: 'noInitializer' })
     })
+
+    it('static 블록·static 필드 초기값이 부르는 같은 형식의 static 메서드(그 메서드가 부르는 것도)를 본다', () => {
+      // 리뷰의 SB.java·Rep.java(javac + Dashboard 0.6.0: a = 10, c = 30, f = 60, viaMethod = 100, 나머지는 초기값)
+      const text = `${CONFIG}@Config public class L {
+  public static double a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8;
+  public static class Pid { public double kP = 1; }
+  public static Pid PID = new Pid();
+  static { L.one(); two(1); rec(); }
+  static void one() { a = 10; }
+  static void two(int n) { }
+  static void two(String s) { b = 20; }
+  static int depth;
+  static void rec() { if (depth++ < 1) rec(); chain(); }
+  static void chain() { set(); }
+  static void set() { c = 30; tune(PID); }
+  static void tune(Pid p) { }
+  static void never() { d = 40; }
+  void instance() { e = 50; }
+  public static double viaInit = initF();
+  static double initF() { f = 60; return 0; }
+  static Helper other() { return new Helper(); }
+  static { Helper.set(); new Helper().run(); other().set(); Runnable r = Helper::g; }
+  static class Helper { static void set() { } void run() { } static void g() { } }
+  static void g() { g = 70; }
+}`
+      const editable = Object.fromEntries(
+        nodes(parseTunables(text)).map((item) => [
+          item.id,
+          item.kind === 'value' ? item.editable : item.reason
+        ])
+      )
+      expect(editable).toMatchObject({
+        'L#a': false,
+        // 이름이 같은 메서드(오버로드)는 모두 본다(애매하면 읽기 전용)
+        'L#b': false,
+        'L#c': false,
+        // 부르지 않는 메서드, 인스턴스 메서드, 다른 형식으로 한정한 호출, 메서드 참조는 보지 않는다
+        'L#d': true,
+        'L#e': true,
+        'L#f': false,
+        'L#g': true,
+        'L#h': true,
+        // 메서드 안에 나온 객체 필드는 자식이 읽기 전용
+        'L.Pid#kP': false
+      })
+    })
   })
 
   describe('같은 파일의 상위 클래스(extends)', () => {
@@ -1043,6 +1128,54 @@ interface Iface { double X = 1; }`
         ['H.Child#OWN', true, null],
         ['H.Base#G', false, 'initializedInType']
       ])
+    })
+
+    it('묶음 클래스와 사이 클래스의 static 블록이 정한 물려받은 필드도 읽기 전용이다(같은 이름으로 가린 것은 뺀다)', () => {
+      // 리뷰의 SubStatic.java와 Rep.java(javac + Dashboard 0.6.0: CompBot의 MAX_VEL = 50, C의 V·W·Z = 9, X·Y는 초기값)
+      const text = `${CONFIG}public class S {
+    public static class DriveConstants { public static double MAX_VEL = 30; public static double MAX_ACCEL = 30; }
+    @Config public static class CompBot extends DriveConstants {
+        public static double TRACK_WIDTH = 14;
+        static { MAX_VEL = 50; }
+    }
+    public static class D { public static double X = 1, Y = 2, Z = 3, W = 4, V = 5; }
+    public static class M extends D { public static double X = 5; }
+    @Config public static class C extends M {
+        static { X = 9; D.Z = 9; C.W = 9; setV(); M.X = 9; Other.Y = 9; }
+        static void setV() { V = 9; }
+    }
+    static class Other { static double Y; }
+}`
+      const file = parseTunables(text)
+      const fieldStates = (index: number): [string, boolean | string][] =>
+        file.blocks[index].fields.map((field) => [
+          field.id,
+          field.kind === 'value' ? field.editable : field.kind
+        ])
+      expect(fieldStates(0)).toEqual([
+        ['S.CompBot#TRACK_WIDTH', true],
+        ['S.DriveConstants#MAX_VEL', false],
+        ['S.DriveConstants#MAX_ACCEL', true]
+      ])
+      expect(fieldStates(1)).toEqual([
+        // X는 M이 가린 이름이라 C의 static 블록이 정하는 것은 M.X다(Dashboard는 D.X = 1을 보인다)
+        ['S.D#X', true],
+        ['S.D#Y', true],
+        ['S.D#Z', false],
+        ['S.D#W', false],
+        ['S.D#V', false]
+      ])
+      expect(value(text, 'S.DriveConstants#MAX_VEL').reason).toBe('initializedInType')
+      // 하위 클래스를 묶음으로 보지 않는 곳(DriveConstants 자신의 묶음)도 같은 id라 읽기 전용이다
+      const own = text.replace(
+        'public static class DriveConstants',
+        '@Config public static class DriveConstants'
+      )
+      expect(value(own, 'S.DriveConstants#MAX_VEL').editable).toBe(false)
+      expect(parseTunables(own).blocks[0].fields[0]).toMatchObject({
+        id: 'S.DriveConstants#MAX_VEL',
+        editable: false
+      })
     })
 
     it('객체 자식: 상위 클래스의 public 인스턴스 필드도 펼친다(다른 파일의 상위 클래스는 아는 필드만)', () => {

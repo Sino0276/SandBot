@@ -6,8 +6,10 @@ import {
 import type { TunableFile, TunableNode, TunableValueType } from '../../../shared/java/tunableTypes'
 
 // 저장하지 않은 튜닝 값(씬 문서의 sceneStore.tunables). 원본은 Java 파일이고, SandBot은 디스크 값과 다른 필드만
-// {value, base}로 든다. value는 쓸 리터럴, base는 편집할 때 본 디스크 리터럴이다(둘 다 normalizeLiteral로 맞춘 글자).
-// 디스크와 같아지면(value === base) 항목을 지우므로, 튜닝 값의 dirty는 "비어 있지 않음"이다.
+// {value, base}로 든다. value는 쓸 리터럴, base는 편집할 때 본 디스크 리터럴이다(둘 다 normalizeLiteral로 맞춘 글자.
+// 저장 뒤 실행 취소로 되돌릴 원래 글자(TunableWrite.restore)만 value에 '- 5'처럼 맞추지 않은 채로 들어가므로, value를
+// 디스크 글자와 비교할 때는 sameLiteralKey를 쓴다). 디스크와 같아지면(value === base) 항목을 지우므로, 튜닝 값의 dirty는
+// "비어 있지 않음"이다.
 // 저장(project.json과 함께 Ctrl+S)할 때만 파일에 쓰고, project.json에는 넣지 않는다.
 
 export type TunableEdit = { readonly value: string; readonly base: string }
@@ -19,10 +21,10 @@ export type TunableEdits = Readonly<Record<string, TunableFileEdits>>
 // 빈 문서. 같은 객체를 써서, 비어 있는 것을 다시 비울 때 참조가 바뀌지 않게 한다(실행 취소에 빈 단계가 생기지 않음).
 export const NO_TUNABLE_EDITS: TunableEdits = Object.freeze({})
 
-// 저장 때 파일에 쓴(또는 이미 그 값이던) 필드. before는 그 편집의 base(쓰기 직전 디스크 값), after는 새 디스크 값.
-// restore는 before를 되돌려 쓸 리터럴이다. before가 그 필드에 쓸 수 있는 리터럴이면(literalFitsType) before 그대로라
-// 저장 뒤 실행 취소하고 다시 저장하면 파일이 원래 글자로 돌아간다(git diff가 비게). 쓸 수 없으면(제어 문자가 든 문자열
-// 등) 같은 값의 정규 리터럴이다.
+// 저장 때 파일에 쓴(또는 이미 그 값이던) 필드. before는 그 편집의 base(쓰기 직전 디스크 값), after는 새 디스크 값(둘 다
+// normalizeLiteral로 맞춘 글자). restore는 before를 되돌려 쓸 리터럴이다. 쓰기 직전 디스크 글자가 그 필드에 쓸 수 있는
+// 리터럴이면(literalFitsType) 그 글자 그대로라('- 5'의 공백 포함) 저장 뒤 실행 취소하고 다시 저장하면 파일이 원래 글자로
+// 돌아간다(git diff가 비게). 쓸 수 없으면(제어 문자가 든 문자열 등) 같은 값의 정규 리터럴이다.
 export type TunableWrite = {
   path: string
   fieldId: string
@@ -69,6 +71,12 @@ export function hasTunableEdits(edits: TunableEdits): boolean {
   return Object.values(edits).some((file) => Object.keys(file).length > 0)
 }
 
+// 편집 값(쓸 리터럴)이 비교용 글자(normalizeLiteral로 맞춘 디스크 글자)와 같은지. 문자열 리터럴은 토큰 하나라 맞춰도
+// 같으므로 긴 문자열을 다시 읽지 않는다.
+export function sameLiteralKey(value: string, key: string): boolean {
+  return value === key || (!value.startsWith('"') && normalizeLiteral(value) === key)
+}
+
 // 저장해 파일에 쓴 뒤 문서 하나(현재 문서와 실행 취소 기록의 모든 스냅샷)를 새 디스크 값 기준으로 옮긴다.
 // 항목이 없는 스냅샷은 "그때 디스크 값(before)"을 뜻했으므로, 이제는 {value: restore, base: after}가 된다. 그래서 저장한
 // 뒤 실행 취소하면 dirty가 되고, 다시 저장하면 파일이 이전 값으로 돌아간다. base가 before와 다른 항목은 다른 디스크
@@ -82,10 +90,13 @@ export function rebaseAfterWrite(
   for (const { path, fieldId, before, after, restore } of writes) {
     const entry = next[path]?.[fieldId]
     if (entry && entry.base !== before) {
-      if (entry.value === after) next = withoutTunable(next, path, fieldId)
+      if (sameLiteralKey(entry.value, after)) next = withoutTunable(next, path, fieldId)
       continue
     }
-    next = withTunable(next, path, fieldId, entry ? entry.value : restore, after)
+    const value = entry ? entry.value : restore
+    next = sameLiteralKey(value, after)
+      ? withoutTunable(next, path, fieldId)
+      : withTunable(next, path, fieldId, value, after)
   }
   return next
 }
@@ -109,6 +120,16 @@ export function tunableNodes(file: TunableFile): Map<string, TunableNode> {
   for (const block of file.blocks) for (const field of block.fields) visit(field)
   nodeMaps.set(file, map)
   return map
+}
+
+// 인스펙터에 값 칸이 없는 편집(file이 null이면 모두): 1 MB를 넘어 읽지 않았거나 읽지 못한 파일, 밖에서 지워지거나 이름이
+// 바뀐 필드, 같은 id가 값이 아니게 된 것(객체 등). 인스펙터가 따로 보여 버릴 수 있게 한다.
+export function editsWithoutRow(
+  edits: TunableFileEdits | undefined,
+  file: TunableFile | null
+): [string, TunableEdit][] {
+  const nodes = file ? tunableNodes(file) : null
+  return Object.entries(edits ?? {}).filter(([id]) => nodes?.get(id)?.kind !== 'value')
 }
 
 // 고칠 수 있는 값 칸인지(파일 자체를 쓸 수 있는지는 따로 본다)
@@ -179,7 +200,11 @@ export function displayTunable(
     text: shownLiteral(node, entry.value, true),
     pending: true,
     fileValue:
-      entry.base === disk || entry.value === disk ? null : node.literal === null ? '—' : diskText
+      entry.base === disk || (disk !== null && sameLiteralKey(entry.value, disk))
+        ? null
+        : node.literal === null
+          ? '—'
+          : diskText
   }
 }
 

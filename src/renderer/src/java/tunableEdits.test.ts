@@ -5,6 +5,7 @@ import type { SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import {
   displayTunable,
+  editsWithoutRow,
   hasTunableEdits,
   NO_TUNABLE_EDITS,
   rebaseAfterWrite,
@@ -12,6 +13,7 @@ import {
   tunableFieldLabel,
   tunableInputLiteral,
   tunableNodes,
+  sameLiteralKey,
   withoutTunable,
   withTunable,
   type TunableEdits,
@@ -271,6 +273,45 @@ describe('튜닝 값 표시', () => {
     expect(nodes.get('MecanumDrive.Params#kS')).toBe(kS)
     expect(nodes.get('MecanumDrive#PARAMS')?.kind).toBe('object')
     expect(tunableNodes(file)).toBe(nodes)
+  })
+
+  it('값 칸이 없는 편집(읽지 않은 파일, 없어진 필드, 값이 아니게 된 id)을 따로 고른다', () => {
+    const edits = {
+      [KP]: { value: '0.2', base: '0.5' },
+      'Lift#gone': { value: '1.0', base: '2.0' },
+      'MecanumDrive#PARAMS': { value: '1.0', base: '2.0' }
+    }
+    expect(editsWithoutRow(edits, file)).toEqual([
+      ['Lift#gone', { value: '1.0', base: '2.0' }],
+      ['MecanumDrive#PARAMS', { value: '1.0', base: '2.0' }]
+    ])
+    // 1 MB를 넘어 내용이 없거나 읽지 못한 파일이면 모두
+    expect(editsWithoutRow(edits, null).map(([id]) => id)).toEqual([
+      KP,
+      'Lift#gone',
+      'MecanumDrive#PARAMS'
+    ])
+    expect(editsWithoutRow(undefined, file)).toEqual([])
+  })
+
+  it('되돌릴 원래 글자(- 5)는 비교용 글자(-5)와 같은 값이다(파일 값 알림을 띄우지 않는다)', () => {
+    expect(sameLiteralKey('- 5', '-5')).toBe(true)
+    expect(sameLiteralKey('-\t5', '-5')).toBe(true)
+    expect(sameLiteralKey('-5', '-5')).toBe(true)
+    expect(sameLiteralKey('- 5', '5')).toBe(false)
+    expect(sameLiteralKey('"a  b"', '"a  b"')).toBe(true)
+    expect(sameLiteralKey('"a"', '"b"')).toBe(false)
+    const minus = { ...kP, type: 'int' as const, literal: '-5' }
+    expect(displayTunable(minus, { value: '- 5', base: '7' }, true)).toEqual({
+      text: '-5',
+      pending: true,
+      fileValue: null
+    })
+    // 저장 뒤 기록: 그 값이 새 디스크 값이면 항목이 남지 않는다
+    const write: TunableWrite = { path: LIFT, fieldId: KP, before: '7', after: '-5', restore: '7' }
+    expect(rebaseAfterWrite(withTunable(NO_TUNABLE_EDITS, LIFT, KP, '- 5', '7'), [write])).toEqual(
+      {}
+    )
   })
 
   it('저장하지 않은 값을 먼저 보이고, 편집할 때 본 값과 디스크 값이 다르면 파일 값을 알린다', () => {

@@ -120,7 +120,8 @@ export type OpenJavaFileResult =
   | { ok: false; code: 'notAllowed' | 'missing' | 'launchFailed' | 'openFailed'; detail: string }
 
 // 튜닝 값을 쓸 수 없는 파일 상태: encoding(UTF-8로 그대로 되돌릴 수 없음), generated(생성 표식),
-// readOnly(읽기 전용 파일: 쓰기 비트 없음, Windows 읽기 전용 속성), tooLarge(1 MB 초과).
+// readOnly(읽기 전용: 쓰기 비트 없음, Windows 읽기 전용 속성, 이 사용자가 파일이나 그 폴더에 쓸 수 없음),
+// tooLarge(1 MB 초과).
 // 쓰기(writeJavaLiterals)의 refused reason도 같은 글자다(읽은 뒤 파일 상태가 바뀌었을 때).
 export type JavaFileProblem = 'encoding' | 'generated' | 'readOnly' | 'tooLarge'
 

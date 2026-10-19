@@ -6,7 +6,7 @@ import type {
 } from '../../../shared/ipc'
 import { isLiteralSpanText } from '../../../shared/java/javaLiteral'
 import type { TunableFile, TunableNode, TunableValueType } from '../../../shared/java/tunableTypes'
-import { clearHistory, initHistory, undo } from '../editor/history'
+import { clearHistory, initHistory, redo, undo } from '../editor/history'
 import { useNoticeStore } from '../editor/noticeStore'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
@@ -44,7 +44,8 @@ vi.mock('../../../shared/java/tunables', () => ({
     }
     return {
       blocks: [{ classPath: className, name: className, line: 1, fields }],
-      unicodeEscapes: false,
+      // 주석 안의 \\u(이 테스트의 글자만)
+      unicodeEscapes: /\/\/[^\n]*\\u/.test(text),
       staticFieldsWithoutConfig: false
     }
   }
@@ -133,9 +134,17 @@ describe('튜닝 값 저장', () => {
     const source = useJavaSourcesStore.getState().files[LIFT]
     expect(source?.status === 'ready' && source.hash).toBe(hashOf(disk.get(LIFT)!))
     expect(noticeKeys()).toEqual([])
-    // 저장 뒤 실행 취소하면 이전 디스크 값이 저장하지 않은 값이 된다
+    // 저장 뒤 실행 취소하면 이전 디스크 값이 저장하지 않은 값이 된다(부호 뒤 공백까지 원래 글자 그대로)
     expect(undo()).toBe(true)
-    expect(scene().tunables[LIFT]['Lift#n']).toEqual({ value: '-3', base: '4' })
+    expect(scene().tunables[LIFT]['Lift#n']).toEqual({ value: '- 3', base: '4' })
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.25'), field('int', 'n', '- 3')))
+    expect(scene().tunables).toEqual({})
+    // 다시 실행하면 그 저장의 디스크 값(4) 기준으로 맞춘 편집이 된다(base는 비교용 글자 '-3')
+    expect(redo()).toBe(true)
+    expect(scene().tunables[LIFT]['Lift#n']).toEqual({ value: '4', base: '-3' })
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.25'), field('int', 'n', '4')))
   })
 
   it('다른 줄이 바뀐 것은 충돌이 아니다', async () => {
@@ -351,23 +360,64 @@ describe('튜닝 값 저장', () => {
     const again = await save()
     expect(again.failed).toEqual([{ path: LIFT, reason: 'error', detail: 'EIO' }])
     expect(scene().tunables[LIFT]).toBeDefined()
-    // 파일 상태가 아닌 거부(허용하지 않는 경로 등)는 메인의 이유를 그대로 보인다
+    // 파일 상태가 아닌 그 밖의 거부는 메인의 이유를 그대로 보인다
     writeJavaLiterals.mockImplementationOnce(async () => ({
       status: 'refused',
-      reason: 'notAllowed: became a link'
+      reason: 'expected text does not match'
     }))
     const refused = await save()
     expect(refused.failed).toEqual([
-      { path: LIFT, reason: 'error', detail: 'notAllowed: became a link' }
+      { path: LIFT, reason: 'error', detail: 'expected text does not match' }
     ])
     expect(isCompleteTunableSave(refused)).toBe(false)
     expect(useNoticeStore.getState().notices).toMatchObject([
       {
         key: 'tunableWriteFailed',
-        params: { file: 'Lift.java', detail: 'notAllowed: became a link' }
+        params: { file: 'Lift.java', detail: 'expected text does not match' }
       }
     ])
     expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
+  })
+
+  it('실패: 메인이 받지 않는 파일이 됐으면(밖을 가리키는 링크 등, notAllowed) 값을 남기고 번역한 이유로 알린다', async () => {
+    disk.set(LIFT, lift(field('double', 'kP', '0.1')))
+    scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')
+    readJavaFile.mockImplementationOnce(async () => ({
+      ok: false,
+      code: 'notAllowed',
+      detail: 'outside TeamCode/src/main/java'
+    }))
+    const read = await save()
+    expect(read.failed).toEqual([{ path: LIFT, reason: 'notAllowed' }])
+    expect(noticeKeys()).toEqual(['tunableFileNotAllowed'])
+    writeJavaLiterals.mockImplementationOnce(async () => ({
+      status: 'refused',
+      reason: 'notAllowed: became a link'
+    }))
+    const written = await save()
+    expect(written.failed).toEqual([{ path: LIFT, reason: 'notAllowed' }])
+    expect(isCompleteTunableSave(written)).toBe(false)
+    expect(useNoticeStore.getState().notices).toMatchObject([
+      { key: 'tunableFileNotAllowed', params: { file: 'Lift.java' } }
+    ])
+    expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
+  })
+
+  it('실패: 리터럴 밖에 \\u가 생겼으면(파일 전체가 읽기 전용) 충돌로 버리지 않고 값을 남긴다', async () => {
+    disk.set(LIFT, lift(field('double', 'kP', '0.1')))
+    scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')
+    const escaped = lift(field('double', 'kP', '0.1')).replace('// 주석', '// 30\\u00B0')
+    disk.set(LIFT, escaped)
+    const outcome = await save()
+    expect(outcome.failed).toEqual([{ path: LIFT, reason: 'unicodeEscape' }])
+    expect(outcome.conflicts).toEqual([])
+    expect(writeJavaLiterals).not.toHaveBeenCalled()
+    expect(noticeKeys()).toEqual(['tunableFileUnicodeEscape'])
+    expect(scene().tunables).toEqual({ [LIFT]: { 'Lift#kP': { value: '0.25', base: '0.1' } } })
+    // \\u를 지우면 다음 저장이 쓴다
+    disk.set(LIFT, lift(field('double', 'kP', '0.1')))
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.25')))
   })
 
   it('저장하는 동안 다시 고친 값은 충돌이어도 지금 문서에서 빼지 않는다', async () => {

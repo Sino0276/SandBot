@@ -176,6 +176,8 @@ describe('isWritableLiteral', () => {
       '0b1',
       '1_000',
       '+1',
+      '- 1',
+      '-\t1',
       '1.',
       '.5',
       '5d',
@@ -214,7 +216,8 @@ describe('isWritableLiteral', () => {
       '2147483648',
       '9223372036854775808L',
       '1e999',
-      '- 1',
+      '-\n1',
+      '-/**/1',
       '--1',
       '+true',
       'TRUE',
@@ -246,8 +249,8 @@ const FIELD: Record<string, [TunableValueType, boolean]> = {
 }
 
 describe('literalFitsType', () => {
-  // [필드 형식, 글자, javac --release 8이 그 필드의 초기값으로 받는지]. 모두 javac로 확인했다('- 1'만 빼고: 공백이 든
-  // 글자는 normalizeLiteral 출력이 아니라 받지 않는다. javac는 단항 식으로 받는다).
+  // [필드 형식, 글자, javac --release 8이 그 필드의 초기값으로 받는지]. 모두 javac로 확인했다(줄바꿈·주석이 든 것만
+  // 빼고: javac는 받지만 쓰는 글자로는 받지 않는다).
   const CASES: [string, string, boolean][] = [
     // JLS 3.10.1·3.10.2 모양: 받는 것
     ['int', '1_000', true],
@@ -293,13 +296,23 @@ describe('literalFitsType', () => {
     ['double', '1e_5', false],
     ['double', '1.5L', false],
     ['double', '1fL', false],
-    // 부호: 바로 붙은 '-'·'+' 하나만
+    // 부호: '-'·'+' 하나와 그 뒤 공백·탭·폼 피드(디스크 글자 '- 5'를 그대로 되돌려 쓰려고)
     ['int', '+5', true],
     ['int', '-5', true],
     ['double', '-.5', true],
     ['double', '+0.0', true],
     ['int', '--1', false],
-    ['int', '- 1', false],
+    ['int', '- 1', true],
+    ['int', '-\t5', true],
+    ['int', '-\f5', true],
+    ['Integer', '- 5', true],
+    ['double', '+  .5', true],
+    ['int', '- 2147483648', true],
+    ['long', '- 9223372036854775808L', true],
+    ['int', '-\n5', false],
+    ['int', '-/**/5', false],
+    ['int', ' 5', false],
+    ['int', '5 ', false],
     ['boolean', '-true', false],
     ['String', '-"a"', false],
     // int
@@ -413,6 +426,43 @@ describe('literalFitsType', () => {
     expect(literalFitsType('long', '5')).toBe(true)
     expect(literalFitsType('long', '5', true)).toBe(false)
   })
+
+  it('문자열 값은 modified UTF-8로 65535바이트까지다(넘으면 javac가 "too long for the constant pool")', () => {
+    // javac --release 8로 확인: 가 21845개(65535바이트)·😀 10922개·é 32767개 + a는 되고, 하나 더하면 오류.
+    // U+0000은 2바이트로 센다(é 32767개 + \0 = 65536바이트)
+    const quoted = (body: string): string => `"${body}"`
+    expect(literalFitsType('String', quoted('가'.repeat(21845)))).toBe(true)
+    expect(literalFitsType('String', quoted('가'.repeat(21846)))).toBe(false)
+    expect(literalFitsType('String', quoted('😀'.repeat(10922)))).toBe(true)
+    expect(literalFitsType('String', quoted('😀'.repeat(10923)))).toBe(false)
+    expect(literalFitsType('String', quoted(`${'é'.repeat(32767)}a`))).toBe(true)
+    expect(literalFitsType('String', quoted(`${'é'.repeat(32767)}\\0`))).toBe(false)
+    expect(isWritableLiteral(quoted('가'.repeat(21846)))).toBe(false)
+    // 입력도 받지 않는다(입력칸이 이전 값으로 돌아간다)
+    expect(formatTunableLiteral('String', '가'.repeat(21845))).toBe(quoted('가'.repeat(21845)))
+    expect(formatTunableLiteral('String', '가'.repeat(21846))).toBeNull()
+  })
+
+  it('8진 이스케이프가 많은 문자열도 곧바로 판정한다(되짚기가 이스케이프 수에 지수로 늘지 않는다)', () => {
+    // 텔레메트리 색 코드(\033[1m) 30개 뒤에 날 탭(받지 않는 글자): 예전 정규식은 이스케이프마다 길이 세 가지를 되짚었다
+    const escapes = '\\033[1m'.repeat(30)
+    const started = performance.now()
+    expect(literalFitsType('String', `"${escapes}SandBot\tv1"`)).toBe(false)
+    expect(literalFitsType('String', `"${escapes}SandBot v1"`)).toBe(true)
+    expect(literalFitsType('String', `"${'\\0'.repeat(20000)}\t"`)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(50)
+    // 가장 길게 읽어도 받는 글자는 같다(\0012는 \001 뒤 2, \400은 \40 뒤 0, \8은 이스케이프가 아니다)
+    for (const [text, expected] of [
+      ['"\\0012"', true],
+      ['"\\400"', true],
+      ['"\\777"', true],
+      ['"\\7a"', true],
+      ['"\\8"', false],
+      ['"\\"', false]
+    ] as const) {
+      expect(literalFitsType('String', text), text).toBe(expected)
+    }
+  })
 })
 
 describe('isLiteralSpanText', () => {
@@ -516,6 +566,40 @@ describe('displayTunableLiteral', () => {
     for (const [type, literal, display] of cases) {
       expect(displayTunableLiteral(type, literal), `${type} ${literal}`).toBe(display)
     }
+  })
+
+  it('넓힌 값은 정확한 값에서 한 번만 반올림한다(double을 거친 두 번 반올림이 아니다)', () => {
+    // javac --release 8의 값(Float.toString·Double.toString): 1.1529216E18, 7.20576E16, 1.7296189E16, -3.9149917E18,
+    // 1.0000001192092896, 1.0000000000000002, 1.0000001, 2.225073858507202E-308, 9.9E-324(가장 작은 비정규 값의 두 배).
+    // 무작위 중간값 근처 8614개(long → float, 10진 f → double, 긴 16진 가수·비정규)를 javac와 비교해 모두 같았다.
+    const cases: [TunableValueType, string, number][] = [
+      // 2^60 + 2^36 + 1: double로 먼저 반올림하면 float 중간값이 되어 짝수 쪽(아래)으로 간다
+      ['float', '1152921573326323713L', 1.1529216e18],
+      ['float', '0x100000100000001L', 7.20576e16],
+      ['float', '17296188172664833L', 1.7296189e16],
+      ['float', '-3914991608042356737L', -3.9149917e18],
+      // 1 + 2^-24보다 아주 조금 크다
+      ['double', '1.0000000596046447753906251f', 1.0000001192092896],
+      // 가수가 64비트를 넘는다(1 + 2^-53 + 2^-116)
+      ['double', '0x1.00000000000008000000000000001p0', 1.0000000000000002],
+      ['float', '0x1.000001000000001p0f', 1.0000001],
+      ['double', '0x1.000001000000001p0f', 1.0000001192092896],
+      ['double', '0x1.0000000000000801p-1022', 2.225073858507202e-308],
+      // 비정규 범위의 중간값(1.5 × 2^-1074)은 짝수(2 × 2^-1074)로
+      ['double', '0x0.00000000000018p-1022', 9.9e-324]
+    ]
+    for (const [type, literal, value] of cases) {
+      const shown = Number(displayTunableLiteral(type, literal))
+      expect(type === 'float' ? Math.fround(shown) : shown, `${type} ${literal}`).toBe(
+        type === 'float' ? Math.fround(value) : value
+      )
+    }
+    // 넘치거나 아주 작은 값(컴파일되지 않는 글자)도 멈추지 않는다
+    expect(displayTunableLiteral('double', '1e99999999999999999999f')).toBe(
+      '1e99999999999999999999f'
+    )
+    expect(displayTunableLiteral('double', '0x1p99999999999')).toBe('0x1p99999999999')
+    expect(displayTunableLiteral('double', '0x1p-99999999999')).toBe('0')
   })
 
   it('디스크의 리터럴(고칠 수 있는 모양)을 보인 글자는 그대로 다시 넣을 수 있다', () => {

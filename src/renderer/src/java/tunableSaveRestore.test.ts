@@ -6,7 +6,7 @@ import type {
   WriteJavaLiteralsResult
 } from '../../../shared/ipc'
 import { parseTunables } from '../../../shared/java/tunables'
-import { clearHistory, initHistory, undo } from '../editor/history'
+import { clearHistory, initHistory, redo, undo } from '../editor/history'
 import { useNoticeStore } from '../editor/noticeStore'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
@@ -128,7 +128,11 @@ describe('저장 뒤 실행 취소하고 다시 저장하면 원래 글자로 �
     ['double .5', lift('double kP = .5'), 'Lift#kP', '7'],
     ['int 010', lift('int kP = 010'), 'Lift#kP', '7'],
     ['Double 0.0', lift('Double kP = 0.0'), 'Lift#kP', '7'],
-    ['Long 5L', lift('Long kP = 5L'), 'Lift#kP', '7']
+    ['Long 5L', lift('Long kP = 5L'), 'Lift#kP', '7'],
+    // 부호 뒤 공백(비교용 글자 '-5'와 다르다)
+    ['int - 5', lift('int kP = - 5'), 'Lift#kP', '7'],
+    ['int -<TAB>5', lift('int kP = -\t5'), 'Lift#kP', '7'],
+    ['Integer - 5', lift('Integer kP = - 5'), 'Lift#kP', '7']
   ]
 
   for (const [label, original, id, input] of cases) {
@@ -150,6 +154,29 @@ describe('저장 뒤 실행 취소하고 다시 저장하면 원래 글자로 �
       expect(disk).toBe(original)
     })
   }
+
+  it('되돌릴 원래 글자(- 5)는 비교용 글자(-5)와 같은 값으로 본다(다시 실행, 밖에서 같은 값으로 되돌림)', async () => {
+    const original = lift('int kP = - 5')
+    disk = original
+    type('Lift#kP', '7')
+    await save()
+    expect(undo()).toBe(true)
+    expect(scene().tunables[PATH]['Lift#kP']).toEqual({ value: '- 5', base: '7' })
+    // 밖에서 같은 값(-5)으로 되돌렸다: 충돌이 아니고, 파일은 그대로 두고 항목만 지운다
+    disk = lift('int kP = -5')
+    const writes = writeJavaLiterals.mock.calls.length
+    const outcome = await save()
+    expect(isCompleteTunableSave(outcome)).toBe(true)
+    expect(writeJavaLiterals.mock.calls.length).toBe(writes)
+    expect(disk).toBe(lift('int kP = -5'))
+    expect(scene().tunables).toEqual({})
+    // 다시 실행하면 7이 그 디스크 값(-5) 기준의 편집이고, 저장하면 쓴다
+    expect(redo()).toBe(true)
+    expect(scene().tunables[PATH]['Lift#kP']).toEqual({ value: '7', base: '-5' })
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk).toBe(lift('int kP = 7'))
+    expect(useNoticeStore.getState().notices).toEqual([])
+  })
 
   it('쓸 수 없는 디스크 글자(날 탭이 든 문자열)는 같은 값의 정규 리터럴로 되돌린다', async () => {
     const original = lift('String NAME = "a\tb"')

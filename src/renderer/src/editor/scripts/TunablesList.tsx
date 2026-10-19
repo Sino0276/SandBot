@@ -11,7 +11,10 @@ import {
   diskLiteralKey,
   displayTunable,
   isEditableValue,
+  editsWithoutRow,
   tunableEditValue,
+  tunableFieldLabel,
+  type TunableEdit,
   type TunableFileEdits,
   type TunableValueNode
 } from '../../java/tunableEdits'
@@ -38,7 +41,7 @@ const javaTypeName = (node: TunableValueNode): string => (node.boxed ? BOXED[nod
 
 type RowContext = {
   path: string
-  // 파일 자체를 쓸 수 있는지(UTF-8 왕복, 생성 표식 없음, 읽기 전용 아님, 1 MB 이하)
+  // 파일 자체를 쓸 수 있는지(UTF-8 왕복, 생성 표식 없음, 읽기 전용 아님, 1 MB 이하, 리터럴 밖 \u 없음)
   fileEditable: boolean
   edits: TunableFileEdits | undefined
 }
@@ -212,6 +215,64 @@ function ValueRow({
   )
 }
 
+// 지금 파일에서 칸을 찾을 수 없는 저장하지 않은 값(1 MB를 넘어 읽지 않은 파일, 읽지 못한 파일, 밖에서 이름이 바뀌거나
+// 지워진 필드). 보이지 않으면 버릴 길이 없고 저장할 때마다 실패하므로, 필드 id와 값을 보이고 [파일 값 따르기]를 둔다.
+// 파일을 쓸 수 있으면 다음 저장이 "필드를 찾지 못함"으로 알리고 버린다(java/tunableSave.ts).
+function OrphanRow({
+  context,
+  fieldId,
+  entry
+}: {
+  context: RowContext
+  fieldId: string
+  entry: TunableEdit
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const setTunable = useSceneStore((state) => state.setTunable)
+  const hint = t(
+    context.fileEditable
+      ? 'inspector.tunables.pendingFieldMissing'
+      : 'inspector.tunables.pendingFileLocked'
+  )
+  return (
+    <>
+      <div className="hw-row tunable-row is-pending">
+        <span className="hw-row-label tunable-label is-pending" title={hint}>
+          {tunableFieldLabel(fieldId)}
+        </span>
+        <code className="tunable-code">{entry.value}</code>
+      </div>
+      <div className="tunable-file-changed">
+        <button
+          type="button"
+          className="panel-button"
+          title={t('inspector.tunables.useFileValueHint')}
+          onClick={() => setTunable(context.path, fieldId, entry.base, entry.base)}
+        >
+          {t('inspector.tunables.useFileValue')}
+        </button>
+      </div>
+    </>
+  )
+}
+
+function OrphanRows({
+  context,
+  orphans
+}: {
+  context: RowContext
+  orphans: [string, TunableEdit][]
+}): React.JSX.Element | null {
+  if (orphans.length === 0) return null
+  return (
+    <div className="tunables">
+      {orphans.map(([fieldId, entry]) => (
+        <OrphanRow key={fieldId} context={context} fieldId={fieldId} entry={entry} />
+      ))}
+    </div>
+  )
+}
+
 function NodeRow({ context, node }: { context: RowContext; node: TunableNode }): React.JSX.Element {
   if (node.kind === 'value') return <ValueRow context={context} node={node} />
   const declaration = `${node.kind === 'object' ? node.typeName : node.typeText} ${node.name}`
@@ -294,10 +355,22 @@ function TunablesList({ path }: { path: string }): React.JSX.Element | null {
   // 없는 파일은 카드가 [다시 연결]과 함께 알린다
   if (source.status === 'missing') return null
   if (source.status === 'failed')
-    return <p className="inspector-note">{t('inspector.tunables.readFailed')}</p>
+    return (
+      <>
+        <p className="inspector-note">{t('inspector.tunables.readFailed')}</p>
+        <OrphanRows
+          context={{ path, fileEditable: false, edits }}
+          orphans={editsWithoutRow(edits, null)}
+        />
+      </>
+    )
 
   const file = source.tunables
-  const context: RowContext = { path, fileEditable: source.editable, edits }
+  const context: RowContext = {
+    path,
+    fileEditable: source.editable && !file.unicodeEscapes,
+    edits
+  }
   const fileNote = !source.editable
     ? (source.reason ?? 'encoding')
     : file.unicodeEscapes
@@ -311,10 +384,13 @@ function TunablesList({ path }: { path: string }): React.JSX.Element | null {
   )
   // 묶음이 없을 때: 1 MB를 넘은 파일은 내용을 읽지 않았으므로(빈 글자) 늘 알린다. 그 밖의 이유는 @Config 안내가
   // 보일 때만 함께 보인다(튜닝 값이 없는 파일마다 "보기만 한다"고 하지 않게).
+  const orphanList = editsWithoutRow(edits, file)
+  const orphans = <OrphanRows context={context} orphans={orphanList} />
   if (file.blocks.length === 0)
-    return source.reason === 'tooLarge' || noConfig ? (
+    return source.reason === 'tooLarge' || noConfig || orphanList.length > 0 ? (
       <>
         {note}
+        {orphans}
         {noConfig}
       </>
     ) : null
@@ -322,6 +398,7 @@ function TunablesList({ path }: { path: string }): React.JSX.Element | null {
   return (
     <div className="tunables">
       {note}
+      {orphans}
       {file.blocks.map((block) => (
         <BlockView key={block.classPath} context={context} block={block} />
       ))}

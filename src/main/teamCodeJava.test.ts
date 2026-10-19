@@ -706,6 +706,30 @@ describe('튜닝 값 읽기·쓰기', () => {
     }
   )
 
+  // root는 권한 비트와 관계없이 쓸 수 있으므로 이 검사는 보통 사용자로 돌 때만 한다(CI 등)
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    '이 사용자가 쓸 수 없는 폴더의 파일은 쓰기 비트가 있어도 읽기 전용이다(바꿔치기하지 않는다)',
+    async () => {
+      await put(java('Lift.java'), LIFT)
+      const writable = await readOk(rel('Lift.java'))
+      const edits = [editFor(writable.text, 'Lift#kP', '0.25')]
+      await chmod(java(), 0o555)
+      try {
+        expect(await readOk(rel('Lift.java'))).toMatchObject({
+          editable: false,
+          reason: 'readOnly'
+        })
+        expect(await writeJavaLiterals(root, rel('Lift.java'), writable.hash, edits)).toEqual({
+          status: 'refused',
+          reason: 'readOnly'
+        })
+        expect(await readFile(java('Lift.java'), 'utf8')).toBe(LIFT)
+      } finally {
+        await chmod(java(), 0o755)
+      }
+    }
+  )
+
   it('Windows에서 rename을 다시 하기 전에 파일이 바뀌면 changed이고 그 내용을 남긴다', async () => {
     await put(java('Lift.java'), LIFT)
     const read = await readOk(rel('Lift.java'))

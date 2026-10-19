@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import { ipcMain } from 'electron'
 import { constants, type Dirent, type Stats } from 'fs'
 import {
+  access,
   lstat,
   open as openFile,
   readdir,
@@ -330,10 +331,21 @@ function fileProblem(raw: Buffer, text: string): 'encoding' | 'generated' | null
   return null
 }
 
-// 읽기 전용 파일(소유자 쓰기 비트가 없음). Windows의 읽기 전용 속성도 Node가 쓰기 비트 없는 mode로 알려 준다.
+// 읽기 전용 파일: 소유자 쓰기 비트가 없거나(Windows의 읽기 전용 속성도 Node가 쓰기 비트 없는 mode로 알려 준다), 이
+// 사용자가 그 파일이나 임시 파일을 만들고 바꿔치기할 폴더에 쓸 수 없다(POSIX에서 다른 사용자의 파일·폴더. 폴더에만 쓸 수
+// 있으면 바꿔치기가 파일 주인을 바꾼다). Windows의 access(W_OK)는 읽기 전용 속성만 보고 폴더는 늘 통과한다.
 // 이런 파일은 바꿔치기하지 않는다(Windows rename은 늘 실패하고, 팀이 일부러 막은 것일 수 있다).
-function isReadOnly(stats: Stats): boolean {
-  return (stats.mode & 0o200) === 0
+async function isReadOnly(real: string, stats: Stats): Promise<boolean> {
+  if ((stats.mode & 0o200) === 0) return true
+  try {
+    await Promise.all([
+      access(real, constants.W_OK),
+      access(dirname(real), constants.W_OK | constants.X_OK)
+    ])
+    return false
+  } catch {
+    return true
+  }
 }
 
 function errnoCode(error: unknown): string | undefined {
@@ -365,7 +377,8 @@ export async function readJavaFile(root: unknown, relPath: unknown): Promise<Rea
   const text = snapshot.raw.toString('utf8')
   const hash = sha256(snapshot.raw)
   const problem =
-    fileProblem(snapshot.raw, text) ?? (isReadOnly(snapshot.stats) ? 'readOnly' : null)
+    fileProblem(snapshot.raw, text) ??
+    ((await isReadOnly(located.real, snapshot.stats)) ? 'readOnly' : null)
   return problem
     ? { ok: true, text, hash, editable: false, reason: problem }
     : { ok: true, text, hash, editable: true }
@@ -617,7 +630,7 @@ async function writeLocked(
   const problem = fileProblem(raw, text)
   if (problem) return refused(problem)
   // 읽기 전용 파일은 쓰지 않는다(readJavaFile과 같은 규칙. 렌더러가 읽은 뒤 읽기 전용이 됐을 때 여기서 걸린다)
-  if (isReadOnly(stats)) return refused('readOnly')
+  if (await isReadOnly(located.real, stats)) return refused('readOnly')
   const editProblem = checkLiteralEdits(text, edits)
   if (editProblem) return refused(editProblem)
   const next = applyLiteralEdits(text, edits)
