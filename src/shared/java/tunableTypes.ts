@@ -33,7 +33,7 @@ export type TunableReadOnlyReason =
   | 'object'
   // short·byte·char·배열·제네릭 등
   | 'unsupportedType'
-  // 파일 자체를 쓸 수 없음(UTF-8로 그대로 되돌릴 수 없음, 생성 표식, 너무 큼)
+  // 파일 자체를 쓸 수 없음(JavaFileProblem: UTF-8로 그대로 되돌릴 수 없음, 생성 표식, 읽기 전용 파일, 너무 큼)
   | 'file'
 
 export type TunableSpan = { start: number; end: number }
