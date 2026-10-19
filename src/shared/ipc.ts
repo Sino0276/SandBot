@@ -119,8 +119,13 @@ export type OpenJavaFileResult =
   | { ok: true }
   | { ok: false; code: 'notAllowed' | 'missing' | 'launchFailed' | 'openFailed'; detail: string }
 
+// 튜닝 값을 쓸 수 없는 파일 상태: encoding(UTF-8로 그대로 되돌릴 수 없음), generated(생성 표식),
+// readOnly(읽기 전용 파일: 쓰기 비트 없음, Windows 읽기 전용 속성), tooLarge(1 MB 초과).
+// 쓰기(writeJavaLiterals)의 refused reason도 같은 글자다(읽은 뒤 파일 상태가 바뀌었을 때).
+export type JavaFileProblem = 'encoding' | 'generated' | 'readOnly' | 'tooLarge'
+
 // TeamCode Java 파일 읽기(튜닝 값). 메인이 Buffer.toString('utf8')로 읽는다(BOM을 남겨 오프셋이 쓰기와 같다).
-// editable이 false면 보여 주기만 한다: encoding(UTF-8로 그대로 되돌릴 수 없음), generated(생성 표식), tooLarge(1 MB 초과).
+// editable이 false면 보여 주기만 하고 reason에 이유(JavaFileProblem)가 있다. tooLarge면 text·hash가 빈 글자다.
 // hash는 디스크 바이트의 SHA-256(쓰기의 expectedHash).
 export type ReadJavaFileResult =
   | {
@@ -128,7 +133,7 @@ export type ReadJavaFileResult =
       text: string
       hash: string
       editable: boolean
-      reason?: 'encoding' | 'generated' | 'tooLarge'
+      reason?: JavaFileProblem
     }
   | { ok: false; code: 'notAllowed' | 'missing' | 'failed'; detail: string }
 
@@ -137,7 +142,8 @@ export type ReadJavaFileResult =
 export type JavaLiteralEdit = { start: number; end: number; expected: string; text: string }
 
 // written: 썼다(새 내용과 해시). changed: 읽은 뒤 파일이 바뀌었다(다시 읽고 한 번 더 해 본다).
-// missing: 파일이 없다. refused: 확인에 걸려 쓰지 않았다(reason에 이유).
+// missing: 파일이 없다. refused: 확인에 걸려 쓰지 않았다(reason에 이유. 파일 상태면 JavaFileProblem 글자,
+// 그 밖에는 'notAllowed: …'나 편집 확인 이유).
 export type WriteJavaLiteralsResult =
   | { status: 'written'; text: string; hash: string }
   | { status: 'changed' }

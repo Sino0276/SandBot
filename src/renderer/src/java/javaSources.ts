@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ReadJavaFileResult } from '../../../shared/ipc'
+import type { JavaFileProblem, ReadJavaFileResult } from '../../../shared/ipc'
 import { parseTunables } from '../../../shared/java/tunables'
 import type { TunableFile } from '../../../shared/java/tunableTypes'
 import { useProjectStore } from '../project/projectStore'
@@ -17,9 +17,9 @@ export type JavaSource =
   | {
       status: 'ready'
       hash: string
-      // false면 보기만 한다(UTF-8로 그대로 되돌릴 수 없음, 생성 표식, 1 MB 초과)
+      // false면 보기만 한다(UTF-8로 그대로 되돌릴 수 없음, 생성 표식, 읽기 전용, 1 MB 초과)
       editable: boolean
-      reason?: 'encoding' | 'generated' | 'tooLarge'
+      reason?: JavaFileProblem
       tunables: TunableFile
     }
   | { status: 'missing' }
@@ -54,7 +54,8 @@ export function linkedJavaPaths(objects: SceneObjects): readonly string[] {
   return paths
 }
 
-// 읽은 결과 → 캐시 항목. 이전 항목과 해시·쓰기 가능 여부가 같으면 그 항목을 그대로 돌려준다(파싱하지 않음).
+// 읽은 결과 → 캐시 항목. 이전 항목과 해시·쓰기 가능 여부·이유가 같으면 그 항목을 그대로 돌려준다(파싱하지 않음).
+// 내용이 같아도 읽기 전용 속성만 바뀌면 새 항목이다(창 포커스 때 다시 읽어 인스펙터가 따라간다).
 export function sourceFromRead(result: ReadJavaFileResult, previous?: JavaSource): JavaSource {
   if (!result.ok)
     return result.code === 'missing'

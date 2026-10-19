@@ -330,13 +330,19 @@ function fileProblem(raw: Buffer, text: string): 'encoding' | 'generated' | null
   return null
 }
 
+// 읽기 전용 파일(소유자 쓰기 비트가 없음). Windows의 읽기 전용 속성도 Node가 쓰기 비트 없는 mode로 알려 준다.
+// 이런 파일은 바꿔치기하지 않는다(Windows rename은 늘 실패하고, 팀이 일부러 막은 것일 수 있다).
+function isReadOnly(stats: Stats): boolean {
+  return (stats.mode & 0o200) === 0
+}
+
 function errnoCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | null)?.code
 }
 
 // 튜닝 값을 보이려고 연결 파일을 읽는다. 1 MB를 넘으면 내용을 읽지 않고 text·hash를 빈 글자로, editable false·
 // reason tooLarge로 돌려준다(렌더러는 "파일이 너무 크다"만 보인다). UTF-8로 그대로 되돌릴 수 없거나 생성 표식이
-// 있으면 내용은 주되(보여 주기용) editable이 false다.
+// 있거나 읽기 전용이면 내용은 주되(보여 주기용) editable이 false다(이유는 그 순서로 하나만).
 export async function readJavaFile(root: unknown, relPath: unknown): Promise<ReadJavaFileResult> {
   const located = await locateJavaFile(root, relPath)
   if (!located.ok) return located
@@ -358,7 +364,8 @@ export async function readJavaFile(root: unknown, relPath: unknown): Promise<Rea
     return { ok: true, text: '', hash: '', editable: false, reason: 'tooLarge' }
   const text = snapshot.raw.toString('utf8')
   const hash = sha256(snapshot.raw)
-  const problem = fileProblem(snapshot.raw, text)
+  const problem =
+    fileProblem(snapshot.raw, text) ?? (isReadOnly(snapshot.stats) ? 'readOnly' : null)
   return problem
     ? { ok: true, text, hash, editable: false, reason: problem }
     : { ok: true, text, hash, editable: true }
@@ -433,15 +440,18 @@ export type RenameOptions = {
   rename?: (from: string, to: string) => Promise<void>
   platform?: NodeJS.Platform
   sleep?: (ms: number) => Promise<void>
+  // 기다린 뒤 다시 하기 전마다 부른다. false면 다시 하지 않고 그만둔다(renameWithRetry가 false를 돌려준다).
+  beforeRetry?: () => Promise<boolean>
 }
 
 // Windows의 rename(MoveFileExW)은 백신·색인기가 파일을 잡고 있으면 EPERM·EACCES·EBUSY로 실패한다.
 // 10 ms부터 늘려 가며(최대 100 ms 간격) 2초쯤 다시 한다(graceful-fs와 같은 방식). 다른 OS는 바로 실패한다.
+// 바꿨으면 true, beforeRetry가 false라 그만뒀으면 false다.
 export async function renameWithRetry(
   from: string,
   to: string,
   options: RenameOptions = {}
-): Promise<void> {
+): Promise<boolean> {
   const doRename = options.rename ?? rename
   const platform = options.platform ?? process.platform
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
@@ -450,7 +460,7 @@ export async function renameWithRetry(
   for (;;) {
     try {
       await doRename(from, to)
-      return
+      return true
     } catch (error) {
       const code = errnoCode(error)
       if (platform !== 'win32' || !code || !RENAME_RETRY_CODES.has(code)) throw error
@@ -458,6 +468,7 @@ export async function renameWithRetry(
       await sleep(delay)
       waited += delay
       delay = Math.min(delay * 2, 100)
+      if (options.beforeRetry && !(await options.beforeRetry())) return false
     }
   }
 }
@@ -467,6 +478,8 @@ export type WriteHooks = {
   // 임시 파일을 다 쓴 뒤, 다시 stat하기 전
   afterTempWrite?: () => Promise<void>
   rename?: (from: string, to: string) => Promise<void>
+  // rename 다시 하기(renameWithRetry)가 볼 운영체제(Windows의 다시 하기를 다른 OS에서 흉내 낸다)
+  platform?: NodeJS.Platform
 }
 
 // 임시 파일을 'wx'(이미 있으면 실패, 링크를 따라가지 않음)로 연다. 이전 실행이 남긴 임시 파일이 있으면 지우고
@@ -485,7 +498,9 @@ async function openTemp(temp: string): Promise<FileHandle> {
 
 // 같은 폴더의 임시 파일에 쓰고, 원래 파일이 읽은 뒤 바뀌지 않았는지 다시 확인한 뒤 바꿔치기한다. 확인은 stat
 // (크기·수정 시각·inode)과 내용 해시 둘 다 본다(수정 시각의 단위가 거친 파일 시스템에서 같은 크기로 고친 것도 잡게).
-// 다시 확인과 rename 사이(밀리초)에 다른 편집기가 쓰면 그 변경은 덮인다(파일 시스템에 비교 후 교환이 없다).
+// Windows에서 rename을 다시 할 때(renameWithRetry)도 매번 그 직전에 다시 확인한다(기다리는 2초 동안의 저장을 덮지
+// 않게). 그래도 마지막 확인과 rename 사이(밀리초)에 다른 편집기가 쓰면 그 변경은 덮인다(파일 시스템에 비교 후
+// 교환이 없다).
 async function replaceFile(
   real: string,
   bytes: Buffer,
@@ -493,6 +508,17 @@ async function replaceFile(
   hooks: WriteHooks
 ): Promise<'written' | 'changed'> {
   const temp = join(dirname(real), `.${basename(real)}.sandbot.tmp`)
+  const unchanged = async (): Promise<boolean> => {
+    const now = await readSnapshot(real).catch(() => null)
+    return (
+      now !== null &&
+      typeof now !== 'string' &&
+      now.stats.size === before.stats.size &&
+      now.stats.mtimeMs === before.stats.mtimeMs &&
+      now.stats.ino === before.stats.ino &&
+      sha256(now.raw) === before.hash
+    )
+  }
   const handle = await openTemp(temp)
   try {
     try {
@@ -504,19 +530,17 @@ async function replaceFile(
       await handle.close()
     }
     await hooks.afterTempWrite?.()
-    const now = await readSnapshot(real).catch(() => null)
-    if (
-      now === null ||
-      typeof now === 'string' ||
-      now.stats.size !== before.stats.size ||
-      now.stats.mtimeMs !== before.stats.mtimeMs ||
-      now.stats.ino !== before.stats.ino ||
-      sha256(now.raw) !== before.hash
-    ) {
+    const renamed =
+      (await unchanged()) &&
+      (await renameWithRetry(temp, real, {
+        rename: hooks.rename,
+        platform: hooks.platform,
+        beforeRetry: unchanged
+      }))
+    if (!renamed) {
       await unlink(temp).catch(() => undefined)
       return 'changed'
     }
-    await renameWithRetry(temp, real, { rename: hooks.rename })
     return 'written'
   } catch (error) {
     await unlink(temp).catch(() => undefined)
@@ -592,8 +616,8 @@ async function writeLocked(
   const text = raw.toString('utf8')
   const problem = fileProblem(raw, text)
   if (problem) return refused(problem)
-  // 읽기 전용 파일은 바꿔치기하지 않는다(Windows rename은 늘 실패하고, 팀이 일부러 막은 것일 수 있다)
-  if ((stats.mode & 0o200) === 0) return refused('readOnly')
+  // 읽기 전용 파일은 쓰지 않는다(readJavaFile과 같은 규칙. 렌더러가 읽은 뒤 읽기 전용이 됐을 때 여기서 걸린다)
+  if (isReadOnly(stats)) return refused('readOnly')
   const editProblem = checkLiteralEdits(text, edits)
   if (editProblem) return refused(editProblem)
   const next = applyLiteralEdits(text, edits)

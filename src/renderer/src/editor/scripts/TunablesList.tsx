@@ -38,7 +38,7 @@ const javaTypeName = (node: TunableValueNode): string => (node.boxed ? BOXED[nod
 
 type RowContext = {
   path: string
-  // 파일 자체를 쓸 수 있는지(UTF-8 왕복, 생성 표식 없음, 1 MB 이하)
+  // 파일 자체를 쓸 수 있는지(UTF-8 왕복, 생성 표식 없음, 읽기 전용 아님, 1 MB 이하)
   fileEditable: boolean
   edits: TunableFileEdits | undefined
 }
@@ -65,20 +65,23 @@ function FieldLabel({
   name,
   declaration,
   line,
-  pending
+  pending,
+  pendingHint
 }: {
   context: RowContext
   name: string
   declaration: string
   line: number
   pending: boolean
+  // 저장하지 않은 값의 설명(없으면 저장할 때 쓴다는 기본 설명)
+  pendingHint?: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const hint = t('inspector.tunables.fieldHint', { declaration, line })
   return (
     <span
       className={pending ? 'hw-row-label tunable-label is-pending' : 'hw-row-label tunable-label'}
-      title={pending ? `${hint}\n${t('inspector.tunables.pending')}` : hint}
+      title={pending ? `${hint}\n${pendingHint ?? t('inspector.tunables.pending')}` : hint}
       onDoubleClick={() => void openScriptFile(context.path, line)}
     >
       {name}
@@ -102,6 +105,16 @@ function ValueRow({
   // [SandBot 값 쓰기]로 남길 값: 저장하지 않은 값을 지금 필드 형식으로 다시 만든다(밖에서 형식이 바뀌면 그대로는 맞지
   // 않는다: double 0.25 → float 0.25f). 지금 형식으로 받을 수 없으면(double → int) null이라 버튼을 숨긴다.
   const kept = editable && base !== null ? tunableEditValue(node, display.text) : null
+  // 저장하지 않은 값이 있지만 지금은 고칠 수 없다. 파일을 쓸 수 없으면 저장이 값을 남기고(실패), 필드가 고칠 수 없게
+  // 바뀌었으면 저장이 파일 값을 따른다(충돌, java/tunableSave.ts). 어느 쪽이든 [파일 값 따르기]로 버릴 수 있다.
+  const lockedHint =
+    entry && !editable
+      ? t(
+          context.fileEditable
+            ? 'inspector.tunables.pendingFieldLocked'
+            : 'inspector.tunables.pendingFileLocked'
+        )
+      : undefined
   const declaration = `${javaTypeName(node)} ${node.name}`
   // 받을 수 없는 입력은 버린다(입력칸은 초안을 지우고 이전 값으로 돌아간다, NumberField와 같음)
   const commit = (input: string): void => {
@@ -141,16 +154,17 @@ function ValueRow({
           declaration={declaration}
           line={node.line}
           pending={display.pending}
+          pendingHint={lockedHint}
         />
         {control}
       </div>
-      {display.fileValue !== null && entry && (
+      {display.fileValue !== null && entry && editable && (
         <div className="tunable-file-changed">
           <span title={t('inspector.tunables.fileChangedHint')}>
             ⚠ {t('inspector.tunables.fileChanged', { value: display.fileValue })}
           </span>
           {/* 같은 값은 입력칸·체크박스로 다시 확정할 수 없으므로 고르는 버튼을 둔다(둘 다 실행 취소 한 단계) */}
-          {editable && base !== null && (
+          {base !== null && (
             <>
               {kept !== null && (
                 <button
@@ -172,6 +186,26 @@ function ValueRow({
               </button>
             </>
           )}
+        </div>
+      )}
+      {/* 칸은 저장하지 않은 값을 보이고, 여기에 파일 값과 버리는 버튼을 둔다. 버튼은 편집의 base를 value·base로
+          넘긴다(withTunable은 value === base면 항목을 지운다). 지금 디스크 글자(식 등)는 base가 될 수 없어서다. */}
+      {entry && lockedHint && (
+        <div className="tunable-file-changed">
+          <span title={lockedHint}>
+            {display.fileValue !== null && '⚠ '}
+            {t('inspector.tunables.fileChanged', {
+              value: display.fileValue ?? node.literal ?? '—'
+            })}
+          </span>
+          <button
+            type="button"
+            className="panel-button"
+            title={t('inspector.tunables.useFileValueHint')}
+            onClick={() => setTunable(context.path, node.id, entry.base, entry.base)}
+          >
+            {t('inspector.tunables.useFileValue')}
+          </button>
         </div>
       )}
     </>
@@ -272,13 +306,22 @@ function TunablesList({ path }: { path: string }): React.JSX.Element | null {
   const noConfig = file.staticFieldsWithoutConfig && (
     <p className="inspector-note">{t('inspector.tunables.noConfig')}</p>
   )
-  if (file.blocks.length === 0) return noConfig || null
+  const note = fileNote && (
+    <p className="inspector-note">{t(`inspector.tunables.fileReadOnly.${fileNote}`)}</p>
+  )
+  // 묶음이 없을 때: 1 MB를 넘은 파일은 내용을 읽지 않았으므로(빈 글자) 늘 알린다. 그 밖의 이유는 @Config 안내가
+  // 보일 때만 함께 보인다(튜닝 값이 없는 파일마다 "보기만 한다"고 하지 않게).
+  if (file.blocks.length === 0)
+    return source.reason === 'tooLarge' || noConfig ? (
+      <>
+        {note}
+        {noConfig}
+      </>
+    ) : null
 
   return (
     <div className="tunables">
-      {fileNote && (
-        <p className="inspector-note">{t(`inspector.tunables.fileReadOnly.${fileNote}`)}</p>
-      )}
+      {note}
       {file.blocks.map((block) => (
         <BlockView key={block.classPath} context={context} block={block} />
       ))}

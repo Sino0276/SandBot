@@ -1,4 +1,4 @@
-import type { JavaLiteralEdit, ReadJavaFileResult } from '../../../shared/ipc'
+import type { JavaFileProblem, JavaLiteralEdit, ReadJavaFileResult } from '../../../shared/ipc'
 import {
   displayTunableLiteral,
   literalFitsType,
@@ -30,6 +30,8 @@ import {
 // 있지만 튜닝 값은 사용자 값이다). 하드웨어 검증 오류와 관계없이 쓴다.
 // 파일마다: 다시 읽고 파싱해 필드마다 편집할 때 본 값(base)과 지금 디스크 값을 비교한다. 다른 줄의 변경은 상관없다
 // (필드를 위치가 아니라 이름으로 찾는다). 그 필드의 값이 SandBot 밖에서 바뀌었으면 쓰지 않고 파일 값을 따른다(알림).
+// 파일 자체를 쓸 수 없는 상태(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식)면 그 파일의 편집은 모두 저장하지 않은
+// 채로 남긴다(실패. 파일을 고친 뒤 다시 저장하면 쓴다).
 // 쓰기는 파일 하나씩 원자적이다(메인이 해시·바꿀 자리 글자를 확인하고 임시 파일에 쓴 뒤 바꿔치기). 여러 파일을 함께
 // 묶지는 못한다.
 
@@ -42,7 +44,22 @@ export type TunableMissing = {
   fields: { fieldId: string; value: string }[]
 }
 // 쓰지 못한 파일(편집은 저장하지 않은 채로 남긴다)
-export type TunableFailure = { path: string; detail: string; changed?: boolean }
+export type TunableFailure =
+  // 파일 상태 때문에 쓸 수 없다(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식). 사용자가 파일을 바꿔야 풀린다.
+  | { path: string; reason: JavaFileProblem }
+  // 저장하는 동안 파일이 계속 바뀌었다
+  | { path: string; reason: 'changed' }
+  // 그 밖의 입출력 오류·거부(detail은 메인이 준 이유 그대로)
+  | { path: string; reason: 'error'; detail: string }
+
+const FILE_PROBLEMS: ReadonlySet<string> = new Set<JavaFileProblem>([
+  'encoding',
+  'generated',
+  'readOnly',
+  'tooLarge'
+])
+
+const isFileProblem = (reason: string): reason is JavaFileProblem => FILE_PROBLEMS.has(reason)
 
 export type TunableSaveOutcome = {
   // 파일에 썼거나 이미 그 값이던 필드(기록 전체를 새 디스크 값 기준으로 옮긴다)
@@ -93,7 +110,7 @@ function restoreLiteral(node: TunableValueNode, base: string): string {
   return tunableInputLiteral(node.type, displayTunableLiteral(node.type, base)) ?? base
 }
 
-// 읽은 내용으로 필드마다 할 일을 정한다
+// 읽은 내용으로 필드마다 할 일을 정한다(파일을 쓸 수 있을 때만 부른다)
 function planFile(
   path: string,
   read: Extract<ReadJavaFileResult, { ok: true }>,
@@ -111,13 +128,8 @@ function planFile(
       drop()
       continue
     }
-    // 파일을 쓸 수 없게 됐거나(인코딩 등), 리터럴이 아니게 됐거나(식), 형식이 바뀌어 값이 맞지 않으면(double → float)
-    // 파일 값을 따른다
-    if (
-      !read.editable ||
-      !isEditableValue(node) ||
-      !literalFitsType(node.type, entry.value, node.boxed)
-    ) {
+    // 리터럴이 아니게 됐거나(식), 형식이 바뀌어 값이 맞지 않으면(double → float) 파일 값을 따른다
+    if (!isEditableValue(node) || !literalFitsType(node.type, entry.value, node.boxed)) {
       plan.conflicts.push({ path, fieldId, fileValue: nodeText(node), value: entry.value })
       drop()
       continue
@@ -182,13 +194,19 @@ async function saveFile(
     try {
       read = await window.api.readJavaFile(root, path)
     } catch (error) {
-      outcome.failed.push({ path, detail: ipcErrorDetail(error) })
+      outcome.failed.push({ path, reason: 'error', detail: ipcErrorDetail(error) })
       return
     }
     outcome.sources.push({ path, result: read })
     if (!read.ok) {
       if (read.code === 'missing') fileMissing(outcome, path, entries)
-      else outcome.failed.push({ path, detail: read.detail || read.code })
+      else outcome.failed.push({ path, reason: 'error', detail: read.detail || read.code })
+      return
+    }
+    // 파일을 쓸 수 없는 상태면(읽기 전용 등) 필드를 보지 않고 모두 남긴다. 파일 값을 따르는 충돌이 아니다(파일을
+    // 쓰기 가능하게 바꾸면 다음 저장이 쓴다). tooLarge는 내용이 없어 필드를 찾을 수도 없다.
+    if (!read.editable) {
+      outcome.failed.push({ path, reason: read.reason ?? 'encoding' })
       return
     }
     let plan: FilePlan
@@ -196,7 +214,7 @@ async function saveFile(
       plan = planFile(path, read, entries)
     } catch (error) {
       console.error('튜닝 값을 읽지 못했다', error)
-      outcome.failed.push({ path, detail: ipcErrorDetail(error) })
+      outcome.failed.push({ path, reason: 'error', detail: ipcErrorDetail(error) })
       return
     }
     if (plan.edits.length === 0) {
@@ -207,7 +225,7 @@ async function saveFile(
     try {
       result = await window.api.writeJavaLiterals(root, path, read.hash, plan.edits)
     } catch (error) {
-      outcome.failed.push({ path, detail: ipcErrorDetail(error) })
+      outcome.failed.push({ path, reason: 'error', detail: ipcErrorDetail(error) })
       return
     }
     switch (result.status) {
@@ -225,11 +243,16 @@ async function saveFile(
         fileMissing(outcome, path, entries)
         return
       case 'refused':
-        outcome.failed.push({ path, detail: result.reason })
+        // 읽은 뒤 파일 상태가 바뀌었으면(읽기 전용이 됨 등) 읽을 때 걸린 것과 같이 다룬다
+        outcome.failed.push(
+          isFileProblem(result.reason)
+            ? { path, reason: result.reason }
+            : { path, reason: 'error', detail: result.reason }
+        )
         return
     }
   }
-  outcome.failed.push({ path, detail: 'changed', changed: true })
+  outcome.failed.push({ path, reason: 'changed' })
 }
 
 // 저장을 시작할 때 잡은 튜닝 값을 파일마다 쓴다. 예외를 던지지 않는다(실패는 outcome.failed).
@@ -255,6 +278,15 @@ export function replaceTunableNotices(notices: Parameters<typeof showNotice>[]):
 
 const fileNameOfPath = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 
+// 실패 이유 → 알림 문구. 파일 상태는 무엇을 바꿔야 하는지 알리고, 그 밖의 오류만 메인의 이유를 그대로 보인다.
+const FAILURE_NOTICES = {
+  readOnly: 'tunableFileReadOnly',
+  tooLarge: 'tunableFileTooLarge',
+  encoding: 'tunableFileEncoding',
+  generated: 'tunableFileGenerated',
+  changed: 'tunableFileBusy'
+} as const satisfies Record<Exclude<TunableFailure['reason'], 'error'>, string>
+
 export function tunableSaveNotices(outcome: TunableSaveOutcome): Parameters<typeof showNotice>[] {
   const notices: Parameters<typeof showNotice>[] = []
   for (const { path, fieldId, fileValue, value } of outcome.conflicts)
@@ -274,12 +306,14 @@ export function tunableSaveNotices(outcome: TunableSaveOutcome): Parameters<type
           .join(', ')
       }
     ])
-  for (const { path, detail, changed } of outcome.failed)
+  for (const failure of outcome.failed) {
+    const file = fileNameOfPath(failure.path)
     notices.push(
-      changed
-        ? ['error', 'tunableFileBusy', { file: fileNameOfPath(path) }]
-        : ['error', 'tunableWriteFailed', { file: fileNameOfPath(path), detail }]
+      failure.reason === 'error'
+        ? ['error', 'tunableWriteFailed', { file, detail: failure.detail }]
+        : ['error', FAILURE_NOTICES[failure.reason], { file }]
     )
+  }
   return notices
 }
 

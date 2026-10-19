@@ -173,5 +173,27 @@ describe('연결한 Java 파일 내용', () => {
     expect(readOnly).toMatchObject({ status: 'ready', editable: false, reason: 'generated' })
     // 쓰기 가능 여부가 바뀌면 같은 해시여도 새 항목이다
     expect(sourceFromRead(ok('x'), readOnly)).toMatchObject({ editable: true })
+    // 이유만 바뀌어도 새 항목이다(생성 표식 → 읽기 전용)
+    expect(
+      sourceFromRead({ ...ok('x'), editable: false, reason: 'readOnly' }, readOnly)
+    ).toMatchObject({ editable: false, reason: 'readOnly' })
+  })
+
+  it('창 포커스 때 다시 읽으면 읽기 전용 속성만 바뀐 것도 따라간다', async () => {
+    useSceneStore.getState().replaceObjects(linked(A))
+    const first = refreshJavaSources()
+    resolveRead(A, ok('a'))
+    await first
+    expect(files()[A]).toMatchObject({ editable: true })
+    // 내용(해시)은 그대로, 파일만 읽기 전용이 됐다
+    const locked = refreshJavaSources()
+    resolveRead(A, { ...ok('a'), editable: false, reason: 'readOnly' }, 1)
+    await locked
+    expect(files()[A]).toMatchObject({ status: 'ready', editable: false, reason: 'readOnly' })
+    const unlocked = refreshJavaSources()
+    resolveRead(A, ok('a'), 2)
+    await unlocked
+    expect(files()[A]).toMatchObject({ editable: true })
+    expect(files()[A]).not.toHaveProperty('reason')
   })
 })

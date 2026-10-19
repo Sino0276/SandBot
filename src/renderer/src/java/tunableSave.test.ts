@@ -181,20 +181,71 @@ describe('튜닝 값 저장', () => {
     expect(scene().tunables).toEqual({})
   })
 
-  it('충돌: 파일을 쓸 수 없게 됐으면(인코딩 등) 쓰지 않는다', async () => {
+  it('실패: 파일을 쓸 수 없는 상태면(읽기 전용 등) 쓰지 않고 그 파일의 값을 모두 남기며 이유를 알린다', async () => {
+    const cases = [
+      ['readOnly', 'tunableFileReadOnly'],
+      ['tooLarge', 'tunableFileTooLarge'],
+      ['encoding', 'tunableFileEncoding'],
+      ['generated', 'tunableFileGenerated']
+    ] as const
+    for (const [reason, key] of cases) {
+      disk.set(LIFT, lift(field('double', 'kP', '0.1'), field('double', 'kI', '0.0')))
+      scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')
+      // 밖에서 바뀐 필드·없어진 필드도 파일을 고친 뒤 다음 저장이 정한다(지금 버리지 않는다)
+      scene().setTunable(LIFT, 'Lift#kI', '0.5', '0.3')
+      scene().setTunable(LIFT, 'Lift#gone', '1.0', '2.0')
+      const before = scene().tunables
+      readJavaFile.mockImplementationOnce(async () => ({
+        ok: true,
+        // 1 MB를 넘으면 내용이 없다(모든 필드가 없어 보이지만 없어진 것이 아니다)
+        text: reason === 'tooLarge' ? '' : disk.get(LIFT)!,
+        hash: reason === 'tooLarge' ? '' : 'x',
+        editable: false,
+        reason
+      }))
+      const outcome = await save()
+      expect(outcome.failed, reason).toEqual([{ path: LIFT, reason }])
+      expect(outcome.conflicts, reason).toEqual([])
+      expect(outcome.missing, reason).toEqual([])
+      expect(isCompleteTunableSave(outcome), reason).toBe(false)
+      expect(writeJavaLiterals).not.toHaveBeenCalled()
+      expect(scene().tunables, reason).toBe(before)
+      expect(useNoticeStore.getState().notices, reason).toMatchObject([
+        { level: 'error', key, params: { file: 'Lift.java' } }
+      ])
+      // 인스펙터 캐시도 쓸 수 없는 파일로 바뀐다
+      expect(useJavaSourcesStore.getState().files[LIFT], reason).toMatchObject({
+        status: 'ready',
+        editable: false,
+        reason
+      })
+    }
+  })
+
+  it('실패: 읽은 뒤 쓰기 전에 파일 상태가 바뀌어 거부되면(읽기 전용이 됨 등) 값을 남기고 이유를 알린다', async () => {
+    const cases = [
+      ['readOnly', 'tunableFileReadOnly'],
+      ['tooLarge', 'tunableFileTooLarge'],
+      ['encoding', 'tunableFileEncoding'],
+      ['generated', 'tunableFileGenerated']
+    ] as const
     disk.set(LIFT, lift(field('double', 'kP', '0.1')))
     scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')
-    readJavaFile.mockImplementationOnce(async () => ({
-      ok: true,
-      text: disk.get(LIFT)!,
-      hash: 'x',
-      editable: false,
-      reason: 'encoding'
-    }))
-    const outcome = await save()
-    expect(outcome.conflicts).toHaveLength(1)
-    expect(writeJavaLiterals).not.toHaveBeenCalled()
-    expect(scene().tunables).toEqual({})
+    for (const [reason, key] of cases) {
+      writeJavaLiterals.mockImplementationOnce(async () => ({ status: 'refused', reason }))
+      const outcome = await save()
+      expect(outcome.failed, reason).toEqual([{ path: LIFT, reason }])
+      expect(isCompleteTunableSave(outcome), reason).toBe(false)
+      expect(scene().tunables, reason).toEqual({
+        [LIFT]: { 'Lift#kP': { value: '0.25', base: '0.1' } }
+      })
+      expect(noticeKeys(), reason).toEqual([key])
+    }
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.1')))
+    // 파일을 고친 뒤 다시 저장하면 쓴다
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.25')))
+    expect(noticeKeys()).toEqual([])
   })
 
   it('파일이 없으면 버리고 값을 알린다', async () => {
@@ -270,7 +321,7 @@ describe('튜닝 값 저장', () => {
       .mockImplementationOnce(async () => ({ status: 'changed' }))
     const outcome = await save()
     expect(writeJavaLiterals).toHaveBeenCalledTimes(2)
-    expect(outcome.failed).toEqual([{ path: LIFT, detail: 'changed', changed: true }])
+    expect(outcome.failed).toEqual([{ path: LIFT, reason: 'changed' }])
     expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
     expect(noticeKeys()).toEqual(['tunableFileBusy'])
   })
@@ -288,7 +339,7 @@ describe('튜닝 값 저장', () => {
     })
     const outcome = await save()
     // 파일 순서대로 한다: Lift는 실패, Arm은 썼다
-    expect(outcome.failed).toEqual([{ path: LIFT, detail: 'EPERM' }])
+    expect(outcome.failed).toEqual([{ path: LIFT, reason: 'error', detail: 'EPERM' }])
     expect(scene().tunables).toEqual({ [LIFT]: { 'Lift#kP': { value: '0.25', base: '0.1' } } })
     expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.1')))
     expect(useNoticeStore.getState().notices[0]).toMatchObject({
@@ -298,8 +349,25 @@ describe('튜닝 값 저장', () => {
     // 읽기 실패도 같다
     readJavaFile.mockImplementationOnce(async () => ({ ok: false, code: 'failed', detail: 'EIO' }))
     const again = await save()
-    expect(again.failed).toEqual([{ path: LIFT, detail: 'EIO' }])
+    expect(again.failed).toEqual([{ path: LIFT, reason: 'error', detail: 'EIO' }])
     expect(scene().tunables[LIFT]).toBeDefined()
+    // 파일 상태가 아닌 거부(허용하지 않는 경로 등)는 메인의 이유를 그대로 보인다
+    writeJavaLiterals.mockImplementationOnce(async () => ({
+      status: 'refused',
+      reason: 'notAllowed: became a link'
+    }))
+    const refused = await save()
+    expect(refused.failed).toEqual([
+      { path: LIFT, reason: 'error', detail: 'notAllowed: became a link' }
+    ])
+    expect(isCompleteTunableSave(refused)).toBe(false)
+    expect(useNoticeStore.getState().notices).toMatchObject([
+      {
+        key: 'tunableWriteFailed',
+        params: { file: 'Lift.java', detail: 'notAllowed: became a link' }
+      }
+    ])
+    expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
   })
 
   it('저장하는 동안 다시 고친 값은 충돌이어도 지금 문서에서 빼지 않는다', async () => {

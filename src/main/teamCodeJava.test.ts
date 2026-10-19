@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -663,16 +664,95 @@ describe('튜닝 값 읽기·쓰기', () => {
     expect(await tempFiles()).toEqual([])
   })
 
-  it.skipIf(process.platform === 'win32')('읽기 전용 파일은 쓰지 않는다', async () => {
+  it.skipIf(process.platform === 'win32')(
+    '읽기 전용 파일은 보여 주기만 하고(readOnly) 쓰지 않는다',
+    async () => {
+      await put(java('Lift.java'), LIFT)
+      const writable = await readOk(rel('Lift.java'))
+      expect(writable.editable).toBe(true)
+      const edits = [editFor(writable.text, 'Lift#kP', '0.25')]
+      await chmod(java('Lift.java'), 0o444)
+      // 읽기: 내용은 주되 고칠 수 없다(쓰기와 같은 규칙)
+      const read = await readOk(rel('Lift.java'))
+      expect(read).toEqual({
+        ok: true,
+        text: LIFT,
+        hash: writable.hash,
+        editable: false,
+        reason: 'readOnly'
+      })
+      // 쓸 수 있을 때 읽고 그 뒤 읽기 전용이 됐어도 쓰지 않는다
+      expect(await writeJavaLiterals(root, rel('Lift.java'), writable.hash, edits)).toEqual({
+        status: 'refused',
+        reason: 'readOnly'
+      })
+      expect(await readFile(java('Lift.java'), 'utf8')).toBe(LIFT)
+      expect(await tempFiles()).toEqual([])
+      // 인코딩·생성 표식이 먼저다
+      const generated = `// ${GENERATED_MARKER} 0123456789abcd\n${LIFT}`
+      await put(java('Copied.java'), generated)
+      await chmod(java('Copied.java'), 0o444)
+      expect(await readOk(rel('Copied.java'))).toMatchObject({
+        editable: false,
+        reason: 'generated'
+      })
+      // 쓰기 가능하게 되돌리면 다시 고칠 수 있다
+      await chmod(java('Lift.java'), 0o644)
+      await chmod(java('Copied.java'), 0o644)
+      expect(await readOk(rel('Lift.java'))).toMatchObject({ editable: true })
+      expect((await writeJavaLiterals(root, rel('Lift.java'), writable.hash, edits)).status).toBe(
+        'written'
+      )
+    }
+  )
+
+  it('Windows에서 rename을 다시 하기 전에 파일이 바뀌면 changed이고 그 내용을 남긴다', async () => {
     await put(java('Lift.java'), LIFT)
-    await chmod(java('Lift.java'), 0o444)
     const read = await readOk(rel('Lift.java'))
-    expect(
-      await writeJavaLiterals(root, rel('Lift.java'), read.hash, [
-        editFor(read.text, 'Lift#kP', '0.25')
-      ])
-    ).toEqual({ status: 'refused', reason: 'readOnly' })
-    await chmod(java('Lift.java'), 0o644)
+    const external = LIFT.replace('TARGET = 100', 'TARGET = 200')
+    let renames = 0
+    const result = await writeJavaLiterals(
+      root,
+      rel('Lift.java'),
+      read.hash,
+      [editFor(read.text, 'Lift#kP', '0.25')],
+      {
+        platform: 'win32',
+        // 백신이 파일을 잡고 있는 동안(EPERM) 다른 편집기가 저장했다
+        rename: async () => {
+          renames++
+          await writeFile(java('Lift.java'), external)
+          throw Object.assign(new Error('EPERM'), { code: 'EPERM' })
+        }
+      }
+    )
+    expect(result).toEqual({ status: 'changed' })
+    expect(renames).toBe(1)
+    expect(await readFile(java('Lift.java'), 'utf8')).toBe(external)
+    expect(await tempFiles()).toEqual([])
+  })
+
+  it('Windows에서 rename을 다시 할 때 파일이 그대로면 쓴다', async () => {
+    await put(java('Lift.java'), LIFT)
+    const read = await readOk(rel('Lift.java'))
+    let renames = 0
+    const result = await writeJavaLiterals(
+      root,
+      rel('Lift.java'),
+      read.hash,
+      [editFor(read.text, 'Lift#kP', '0.25')],
+      {
+        platform: 'win32',
+        rename: async (from, to) => {
+          if (renames++ < 2) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+          await rename(from, to)
+        }
+      }
+    )
+    expect(result.status).toBe('written')
+    expect(renames).toBe(3)
+    expect(await readFile(java('Lift.java'), 'utf8')).toContain('kP = 0.25;')
+    expect(await tempFiles()).toEqual([])
   })
 
   it('같은 루트의 쓰기는 차례로 한다(둘째는 첫째가 바꾼 해시를 본다)', async () => {
@@ -707,6 +787,37 @@ describe('renameWithRetry', () => {
     })
     expect(calls).toBe(4)
     expect(sleeps).toEqual([10, 20, 40])
+  })
+
+  it('다시 하기 전마다(기다린 뒤) beforeRetry를 부르고, false면 그만두고 false를 돌려준다', async () => {
+    const order: string[] = []
+    let checks = 0
+    const result = await renameWithRetry('a', 'b', {
+      platform: 'win32',
+      sleep: async (ms) => {
+        order.push(`sleep ${ms}`)
+      },
+      beforeRetry: async () => {
+        order.push('check')
+        return ++checks < 2
+      },
+      rename: async () => {
+        order.push('rename')
+        throw error('EPERM')
+      }
+    })
+    expect(result).toBe(false)
+    expect(order).toEqual(['rename', 'sleep 10', 'check', 'rename', 'sleep 20', 'check'])
+    // 처음에 바로 바꾸면 부르지 않는다
+    expect(
+      await renameWithRetry('a', 'b', {
+        platform: 'win32',
+        beforeRetry: async () => {
+          throw new Error('not called')
+        },
+        rename: async () => undefined
+      })
+    ).toBe(true)
   })
 
   it('다른 오류나 다른 OS는 바로 실패하고, 2초쯤 지나면 그만둔다', async () => {
