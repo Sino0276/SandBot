@@ -122,7 +122,7 @@ const ko = {
     tunableFileUnicodeEscape:
       '{{file}}의 리터럴 밖(주석 등)에 \\u 이스케이프가 있어(javac가 먼저 바꾸므로 위치를 믿을 수 없음) 튜닝 값을 쓰지 못했습니다. 그 \\u를 지운 뒤 다시 저장하세요. 값은 저장하지 않은 채로 남아 있습니다.',
     tunableFileNotAllowed:
-      '{{file}}이(가) 이제 TeamCode/src/main/java 안의 보통 파일이 아니라(밖을 가리키는 링크 등) 튜닝 값을 쓰지 않았습니다. 파일을 되돌리거나 스크립트를 다시 연결한 뒤 다시 저장하세요. 값은 저장하지 않은 채로 남아 있습니다.'
+      '{{file}}이(가) 이제 TeamCode/src/main/java 안의 보통 파일이 아니라(밖을 가리키는 링크 등) 튜닝 값을 쓰지 않고 버렸습니다: {{fields}}'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {

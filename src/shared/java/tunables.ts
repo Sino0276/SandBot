@@ -21,16 +21,17 @@
 //   선언한 클래스나 그 아래(T 쪽 하위 클래스)에 있으면 그 자식의 초기값이 실제 값이 아닐 수 있으므로, 펼치되 그 자식 값은
 //   읽기 전용이다(initializedInType, 그 안의 객체도 같다). 위(상위 클래스)의 것은 자식 필드 초기값보다 먼저 돌아 세지 않는다.
 //   같은 id는 렌더러가 처음 것만 보므로 한 경로에서라도 그러면 모두 그렇게 둔다.
-// - 클래스를 초기화할 때 도는 코드가 대입·증감하는 필드(객체 필드는 나오기만 해도 그 자식)도 읽기 전용이다
-//   (initializedInType). Dashboard는 클래스를 초기화한 뒤의 값을 보이므로 초기값을 고쳐도 소용이 없다. 보는 코드는 선언한
-//   형식과, 묶음의 클래스에서 선언한 형식까지의 하위 클래스들의 static 블록, 그리고 그 static 블록·static 필드 초기값이
-//   부르는 같은 형식의 static 메서드(그 메서드가 부르는 것도)다. 람다·익명 클래스 안도 보고, 같은 이름의 지역 변수 선언과
-//   다른 이름으로 한정한 것(other.kP), 하위 클래스가 같은 이름의 필드로 가린 것은 뺀다. 애매하면 읽기 전용으로 둔다.
+// - 클래스를 초기화할 때 도는 코드가 대입·증감하는 필드(객체 필드는 멤버를 읽기만 하는 것이 아니면 나오기만 해도 그
+//   자식)도 읽기 전용이다(initializedInType). Dashboard는 클래스를 초기화한 뒤의 값을 보이므로 초기값을 고쳐도 소용이 없다.
+//   보는 코드는 선언한 형식과, 묶음의 클래스에서 선언한 형식까지의 하위 클래스들의 static 블록과 static 필드 초기값, 그리고
+//   거기서 부르는 같은 형식의 static 메서드와 new T(…)가 돌리는 그 형식의 생성자·인스턴스 초기화 블록(싱글턴, 차례로
+//   따라간다)이다. 람다·익명 클래스 안도 보고, 같은 이름의 지역 변수 선언과 다른 이름으로 한정한 것(other.kP), 하위 클래스가
+//   같은 이름의 필드로 가린 것은 뺀다. 애매하면 읽기 전용으로 둔다.
 // - enum은 읽기 전용이다(SDK enum의 상수 목록은 SDK 소스 없이 알 수 없다).
 //
 // 한계: 다른 파일의 상위 클래스 필드는 보이지 않는다(Dashboard는 getFields로 보인다. 객체는 아는 필드만 펼친다).
 // 다른 파일에 선언된 형식은 펼치지 않는다. 그 밖의 형식(묶음 사슬 밖의 하위 클래스, 중첩 클래스 등)의 static 블록과 다른
-// 형식의 메서드(상위 클래스의 static 메서드, 메서드 참조 Lift::apply 포함)가 하는 대입은 보지 않는다.
+// 형식의 메서드(상위 클래스의 static 메서드, 메서드 참조 Lift::apply 포함)·인스턴스 메서드가 하는 대입은 보지 않는다.
 import { decodeJavaQuoted, lexJava, lineAt, type JavaToken } from './lexer'
 import { isLiteralSpanText } from './javaLiteral'
 import type {
@@ -114,6 +115,8 @@ type TypeDecl = {
   staticBlocks: { start: number; end: number }[]
   // static 메서드 이름 → 본문의 토큰 범위들(오버로드는 여럿, 범위는 static 블록과 같은 모양)
   staticMethods: Map<string, { start: number; end: number }[]>
+  // 모든 생성자 본문과 인스턴스 초기화 블록의 토큰 범위(클래스 초기화 중에 new T(…)가 돌리는 코드)
+  instanceInits: { start: number; end: number }[]
 }
 
 type FieldDecl = {
@@ -379,7 +382,8 @@ class Parser {
       hasConstructor: false,
       hasInstanceInit: false,
       staticBlocks: [],
-      staticMethods: new Map()
+      staticMethods: new Map(),
+      instanceInits: []
     }
     j++
     // 형식 매개변수(<T extends A>의 extends는 상위 클래스가 아니다). 읽지 못하면 extends를 두지 않는다.
@@ -419,7 +423,9 @@ class Parser {
       }
       if (this.isOp(i, '{')) {
         decl.hasInstanceInit = true
-        i = this.skipBalanced(i)
+        const end = this.skipBalanced(i)
+        decl.instanceInits.push({ start: i + 1, end })
+        i = end
         continue
       }
       if (this.isKeyword(i, 'static') && this.isOp(i + 1, '{')) {
@@ -446,10 +452,12 @@ class Parser {
       ) {
         if (this.isOp(j + 1, '(')) {
           if (this.constructorRunsOnNew(j + 1)) decl.hasConstructor = true
-          i = this.skipMethodRest(j + 1)
+          i = this.skipMethodRest(j + 1, (body) => decl.instanceInits.push(body))
         } else {
           decl.hasConstructor = true
-          i = this.skipBalanced(j + 1)
+          const end = this.skipBalanced(j + 1)
+          decl.instanceInits.push({ start: j + 2, end })
+          i = end
         }
         continue
       }
@@ -1011,11 +1019,35 @@ function assignedAt(parser: Parser, start: number, i: number): boolean {
   )
 }
 
-const declaresField = (decl: TypeDecl, name: string): boolean =>
-  decl.fields.some((field) => field.name === name)
+// 형식마다 필드 이름 집합을 한 번 만든다(가림 확인이 이름이 나올 때마다 돈다)
+const fieldNameSets = new WeakMap<TypeDecl, Set<string>>()
 
-// 클래스를 초기화할 때 도는 코드(staticBlockNames)가 그 필드를 정하는지. 값 필드는 대입·증감, 객체 필드(anyUse)는 나오기만
-// 해도(PARAMS.kS = 1, f(PARAMS)) 정하는 것으로 본다. 람다·익명 클래스 안도 같다. 같은 이름의 지역 변수 선언과 다른 이름으로
+function declaresField(decl: TypeDecl, name: string): boolean {
+  let names = fieldNameSets.get(decl)
+  if (!names) {
+    names = new Set(decl.fields.map((field) => field.name))
+    fieldNameSets.set(decl, names)
+  }
+  return names.has(name)
+}
+
+// 한정자 시작(start)부터 이름(i)까지에 이어진 멤버 읽기(PARAMS.kS, PARAMS.pid.kP)인지: 뒤에 .이름이 하나 이상 있고,
+// 마지막 멤버가 대입·증감·호출(.reset())·첨자([0])·메서드 참조(::)가 아니다. 객체를 읽기만 하는 코드(X = PARAMS.kS)는
+// 객체의 값을 정하지 않는다.
+function memberRead(parser: Parser, start: number, i: number): boolean {
+  let j = i
+  while (parser.isOp(j + 1, '.') && parser.isIdent(j + 2)) j += 2
+  return (
+    j !== i &&
+    !parser.isOp(j + 1, '(') &&
+    !parser.isOp(j + 1, '[') &&
+    !parser.isOp(j + 1, '::') &&
+    !assignedAt(parser, start, j)
+  )
+}
+
+// 클래스를 초기화할 때 도는 코드(staticBlockNames)가 그 필드를 정하는지. 값 필드는 대입·증감, 객체 필드(anyUse)는 멤버를
+// 읽기만 하는 것(X = PARAMS.kS)이 아니면 나오기만 해도(PARAMS.kS = 1, f(PARAMS), PARAMS.reset()) 정하는 것으로 본다. 람다·익명 클래스 안도 같다. 같은 이름의 지역 변수 선언과 다른 이름으로
 // 한정한 것(other.kP)은 빼고, 식으로 한정한 것(f().kP)은 알 수 없으므로 넣는다. 지역 변수의 범위는 따지지 않으므로 그
 // 지역 변수에 대입한 것도 필드로 본다(애매하면 읽기 전용).
 // below는 선언한 형식의 하위 클래스들(묶음의 클래스부터 선언한 형식 바로 아래까지, classChain 순서)이고 그 static 블록도
@@ -1033,9 +1065,14 @@ function setInStaticBlock(
     // 블록이 있는 형식부터 선언한 형식까지(가까운 것부터)
     const targets = [...below.slice(level), owner]
     const scope = targets[0]
-    const hiddenFrom = (index: number): boolean =>
-      targets.slice(index, -1).some((type) => declaresField(type, field.name))
-    for (const i of staticBlockNames(ctx, scope).get(field.name) ?? []) {
+    const occurrences = staticBlockNames(ctx, scope).get(field.name)
+    if (!occurrences) continue
+    // hidden[k]: targets[k]부터 선언한 형식 바로 위까지 사이의 클래스가 같은 이름의 필드로 가린다(한 번만 계산)
+    const hidden: boolean[] = new Array(targets.length).fill(false)
+    for (let k = targets.length - 2; k >= 0; k--)
+      hidden[k] = hidden[k + 1] || declaresField(targets[k], field.name)
+    const hiddenFrom = (index: number): boolean => hidden[index]
+    for (const i of occurrences) {
       const { start, segments, expression } = qualifierOf(parser, i)
       if (!expression) {
         if (segments.length > 0) {
@@ -1043,7 +1080,7 @@ function setInStaticBlock(
           if (target < 0 || hiddenFrom(target)) continue
         } else if (hiddenFrom(0) || declaresLocal(parser, i)) continue
       }
-      if (anyUse || assignedAt(parser, start, i)) return true
+      if (anyUse ? !memberRead(parser, start, i) : assignedAt(parser, start, i)) return true
     }
   }
   return false
@@ -1058,20 +1095,43 @@ function callsOwnMethod(ctx: Context, decl: TypeDecl, i: number): boolean {
   return qualifierTarget(ctx, decl, [decl], segments) === 0
 }
 
-// 클래스를 초기화할 때 도는 코드의 토큰 범위: static 블록과, static 블록·static 필드 초기값이 부르는 같은 형식의 static
-// 메서드 본문(그 본문이 부르는 것도 차례로 따라간다). 오버로드는 이름이 같으면 모두 본다.
+// 초기값·본문 안의 new 이름(위치 i, 뒤가 '(')이 decl을 만드는지(익명 하위 클래스 new T() {…}도 T의 생성자를 부른다)
+function constructsOwnType(ctx: Context, decl: TypeDecl, i: number): boolean {
+  const { parser } = ctx
+  if (!parser.isKeyword(i, 'new')) return false
+  const segments: string[] = []
+  let j = i + 1
+  while (parser.isIdent(j)) {
+    segments.push(parser.tx(j))
+    if (!parser.isOp(j + 1, '.')) break
+    j += 2
+  }
+  if (segments.length === 0 || !parser.isOp(j + 1, '(')) return false
+  return resolveType(segments, decl, ctx.topLevel) === decl
+}
+
+// 클래스를 초기화할 때 도는 코드의 토큰 범위: static 블록, static 필드 초기값, 그리고 이들이 부르는 같은 형식의 static
+// 메서드 본문(그 본문이 부르는 것도 차례로 따라간다)과 new T(…)가 돌리는 T의 생성자·인스턴스 초기화 블록(싱글턴
+// INSTANCE = new T()). 오버로드는 이름이 같으면 모두 보고, 생성자는 인자와 관계없이 모두 본다. 인스턴스 메서드·
+// 메서드 참조·다른 형식의 메서드는 따라가지 않는다.
 function staticInitRanges(ctx: Context, decl: TypeDecl): { start: number; end: number }[] {
   const { parser } = ctx
-  const ranges = [...decl.staticBlocks]
-  if (decl.staticMethods.size === 0) return ranges
-  const seeds = [
+  const ranges = [
     ...decl.staticBlocks,
     ...decl.fields.flatMap((field) => (isStatic(field) && field.init ? [field.init] : []))
   ]
+  const seeds = [...ranges]
   const followed = new Set<string>()
+  let constructed = false
   for (let k = 0; k < seeds.length; k++) {
     const { start, end } = seeds[k]
     for (let i = start; i < end; i++) {
+      if (!constructed && decl.instanceInits.length > 0 && constructsOwnType(ctx, decl, i)) {
+        constructed = true
+        ranges.push(...decl.instanceInits)
+        seeds.push(...decl.instanceInits)
+        continue
+      }
       if (!parser.isIdent(i) || !parser.isOp(i + 1, '(')) continue
       const name = parser.tx(i)
       const bodies = decl.staticMethods.get(name)

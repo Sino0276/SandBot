@@ -38,17 +38,20 @@ import {
 
 // 파일 값이 이긴 필드(쓰지 않음). 파일 값과 SandBot 값은 리터럴 글자다.
 export type TunableConflict = { path: string; fieldId: string; fileValue: string; value: string }
-// 파일이나 필드가 없어 쓰지 않은 편집(이름이 바뀌었을 수 있다. 따라가지 않는다)
+// 파일이나 필드가 없어 쓰지 않은 편집(이름이 바뀌었을 수 있다. 따라가지 않는다). notAllowed는 파일이 메인이 받지 않는
+// 경로가 된 것이다(밖을 가리키는 링크·보통 파일 아님). 스크립트 목록에서도 빠져 카드가 그 값을 보일 수 없으므로, 없는
+// 파일처럼 버리고 알린다(남기면 저장할 때마다 실패하고 버릴 길도 없다).
 export type TunableMissing = {
   path: string
   file: boolean
+  notAllowed?: boolean
   fields: { fieldId: string; value: string }[]
 }
 // 쓰지 못한 파일(편집은 저장하지 않은 채로 남긴다)
 export type TunableFailure =
-  // 파일 상태 때문에 쓸 수 없다(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식, 리터럴 밖의 \u, 메인이 받지 않는
-  // 경로: 밖을 가리키는 링크·보통 파일 아님). 사용자가 파일을 바꿔야 풀린다.
-  | { path: string; reason: JavaFileProblem | 'unicodeEscape' | 'notAllowed' }
+  // 파일 상태 때문에 쓸 수 없다(읽기 전용, 1 MB 초과, 다른 인코딩, 생성 표식, 리터럴 밖의 \u). 사용자가 파일을
+  // 바꿔야 풀린다.
+  | { path: string; reason: JavaFileProblem | 'unicodeEscape' }
   // 저장하는 동안 파일이 계속 바뀌었다
   | { path: string; reason: 'changed' }
   // 그 밖의 입출력 오류·거부(detail은 메인이 준 이유 그대로)
@@ -178,13 +181,20 @@ function commitPlan(outcome: TunableSaveOutcome, path: string, plan: FilePlan): 
     outcome.missing.push({ path, file: false, fields: plan.missingFields })
 }
 
-// 파일이 없다: 모든 편집을 버리고 알린다
-function fileMissing(outcome: TunableSaveOutcome, path: string, entries: TunableFileEdits): void {
+// 파일이 없거나 메인이 받지 않는 경로가 됐다(notAllowed): 모든 편집을 버리고 알린다
+function fileMissing(
+  outcome: TunableSaveOutcome,
+  path: string,
+  entries: TunableFileEdits,
+  notAllowed = false
+): void {
   const fields = Object.entries(entries).map(([fieldId, entry]) => {
     outcome.drops.push({ path, fieldId, entry })
     return { fieldId, value: entry.value }
   })
-  outcome.missing.push({ path, file: true, fields })
+  outcome.missing.push(
+    notAllowed ? { path, file: true, notAllowed, fields } : { path, file: true, fields }
+  )
 }
 
 async function saveFile(
@@ -205,7 +215,7 @@ async function saveFile(
     outcome.sources.push({ path, result: read })
     if (!read.ok) {
       if (read.code === 'missing') fileMissing(outcome, path, entries)
-      else if (read.code === 'notAllowed') outcome.failed.push({ path, reason: 'notAllowed' })
+      else if (read.code === 'notAllowed') fileMissing(outcome, path, entries, true)
       else outcome.failed.push({ path, reason: 'error', detail: read.detail || read.code })
       return
     }
@@ -255,14 +265,14 @@ async function saveFile(
         fileMissing(outcome, path, entries)
         return
       case 'refused':
-        // 읽은 뒤 파일 상태가 바뀌었으면(읽기 전용이 됨 등) 읽을 때 걸린 것과 같이 다룬다
-        outcome.failed.push(
-          isFileProblem(result.reason)
-            ? { path, reason: result.reason }
-            : result.reason.startsWith('notAllowed')
-              ? { path, reason: 'notAllowed' }
+        // 읽은 뒤 파일 상태가 바뀌었으면(읽기 전용이 됨, 링크가 됨 등) 읽을 때 걸린 것과 같이 다룬다
+        if (result.reason.startsWith('notAllowed')) fileMissing(outcome, path, entries, true)
+        else
+          outcome.failed.push(
+            isFileProblem(result.reason)
+              ? { path, reason: result.reason }
               : { path, reason: 'error', detail: result.reason }
-        )
+          )
         return
     }
   }
@@ -299,7 +309,6 @@ const FAILURE_NOTICES = {
   encoding: 'tunableFileEncoding',
   generated: 'tunableFileGenerated',
   unicodeEscape: 'tunableFileUnicodeEscape',
-  notAllowed: 'tunableFileNotAllowed',
   changed: 'tunableFileBusy'
 } as const satisfies Record<Exclude<TunableFailure['reason'], 'error'>, string>
 
@@ -311,10 +320,10 @@ export function tunableSaveNotices(outcome: TunableSaveOutcome): Parameters<type
       'tunableConflict',
       { file: fileNameOfPath(path), field: tunableFieldLabel(fieldId), fileValue, value }
     ])
-  for (const { path, fields } of outcome.missing)
+  for (const { path, fields, notAllowed } of outcome.missing)
     notices.push([
       'warning',
-      'tunableMissing',
+      notAllowed ? 'tunableFileNotAllowed' : 'tunableMissing',
       {
         file: fileNameOfPath(path),
         fields: fields

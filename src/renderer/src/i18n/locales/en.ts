@@ -124,7 +124,7 @@ const en: Messages = {
     tunableFileUnicodeEscape:
       '{{file}} has \\u escapes outside literals (in comments, etc.; javac translates them first, so positions cannot be trusted), so its tunables were not written. Remove those \\u escapes, then save again. The values are still unsaved.',
     tunableFileNotAllowed:
-      '{{file}} is no longer a regular file inside TeamCode/src/main/java (for example, a link pointing outside), so its tunables were not written. Restore the file or relink the script, then save again. The values are still unsaved.'
+      '{{file}} is no longer a regular file inside TeamCode/src/main/java (for example, a link pointing outside), so its tunables were discarded without being written: {{fields}}'
   },
   importPhase: {
     checking: 'checking the file',

@@ -379,7 +379,7 @@ describe('튜닝 값 저장', () => {
     expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
   })
 
-  it('실패: 메인이 받지 않는 파일이 됐으면(밖을 가리키는 링크 등, notAllowed) 값을 남기고 번역한 이유로 알린다', async () => {
+  it('메인이 받지 않는 파일이 됐으면(밖을 가리키는 링크 등, notAllowed) 없는 파일처럼 버리고 알린다(카드가 보일 수 없음)', async () => {
     disk.set(LIFT, lift(field('double', 'kP', '0.1')))
     scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')
     readJavaFile.mockImplementationOnce(async () => ({
@@ -388,21 +388,27 @@ describe('튜닝 값 저장', () => {
       detail: 'outside TeamCode/src/main/java'
     }))
     const read = await save()
-    expect(read.failed).toEqual([{ path: LIFT, reason: 'notAllowed' }])
-    expect(noticeKeys()).toEqual(['tunableFileNotAllowed'])
+    expect(read.failed).toEqual([])
+    expect(read.missing).toEqual([
+      { path: LIFT, file: true, notAllowed: true, fields: [{ fieldId: 'Lift#kP', value: '0.25' }] }
+    ])
+    expect(isCompleteTunableSave(read)).toBe(false)
+    expect(useNoticeStore.getState().notices).toMatchObject([
+      { key: 'tunableFileNotAllowed', params: { file: 'Lift.java', fields: 'Lift.kP = 0.25' } }
+    ])
+    expect(scene().tunables[LIFT]).toBeUndefined()
+    // 쓰는 순간 링크가 됐어도(쓰기 거부) 같다
+    scene().setTunable(LIFT, 'Lift#kP', '0.3', '0.1')
     writeJavaLiterals.mockImplementationOnce(async () => ({
       status: 'refused',
       reason: 'notAllowed: became a link'
     }))
     const written = await save()
-    expect(written.failed).toEqual([{ path: LIFT, reason: 'notAllowed' }])
-    expect(isCompleteTunableSave(written)).toBe(false)
-    expect(useNoticeStore.getState().notices).toMatchObject([
-      { key: 'tunableFileNotAllowed', params: { file: 'Lift.java' } }
-    ])
-    expect(scene().tunables[LIFT]['Lift#kP']).toEqual({ value: '0.25', base: '0.1' })
+    expect(written.failed).toEqual([])
+    expect(written.missing).toMatchObject([{ path: LIFT, notAllowed: true }])
+    expect(noticeKeys()).toEqual(['tunableFileNotAllowed'])
+    expect(scene().tunables[LIFT]).toBeUndefined()
   })
-
   it('실패: 리터럴 밖에 \\u가 생겼으면(파일 전체가 읽기 전용) 충돌로 버리지 않고 값을 남긴다', async () => {
     disk.set(LIFT, lift(field('double', 'kP', '0.1')))
     scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')

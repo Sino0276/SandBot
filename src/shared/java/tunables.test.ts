@@ -1064,6 +1064,99 @@ class Params { public double outside = 1; }
     })
   })
 
+  describe('클래스 초기화 코드: 멤버 읽기, static 필드 초기값, 싱글턴 생성자', () => {
+    it('객체 멤버를 읽기만 하는 static 메서드(static 초기값이 부름)는 객체 자식을 잠그지 않는다', () => {
+      const text = `${CONFIG}@Config public class Lift {
+  public static class Params { public double ticksPerInch = 45.3; public double maxHeight = 30; }
+  public static Params PARAMS = new Params();
+  private static final int MAX_TICKS = inchesToTicks(30);
+  private static final double H = PARAMS.maxHeight * 2;
+  public static int inchesToTicks(double inches) { return (int) Math.round(inches * PARAMS.ticksPerInch); }
+}`
+      expect(value(text, 'Lift.Params#ticksPerInch').editable).toBe(true)
+      expect(value(text, 'Lift.Params#maxHeight').editable).toBe(true)
+    })
+
+    it('멤버를 바꾸거나(대입·증감·호출·첨자) 객체를 넘기면 잠근다', () => {
+      const lift = (body: string): string => `${CONFIG}@Config public class Lift {
+  public static class Pid { public double kP = 5; public double[] gains = {1}; void reset() { } }
+  public static Pid PID = new Pid();
+  static { ${body} }
+}`
+      for (const body of [
+        'PID.kP = 0.5;',
+        'PID.kP++;',
+        'PID.kP /= 10;',
+        'PID.reset();',
+        'PID.gains[0] = 2;',
+        'tune(PID);',
+        'Pid p = PID; p.kP = 1;'
+      ]) {
+        expect(value(lift(body), 'Lift.Pid#kP').reason, body).toBe('initializedInType')
+      }
+      expect(value(lift('double x = PID.kP * 2;'), 'Lift.Pid#kP').editable).toBe(true)
+    })
+
+    it('static 필드 초기값 안의 대입과 객체를 넘기는 호출도 센다', () => {
+      const text = `${CONFIG}@Config public class Lift {
+  public static double A = 1;
+  public static int B = 2;
+  public static class Pid { public double kP = 5; }
+  public static Pid PID = new Pid();
+  private static final double C = (A = 3);
+  private static final int D = B++;
+  private static final Pid SCALED = scale(PID);
+  static Pid scale(Pid p) { p.kP /= 10; return p; }
+}`
+      expect(value(text, 'Lift#A').reason).toBe('initializedInType')
+      expect(value(text, 'Lift#B').reason).toBe('initializedInType')
+      expect(value(text, 'Lift.Pid#kP').reason).toBe('initializedInType')
+    })
+
+    it('static 초기값의 new T(…)가 돌리는 T의 생성자·초기화 블록(싱글턴)이 대입하는 필드는 읽기 전용', () => {
+      const singleton = `${CONFIG}@Config public class Singleton {
+  public static double SPEED = 0.5;
+  public static double TURN = 0.3;
+  public static int COUNT = 0;
+  public static final Singleton INSTANCE = new Singleton(2);
+  private Singleton(int n) { SPEED = 0.8; helper(); }
+  { COUNT++; }
+  private static void helper() { TURN = 0.1; }
+}`
+      expect(value(singleton, 'Singleton#SPEED').reason).toBe('initializedInType')
+      expect(value(singleton, 'Singleton#COUNT').reason).toBe('initializedInType')
+      // 생성자가 부르는 같은 형식의 static 메서드도 따라간다
+      expect(value(singleton, 'Singleton#TURN').reason).toBe('initializedInType')
+      // 클래스를 초기화할 때 만들지 않으면 생성자는 돌지 않는다
+      const lazy = `${CONFIG}@Config public class Lazy {
+  public static double SPEED = 0.5;
+  private static Lazy instance;
+  private Lazy() { SPEED = 0.8; }
+  public static Lazy get() { if (instance == null) instance = new Lazy(); return instance; }
+}`
+      expect(value(lazy, 'Lazy#SPEED').editable).toBe(true)
+    })
+
+    it('하위 클래스 static 블록에서 물려받은 필드를 많이 읽어도 빠르다(가림 확인을 한 번만)', () => {
+      const fields = Array.from({ length: 20000 }, (_, i) => `a${i}`).join(', ')
+      const reads = Array.from({ length: 50000 }, () => 'K').join(' + ')
+      const text = `${CONFIG}public class Outer {
+  public static class Base { public static double K = 1; }
+  @Config public static class A extends Base {
+    static int ${fields};
+    static { double d = ${reads}; }
+  }
+}`
+      const started = performance.now()
+      const file = parseTunables(text)
+      const elapsed = performance.now() - started
+      expect(file.blocks[0].fields.find((field) => field.name === 'K')).toMatchObject({
+        editable: true
+      })
+      expect(elapsed).toBeLessThan(3000)
+    })
+  })
+
   describe('같은 파일의 상위 클래스(extends)', () => {
     it('맨 위 필드: 자기 필드 뒤에 상위 클래스들의 public static 필드, id는 선언한 형식', () => {
       // 리뷰의 Inherit2.java(Dashboard: Child는 OWN·BASE_GAIN, Child2는 OWN2·OWN·BASE_GAIN)
