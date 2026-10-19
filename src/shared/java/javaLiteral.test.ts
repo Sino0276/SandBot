@@ -157,7 +157,7 @@ describe('formatTunableLiteral', () => {
 })
 
 describe('isWritableLiteral', () => {
-  it('정규 모양만 받는다', () => {
+  it('어느 형식에든 컴파일되는 리터럴 하나를 받는다(정규 모양이 아닌 디스크 리터럴도)', () => {
     for (const text of [
       'true',
       'false',
@@ -171,6 +171,15 @@ describe('isWritableLiteral', () => {
       '1e5',
       '1.5e-3f',
       '-0.0',
+      '012',
+      '0x10',
+      '0b1',
+      '1_000',
+      '+1',
+      '1.',
+      '.5',
+      '5d',
+      '0x1p3',
       '""',
       '"a\\tb"',
       '"\\012"',
@@ -182,7 +191,7 @@ describe('isWritableLiteral', () => {
     }
   })
 
-  it('식·줄바꿈·\\u·텍스트 블록·진법 리터럴은 받지 않는다', () => {
+  it('식·공백·줄바꿈·\\u·텍스트 블록·잘못된 리터럴은 받지 않는다', () => {
     for (const text of [
       '',
       '1; x()',
@@ -197,47 +206,212 @@ describe('isWritableLiteral', () => {
       '"abc',
       'abc"',
       '"a"b"',
-      '012',
-      '0x10',
-      '0b1',
+      '08',
+      '1_',
+      '0x',
       '1.5L',
       '1e5L',
-      '1_000',
-      '+1',
+      '2147483648',
+      '9223372036854775808L',
+      '1e999',
       '- 1',
       '--1',
+      '+true',
       'TRUE',
       'null',
       "'c'",
       '"\uD800"',
       '"\u0001"',
-      '1.',
-      '.5'
+      ' 1',
+      '1 '
     ]) {
       expect(isWritableLiteral(text), JSON.stringify(text)).toBe(false)
     }
   })
 })
 
+// 필드 Java 형식 → (형식, 박싱)
+const FIELD: Record<string, [TunableValueType, boolean]> = {
+  boolean: ['boolean', false],
+  Boolean: ['boolean', true],
+  int: ['int', false],
+  Integer: ['int', true],
+  long: ['long', false],
+  Long: ['long', true],
+  float: ['float', false],
+  Float: ['float', true],
+  double: ['double', false],
+  Double: ['double', true],
+  String: ['String', false]
+}
+
 describe('literalFitsType', () => {
-  it('박싱 형식에도 컴파일되는 모양만 받는다', () => {
-    expect(literalFitsType('int', '1')).toBe(true)
-    expect(literalFitsType('int', '1.0')).toBe(false)
-    expect(literalFitsType('int', '2147483648')).toBe(false)
-    expect(literalFitsType('long', '1')).toBe(false)
-    expect(literalFitsType('long', '1L')).toBe(true)
-    expect(literalFitsType('double', '1')).toBe(false)
-    expect(literalFitsType('double', '1.0')).toBe(true)
-    expect(literalFitsType('double', '1e5')).toBe(true)
-    expect(literalFitsType('double', '1.0f')).toBe(false)
-    expect(literalFitsType('double', '1e999')).toBe(false)
-    expect(literalFitsType('float', '1.0')).toBe(false)
-    expect(literalFitsType('float', '1.0f')).toBe(true)
-    expect(literalFitsType('float', '1e39f')).toBe(false)
-    expect(literalFitsType('boolean', 'true')).toBe(true)
-    expect(literalFitsType('boolean', '"true"')).toBe(false)
-    expect(literalFitsType('String', '"x"')).toBe(true)
-    expect(literalFitsType('String', 'true')).toBe(false)
+  // [필드 형식, 글자, javac --release 8이 그 필드의 초기값으로 받는지]. 모두 javac로 확인했다('- 1'만 빼고: 공백이 든
+  // 글자는 normalizeLiteral 출력이 아니라 받지 않는다. javac는 단항 식으로 받는다).
+  const CASES: [string, string, boolean][] = [
+    // JLS 3.10.1·3.10.2 모양: 받는 것
+    ['int', '1_000', true],
+    ['int', '1__2', true],
+    ['double', '09.5', true],
+    ['int', '0_7', true],
+    ['int', '00', true],
+    ['int', '010', true],
+    ['int', '0x10', true],
+    ['int', '0b101', true],
+    ['double', '0x1p3', true],
+    ['float', '0x1.8p1f', true],
+    ['double', '0x.8p0', true],
+    ['double', '0x1.p1', true],
+    ['double', '1e10', true],
+    ['double', '1.e5', true],
+    ['double', '.5', true],
+    ['double', '5.', true],
+    ['double', '5d', true],
+    ['float', '5f', true],
+    ['double', '5e1_0', true],
+    ['double', '1__2.3__4', true],
+    ['double', '1_000.5', true],
+    // 받지 않는 것
+    ['int', '1_', false],
+    ['int', '_1', false],
+    ['int', '0x_1', false],
+    ['double', '1._5', false],
+    ['double', '1_.5', false],
+    ['int', '08', false],
+    ['int', '09', false],
+    ['int', '0b2', false],
+    ['double', '0x1.8', false],
+    ['double', '0x1p', false],
+    ['double', '0x.p1', false],
+    ['double', '0x1_.8p1', false],
+    ['int', '0x', false],
+    ['int', '0b', false],
+    ['int', '0_', false],
+    ['double', '.', false],
+    ['double', '1e', false],
+    ['double', '1e+', false],
+    ['double', '1e_5', false],
+    ['double', '1.5L', false],
+    ['double', '1fL', false],
+    // 부호: 바로 붙은 '-'·'+' 하나만
+    ['int', '+5', true],
+    ['int', '-5', true],
+    ['double', '-.5', true],
+    ['double', '+0.0', true],
+    ['int', '--1', false],
+    ['int', '- 1', false],
+    ['boolean', '-true', false],
+    ['String', '-"a"', false],
+    // int
+    ['int', '2147483647', true],
+    ['int', '2147483648', false],
+    ['int', '-2147483648', true],
+    ['int', '+2147483648', false],
+    ['int', '-2147483649', false],
+    ['int', '0xFFFFFFFF', true],
+    ['int', '-0xFFFFFFFF', true],
+    ['int', '0x100000000', false],
+    ['int', '037777777777', true],
+    ['int', '040000000000', false],
+    ['int', `0b${'1'.repeat(32)}`, true],
+    ['int', `0b${'1'.repeat(33)}`, false],
+    ['int', '5L', false],
+    ['int', '5.0', false],
+    ['Integer', '5', true],
+    ['Integer', '5L', false],
+    // long
+    ['long', '5', true],
+    ['long', '0x10', true],
+    ['long', '2147483648', false],
+    ['long', '2147483648L', true],
+    ['long', '9223372036854775807L', true],
+    ['long', '9223372036854775808L', false],
+    ['long', '-9223372036854775808L', true],
+    ['long', '0xFFFFFFFFFFFFFFFFL', true],
+    ['long', '0x10000000000000000L', false],
+    ['long', '5l', true],
+    ['long', '1.0', false],
+    ['Long', '5L', true],
+    ['Long', '5', false],
+    // float: 정수는 넓혀지고, 부동소수는 f가 있어야 한다. 범위는 float로 정확히 반올림해 본다
+    ['float', '1', true],
+    ['float', '5L', true],
+    ['float', '16777217', true],
+    ['float', '1.5F', true],
+    ['float', '1.5', false],
+    ['float', '1.5d', false],
+    ['float', '0x1p3', false],
+    ['float', '0x1p3f', true],
+    ['float', '3.4028235e38f', true],
+    ['float', '3.4028236e38f', false],
+    // 가장 큰 float과 2^128의 중간: 바로 아래는 가장 큰 float, 정확히 중간은 무한대(double을 거치면 둘 다 무한대)
+    ['float', '340282356779733661637539395458142568447f', true],
+    ['float', '340282356779733661637539395458142568448f', false],
+    ['float', '1.4e-45f', true],
+    ['float', '1e-46f', false],
+    // 2^-150(가장 작은 float의 절반): 정확히 그 값은 0, 조금 위는 2^-149
+    [
+      'float',
+      '7.00649232162408535461864791644958065640130970938257885878534141944895541342930300743319094181060791015625e-46f',
+      false
+    ],
+    [
+      'float',
+      '7.0064923216240853546186479164495806564013097093825788587853414194489554134293030074331909418106079101563e-46f',
+      true
+    ],
+    ['float', '0x1p-150f', false],
+    ['float', '0x1.0000000001p-150f', true],
+    ['float', '0e999f', true],
+    ['Float', '1.5f', true],
+    ['Float', '1', false],
+    ['Float', '1.5', false],
+    // double
+    ['double', '0', true],
+    ['double', '5L', true],
+    ['double', '0.1f', true],
+    ['double', '1.7976931348623157e308', true],
+    ['double', '1.7976931348623159e308', false],
+    ['double', '4.9e-324', true],
+    ['double', '2.4703282292062327e-324', false],
+    ['double', '2.4703282292062328e-324', true],
+    ['double', '0x1p-1075', false],
+    ['double', '0x1.000001p-1075', true],
+    ['double', '1e-9999999999999999999999', false],
+    ['double', '0e9999999999999999999999', true],
+    ['Double', '0.0', true],
+    ['Double', '2.5d', true],
+    ['Double', '5d', true],
+    ['Double', '1e5', true],
+    ['Double', '0x1p3', true],
+    ['Double', '0x1p3d', true],
+    ['Double', '0', false],
+    ['Double', '0.1f', false],
+    ['Double', '5L', false],
+    // boolean·String
+    ['boolean', 'true', true],
+    ['Boolean', 'false', true],
+    ['boolean', 'TRUE', false],
+    ['boolean', '1', false],
+    ['String', '"a\\tb"', true],
+    ['String', '"\\377"', true],
+    ['String', '"\\s"', false],
+    ['String', 'true', false],
+    ['int', '"5"', false]
+  ]
+
+  it('javac가 받는 리터럴 토큰(부호 하나 포함)을 형식·박싱별로 받는다', () => {
+    for (const [java, text, expected] of CASES) {
+      const [type, boxed] = FIELD[java]
+      expect(literalFitsType(type, text, boxed), `${java} ${text}`).toBe(expected)
+    }
+  })
+
+  it('박싱 여부를 넘기지 않으면 기본형이다', () => {
+    expect(literalFitsType('double', '1')).toBe(true)
+    expect(literalFitsType('double', '1', true)).toBe(false)
+    expect(literalFitsType('long', '5')).toBe(true)
+    expect(literalFitsType('long', '5', true)).toBe(false)
   })
 })
 
@@ -313,6 +487,26 @@ describe('displayTunableLiteral', () => {
       ['int', '-0x80000000', '-2147483648'],
       ['int', '010', '8'],
       ['int', '1_000', '1000'],
+      // 리터럴의 형식이 필드 형식과 다르면 Java처럼 넓힌 값(정수 리터럴의 형식은 접미사로 정해진다)
+      ['long', '0xFFFFFFFF', '-1'],
+      ['long', '037777777777', '-1'],
+      ['long', '0xFFFFFFFFL', '4294967295'],
+      ['double', '0xFFFFFFFF', '-1'],
+      ['double', '-0xFFFFFFFF', '1'],
+      ['float', '037777777777', '-1'],
+      ['double', '0.1f', '0.10000000149011612'],
+      ['double', '-0.1F', '-0.10000000149011612'],
+      ['double', '0x1.99999ap-4f', '0.10000000149011612'],
+      ['double', '2.5f', '2.5'],
+      ['float', '16777217', '16777216'],
+      ['float', '2147483647', '2147483600'],
+      ['float', '-16777217L', '-16777216'],
+      ['double', '9007199254740993L', '9007199254740992'],
+      ['double', '9223372036854775807L', '9223372036854776000'],
+      ['double', '9007199254740991L', '9007199254740991'],
+      ['double', '0x1p-1075', '0'],
+      ['double', '0x1.000001p-1075', '5e-324'],
+      ['double', '0x0p999999', '0'],
       ['String', '"a\\tb"', 'a\tb'],
       ['String', '"\\u00B0"', '°'],
       ['boolean', 'true', 'true'],

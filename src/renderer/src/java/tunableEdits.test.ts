@@ -46,7 +46,9 @@ describe('튜닝 값 편집(순수 함수)', () => {
   })
 
   it('rebase: 쓴 필드의 항목은 사라지고, 항목이 없던 문서는 이전 디스크 값을 저장하지 않은 값으로 갖는다', () => {
-    const writes: TunableWrite[] = [{ path: LIFT, fieldId: KP, before: '0.1', after: '0.2' }]
+    const writes: TunableWrite[] = [
+      { path: LIFT, fieldId: KP, before: '0.1', after: '0.2', restore: '0.1' }
+    ]
     const written = withTunable(NO_TUNABLE_EDITS, LIFT, KP, '0.2', '0.1')
     expect(rebaseAfterWrite(written, writes)).toEqual({})
     expect(rebaseAfterWrite(NO_TUNABLE_EDITS, writes)).toEqual({
@@ -60,6 +62,28 @@ describe('튜닝 값 편집(순수 함수)', () => {
     expect(rebaseAfterWrite(other, writes)).toEqual({
       [LIFT]: { 'Lift#kI': { value: '3', base: '1' }, [KP]: { value: '0.1', base: '0.2' } }
     })
+  })
+
+  it('rebase: 항목이 없던 문서는 before 대신 restore(되돌려 쓸 리터럴)를 갖는다', () => {
+    // 쓸 수 없는 디스크 글자(날 탭이 든 문자열)는 같은 값의 정규 리터럴로 되돌린다
+    const writes: TunableWrite[] = [
+      { path: LIFT, fieldId: 'Lift#NAME', before: '"a\tb"', after: '"x"', restore: '"a\\tb"' }
+    ]
+    expect(rebaseAfterWrite(NO_TUNABLE_EDITS, writes)).toEqual({
+      [LIFT]: { 'Lift#NAME': { value: '"a\\tb"', base: '"x"' } }
+    })
+  })
+
+  it('rebase: 다른 디스크 값을 보던 편집이라도 값이 이미 새 디스크 값이면 지운다', () => {
+    const writes: TunableWrite[] = [
+      { path: LIFT, fieldId: KP, before: '0.3', after: '0.2', restore: '0.3' }
+    ]
+    // 0.1을 보고 0.2로 고친 편집(그 뒤 밖에서 0.3이 됐다가 SandBot이 0.2를 썼다)
+    const sameValue = withTunable(NO_TUNABLE_EDITS, LIFT, KP, '0.2', '0.1')
+    expect(rebaseAfterWrite(sameValue, writes)).toEqual({})
+    // 값이 다르면 그대로(저장할 때 충돌)
+    const otherValue = withTunable(NO_TUNABLE_EDITS, LIFT, KP, '0.25', '0.1')
+    expect(rebaseAfterWrite(otherValue, writes)).toBe(otherValue)
   })
 
   it('알림의 필드 이름', () => {
@@ -79,7 +103,8 @@ function writesOf(tunables: TunableEdits): TunableWrite[] {
       path,
       fieldId,
       before: base,
-      after: value
+      after: value,
+      restore: base
     }))
   )
 }
@@ -145,7 +170,7 @@ describe('저장 뒤 실행 취소(rebase)', () => {
     edit('0.5')
     const stale = state().tunables
     // 그 사이 다른 경로로 0.3 → 0.4를 썼다(이 편집과 관계없는 저장)
-    save([{ path: LIFT, fieldId: KP, before: '0.1', after: '0.4' }])
+    save([{ path: LIFT, fieldId: KP, before: '0.1', after: '0.4', restore: '0.1' }])
     expect(state().tunables).toBe(stale)
   })
 
@@ -268,6 +293,29 @@ describe('튜닝 값 표시', () => {
     // 비교는 정규화한 글자로 한다('- 1'과 '-1')
     const negative = { ...kP, literal: '- 1.0' }
     expect(displayTunable(negative, { value: '2.0', base: '-1.0' }, true).fileValue).toBeNull()
+    // 밖에서 SandBot 값과 같은 값으로 고쳤으면 ⚠를 띄우지 않는다(다음 저장이 항목을 지운다)
+    expect(displayTunable(kP, { value: '0.5', base: '0.3' }, true)).toEqual({
+      text: '0.5',
+      pending: true,
+      fileValue: null
+    })
+  })
+
+  it('[SandBot 값 쓰기]는 저장하지 않은 값을 지금 형식으로 다시 만들고, 받을 수 없으면 null(버튼을 숨긴다)', () => {
+    // TunablesList: kept = tunableEditValue(node, displayTunable(...).text)
+    const keep = (node: typeof kP, value: string, base: string): string | null =>
+      tunableEditValue(node, displayTunable(node, { value, base }, true).text)
+    // double 0.25를 고치는 동안 밖에서 float 0.7f가 됐다
+    const asFloat = { ...kP, type: 'float' as const, literal: '0.7f' }
+    expect(keep(asFloat, '0.25', '0.5')).toBe('0.25f')
+    // long → Long: Long에는 L이 있어야 한다
+    const asLong = { ...kP, type: 'long' as const, boxed: true, literal: '7L' }
+    expect(keep(asLong, '5', '6')).toBe('5L')
+    // double → int: 0.25는 int로 받을 수 없다
+    const asInt = { ...kP, type: 'int' as const, literal: '3' }
+    expect(keep(asInt, '0.25', '0.5')).toBeNull()
+    // 같은 형식이면 저장하지 않은 값 그대로
+    expect(keep({ ...kP, literal: '0.7' }, '0.25', '0.5')).toBe('0.25')
   })
 
   it('디스크 값과 같은 값을 다른 글자로 입력하면 디스크 리터럴(항목 없음)이다', () => {
@@ -278,6 +326,18 @@ describe('튜닝 값 표시', () => {
     expect(tunableEditValue(hex, '16')).toBe('0x10')
     expect(tunableEditValue(hex, '17')).toBe('17')
     expect(tunableEditValue(hex, '1.5')).toBeNull()
+    // 리터럴의 형식이 필드 형식과 다르면 Java처럼 넓힌 값으로 비교한다
+    const mask = { ...kP, type: 'long' as const, literal: '0xFFFFFFFF' }
+    expect(displayTunable(mask, undefined, true).text).toBe('-1')
+    expect(tunableEditValue(mask, '-1')).toBe('0xFFFFFFFF')
+    expect(tunableEditValue(mask, '4294967295')).toBe('4294967295L')
+    const floatInDouble = { ...kP, literal: '0.1f' }
+    expect(displayTunable(floatInDouble, undefined, true).text).toBe('0.10000000149011612')
+    expect(tunableEditValue(floatInDouble, '0.10000000149011612')).toBe('0.1f')
+    expect(tunableEditValue(floatInDouble, '0.1')).toBe('0.1')
+    const intInFloat = { ...kP, type: 'float' as const, literal: '16777217' }
+    expect(displayTunable(intInFloat, undefined, true).text).toBe('16777216')
+    expect(tunableEditValue(intInFloat, '16777216')).toBe('16777217')
     const flag = { ...kP, type: 'boolean' as const, literal: 'true' }
     expect(tunableEditValue(flag, 'false')).toBe('false')
     expect(tunableEditValue(flag, 'true')).toBe('true')

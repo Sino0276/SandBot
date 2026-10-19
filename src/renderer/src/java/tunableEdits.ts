@@ -20,11 +20,15 @@ export type TunableEdits = Readonly<Record<string, TunableFileEdits>>
 export const NO_TUNABLE_EDITS: TunableEdits = Object.freeze({})
 
 // 저장 때 파일에 쓴(또는 이미 그 값이던) 필드. before는 그 편집의 base(쓰기 직전 디스크 값), after는 새 디스크 값.
+// restore는 before를 되돌려 쓸 리터럴이다. before가 그 필드에 쓸 수 있는 리터럴이면(literalFitsType) before 그대로라
+// 저장 뒤 실행 취소하고 다시 저장하면 파일이 원래 글자로 돌아간다(git diff가 비게). 쓸 수 없으면(제어 문자가 든 문자열
+// 등) 같은 값의 정규 리터럴이다.
 export type TunableWrite = {
   path: string
   fieldId: string
   before: string
   after: string
+  restore: string
 }
 
 function without<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
@@ -66,18 +70,22 @@ export function hasTunableEdits(edits: TunableEdits): boolean {
 }
 
 // 저장해 파일에 쓴 뒤 문서 하나(현재 문서와 실행 취소 기록의 모든 스냅샷)를 새 디스크 값 기준으로 옮긴다.
-// 항목이 없는 스냅샷은 "그때 디스크 값(before)"을 뜻했으므로, 이제는 {before, base: after}가 된다. 그래서 저장한 뒤
-// 실행 취소하면 dirty가 되고, 다시 저장하면 파일이 이전 값으로 돌아간다. base가 before와 다른 항목은 다른 디스크 값을
-// 보고 한 편집이라 그대로 둔다(저장할 때 충돌로 처리된다). 저장하는 동안의 편집·실행 취소도 같은 식으로 맞는다.
+// 항목이 없는 스냅샷은 "그때 디스크 값(before)"을 뜻했으므로, 이제는 {value: restore, base: after}가 된다. 그래서 저장한
+// 뒤 실행 취소하면 dirty가 되고, 다시 저장하면 파일이 이전 값으로 돌아간다. base가 before와 다른 항목은 다른 디스크
+// 값을 보고 한 편집이라 그대로 둔다(저장할 때 충돌로 처리된다). 다만 그 값이 이미 새 디스크 값이면 지운다(디스크와
+// 같은데 저장하지 않은 값·⚠ 파일 값으로 남지 않게). 저장하는 동안의 편집·실행 취소도 같은 식으로 맞는다.
 export function rebaseAfterWrite(
   edits: TunableEdits,
   writes: readonly TunableWrite[]
 ): TunableEdits {
   let next = edits
-  for (const { path, fieldId, before, after } of writes) {
+  for (const { path, fieldId, before, after, restore } of writes) {
     const entry = next[path]?.[fieldId]
-    if (entry && entry.base !== before) continue
-    next = withTunable(next, path, fieldId, entry ? entry.value : before, after)
+    if (entry && entry.base !== before) {
+      if (entry.value === after) next = withoutTunable(next, path, fieldId)
+      continue
+    }
+    next = withTunable(next, path, fieldId, entry ? entry.value : restore, after)
   }
   return next
 }
@@ -152,7 +160,8 @@ export type TunableDisplay = {
   text: string
   // 저장하지 않은 값이 있다
   pending: boolean
-  // 편집할 때 본 값과 지금 디스크 값이 다르면 그 디스크 값(⚠ 파일 값: x). 같으면 null.
+  // 편집할 때 본 값과 지금 디스크 값이 다르면 그 디스크 값(⚠ 파일 값: x). 같거나, 디스크 값이 이미 저장하지 않은
+  // 값과 같으면(다음 저장이 항목을 지운다) null.
   fileValue: string | null
 }
 
@@ -165,10 +174,12 @@ export function displayTunable(
   const diskText = node.literal === null ? '' : shownLiteral(node, node.literal, editable)
   if (!entry) return { text: diskText, pending: false, fileValue: null }
   return {
-    // 저장하지 않은 값은 SandBot이 만든 정규 리터럴이라 형식대로 풀어 보인다
+    // 저장하지 않은 값은 쓸 수 있는 리터럴(SandBot이 만든 정규 리터럴, 실행 취소로 되돌릴 디스크 글자)이라 형식대로
+    // 풀어 보인다
     text: shownLiteral(node, entry.value, true),
     pending: true,
-    fileValue: entry.base === disk ? null : node.literal === null ? '—' : diskText
+    fileValue:
+      entry.base === disk || entry.value === disk ? null : node.literal === null ? '—' : diskText
   }
 }
 

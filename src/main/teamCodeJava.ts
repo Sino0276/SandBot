@@ -382,13 +382,13 @@ function parseEdits(edits: unknown): JavaLiteralEdit[] | null {
   return parsed
 }
 
-// 지금 파일에서 고칠 수 있는 값 노드의 자리 → 형식
-function editableSpans(text: string): Map<string, TunableValueType> {
-  const spans = new Map<string, TunableValueType>()
+// 지금 파일에서 고칠 수 있는 값 노드의 자리 → 형식(박싱 여부 포함)
+function editableSpans(text: string): Map<string, { type: TunableValueType; boxed: boolean }> {
+  const spans = new Map<string, { type: TunableValueType; boxed: boolean }>()
   const visit = (node: TunableNode): void => {
     if (node.kind === 'object') node.children.forEach(visit)
     else if (node.kind === 'value' && node.editable && node.span)
-      spans.set(`${node.span.start}:${node.span.end}`, node.type)
+      spans.set(`${node.span.start}:${node.span.end}`, { type: node.type, boxed: node.boxed })
   }
   for (const block of parseTunables(text).blocks) block.fields.forEach(visit)
   return spans
@@ -397,8 +397,9 @@ function editableSpans(text: string): Map<string, TunableValueType> {
 // 편집이 안전한지. 문제가 있으면 그 이유.
 // - 위치 순서이고 겹치지 않고 글자 범위 안이다.
 // - 그 자리의 글자가 expected와 같고, expected는 부호가 붙을 수 있는 리터럴 하나다(isLiteralSpanText).
-// - 새 글자는 쓸 수 있는 정규 리터럴이다(isWritableLiteral).
-// - 그 자리가 지금 파일에서 고칠 수 있는 튜닝 값의 초기값이고, 새 글자가 그 필드 형식에 컴파일된다(literalFitsType).
+// - 새 글자는 리터럴 토큰 하나다(isWritableLiteral: 식·주석·줄바꿈·\u 없음).
+// - 그 자리가 지금 파일에서 고칠 수 있는 튜닝 값의 초기값이고, 새 글자가 그 필드 형식(박싱 포함)에 컴파일된다
+//   (literalFitsType).
 //   렌더러가 같은 파서로 같은 글자에서 자리를 정하므로 맞아야 한다(메서드 안 리터럴 등 다른 곳을 바꾸지 않게).
 export function checkLiteralEdits(text: string, edits: readonly JavaLiteralEdit[]): string | null {
   const spans = editableSpans(text)
@@ -409,9 +410,10 @@ export function checkLiteralEdits(text: string, edits: readonly JavaLiteralEdit[
     if (text.slice(edit.start, edit.end) !== edit.expected) return 'expected text does not match'
     if (!isLiteralSpanText(edit.expected)) return 'expected text is not a literal'
     if (!isWritableLiteral(edit.text)) return 'new text is not a writable literal'
-    const type = spans.get(`${edit.start}:${edit.end}`)
-    if (!type) return 'not an editable tunable literal'
-    if (!literalFitsType(type, edit.text)) return `new text does not fit ${type}`
+    const field = spans.get(`${edit.start}:${edit.end}`)
+    if (!field) return 'not an editable tunable literal'
+    if (!literalFitsType(field.type, edit.text, field.boxed))
+      return `new text does not fit ${field.boxed ? 'boxed ' : ''}${field.type}`
     previousEnd = edit.end
   }
   return null

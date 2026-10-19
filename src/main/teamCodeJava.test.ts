@@ -417,7 +417,8 @@ describe('튜닝 값 읽기·쓰기', () => {
       ['newline', [{ ...kP, text: '1\n' }]],
       ['unicode escape', [{ ...name, text: '"\\u0041"' }]],
       ['wrong type', [{ ...target, text: '0.25' }]],
-      ['boxed-unsafe double', [{ ...kP, text: '1' }]],
+      ['long literal in int', [{ ...target, text: '120L' }]],
+      ['malformed literal', [{ ...kP, text: '1_' }]],
       ['not a tunable', [local]],
       [
         'not a literal span',
@@ -434,6 +435,50 @@ describe('튜닝 값 읽기·쓰기', () => {
     }
     expect(await readFile(java('Lift.java'), 'utf8')).toBe(LIFT)
     expect(await tempFiles()).toEqual([])
+  })
+
+  it('박싱 형식 필드에는 형식이 정확히 맞는 리터럴만, 기본형에는 javac가 받는 리터럴을 원래 모양 그대로 쓴다', async () => {
+    const source = [
+      'import com.acmerobotics.dashboard.config.Config;',
+      '@Config',
+      'public class Boxed {',
+      '    public static Double kD = 0.1;',
+      '    public static Long COUNT = 5L;',
+      '    public static double kS = 0.5;',
+      '    public static long MASK = 1L;',
+      '}',
+      ''
+    ].join('\n')
+    await put(java('Boxed.java'), source)
+    const read = await readOk(rel('Boxed.java'))
+    for (const [id, text] of [
+      ['Boxed#kD', '1'],
+      ['Boxed#kD', '0.5f'],
+      ['Boxed#COUNT', '5'],
+      ['Boxed#kS', '0.5L'],
+      ['Boxed#MASK', '0x1_']
+    ]) {
+      const result = await writeJavaLiterals(root, rel('Boxed.java'), read.hash, [
+        editFor(read.text, id, text)
+      ])
+      expect(result.status, `${id} ${text}`).toBe('refused')
+    }
+    expect(await readFile(java('Boxed.java'), 'utf8')).toBe(source)
+    const edits = [
+      editFor(read.text, 'Boxed#kD', '0.0'),
+      editFor(read.text, 'Boxed#COUNT', '0x10L'),
+      editFor(read.text, 'Boxed#kS', '0'),
+      editFor(read.text, 'Boxed#MASK', '0xFFFFFFFF')
+    ]
+    const result = await writeJavaLiterals(root, rel('Boxed.java'), read.hash, edits)
+    expect(result.status).toBe('written')
+    expect(await readFile(java('Boxed.java'), 'utf8')).toBe(
+      source
+        .replace('kD = 0.1', 'kD = 0.0')
+        .replace('COUNT = 5L', 'COUNT = 0x10L')
+        .replace('kS = 0.5', 'kS = 0')
+        .replace('MASK = 1L', 'MASK = 0xFFFFFFFF')
+    )
   })
 
   it('인자 모양이 틀리면 거부한다', async () => {

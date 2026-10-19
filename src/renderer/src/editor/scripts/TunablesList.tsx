@@ -99,6 +99,9 @@ function ValueRow({
   const editable = context.fileEditable && isEditableValue(node)
   const display = displayTunable(node, entry, editable)
   const base = diskLiteralKey(node)
+  // [SandBot 값 쓰기]로 남길 값: 저장하지 않은 값을 지금 필드 형식으로 다시 만든다(밖에서 형식이 바뀌면 그대로는 맞지
+  // 않는다: double 0.25 → float 0.25f). 지금 형식으로 받을 수 없으면(double → int) null이라 버튼을 숨긴다.
+  const kept = editable && base !== null ? tunableEditValue(node, display.text) : null
   const declaration = `${javaTypeName(node)} ${node.name}`
   // 받을 수 없는 입력은 버린다(입력칸은 초안을 지우고 이전 값으로 돌아간다, NumberField와 같음)
   const commit = (input: string): void => {
@@ -149,14 +152,16 @@ function ValueRow({
           {/* 같은 값은 입력칸·체크박스로 다시 확정할 수 없으므로 고르는 버튼을 둔다(둘 다 실행 취소 한 단계) */}
           {editable && base !== null && (
             <>
-              <button
-                type="button"
-                className="panel-button"
-                title={t('inspector.tunables.keepValueHint')}
-                onClick={() => setTunable(context.path, node.id, entry.value, base)}
-              >
-                {t('inspector.tunables.keepValue')}
-              </button>
+              {kept !== null && (
+                <button
+                  type="button"
+                  className="panel-button"
+                  title={t('inspector.tunables.keepValueHint')}
+                  onClick={() => setTunable(context.path, node.id, kept, base)}
+                >
+                  {t('inspector.tunables.keepValue')}
+                </button>
+              )}
               <button
                 type="button"
                 className="panel-button"

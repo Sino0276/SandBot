@@ -234,6 +234,19 @@ describe('튜닝 값 저장', () => {
     expect(scene().tunables).toEqual({})
   })
 
+  it('[SandBot 값 쓰기]로 저장한 뒤 버튼을 되돌려도, 그 값이 이미 디스크 값이면 저장하지 않은 값이 남지 않는다', async () => {
+    disk.set(LIFT, lift(field('double', 'kP', '0.1')))
+    scene().setTunable(LIFT, 'Lift#kP', '0.2', '0.1')
+    // Android Studio에서 0.3이 됐고, [SandBot 값 쓰기]가 새 base로 다시 고쳤다
+    disk.set(LIFT, lift(field('double', 'kP', '0.3')))
+    scene().setTunable(LIFT, 'Lift#kP', '0.2', '0.3')
+    expect(isCompleteTunableSave(await save())).toBe(true)
+    expect(disk.get(LIFT)).toBe(lift(field('double', 'kP', '0.2')))
+    // 버튼을 누르기 전 문서({0.2, base 0.1})는 디스크 값(0.2)과 같다
+    expect(undo()).toBe(true)
+    expect(scene().tunables).toEqual({})
+  })
+
   it('읽은 뒤 파일이 바뀌면(changed) 다시 읽고 한 번 더 쓴다', async () => {
     disk.set(LIFT, lift(field('double', 'kP', '0.1')))
     scene().setTunable(LIFT, 'Lift#kP', '0.25', '0.1')

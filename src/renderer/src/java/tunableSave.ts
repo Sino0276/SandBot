@@ -1,5 +1,9 @@
 import type { JavaLiteralEdit, ReadJavaFileResult } from '../../../shared/ipc'
-import { literalFitsType, normalizeLiteral } from '../../../shared/java/javaLiteral'
+import {
+  displayTunableLiteral,
+  literalFitsType,
+  normalizeLiteral
+} from '../../../shared/java/javaLiteral'
 import { parseTunables } from '../../../shared/java/tunables'
 import type { TunableNode } from '../../../shared/java/tunableTypes'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
@@ -12,11 +16,13 @@ import {
   isEditableValue,
   rebaseAfterWrite,
   tunableFieldLabel,
+  tunableInputLiteral,
   tunableNodes,
   withoutTunable,
   type TunableEdit,
   type TunableEdits,
   type TunableFileEdits,
+  type TunableValueNode,
   type TunableWrite
 } from './tunableEdits'
 
@@ -80,6 +86,13 @@ type FilePlan = {
   missingFields: TunableMissing['fields']
 }
 
+// 저장 뒤 실행 취소하면 되돌려 쓸 리터럴(TunableWrite.restore). base(편집할 때 본 디스크 글자)를 그 필드에 쓸 수
+// 있으면 그대로(원래 글자로 돌아간다), 아니면 같은 값의 정규 리터럴이다.
+function restoreLiteral(node: TunableValueNode, base: string): string {
+  if (literalFitsType(node.type, base, node.boxed)) return base
+  return tunableInputLiteral(node.type, displayTunableLiteral(node.type, base)) ?? base
+}
+
 // 읽은 내용으로 필드마다 할 일을 정한다
 function planFile(
   path: string,
@@ -100,7 +113,11 @@ function planFile(
     }
     // 파일을 쓸 수 없게 됐거나(인코딩 등), 리터럴이 아니게 됐거나(식), 형식이 바뀌어 값이 맞지 않으면(double → float)
     // 파일 값을 따른다
-    if (!read.editable || !isEditableValue(node) || !literalFitsType(node.type, entry.value)) {
+    if (
+      !read.editable ||
+      !isEditableValue(node) ||
+      !literalFitsType(node.type, entry.value, node.boxed)
+    ) {
       plan.conflicts.push({ path, fieldId, fileValue: nodeText(node), value: entry.value })
       drop()
       continue
@@ -108,7 +125,13 @@ function planFile(
     const literal = normalizeLiteral(node.literal)
     // 이미 그 값이다(다른 편집기에서 같은 값으로 고침): 쓰지 않고 기록만 새 디스크 값 기준으로 옮긴다
     if (literal === entry.value) {
-      plan.writes.push({ path, fieldId, before: entry.base, after: entry.value })
+      plan.writes.push({
+        path,
+        fieldId,
+        before: entry.base,
+        after: entry.value,
+        restore: restoreLiteral(node, entry.base)
+      })
       continue
     }
     if (literal !== entry.base) {
@@ -118,7 +141,13 @@ function planFile(
     }
     const { start, end } = node.span
     plan.edits.push({ start, end, expected: read.text.slice(start, end), text: entry.value })
-    plan.writes.push({ path, fieldId, before: entry.base, after: entry.value })
+    plan.writes.push({
+      path,
+      fieldId,
+      before: entry.base,
+      after: entry.value,
+      restore: restoreLiteral(node, entry.base)
+    })
   }
   plan.edits.sort((a, b) => a.start - b.start)
   return plan
