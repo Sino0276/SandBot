@@ -1299,6 +1299,285 @@ body {
   font-size: 11px;
 }
 
+/* 사용처(4단계): 장치·그룹·로봇 카드의 접힌 "사용처"와 파일별 트리. 행은 고르기만 하고 글자를 고르지 않는다
+   (한 번 누르면 포커스, 더블클릭으로 연다). 문제(⚠)는 검증 경고와 같은 색이다. */
+.usage-section {
+  margin: 4px 0 6px;
+}
+
+.usage-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px 0 0;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.usage-header:hover {
+  background: var(--color-panel-header);
+}
+
+.usage-header:focus-visible,
+.usage-fold:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* 찾은 것이 없거나 아직 결과가 없는 머리줄: 펼치지 않는다 */
+.usage-header.is-muted {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.usage-twisty {
+  flex: none;
+  width: 10px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.usage-title {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.usage-summary {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-warnings {
+  flex: none;
+  margin-left: auto;
+  color: #e0b341;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-busy {
+  color: var(--color-text-muted);
+}
+
+.usage-body {
+  padding-left: 12px;
+}
+
+/* 실패·TeamCode 없음: 이전 결과를 흐리게 보인다 */
+.usage-section.is-stale .usage-summary,
+.usage-section.is-stale .usage-part,
+.usage-section.is-stale .usage-descendants,
+.script-uses.is-stale .script-chips {
+  opacity: 0.6;
+}
+
+.usage-note {
+  margin: 2px 0 4px;
+}
+
+.usage-part {
+  margin: 4px 0;
+}
+
+.usage-part-header {
+  margin-bottom: 2px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.usage-part.is-warning .usage-part-header {
+  color: #e0b341;
+}
+
+.usage-part-title {
+  overflow-wrap: anywhere;
+}
+
+.usage-info {
+  color: var(--color-text-muted);
+}
+
+/* 접어 두는 부분(세지 않는 것)의 펼침 단추 */
+.usage-fold {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.usage-fold:hover {
+  color: var(--color-text);
+}
+
+.usage-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: default;
+  outline: none;
+  user-select: none;
+}
+
+.usage-row:hover {
+  background: var(--color-panel-header);
+}
+
+/* 한 번 누르면 포커스(고른 행) */
+.usage-row:focus {
+  background: var(--color-accent-muted);
+}
+
+.usage-row:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* 긴 경로는 끝(파일 이름)이 보이도록 앞쪽을 줄인다 */
+.usage-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.usage-file-count {
+  flex: none;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-line-row {
+  padding-left: 20px;
+}
+
+.usage-line {
+  flex: none;
+  min-width: 4ch;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.usage-badge {
+  flex: none;
+  padding: 0 3px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+/* 코드 조각: 앞은 snippetWindow가 줄이고 뒤는 말줄임으로 자른다 */
+.usage-code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+}
+
+.usage-mark {
+  color: inherit;
+  background: rgb(76 141 255 / 30%);
+  border-radius: 2px;
+}
+
+.usage-part.is-warning .usage-mark {
+  background: rgb(224 179 65 / 30%);
+}
+
+.usage-more {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.usage-file-more {
+  padding-left: calc(20px + 4ch + 10px);
+}
+
+.usage-descendants {
+  margin: 4px 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* 스크립트 카드의 "이 스크립트가 쓰는 하드웨어": 누르면 그 오브젝트를 고르는 칩 */
+.script-uses {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+}
+
+.script-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-chip {
+  max-width: 100%;
+  height: 18px;
+  padding: 0 7px;
+  overflow: hidden;
+  color: var(--color-text);
+  background: var(--color-panel-header);
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.script-chip:hover {
+  border-color: var(--color-accent);
+}
+
+.script-chip:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
 /* 환경 설정 창(Unity의 Edit > Preferences) */
 .dialog.preferences {
   display: flex;

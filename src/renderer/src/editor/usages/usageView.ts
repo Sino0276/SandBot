@@ -1,18 +1,17 @@
 // 사용처 카드의 보기 모델(spec §6.6, §8). 순수 함수라 Vitest가 DOM 없이 확인한다(UsageSection·UsageTree가 그린다).
 // - 장치·그룹·로봇 카드마다 머리줄 개수(코드·이름·하위 장치·문제)와 부분(코드, 이름으로, 이전 이름 …)을 만든다.
 // - 이름 바꾸기는 상태 없이 기준 씬(마지막으로 열거나 저장한 씬)의 범위와 비교해 바꾼 카드에 "이전 이름"으로 붙인다.
-//   생성 코드의 이름은 codeScopes(buildCodeScopes)에서만 읽고 다시 만들지 않는다.
+//   생성 코드의 이름은 codeScopes(buildCodeScopes)에서, 찾기 이름은 usageSymbols의 lookupNamesOf에서만 읽고
+//   다시 만들지 않는다(맞추기가 쓴 이름과 달라지면 이전 이름을 붙이지 못한다).
 // - 행은 파일별로 묶고(파일마다 50개, 부분마다 200개까지), 코드 조각은 맞은 토큰 앞을 12자까지만 남긴다.
 import {
   allScopes,
   buildCodeScopes,
   deviceKey,
   type CodeScope,
-  type DeviceMember,
-  type RobotCodeScopes
+  type DeviceMember
 } from '../../hardware/codeScopes'
-import type { ComponentEntry } from '../../hardware/components'
-import { deadWheelDeviceName } from '../../hardware/javaCodegen'
+import { lookupNamesOf, usageSymbols } from '../../java/usages/usageSymbols'
 import {
   deviceUsageKey,
   groupUsageKey,
@@ -36,7 +35,7 @@ export type UsageCardKind = UsageTarget['kind']
 // renamedCode·renamedName: 이전 이름을 쓰는 곳(바꾼 카드에 붙인다)
 // unresolved: 로봇의 생성 코드에 없는 이름 전체, unresolvedInClass: 그룹 클래스에 없는 이름
 // constructs: 로봇을 만드는 곳(new), code: 코드 사용처, byName: 구성 이름으로 찾는 문자열
-// sameText: 같은 글자의 다른 문자열(접고 세지 않음), unknownNames: 구성에 없는 장치 이름(접고 ⚠에 넣지 않음)
+// sameText: 같은 글자의 다른 문자열, unknownNames: 구성에 없는 장치 이름(둘 다 접어 두고 세지 않는다)
 export type UsageSectionId =
   | 'renamedCode'
   | 'renamedName'
@@ -48,44 +47,46 @@ export type UsageSectionId =
   | 'sameText'
   | 'unknownNames'
 
+// warning: 문제(⚠, 머리줄의 문제 개수에 들어간다), main: 코드·이름 사용처, folded: 접어 두고 세지 않는 것
+export type UsageSectionTone = 'warning' | 'main' | 'folded'
+
 export type UsageSectionView = {
   id: UsageSectionId
+  tone: UsageSectionTone
   // 이 부분 행의 기본 종류. 다른 종류의 행에만 배지를 단다(장치·그룹은 필드, 로봇은 형식).
   defaultKind: UsageKind
   // (path, line, col) 순서
   hits: UsageHit[]
   // 한도로 자르기 전의 개수(hits보다 많으면 끝에 '외 N곳')
   total: number
-  // 문제(⚠) 부분. 머리줄의 문제 개수에 들어간다.
-  warning: boolean
-  // 접어 두는 부분(같은 글자의 다른 문자열, 구성에 없는 이름). 개수에 넣지 않는다.
-  collapsible: boolean
-  // 이전 이름 부분의 이전 이름(robot.lift.liftLeft, RobotHardware 등)
+  // 이전 이름 부분: 사용처가 쓰는 이전 이름(robot.lift.liftLeft, MyBot.Lift.PAR_X_MM 등, 쉼표로 이음)
   old?: string
 }
 
-export type UsageCounts = {
+export type UsageHeaderCounts = {
   // 코드 사용처(장치: 필드·상수, 그룹: 필드·형식·생성, 로봇: 생성·형식·상수)
   code: number
   // 구성 이름으로 찾는 문자열(장치만)
   byName: number
-  // 하위 장치의 사용처 합(그룹·로봇). 같은 줄을 두 번 늘어놓지 않도록 개수만 보인다.
+  // 하위 장치의 코드·이름 사용처 합(그룹·로봇). 같은 줄을 두 번 늘어놓지 않도록 개수만 보인다.
   descendants: number
   // 문제(이전 이름, 생성 코드에 없는 이름)
   warnings: number
 }
 
 export type UsageView = {
-  // 목록 이름(장치 이름, 그룹 이름, 로봇 이름)
+  // 목록 이름(장치의 구성 이름, 그룹·로봇의 이름)
   name: string
-  counts: UsageCounts
-  // 문제 부분이 먼저, 그다음 코드·이름 순서. 빈 부분은 넣지 않는다.
+  counts: UsageHeaderCounts
+  // 문제 부분이 먼저, 그다음 코드·이름, 접어 두는 부분 순서. 빈 부분은 넣지 않는다.
   sections: UsageSectionView[]
-  // 이 구성 이름을 다른 로봇의 장치도 써서 이름으로 찾은 곳이 그 로봇의 것일 수도 있다
+  // 이 구성 이름을 다른 장치도 써서 이름으로 찾은 곳이 그 장치의 것일 수도 있다
   sharedName: boolean
-  // 찾은 것(빈 머리줄의 도움말): robot.lift.liftLeft, RobotHardware.Lift.LIFT_LEFT_X_MM, "liftLeft"
+  // 로봇 클래스 이름 문제(잘못됐거나 겹침)로 코드 사용처를 찾을 수 없다(이름으로 찾기는 한다)
+  unavailable: boolean
+  // 찾은 것(빈 머리줄의 도움말): robot.lift.liftLeft, MyBot.Lift.LIFT_LEFT_X_MM, "liftLeft"
   terms: string[]
-  // 보일 것이 하나도 없다(부분 없음, 하위 장치 0). 일부만 찾았는지·클래스 이름 문제는 화면이 따로 본다.
+  // 보일 것이 하나도 없다(부분 없음, 하위 장치 0, 클래스 이름 문제 없음). 일부만 찾았는지는 화면이 따로 본다.
   empty: boolean
 }
 
@@ -103,6 +104,7 @@ function compareHits(a: UsageHit, b: UsageHit): number {
   return compare(a.path, b.path) || a.line - b.line || a.col - b.col
 }
 
+// 한도로 자르기 전의 개수(totals)
 const total = (result: UsageResult, key: UsageKey, kinds: readonly UsageKind[]): number => {
   const counts = result.totals.get(key)
   return counts ? kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0) : 0
@@ -115,16 +117,15 @@ function kindSection(
   id: UsageSectionId,
   kinds: readonly UsageKind[],
   defaultKind: UsageKind,
-  collapsible = false
+  tone: UsageSectionTone = 'main'
 ): UsageSectionView {
   const hits = (result.hits.get(key) ?? []).filter((hit) => kinds.includes(hit.kind))
   return {
     id,
+    tone,
     defaultKind,
     hits,
-    total: Math.max(hits.length, total(result, key, kinds)),
-    warning: false,
-    collapsible
+    total: Math.max(hits.length, total(result, key, kinds))
   }
 }
 
@@ -132,22 +133,17 @@ function warningSection(
   id: UsageSectionId,
   hits: UsageHit[],
   count = hits.length,
+  defaultKind: UsageKind = 'unresolved',
   old?: string
 ): UsageSectionView {
   return {
     id,
-    defaultKind: 'unresolved',
+    tone: 'warning',
+    defaultKind,
     hits,
     total: Math.max(count, hits.length),
-    warning: true,
-    collapsible: false,
     ...(old !== undefined ? { old } : {})
   }
-}
-
-// 이전 이름 부분은 이전 이름의 종류(필드·형식·찾기)가 섞여 있어 배지를 달지 않는다
-function renamedNameSection(hits: UsageHit[], old: string): UsageSectionView {
-  return { ...warningSection('renamedName', hits, hits.length, old), defaultKind: 'lookup' }
 }
 
 // 범위(로봇 클래스 또는 그룹 중첩 클래스)의 사용처 키
@@ -155,52 +151,67 @@ function scopeKey(scope: CodeScope, robotId: string): UsageKey {
   return scope.objectId === robotId ? robotUsageKey(robotId) : groupUsageKey(scope.objectId)
 }
 
-// 장치를 구성 이름으로 찾을 때의 이름(앞뒤 공백 뺀 것). 데드휠은 같은 포트 모터의 이름이다(usageSymbols와 같음).
-function lookupNameOf(entry: ComponentEntry, entries: ComponentEntry[]): string {
-  const name =
-    entry.component.type === 'deadWheel'
-      ? deadWheelDeviceName(entry, entries)
-      : entry.component.name
-  return name.trim()
+const robotPath = (fieldPath: readonly string[]): string => ['robot', ...fieldPath].join('.')
+
+// 장치 키 → 찾기 이름(앞뒤 공백 뺀 구성 이름, 데드휠은 같은 포트 모터의 이름). lookupNamesOf를 뒤집어 문서마다 한 번.
+const lookupNameCache = new WeakMap<SceneObjects, Map<UsageKey, string>>()
+
+function lookupNameByKey(objects: SceneObjects): Map<UsageKey, string> {
+  let byKey = lookupNameCache.get(objects)
+  if (!byKey) {
+    byKey = new Map()
+    for (const [name, keys] of lookupNamesOf(objects))
+      for (const key of keys) if (!byKey.has(key)) byKey.set(key, name)
+    lookupNameCache.set(objects, byKey)
+  }
+  return byKey
 }
 
-function entryOf(
-  scopes: RobotCodeScopes,
-  objectId: string,
-  componentId: string
-): ComponentEntry | undefined {
-  return scopes.entries.find(
-    (entry) => entry.objectId === objectId && entry.component.id === componentId
-  )
+// 대상의 로봇이 클래스 이름 문제로 기호표에서 빠졌는지(usageSymbols가 정한 것을 읽는다)
+function robotUnavailable(objects: SceneObjects, robotId: string): boolean {
+  const key = robotUsageKey(robotId)
+  return usageSymbols(objects).unavailable.some((entry) => entry.key === key)
 }
 
-// 그룹 범위를 멤버로 가진 범위(바로 위 클래스)와 그 멤버
+// 그룹 범위를 멤버로 가진 범위(바로 위 클래스)와 그 필드
 function parentScopeOf(
   root: CodeScope,
   groupId: string
 ): { parent: CodeScope; field: string } | null {
-  for (const scope of allScopes(root)) {
+  for (const scope of allScopes(root))
     for (const member of scope.members)
       if (member.kind === 'group' && member.objectId === groupId)
         return { parent: scope, field: member.field }
-  }
   return null
 }
 
-const robotPath = (fieldPath: readonly string[]): string => ['robot', ...fieldPath].join('.')
-
-// 기준 씬에서 이 오브젝트가 있던 로봇의 범위. 기준 씬이 없거나 그때 로봇 밖이었으면 null.
-function baselineScopes(
-  baseline: SceneObjects | null,
-  objectId: string
-): { robotId: string; scopes: RobotCodeScopes } | null {
-  if (!baseline || !baseline[objectId]) return null
-  const robotId = findRobotId(baseline, objectId)
-  return robotId ? { robotId, scopes: buildCodeScopes(baseline, robotId) } : null
+// 기준 씬에서 이 오브젝트가 있던 로봇. 기준 씬이 없거나 그때 없던 오브젝트·로봇 밖이었으면 null.
+function baselineRobotId(baseline: SceneObjects | null, objectId: string): string | null {
+  return baseline && baseline[objectId] ? findRobotId(baseline, objectId) : null
 }
 
-// 장치의 이름 바꾸기(spec §6.6). 저장한 범위·필드와 지금 것이 다르면, 저장한 범위의 생성 코드에 없는 이름 중
-// 이전 필드·상수 이름인 것. 구성 이름이 바뀌었으면 이전 이름을 찾는 구성에 없는 이름.
+// 이전 이름 부분. 저장한 범위의 생성 코드에 없는 이름 중 이전 이름(멤버 → 보일 글자)인 것이고, 제목에는 사용처가
+// 실제로 쓰는 이전 이름만 넣는다.
+function renamedCodeSection(
+  result: UsageResult,
+  savedScopeKey: UsageKey,
+  oldForms: ReadonlyMap<string, string>
+): UsageSectionView | null {
+  if (oldForms.size === 0) return null
+  const hits = (result.unresolved.get(savedScopeKey) ?? []).filter(
+    (hit) => hit.member !== undefined && oldForms.has(hit.member)
+  )
+  if (hits.length === 0) return null
+  const used = new Set(hits.map((hit) => hit.member))
+  const old = [...oldForms]
+    .filter(([member]) => used.has(member))
+    .map(([, form]) => form)
+    .join(', ')
+  return warningSection('renamedCode', hits, hits.length, 'unresolved', old)
+}
+
+// 장치의 이름 바꾸기(spec §6.6). 저장한 범위·필드(상수)와 지금 것이 다르면 저장한 범위의 생성 코드에 없는 이름 중
+// 이전 필드·상수인 것. 구성 이름이 바뀌었으면 이전 이름을 찾는 구성에 없는 이름(javac는 모르고 실행할 때 깨진다).
 function deviceRenames(
   result: UsageResult,
   baseline: SceneObjects | null,
@@ -209,79 +220,65 @@ function deviceRenames(
   current: { scope: CodeScope; member: DeviceMember },
   lookupName: string
 ): UsageSectionView[] {
-  const saved = baselineScopes(baseline, objectId)
-  if (!saved) return []
+  const robotId = baselineRobotId(baseline, objectId)
+  if (!baseline || !robotId) return []
   const sections: UsageSectionView[] = []
-  const found = saved.scopes.devices.get(deviceKey(objectId, componentId))
-  if (found) {
-    const scopeChanged = found.scope.objectId !== current.scope.objectId
-    const fieldChanged = scopeChanged || found.member.field !== current.member.field
-    const oldNames = new Set<string>()
-    if (fieldChanged) oldNames.add(found.member.field)
-    // 상수는 장치 이름에서 만들므로 이름을 바꾸면 함께 바뀐다(RobotHardware.Lift.LIFT_LEFT_X_MM)
-    const oldConstants = found.member.constants.filter(
-      (constant) => scopeChanged || !current.member.constants.includes(constant)
-    )
-    for (const constant of oldConstants) oldNames.add(constant)
-    if (oldNames.size > 0) {
-      const hits = (result.unresolved.get(scopeKey(found.scope, saved.robotId)) ?? []).filter(
-        (hit) => hit.member !== undefined && oldNames.has(hit.member)
-      )
-      const old = fieldChanged
-        ? robotPath([...found.scope.fieldPath, found.member.field])
-        : `${found.scope.classPath.join('.')}.${oldConstants[0]}`
-      if (hits.length > 0) sections.push(warningSection('renamedCode', hits, hits.length, old))
-    }
+  const saved = buildCodeScopes(baseline, robotId).devices.get(deviceKey(objectId, componentId))
+  if (saved) {
+    const scopeChanged = saved.scope.objectId !== current.scope.objectId
+    const oldForms = new Map<string, string>()
+    if (scopeChanged || saved.member.field !== current.member.field)
+      oldForms.set(saved.member.field, robotPath([...saved.scope.fieldPath, saved.member.field]))
+    // 상수도 장치 이름(과 종류)에서 만들므로 이름을 바꾸면 함께 바뀐다(MyBot.Lift.LIFT_LEFT_X_MM)
+    const typeName = saved.scope.classPath.join('.')
+    for (const constant of saved.member.constants)
+      if (scopeChanged || !current.member.constants.includes(constant))
+        oldForms.set(constant, `${typeName}.${constant}`)
+    const section = renamedCodeSection(result, scopeKey(saved.scope, robotId), oldForms)
+    if (section) sections.push(section)
   }
-  // 구성 이름: SDK가 실행할 때 찾지 못하는 곳(javac는 모른다)
-  const entry = entryOf(saved.scopes, objectId, componentId)
-  const oldName = entry ? lookupNameOf(entry, saved.scopes.entries) : ''
+  const oldName = lookupNameByKey(baseline).get(deviceUsageKey(objectId, componentId)) ?? ''
   if (oldName && oldName !== lookupName) {
     const hits = result.unknownNames.get(oldName) ?? []
-    if (hits.length > 0) sections.push(renamedNameSection(hits, oldName))
+    if (hits.length > 0)
+      sections.push(warningSection('renamedName', hits, hits.length, 'lookup', oldName))
   }
   return sections
 }
 
-// 지금 로봇의 사용처 키인지(지난 결과의 키도 오브젝트의 로봇으로 판단한다)
-function belongsToRobot(objects: SceneObjects, key: UsageKey, robotId: string): boolean {
-  const id = usageKeyObjectId(key)
-  if (id === null || !objects[id]) return false
-  return id === robotId || findRobotId(objects, id) === robotId
-}
-
-// 장치 사용처 키들의 코드·이름 사용처 합(그룹·로봇의 "하위 장치 N곳")
+// 범위들의 장치 코드·이름 사용처 합(그룹·로봇의 "하위 장치 N곳"). 같은 글자의 다른 문자열은 넣지 않는다.
 function deviceTotals(result: UsageResult, scopes: readonly CodeScope[]): number {
   let sum = 0
   for (const scope of scopes)
     for (const member of scope.members)
-      if (member.kind === 'device')
-        sum += total(result, deviceUsageKey(member.objectId, member.component.id), [
-          'field',
-          'constant',
-          'lookup'
-        ])
+      if (member.kind === 'device') {
+        const key = deviceUsageKey(member.objectId, member.component.id)
+        const hits = result.hits.get(key) ?? []
+        const counted = hits.filter((hit) => hit.kind !== 'text').length
+        sum += Math.max(counted, total(result, key, ['field', 'constant', 'lookup']))
+      }
   return sum
 }
 
+const TONE_ORDER: Record<UsageSectionTone, number> = { warning: 0, main: 1, folded: 2 }
+
 function finish(
-  name: string,
+  base: Pick<UsageView, 'name' | 'terms' | 'sharedName' | 'unavailable'>,
   sections: UsageSectionView[],
-  counts: Omit<UsageCounts, 'warnings'>,
-  terms: string[],
-  sharedName = false
+  counts: Omit<UsageHeaderCounts, 'warnings'>
 ): UsageView {
-  const shown = sections.filter((section) => section.total > 0 || section.hits.length > 0)
+  // 문제가 먼저(정렬은 안정적이라 같은 무리 안의 순서는 그대로다)
+  const shown = sections
+    .filter((section) => section.total > 0 || section.hits.length > 0)
+    .sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone])
   const warnings = shown
-    .filter((section) => section.warning)
+    .filter((section) => section.tone === 'warning')
     .reduce((sum, section) => sum + section.total, 0)
   return {
-    name,
+    ...base,
     counts: { ...counts, warnings },
     sections: shown,
-    sharedName,
-    terms,
-    empty: shown.length === 0 && counts.descendants === 0
+    empty: shown.length === 0 && counts.descendants === 0 && !base.unavailable
   }
 }
 
@@ -295,45 +292,30 @@ export function deviceUsageView(
 ): UsageView | null {
   const robotId = findRobotId(objects, objectId)
   if (!robotId) return null
-  const scopes = buildCodeScopes(objects, robotId)
-  const found = scopes.devices.get(deviceKey(objectId, componentId))
-  const entry = entryOf(scopes, objectId, componentId)
-  if (!found || !entry) return null
+  const found = buildCodeScopes(objects, robotId).devices.get(deviceKey(objectId, componentId))
+  if (!found) return null
   const key = deviceUsageKey(objectId, componentId)
-  const lookupName = lookupNameOf(entry, scopes.entries)
+  const lookupName = lookupNameByKey(objects).get(key) ?? ''
 
   const code = kindSection(result, key, 'code', ['field', 'constant'], 'field')
   const byName = kindSection(result, key, 'byName', ['lookup'], 'lookup')
-  const sameText = kindSection(result, key, 'sameText', ['text'], 'text', true)
+  const sameText = kindSection(result, key, 'sameText', ['text'], 'text', 'folded')
   const renames = deviceRenames(result, baseline, objectId, componentId, found, lookupName)
   const typeName = found.scope.classPath.join('.')
-  const terms = [
-    robotPath([...found.scope.fieldPath, found.member.field]),
-    ...found.member.constants.map((constant) => `${typeName}.${constant}`),
-    ...(lookupName ? [JSON.stringify(lookupName)] : [])
-  ]
   return finish(
-    found.member.component.name,
+    {
+      name: found.member.component.name.trim() || objects[objectId].name,
+      terms: [
+        robotPath([...found.scope.fieldPath, found.member.field]),
+        ...found.member.constants.map((constant) => `${typeName}.${constant}`),
+        ...(lookupName ? [JSON.stringify(lookupName)] : [])
+      ],
+      sharedName: lookupName !== '' && (lookupNamesOf(objects).get(lookupName)?.length ?? 0) > 1,
+      unavailable: robotUnavailable(objects, robotId)
+    },
     [...renames, code, byName, sameText],
-    { code: code.total, byName: byName.total, descendants: 0 },
-    terms,
-    sharedLookupName(objects, lookupName, key)
+    { code: code.total, byName: byName.total, descendants: 0 }
   )
-}
-
-// 이 구성 이름을 쓰는 다른 장치가 있는지(다른 로봇의 장치. 같은 로봇 안에서 겹치는 것은 검증 오류 duplicateName이다).
-// 그 장치를 찾는 문자열도 같은 글자라 어느 로봇의 것인지 가릴 수 없다.
-function sharedLookupName(objects: SceneObjects, name: string, key: UsageKey): boolean {
-  if (!name) return false
-  for (const robot of childrenInDocument(objects, null)) {
-    if (robot.kind !== 'robot') continue
-    const scopes = buildCodeScopes(objects, robot.id)
-    for (const entry of scopes.entries) {
-      if (deviceUsageKey(entry.objectId, entry.component.id) === key) continue
-      if (lookupNameOf(entry, scopes.entries) === name) return true
-    }
-  }
-  return false
 }
 
 // 그룹 카드. 장치가 없어 클래스를 만들지 않는 그룹이나 로봇 밖 그룹은 사용처가 없다.
@@ -347,61 +329,53 @@ export function groupUsageView(
   if (!robotId) return null
   const scopes = buildCodeScopes(objects, robotId)
   const scope = scopes.groups.get(groupId)
-  const parent = parentScopeOf(scopes.root, groupId)
+  const parent = scope ? parentScopeOf(scopes.root, groupId) : null
   if (!scope || !parent) return null
   const key = groupUsageKey(groupId)
 
   const sections: UsageSectionView[] = []
   // 이름 바꾸기: 저장한 부모 범위·필드·클래스 이름 중 바뀐 것이 있으면, 저장한 부모 범위의 없는 이름 중 이전 것
-  const saved = baselineScopes(baseline, groupId)
-  const savedScope = saved?.scopes.groups.get(groupId)
-  const savedParent = saved && savedScope ? parentScopeOf(saved.scopes.root, groupId) : null
-  if (saved && savedScope && savedParent) {
+  // (robot.lift는 부모 범위에서 필드 lift가, MyBot.Lift는 부모 클래스에서 멤버 형식 Lift가 없다)
+  const savedRobotId = baselineRobotId(baseline, groupId)
+  const savedScopes = baseline && savedRobotId ? buildCodeScopes(baseline, savedRobotId) : null
+  const savedScope = savedScopes?.groups.get(groupId)
+  const savedParent = savedScopes && savedScope ? parentScopeOf(savedScopes.root, groupId) : null
+  if (savedRobotId && savedScope && savedParent) {
     const parentChanged = savedParent.parent.objectId !== parent.parent.objectId
-    const fieldChanged = parentChanged || savedParent.field !== parent.field
-    const classChanged = parentChanged || savedScope.className !== scope.className
-    const oldNames = new Set<string>()
-    const old: string[] = []
-    if (fieldChanged) {
-      oldNames.add(savedParent.field)
-      old.push(robotPath(savedScope.fieldPath))
-    }
-    if (classChanged) {
-      oldNames.add(savedScope.className)
-      old.push(savedScope.classPath.join('.'))
-    }
-    if (oldNames.size > 0) {
-      const hits = (
-        result.unresolved.get(scopeKey(savedParent.parent, saved.robotId)) ?? []
-      ).filter((hit) => hit.member !== undefined && oldNames.has(hit.member))
-      sections.push(warningSection('renamedCode', hits, hits.length, old.join(', ')))
-    }
+    const oldForms = new Map<string, string>()
+    if (parentChanged || savedParent.field !== parent.field)
+      oldForms.set(savedParent.field, robotPath(savedScope.fieldPath))
+    if (parentChanged || savedScope.className !== scope.className)
+      oldForms.set(savedScope.className, savedScope.classPath.join('.'))
+    const section = renamedCodeSection(result, scopeKey(savedParent.parent, savedRobotId), oldForms)
+    if (section) sections.push(section)
   }
   const inClass = result.unresolved.get(key) ?? []
-  sections.push(
-    warningSection(
-      'unresolvedInClass',
-      inClass,
-      Math.max(inClass.length, total(result, key, ['unresolved']))
-    )
-  )
+  sections.push(warningSection('unresolvedInClass', inClass, total(result, key, ['unresolved'])))
   const code = kindSection(result, key, 'code', ['field', 'type', 'new'], 'field')
   sections.push(code)
   return finish(
-    objects[groupId].name,
+    {
+      name: objects[groupId].name,
+      terms: [robotPath(scope.fieldPath), scope.classPath.join('.')],
+      sharedName: false,
+      unavailable: robotUnavailable(objects, robotId)
+    },
     sections,
-    { code: code.total, byName: 0, descendants: deviceTotals(result, allScopes(scope)) },
-    [robotPath(scope.fieldPath), scope.classPath.join('.')]
+    { code: code.total, byName: 0, descendants: deviceTotals(result, allScopes(scope)) }
   )
 }
 
 // 로봇 카드. 장치가 없는 로봇도 보인다(마지막 장치를 지운 뒤에도 생성 패키지에 없는 형식이 보이게).
+// 생성 코드에 없는 이름은 이 로봇 범위들의 것과 생성 패키지에 없는 형식('*', 모든 로봇 카드)을 모두 모아 보인다
+// (장치·그룹 카드에 이전 이름으로 붙인 것도 여기 다시 보인다. 같은 카드에서 두 번 늘어놓지만 않는다).
 export function robotUsageView(
   objects: SceneObjects,
   result: UsageResult,
   baseline: SceneObjects | null,
   robotId: string
-): UsageView {
+): UsageView | null {
+  if (objects[robotId]?.kind !== 'robot') return null
   const scopes = buildCodeScopes(objects, robotId)
   const key = robotUsageKey(robotId)
   const className = scopes.root.className
@@ -410,23 +384,30 @@ export function robotUsageView(
   // 이름 바꾸기: 저장한 클래스 이름을 생성 패키지에 없는 형식으로 쓰는 곳
   const missingTypes = result.unresolved.get(MISSING_GENERATED_TYPE) ?? []
   const savedClassName =
-    baseline && baseline[robotId] ? buildCodeScopes(baseline, robotId).root.className : null
+    baseline && baseline[robotId]?.kind === 'robot'
+      ? buildCodeScopes(baseline, robotId).root.className
+      : null
   const renamed =
     savedClassName !== null && savedClassName !== className
       ? missingTypes.filter((hit) => hit.member === savedClassName)
       : []
   if (renamed.length > 0)
-    sections.push(warningSection('renamedCode', renamed, renamed.length, savedClassName!))
+    sections.push(
+      warningSection('renamedCode', renamed, renamed.length, 'unresolved', savedClassName!)
+    )
 
-  // 이 로봇 범위들의 생성 코드에 없는 이름 전부와 생성 패키지에 없는 형식(모든 로봇 카드). 이전 이름 행은 뺀다.
   const listed = new Set(renamed)
   const unresolved: UsageHit[] = []
   let unresolvedTotal = 0
-  for (const [unresolvedKey, hits] of result.unresolved) {
-    if (unresolvedKey !== MISSING_GENERATED_TYPE && !belongsToRobot(objects, unresolvedKey, robotId))
-      continue
+  const keys = [
+    ...allScopes(scopes.root).map((scope) => scopeKey(scope, robotId)),
+    MISSING_GENERATED_TYPE
+  ]
+  for (const unresolvedKey of keys) {
+    const hits = result.unresolved.get(unresolvedKey) ?? []
     const rest = hits.filter((hit) => !listed.has(hit))
     unresolved.push(...rest)
+    // 한도로 잘랐으면 자르기 전의 개수에서 이전 이름 부분에 넣은 것을 뺀다
     unresolvedTotal +=
       Math.max(hits.length, total(result, unresolvedKey, ['unresolved'])) -
       (hits.length - rest.length)
@@ -434,30 +415,33 @@ export function robotUsageView(
   unresolved.sort(compareHits)
   sections.push(warningSection('unresolved', unresolved, unresolvedTotal))
 
-  const constructs = kindSection(result, key, 'constructs', ['new'], 'new')
-  const code = kindSection(result, key, 'code', ['type', 'constant', 'field'], 'type')
-  sections.push(constructs, code)
+  sections.push(
+    kindSection(result, key, 'constructs', ['new'], 'new'),
+    kindSection(result, key, 'code', ['type', 'constant'], 'type')
+  )
 
   // 어느 로봇에도 없는 찾기 이름(접어 두고 ⚠에 넣지 않는다)
   const unknown = [...result.unknownNames.values()].flat().sort(compareHits)
   sections.push({
     id: 'unknownNames',
+    tone: 'folded',
     defaultKind: 'lookup',
     hits: unknown,
-    total: unknown.length,
-    warning: false,
-    collapsible: true
+    total: unknown.length
   })
 
+  const code = sections
+    .filter((section) => section.id === 'constructs' || section.id === 'code')
+    .reduce((sum, section) => sum + section.total, 0)
   return finish(
-    objects[robotId]?.name ?? className,
-    sections,
     {
-      code: constructs.total + code.total,
-      byName: 0,
-      descendants: deviceTotals(result, allScopes(scopes.root))
+      name: objects[robotId].name,
+      terms: [className, `${className}.CONFIGURATION_NAME`],
+      sharedName: false,
+      unavailable: robotUnavailable(objects, robotId)
     },
-    [className, `${className}.CONFIGURATION_NAME`]
+    sections,
+    { code, byName: 0, descendants: deviceTotals(result, allScopes(scopes.root)) }
   )
 }
 
@@ -477,7 +461,8 @@ export function usageView(
   }
 }
 
-// 대상이 지금 씬에서 사용처 부분을 갖는지(결과가 아직 없어도 머리줄을 보일지 정한다)
+// 대상이 지금 씬에서 사용처 부분을 갖는지(결과가 아직 없어도 머리줄을 보일지 정한다). spec §8.1: 로봇 밖이거나
+// 카탈로그에 없는 종류의 장치, 클래스를 만들지 않는 그룹은 없다. 로봇은 장치가 없어도 있다.
 export function hasUsageSection(objects: SceneObjects, target: UsageTarget): boolean {
   switch (target.kind) {
     case 'device': {
@@ -498,13 +483,20 @@ export function hasUsageSection(objects: SceneObjects, target: UsageTarget): boo
   }
 }
 
+// 빈 머리줄의 도움말에 넣는 찾은 것
+export function searchedTerms(view: Pick<UsageView, 'terms'>): string {
+  return view.terms.join(', ')
+}
+
 // ---- 파일 묶음과 코드 조각 ----
 
 export type UsageFileGroup = {
   path: string
   // 이 파일의 행 수(묶음 머리줄은 늘 전체 수를 보인다)
   count: number
-  // 그릴 행(파일마다 MAX_ROWS_PER_FILE개, 부분 전체에서 MAX_ROWS_PER_SECTION개까지)
+  // 이 파일의 첫 사용처(파일 행을 더블클릭하면 연다. 부분 한도로 행을 하나도 그리지 않아도 있다)
+  first: UsageHit
+  // 그릴 행(파일마다 perFile개, 부분 전체에서 perSection개까지)
   rows: UsageHit[]
   // 그리지 않은 행 수('외 N곳')
   more: number
@@ -528,7 +520,13 @@ export function fileGroups(
     const all = byPath.get(path)!.sort(compareHits)
     const shown = Math.max(0, Math.min(all.length, caps.perFile, budget))
     budget -= shown
-    return { path, count: all.length, rows: all.slice(0, shown), more: all.length - shown }
+    return {
+      path,
+      count: all.length,
+      first: all[0],
+      rows: all.slice(0, shown),
+      more: all.length - shown
+    }
   })
 }
 
@@ -569,23 +567,18 @@ export function snippetWindow(
   }
 }
 
-// 빈 머리줄의 도움말에 넣는 찾은 것
-export function searchedTerms(view: UsageView): string {
-  return view.terms.join(', ')
-}
-
 // ---- 스크립트 카드의 "이 스크립트가 쓰는 하드웨어" ----
 
 export type ScriptHardwareChip = {
   key: UsageKey
-  // 누르면 고를 오브젝트(장치는 컴포넌트가 붙은 파트, 그룹·로봇은 그 오브젝트)
+  // 누르면 고를 오브젝트(장치는 컴포넌트가 붙은 오브젝트, 그룹·로봇은 그 오브젝트)
   objectId: string
-  // 장치는 구성 이름, 그룹·로봇은 오브젝트 이름
+  // 장치는 구성 이름(비었으면 오브젝트 이름), 그룹·로봇은 오브젝트 이름
   label: string
 }
 
-// 결과에서 이 파일에 사용처(코드·이름으로 찾기)가 있는 키를 하이어라키 순서로, 한 번씩. 같은 글자의 다른 문자열과
-// 생성 코드에 없는 이름은 넣지 않는다. 지금 씬에 없는 키(지난 결과)는 뺀다.
+// 결과에서 이 파일에 사용처(코드, 이름으로 찾기)가 있는 키를 하이어라키 순서로 한 번씩. 같은 글자의 다른 문자열과
+// 생성 코드에 없는 이름은 넣지 않는다. 지금 씬에 없는 키(이전 결과의 것)는 뺀다.
 export function scriptUsesHardware(
   result: UsageResult,
   path: string,
@@ -600,22 +593,20 @@ export function scriptUsesHardware(
     if (!hits.some((hit) => hit.path === path && hit.kind !== 'text')) continue
     const objectId = usageKeyObjectId(key)
     const object = objectId !== null ? objects[objectId] : undefined
-    if (!object || !order.has(object.id)) continue
+    const rank = object ? order.get(object.id) : undefined
+    if (!object || rank === undefined) continue
     if (key.startsWith('d:')) {
       const componentId = key.slice(key.indexOf('\n') + 1)
-      const index = (object.components ?? []).findIndex((c) => c.id === componentId)
+      const components = object.components ?? []
+      const index = components.findIndex((component) => component.id === componentId)
       if (index < 0) continue
-      const component = object.components![index]
       chips.push({
-        chip: { key, objectId: object.id, label: component.name.trim() || object.name },
-        rank: [order.get(object.id)!, index]
+        chip: { key, objectId: object.id, label: components[index].name.trim() || object.name },
+        rank: [rank, index]
       })
     } else {
-      // 오브젝트 자신(그룹·로봇)이 그 오브젝트의 장치보다 먼저
-      chips.push({
-        chip: { key, objectId: object.id, label: object.name },
-        rank: [order.get(object.id)!, -1]
-      })
+      // 오브젝트 자신(그룹·로봇)이 그 오브젝트에 붙은 장치보다 먼저
+      chips.push({ chip: { key, objectId: object.id, label: object.name }, rank: [rank, -1] })
     }
   }
   return chips
@@ -640,7 +631,10 @@ export type UsageTreeRow =
 
 const fileRowId = (path: string): string => `f\n${path}`
 
-// 보이는 행(펼친 파일의 줄만), 화면 순서. id는 경로와 파일 안 순번이라 결과가 바뀌어도 같은 줄을 가리키기 쉽다.
+// 펼칠 수 있는 파일 묶음(그릴 행이 있는 것)
+export const canExpand = (group: UsageFileGroup): boolean => group.rows.length > 0
+
+// 보이는 행(펼친 파일의 줄만), 화면 순서. id는 경로와 파일 안 순번이라 결과가 바뀌어도 같은 자리를 가리킨다.
 export function usageTreeRows(
   groups: readonly UsageFileGroup[],
   isOpen: (path: string) => boolean
@@ -648,7 +642,7 @@ export function usageTreeRows(
   const rows: UsageTreeRow[] = []
   groups.forEach((group, index) => {
     const id = fileRowId(group.path)
-    const open = isOpen(group.path)
+    const open = canExpand(group) && isOpen(group.path)
     rows.push({ type: 'file', id, group, open, posInSet: index + 1 })
     if (!open) return
     group.rows.forEach((hit, line) =>
@@ -667,8 +661,8 @@ export function usageTreeRows(
 }
 
 // 연다: 줄 행은 그 줄, 파일 행은 첫 사용처
-export function usageRowTarget(row: UsageTreeRow): UsageHit | null {
-  return row.type === 'line' ? row.hit : (row.group.rows[0] ?? null)
+export function usageRowTarget(row: UsageTreeRow): UsageHit {
+  return row.type === 'line' ? row.hit : row.group.first
 }
 
 export type UsageTreeAction =
@@ -676,7 +670,7 @@ export type UsageTreeAction =
   | { type: 'setOpen'; path: string; open: boolean }
   | { type: 'open'; hit: UsageHit }
 
-// 트리 키보드(WAI-ARIA 트리와 하이어라키와 같음): 위/아래·Home/End 이동, 오른쪽은 펼치기(펼쳐 있으면 첫 줄로),
+// 트리 키보드(WAI-ARIA 트리, 하이어라키와 같음): 위/아래·Home/End 이동, 오른쪽은 펼치기(펼쳐 있으면 첫 줄로),
 // 왼쪽은 접기(줄이면 그 파일로), Enter는 열기
 export function usageTreeKey(
   rows: readonly UsageTreeRow[],
@@ -701,15 +695,15 @@ export function usageTreeKey(
   const row = rows[index]
   switch (key) {
     case 'ArrowRight':
-      if (row.type !== 'file' || row.group.rows.length === 0) return null
-      return row.open ? focus(rows[index + 1]) : { type: 'setOpen', path: row.group.path, open: true }
+      if (row.type !== 'file' || !canExpand(row.group)) return null
+      return row.open
+        ? focus(rows[index + 1])
+        : { type: 'setOpen', path: row.group.path, open: true }
     case 'ArrowLeft':
       if (row.type === 'line') return { type: 'focus', id: row.parentId }
       return row.open ? { type: 'setOpen', path: row.group.path, open: false } : null
-    case 'Enter': {
-      const hit = usageRowTarget(row)
-      return hit ? { type: 'open', hit } : null
-    }
+    case 'Enter':
+      return { type: 'open', hit: usageRowTarget(row) }
   }
   return null
 }

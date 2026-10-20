@@ -30,6 +30,7 @@ import {
 import { useSceneStore } from '../../scene/sceneStore'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
+import UsageSection from '../usages/UsageSection'
 import IssueList from './IssueList'
 
 const HUBS: HubId[] = ['controlHub', 'expansionHub']
@@ -224,6 +225,10 @@ function ComponentCard({
           <span className="hw-row-label">{t('hardware.javaPath')}</span>
           <code className="hw-path hw-code">{['robot', ...codePath.fieldPath].join('.')}</code>
         </div>
+      )}
+      {/* 이 장치를 TeamCode에서 쓰는 곳(생성 필드·상수, 구성 이름 문자열). 로봇 밖·카탈로그 밖 종류는 없다. */}
+      {codePath && (
+        <UsageSection target={{ kind: 'device', objectId, componentId: component.id }} />
       )}
       {def.portKind === 'usb' ? (
         <FieldRow label={t('hardware.portKinds.usb')}>

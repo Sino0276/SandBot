@@ -335,6 +335,10 @@ const ko = {
     unknown: 'TeamCode 파일 목록을 다 읽지 못해 이 파일이 있는지 확인하지 못했습니다.',
     noProject: '프로젝트를 열거나 저장하면 TeamCode에서 이 파일을 찾아 열 수 있습니다.',
     noTeamCode: '프로젝트에 TeamCode 폴더가 없어 이 파일을 열 수 없습니다.',
+    // 사용처(4단계)의 거꾸로 보기: 이 파일에서 사용처를 찾은 장치·그룹·로봇. 누르면 그 오브젝트를 고른다.
+    usesHardware: '이 스크립트가 쓰는 하드웨어',
+    usesHardwareHint:
+      '사용처에서 이 파일이 쓰는 장치·그룹·로봇입니다(생성 코드와 구성 이름으로 찾는 문자열). 누르면 그 오브젝트를 고릅니다.',
     // Add Component 선택 상자의 항목
     addGroup: '스크립트',
     addOption: 'TeamCode 스크립트…',
@@ -354,6 +358,66 @@ const ko = {
       more: '외 {{count}}개 · 검색어로 좁히세요',
       defaultPackage: '(기본 패키지)'
     }
+  },
+  // 사용처(4단계, Android Studio의 Find Usages): 장치·그룹·로봇 카드의 접힌 "사용처"
+  usages: {
+    title: '사용처',
+    // 머리줄 개수
+    code: '코드 {{count}}',
+    byName: '이름 {{count}}',
+    warnings: '문제 {{count}}곳',
+    none: '찾은 사용처 없음',
+    searched: '찾은 것: {{terms}}',
+    scanning: '찾는 중…',
+    partialBadge: '(일부)',
+    failed: '사용처를 찾지 못했습니다: {{detail}}',
+    failedNoDetail: '사용처를 찾지 못했습니다.',
+    noProject: '프로젝트를 열거나 저장하면 TeamCode에서 사용처를 찾습니다.',
+    noTeamCode: '프로젝트에 TeamCode 폴더가 없어 사용처를 찾지 못합니다.',
+    truncated: 'TeamCode 파일이 너무 많아 앞의 {{count}}개에서만 찾았습니다.',
+    partial: '파일 {{count}}개는 찾지 않았습니다(너무 큰 파일, \\u 이스케이프, 읽기 실패).',
+    kotlin: 'Kotlin(.kt) 파일은 찾지 않습니다.',
+    unavailable:
+      '로봇 클래스 이름 문제를 고치면 코드 사용처를 찾습니다. 이름으로 찾기는 그대로 합니다.',
+    // 부분 제목
+    sectionCode: '코드',
+    sectionByName: '이름으로',
+    byNameHint: '구성 이름으로 장치를 찾는 문자열입니다(hardwareMap.get, …Name(…) 등).',
+    sharedName: '다른 로봇에도 같은 구성 이름의 장치가 있어 그 로봇의 사용처일 수도 있습니다.',
+    sameText: '같은 글자의 다른 문자열 {{count}}',
+    sameTextHint:
+      '장치를 찾는 데 쓰지 않는 문자열(텔레메트리 문구 등)입니다. 개수에 넣지 않습니다.',
+    descendants: '하위 장치 {{count}}곳',
+    constructs: '만드는 곳',
+    // 행 배지와 읽어 주는 이름의 종류(lookup·text는 부분 제목이 이미 알려 배지로는 보이지 않는다)
+    kinds: {
+      field: '필드',
+      constant: '상수',
+      type: '형식',
+      new: '생성',
+      lookup: '이름',
+      text: '문자열',
+      unresolved: '없는 이름'
+    },
+    listLabel: '{{name}} 사용처',
+    fileLabel: '{{file}}, {{count}}곳',
+    rowLabel: '{{file}} {{line}}번째 줄, {{kind}}: {{code}}',
+    openHint: '더블클릭하거나 Enter를 누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
+    noLineHint:
+      '지금 외부 스크립트 편집기는 줄 번호를 받지 않아 파일만 엽니다. 환경 설정에서 Android Studio 등을 고르면 이 줄로 엽니다.',
+    more: '외 {{count}}곳',
+    // 문제(⚠): 이름 바꾸기는 마지막으로 열거나 저장한 씬과 비교해 바꾼 카드에 붙인다
+    renamedCode:
+      '이전 이름 {{old}}을(를) 쓰는 곳 {{count}}곳: 지금 씬의 생성 코드로는 컴파일되지 않습니다.',
+    renamedName:
+      '이전 구성 이름 "{{old}}"을(를) 찾는 문자열 {{count}}곳: 지금 구성으로 실행하면 장치를 찾지 못합니다.',
+    unresolved: '생성 코드에 없는 이름 {{count}}곳',
+    unresolvedHint:
+      '지금 씬으로 만드는 하드웨어 클래스에 없는 필드·형식을 쓰는 곳입니다. 그 코드로는 컴파일되지 않습니다.',
+    unresolvedInClass: '이 클래스에 없는 이름 {{count}}곳',
+    unknownNames: '구성에 없는 장치 이름 {{count}}곳',
+    unknownNamesHint:
+      'SandBot의 어느 로봇에도 이 구성 이름의 장치가 없습니다. 생성한 구성으로 실행하면 이 장치를 찾지 못합니다.'
   },
   // 환경 설정 창(Unity의 Edit > Preferences). 편집기 제품 이름(Android Studio 등)은 번역하지 않는다.
   preferences: {

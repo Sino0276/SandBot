@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   displayJavaPath,
@@ -6,10 +7,58 @@ import {
   useJavaIndexStore
 } from '../../java/javaIndex'
 import { openScriptFile } from '../../java/openScript'
+import { useUsageIndexStore } from '../../java/usageIndex'
 import { useProjectStore } from '../../project/projectStore'
 import type { ScriptLink } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import { useEditorStore } from '../editorStore'
+import { scriptUsesHardware } from '../usages/usageView'
 import TunablesList from './TunablesList'
+
+// 이 파일이 쓰는 하드웨어(사용처의 거꾸로 보기). 이 파일에 코드·이름으로 찾기 사용처가 있는 장치·그룹·로봇을
+// 하이어라키 순서로 칩으로 보인다. 누르면 그 오브젝트를 고른다(하이어라키 행 한 번 누르기와 같이 카메라는 그대로).
+// 찾은 것이 없거나 아직 결과가 없으면 보이지 않는다.
+function UsesHardware({ path }: { path: string }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const objects = useSceneStore((state) => state.objects)
+  const result = useUsageIndexStore((state) => state.result)
+  const status = useUsageIndexStore((state) => state.status)
+  const select = useEditorStore((state) => state.select)
+  const chips = useMemo(
+    () => (result ? scriptUsesHardware(result, path, objects) : []),
+    [result, path, objects]
+  )
+  if (chips.length === 0) return null
+  // 실패·TeamCode 없음이면 이전 결과라 흐리게 보인다
+  const stale = status === 'failed' || status === 'noTeamCode'
+  return (
+    <div className={stale ? 'script-uses is-stale' : 'script-uses'}>
+      <span className="hw-row-label" title={t('scripts.usesHardwareHint')}>
+        {t('scripts.usesHardware')}
+      </span>
+      <div className="script-chips">
+        {chips.map((chip) => {
+          const objectName = objects[chip.objectId]?.name ?? ''
+          return (
+            <button
+              key={chip.key}
+              type="button"
+              className="script-chip"
+              title={
+                objectName && objectName !== chip.label
+                  ? `${objectName}\n${t('scripts.usesHardwareHint')}`
+                  : t('scripts.usesHardwareHint')
+              }
+              onClick={() => select(chip.objectId)}
+            >
+              {chip.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // 연결한 TeamCode Java 파일 카드(Unity의 스크립트 컴포넌트). 첫 줄은 Unity의 회색 Script 칸처럼 파일 이름을
 // 읽기 전용으로 보이고, 더블클릭하거나 [열기]를 누르면 외부 스크립트 편집기로 연다. 탐색용 연결이라 생성 코드와는
@@ -110,6 +159,7 @@ function ScriptCard({ objectId, link }: { objectId: string; link: ScriptLink }):
       {status.kind === 'unknown' && <p className="inspector-note">{t('scripts.unknown')}</p>}
       {status.kind === 'noProject' && <p className="inspector-note">{t('scripts.noProject')}</p>}
       {status.kind === 'noTeamCode' && <p className="inspector-note">{t('scripts.noTeamCode')}</p>}
+      {canOpen && <UsesHardware path={link.path} />}
       {canOpen && <TunablesList path={link.path} />}
       <p className="inspector-note">{t('scripts.navigationHint')}</p>
     </li>
