@@ -1,0 +1,373 @@
+# corpus-sha256 c94ebfe36d367f2706a3d9b846039f289e054fabd1243e4f75bf7344f1fdf60d
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13:20 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13:25 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13:30 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:14:21 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15:53 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15:58 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/BaseOpMode.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/BaseOpMode.java:8:15 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/BaseOpMode.java:10:15 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/BaseOpMode.java:15:21 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:5:5 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:5:18 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:12:15 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:12:33 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/Escapes.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Escapes.java:7:12 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Escapes.java:8:11 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Escapes.java:8:21 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:11:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:15:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:16:22 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:16:36 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:17:20 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:17:58 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:26 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:40 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:48 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:62 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:71 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20:76 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:21:11 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:21:29 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:21:34 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:22:14 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:22:49 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:23:29 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:24:31 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:24:45 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:24:58 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:24:72 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:25:38 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:25:43 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:27:14 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:27:48 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:28:54 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:28:59 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:30:13 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:31:19 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:37:27 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:37:32 field RobotHardware.Lift.enc
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:49:38 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Extras.java:49:43 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Globals.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Globals.java:6:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Globals.java:7:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Globals.java:7:46 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:7:22 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:16:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:16:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:17:9 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:18:13 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:18:13 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:20:17 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:20:22 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:20:27 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Hiding.java:29:11 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:4:54 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:4:68 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:6:47 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:6:61 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:9:16 const RobotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:10:16 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:11:5 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:13:12 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:14:11 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:18:55 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:18:69 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Imports.java:18:74 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:5:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:9:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:16:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:16:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:17:27 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:22:16 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:22:21 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:23:15 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:24:17 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:24:22 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:24:27 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Interfaces.java:25:26 field RobotHardware.Lift.enc
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:6:18 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:8:13 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:11:14 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:11:19 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:14:19 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:14:24 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:6:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:13:9 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:13:35 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:16:19 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:16:24 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:17:21 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:17:37 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:17:44 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:20:33 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:22:58 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:23:24 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:23:38 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:23:55 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:23:60 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:24:26 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:24:40 const RobotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:25:17 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:25:44 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:25:49 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:26:49 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:26:54 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:7:29 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:12:73 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:12:87 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:31:9 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:31:18 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:33:11 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:33:44 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:33:49 field RobotHardware.Lift.enc
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:33:66 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:7:30 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:13:9 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:14:14 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:14:19 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:15:9 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:15:18 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:16:20 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:17:11 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:17:16 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Obscure.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Obscure.java:15:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:3:54 type PracticeBotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:4:54 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:4:68 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:6:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:10:21 const PracticeBotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:11:5 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:12:5 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:12:19 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:12:24 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:13:22 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:13:36 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:13:41 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:14:19 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:14:33 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:14:38 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:14:66 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Renames.java:14:78 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Robot.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/Robot.java:9:12 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Robot.java:17:18 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Robot.java:18:12 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:7:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:10:15 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:12:15 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:13:14 type PracticeBotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:13:46 type PracticeBotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:13:76 field PracticeBotHardware.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:14:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:14:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:16:34 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:16:39 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:17:37 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:17:51 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:17:62 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:17:76 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:17:97 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:18:37 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:18:65 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:18:70 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:26:60 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:26:65 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:30:30 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:30:44 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:31:11 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:31:25 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:31:34 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:32:14 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:32:28 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:32:46 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:32:51 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:33:22 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:34:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:34:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:34:40 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:34:54 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:35:16 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:36:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:36:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:36:50 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:36:55 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:37:31 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:37:36 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:40:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:45:16 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/Shadowing.java:45:21 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:5:47 type PracticeBotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:6:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:13:28 type PracticeBotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:13:48 const PracticeBotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:15:13 type PracticeBotHardware
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:15:43 type PracticeBotHardware
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:16:17 field PracticeBotHardware.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:17:17 field PracticeBotHardware.wrist
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:19:13 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:19:37 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:20:17 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/TwoRobots.java:20:22 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/UsesGlobals.java:5:23 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesGlobals.java:5:28 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/UsesGlobals.java:6:25 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/UsesMyRobot.java:5:11 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesMyRobot.java:5:16 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesMyRobot.java:5:21 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:7:32 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:7:37 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:8:18 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:8:23 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:18 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:23 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:28 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:20 field RobotHardware.Lift.claw [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:25 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:16:23 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17:28 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17:33 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/OnDemand.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:3:47 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:3:61 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:6:12 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:7:11 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:6:15 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:6:41 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/precedence/C.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/C.java:8:17 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/precedence/C.java:9:18 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:7:14 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:8:20 const RobotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:9:16 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:9:27 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:9:32 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/precedence/E.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:11:26 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:11:31 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:20:30 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:20:35 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/G.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/G.java:9:17 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/precedence/G.java:10:18 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:7:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:10:18 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:10:23 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:10:34 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:10:48 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/H.java:10:53 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/precedence/M.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub/B.java:11:14 type PracticeBotHardware
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub/B.java:12:18 field PracticeBotHardware.wrist
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub2/K.java:3:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub2/L.java:4:47 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub2/L.java:4:61 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub2/L.java:8:17 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/precedence/sub2/L.java:9:18 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:5:34 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:13:34 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:15:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:15:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:19:39 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:21:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q10Generic.java:21:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q1PkgPrivate.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q1PkgPrivate.java:6:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q1PkgPrivate.java:10:19 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q1PkgPrivate.java:10:24 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q2Lambda.java:5:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q2Lambda.java:8:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q2Lambda.java:14:45 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q2Lambda.java:14:50 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q3Catch.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q3Catch.java:6:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q3Catch.java:10:19 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q3Catch.java:14:19 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q3Catch.java:14:24 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:6:12 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:7:9 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:7:9 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:7:38 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:8:11 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:8:16 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:40 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:9:59 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:10:16 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q4MultiDecl.java:12:16 field RobotHardware.Lift.enc
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q5CastPrec.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q5CastPrec.java:7:9 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q5CastPrec.java:7:23 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q5CastPrec.java:12:32 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:7:12 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:7:38 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:8:31 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:8:36 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:11:15 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:15:17 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:15:22 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:8:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:11:17 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:15:23 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:15:28 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q8StaticMethodImport.java:8:15 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q8StaticMethodImport.java:8:20 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q8StaticMethodImport.java:9:20 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:5:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:8:16 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:8:30 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:9:27 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:9:46 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:11:16 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:12:11 field RobotHardware.lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:12:16 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:6:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:8:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:8:19 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:8:33 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:10:17 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:10:31 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:15:12 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:16:23 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:6:19 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:6:33 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:7:19 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:7:33 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:7:38 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:9:26 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:9:40 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:11:26 field RobotHardware.Lift.claw
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:15:14 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:16:19 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:17:14 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:18:20 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:18:34 type RobotHardware.Lift [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:18:39 const RobotHardware.Lift.ENC_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:22:14 field RobotHardware.Lift.Claw.grip
