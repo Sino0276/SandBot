@@ -23,6 +23,12 @@ import {
   replaceTunableNotices,
   saveTunables
 } from '../java/tunableSave'
+import {
+  checkUsagesAfterSave,
+  clearUsageNotices,
+  initUsageIndex,
+  setUsageBaseline
+} from '../java/usageIndex'
 import type { SceneObjects } from '../scene/model'
 import { disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
@@ -182,13 +188,19 @@ export function saveProject(): Promise<boolean> {
     }
     wrote = true
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
+    // 이번 저장이 없앤 구성 이름을 찾으려고 이전에 저장한(연) 씬을 잡아 둔다
+    const previous = savedObjects
     savedObjects = objects
+    setUsageBaseline(objects)
     setDirty(computeDirty(useSceneStore.getState()))
     // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
     const tunableOutcome = await saveTunables(projectRoot, tunables)
     applyTunableSaveOutcome(projectRoot, tunableOutcome)
     setDirty(computeDirty(useSceneStore.getState()))
     await syncTeamCode(projectRoot, objects)
+    // 생성 코드를 쓴 저장만 TeamCode가 깨지는지 본다(막히거나 실패하면 디스크에는 이전 클래스가 그대로 있다)
+    if (useProjectStore.getState().generation?.status === 'synced')
+      void checkUsagesAfterSave(previous, objects)
     return isCompleteTunableSave(tunableOutcome)
   }).then((saved) => {
     // 처음 저장해 프로젝트가 생겼거나 생성 파일·튜닝 값이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
@@ -242,6 +254,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       })
       replaceGenerationNotices([])
       replaceTunableNotices([])
+      clearUsageNotices()
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
       replaceProjectNotice(
@@ -275,6 +288,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
       savedObjects = useSceneStore.getState().objects
+      // 사용처의 "이전 이름"은 연 씬(고친 경로 포함)과 비교한다
+      setUsageBaseline(savedObjects)
       setDirty(false)
       opened = true
     } catch (error) {
@@ -411,6 +426,8 @@ export function initProjectSession(): void {
   })
   // 연결을 더하면 그 Java 파일을 읽어 튜닝 값을 보인다
   initJavaSources()
+  // TeamCode에서 생성 하드웨어를 쓰는 곳(사용처). Java 목록·씬·프로젝트를 구독한다.
+  initUsageIndex()
 
   const updateTitle = (): void => {
     const { name, dirty } = useProjectStore.getState()

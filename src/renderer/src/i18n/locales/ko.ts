@@ -97,6 +97,11 @@ const ko = {
     // 줄로 열기(사용처·튜닝 값)를 편집기가 받지 못함. 앱을 켠 동안 한 번만 띄운다.
     lineIgnored:
       '외부 스크립트 편집기가 줄 번호를 받지 않아 파일만 열었습니다. 환경 설정에서 Android Studio 등을 고르면 그 줄로 엽니다.',
+    // 사용처(4단계): 저장해 생성 코드를 맞춘 뒤 깨지는 TeamCode. 저장할 때마다 하나로 바꾼다. {{files}}는 파일 이름 3개까지.
+    usagesBroken:
+      'TeamCode {{count}}곳({{files}})이 저장한 생성 코드에 없는 이름을 씁니다. 인스펙터의 사용처에서 열 수 있습니다.',
+    usagesBrokenByName:
+      '구성 이름이 바뀌어 TeamCode 문자열 {{count}}곳({{files}})이 실행할 때 장치를 찾지 못합니다.',
     scriptLinksDropped:
       'project.json의 스크립트 연결 {{count}}개는 허용하지 않는 경로이거나 같은 오브젝트에 겹친 경로라 버렸습니다. 저장하면 파일에서도 빠집니다.',
     externalEditorFailed: '외부 스크립트 편집기 설정을 바꾸지 못했습니다 ({{detail}}).',

@@ -99,6 +99,11 @@ const en: Messages = {
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
     lineIgnored:
       "The external script editor can't take a line number, so only the file was opened. Choose Android Studio or another editor in Preferences to open at the line.",
+    // Usages (phase 4): TeamCode that a save breaks. One notice, replaced on every save. {{files}} lists up to 3 file names.
+    usagesBroken:
+      "{{count}} place(s) in TeamCode ({{files}}) use names the saved generated code doesn't have. Open them from Usages in the Inspector.",
+    usagesBrokenByName:
+      "Configuration names changed; {{count}} string(s) in TeamCode ({{files}}) won't find their device at run time.",
     scriptLinksDropped:
       '{{count}} script links in project.json were dropped because their paths are not allowed or repeat on the same object. Saving removes them from the file too.',
     externalEditorFailed: 'Could not change the external script editor setting ({{detail}}).',
