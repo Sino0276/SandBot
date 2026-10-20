@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { propertyDefaults, type ComponentType } from '../../hardware/catalog'
 import {
   deviceUsageKey,
@@ -29,77 +29,6 @@ import {
   type UsageSectionView,
   type UsageView
 } from './usageView'
-
-// 보기 모델은 찾기 이름(lookupNamesOf)과 클래스 이름 문제(usageSymbols.unavailable)를 기호표에서 읽는다.
-// 핵심 작업의 기호표가 아직 자리 함수(not implemented)면 같은 규칙의 작은 대역을 쓴다. 합친 뒤에는 진짜를 쓴다.
-vi.mock('../../java/usages/usageSymbols', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../java/usages/usageSymbols')>()
-  const { buildCodeScopes } = await import('../../hardware/codeScopes')
-  const { robotComponents } = await import('../../hardware/components')
-  const { deadWheelDeviceName } = await import('../../hardware/javaCodegen')
-  const { sceneIssues } = await import('../../hardware/sceneIssues')
-  const { childrenInDocument } = await import('../../scene/model')
-  const types = await import('../../java/usages/usageTypes')
-  type Objects = Parameters<typeof real.usageSymbols>[0]
-  const robotIds = (objects: Objects): string[] =>
-    childrenInDocument(objects, null)
-      .filter((o) => o.kind === 'robot' && robotComponents(objects, o.id).length > 0)
-      .map((o) => o.id)
-  const lookupNamesOf = (objects: Objects): Map<string, string[]> => {
-    const names = new Map<string, string[]>()
-    for (const robotId of robotIds(objects)) {
-      const { entries } = buildCodeScopes(objects, robotId)
-      for (const entry of entries) {
-        const raw =
-          entry.component.type === 'deadWheel'
-            ? deadWheelDeviceName(entry, entries)
-            : entry.component.name
-        const name = raw.trim()
-        if (!name) continue
-        const key = types.deviceUsageKey(entry.objectId, entry.component.id)
-        names.set(name, [...(names.get(name) ?? []), key])
-      }
-    }
-    return names
-  }
-  const usageSymbols = (objects: Objects): ReturnType<typeof real.usageSymbols> => {
-    const issues = sceneIssues(objects)
-    const unavailable = robotIds(objects).flatMap((robotId) => {
-      const issue = issues.find(
-        (i) =>
-          i.robotId === robotId &&
-          !i.componentId &&
-          (i.code === 'invalidClassName' || i.code === 'duplicateClassName')
-      )
-      return issue
-        ? [
-            {
-              key: types.robotUsageKey(robotId),
-              className: buildCodeScopes(objects, robotId).root.className,
-              reason: issue.code as 'invalidClassName' | 'duplicateClassName'
-            }
-          ]
-        : []
-    })
-    return { robots: [], unavailable, lookupNames: [], signature: '' }
-  }
-  function orStandIn<T>(actual: (objects: Objects) => T, standIn: (objects: Objects) => T) {
-    return (objects: Objects): T => {
-      try {
-        return actual(objects)
-      } catch (error) {
-        if (error instanceof Error && error.message.endsWith('not implemented'))
-          return standIn(objects)
-        throw error
-      }
-    }
-  }
-  return {
-    ...real,
-    usageSymbols: orStandIn(real.usageSymbols, usageSymbols),
-    lookupNamesOf: orStandIn(real.lookupNamesOf, lookupNamesOf)
-  }
-})
 
 // ---- 씬 ----
 

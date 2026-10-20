@@ -1,7 +1,7 @@
 import i18n from 'i18next'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { initReactI18next } from 'react-i18next'
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { propertyDefaults } from '../../hardware/catalog'
 import ko from '../../i18n/locales/ko'
 import { useJavaIndexStore } from '../../java/javaIndex'
@@ -22,44 +22,7 @@ import { useUsageOpenStore } from './usageOpenStore'
 import UsageSection from './UsageSection'
 
 // 그리기 확인(renderToStaticMarkup, DOM 없음): 머리줄·트리의 역할과 ARIA, 상태별 문구. 보기 모델 자체는
-// usageView.test.ts가 확인한다. 기호표가 아직 자리 함수면 같은 규칙의 작은 대역을 쓴다(usageView.test.ts와 같음).
-vi.mock('../../java/usages/usageSymbols', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../java/usages/usageSymbols')>()
-  const types = await import('../../java/usages/usageTypes')
-  type Objects = Parameters<typeof real.usageSymbols>[0]
-  // 이 파일의 씬은 데드휠·겹치는 클래스 이름이 없다
-  const lookupNamesOf = (objects: Objects): Map<string, string[]> => {
-    const names = new Map<string, string[]>()
-    for (const object of Object.values(objects))
-      for (const component of object.components ?? [])
-        names.set(component.name.trim(), [
-          ...(names.get(component.name.trim()) ?? []),
-          types.deviceUsageKey(object.id, component.id)
-        ])
-    return names
-  }
-  function orStandIn<T>(actual: (objects: Objects) => T, standIn: (objects: Objects) => T) {
-    return (objects: Objects): T => {
-      try {
-        return actual(objects)
-      } catch (error) {
-        if (error instanceof Error && error.message.endsWith('not implemented'))
-          return standIn(objects)
-        throw error
-      }
-    }
-  }
-  return {
-    ...real,
-    usageSymbols: orStandIn(real.usageSymbols, () => ({
-      robots: [],
-      unavailable: [],
-      lookupNames: [],
-      signature: ''
-    })),
-    lookupNamesOf: orStandIn(real.lookupNamesOf, lookupNamesOf)
-  }
-})
+// usageView.test.ts가 확인한다.
 
 // renderToStaticMarkup은 zustand의 서버 스냅숏(처음 상태 객체)을 읽는다. 테스트마다 그 객체에도 같은 값을 넣고
 // 끝나면 되돌린다(이 파일의 모듈은 다른 테스트 파일과 나뉜다).
