@@ -55,6 +55,8 @@ const MISSED_LIFT_LEFT = [
   `${T}Shadowing.java:37:36`,
   `${T}probes/b/Q10Generic.java:21:20`
 ]
+// 그 밖의 ACCEPTED_FN(건너뛴 파일의 형식 RobotHardware)
+const MISSED = [`${T}Escapes.java:7:12`, ...MISSED_LIFT_LEFT]
 
 const posix = (path: string): string => path.split(sep).join('/')
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
@@ -77,6 +79,17 @@ function golden(name: string): string[] {
     .replace(/\r/g, '')
     .split('\n')
     .filter((line) => line && !line.startsWith('#'))
+}
+
+// 정답표에서 이 줄 모양의 코드 사용처 자리(경로:줄:열). import·한정자는 사용처가 아니고, javac가 선언자 여럿에 같은
+// 형식 트리를 나눠 주어 겹친 자리는 하나로 본다. 받아들인 한계(MISSED)는 뺀다.
+function goldenPositions(pattern: RegExp): string[] {
+  const lines = golden('golden.txt').filter(
+    (line) => !/\[(import|qualifier)\]/.test(line) && pattern.test(line)
+  )
+  return [...new Set(lines.map((line) => line.split(' ')[0]))]
+    .filter((position) => !MISSED.includes(position))
+    .sort(compare)
 }
 
 // 메인의 목록처럼 TeamCode 기준 경로(생성 패키지 폴더 제외)와 크기·수정 시각
@@ -244,19 +257,12 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
 
     const view = deviceView(objects)
     // 코드: javac가 liftLeft(RobotHardware.Lift)에 묶는 자리(import·한정자 제외)에서 받아들인 한계만 빠진다
-    const expected = [
-      ...new Set(
-        golden('golden.txt')
-          .filter((line) => / field RobotHardware\.Lift\.liftLeft$/.test(line))
-          .map((line) => line.split(' ')[0])
-      )
-    ]
-      .filter((position) => !MISSED_LIFT_LEFT.includes(position))
-      .sort(compare)
+    const expected = goldenPositions(/ field RobotHardware\.Lift\.liftLeft$/)
     const code = section(view, 'code')!
     expect(code.hits.map(at).sort(compare)).toEqual(expected)
     expect(code.hits.every((hit) => hit.kind === 'field')).toBe(true)
-    for (const hit of code.hits) expect(hit.snippet.slice(hit.mark[0], hit.mark[1])).toBe('liftLeft')
+    for (const hit of code.hits)
+      expect(hit.snippet.slice(hit.mark[0], hit.mark[1])).toBe('liftLeft')
     expect(view.counts).toEqual({ code: expected.length, byName: 1, descendants: 0, warnings: 0 })
 
     // 이름으로: 다른 파일의 상수를 찾기 인자로 쓴 초기값. Practice Bot에도 같은 구성 이름이 있다.
@@ -285,6 +291,72 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     )
   })
 
+  it('그룹·로봇 카드가 javac 정답표의 필드·형식·생성 사용처와 하위 장치 수를 보인다', async () => {
+    const objects = corpusScene()
+    await openCorpus(objects)
+    const deviceCount = (device: { objectId: string; componentId: string }): number => {
+      const { counts } = deviceView(objects, device)
+      return counts.code + counts.byName
+    }
+    const LIFT_DEVICES = [
+      LIFT_LEFT,
+      { objectId: 'liftEncoder', componentId: 'enc' },
+      { objectId: 'clawServo', componentId: 'grip' }
+    ]
+
+    // Lift 그룹: 연쇄가 lift에서 끝나는 필드와 형식 RobotHardware.Lift. 하위 장치 수는 Claw 그룹의 grip까지
+    // 장치 카드의 코드·이름 수를 더한 것이다.
+    const lift = groupUsageView(objects, result(), usage().baseline, 'lift')!
+    const liftCode = section(lift, 'code')!
+    expect(liftCode.hits.map(at).sort(compare)).toEqual(
+      goldenPositions(/ (field RobotHardware\.lift|type RobotHardware\.Lift)$/)
+    )
+    expect(new Set(liftCode.hits.map((hit) => hit.kind))).toEqual(new Set(['field', 'type']))
+    expect(lift.sections.map((s) => s.id)).toEqual(['code'])
+    expect(lift.counts).toEqual({
+      code: liftCode.total,
+      byName: 0,
+      descendants: LIFT_DEVICES.map(deviceCount).reduce((a, b) => a + b, 0),
+      warnings: 0
+    })
+
+    // 로봇: 만드는 곳(new)과 형식·CONFIGURATION_NAME. Escapes.java는 건너뛴 파일이다.
+    for (const [robotId, className] of [
+      [COMP_ROBOT_ID, 'RobotHardware'],
+      [PRACTICE_ROBOT_ID, 'PracticeBotHardware']
+    ]) {
+      const robot = robotUsageView(objects, result(), usage().baseline, robotId)!
+      const constructs = section(robot, 'constructs')?.hits ?? []
+      const code = section(robot, 'code')!.hits
+      expect(constructs.every((hit) => hit.kind === 'new' && hit.snippet.startsWith('new '))).toBe(
+        true
+      )
+      expect([...constructs, ...code].map(at).sort(compare)).toEqual(
+        goldenPositions(new RegExp(` (type ${className}|const ${className}\\.CONFIGURATION_NAME)$`))
+      )
+      expect(robot.counts.code).toBe(constructs.length + code.length)
+      expect(robot.counts.warnings).toBe(0)
+      // 어느 로봇에도 없는 찾기 이름은 로봇 카드마다 모두 접어 두고 세지 않는다
+      const unknown = section(robot, 'unknownNames')!
+      expect(unknown.tone).toBe('folded')
+      expect(unknown.hits.map(at).sort(compare)).toEqual(
+        [...result().unknownNames.values()].flat().map(at).sort(compare)
+      )
+    }
+    expect([...result().unknownNames.keys()]).toEqual(['leftBack', 'rightBack', 'rightFront'])
+    const comp = robotUsageView(objects, result(), usage().baseline, COMP_ROBOT_ID)!
+    expect(section(comp, 'constructs')!.hits.length).toBeGreaterThan(0)
+    expect(comp.counts.descendants).toBe(
+      [
+        { objectId: 'drive', componentId: 'lf' },
+        { objectId: 'odometry', componentId: 'par' },
+        ...LIFT_DEVICES
+      ]
+        .map(deviceCount)
+        .reduce((a, b) => a + b, 0)
+    )
+  })
+
   it('이름을 바꾸면 파일을 읽지 않고 맞추기만 해서, 바꾼 카드에 이전 이름을 쓰는 곳을 붙인다', async () => {
     const objects = corpusScene()
     await openCorpus(objects)
@@ -301,7 +373,9 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
 
     // 장치 카드: 저장한 범위(Lift)에 없는 이전 필드 liftLeft. javac의 cannot find symbol(liftLeft)에서 받아들인
     // 한계만 빠진다.
-    const missedLines = MISSED_LIFT_LEFT.map((position) => position.split(':').slice(0, 2).join(':'))
+    const missedLines = MISSED_LIFT_LEFT.map((position) =>
+      position.split(':').slice(0, 2).join(':')
+    )
     const expectedLines = golden('golden-renamed.txt')
       .filter((line) => line.endsWith(' liftLeft'))
       .map((line) => line.split(' ')[0])
@@ -309,7 +383,11 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
       .sort(compare)
     const device = deviceView(renamed)
     const renamedCode = device.sections[0]
-    expect(renamedCode).toMatchObject({ id: 'renamedCode', tone: 'warning', old: 'robot.lift.liftLeft' })
+    expect(renamedCode).toMatchObject({
+      id: 'renamedCode',
+      tone: 'warning',
+      old: 'robot.lift.liftLeft'
+    })
     expect(renamedCode.hits.map(atLine).sort(compare)).toEqual(expectedLines)
     expect(renamedCode.hits.every((h) => h.kind === 'unresolved' && h.member === 'liftLeft')).toBe(
       true
@@ -369,11 +447,23 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     expect(readCount()).toBe(reads)
     const view = deviceView(renamed, { objectId: 'liftEncoder', componentId: 'enc' })
     const renamedCode = section(view, 'renamedCode')!
-    // RobotHardware.Lift.ENC_X_MM(LiftSubsystem.java의 S9)
-    expect(renamedCode.old).toBe('RobotHardware.Lift.ENC_X_MM')
-    expect(renamedCode.hits.map((hit) => `${atLine(hit)} ${hit.member}`)).toContain(
-      `${T}subsystems/LiftSubsystem.java:18 ENC_X_MM`
-    )
+    // 필드 enc(robot.lift.enc)와 상수 ENC_X_MM을 모두 쓰므로 제목에 둘 다 있다
+    expect(renamedCode.old).toBe('robot.lift.enc, RobotHardware.Lift.ENC_X_MM')
+    // 정답표에서 javac가 필드 enc·상수 ENC_X_MM에 묶은 자리가 모두 이전 이름이 된다. 중첩 클래스의 static
+    // on-demand로 들여온 단순 이름(Imports.java:10)은 알리지 않는다(spec §6.5).
+    const expected = golden('golden.txt')
+      .filter((line) =>
+        / (field RobotHardware\.Lift\.enc|const RobotHardware\.Lift\.ENC_X_MM)$/.test(line)
+      )
+      .map((line) => line.split(' ')[0])
+      .filter((position) => position !== `${T}Imports.java:10:16`)
+      .sort(compare)
+    expect(renamedCode.hits.map(at).sort(compare)).toEqual(expected)
+    expect(renamedCode.hits.map((hit) => hit.member).sort()).toEqual([
+      ...Array<string>(6).fill('ENC_X_MM'),
+      ...Array<string>(4).fill('enc')
+    ])
+    expect(view.counts).toEqual({ code: 0, byName: 0, descendants: 0, warnings: 11 })
     // "enc"를 찾는 문자열(같은 파일의 String 상수 초기값)은 이제 어느 장치에도 없는 이름이다
     const renamedName = section(view, 'renamedName')!
     expect(renamedName.old).toBe('enc')
