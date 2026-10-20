@@ -65,7 +65,7 @@ export type RobotCodeScopes = {
   groups: Map<string, CodeScope>
 }
 
-function deviceKey(objectId: string, componentId: string): string {
+export function deviceKey(objectId: string, componentId: string): string {
   return `${objectId}\n${componentId}`
 }
 

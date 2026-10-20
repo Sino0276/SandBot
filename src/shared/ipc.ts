@@ -18,6 +18,7 @@ export const IPC = {
   openJavaFile: 'teamcode:open-java-file',
   readJavaFile: 'teamcode:read-java-file',
   writeJavaLiterals: 'teamcode:write-java-literals',
+  readJavaSources: 'teamcode:read-java-sources',
   getExternalEditor: 'editor:get-external-editor',
   setExternalEditor: 'editor:set-external-editor',
   setDirty: 'app:set-dirty',
@@ -115,8 +116,9 @@ export type ExternalEditorChoice =
 // - missing: 파일이 없다
 // - launchFailed: 편집기를 실행하지 못했다(detail에 이유)
 // - openFailed: 운영체제가 파일을 열지 못했다(연결된 앱이 없는 등, detail에 이유)
+// lineIgnored: 줄 번호를 넘겼지만 지금 편집기가 받지 못한다(확장자로 열기, $(Line)이 없는 인자 템플릿). 파일만 열었다.
 export type OpenJavaFileResult =
-  | { ok: true }
+  | { ok: true; lineIgnored?: true }
   | { ok: false; code: 'notAllowed' | 'missing' | 'launchFailed' | 'openFailed'; detail: string }
 
 // 튜닝 값을 쓸 수 없는 파일 상태: encoding(UTF-8로 그대로 되돌릴 수 없음), generated(생성 표식),
@@ -150,6 +152,24 @@ export type WriteJavaLiteralsResult =
   | { status: 'changed' }
   | { status: 'missing' }
   | { status: 'refused'; reason: string }
+
+// 사용처(4단계)가 TeamCode Java를 한꺼번에 읽는 한도: 한 번에 경로 수, 돌려주는 글자 바이트(넘으면 나머지는
+// deferred로 다시 묻게 한다), 파일 하나의 크기(넘으면 tooLarge, 렉서·추출이 너무 오래 걸린다).
+export const MAX_SOURCE_PATHS = 256
+export const MAX_SOURCE_BATCH_BYTES = 4 * 1024 * 1024
+export const MAX_USAGE_FILE_BYTES = 256 * 1024
+
+// 사용처를 찾으려고 읽은 파일 하나. ok·tooLarge의 size·mtimeMs는 읽은 핸들의 stat이다(목록의 것과 비교해 다시
+// 읽을지 정한다). 쓰지 않으므로 인코딩·생성 표식은 따지지 않는다(Buffer.toString('utf8')).
+export type JavaSourceRead =
+  | { path: string; status: 'ok'; text: string; size: number; mtimeMs: number }
+  | { path: string; status: 'tooLarge'; size: number; mtimeMs: number }
+  | { path: string; status: 'missing' | 'notAllowed' | 'failed' }
+  // 이번 묶음의 바이트 한도를 다 써서 읽지 않았다(다시 묻는다)
+  | { path: string; status: 'deferred' }
+
+export type ReadJavaSourcesResult =
+  { ok: true; files: JavaSourceRead[] } | { ok: false; code: 'notAllowed'; detail: string }
 
 // 렌더러에서 window.api로 쓰는 API (preload가 노출)
 export type SandbotApi = {
@@ -195,6 +215,8 @@ export type SandbotApi = {
     expectedHash: string,
     edits: JavaLiteralEdit[]
   ) => Promise<WriteJavaLiteralsResult>
+  // 사용처: 목록(listJavaFiles)의 경로를 한꺼번에 읽는다. root는 열거나 저장한 프로젝트, 경로는 MAX_SOURCE_PATHS개까지.
+  readJavaSources: (root: string, paths: string[]) => Promise<ReadJavaSourcesResult>
   getExternalEditor: () => Promise<ExternalEditorState>
   setExternalEditor: (choice: ExternalEditorChoice) => Promise<ExternalEditorState>
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다
