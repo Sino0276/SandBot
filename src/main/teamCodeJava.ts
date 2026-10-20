@@ -16,11 +16,16 @@ import path, { basename, dirname, extname, join, relative, resolve, sep } from '
 import { generatedState } from '../shared/generatedFiles'
 import {
   IPC,
+  MAX_SOURCE_BATCH_BYTES,
+  MAX_SOURCE_PATHS,
+  MAX_USAGE_FILE_BYTES,
   type JavaFileEntry,
   type JavaFileList,
   type JavaLiteralEdit,
+  type JavaSourceRead,
   type OpenJavaFileResult,
   type ReadJavaFileResult,
+  type ReadJavaSourcesResult,
   type WriteJavaLiteralsResult
 } from '../shared/ipc'
 import { isLiteralSpanText, isWritableLiteral, literalFitsType } from '../shared/java/javaLiteral'
@@ -36,10 +41,11 @@ import {
 import { openInExternalEditor } from './externalEditor'
 import { isTrustedRoot } from './projectRoots'
 
-// 팀이 쓴 TeamCode Java 파일(오브젝트에 연결하는 스크립트)의 목록, 외부 편집기로 열기, 튜닝 값 읽기·쓰기.
+// 팀이 쓴 TeamCode Java 파일(오브젝트에 연결하는 스크립트)의 목록, 외부 편집기로 열기, 튜닝 값 읽기·쓰기, 사용처 읽기.
 // - 목록은 이름·크기·시각만 보고, 열기는 편집기에 경로만 넘긴다.
 // - 튜닝 값(3단계): 읽기는 내용을 그대로 돌려주고, 쓰기는 저장(Ctrl+S) 때 렌더러가 고른 리터럴 자리만 바꾼다.
 //   파일을 만들거나 지우거나 이름을 바꾸지 않는다(같은 폴더의 임시 파일 .<이름>.sandbot.tmp만 만들고 지운다).
+// - 사용처(4단계): 목록의 파일을 한꺼번에 읽기만 한다(readJavaSources).
 // root는 열거나 저장한 프로젝트만 받고(projectRoots.ts), 경로는 src/shared/teamCodePaths.ts의 규칙으로 확인한다.
 
 // 이보다 많으면 앞의 것만 담고 truncated로 알린다
@@ -70,7 +76,12 @@ async function isDirectory(target: string): Promise<boolean> {
   }
 }
 
-async function mapLimit<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+// items를 순서대로 limit개까지 동시에 처리한다. 결과는 items 순서다.
+export async function mapLimit<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  limit: number = CONCURRENCY
+): Promise<R[]> {
   const results = new Array<R>(items.length)
   let next = 0
   const worker = async (): Promise<void> => {
@@ -79,7 +90,7 @@ async function mapLimit<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<
       results[index] = await fn(items[index])
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
   return results
 }
 
@@ -223,7 +234,12 @@ type Located =
 // 렌더러가 보낸 root·경로(믿지 않는 입력)를 확인하고 디스크 위치를 찾는다.
 // 열린 프로젝트이고, 연결 경로 규칙에 맞고, 보통 파일이고, 링크를 풀어도 TeamCode/src/main/java 안의 .java여야 한다.
 // file은 받은 경로의 디스크 위치(NFD 이름이면 그 이름), real은 링크를 푼 실제 위치다.
-async function locateJavaFile(root: unknown, relPath: unknown): Promise<Located> {
+// knownRealJavaRoot는 미리 푼 TeamCode/src/main/java의 실제 위치다(여러 파일을 읽을 때 한 번만 푼다).
+async function locateJavaFile(
+  root: unknown,
+  relPath: unknown,
+  knownRealJavaRoot?: string
+): Promise<Located> {
   if (!isTrustedRoot(root))
     return { ok: false, code: 'notAllowed', detail: 'not an opened project' }
   if (typeof relPath !== 'string' || !isLinkableJavaPath(relPath))
@@ -250,7 +266,10 @@ async function locateJavaFile(root: unknown, relPath: unknown): Promise<Located>
   let realJavaRoot: string
   let real: string
   try {
-    ;[realJavaRoot, real] = await Promise.all([realpath(javaRoot), realpath(file)])
+    ;[realJavaRoot, real] = await Promise.all([
+      knownRealJavaRoot ?? realpath(javaRoot),
+      realpath(file)
+    ])
   } catch (error) {
     // 링크를 풀 수 없으면(일부 가상 드라이브) 안에 있는지 알 수 없으므로 열지 않는다
     return { ok: false, code: 'notAllowed', detail: `cannot resolve path: ${errorText(error)}` }
@@ -301,11 +320,16 @@ function isLinkableRealPath(realJavaRoot: string, real: string): boolean {
   return isLinkableJavaPath(normalizeLinkPath(`${JAVA_SOURCE_PREFIX}${rel}`))
 }
 
-type Snapshot = { raw: Buffer; stats: Stats } | 'tooLarge' | 'notFile'
+// tooLarge의 stats는 내용을 읽지 않은 파일의 크기·시각이다(사용처가 다시 읽을지 정할 때 쓴다)
+type Snapshot =
+  | { kind: 'file'; raw: Buffer; stats: Stats }
+  | { kind: 'tooLarge'; stats: Stats }
+  | { kind: 'notFile' }
 
 // 링크를 따르지 않고(POSIX의 O_NOFOLLOW) 열어 그 핸들로 stat과 내용을 읽는다(둘이 같은 파일이다).
 // O_NONBLOCK은 그사이 FIFO로 바뀐 경로를 여는 데서 멈추지 않게 한다(보통 파일에는 영향이 없다).
-async function readSnapshot(real: string): Promise<Snapshot> {
+// maxBytes보다 크면 내용 없이 tooLarge다(튜닝 값은 1 MB, 사용처는 256 KB).
+async function readSnapshot(real: string, maxBytes = MAX_JAVA_FILE_BYTES): Promise<Snapshot> {
   const flags =
     constants.O_NOFOLLOW !== undefined
       ? constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -313,11 +337,12 @@ async function readSnapshot(real: string): Promise<Snapshot> {
   const handle = await openFile(real, flags)
   try {
     const stats = await handle.stat()
-    if (!stats.isFile()) return 'notFile'
-    if (stats.size > MAX_JAVA_FILE_BYTES) return 'tooLarge'
+    if (!stats.isFile()) return { kind: 'notFile' }
+    if (stats.size > maxBytes) return { kind: 'tooLarge', stats }
     const raw = await handle.readFile()
-    if (raw.length > MAX_JAVA_FILE_BYTES) return 'tooLarge'
-    return { raw, stats }
+    // stat한 뒤 커졌다. 크기·시각은 지금 것으로 알린다.
+    if (raw.length > maxBytes) return { kind: 'tooLarge', stats: await handle.stat() }
+    return { kind: 'file', raw, stats }
   } finally {
     await handle.close()
   }
@@ -371,8 +396,9 @@ export async function readJavaFile(root: unknown, relPath: unknown): Promise<Rea
     if (code === 'ELOOP') return { ok: false, code: 'notAllowed', detail: 'became a link' }
     return { ok: false, code: 'failed', detail: errorText(error) }
   }
-  if (snapshot === 'notFile') return { ok: false, code: 'notAllowed', detail: 'not a regular file' }
-  if (snapshot === 'tooLarge')
+  if (snapshot.kind === 'notFile')
+    return { ok: false, code: 'notAllowed', detail: 'not a regular file' }
+  if (snapshot.kind === 'tooLarge')
     return { ok: true, text: '', hash: '', editable: false, reason: 'tooLarge' }
   const text = snapshot.raw.toString('utf8')
   const hash = sha256(snapshot.raw)
@@ -525,7 +551,7 @@ async function replaceFile(
     const now = await readSnapshot(real).catch(() => null)
     return (
       now !== null &&
-      typeof now !== 'string' &&
+      now.kind === 'file' &&
       now.stats.size === before.stats.size &&
       now.stats.mtimeMs === before.stats.mtimeMs &&
       now.stats.ino === before.stats.ino &&
@@ -622,8 +648,8 @@ async function writeLocked(
     if (code === 'ELOOP') return refused('notAllowed: became a link')
     throw error
   }
-  if (snapshot === 'notFile') return refused('notAllowed: not a regular file')
-  if (snapshot === 'tooLarge') return refused('tooLarge')
+  if (snapshot.kind === 'notFile') return refused('notAllowed: not a regular file')
+  if (snapshot.kind === 'tooLarge') return refused('tooLarge')
   const { raw, stats } = snapshot
   if (sha256(raw) !== expectedHash) return { status: 'changed' }
   const text = raw.toString('utf8')
@@ -641,6 +667,71 @@ async function writeLocked(
   return { status: 'written', text: next, hash: sha256(bytes) }
 }
 
+// --- 사용처: 목록의 파일을 한꺼번에 읽기 ---
+
+// 사용처 읽기의 동시 작업 수. 목록 훑기(CONCURRENCY)보다 적다. libuv 스레드 풀은 프로세스 전체가 같이 쓰므로
+// STEP 해시·저장이 이 읽기를 기다리지 않게 한다.
+const SOURCE_CONCURRENCY = 2
+
+// 사용처(4단계)가 목록(listJavaFiles)의 파일을 한꺼번에 읽는다. 렌더러가 보낸 값은 믿지 않는 입력이다.
+// - root는 열거나 저장한 프로젝트, paths는 MAX_SOURCE_PATHS개까지의 배열이어야 한다(아니면 전체를 거부한다).
+// - 경로마다 readJavaFile과 같은 확인(locateJavaFile, 링크를 푼 위치의 경로 규칙)을 하고, 걸리면 그 경로만 notAllowed다.
+//   같은 경로는 한 번만 읽는다. 결과는 받은 순서다.
+// - MAX_USAGE_FILE_BYTES를 넘는 파일은 내용 없이 tooLarge다.
+// - 돌려주는 글자는 모두 MAX_SOURCE_BATCH_BYTES까지다(첫 파일은 늘 준다). 넘으면 그 파일과 아직 읽지 않은 파일은
+//   deferred다(렌더러가 다음 묶음에서 다시 묻는다).
+// - 쓰지 않으므로 인코딩·생성 표식·읽기 전용은 따지지 않는다. CP949 파일도 Buffer.toString('utf8')로 준다(줄 번호는
+//   맞다). 생성 폴더 밖에 있는 생성 표식 파일도 다른 파일처럼 읽는다.
+export async function readJavaSources(
+  root: unknown,
+  paths: unknown
+): Promise<ReadJavaSourcesResult> {
+  if (!isTrustedRoot(root))
+    return { ok: false, code: 'notAllowed', detail: 'not an opened project' }
+  if (!Array.isArray(paths) || paths.length > MAX_SOURCE_PATHS)
+    return { ok: false, code: 'notAllowed', detail: 'invalid path list' }
+  const entries = [...new Set<unknown>(paths)]
+  const javaRoot = join(resolve(root), TEAMCODE_DIR, ...JAVA_DIR_SEGMENTS)
+  // 한 번만 푼다. 풀지 못하면(폴더가 없는 등) 파일마다 locateJavaFile이 다시 푼다(한 파일 읽기와 같은 결과).
+  const realJavaRoot = await realpath(javaRoot).catch(() => undefined)
+  let returnedFiles = 0
+  let returnedBytes = 0
+  let full = false
+
+  const readOne = async (relPath: unknown): Promise<JavaSourceRead> => {
+    // 문자열이 아닌 항목은 렌더러 오류다(경로로 돌려줄 글자가 없다)
+    if (typeof relPath !== 'string') return { path: '', status: 'notAllowed' }
+    if (!isLinkableJavaPath(relPath)) return { path: relPath, status: 'notAllowed' }
+    if (full) return { path: relPath, status: 'deferred' }
+    try {
+      const located = await locateJavaFile(root, relPath, realJavaRoot)
+      if (!located.ok) return { path: relPath, status: located.code }
+      if (!isLinkableRealPath(located.realJavaRoot, located.real))
+        return { path: relPath, status: 'notAllowed' }
+      const snapshot = await readSnapshot(located.real, MAX_USAGE_FILE_BYTES)
+      if (snapshot.kind === 'notFile') return { path: relPath, status: 'notAllowed' }
+      const { size, mtimeMs } = snapshot.stats
+      if (snapshot.kind === 'tooLarge') return { path: relPath, status: 'tooLarge', size, mtimeMs }
+      const bytes = snapshot.raw.length
+      if (full || (returnedFiles > 0 && returnedBytes + bytes > MAX_SOURCE_BATCH_BYTES)) {
+        full = true
+        return { path: relPath, status: 'deferred' }
+      }
+      returnedFiles++
+      returnedBytes += bytes
+      return { path: relPath, status: 'ok', text: snapshot.raw.toString('utf8'), size, mtimeMs }
+    } catch (error) {
+      const code = errnoCode(error)
+      if (code === 'ENOENT' || code === 'ENOTDIR') return { path: relPath, status: 'missing' }
+      // 그사이 링크로 바뀌었다(O_NOFOLLOW)
+      if (code === 'ELOOP') return { path: relPath, status: 'notAllowed' }
+      return { path: relPath, status: 'failed' }
+    }
+  }
+
+  return { ok: true, files: await mapLimit(entries, readOne, SOURCE_CONCURRENCY) }
+}
+
 // 렌더러가 보낸 root(믿지 않는 입력)의 목록. 열거나 저장한 프로젝트가 아니면 거부한다(JavaFileList에는 실패를 담을
 // 자리가 없으므로 예외로 알린다).
 export async function listTrustedJavaFiles(root: unknown): Promise<JavaFileList> {
@@ -655,6 +746,9 @@ export function registerTeamCodeJavaIpc(): void {
   )
   ipcMain.handle(IPC.readJavaFile, (_event, root: unknown, relPath: unknown) =>
     readJavaFile(root, relPath)
+  )
+  ipcMain.handle(IPC.readJavaSources, (_event, root: unknown, paths: unknown) =>
+    readJavaSources(root, paths)
   )
   // 핸들러가 정한 인자만 넘긴다(hooks는 테스트용)
   ipcMain.handle(

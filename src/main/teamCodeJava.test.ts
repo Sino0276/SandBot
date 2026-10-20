@@ -16,7 +16,15 @@ import { tmpdir } from 'os'
 import { dirname, join, posix, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GENERATED_MARKER } from '../shared/generatedFiles'
-import type { JavaLiteralEdit, OpenJavaFileResult, ReadJavaFileResult } from '../shared/ipc'
+import {
+  MAX_SOURCE_BATCH_BYTES,
+  MAX_SOURCE_PATHS,
+  MAX_USAGE_FILE_BYTES,
+  type JavaLiteralEdit,
+  type JavaSourceRead,
+  type OpenJavaFileResult,
+  type ReadJavaFileResult
+} from '../shared/ipc'
 import { formatTunableLiteral } from '../shared/java/javaLiteral'
 import { parseTunables } from '../shared/java/tunables'
 import type { TunableNode } from '../shared/java/tunableTypes'
@@ -26,9 +34,11 @@ import {
   containedIn,
   listJavaFiles,
   listTrustedJavaFiles,
+  mapLimit,
   MAX_JAVA_FILE_BYTES,
   openJavaFile,
   readJavaFile,
+  readJavaSources,
   renameWithRetry,
   writeJavaLiterals,
   type EditorOpener
@@ -789,6 +799,296 @@ describe('튜닝 값 읽기·쓰기', () => {
     expect(first.status).toBe('written')
     expect(second).toEqual({ status: 'changed' })
     expect(await readFile(java('Lift.java'), 'utf8')).toContain('kP = 0.25;')
+  })
+})
+
+describe('사용처 읽기(readJavaSources)', () => {
+  let root: string
+  let outside: string
+  const rel = (name: string): string => `${PKG}/${name}`
+  const java = (...parts: string[]): string => join(root, 'TeamCode', ...PKG.split('/'), ...parts)
+  const put = async (target: string, content: string | Buffer = 'class X {}'): Promise<void> => {
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, content)
+  }
+  const read = async (paths: unknown): Promise<JavaSourceRead[]> => {
+    const result = await readJavaSources(root, paths)
+    if (!result.ok) throw new Error(`${result.code}: ${result.detail}`)
+    return result.files
+  }
+  const statusOf = (files: JavaSourceRead[]): [string, string][] =>
+    files.map((file) => [file.path, file.status])
+
+  // 프로젝트 폴더 전체(이름·크기·시각·내용). 읽기 전후가 같아야 한다.
+  const treeOf = async (dir: string): Promise<string[]> => {
+    const out: string[] = []
+    const walk = async (current: string): Promise<void> => {
+      for (const entry of (await readdir(current, { withFileTypes: true })).sort((a, b) =>
+        a.name < b.name ? -1 : 1
+      )) {
+        const full = join(current, entry.name)
+        const info = await lstat(full)
+        if (entry.isDirectory()) {
+          out.push(`${full}/ ${info.mtimeMs}`)
+          await walk(full)
+        } else if (entry.isSymbolicLink()) {
+          out.push(`${full} -> link`)
+        } else {
+          const hash = createHash('sha256')
+            .update(await readFile(full))
+            .digest('hex')
+          out.push(`${full} ${info.size} ${info.mtimeMs} ${info.mode} ${hash}`)
+        }
+      }
+    }
+    await walk(dir)
+    return out
+  }
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'sandbot-sources-'))
+    outside = await mkdtemp(join(tmpdir(), 'sandbot-outside-'))
+    trustRoot(root)
+  })
+  afterEach(async () => {
+    clearTrustedRoots()
+    await rm(root, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  it('목록의 경로를 받은 순서대로 읽고, 크기·시각은 읽은 파일의 것이다(같은 경로는 한 번)', async () => {
+    await put(java('Lift.java'), 'class Lift {}')
+    await put(java('subsystems', 'Arm.java'), 'class Arm {}\n')
+    const listed = await listJavaFiles(root)
+    const files = await read([rel('subsystems/Arm.java'), rel('Lift.java'), rel('Lift.java')])
+    expect(files).toEqual([
+      {
+        path: rel('subsystems/Arm.java'),
+        status: 'ok',
+        text: 'class Arm {}\n',
+        size: listed.files[1].size,
+        mtimeMs: listed.files[1].mtimeMs
+      },
+      {
+        path: rel('Lift.java'),
+        status: 'ok',
+        text: 'class Lift {}',
+        size: listed.files[0].size,
+        mtimeMs: listed.files[0].mtimeMs
+      }
+    ])
+    expect(await read([])).toEqual([])
+  })
+
+  it('열거나 저장하지 않은 프로젝트와 배열이 아니거나 너무 많은 경로는 전체를 거부한다', async () => {
+    await put(java('Lift.java'))
+    for (const paths of [
+      rel('Lift.java'),
+      null,
+      { 0: rel('Lift.java'), length: 1 },
+      Array(MAX_SOURCE_PATHS + 1).fill(rel('Lift.java'))
+    ]) {
+      expect(await readJavaSources(root, paths)).toMatchObject({ ok: false, code: 'notAllowed' })
+    }
+    // 한도까지는 받는다(같은 경로는 한 번만 읽는다)
+    expect(await read(Array(MAX_SOURCE_PATHS).fill(rel('Lift.java')))).toHaveLength(1)
+    for (const other of [42, null, '', join(root, 'x')]) {
+      expect(await readJavaSources(other, [rel('Lift.java')])).toMatchObject({
+        ok: false,
+        code: 'notAllowed'
+      })
+    }
+    clearTrustedRoots()
+    expect(await readJavaSources(root, [rel('Lift.java')])).toEqual({
+      ok: false,
+      code: 'notAllowed',
+      detail: 'not an opened project'
+    })
+  })
+
+  it('경로 규칙에 맞지 않는 항목(생성 폴더, ../, 문자열이 아닌 값)은 그 항목만 notAllowed다', async () => {
+    await put(java('Lift.java'))
+    await put(java('sandbot', 'RobotHardware.java'))
+    await put(java('SandBot', 'Copy.java'))
+    await put(java('Lift.kt'))
+    await put(join(root, 'TeamCode', 'build.gradle'))
+    await mkdir(java('Folder.java'), { recursive: true })
+    const files = await read([
+      rel('sandbot/RobotHardware.java'),
+      rel('SandBot/Copy.java'),
+      `${PKG}/../Lift.java`,
+      rel('Lift.kt'),
+      '../build.gradle',
+      42,
+      { path: rel('Lift.java') },
+      rel('Folder.java'),
+      rel('Missing.java'),
+      rel('Lift.java')
+    ])
+    expect(statusOf(files)).toEqual([
+      [rel('sandbot/RobotHardware.java'), 'notAllowed'],
+      [rel('SandBot/Copy.java'), 'notAllowed'],
+      [`${PKG}/../Lift.java`, 'notAllowed'],
+      [rel('Lift.kt'), 'notAllowed'],
+      ['../build.gradle', 'notAllowed'],
+      ['', 'notAllowed'],
+      ['', 'notAllowed'],
+      [rel('Folder.java'), 'notAllowed'],
+      [rel('Missing.java'), 'missing'],
+      [rel('Lift.java'), 'ok']
+    ])
+    // 거부한 항목에는 내용·크기가 없다
+    expect(files.slice(0, -1).every((file) => !('text' in file) && !('size' in file))).toBe(true)
+  })
+
+  it('링크가 TeamCode/src/main/java 밖이나 생성 패키지, .java가 아닌 파일을 가리키면 notAllowed다', async () => {
+    await put(join(outside, 'Evil.java'))
+    await put(join(outside, 'pkg', 'Deep.java'))
+    await put(java('sandbot', 'Lift.java'))
+    await put(java('tool.sh'), '#!/bin/sh\n')
+    await put(java('Real.java'), 'class Real {}')
+    await symlink(join(outside, 'Evil.java'), java('Escape.java'))
+    await symlink(join(outside, 'pkg'), java('outpkg'), 'dir')
+    await symlink(java('sandbot', 'Lift.java'), java('Gen.java'))
+    await symlink(java('tool.sh'), java('Script.java'))
+    await symlink(java('Real.java'), java('Alias.java'))
+    const files = await read([
+      rel('Escape.java'),
+      rel('outpkg/Deep.java'),
+      rel('Gen.java'),
+      rel('Script.java'),
+      rel('Alias.java')
+    ])
+    expect(statusOf(files)).toEqual([
+      [rel('Escape.java'), 'notAllowed'],
+      [rel('outpkg/Deep.java'), 'notAllowed'],
+      [rel('Gen.java'), 'notAllowed'],
+      [rel('Script.java'), 'notAllowed'],
+      // 안쪽 .java를 가리키는 링크는 읽는다
+      [rel('Alias.java'), 'ok']
+    ])
+    expect(files[4]).toMatchObject({ text: 'class Real {}' })
+  })
+
+  it('256 KB를 넘는 파일은 내용 없이 tooLarge이고 크기·시각을 준다', async () => {
+    await put(java('Big.java'), `class Big {}\n//${'x'.repeat(MAX_USAGE_FILE_BYTES)}`)
+    await put(java('Edge.java'), 'x'.repeat(MAX_USAGE_FILE_BYTES))
+    const info = await stat(java('Big.java'))
+    const files = await read([rel('Big.java'), rel('Edge.java')])
+    expect(files[0]).toEqual({
+      path: rel('Big.java'),
+      status: 'tooLarge',
+      size: info.size,
+      mtimeMs: info.mtimeMs
+    })
+    // 딱 한도인 파일은 읽는다
+    expect(files[1]).toMatchObject({ status: 'ok', size: MAX_USAGE_FILE_BYTES })
+    // 튜닝 값(1 MB 한도)으로는 여전히 읽는다
+    expect(await readJavaFile(root, rel('Big.java'))).toMatchObject({ ok: true, editable: true })
+  })
+
+  it('돌려주는 글자가 묶음 한도를 넘으면 그 뒤 파일은 deferred이고, 다시 물으면 읽는다', async () => {
+    const SIZE = 250_000
+    const count = Math.floor(MAX_SOURCE_BATCH_BYTES / SIZE) + 2
+    const names = Array.from({ length: count }, (_, i) => `F${String(i).padStart(2, '0')}.java`)
+    for (const name of names) await put(java(name), `//${'x'.repeat(SIZE - 2)}`)
+    const paths = names.map(rel)
+    const first = await read(paths)
+    const ok = first.filter((file) => file.status === 'ok')
+    const deferred = first.filter((file) => file.status === 'deferred')
+    expect(ok).toHaveLength(Math.floor(MAX_SOURCE_BATCH_BYTES / SIZE))
+    expect(ok.length * SIZE).toBeLessThanOrEqual(MAX_SOURCE_BATCH_BYTES)
+    expect(deferred).toHaveLength(2)
+    expect(deferred.every((file) => Object.keys(file).sort().join() === 'path,status')).toBe(true)
+    // 결과는 받은 순서이고, 뒤로 미룬 것은 다음 묶음에서 읽는다
+    expect(first.map((file) => file.path)).toEqual(paths)
+    const again = await read(deferred.map((file) => file.path))
+    expect(again.map((file) => file.status)).toEqual(['ok', 'ok'])
+    // 내용 없는 결과(tooLarge·missing·notAllowed)는 한도에 들지 않는다
+    await put(java('Huge.java'), 'x'.repeat(MAX_USAGE_FILE_BYTES + 1))
+    const mixed = await read([
+      rel('Huge.java'),
+      rel('Missing.java'),
+      rel('sandbot/X.java'),
+      ...paths.slice(0, ok.length)
+    ])
+    expect(mixed.map((file) => file.status)).toEqual([
+      'tooLarge',
+      'missing',
+      'notAllowed',
+      ...Array(ok.length).fill('ok')
+    ])
+  })
+
+  it('디스크 이름이 NFD여도(macOS에서 압축한 한글 이름) 목록의 NFC 경로로 읽는다', async () => {
+    const folder = '리프트'.normalize('NFD')
+    const name = `${'팔'.normalize('NFD')}.java`
+    await put(java(folder, name), 'class 팔 {}')
+    const nfcPath = `${PKG}/리프트/팔.java`
+    expect((await listJavaFiles(root)).files.map((file) => file.path)).toContain(nfcPath)
+    expect(await read([nfcPath])).toEqual([
+      expect.objectContaining({ path: nfcPath, status: 'ok', text: 'class 팔 {}' })
+    ])
+  })
+
+  it('CP949·생성 표식·읽기 전용 파일도 읽는다(쓰지 않으므로 따지지 않는다)', async () => {
+    // "// 리프트"를 CP949로 쓴 바이트 + 줄바꿈 + ASCII
+    const cp949 = Buffer.concat([
+      Buffer.from([0x2f, 0x2f, 0x20, 0xb8, 0xae, 0xc7, 0xc1, 0xc6, 0xae, 0x0a]),
+      Buffer.from('class Lift {\n  int x;\n}\n', 'utf8')
+    ])
+    await put(java('Lift.java'), cp949)
+    await put(java('Copied.java'), `// ${GENERATED_MARKER} 0123456789abcd\nclass Copied {}`)
+    await put(java('Locked.java'), 'class Locked {}')
+    if (process.platform !== 'win32') await chmod(java('Locked.java'), 0o444)
+    const files = await read([rel('Lift.java'), rel('Copied.java'), rel('Locked.java')])
+    expect(files.map((file) => file.status)).toEqual(['ok', 'ok', 'ok'])
+    const text = (files[0] as Extract<JavaSourceRead, { status: 'ok' }>).text
+    expect(text).toBe(cp949.toString('utf8'))
+    // 깨진 글자가 있어도 줄은 그대로다(줄 번호가 맞다)
+    expect(text.split('\n')).toHaveLength(5)
+    expect(text.split('\n')[2]).toBe('  int x;')
+    expect(files[0]).toMatchObject({ size: cp949.length })
+  })
+
+  it('아무것도 쓰지 않는다(파일·폴더·권한·시각이 그대로이고 임시 파일도 없다)', async () => {
+    await put(java('Lift.java'), 'class Lift {}')
+    await put(java('subsystems', 'Arm.java'), 'class Arm {}')
+    await put(java('Big.java'), 'x'.repeat(MAX_USAGE_FILE_BYTES + 1))
+    await put(java('sandbot', 'RobotHardware.java'), 'class RobotHardware {}')
+    await symlink(java('Lift.java'), java('Alias.java'))
+    const before = await treeOf(root)
+    await read([
+      rel('Lift.java'),
+      rel('subsystems/Arm.java'),
+      rel('Big.java'),
+      rel('Alias.java'),
+      rel('sandbot/RobotHardware.java'),
+      rel('Missing.java')
+    ])
+    expect(await treeOf(root)).toEqual(before)
+  })
+})
+
+describe('mapLimit', () => {
+  it('결과는 받은 순서이고, 동시에 limit개까지만 돈다', async () => {
+    let running = 0
+    let peak = 0
+    const items = [5, 1, 4, 2, 3, 0]
+    const result = await mapLimit(
+      items,
+      async (n) => {
+        running++
+        peak = Math.max(peak, running)
+        await new Promise((done) => setTimeout(done, n))
+        running--
+        return n * 10
+      },
+      2
+    )
+    expect(result).toEqual([50, 10, 40, 20, 30, 0])
+    expect(peak).toBe(2)
+    expect(await mapLimit([], async () => 1, 2)).toEqual([])
   })
 })
 

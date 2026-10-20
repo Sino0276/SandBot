@@ -94,6 +94,9 @@ const ko = {
     scriptMissing: '{{fileName}}이(가) TeamCode에 없습니다. 인스펙터에서 연결을 확인하세요.',
     scriptNotAllowed:
       '{{fileName}}은(는) 열 수 없는 경로입니다. TeamCode/src/main/java 안의 Java 파일만 엽니다.',
+    // 줄로 열기(사용처·튜닝 값)를 편집기가 받지 못함. 앱을 켠 동안 한 번만 띄운다.
+    lineIgnored:
+      '외부 스크립트 편집기가 줄 번호를 받지 않아 파일만 열었습니다. 환경 설정에서 Android Studio 등을 고르면 그 줄로 엽니다.',
     scriptLinksDropped:
       'project.json의 스크립트 연결 {{count}}개는 허용하지 않는 경로이거나 같은 오브젝트에 겹친 경로라 버렸습니다. 저장하면 파일에서도 빠집니다.',
     externalEditorFailed: '외부 스크립트 편집기 설정을 바꾸지 못했습니다 ({{detail}}).',

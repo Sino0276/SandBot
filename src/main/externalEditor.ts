@@ -550,6 +550,8 @@ async function detectFresh(deps: EditorDeps): Promise<DetectedEditor[]> {
 }
 
 // file은 확인을 마친 TeamCode의 .java 절대 경로(teamCodeJava.ts), projectRoot는 프로젝트 폴더.
+// 줄 번호를 받았는데 넘길 수 없으면(확장자로 열기, $(Line)이 없는 인자 템플릿) 파일만 열고 lineIgnored로 알린다.
+// 찾은 편집기는 프리셋 인자가 늘 줄 번호를 넘긴다.
 export async function openInExternalEditor(
   file: string,
   projectRoot: string,
@@ -562,7 +564,8 @@ export async function openInExternalEditor(
     if (extname(file) !== '.java')
       return { ok: false, code: 'notAllowed', detail: 'not a .java file' }
     const error = await deps.openPath(file)
-    return error ? { ok: false, code: 'openFailed', detail: error } : { ok: true }
+    if (error) return { ok: false, code: 'openFailed', detail: error }
+    return line !== undefined ? { ok: true, lineIgnored: true } : { ok: true }
   }
 
   let exe = settings.exe
@@ -601,7 +604,10 @@ export async function openInExternalEditor(
     deps.platform
   )
   if (!command.ok) return { ok: false, code: 'launchFailed', detail: command.error }
-  return launchEditorProcess(command, projectRoot, deps.spawn)
+  const result = await launchEditorProcess(command, projectRoot, deps.spawn)
+  // 변수 이름은 대소문자를 구분한다(buildEditorCommand). $(Column)만 있으면 줄은 늘 1이다.
+  const lineIgnored = settings.kind === 'custom' && line !== undefined && !args.includes('$(Line)')
+  return result.ok && lineIgnored ? { ok: true, lineIgnored: true } : result
 }
 
 // ───────────────────────── 설정 창(IPC) ─────────────────────────

@@ -97,6 +97,8 @@ const en: Messages = {
     scriptMissing: '{{fileName}} is not in TeamCode. Check the link in the Inspector.',
     scriptNotAllowed:
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
+    lineIgnored:
+      "The external script editor can't take a line number, so only the file was opened. Choose Android Studio or another editor in Preferences to open at the line.",
     scriptLinksDropped:
       '{{count}} script links in project.json were dropped because their paths are not allowed or repeat on the same object. Saving removes them from the file too.',
     externalEditorFailed: 'Could not change the external script editor setting ({{detail}}).',
