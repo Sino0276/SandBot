@@ -98,14 +98,15 @@ function orderedFacts(state: UsageWorkerState): Map<string, FileFacts> {
 
 function match(state: UsageWorkerState, symbols: UsageSymbols): UsageResult {
   const result = state.deps.resolveUsages(orderedFacts(state), symbols)
-  const tooLarge: string[] = []
+  // 맞추기가 돌려준 tooLarge는 사실의 한도를 넘은 파일(capped)이다. 읽기 결과의 너무 큰 파일과 합친다.
+  const tooLarge: string[] = [...result.files.tooLarge]
   const failed: string[] = []
   for (const path of [...state.files.keys()].sort(compare)) {
     const { problem } = state.files.get(path)!
     if (problem === 'tooLarge') tooLarge.push(path)
     else if (problem === 'failed') failed.push(path)
   }
-  return { ...result, files: { ...result.files, tooLarge, failed } }
+  return { ...result, files: { ...result.files, tooLarge: tooLarge.sort(compare), failed } }
 }
 
 // 메시지 하나를 처리하고 돌려줄 답을 만든다. 맞추기가 예외를 던지면 error로 답한다(스토어가 워커를 새로 만든다).

@@ -83,7 +83,8 @@ export type UsageResult = {
   unresolved: Map<UsageKey, UsageHit[]>
   // 어느 장치에도 없는 찾기 이름(앞뒤 공백 뺀 글자) → 찾기 사용처
   unknownNames: Map<string, UsageHit[]>
-  // scanned: 사실을 만든 파일 수. tooLarge·failed는 워커가 읽기 결과로, unicodeEscape는 사실(skipped)로 채운다.
+  // scanned: 사실을 만든 파일 수. tooLarge는 너무 커서 읽지 않은 파일(워커)과 사실 한도를 넘은 파일(capped,
+  // 맞추기)이다. failed는 워커가 읽기 결과로, unicodeEscape는 맞추기가 사실(skipped)로 채운다.
   files: { scanned: number; tooLarge: string[]; unicodeEscape: string[]; failed: string[] }
 }
 
