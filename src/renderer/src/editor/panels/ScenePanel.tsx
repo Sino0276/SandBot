@@ -2,6 +2,8 @@ import { Canvas } from '@react-three/fiber'
 import { useTranslation } from 'react-i18next'
 import { isRecentHandleInteraction, useEditorStore, type HandleSpace } from '../editorStore'
 import { useFlyStore } from '../flyStore'
+import { exitIsolation, useSceneVisibilityStore } from '../sceneVisibility'
+import { shortcutLabel } from '../shortcuts'
 import PanelFrame from '../PanelFrame'
 import FieldFloor from '../scene/FieldFloor'
 import EditorCameraControls from '../scene/EditorCameraControls'
@@ -26,6 +28,7 @@ function ScenePanel(): React.JSX.Element {
   const flySpeed = useFlyStore((state) => state.speed)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const select = useEditorStore((state) => state.select)
+  const isolated = useSceneVisibilityStore((state) => state.isolated !== null)
 
   const actions = (
     <>
@@ -67,6 +70,14 @@ function ScenePanel(): React.JSX.Element {
         <FocusController />
         <ViewGizmo />
       </Canvas>
+      {isolated && (
+        <div className="isolation-banner" role="status">
+          {t('scene.isolation')}
+          <button type="button" className="status-dismiss" onClick={exitIsolation}>
+            {t('scene.exitIsolation', { shortcut: shortcutLabel('isolate') })}
+          </button>
+        </div>
+      )}
       {flying && (
         <div className="fly-hud" aria-live="polite">
           {t('scene.flySpeed', {

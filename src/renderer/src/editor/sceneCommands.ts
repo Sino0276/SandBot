@@ -1,11 +1,19 @@
 import i18n from 'i18next'
-import { canCreateEmptyParent, extraRemovalIds, selectionRoots } from '../scene/hierarchy'
-import { childrenInDocument, findRobotId, type SceneObjects } from '../scene/model'
+import {
+  canCreateEmptyParent,
+  extraRemovalIds,
+  moveRejection,
+  selectionRoots,
+  type MoveRejection
+} from '../scene/hierarchy'
+import { childrenInDocument, findRobotId, subtreeIds, type SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { showDialog } from './dialogStore'
 import { useEditorStore } from './editorStore'
-import { revealObjects, useHierarchyViewStore } from './hierarchyTree'
+import { revealObjects, searchRows, useHierarchyViewStore } from './hierarchyTree'
 import { isChangeOpen } from './history'
+import { showNotice, type NoticeKey } from './noticeStore'
+import { toggleIsolation, toggleSelectionVisibility } from './sceneVisibility'
 import { shortcutLabel } from './shortcuts'
 
 // 하이어라키 편집 명령(단축키·우클릭 메뉴·헤더 버튼이 같이 쓴다). 모두 핸들을 드래그하는 중(isChangeOpen)에는
@@ -133,21 +141,153 @@ export async function deleteSelection(): Promise<boolean> {
   return true
 }
 
-export type HierarchyMenuItem = 'rename' | 'delete' | 'createEmpty' | 'createEmptyParent'
+// ---- 선택 명령 ----
 
-// 하이어라키 우클릭 메뉴의 항목과 사용 가능 여부(Unity SceneHierarchy 순서: Rename, Delete | Create Empty,
-// Create Empty Parent). 행에서 열면 그 행이 이미 선택에 들어 있다. 빈 공간에서 열면 만들기만 있다.
+// Select All(Ctrl+A): 모든 오브젝트(문서 순서). 검색 중이면 검색 결과만(보이는 행을 고르는 것이 자연스럽다).
+// 활성 오브젝트가 들어 있으면 그대로 둔다.
+export function selectAll(): boolean {
+  const { objects } = useSceneStore.getState()
+  const rows = searchRows(objects, useHierarchyViewStore.getState().query)
+  const ids = rows
+    ? rows.map((row) => row.id)
+    : childrenInDocument(objects, null).flatMap((object) => subtreeIds(objects, object.id))
+  if (ids.length === 0) return false
+  const { selectedId, setSelection } = useEditorStore.getState()
+  setSelection(ids, selectedId !== null && ids.includes(selectedId) ? selectedId : ids[0])
+  return true
+}
+
+// Select Children(Unity 하이어라키 메뉴): 선택과 그 하위 전체. 활성 오브젝트는 그대로다.
+export function selectChildren(): boolean {
+  const { objects } = useSceneStore.getState()
+  const { selectedIds, selectedId, setSelection } = useEditorStore.getState()
+  const roots = selectedIds.filter((id) => objects[id])
+  if (roots.length === 0) return false
+  const ids = [...new Set(roots.flatMap((id) => subtreeIds(objects, id)))]
+  revealObjects(objects, ids)
+  setSelection(ids, selectedId)
+  return true
+}
+
+// ---- 잘라내기·붙여넣기(부모 바꾸기) ----
+
+// 잘라내기(Ctrl+X). 씬은 붙여넣을 때 바뀐다. 다른 선택의 하위는 그 선택과 함께 옮겨지므로 뺀다.
+export function cutSelection(): boolean {
+  if (isChangeOpen()) return false
+  const { objects } = useSceneStore.getState()
+  const ids = selectionRoots(objects, useEditorStore.getState().selectedIds)
+  if (ids.length === 0) return false
+  useEditorStore.getState().setCut(ids)
+  return true
+}
+
+export type PasteTarget = { parentId: string | null; beforeId: string | null }
+
+// 붙일 자리. 자식으로(Ctrl+Shift+V, Unity의 Paste As Child)는 활성 오브젝트의 마지막 자식, 아니면(Ctrl+V) 활성
+// 오브젝트 바로 다음 형제(Unity와 같음). 옮기는 오브젝트는 기준 형제가 될 수 없어 그다음 것을 쓴다.
+export function pasteTarget(
+  objects: SceneObjects,
+  activeId: string,
+  moving: readonly string[],
+  asChild: boolean
+): PasteTarget | null {
+  const active = objects[activeId]
+  if (!active) return null
+  if (asChild) return { parentId: activeId, beforeId: null }
+  const siblings = childrenInDocument(objects, active.parentId)
+  const index = siblings.findIndex((object) => object.id === activeId)
+  const movingSet = new Set(moving)
+  const next = siblings.slice(index + 1).find((object) => !movingSet.has(object.id))
+  return { parentId: active.parentId, beforeId: next?.id ?? null }
+}
+
+const PASTE_REJECTION: Record<MoveRejection, NoticeKey> = {
+  empty: 'pasteRejectedMissing',
+  missing: 'pasteRejectedMissing',
+  before: 'pasteRejectedMissing',
+  robot: 'pasteRejectedRobot',
+  cadRoot: 'pasteRejectedCadRoot',
+  otherRobot: 'pasteRejectedOtherRobot',
+  descendant: 'pasteRejectedDescendant'
+}
+
+// 붙여넣기. 잘라낸 것이 없거나 활성 오브젝트가 없으면 false. 옮길 수 없으면(이동 규칙, moveRejection) 이유를 알리고
+// 잘라낸 것은 그대로 둔다. 옮기면 실행 취소 한 단계이고, 옮긴 것을 선택해 보이게 한다.
+export function pasteCut(asChild: boolean): boolean {
+  if (isChangeOpen()) return false
+  const { objects } = useSceneStore.getState()
+  const editor = useEditorStore.getState()
+  const ids = selectionRoots(objects, editor.cutIds)
+  if (ids.length === 0 || editor.selectedId === null) return false
+  const target = pasteTarget(objects, editor.selectedId, ids, asChild)
+  if (!target) return false
+  const rejection = moveRejection(objects, ids, target.parentId, target.beforeId)
+  if (rejection) {
+    showNotice('warning', PASTE_REJECTION[rejection])
+    return false
+  }
+  useSceneStore.getState().moveObjects(ids, target.parentId, target.beforeId)
+  editor.setCut([])
+  revealObjects(useSceneStore.getState().objects, ids)
+  useEditorStore.getState().setSelection(ids, ids[0])
+  return true
+}
+
+// ---- 보이기·숨기기(씬 뷰에서만, sceneVisibility) ----
+
+// H: 선택을 숨기거나 보인다
+export function toggleSelectedVisibility(): boolean {
+  return toggleSelectionVisibility(
+    useSceneStore.getState().objects,
+    useEditorStore.getState().selectedIds
+  )
+}
+
+// Shift+H: 고립 보기 켜기·끄기
+export function toggleSelectedIsolation(): boolean {
+  return toggleIsolation(useSceneStore.getState().objects, useEditorStore.getState().selectedIds)
+}
+
+export type HierarchyMenuItem =
+  | 'cut'
+  | 'paste'
+  | 'pasteAsChild'
+  | 'rename'
+  | 'delete'
+  | 'selectChildren'
+  | 'createEmpty'
+  | 'createEmptyParent'
+
+// 하이어라키 우클릭 메뉴의 항목과 사용 가능 여부(Unity SceneHierarchy 순서: Cut, Paste, Paste As Child | Rename,
+// Delete | Select Children | Create Empty, Create Empty Parent). 복사·복제는 없다(CAD 파트는 CAD에서 온다).
+// 행에서 열면 그 행이 이미 선택에 들어 있다. 빈 공간에서 열면 만들기만 있다.
 // Unity 메뉴에 Create Empty Child는 없다(행의 Create Empty가 이미 그 행의 자식을 만든다). Alt+Shift+N으로만 쓴다.
 export function hierarchyMenuState(
   objects: SceneObjects,
   selectedIds: readonly string[],
-  onRow: boolean
+  onRow: boolean,
+  cutIds: readonly string[] = [],
+  activeId: string | null = null
 ): { item: HierarchyMenuItem; enabled: boolean; separatorBefore?: boolean }[] {
   if (!onRow) return [{ item: 'createEmpty', enabled: true }]
   const existing = selectedIds.filter((id) => objects[id])
+  const cut = selectionRoots(objects, cutIds)
+  const canPaste = (asChild: boolean): boolean => {
+    if (cut.length === 0 || activeId === null || !objects[activeId]) return false
+    const target = pasteTarget(objects, activeId, cut, asChild)
+    return target !== null && moveRejection(objects, cut, target.parentId, target.beforeId) === null
+  }
   return [
-    { item: 'rename', enabled: existing.length === 1 },
+    { item: 'cut', enabled: existing.length > 0 },
+    { item: 'paste', enabled: canPaste(false) },
+    { item: 'pasteAsChild', enabled: canPaste(true) },
+    { item: 'rename', enabled: existing.length === 1, separatorBefore: true },
     { item: 'delete', enabled: existing.length > 0 },
+    {
+      item: 'selectChildren',
+      enabled: existing.some((id) => childrenInDocument(objects, id).length > 0),
+      separatorBefore: true
+    },
     { item: 'createEmpty', enabled: true, separatorBefore: true },
     { item: 'createEmptyParent', enabled: canCreateEmptyParent(objects, existing) }
   ]

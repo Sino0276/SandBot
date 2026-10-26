@@ -1,7 +1,11 @@
 import { PerspectiveCamera, Vector3 } from 'three'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  addCameraInput,
   directionRotation,
+  frameStep,
+  resetCameraMotion,
+  stepCameraInput,
   FLIGHT_SECONDS,
   flyCameraTo,
   isCameraMoving,
@@ -21,6 +25,8 @@ function setup(
   camera.up.set(0, 0, 1)
   camera.position.copy(position)
   const controls = { target: target.clone(), update: () => camera.lookAt(controls.target) }
+  // 앱에서처럼 카메라는 처음부터 중심점을 본다
+  controls.update()
   return { camera, controls }
 }
 
@@ -113,5 +119,83 @@ describe('zoomCamera', () => {
     zoomCamera(camera, controls, 2)
     run(camera, controls, 200)
     expect(camera.position.y).toBeLessThan(1)
+  })
+})
+
+describe('드래그 입력(짧은 감쇠)', () => {
+  afterEach(resetCameraMotion)
+
+  const settle = (
+    camera: PerspectiveCamera,
+    controls: { target: Vector3; update: () => void }
+  ): number => {
+    let frames = 0
+    while (stepCameraInput(camera, controls, 1 / 60, 600) && frames < 1000) frames++
+    return frames
+  }
+
+  it('한 번에 다 가지 않고, 짧게(0.3초 안) 따라가 마우스가 움직인 만큼 정확히 간다', () => {
+    const { camera, controls } = setup(new Vector3(5, 0, 0), new Vector3(0, 0, 0))
+    addCameraInput('orbit', 150, 0)
+    stepCameraInput(camera, controls, 1 / 60, 600)
+    const angle = (): number => Math.atan2(camera.position.y, camera.position.x)
+    // 첫 프레임에는 일부만
+    expect(Math.abs(angle())).toBeGreaterThan(0)
+    expect(Math.abs(angle())).toBeLessThan(Math.PI / 2 - 0.1)
+    expect(settle(camera, controls)).toBeLessThan(18)
+    // 화면 높이(600)의 1/4을 끌면 OrbitControls처럼 1/4바퀴(오른쪽으로 끌면 시계 방향)
+    expect(angle()).toBeCloseTo(-Math.PI / 2, 4)
+    expect(camera.position.distanceTo(controls.target)).toBeCloseTo(5, 6)
+    expect(isCameraMoving()).toBe(false)
+  })
+
+  it('나눠서 들어온 입력도 합은 같다(이벤트 박자와 관계없다)', () => {
+    const a = setup(new Vector3(3, 1, 2), new Vector3(0, 0, 0))
+    addCameraInput('pan', 40, -25)
+    settle(a.camera, a.controls)
+    const b = setup(new Vector3(3, 1, 2), new Vector3(0, 0, 0))
+    for (let i = 0; i < 5; i++) {
+      addCameraInput('pan', 8, -5)
+      stepCameraInput(b.camera, b.controls, 1 / 144, 600)
+    }
+    settle(b.camera, b.controls)
+    expect(b.camera.position.distanceTo(a.camera.position)).toBeLessThan(1e-3)
+    expect(b.controls.target.distanceTo(a.controls.target)).toBeLessThan(1e-3)
+  })
+
+  it('둘러보기: 아래로 끌면 아래를 보고, 카메라는 그 자리에 있다. 위·아래 끝은 넘지 않는다', () => {
+    const { camera, controls } = setup(new Vector3(0, 0, 1), new Vector3(1, 0, 1))
+    addCameraInput('look', 0, 50)
+    settle(camera, controls)
+    expect(camera.position.toArray()).toEqual([0, 0, 1])
+    expect(controls.target.z).toBeLessThan(1)
+    addCameraInput('look', 0, 10000)
+    settle(camera, controls)
+    const direction = controls.target.clone().sub(camera.position).normalize()
+    expect(direction.z).toBeGreaterThan(-1)
+  })
+
+  it('팬은 카메라와 중심점을 함께, 줌 드래그는 아래로 끌면 다가간다', () => {
+    const { camera, controls } = setup(new Vector3(5, 0, 0), new Vector3(0, 0, 0))
+    addCameraInput('dolly', 0, 30)
+    settle(camera, controls)
+    expect(camera.position.distanceTo(controls.target)).toBeCloseTo(5 * Math.exp(-0.3), 6)
+    const offset = camera.position.clone().sub(controls.target)
+    addCameraInput('pan', 20, 0)
+    settle(camera, controls)
+    expect(camera.position.clone().sub(controls.target).distanceTo(offset)).toBeLessThan(1e-9)
+  })
+
+  it('포커스 이동(F)이 시작하면 남은 드래그 양은 버린다', () => {
+    const { camera, controls } = setup(new Vector3(5, 0, 0), new Vector3(0, 0, 0))
+    addCameraInput('orbit', 300, 0)
+    flyCameraTo(camera, controls, new Vector3(0, 5, 0), new Vector3(0, 0, 0))
+    expect(stepCameraInput(camera, controls, 1 / 60, 600)).toBe(false)
+  })
+
+  it('쉬다가 그린 첫 프레임의 큰 delta는 한 프레임으로 본다', () => {
+    expect(frameStep(3)).toBeCloseTo(1 / 60)
+    expect(frameStep(0)).toBeCloseTo(1 / 60)
+    expect(frameStep(0.02)).toBe(0.02)
   })
 })

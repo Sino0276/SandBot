@@ -50,6 +50,44 @@ export function visibleRows(objects: SceneObjects, overrides: OpenOverrides): Tr
   return rows
 }
 
+// 검색어 비교용 글자(앞뒤 공백 없이, 대소문자·NFC 무시)
+function searchKey(text: string): string {
+  return text.normalize('NFC').toLocaleLowerCase().trim()
+}
+
+// 검색어가 오브젝트에 맞는가: 이름이나 붙인 하드웨어의 장치 이름(구성 이름)에 들어 있다. 구성 이름은 FTC에서
+// 코드로 장치를 찾는 이름이라 함께 찾는다(Unity는 이름만 찾는다).
+function matchesSearch(object: SceneObjects[string], key: string): boolean {
+  if (searchKey(object.name).includes(key)) return true
+  return (object.components ?? []).some((component) => searchKey(component.name).includes(key))
+}
+
+// 검색 결과 행(Unity처럼 계층 없이 평평하게, 문서 순서). 검색어가 비면 null.
+export function searchRows(objects: SceneObjects, query: string): TreeRow[] | null {
+  const key = searchKey(query)
+  if (!key) return null
+  const ids: string[] = []
+  const visited = new Set<string>()
+  const walk = (parentId: string | null): void => {
+    for (const object of childrenInDocument(objects, parentId)) {
+      if (visited.has(object.id)) continue
+      visited.add(object.id)
+      if (matchesSearch(object, key)) ids.push(object.id)
+      walk(object.id)
+    }
+  }
+  walk(null)
+  return ids.map((id, index) => ({
+    id,
+    depth: 0,
+    parentId: null,
+    hasChildren: false,
+    open: false,
+    posInSet: index + 1,
+    setSize: ids.length
+  }))
+}
+
 // 하이어라키 키보드(Unity TreeView와 같음): 위/아래 선택 이동(Shift는 범위), Home/End,
 // 오른쪽은 펼치기(펼쳐 있으면 첫 자식으로), 왼쪽은 접기(접혀 있거나 자식이 없으면 부모로)
 export type TreeKeyAction =
@@ -105,15 +143,20 @@ export function selectionSet(ids: readonly string[]): ReadonlySet<string> {
   return set
 }
 
-// 펼침 상태. 씬 문서가 아니라 보기 상태라 실행 취소·저장에 들어가지 않는다.
+// 펼침 상태와 검색어. 씬 문서가 아니라 보기 상태라 실행 취소·저장에 들어가지 않는다.
 type HierarchyViewState = {
   // 사용자가 직접 접거나 편 행(나머지는 DEFAULT_OPEN_DEPTH로 정한다)
   overrides: OpenOverrides
   setOpen: (ids: readonly string[], open: boolean) => void
+  // 하이어라키 검색어(비면 트리, 있으면 결과 목록)
+  query: string
+  setQuery: (query: string) => void
 }
 
 export const useHierarchyViewStore = create<HierarchyViewState>()((set) => ({
   overrides: {},
+  query: '',
+  setQuery: (query) => set({ query }),
   setOpen: (ids, open) =>
     set((state) => {
       if (ids.every((id) => state.overrides[id] === open)) return state

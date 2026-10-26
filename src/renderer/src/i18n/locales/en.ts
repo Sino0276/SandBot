@@ -53,6 +53,14 @@ const en: Messages = {
     delete: 'Delete'
   },
   notice: {
+    pasteRejectedRobot:
+      'A robot cannot be pasted under another object. Robots can only be reordered.',
+    pasteRejectedCadRoot:
+      "A CAD root can only be reordered within its robot (the CAD root's transform is the CAD alignment).",
+    pasteRejectedOtherRobot:
+      'Objects cannot move to another robot. Paste them within the same robot.',
+    pasteRejectedDescendant: 'Objects cannot be pasted under themselves or their children.',
+    pasteRejectedMissing: 'There is nothing to paste or nowhere to paste it.',
     importing: 'Importing {{fileName}}…',
     importReadFailed: 'Could not read {{fileName}} as a STEP file.',
     importEmpty: '{{fileName}} contains no geometry to import.',
@@ -181,7 +189,9 @@ const en: Messages = {
     flySpeed: 'Fly speed {{speed}} {{unit}}/s · scroll to change, Shift for faster',
     handleSpace: "Handle axes: Global (field axes) · Local (the object's own axes) (X)",
     global: 'Global',
-    local: 'Local'
+    local: 'Local',
+    isolation: 'Isolation view: only the selected objects are shown',
+    exitIsolation: 'Exit ({{shortcut}})'
   },
   hierarchy: {
     empty: 'No objects in the scene',
@@ -192,8 +202,20 @@ const en: Messages = {
     create: 'Create Empty',
     createTooltip: 'Create Empty ({{shortcut}})',
     renameLabel: 'Object name',
+    search: 'Search hierarchy',
+    searchPlaceholder: 'Search ({{shortcut}})',
+    searchClear: 'Clear search',
+    searchNoResults: 'No objects match "{{query}}"',
+    hide: 'Hide in Scene view',
+    show: 'Show in Scene view',
+    visibilityTitle: '{{action}} (H, Alt+click for this object only)',
+    cutTitle: 'Cut: select a row and press {{paste}} (next sibling) or {{child}} (child)',
     menu: {
       label: 'Hierarchy menu',
+      cut: 'Cut',
+      paste: 'Paste',
+      pasteAsChild: 'Paste As Child',
+      selectChildren: 'Select Children',
       rename: 'Rename',
       delete: 'Delete',
       createEmpty: 'Create Empty',

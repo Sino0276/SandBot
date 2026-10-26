@@ -52,6 +52,14 @@ const ko = {
     delete: '삭제'
   },
   notice: {
+    // 잘라낸 오브젝트를 붙일 수 없는 이유(하이어라키 이동 규칙)
+    pasteRejectedRobot:
+      '로봇은 다른 오브젝트 아래에 붙일 수 없습니다. 로봇끼리 순서만 바꿀 수 있습니다.',
+    pasteRejectedCadRoot:
+      'CAD 루트는 지금 로봇 안에서 순서만 바꿀 수 있습니다(CAD 루트의 위치가 곧 CAD 정렬입니다).',
+    pasteRejectedOtherRobot: '다른 로봇으로는 옮길 수 없습니다. 같은 로봇 안에 붙이세요.',
+    pasteRejectedDescendant: '자기 자신이나 하위 오브젝트 아래에는 붙일 수 없습니다.',
+    pasteRejectedMissing: '붙일 자리나 잘라낸 오브젝트가 없습니다.',
     importing: '{{fileName}} 불러오는 중…',
     importReadFailed: '{{fileName}}을(를) STEP 파일로 읽지 못했습니다.',
     importEmpty: '{{fileName}}에 불러올 형상이 없습니다.',
@@ -182,7 +190,10 @@ const ko = {
     flySpeed: '비행 속도 {{speed}} {{unit}}/s · 휠로 조절, Shift로 빠르게',
     handleSpace: '핸들 축: 전역(필드 축) · 로컬(오브젝트 자신의 축) (X)',
     global: '전역',
-    local: '로컬'
+    local: '로컬',
+    // 고립 보기(Shift+H)
+    isolation: '고립 보기: 선택한 오브젝트만 보입니다',
+    exitIsolation: '나가기 ({{shortcut}})'
   },
   hierarchy: {
     empty: '씬에 오브젝트가 없습니다',
@@ -194,8 +205,22 @@ const ko = {
     create: '빈 그룹 만들기',
     createTooltip: '빈 그룹 만들기 ({{shortcut}})',
     renameLabel: '오브젝트 이름',
+    // 검색(Unity 하이어라키 검색칸). 이름과 장치 이름(구성 이름)으로 찾는다.
+    search: '하이어라키 검색',
+    searchPlaceholder: '검색 ({{shortcut}})',
+    searchClear: '검색 지우기',
+    searchNoResults: '"{{query}}"에 맞는 오브젝트가 없습니다',
+    // 눈 아이콘(씬 뷰에서만 숨김)
+    hide: '씬 뷰에서 숨기기',
+    show: '씬 뷰에 보이기',
+    visibilityTitle: '{{action}} (H, Alt+클릭은 이 오브젝트만)',
+    cutTitle: '잘라냄: 붙일 행을 고르고 {{paste}}(다음 형제) 또는 {{child}}(자식)',
     menu: {
       label: '하이어라키 메뉴',
+      cut: '잘라내기',
+      paste: '붙여넣기',
+      pasteAsChild: '자식으로 붙여넣기',
+      selectChildren: '하위 모두 선택',
       rename: '이름 바꾸기',
       delete: '삭제',
       createEmpty: '빈 그룹 만들기',

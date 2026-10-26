@@ -1,7 +1,7 @@
 import { Edges } from '@react-three/drei'
-import type { ThreeEvent } from '@react-three/fiber'
-import { useMemo } from 'react'
-import { Color, SRGBColorSpace } from 'three'
+import { useThree, type ThreeEvent } from '@react-three/fiber'
+import { useEffect } from 'react'
+import { Color, MeshStandardMaterial, SRGBColorSpace } from 'three'
 import { useShallow } from 'zustand/react/shallow'
 import { ROBOT_SIZE } from '../../scene/coordinates'
 import { getGeometry } from '../../scene/geometryRegistry'
@@ -9,6 +9,7 @@ import { cadMeshRaycast } from '../../scene/meshBvh'
 import { childrenInDocument, type ObjectVisual, type Vec3 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
+import { isHiddenInScene, useSceneVisibilityStore } from '../sceneVisibility'
 
 const SELECTED_COLOR = '#4c8dff'
 const HIGHLIGHT_EMISSIVE = new Color('#1d4ed8')
@@ -69,6 +70,32 @@ function PlaceholderWebcam({ highlighted, onClick }: VisualProps): React.JSX.Ele
 
 type CadMeshProps = VisualProps & { geometryId: string; color: Vec3 }
 
+// CAD 재질은 (색, 꼭짓점 색, 강조)마다 하나를 함께 쓴다. 큰 CAD(메시 1761개)도 색은 몇십 가지라, 메시마다 재질을
+// 만들면 그릴 때마다 재질(uniform)을 1761번 바꾼다. 재질 수는 색 수에 묶여 있어 해제하지 않는다(형상은 따로 해제한다).
+const cadMaterials = new Map<string, MeshStandardMaterial>()
+
+function cadMaterial(
+  color: Vec3,
+  vertexColors: boolean,
+  highlighted: boolean
+): MeshStandardMaterial {
+  const key = `${color.join(',')}|${vertexColors ? 1 : 0}|${highlighted ? 1 : 0}`
+  let material = cadMaterials.get(key)
+  if (!material) {
+    material = new MeshStandardMaterial({
+      // CAD 색은 sRGB 값이다
+      color: new Color().setRGB(...color, SRGBColorSpace),
+      vertexColors,
+      emissive: highlighted ? HIGHLIGHT_EMISSIVE : NO_EMISSIVE,
+      emissiveIntensity: 0.35,
+      metalness: 0.1,
+      roughness: 0.7
+    })
+    cadMaterials.set(key, material)
+  }
+  return material
+}
+
 // CAD에서 불러온 파트 메시. 선택하면 파랗게 빛나게 한다.
 function CadMesh({
   geometryId,
@@ -79,20 +106,14 @@ function CadMesh({
   // 형상은 프로젝트를 연 뒤 비동기로 등록되므로 등록될 때마다 다시 그린다
   useSceneStore((state) => state.geometryRevision)
   const geometry = getGeometry(geometryId)
-  // CAD 색은 sRGB 값이다
-  const baseColor = useMemo(() => new Color().setRGB(...color, SRGBColorSpace), [color])
   if (!geometry) return null
   return (
-    <mesh geometry={geometry} raycast={cadMeshRaycast} onClick={onClick}>
-      <meshStandardMaterial
-        color={baseColor}
-        vertexColors={geometry.hasAttribute('color')}
-        emissive={highlighted ? HIGHLIGHT_EMISSIVE : NO_EMISSIVE}
-        emissiveIntensity={0.35}
-        metalness={0.1}
-        roughness={0.7}
-      />
-    </mesh>
+    <mesh
+      geometry={geometry}
+      material={cadMaterial(color, geometry.hasAttribute('color'), highlighted)}
+      raycast={cadMeshRaycast}
+      onClick={onClick}
+    />
   )
 }
 
@@ -124,6 +145,10 @@ function ObjectNode({
   // 선택 전체를 같은 색으로 강조한다(Unity도 다중 선택을 모두 외곽선으로 보인다). 씬 뷰 클릭은 하나만 선택한다.
   const selected = useEditorStore((state) => selectionSet(state.selectedIds).has(id))
   const select = useEditorStore((state) => state.select)
+  // 숨긴 오브젝트(하이어라키 눈 아이콘·H·고립 보기)는 그리지 않고 클릭되지도 않는다. 자식은 자기 값을 따른다.
+  const hidden = useSceneVisibilityStore((state) =>
+    isHiddenInScene(state, useSceneStore.getState().objects, id)
+  )
 
   if (!object) return null
   const [rx, ry, rz] = object.transform.rotation
@@ -137,7 +162,7 @@ function ObjectNode({
 
   return (
     <group position={object.transform.position} rotation={[rx, ry, rz, 'ZYX']}>
-      {object.visual && (
+      {object.visual && !hidden && (
         <Visual visual={object.visual} highlighted={highlighted} onClick={handleClick} />
       )}
       {childIds.map((childId) => (
@@ -148,6 +173,9 @@ function ObjectNode({
 }
 
 function SceneObjectsView(): React.JSX.Element {
+  // 메시를 빼거나 다시 넣기만 해서는 demand 모드 캔버스가 다시 그려지지 않는다. 숨김·고립 보기가 바뀌면 요청한다.
+  const invalidate = useThree((state) => state.invalidate)
+  useEffect(() => useSceneVisibilityStore.subscribe(() => invalidate()), [invalidate])
   const rootIds = useSceneStore(
     useShallow((state) => childrenInDocument(state.objects, null).map((object) => object.id))
   )

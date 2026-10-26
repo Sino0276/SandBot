@@ -108,7 +108,7 @@ describe('shortcutCommand', () => {
   it('입력칸·Ctrl·Alt·핸들 드래그 중에는 한 글자 단축키를 쓰지 않는다', () => {
     expect(command(key('KeyF'), { handlesOwnKeys: true })).toBeNull()
     expect(command(key('Delete', { key: 'Delete' }), { handlesOwnKeys: true })).toBeNull()
-    expect(command(key('KeyF', { ctrlKey: true }))).toBeNull()
+    expect(command(key('KeyQ', { ctrlKey: true }))).toBeNull()
     expect(command(key('KeyQ', { altKey: true }))).toBeNull()
     expect(command(key('Delete', { key: 'Delete' }), { dragging: true })).toBeNull()
     expect(command(key('F2', { key: 'F2' }), { dragging: true })).toBeNull()
@@ -118,6 +118,29 @@ describe('shortcutCommand', () => {
     expect(command(key('KeyQ', { repeat: true }))).toBeNull()
     expect(command(key('F2', { key: 'F2', repeat: true }))).toBeNull()
     expect(command(key('Delete', { key: 'Delete', repeat: true }))).toBe('delete')
+  })
+})
+
+describe('하이어라키 보강 단축키', () => {
+  it('Ctrl+X·V·Shift+V·A는 입력칸 밖에서만, Ctrl+F는 어디서나 검색칸으로', () => {
+    expect(command(key('KeyX', { ctrlKey: true }))).toBe('cut')
+    expect(command(key('KeyV', { ctrlKey: true }))).toBe('paste')
+    expect(command(key('KeyV', { ctrlKey: true, shiftKey: true }))).toBe('pasteAsChild')
+    expect(command(key('KeyA', { metaKey: true }))).toBe('selectAll')
+    for (const code of ['KeyX', 'KeyV', 'KeyA'])
+      expect(command(key(code, { ctrlKey: true }), { handlesOwnKeys: true })).toBeNull()
+    expect(command(key('KeyF', { ctrlKey: true }))).toBe('search')
+    expect(command(key('KeyF', { ctrlKey: true }), { handlesOwnKeys: true })).toBe('search')
+    // 핸들을 끄는 중에는 옮기지 않는다
+    expect(command(key('KeyV', { ctrlKey: true }), { dragging: true })).toBeNull()
+  })
+
+  it('H는 보이기·숨기기, Shift+H는 고립 보기(입력칸 안에서는 글자)', () => {
+    expect(command(key('KeyH'))).toBe('toggleVisibility')
+    expect(command(key('KeyH', { shiftKey: true }))).toBe('isolate')
+    expect(command(key('KeyH'), { handlesOwnKeys: true })).toBeNull()
+    expect(shortcutLabel('isolate', false)).toBe('Shift+H')
+    expect(shortcutLabel('pasteAsChild', true)).toBe('⇧⌘V')
   })
 })
 

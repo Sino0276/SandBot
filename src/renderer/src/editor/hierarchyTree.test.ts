@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import {
   revealObjects,
+  searchRows,
   selectionSet,
   treeKeyAction,
   useHierarchyViewStore,
@@ -151,5 +152,37 @@ describe('selectionSet', () => {
     const selected = ['a', 'b']
     expect(selectionSet(selected)).toBe(selectionSet(selected))
     expect(selectionSet(selected).has('b')).toBe(true)
+  })
+})
+
+describe('searchRows', () => {
+  it('검색어가 비면 null, 있으면 이름·장치 이름에 맞는 오브젝트를 문서 순서의 평평한 행으로', () => {
+    expect(searchRows(SCENE, '')).toBeNull()
+    expect(searchRows(SCENE, '   ')).toBeNull()
+    const scene: SceneObjects = {
+      ...SCENE,
+      part: {
+        ...SCENE.part,
+        name: 'Motor Mount',
+        components: [
+          { id: 'm', type: 'motor', name: 'liftLeft', hub: 'controlHub', port: 0, props: {} }
+        ]
+      },
+      group: { ...SCENE.group, name: 'Lift' }
+    }
+    // 대소문자 무시, 앞뒤 공백 무시
+    expect(searchRows(scene, ' LIFT ')!.map((row) => row.id)).toEqual(['part', 'group'])
+    expect(searchRows(scene, 'mount')).toEqual([
+      {
+        id: 'part',
+        depth: 0,
+        parentId: null,
+        hasChildren: false,
+        open: false,
+        posInSet: 1,
+        setSize: 1
+      }
+    ])
+    expect(searchRows(scene, 'nothing')).toEqual([])
   })
 })
