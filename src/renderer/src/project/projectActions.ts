@@ -10,8 +10,10 @@ import { cancelAllImports, isImporting, useImportStore } from '../cad/importStor
 import { isImportedModel, MESH_CACHE_TAG } from '../cad/stepImport'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
+import { useHierarchyViewStore } from '../editor/hierarchyTree'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../editor/history'
+import { resetSceneVisibility } from '../editor/sceneVisibility'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import { refreshJavaIndex, scheduleFocusRefresh } from '../java/javaIndex'
@@ -256,6 +258,10 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
       useEditorStore.getState().select(null)
+      // 이전 씬의 보기 상태(잘라낸 것, 검색어, 숨김·고립 보기)도 버린다
+      useEditorStore.getState().setCut([])
+      useHierarchyViewStore.getState().setQuery('')
+      resetSceneVisibility()
       useProjectStore.setState({
         root,
         name: info.name,

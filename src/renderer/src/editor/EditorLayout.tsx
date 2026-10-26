@@ -19,8 +19,13 @@ import {
   createEmpty,
   createEmptyChild,
   createEmptyParent,
+  cutSelection,
   deleteSelection,
-  renameSelection
+  pasteCut,
+  renameSelection,
+  selectAll,
+  toggleSelectedIsolation,
+  toggleSelectedVisibility
 } from './sceneCommands'
 import { shortcutCommand, type ShortcutCommand } from './shortcuts'
 import Toolbar from './Toolbar'
@@ -94,6 +99,29 @@ function runShortcut(command: ShortcutCommand): void {
       return
     case 'delete':
       void deleteSelection()
+      return
+    case 'selectAll':
+      selectAll()
+      return
+    case 'cut':
+      cutSelection()
+      return
+    case 'paste':
+    case 'pasteAsChild':
+      pasteCut(command === 'pasteAsChild')
+      return
+    case 'search': {
+      // 하이어라키 검색칸(HierarchyPanel)으로 옮기고 글자를 고른다(Unity Ctrl+F)
+      const input = document.querySelector<HTMLInputElement>('[data-hierarchy-search]')
+      input?.focus()
+      input?.select()
+      return
+    }
+    case 'toggleVisibility':
+      toggleSelectedVisibility()
+      return
+    case 'isolate':
+      toggleSelectedIsolation()
       return
   }
 }

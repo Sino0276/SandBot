@@ -16,12 +16,20 @@ export type ShortcutCommand =
   | 'toolRotate'
   | 'toggleHandleSpace'
   | 'delete'
+  | 'selectAll'
+  | 'cut'
+  | 'paste'
+  | 'pasteAsChild'
+  | 'search'
+  | 'toggleVisibility'
+  | 'isolate'
 
 // 표시용 조합. ctrl은 macOS에서 Cmd다(키 처리도 Ctrl·Cmd를 같이 받는다).
 type Chord = { ctrl?: boolean; alt?: boolean; shift?: boolean; key: string }
 
 // Unity와 같은 키(UnityCsReference GOCreationCommands.cs: Create Empty %#n, Create Empty Child &#n,
-// Create Empty Parent %#g)
+// Create Empty Parent %#g). 잘라내기·붙여넣기·자식으로 붙여넣기(Paste As Child %#v)·전체 선택·검색(Ctrl+F)과
+// 보이기·숨기기(H)·고립 보기(Shift+H)도 Unity와 같다.
 export const SHORTCUTS: Readonly<Record<ShortcutCommand, Chord>> = {
   save: { ctrl: true, key: 'S' },
   open: { ctrl: true, key: 'O' },
@@ -36,7 +44,14 @@ export const SHORTCUTS: Readonly<Record<ShortcutCommand, Chord>> = {
   toolTranslate: { key: 'W' },
   toolRotate: { key: 'E' },
   toggleHandleSpace: { key: 'X' },
-  delete: { key: 'Delete' }
+  delete: { key: 'Delete' },
+  selectAll: { ctrl: true, key: 'A' },
+  cut: { ctrl: true, key: 'X' },
+  paste: { ctrl: true, key: 'V' },
+  pasteAsChild: { ctrl: true, shift: true, key: 'V' },
+  search: { ctrl: true, key: 'F' },
+  toggleVisibility: { key: 'H' },
+  isolate: { shift: true, key: 'H' }
 }
 
 export function isMacPlatform(): boolean {
@@ -99,8 +114,9 @@ const TOOL_COMMANDS: Partial<Record<string, ShortcutCommand>> = {
 }
 
 // 키 입력 → 명령. 처리 순서:
-// 1. 대화상자·메뉴·비행 중이면 무시 2. 저장·열기 3. 실행 취소 4. 새 조합키(Create Empty 등)
-// 5. 입력칸·Ctrl·Alt·핸들 드래그 중이면 여기서 끝 6. F2, F, Q/W/E, X, Delete
+// 1. 대화상자·메뉴·비행 중이면 무시 2. 저장·열기, 검색(Ctrl+F) 3. 실행 취소 4. 새 조합키(Create Empty 등),
+// 잘라내기·붙여넣기·전체 선택(입력칸 안에서는 입력칸의 것) 5. 입력칸·Ctrl·Alt·핸들 드래그 중이면 여기서 끝
+// 6. F2, F, Q/W/E, X, H·Shift+H, Delete
 export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): ShortcutResult {
   if (state.blocked) return NONE
   const command = event.ctrlKey || event.metaKey
@@ -109,6 +125,9 @@ export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): 
   // Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기
   if (command && !event.altKey && (code === 'KeyS' || code === 'KeyO'))
     return run(code === 'KeyS' ? 'save' : 'open')
+  // Ctrl/Cmd+F: 하이어라키 검색칸으로(입력칸에 있어도)
+  if (command && !event.altKey && !event.shiftKey && code === 'KeyF')
+    return event.repeat ? SWALLOW : run('search')
 
   // Ctrl/Cmd+Z 실행 취소, Ctrl/Cmd+Shift+Z·Ctrl+Y 다시 실행.
   // 입력칸에 확정하지 않은 글자가 있을 때만 입력칸 자체의 실행 취소에 맡긴다.
@@ -126,6 +145,15 @@ export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): 
   }
   if (!state.handlesOwnKeys && !state.dragging && command && event.shiftKey && !event.altKey) {
     if (code === 'KeyG') return event.repeat ? SWALLOW : run('createEmptyParent')
+    if (code === 'KeyV') return event.repeat ? SWALLOW : run('pasteAsChild')
+  }
+  // Ctrl+X 잘라내기, Ctrl+V 붙여넣기, Ctrl+A 전체 선택. 입력칸 안에서는 입력칸의 잘라내기·전체 선택이다.
+  if (!state.handlesOwnKeys && command && !event.shiftKey && !event.altKey) {
+    if (code === 'KeyA') return run('selectAll')
+    if (code === 'KeyX' || code === 'KeyV') {
+      if (state.dragging || event.repeat) return SWALLOW
+      return run(code === 'KeyX' ? 'cut' : 'paste')
+    }
   }
 
   if (state.handlesOwnKeys || command || event.altKey || state.dragging) return NONE
@@ -141,6 +169,8 @@ export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): 
   const tool = TOOL_COMMANDS[code]
   if (tool && !event.shiftKey) return run(tool)
   if (code === 'KeyX' && !event.shiftKey) return run('toggleHandleSpace')
+  // H: 선택 숨기기·보이기, Shift+H: 고립 보기
+  if (code === 'KeyH') return run(event.shiftKey ? 'isolate' : 'toggleVisibility')
   if (isDelete) return run('delete')
   return NONE
 }

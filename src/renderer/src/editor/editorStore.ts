@@ -22,6 +22,9 @@ type EditorState = Selection & {
   // 핸들 방향에만 적용되고 저장 데이터·인스펙터 값은 바꾸지 않는다.
   handleSpace: HandleSpace
   tool: EditorTool
+  // 잘라낸 오브젝트(Ctrl+X). 붙여넣을 때(Ctrl+V) 옮기고 비운다. 그 전까지 씬은 바뀌지 않는다(Unity와 같음).
+  cutIds: readonly string[]
+  setCut: (ids: readonly string[]) => void
   // 카메라를 이 오브젝트들(둘 이상이면 합친 경계)에 맞추라는 요청. 같은 대상을 다시 요청해도 반응하도록
   // 매번 새 객체를 만든다.
   focusRequest: { ids: readonly string[] } | null
@@ -72,6 +75,8 @@ export const useEditorStore = create<EditorState>()((set) => ({
   handleSpace: 'global',
   tool: 'translate',
   focusRequest: null,
+  cutIds: [],
+  setCut: (ids) => set({ cutIds: [...ids] }),
   select: (id) => set((state) => selection(state, id === null ? [] : [id], id)),
   toggleSelect: (id) =>
     set((state) =>
@@ -96,18 +101,24 @@ export const useEditorStore = create<EditorState>()((set) => ({
   setSelection: (ids, activeId = null) => set((state) => selection(state, ids, activeId)),
   pruneSelection: (exists) =>
     set((state) => {
+      // 잘라낸 것도 없어진 오브젝트는 뺀다
+      const cutIds = state.cutIds.every(exists) ? state.cutIds : state.cutIds.filter(exists)
       const kept = state.selectedIds.filter(exists)
       const renamingId =
         state.renamingId !== null && exists(state.renamingId) ? state.renamingId : null
-      if (kept.length === state.selectedIds.length && renamingId === state.renamingId) return state
+      if (kept.length === state.selectedIds.length && renamingId === state.renamingId)
+        return cutIds === state.cutIds ? state : { cutIds }
       const anchor =
         state.rangeAnchorId !== null && exists(state.rangeAnchorId) ? state.rangeAnchorId : null
-      return selection(
-        { ...state, renamingId },
-        kept,
-        state.selectedId !== null && exists(state.selectedId) ? state.selectedId : null,
-        anchor
-      )
+      return {
+        cutIds,
+        ...selection(
+          { ...state, renamingId },
+          kept,
+          state.selectedId !== null && exists(state.selectedId) ? state.selectedId : null,
+          anchor
+        )
+      }
     }),
   setRenaming: (renamingId) => set({ renamingId }),
   focus: (target) =>

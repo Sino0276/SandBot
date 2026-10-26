@@ -6,7 +6,7 @@ import { severityByObject, useSceneIssues } from '../../hardware/sceneIssues'
 import type { IssueSeverity } from '../../hardware/validation'
 import { simpleNameOfPath } from '../../java/javaIndex'
 import { useProjectStore } from '../../project/projectStore'
-import { childrenInDocument, subtreeIds, type SceneObject } from '../../scene/model'
+import { ancestorIds, childrenInDocument, subtreeIds, type SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { openContextMenu, type ContextMenuEntry } from '../dialogStore'
 import { useEditorStore } from '../editorStore'
@@ -26,6 +26,7 @@ import {
 } from '../hierarchyDnd'
 import {
   revealObjects,
+  searchRows,
   selectionSet,
   treeKeyAction,
   useHierarchyViewStore,
@@ -39,11 +40,20 @@ import {
   createEmpty,
   createEmptyParent,
   createEmptyUnder,
+  cutSelection,
   deleteSelection,
   hierarchyMenuState,
+  pasteCut,
   renameSelection,
+  selectChildren,
   type HierarchyMenuItem
 } from '../sceneCommands'
+import {
+  rowVisibilities,
+  toggleRowVisibility,
+  useSceneVisibilityStore,
+  type RowVisibility
+} from '../sceneVisibility'
 import { ariaKeyShortcut, shortcutLabel, type ShortcutCommand } from '../shortcuts'
 import { useDraft } from '../useDraft'
 
@@ -158,6 +168,33 @@ const GROUP_ICON = (
   </svg>
 )
 
+// 눈 아이콘(보임·숨김·일부 숨김). Unity처럼 행 왼쪽 여백에 있고, 보일 때는 행에 마우스를 올려야 나타난다.
+function EyeIcon({ state }: { state: RowVisibility }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
+      <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" />
+      {state === 'hidden' ? (
+        <path d="M3 13L13 3" />
+      ) : (
+        <circle
+          cx="8"
+          cy="8"
+          r={state === 'mixed' ? 1 : 2}
+          fill={state === 'mixed' ? 'currentColor' : 'none'}
+        />
+      )}
+    </svg>
+  )
+}
+
 type TreeRowProps = {
   object: SceneObject
   depth: number
@@ -170,6 +207,10 @@ type TreeRowProps = {
   severity: IssueSeverity | undefined
   // 문제가 이 오브젝트 자신에 있는지(false면 하위에 있음)
   severityOwn: boolean
+  visibility: RowVisibility
+  cut: boolean
+  // 검색 결과에서 보이는 상위 경로(검색 중이 아니면 없음)
+  path?: string
 }
 
 // 행 하나. 선택·이름 바꾸기·드롭 표시는 좁은 선택자로 읽어, 선택이 바뀌면 바뀐 행만 다시 그린다(큰 CAD에서 행 수천 개).
@@ -183,7 +224,10 @@ const TreeRowView = memo(function TreeRowView({
   setSize,
   tabStop,
   severity,
-  severityOwn
+  severityOwn,
+  visibility,
+  cut,
+  path
 }: TreeRowProps): React.JSX.Element {
   const { t } = useTranslation()
   const id = object.id
@@ -208,6 +252,9 @@ const TreeRowView = memo(function TreeRowView({
   if (selected) classes.push('is-selected')
   if (active) classes.push('is-active')
   if (drop?.position === 'into') classes.push('is-drop-into')
+  if (cut) classes.push('is-cut')
+  if (visibility === 'hidden') classes.push('is-hidden')
+  const eyeAction = visibility === 'hidden' ? t('hierarchy.show') : t('hierarchy.hide')
   const severityLabel =
     severity &&
     (severityOwn ? t(`hardware.severity.${severity}`) : t(`hardware.severityBelow.${severity}`))
@@ -226,7 +273,30 @@ const TreeRowView = memo(function TreeRowView({
       draggable={!renaming}
       className={classes.join(' ')}
       style={{ paddingLeft: indentOf(depth) }}
+      title={
+        cut
+          ? t('hierarchy.cutTitle', {
+              paste: shortcutLabel('paste'),
+              child: shortcutLabel('pasteAsChild')
+            })
+          : path
+      }
     >
+      <button
+        type="button"
+        tabIndex={-1}
+        className={`tree-eye is-${visibility}`}
+        aria-label={eyeAction}
+        aria-pressed={visibility === 'hidden'}
+        title={t('hierarchy.visibilityTitle', { action: eyeAction })}
+        onClick={(event) => {
+          event.stopPropagation()
+          toggleRowVisibility(useSceneStore.getState().objects, id, event.altKey)
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
+        <EyeIcon state={visibility} />
+      </button>
       {hasChildren ? (
         <button
           type="button"
@@ -250,6 +320,7 @@ const TreeRowView = memo(function TreeRowView({
       ) : (
         <span className="tree-name">{object.name}</span>
       )}
+      {path && <span className="tree-path">{path}</span>}
       {severity && (
         <span
           className={`tree-issue is-${severity}${severityOwn ? '' : ' is-below'}`}
@@ -289,8 +360,12 @@ const TreeRowView = memo(function TreeRowView({
   )
 })
 
-// 메뉴 항목 → 단축키 표(editor/shortcuts.ts)
-const MENU_SHORTCUTS: Record<HierarchyMenuItem, ShortcutCommand> = {
+// 메뉴 항목 → 단축키 표(editor/shortcuts.ts). Select Children은 Unity에도 단축키가 없다.
+const MENU_SHORTCUTS: Record<HierarchyMenuItem, ShortcutCommand | null> = {
+  cut: 'cut',
+  paste: 'paste',
+  pasteAsChild: 'pasteAsChild',
+  selectChildren: null,
   rename: 'rename',
   delete: 'delete',
   createEmpty: 'createEmpty',
@@ -301,6 +376,9 @@ function HierarchyPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const overrides = useHierarchyViewStore((state) => state.overrides)
+  const query = useHierarchyViewStore((state) => state.query)
+  const hidden = useSceneVisibilityStore((state) => state.hidden)
+  const cutIds = useEditorStore((state) => state.cutIds)
   // 활성 오브젝트만 구독한다(roving tabIndex). 선택 표시는 행마다 따로 읽는다.
   const activeId = useEditorStore((state) => state.selectedId)
   const endLine = useHierarchyDragStore((state) => state.indicator?.position === 'end')
@@ -312,7 +390,16 @@ function HierarchyPanel(): React.JSX.Element {
 
   const issues = useSceneIssues()
   const severities = useMemo(() => severityByObject(objects, issues), [objects, issues])
-  const rows = useMemo(() => visibleRows(objects, overrides), [objects, overrides])
+  // 검색어가 있으면 Unity처럼 계층 없이 맞는 오브젝트만 보인다
+  const results = useMemo(() => searchRows(objects, query), [objects, query])
+  const rows = useMemo(
+    () => results ?? visibleRows(objects, overrides),
+    [results, objects, overrides]
+  )
+  const visibilities = useMemo(() => rowVisibilities(objects, hidden), [objects, hidden])
+  const cutSet = useMemo(() => new Set(cutIds), [cutIds])
+  const searching = results !== null
+  const searchRef = useRef<HTMLInputElement>(null)
   const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows])
   const tabStopId = activeId !== null && rowById.has(activeId) ? activeId : (rows[0]?.id ?? null)
 
@@ -341,27 +428,38 @@ function HierarchyPanel(): React.JSX.Element {
   }
 
   const menuEntries = (onRow: boolean, rowId: string | null): ContextMenuEntry[] => {
-    const { selectedIds } = useEditorStore.getState()
+    const { selectedIds, cutIds: cut, selectedId } = useEditorStore.getState()
     const actions: Record<HierarchyMenuItem, () => void> = {
+      cut: () => void cutSelection(),
+      paste: () => void pasteCut(false),
+      pasteAsChild: () => void pasteCut(true),
+      selectChildren: () => void selectChildren(),
       rename: () => void renameSelection(),
       delete: () => void deleteSelection(),
       createEmpty: () => void (rowId !== null ? createEmptyUnder(rowId) : createEmpty()),
       createEmptyParent: () => void createEmptyParent()
     }
-    return hierarchyMenuState(useSceneStore.getState().objects, selectedIds, onRow).flatMap(
-      ({ item, enabled, separatorBefore }): ContextMenuEntry[] => [
+    return hierarchyMenuState(
+      useSceneStore.getState().objects,
+      selectedIds,
+      onRow,
+      cut,
+      selectedId
+    ).flatMap(({ item, enabled, separatorBefore }): ContextMenuEntry[] => {
+      const shortcut = MENU_SHORTCUTS[item]
+      return [
         ...(separatorBefore ? [{ type: 'separator' as const, id: `separator-${item}` }] : []),
         {
           type: 'item',
           id: item,
           label: t(`hierarchy.menu.${item}`),
-          shortcut: shortcutLabel(MENU_SHORTCUTS[item]),
-          ariaKeyShortcuts: ariaKeyShortcut(MENU_SHORTCUTS[item]),
+          shortcut: shortcut ? shortcutLabel(shortcut) : undefined,
+          ariaKeyShortcuts: shortcut ? ariaKeyShortcut(shortcut) : undefined,
           disabled: !enabled,
           onSelect: actions[item]
         }
       ]
-    )
+    })
   }
 
   // 우클릭(Shift+F10·메뉴 키도 포커스된 행에 contextmenu를 보낸다). 선택에 없는 행이면 먼저 그 행만 선택한다(Unity와 같음).
@@ -451,7 +549,8 @@ function HierarchyPanel(): React.JSX.Element {
     // 이름 바꾸기 입력칸 안의 글자 끌기는 입력칸에 맡긴다
     if (event.target instanceof HTMLInputElement) return
     const rowElement = rowElementOf(event.target)
-    if (!rowElement || isChangeOpen()) {
+    // 검색 결과는 계층이 없어 놓을 자리를 보일 수 없다(검색을 지우고 끈다)
+    if (!rowElement || isChangeOpen() || searching) {
       event.preventDefault()
       return
     }
@@ -546,6 +645,20 @@ function HierarchyPanel(): React.JSX.Element {
 
   const roots = childrenInDocument(objects, null)
 
+  // 검색 결과 행에 보일 상위 경로(로봇 › 그룹)
+  const pathOf = (id: string): string =>
+    ancestorIds(objects, id)
+      .reverse()
+      .map((ancestor) => objects[ancestor]?.name ?? '')
+      .join(' › ')
+
+  // 검색어를 지우면 선택한 오브젝트가 트리에 보이게 펼친다(Unity와 같음)
+  const setQuery = (next: string): void => {
+    useHierarchyViewStore.getState().setQuery(next)
+    if (!next.trim())
+      revealObjects(useSceneStore.getState().objects, useEditorStore.getState().selectedIds)
+  }
+
   const actions = (
     <>
       <button
@@ -583,6 +696,31 @@ function HierarchyPanel(): React.JSX.Element {
   return (
     <PanelFrame title={t('panels.hierarchy')} actions={actions}>
       <NoticeList />
+      <div className="hierarchy-search">
+        <input
+          ref={searchRef}
+          type="search"
+          className="text-field hierarchy-search-input"
+          data-hierarchy-search=""
+          aria-label={t('hierarchy.search')}
+          placeholder={t('hierarchy.searchPlaceholder', { shortcut: shortcutLabel('search') })}
+          spellCheck={false}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            // Esc: 지우기(Unity와 같음). 아래 화살표: 첫 결과로
+            if (event.key === 'Escape' && query) {
+              event.preventDefault()
+              setQuery('')
+            } else if (event.key === 'ArrowDown' && rows.length > 0) {
+              event.preventDefault()
+              const first = rows[0].id
+              useEditorStore.getState().select(first)
+              requestAnimationFrame(() => focusRow(first))
+            }
+          }}
+        />
+      </div>
       <div
         className="hierarchy-area"
         onClick={onClick}
@@ -603,6 +741,8 @@ function HierarchyPanel(): React.JSX.Element {
             <br />
             {t('hierarchy.emptyHint')}
           </p>
+        ) : searching && rows.length === 0 ? (
+          <p className="panel-empty">{t('hierarchy.searchNoResults', { query: query.trim() })}</p>
         ) : (
           <div
             ref={treeRef}
@@ -625,6 +765,9 @@ function HierarchyPanel(): React.JSX.Element {
                   tabStop={row.id === tabStopId}
                   severity={severity?.severity}
                   severityOwn={severity?.own ?? false}
+                  visibility={visibilities.get(row.id) ?? 'visible'}
+                  cut={cutSet.has(row.id)}
+                  path={searching ? pathOf(row.id) : undefined}
                 />
               )
             })}
