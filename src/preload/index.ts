@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { posix, relative, resolve, sep } from 'path'
 import { IPC, type SandbotApi, type StepConvertProgress } from '../shared/ipc'
+import type { PlayEvent } from '../shared/play'
 
 const api: SandbotApi = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
@@ -38,6 +39,17 @@ const api: SandbotApi = {
   readJavaSources: (root, paths) => ipcRenderer.invoke(IPC.readJavaSources, root, paths),
   getExternalEditor: () => ipcRenderer.invoke(IPC.getExternalEditor),
   setExternalEditor: (choice) => ipcRenderer.invoke(IPC.setExternalEditor, choice),
+  getJdk: () => ipcRenderer.invoke(IPC.getJdk),
+  setJdk: (choice) => ipcRenderer.invoke(IPC.setJdk, choice),
+  listOpModes: (root) => ipcRenderer.invoke(IPC.listOpModes, root),
+  playInit: (request) => ipcRenderer.invoke(IPC.playInit, request),
+  playCommand: (command) => ipcRenderer.send(IPC.playCommand, command),
+  playGamepads: (gamepads) => ipcRenderer.send(IPC.playGamepads, gamepads),
+  onPlayEvent: (callback) => {
+    const listener = (_: unknown, event: PlayEvent): void => callback(event)
+    ipcRenderer.on(IPC.playEvent, listener)
+    return () => ipcRenderer.removeListener(IPC.playEvent, listener)
+  },
   setDirty: (dirty) => ipcRenderer.send(IPC.setDirty, dirty),
   onCloseRequested: (callback) => {
     const listener = (): void => callback()
