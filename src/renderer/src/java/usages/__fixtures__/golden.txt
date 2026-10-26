@@ -1,4 +1,4 @@
-# corpus-sha256 651a8598949a6d53f1ca556a7ce1d4178989ac1fbc84fe1b94561d45b7a6c518
+# corpus-sha256 2862b2c7e058af151a24b81c63670a4ab2729f847b2332c7a43da271f9c8df01
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:15 field RobotHardware.lift [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:20 field RobotHardware.Lift.liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13:20 field RobotHardware.lift [qualifier]
@@ -257,11 +257,31 @@ src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:25 field 
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:16:23 field RobotHardware.leftFront
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17:28 field RobotHardware.lift [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17:33 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:3:47 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:3:61 type RobotHardware.Lift [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:3:66 type RobotHardware.Lift.Claw [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:8:5 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:10:12 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:11:14 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:12:18 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:13:9 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:14:15 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:4:54 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:4:68 type RobotHardware.Lift [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:5:54 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:10:16 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:11:5 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:14:18 field RobotHardware.Lift.Claw.grip
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/OnDemand.java:3:47 type RobotHardware [import]
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:3:47 type RobotHardware [import] [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:3:61 type RobotHardware.Lift [import]
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:6:12 type RobotHardware.Lift
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:7:11 field RobotHardware.Lift.liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:4:47 type RobotHardware [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:4:61 type RobotHardware.Lift [import] [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:4:66 type RobotHardware.Lift.Claw [import]
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:8:14 type RobotHardware.Lift.Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:9:18 field RobotHardware.Lift.Claw.grip
 src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:3:47 type RobotHardware [import]
 src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:6:15 type RobotHardware
 src/main/java/org/firstinspires/ftc/teamcode/precedence/Base.java:6:41 type RobotHardware
