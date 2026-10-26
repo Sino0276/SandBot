@@ -294,7 +294,8 @@ describe('사용처 조율', () => {
     held = []
     holdReads = false
     symbolsCalls.count = 0
-    readJavaSources.mockClear()
+    // 앞 테스트가 바꾼 구현도 처음 구현(defaultRead)으로 되돌린다
+    readJavaSources.mockReset()
     vi.stubGlobal('window', { api: { readJavaSources } })
     useSceneStore.setState({ objects: scene(['liftLeft']) })
     useProjectStore.setState(useProjectStore.getInitialState())
@@ -478,6 +479,7 @@ describe('사용처 조율', () => {
     write('A.java', 'field liftLeft')
     write('Big.java', 'field liftLeft')
     write('Bad.java', 'field liftLeft')
+    write('Link.java', 'field liftLeft')
     readJavaSources.mockImplementationOnce(async (_root, paths) => ({
       ok: true,
       files: paths.map((path): JavaSourceRead =>
@@ -485,22 +487,70 @@ describe('사용처 조율', () => {
           ? { path, status: 'tooLarge', size: 300_000, mtimeMs: 1 }
           : path.endsWith('Bad.java')
             ? { path, status: 'failed' }
-            : { path, status: 'ok', text: 'field liftLeft', size: 14, mtimeMs: 1 }
+            : path.endsWith('Link.java')
+              ? { path, status: 'notAllowed' }
+              : { path, status: 'ok', text: 'field liftLeft', size: 14, mtimeMs: 1 }
       )
     }))
     await openProject()
     expect(usage().result?.files).toMatchObject({
       scanned: 1,
       tooLarge: [P + 'Big.java'],
-      failed: [P + 'Bad.java']
+      failed: [P + 'Bad.java', P + 'Link.java']
     })
-    // 다음 목록에서 그대로면 다시 읽지 않는다. Big은 읽은 핸들의 stamp(목록 뒤에 커졌다)를, Bad는 목록의
-    // stamp를 기억하므로, 새 목록이 그 크기를 보이면 둘 다 읽지 않는다.
+    // 다음 목록에서 Big은 읽은 핸들의 stamp(목록 뒤에 커졌다)를, Link(받지 않는 경로)는 목록의 stamp를 기억하므로
+    // 새 목록이 그 크기를 보이면 읽지 않는다. 읽기 오류(Bad)는 크기·시각이 그대로여도(잠금이 풀린 파일 등) 그 파일만
+    // 다시 읽는다.
     readJavaSources.mockClear()
     disk.set(P + 'Big.java', { text: 'x', size: 300_000, mtimeMs: 1 })
     publishListing()
     await settle()
+    expect(readPaths()).toEqual([[P + 'Bad.java']])
+    expect(usage().result?.files).toMatchObject({
+      scanned: 2,
+      tooLarge: [P + 'Big.java'],
+      failed: [P + 'Link.java']
+    })
+    expect(hitsOf(LIFT).map((hit) => hit.path)).toEqual([P + 'A.java', P + 'Bad.java'])
+    // 읽었으니 그 뒤로는 바뀌기 전에 다시 읽지 않는다
+    readJavaSources.mockClear()
+    publishListing()
+    await settle()
     expect(readJavaSources).not.toHaveBeenCalled()
+  })
+
+  it('읽기 오류가 난 파일은 열기·저장이 끝날 때도 다시 읽는다(한 번의 읽기 안에서는 다시 묻지 않는다)', async () => {
+    write('A.java', 'field liftLeft')
+    write('Bad.java', 'field liftLeft')
+    const failBad = async (_root: string, paths: string[]): Promise<ReadJavaSourcesResult> => {
+      const result = answer(paths)
+      if (!result.ok) return result
+      return {
+        ok: true,
+        files: result.files.map((file) =>
+          file.path.endsWith('Bad.java') ? { path: file.path, status: 'failed' } : file
+        )
+      }
+    }
+    readJavaSources.mockImplementation(failBad)
+    await openProject()
+    expect(readJavaSources).toHaveBeenCalledTimes(1)
+    expect(usage().result?.files.failed).toEqual([P + 'Bad.java'])
+    // 원인이 그대로면 저장이 끝날 때 그 파일만 한 번 묻고 다시 failed로 둔다
+    useProjectStore.setState({ busy: true })
+    useProjectStore.setState({ busy: false })
+    await settle()
+    expect(readPaths()).toEqual([[P + 'A.java', P + 'Bad.java'], [P + 'Bad.java']])
+    expect(usage()).toMatchObject({ status: 'ready' })
+    expect(usage().result?.files.failed).toEqual([P + 'Bad.java'])
+    // 원인이 풀리면(목록의 크기·시각은 그대로) 다음 저장 끝에 읽어 사용처에 넣는다
+    readJavaSources.mockReset()
+    useProjectStore.setState({ busy: true })
+    useProjectStore.setState({ busy: false })
+    await settle()
+    expect(readPaths().at(-1)).toEqual([P + 'Bad.java'])
+    expect(usage().result?.files.failed).toEqual([])
+    expect(hitsOf(LIFT)).toHaveLength(2)
   })
 
   it('다른 프로젝트를 열면 워커를 끝내고, 늦게 끝난 이전 읽기는 버리고 새로 읽는다', async () => {

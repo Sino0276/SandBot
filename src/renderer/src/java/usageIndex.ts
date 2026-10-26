@@ -381,12 +381,20 @@ async function scan(
               missing.push(path)
               stamps.set(path, null)
               break
-            case 'failed':
             case 'notAllowed': {
-              // 읽지 못한 파일(밖을 가리키게 된 링크 포함)은 목록의 stamp로 둔다(바뀌기 전에는 다시 읽지 않는다)
+              // 받지 않는 경로가 된 파일(밖을 가리키게 된 링크 등)은 목록의 stamp로 둔다(바뀌기 전에는 다시 읽지 않는다)
               const stamp = stampOf(listed.get(path)!)
               upserts.push({ path, stamp, text: null, problem: 'failed' })
               stamps.set(path, stamp)
+              break
+            }
+            case 'failed': {
+              // 읽기 오류(잠금, 오프라인 OneDrive 파일, 권한 등)는 원인이 풀려도 크기·시각이 그대로일 수 있다. 목록의
+              // stamp와 같아질 수 없는 값으로 두어 다음 읽기(새 revision, 열기·저장 끝)에 그 파일만 다시 읽는다.
+              // known에서 지우지는 않는다(목록에서 빠지면 removes로 워커에서도 빼야 한다).
+              const stamp = stampOf(listed.get(path)!)
+              upserts.push({ path, stamp, text: null, problem: 'failed' })
+              stamps.set(path, `failed:${stamp}`)
               break
             }
             default:
