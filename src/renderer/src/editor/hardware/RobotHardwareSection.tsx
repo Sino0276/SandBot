@@ -9,6 +9,7 @@ import type { RobotHardwareSettings, SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
+import UsageSection from '../usages/UsageSection'
 import IssueList from './IssueList'
 
 type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
@@ -161,6 +162,8 @@ function RobotHardwareSection({ robot }: { robot: SceneObject }): React.JSX.Elem
           </div>
         </>
       )}
+      {/* 장치가 없는 로봇도 보인다(마지막 장치를 지운 뒤에도 TeamCode가 쓰는 없는 형식이 보이게) */}
+      <UsageSection target={{ kind: 'robot', robotId: robot.id }} />
       {issues.length > 0 && (
         <>
           <span className="hw-row-label">

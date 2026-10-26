@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JavaFileList, OpenJavaFileResult } from '../../../shared/ipc'
 import { useNoticeStore } from '../editor/noticeStore'
 import { useProjectStore } from '../project/projectStore'
-import { ipcErrorDetail, openScriptFile } from './openScript'
+import {
+  ipcErrorDetail,
+  openScriptFile,
+  resetLineSupport,
+  resetOpenScriptState,
+  useLineSupportStore
+} from './openScript'
 
 const PATH = 'src/main/java/org/firstinspires/ftc/teamcode/Lift.java'
 
@@ -15,16 +21,19 @@ describe('스크립트 열기', () => {
     useNoticeStore.getState().notices.map(({ level, key, params }) => ({ level, key, params }))
 
   beforeEach(() => {
-    openJavaFile.mockClear()
+    // 앞 테스트의 mockResolvedValue를 지우고 처음 구현({ ok: true })으로 되돌린다
+    openJavaFile.mockReset()
     listJavaFiles.mockClear()
     vi.stubGlobal('window', { api: { openJavaFile, listJavaFiles } })
     useProjectStore.setState({ root: '/team', session: 1 })
     useNoticeStore.setState({ notices: [] })
+    resetOpenScriptState()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
     useProjectStore.setState(useProjectStore.getInitialState())
     useNoticeStore.setState({ notices: [] })
+    resetOpenScriptState()
   })
 
   it('열린 프로젝트와 TeamCode 기준 경로를 메인에 넘기고, 성공하면 알리지 않는다', async () => {
@@ -75,6 +84,68 @@ describe('스크립트 열기', () => {
     expect(notices()).toEqual([
       { level: 'error', key: 'scriptOpenFailed', params: { fileName: 'Lift.java', detail: 'boom' } }
     ])
+  })
+
+  it('편집기가 줄 번호를 받지 못하면(lineIgnored) 앱을 켠 동안 한 번만 알린다', async () => {
+    openJavaFile.mockResolvedValue({ ok: true, lineIgnored: true })
+    await openScriptFile(PATH, 12)
+    expect(openJavaFile).toHaveBeenCalledWith('/team', PATH, 12)
+    expect(notices()).toEqual([{ level: 'warning', key: 'lineIgnored', params: {} }])
+    // 다음 열기가 지우지 않고(실패 알림과 다름), 다시 띄우지도 않는다
+    await openScriptFile(PATH, 20)
+    expect(notices()).toHaveLength(1)
+    useNoticeStore.setState({ notices: [] })
+    await openScriptFile(PATH, 30)
+    // 편집기 설정을 바꿔도 다시 띄우지 않는다
+    resetLineSupport()
+    await openScriptFile(PATH, 40)
+    expect(notices()).toEqual([])
+    // 실패 알림은 그대로 띄운다
+    openJavaFile.mockResolvedValueOnce({ ok: false, code: 'launchFailed', detail: 'ENOENT' })
+    await openScriptFile(PATH, 50)
+    expect(notices().map((notice) => notice.key)).toEqual(['scriptLaunchFailed'])
+  })
+
+  it('줄 번호를 받는지(useLineSupportStore)는 줄을 넘겨 연 결과로 정한다', async () => {
+    const support = (): string => useLineSupportStore.getState().support
+    expect(support()).toBe('unknown')
+    // 줄을 넘기지 않으면 알 수 없다
+    openJavaFile.mockResolvedValueOnce({ ok: true })
+    await openScriptFile(PATH)
+    expect(support()).toBe('unknown')
+    openJavaFile.mockResolvedValueOnce({ ok: true, lineIgnored: true })
+    await openScriptFile(PATH, 3)
+    expect(support()).toBe('no')
+    // 실패는 바꾸지 않는다
+    openJavaFile.mockResolvedValueOnce({ ok: false, code: 'missing', detail: '' })
+    await openScriptFile(PATH, 3)
+    openJavaFile.mockRejectedValueOnce(new Error('boom'))
+    await openScriptFile(PATH, 3)
+    expect(support()).toBe('no')
+    openJavaFile.mockResolvedValueOnce({ ok: true })
+    await openScriptFile(PATH, 3)
+    expect(support()).toBe('yes')
+    // 편집기 설정을 바꾸면(환경 설정 창) 다시 모른다
+    resetLineSupport()
+    expect(support()).toBe('unknown')
+  })
+
+  it('여는 사이 편집기 설정을 바꾸면 이전 편집기의 답으로 줄 번호 지원을 정하지 않는다', async () => {
+    const support = (): string => useLineSupportStore.getState().support
+    let answer: (result: OpenJavaFileResult) => void = () => {}
+    openJavaFile.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const opening = openScriptFile(PATH, 7)
+    // 환경 설정 창이 다른 편집기를 고른 뒤(setExternalEditor) 부른다
+    resetLineSupport()
+    answer({ ok: true, lineIgnored: true })
+    await opening
+    expect(support()).toBe('unknown')
+    // 그 열기는 줄을 넘기지 못했으므로 알림은 그대로 띄운다
+    expect(notices().map((notice) => notice.key)).toEqual(['lineIgnored'])
+    // 새 편집기로 연 답은 쓴다
+    openJavaFile.mockResolvedValueOnce({ ok: true })
+    await openScriptFile(PATH, 7)
+    expect(support()).toBe('yes')
   })
 
   it('IPC 오류 메시지의 채널 머리말을 뗀다', () => {

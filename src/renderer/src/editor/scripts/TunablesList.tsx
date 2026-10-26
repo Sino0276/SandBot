@@ -6,7 +6,7 @@ import type {
   TunableValueType
 } from '../../../../shared/java/tunableTypes'
 import { currentJavaSource, useJavaSourcesStore } from '../../java/javaSources'
-import { openScriptFile } from '../../java/openScript'
+import { openScriptFile, useLineSupportStore } from '../../java/openScript'
 import {
   diskLiteralKey,
   displayTunable,
@@ -80,7 +80,10 @@ function FieldLabel({
   pendingHint?: string
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const hint = t('inspector.tunables.fieldHint', { declaration, line })
+  // 지금 편집기가 줄 번호를 받지 않으면 파일만 연다고 덧붙인다(사용처 행과 같다)
+  const lineSupport = useLineSupportStore((state) => state.support)
+  const fieldHint = t('inspector.tunables.fieldHint', { declaration, line })
+  const hint = lineSupport === 'no' ? `${fieldHint}\n${t('usages.noLineHint')}` : fieldHint
   return (
     <span
       className={pending ? 'hw-row-label tunable-label is-pending' : 'hw-row-label tunable-label'}

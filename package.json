@@ -23,7 +23,8 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "build:step-converter": "node scripts/build-step-converter.mjs",
-    "fetch:step-converter": "node scripts/fetch-step-converter.mjs"
+    "fetch:step-converter": "node scripts/fetch-step-converter.mjs",
+    "usage-oracle": "node scripts/usage-oracle/run.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

@@ -438,7 +438,7 @@ describe('openInExternalEditor·setEditor', () => {
   })
 
   it('기본(system)은 .java만 운영체제에 맡기고, 실패 문구를 돌려준다', async () => {
-    expect(await openInExternalEditor(FILE, PROJECT, 3, deps())).toEqual({ ok: true })
+    expect(await openInExternalEditor(FILE, PROJECT, undefined, deps())).toEqual({ ok: true })
     expect(openPath).toHaveBeenCalledWith(FILE)
     openPath.mockResolvedValueOnce('No application is associated')
     expect(await openInExternalEditor(FILE, PROJECT, 3, deps())).toEqual({
@@ -453,8 +453,53 @@ describe('openInExternalEditor·setEditor', () => {
     expect(spawned.calls).toEqual([])
   })
 
+  it('줄 번호를 넘기지 못하면 파일만 열고 lineIgnored로 알린다(확장자로 열기, $(Line)이 없는 템플릿)', async () => {
+    // 확장자로 열기(기본): 운영체제는 줄을 받지 않는다
+    expect(await openInExternalEditor(FILE, PROJECT, 3, deps())).toEqual({
+      ok: true,
+      lineIgnored: true
+    })
+    expect(openPath).toHaveBeenLastCalledWith(FILE)
+    // 실패는 실패로만 알린다
+    openPath.mockResolvedValueOnce('No application is associated')
+    expect(await openInExternalEditor(FILE, PROJECT, 3, deps())).toEqual({
+      ok: false,
+      code: 'openFailed',
+      detail: 'No application is associated'
+    })
+
+    const exe = 'C:\\Program Files\\Notepad++\\notepad++.exe'
+    executables.add(exe)
+    await setEditor({ kind: 'browse', title: 't' }, deps(), async () => exe)
+    // 기본 인자("$(File)"), $(Column)만 있는 인자, 대소문자가 다른 $(line)은 줄을 넘기지 못한다
+    for (const args of [DEFAULT_CUSTOM_ARGS, '"$(File)" -c$(Column)', '"$(File)" -n$(line)']) {
+      await setEditor({ kind: 'customArgs', args }, deps(), async () => null)
+      expect(await openInExternalEditor(FILE, PROJECT, 8, deps()), args).toEqual({
+        ok: true,
+        lineIgnored: true
+      })
+      // 줄을 달라고 하지 않았으면 알리지 않는다
+      expect(await openInExternalEditor(FILE, PROJECT, undefined, deps()), args).toEqual({
+        ok: true
+      })
+    }
+    // $(Line)이 있으면 넘긴다
+    await setEditor({ kind: 'customArgs', args: '-n$(Line) "$(File)"' }, deps(), async () => null)
+    expect(await openInExternalEditor(FILE, PROJECT, 8, deps())).toEqual({ ok: true })
+    expect(spawned.calls.at(-1)).toMatchObject({ exe, argv: ['-n8', FILE] })
+    // 띄우지 못하면 launchFailed만 알린다
+    await setEditor({ kind: 'resetArgs' }, deps(), async () => null)
+    spawned = fakeSpawn('error')
+    expect(await openInExternalEditor(FILE, PROJECT, 8, deps())).toEqual({
+      ok: false,
+      code: 'launchFailed',
+      detail: 'spawn ENOENT'
+    })
+  })
+
   it('찾은 편집기는 프리셋 인자로 띄운다', async () => {
     await setEditor({ kind: 'detected', id: 'android-studio' }, deps(), async () => null)
+    // 프리셋은 늘 줄을 넘기므로 lineIgnored가 없다
     expect(await openInExternalEditor(FILE, PROJECT, 9, deps())).toEqual({ ok: true })
     expect(spawned.calls.map(({ exe, argv }) => ({ exe, argv }))).toEqual([
       { exe: STUDIO, argv: [PROJECT, '--line', '9', FILE] }

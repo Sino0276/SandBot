@@ -5,7 +5,7 @@ import type {
   ExternalEditorError,
   ExternalEditorState
 } from '../../../shared/ipc'
-import { ipcErrorDetail } from '../java/openScript'
+import { ipcErrorDetail, resetLineSupport } from '../java/openScript'
 import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
 import {
   EXTERNAL_EDITOR_BROWSE,
@@ -82,6 +82,8 @@ function ExternalToolsPage(): React.JSX.Element {
       const next = await window.api.setExternalEditor(choice)
       // 받지 않았으면 설정은 그대로이고 이유가 붙어 온다
       if (next.error) replacePreferencesNotice('warning', EXTERNAL_EDITOR_ERROR_NOTICES[next.error])
+      // 편집기나 인자가 바뀌었으면 줄 번호를 받는지 다시 모른다(다음에 줄로 열 때 정한다)
+      else resetLineSupport()
       if (mounted.current) {
         setState(next)
         setError(next.error ?? null)

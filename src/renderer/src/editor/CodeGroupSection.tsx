@@ -6,6 +6,7 @@ import { findRobotId, type SceneObject } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import IssueList from './hardware/IssueList'
 import TextField from './TextField'
+import UsageSection from './usages/UsageSection'
 
 // 클래스 이름 칸을 빨갛게 표시하는 문제(그 칸을 고쳐 해결한다)
 const CLASS_NAME_ISSUES = new Set<IssueCode>([
@@ -53,6 +54,7 @@ function CodeGroupSection({ group }: { group: SceneObject }): React.JSX.Element 
             <span className="hw-row-label">{t('inspector.group.constants')}</span>
             <code className="hw-path hw-code">{path.typeName}</code>
           </div>
+          <UsageSection target={{ kind: 'group', groupId: group.id }} />
         </>
       ) : (
         <p className="inspector-note">

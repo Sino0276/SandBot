@@ -97,6 +97,13 @@ const en: Messages = {
     scriptMissing: '{{fileName}} is not in TeamCode. Check the link in the Inspector.',
     scriptNotAllowed:
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
+    lineIgnored:
+      "The external script editor can't take a line number, so only the file was opened. Choose Android Studio or another editor in Preferences to open at the line.",
+    // Usages (phase 4): TeamCode that a save breaks. One notice, replaced on every save. {{files}} lists up to 3 file names.
+    usagesBroken:
+      "{{count}} place(s) in TeamCode ({{files}}) use names the saved generated code doesn't have. Open them from Usages in the Inspector.",
+    usagesBrokenByName:
+      "Configuration names changed; {{count}} string(s) in TeamCode ({{files}}) won't find their device at run time.",
     scriptLinksDropped:
       '{{count}} script links in project.json were dropped because their paths are not allowed or repeat on the same object. Saving removes them from the file too.',
     externalEditorFailed: 'Could not change the external script editor setting ({{detail}}).',
@@ -326,6 +333,9 @@ const en: Messages = {
       'Could not read the whole TeamCode file list, so SandBot cannot tell whether this file exists.',
     noProject: 'Open or save a project to find and open this file in TeamCode.',
     noTeamCode: 'The project has no TeamCode folder, so this file cannot be opened.',
+    usesHardware: 'Hardware this script uses',
+    usesHardwareHint:
+      'Devices, groups and robots this file uses, from Usages (generated code and strings that look a device up by name). Click one to select it.',
     addGroup: 'Scripts',
     addOption: 'TeamCode script…',
     badge: '{ }',
@@ -344,6 +354,65 @@ const en: Messages = {
       more: '{{count}} more · type to narrow down',
       defaultPackage: '(default package)'
     }
+  },
+  usages: {
+    title: 'Usages',
+    code: 'Code {{count}}',
+    byName: 'By name {{count}}',
+    warnings: '{{count}} problem(s)',
+    none: 'No usages found',
+    searched: 'Searched for: {{terms}}',
+    scanning: 'Searching…',
+    partialBadge: '(partial)',
+    failed: 'Could not search for usages: {{detail}}',
+    failedNoDetail: 'Could not search for usages.',
+    noProject: 'Open or save a project to find usages in TeamCode.',
+    noTeamCode: "The project has no TeamCode folder, so usages can't be found.",
+    truncated: 'TeamCode has too many files; only the first {{count}} were searched.',
+    partial: '{{count}} file(s) were not searched (too large, \\u escapes, or unreadable).',
+    kotlin: 'Kotlin (.kt) files are not searched.',
+    unavailable: 'Fix the robot class name to find code usages. Usages by name are still searched.',
+    sectionCode: 'Code',
+    sectionByName: 'By name',
+    byNameHint:
+      'Strings that look a device up by its configuration name (hardwareMap.get, …Name(…) and the like).',
+    sharedName: 'Another robot has a device with the same name; these may belong to it.',
+    samePortName:
+      'The motor and dead wheel on this port share this configuration name; these may belong to the other one.',
+    sameText: 'Other strings with this text ({{count}})',
+    sameTextHint:
+      'Strings not used to look the device up (telemetry captions and the like). Not counted.',
+    descendants: '{{count}} in devices below',
+    constructs: 'Created at',
+    kinds: {
+      field: 'Field',
+      constant: 'Constant',
+      type: 'Type',
+      new: 'New',
+      lookup: 'Name',
+      text: 'Text',
+      unresolved: 'Missing'
+    },
+    listLabel: 'Usages of {{name}}',
+    fileLabel: '{{file}}, {{count}} usage(s)',
+    fileLabelAtLeast: '{{file}}, {{count}}+ usages',
+    fileCountAtLeast: '{{count}}+',
+    rowLabel: '{{file}} line {{line}}, {{kind}}: {{code}}',
+    openHint: 'Double-click or press Enter to open this line in the external script editor.',
+    noLineHint:
+      "The current external script editor can't take a line number, so only the file opens. Choose Android Studio or another editor in Preferences to open at this line.",
+    more: '{{count}} more',
+    renamedCode:
+      "{{count}} place(s) use the old name {{old}}; they won't compile against the generated code for this scene.",
+    renamedName:
+      '{{count}} string(s) look up the old name "{{old}}"; with this configuration the device won\'t be found at run time.',
+    unresolved: 'Names missing from the generated code ({{count}})',
+    unresolvedHint:
+      "Code that uses fields or types the hardware class for this scene doesn't have. It won't compile against that class.",
+    unresolvedInClass: 'Names missing from this class ({{count}})',
+    unknownNames: 'Device names not in the configuration ({{count}})',
+    unknownNamesHint:
+      "No robot in SandBot has a device with this name. Run with the generated configuration and the device won't be found."
   },
   // Preferences window (Unity's Edit > Preferences). Editor product names (Android Studio etc.) are not translated.
   preferences: {
