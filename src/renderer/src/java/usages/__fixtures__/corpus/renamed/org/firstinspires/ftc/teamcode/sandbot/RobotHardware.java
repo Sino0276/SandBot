@@ -19,16 +19,16 @@ public class RobotHardware {
     /** Robot configuration name to activate on the Driver Station. */
     public static final String CONFIGURATION_NAME = "Comp Bot";
 
-    /** par: dead wheel measuring forward/backward motion; position from the robot center (X forward +, Y left +). */
-    public static final double PAR_X_MM = 0.0;
-    public static final double PAR_Y_MM = 0.0;
-    public static final double PAR_X_IN = 0.0;
-    public static final double PAR_Y_IN = 0.0;
-    public static final boolean PAR_MEASURES_FORWARD = true;
-    public static final boolean PAR_REVERSED = false;
+    /** parallel: dead wheel measuring forward/backward motion; position from the robot center (X forward +, Y left +). */
+    public static final double PARALLEL_X_MM = 0.0;
+    public static final double PARALLEL_Y_MM = 0.0;
+    public static final double PARALLEL_X_IN = 0.0;
+    public static final double PARALLEL_Y_IN = 0.0;
+    public static final boolean PARALLEL_MEASURES_FORWARD = true;
+    public static final boolean PARALLEL_REVERSED = false;
 
     public final DcMotorEx leftFront;
-    public final DcMotorEx par;
+    public final DcMotorEx parallel;
     public final Lift lift;
 
     /** Call during OpMode init (hardwareMap.get must only be used in the init phase). */
@@ -39,8 +39,8 @@ public class RobotHardware {
         leftFront.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         leftFront.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // par
-        par = hardwareMap.get(DcMotorEx.class, "leftFront");
+        // parallel
+        parallel = hardwareMap.get(DcMotorEx.class, "leftFront");
 
         // Lift
         lift = new Lift(hardwareMap);

@@ -5,8 +5,9 @@
 // - corpusScene: 로봇 둘. Comp Bot(RobotHardware): leftFront 모터, par 데드휠(같은 포트 모터가 있어 찾기 이름은
 //   leftFront), Lift 그룹(liftLeft 모터, enc 데드휠, Claw 그룹(grip 서보)). Practice Bot(PracticeBotHardware):
 //   liftLeft 모터(Comp Bot과 같은 구성 이름), wrist 서보.
-// - renamedCorpusScene: 장치 하나(Lift의 liftLeft → liftMain), 그룹 하나(Claw → Gripper), 로봇 클래스 하나
-//   (PracticeBotHardware → TestBotHardware)의 이름을 바꾼 씬. javac의 cannot find symbol과 맞춘다.
+// - renamedCorpusScene: 장치 둘(Lift의 liftLeft → liftMain, 로봇 바로 아래의 데드휠 par → parallel. par는 하위 팀
+//   클래스 CompBot으로도 쓴다), 그룹 하나(Claw → Gripper), 로봇 클래스 하나(PracticeBotHardware → TestBotHardware)의
+//   이름을 바꾼 씬. javac의 cannot find symbol과 맞춘다.
 import { propertyDefaults, type ComponentType } from '../../../hardware/catalog'
 import type { HardwareComponent, SceneObject, SceneObjects } from '../../../scene/model'
 
@@ -43,13 +44,13 @@ function robot(id: string, name: string, className: string): SceneObject {
 const part = (id: string, parentId: string, ...components: HardwareComponent[]): SceneObject =>
   object(id, id, 'part', parentId, { components })
 
-type Names = { liftLeft: string; claw: string; practiceClass: string }
+type Names = { liftLeft: string; par: string; claw: string; practiceClass: string }
 
 function build(names: Names): SceneObjects {
   const objects: SceneObject[] = [
     robot(COMP_ROBOT_ID, 'Comp Bot', 'RobotHardware'),
     part('drive', COMP_ROBOT_ID, component('lf', 'motor', 'leftFront', 0)),
-    part('odometry', COMP_ROBOT_ID, component('par', 'deadWheel', 'par', 0)),
+    part('odometry', COMP_ROBOT_ID, component('par', 'deadWheel', names.par, 0)),
     object('lift', 'Lift', 'group', COMP_ROBOT_ID),
     part('liftMotor', 'lift', component('ll', 'motor', names.liftLeft, 1)),
     part('liftEncoder', 'lift', component('enc', 'deadWheel', 'enc', 2)),
@@ -63,9 +64,19 @@ function build(names: Names): SceneObjects {
 }
 
 export function corpusScene(): SceneObjects {
-  return build({ liftLeft: 'liftLeft', claw: 'Claw', practiceClass: 'PracticeBotHardware' })
+  return build({
+    liftLeft: 'liftLeft',
+    par: 'par',
+    claw: 'Claw',
+    practiceClass: 'PracticeBotHardware'
+  })
 }
 
 export function renamedCorpusScene(): SceneObjects {
-  return build({ liftLeft: 'liftMain', claw: 'Gripper', practiceClass: 'TestBotHardware' })
+  return build({
+    liftLeft: 'liftMain',
+    par: 'parallel',
+    claw: 'Gripper',
+    practiceClass: 'TestBotHardware'
+  })
 }

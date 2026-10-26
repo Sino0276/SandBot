@@ -40,6 +40,13 @@ const ACCEPTED_RENAMED_FN: { at: string; reason: string }[] = [
     return { at: `${path}:${line}`, reason }
   }).map(({ at, reason }) => ({ at: `${at} liftLeft`, reason })),
   { at: `${T}Imports.java:11 Claw`, reason: 'static on-demand로 들여온 멤버 형식(spec §6.5)' },
+  { at: `${T}precedence/D.java:9 PAR_X_MM`, reason: 'static on-demand로 들여온 상수(spec §6.5)' },
+  // 받는 쪽 없는 이름은 패키지·알 수 없는 형식 이름일 수 있어 알리지 않는다(받는 쪽이 있으면 알린다, SC1–SC4)
+  { at: `${T}MyRobot.java:16 PAR_X_MM`, reason: '하위 클래스 안의 받는 쪽 없는 이름(spec §12)' },
+  {
+    at: `${T}CompetitionRobot.java:12 PAR_X_MM`,
+    reason: '하위 클래스 안의 받는 쪽 없는 이름(spec §12)'
+  },
   {
     at: `${T}Shadowing.java:13 PracticeBotHardware`,
     reason: '…sandbot.*로 들여온 이름(spec §6.5)'

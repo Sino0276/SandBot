@@ -1,8 +1,9 @@
-# corpus-sha256 c94ebfe36d367f2706a3d9b846039f289e054fabd1243e4f75bf7344f1fdf60d
+# corpus-sha256 651a8598949a6d53f1ca556a7ce1d4178989ac1fbc84fe1b94561d45b7a6c518
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13 claw
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:12 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/CompetitionRobot.java:12 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/Escapes.java:8 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/Extras.java:20 claw
@@ -20,10 +21,13 @@ src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:11 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/LocalClass.java:14 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:16 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:17 claw
+src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:23 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:25 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/MainTeleOp.java:26 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:12 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/MoreShadowing.java:33 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:14 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:16 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/MyRobot.java:17 claw
 src/main/java/org/firstinspires/ftc/teamcode/Renames.java:3 PracticeBotHardware
 src/main/java/org/firstinspires/ftc/teamcode/Renames.java:4 Claw
@@ -56,10 +60,14 @@ src/main/java/org/firstinspires/ftc/teamcode/UsesMyRobot.java:5 claw
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:7 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:8 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9 claw
+src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:13 par
+src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:10 par
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12 claw
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:7 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/precedence/C.java:9 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:9 PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/precedence/E.java:3 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:11 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/precedence/F.java:20 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/precedence/G.java:10 liftLeft
@@ -78,6 +86,12 @@ src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q6FieldInit.java:15 liftLe
 src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q7Switch.java:15 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q8StaticMethodImport.java:8 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:12 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/providers/UsesProviders.java:6 par
+src/main/java/org/firstinspires/ftc/teamcode/subclass/CompBot.java:13 par
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:3 PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:10 PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:10 par
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:11 PAR_Y_MM
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:15 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:16 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/LiftSubsystem.java:7 Claw

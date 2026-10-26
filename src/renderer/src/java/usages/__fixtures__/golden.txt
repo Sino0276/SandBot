@@ -1,4 +1,4 @@
-# corpus-sha256 c94ebfe36d367f2706a3d9b846039f289e054fabd1243e4f75bf7344f1fdf60d
+# corpus-sha256 651a8598949a6d53f1ca556a7ce1d4178989ac1fbc84fe1b94561d45b7a6c518
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:15 field RobotHardware.lift [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12:20 field RobotHardware.Lift.liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13:20 field RobotHardware.lift [qualifier]
@@ -235,6 +235,22 @@ src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:8:23 field RobotHard
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:18 field RobotHardware.lift [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:23 field RobotHardware.Lift.claw [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/UsesRobot.java:9:28 field RobotHardware.Lift.Claw.grip
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:7:37 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:7:51 const RobotHardware.CONFIGURATION_NAME
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:8:8 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:8:29 type RobotHardware [qualifier]
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:8:43 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:10:11 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/annotations/Annotated.java:11:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:9:12 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:12:33 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:13:31 field RobotHardware.par
+src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:7:30 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:9:11 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:10:11 field RobotHardware.par
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:15 field RobotHardware.lift [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:20 field RobotHardware.Lift.claw [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12:25 field RobotHardware.Lift.Claw.grip
@@ -348,6 +364,20 @@ src/main/java/org/firstinspires/ftc/teamcode/probes/b/Q9ClassLit.java:12:16 fiel
 src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:3:47 type RobotHardware [import]
 src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:6:19 type RobotHardware
 src/main/java/org/firstinspires/ftc/teamcode/probes/c/Globals.java:8:19 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/providers/RobotProvider.java:3:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/providers/RobotProvider.java:6:5 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/providers/UsesProviders.java:5:22 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/providers/UsesProviders.java:6:22 field RobotHardware.par
+src/main/java/org/firstinspires/ftc/teamcode/providers/UsesProviders.java:7:21 field RobotHardware.leftFront
+src/main/java/org/firstinspires/ftc/teamcode/subclass/CompBot.java:4:47 type RobotHardware [import]
+src/main/java/org/firstinspires/ftc/teamcode/subclass/CompBot.java:7:30 type RobotHardware
+src/main/java/org/firstinspires/ftc/teamcode/subclass/CompBot.java:13:14 field RobotHardware.par
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:10:13 field RobotHardware.par
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:10:26 const RobotHardware.PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:11:28 const RobotHardware.PAR_Y_MM
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:12:17 type RobotHardware.Lift
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:12:33 field RobotHardware.lift
+src/main/java/org/firstinspires/ftc/teamcode/subclass/use/UsesCompBot.java:13:13 field RobotHardware.leftFront
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:3:47 type RobotHardware [import]
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:8:19 type RobotHardware [qualifier]
 src/main/java/org/firstinspires/ftc/teamcode/subsystems/Lift.java:8:33 type RobotHardware.Lift
