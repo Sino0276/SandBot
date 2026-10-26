@@ -371,7 +371,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     const reads = readCount()
     const matches = worker().matches
 
-    // 장치(liftLeft → liftMain), 그룹(Claw → Gripper), 로봇 클래스(PracticeBotHardware → TestBotHardware)
+    // 장치(liftLeft → liftMain, par → parallel), 그룹(Claw → Gripper), 로봇 클래스(PracticeBotHardware → TestBotHardware)
     const renamed = renamedCorpusScene()
     await edit(renamed)
     expect(readCount()).toBe(reads)
