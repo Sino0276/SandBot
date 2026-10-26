@@ -226,6 +226,12 @@ describe('클래스 개요', () => {
     expect(api.ifaceRefs.map(ref)).toEqual(['X', 'Y'])
     expect(mode.kind).toBe('enum')
     expect([...mode.fields.keys()]).toEqual(['A', 'B'])
+    // enum의 암묵 메서드(values()는 배열, valueOf()는 그 enum, 몸통 단계에서 푼다)
+    expect(
+      [...mode.methods].map(([name, list]) => `${name} ${list.map((m) => ref(m.ret))}`)
+    ).toEqual(['values Mode[]', 'valueOf Mode'])
+    expect(mode.methods.get('values')![0]).toMatchObject({ access: 'public', isStatic: true })
+    expect(mode.methods.get('values')![0].ret!.scope).toBe(mode.typeScope)
     expect(note.kind).toBe('annotation')
 
     // 클래스 머리의 형식 매개변수: 몸통 단계의 부모 단계에 있다
@@ -234,6 +240,10 @@ describe('클래스 개요', () => {
     const header = facts.typeScopes[body.parent]
     expect(header.cls).toBe(-1)
     expect(ref(header.params.get('R')!)).toBe('RobotHardware')
+    // 둘째부터의 경계
+    expect([...header.more!].map(([name, refs]) => `${name} ${refs.map(ref)}`)).toEqual([
+      'R Cloneable'
+    ])
     // 상위 형식은 머리 단계에서 푼다(자기 멤버 형식이 보이지 않는다)
     expect(outer.superRef!.scope).toBe(body.parent)
 
@@ -245,6 +255,7 @@ describe('클래스 개요', () => {
     expect(methodScope.cls).toBe(-1)
     expect(methodScope.parent).toBe(outer.typeScope)
     expect(ref(methodScope.params.get('T')!)).toBe('RobotHardware.Lift')
+    expect(methodScope.more).toBeUndefined()
     expect(typeUses(facts, 'extends')).toEqual(
       expect.arrayContaining([
         'RobotHardware',
@@ -754,6 +765,31 @@ describe('문자열', () => {
     expect(facts.strings[1].snippet).toBe('hardwareMap.dcMotor.get("leftBack")')
   })
 
+  it('찾기: this.hwMap(그 클래스에 HardwareMap 형식으로 선언한 필드)도 HardwareMap 식이다', () => {
+    const facts = extractFactsOrThrow(`
+      class LiftSub {
+        private final HardwareMap hwMap;
+        private final Object other;
+        LiftSub(HardwareMap hwMap) {
+          this.hwMap = hwMap;
+          this.hwMap.get(DcMotorEx.class, "liftLeft");
+          this.hwMap.servo.get("grip");
+          new MotorEx(this.hwMap, "fl");
+          this.other.get(DcMotorEx.class, "x");
+          LiftSub.this.hwMap.get(Servo.class, "claw");
+        }
+      }
+    `)
+    expect(strings(facts)).toEqual([
+      'lookup liftLeft',
+      'lookup grip',
+      'lookup fl',
+      'text x',
+      'lookup claw'
+    ])
+    expect(facts.strings[0].snippet).toBe('this.hwMap.get(…, "liftLeft")')
+  })
+
   it('찾기: 다른 인자가 HardwareMap 식인 호출·new(FTCLib, Road Runner)', () => {
     const facts = inMethod(`
       new MotorEx(hardwareMap, "fl");
@@ -801,6 +837,35 @@ describe('문자열', () => {
       's.equals("arm")',
       '"arm "'
     ])
+  })
+
+  it('애너테이션 인자: 요소 값의 연쇄·클래스 리터럴은 남기고, 요소 이름과 문자열은 남기지 않는다', () => {
+    const facts = extractFactsOrThrow(`
+      @TeleOp(name = "Comp", group = RobotHardware.CONFIGURATION_NAME)
+      @Uses({RobotHardware.class, RobotHardware.Lift.class})
+      class Main {
+        @Tag(value = Constants.TAG, leftFront = 1) RobotHardware robot;
+        void f(@Named(Keys.ARM) int arm) {
+          @SuppressWarnings(Keys.LOCAL) String s = "x";
+          try { } catch (@Ann(Keys.CATCH) Exception e) { }
+        }
+        enum E { @Ann(Keys.CONST) A }
+      }
+    `)
+    expect(chains(facts)).toEqual([
+      'N:RobotHardware.CONFIGURATION_NAME',
+      'N:Constants.TAG',
+      'N:Keys.ARM',
+      'N:Keys.CONST',
+      'N:Keys.LOCAL',
+      'N:Keys.CATCH'
+    ])
+    // 클래스 선언에 붙은 애너테이션은 그 바깥(파일)에서, 멤버에 붙은 것은 그 클래스에서 푼다
+    expect(facts.chains.slice(0, 2).map((chain) => (chain.head as { cls: number }).cls)).toEqual([
+      -1, 0
+    ])
+    expect(typeUses(facts, 'classLit')).toEqual(['RobotHardware', 'RobotHardware.Lift'])
+    expect(strings(facts)).toEqual(['text x'])
   })
 
   it('찾기 인자인 같은 파일의 String 상수·지역 변수는 그 초기값이 lookup이다', () => {

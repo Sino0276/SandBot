@@ -2,7 +2,8 @@
 // 순수 모듈이라 테스트와 가짜 워커가 같은 스레드에서 돌릴 수 있다(사실 만들기·맞추기 함수는 주입한다).
 // - files: 파일마다 씬과 관계없는 사실을 만들어 경로 → {stamp, 사실, 문제}로 갖는다. 한 파일이 예외를 던져도
 //   그 파일만 failed로 두고 계속한다.
-// - match: 가진 사실을 지금 씬의 기호표로 맞춘다(파일을 다시 읽지 않는다). 너무 큰 파일·읽지 못한 파일은 여기서 채운다.
+// - match: 가진 사실을 지금 씬의 기호표로 맞춘다(파일을 다시 읽지 않는다). 너무 큰 파일·읽지 못한 파일은 여기서 채우고,
+//   그 경로를 맞추기에도 넘긴다(그 이름의 자리 클래스를 둔다).
 import { extractFacts, type FileFacts } from './usageFacts'
 import { resolveUsages } from './usageResolve'
 import type { FromWorker, ToWorker, UsageResult, UsageSymbols } from './usageTypes'
@@ -11,7 +12,11 @@ export type UsageWorkerDeps = {
   // intern은 워커의 글자 풀이다. 사실에 넣는 식별자·조각 글자를 이것으로 복사하면 파일 글자 전체를 붙잡지 않는다.
   // 받지 않는 구현(자기 풀을 쓰는 것)도 이 타입에 들어간다.
   extractFacts: (text: string, intern: (text: string) => string) => FileFacts
-  resolveUsages: (files: ReadonlyMap<string, FileFacts>, symbols: UsageSymbols) => UsageResult
+  resolveUsages: (
+    files: ReadonlyMap<string, FileFacts>,
+    symbols: UsageSymbols,
+    unscanned: readonly string[]
+  ) => UsageResult
 }
 
 // 파일 하나. facts가 null이면 사실이 없다(problem이 이유: 너무 큼, 읽기·추출 실패).
@@ -97,15 +102,20 @@ function orderedFacts(state: UsageWorkerState): Map<string, FileFacts> {
 }
 
 function match(state: UsageWorkerState, symbols: UsageSymbols): UsageResult {
-  const result = state.deps.resolveUsages(orderedFacts(state), symbols)
-  // 맞추기가 돌려준 tooLarge는 사실의 한도를 넘은 파일(capped)이다. 읽기 결과의 너무 큰 파일과 합친다.
-  const tooLarge: string[] = [...result.files.tooLarge]
+  // 사실이 없는 파일(너무 큼·읽지 못함, 경로 순서)
+  const unscanned: string[] = []
+  const tooLarge: string[] = []
   const failed: string[] = []
   for (const path of [...state.files.keys()].sort(compare)) {
     const { problem } = state.files.get(path)!
+    if (problem === null) continue
+    unscanned.push(path)
     if (problem === 'tooLarge') tooLarge.push(path)
-    else if (problem === 'failed') failed.push(path)
+    else failed.push(path)
   }
+  const result = state.deps.resolveUsages(orderedFacts(state), symbols, unscanned)
+  // 맞추기가 돌려준 tooLarge는 사실의 한도를 넘은 파일(capped)이다. 읽기 결과의 너무 큰 파일과 합친다.
+  tooLarge.push(...result.files.tooLarge)
   return { ...result, files: { ...result.files, tooLarge: tooLarge.sort(compare), failed } }
 }
 

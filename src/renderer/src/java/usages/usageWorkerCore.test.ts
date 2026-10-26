@@ -46,7 +46,7 @@ function resultOf(reply: FromWorker): UsageResult {
 }
 
 describe('사용처 워커', () => {
-  it('파일마다 사실을 만들고, 맞추기에는 경로 순서로 사실이 있는 파일만 넘긴다', () => {
+  it('파일마다 사실을 만들고, 맞추기에는 경로 순서로 사실이 있는 파일과 사실이 없는 파일의 경로를 넘긴다', () => {
     const { state, extractFacts, resolveUsages } = setup()
     expect(
       handleMessage(
@@ -64,6 +64,8 @@ describe('사용처 워커', () => {
     expect([...passed.keys()]).toEqual(['a/A.java', 'b/B.java'])
     expect(factsText(passed.get('a/A.java')!)).toBe('class A {}')
     expect(resolveUsages.mock.calls[0][1]).toBe(symbols)
+    // 사실이 없는 파일은 경로만 넘긴다(맞추기가 그 이름의 자리 클래스를 둔다)
+    expect(resolveUsages.mock.calls[0][2]).toEqual(['c/Big.java'])
     expect(result.files).toEqual({
       scanned: 2,
       tooLarge: ['c/Big.java'],
@@ -80,7 +82,7 @@ describe('사용처 워커', () => {
   })
 
   it('한 파일이 예외를 던져도 그 파일만 failed로 두고 나머지는 계속한다', () => {
-    const { state } = setup()
+    const { state, resolveUsages } = setup()
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     handleMessage(
       state,
@@ -95,6 +97,7 @@ describe('사용처 워커', () => {
     const result = resultOf(handleMessage(state, matchMessage()))
     expect(result.files.failed).toEqual(['A.java', 'C.java'])
     expect(result.files.scanned).toBe(1)
+    expect(resolveUsages.mock.calls[0][2]).toEqual(['A.java', 'C.java'])
   })
 
   it('지운 경로는 사실을 버리고, 다시 받은 파일은 새 사실로 바꾼다', () => {

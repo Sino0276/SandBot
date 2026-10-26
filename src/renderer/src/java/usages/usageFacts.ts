@@ -6,7 +6,7 @@
 //   주석은 토큰이 아니라 주석을 사이에 둔 연쇄(robot . /* c */ lift)도 이어지고, 주석 안 글자는 사용처가 아니다.
 // - 패스 A(개요): 패키지·import, 형식 선언(클래스·인터페이스·enum·애너테이션)과 그 멤버(필드·메서드·멤버 형식)를
 //   재귀로 읽는다(괄호 짝을 미리 구해 두어 몸통을 O(1)에 건너뛴다). 메서드 몸통·초기화 블록·필드 초기값·enum 상수
-//   인자는 패스 B 범위로 남긴다.
+//   인자·애너테이션 인자는 패스 B 범위로 남긴다.
 // - 패스 B(몸통): 범위마다 토큰을 한 번 훑으며 지역 변수 범위(프레임)를 쌓고, 연쇄(chains)·형식 사용(typeUses)·
 //   문자열(strings)을 모은다. 익명·지역 클래스는 만나는 자리에서 패스 A로 개요를 만들고 그 멤버 몸통을 범위로 더한다.
 //   재귀는 클래스 중첩만큼만 하고(MAX_CLASS_DEPTH), 블록·괄호 중첩은 스택으로 다룬다.
@@ -41,10 +41,17 @@ export type { TypeRef } from './usageCursor'
 //   null은 "알 수 없는 형식"이다: 경계 없는 형식 매개변수와, 블록 안에 선언된 지역 클래스 이름(바깥의 같은 이름을
 //   가린다)이 여기에 들어간다.
 // - parent: 바깥 단계(-1이면 없음). 0번은 늘 파일 단계({cls: -1, params: 빈 표, parent: -1})다.
+// - more: 경계가 둘 이상인 형식 매개변수 → 둘째부터의 경계(<R extends RobotHardware & Runnable>의 R → Runnable).
+//   첫 경계에 없는 멤버(r.run())는 그 경계의 것일 수 있다. 없으면 그런 매개변수가 없다.
 // 풀 때는 안쪽부터 parent를 따라가며 params와 cls의 멤버 형식(선언·상속)을 차례로 보고, 그다음 파일·import·패키지
 // 순서로 본다(JLS 6.4.1, 7.5). 클래스의 몸통 단계 부모는 그 클래스의 머리 단계(형식 매개변수)라, 상위 형식(extends)은
 // 자기 멤버 형식이 보이지 않는 머리 단계(superRef.scope)에서 푼다.
-export type TypeScope = { cls: number; params: Map<string, TypeRef | null>; parent: number }
+export type TypeScope = {
+  cls: number
+  params: Map<string, TypeRef | null>
+  parent: number
+  more?: Map<string, TypeRef[]>
+}
 
 export type Access = 'public' | 'protected' | 'package' | 'private'
 
@@ -322,6 +329,7 @@ const OPERAND_KINDS = new Set([
 type Modifiers = { access: Access | null; isStatic: boolean; end: number }
 
 // 패스 B가 훑을 범위 [start, end). body면 '{'에서 시작하는 블록(문장 자리), 아니면 식(필드 초기값, enum 상수 인자).
+// annotation이면 애너테이션 인자 '(…)'의 안이다(요소 이름과 문자열은 사실로 두지 않는다).
 type Range = {
   start: number
   end: number
@@ -329,6 +337,7 @@ type Range = {
   scope: number
   params: Map<string, TypeRef | null> | null
   body: boolean
+  annotation?: true
 }
 
 // 지역 변수 프레임. strs는 초기값이 문자열 리터럴 하나인 변수 → 그 리터럴 토큰(찾기 인자로 쓰이면 lookup).
@@ -356,7 +365,7 @@ type BracketRole =
 type Bracket = { open: number; role: BracketRole; call?: CallState }
 
 // 머리 토큰에서 읽은 연쇄(인자 분석용). end는 연쇄 다음 토큰, plain은 호출·첨자 없는 이름만의 연쇄,
-// hwHead는 머리가 HardwareMap 식, hwLast는 마지막 세그먼트가 hardwareMap 필드.
+// hwHead는 머리가 HardwareMap 식, hwLast는 마지막 세그먼트가 HardwareMap 식(hardwareMap 필드, this.hwMap).
 type HeadInfo = {
   head: Head
   headTok: number
@@ -528,6 +537,40 @@ class Extractor {
     else this.forcedLookup.add(tok)
   }
 
+  // '@'에서 애너테이션 하나(@interface가 아닌 것) 다음. 인자 '(…)'가 있으면 그 안을 패스 B 범위로 남긴다. 요소 값의
+  // 연쇄·클래스 리터럴(@TeleOp(group = RobotHardware.CONFIGURATION_NAME), @Uses(RobotHardware.class))은 javac가 묶는
+  // 사용처이고, 요소 이름과 문자열은 사용처가 아니다(spec §1.3). cls·scope는 애너테이션이 붙은 자리다(클래스 선언에
+  // 붙은 것은 그 바깥, 멤버에 붙은 것은 그 클래스 몸통).
+  annotation(j: number, cls: number, scope: number): number {
+    const c = this.c
+    const end = c.skipAnnotation(j)
+    let k = j + 1
+    while (c.ident(k) && c.op(k + 1, '.') && c.ident(k + 2)) k += 2
+    const open = k + 1
+    if (end > open && c.op(open, '(')) {
+      const close = c.pair[open]
+      if (close > open + 1 && close < c.n && c.pair[close] === open) {
+        this.ranges.push({
+          start: open + 1,
+          end: close,
+          cls,
+          scope,
+          params: null,
+          body: false,
+          annotation: true
+        })
+      }
+    }
+    return end
+  }
+
+  // 이어진 애너테이션들 다음(annotation을 차례로)
+  annotations(j: number, cls: number, scope: number): number {
+    let k = j
+    while (this.c.op(k, '@') && !this.c.kw(k + 1, 'interface')) k = this.annotation(k, cls, scope)
+    return k
+  }
+
   // 감싸는 클래스(같은 파일)에서 이름의 필드를 찾는다. 지역·익명 클래스가 잡은 같은 이름의 지역 변수를 먼저 만나면
   // 그 지역 변수다(captured). 못 찾으면 undefined.
   enclosingField(
@@ -547,12 +590,15 @@ class Extractor {
 
   private parseFile(): void {
     const c = this.c
+    // package 앞의 애너테이션(package-info.java)은 건너뛴다. package가 없으면 첫 형식 선언의 것이다.
     let i = c.skipAnnotations(0)
     if (c.kw(i, 'package')) {
       const q = this.qualified(i + 1)
       this.facts.pkg = this.intern(q.names.join('.'))
       i = q.end
       if (c.op(i, ';')) i++
+    } else {
+      i = 0
     }
     for (;;) {
       if (c.op(i, ';')) {
@@ -567,7 +613,7 @@ class Extractor {
         i++
         continue
       }
-      const mods = this.parseModifiers(i)
+      const mods = this.parseModifiers(i, -1, 0)
       if (this.isTypeDeclStart(mods.end)) {
         i = this.parseClassDecl(mods.end, -1, 0, false, null).end
         continue
@@ -626,14 +672,15 @@ class Extractor {
     return c.op(end, ';') ? end + 1 : end
   }
 
-  parseModifiers(i: number): Modifiers {
+  // 수식어와 애너테이션. 애너테이션 인자는 cls·scope 자리의 범위로 남긴다(annotation).
+  parseModifiers(i: number, cls: number, scope: number): Modifiers {
     const c = this.c
     let access: Access | null = null
     let isStatic = false
     let j = i
     for (;;) {
       if (c.op(j, '@') && !c.kw(j + 1, 'interface')) {
-        j = c.skipAnnotation(j)
+        j = this.annotation(j, cls, scope)
         continue
       }
       if (c.tokens[j]?.kind === 'keyword' && MODIFIERS.has(c.texts[j])) {
@@ -755,10 +802,12 @@ class Extractor {
     return cls
   }
 
-  // '<'에서 형식 매개변수 목록. 이름 → 첫 경계를 scope의 params에 넣고, 경계는 extends 사용이다.
+  // '<'에서 형식 매개변수 목록. 이름 → 첫 경계를 scope의 params에 넣고(둘째부터의 경계는 more에), 경계는 extends
+  // 사용이다.
   private parseTypeParams(j: number, scope: number): number {
     const c = this.c
-    const params = this.facts.typeScopes[scope].params
+    const level = this.facts.typeScopes[scope]
+    const params = level.params
     let k = j + 1
     for (;;) {
       k = c.skipAnnotations(k)
@@ -766,15 +815,18 @@ class Extractor {
       const name = this.intern(c.texts[k])
       k++
       let bound: TypeRef | null = null
+      const more: TypeRef[] = []
       if (c.kw(k, 'extends')) {
         let t = this.parseType(k + 1, scope)
         if (t) bound = t.ref
         while (t) {
           this.emitTypeUse(t.ref, 'extends', bound === t.ref ? 'extends ' : '& ')
+          if (t.ref !== bound) more.push(t.ref)
           k = t.end
           t = c.op(k, '&') ? this.parseType(k + 1, scope) : null
         }
       }
+      if (more.length && !params.has(name)) (level.more ??= new Map()).set(name, more)
       if (!params.has(name)) params.set(name, bound)
       if (c.op(k, ',')) {
         k++
@@ -820,7 +872,7 @@ class Extractor {
         j++
         continue
       }
-      const mods = this.parseModifiers(j)
+      const mods = this.parseModifiers(j, cls, scope)
       let k = mods.end
       if (k >= end) break
       const access: Access = mods.access ?? (iface ? 'public' : 'package')
@@ -841,7 +893,7 @@ class Extractor {
       }
       // 생성자
       if (c.ident(k) && c.op(k + 1, '(') && c.texts[k] === facts.name) {
-        const params = this.parseParams(k + 1, memberScope)
+        const params = this.parseParams(k + 1, cls, memberScope)
         j = this.methodRest(c.after(k + 1), cls, memberScope, params, end)
         continue
       }
@@ -864,7 +916,7 @@ class Extractor {
       }
       const name = this.intern(c.texts[nameTok])
       if (c.op(nameTok + 1, '(')) {
-        const params = this.parseParams(nameTok + 1, memberScope)
+        const params = this.parseParams(nameTok + 1, cls, memberScope)
         let m = c.after(nameTok + 1)
         let dims = 0
         while (c.op(m, '[') && c.op(m + 1, ']')) {
@@ -890,7 +942,24 @@ class Extractor {
       }
       j = this.parseFields(ret, nameTok, cls, scope, access, iface || mods.isStatic, end)
     }
+    if (facts.kind === 'enum' && facts.name !== null) this.addEnumMethods(facts, scope)
     this.depth--
+  }
+
+  // enum의 암묵 static 메서드 values()·valueOf(String)(JLS 8.9.3). 선언한 같은 이름의 오버로드(valueOf(int) 등) 뒤에
+  // 둔다(두 메서드 자체는 다시 선언할 수 없다). 반환 형식은 몸통 단계에서 푸는 그 enum이다.
+  private addEnumMethods(facts: ClassFacts, scope: number): void {
+    const self: TypeRef = { names: [facts.name ?? ''], args: [], dims: 0, scope }
+    const implicit: [string, TypeRef][] = [
+      ['values', { ...self, dims: 1 }],
+      ['valueOf', self]
+    ]
+    for (const [name, ret] of implicit) {
+      const method: MethodFacts = { ret, access: 'public', isStatic: true }
+      const list = facts.methods.get(name)
+      if (list) list.push(method)
+      else facts.methods.set(this.intern(name), [method])
+    }
   }
 
   private parseEnumConstants(j: number, end: number, cls: number, scope: number): number {
@@ -904,7 +973,7 @@ class Extractor {
         k++
         continue
       }
-      k = c.skipAnnotations(k)
+      k = this.annotations(k, cls, scope)
       if (!c.ident(k)) return k
       const name = this.intern(c.texts[k])
       if (!facts.fields.has(name))
@@ -924,14 +993,14 @@ class Extractor {
   }
 
   // open: 매개변수 '('. 이름 → 형식(기본형은 null, 가변 인자는 차원 +1)
-  parseParams(open: number, scope: number): Map<string, TypeRef | null> {
+  parseParams(open: number, cls: number, scope: number): Map<string, TypeRef | null> {
     const c = this.c
     const vars = new Map<string, TypeRef | null>()
     const close = c.end(open)
     let j = open + 1
     while (j < close) {
       while (c.kw(j, 'final') || (c.op(j, '@') && !c.kw(j + 1, 'interface')))
-        j = c.kw(j, 'final') ? j + 1 : c.skipAnnotation(j)
+        j = c.kw(j, 'final') ? j + 1 : this.annotation(j, cls, scope)
       const t = this.parseType(j, scope)
       if (!t) break
       let k = t.end
@@ -1273,15 +1342,25 @@ class Walker {
   }
 
   // 지역 클래스 또는 지역 변수 선언([final | @Ann]* Type Ident (= ; , [ 또는 for 머리의 :)). 아니면 -1.
+  // 애너테이션 인자는 선언일 때만 범위로 남긴다(아니면 식 자리의 '@'가 남긴다).
   private declaration(i: number): number {
     const c = this.c
     let j = i
+    const annotations: number[] = []
     for (;;) {
-      if (c.op(j, '@') && !c.kw(j + 1, 'interface')) j = c.skipAnnotation(j)
-      else if (c.tokens[j]?.kind === 'keyword' && LOCAL_CLASS_MODIFIERS.has(c.texts[j])) j++
+      if (c.op(j, '@') && !c.kw(j + 1, 'interface')) {
+        annotations.push(j)
+        j = c.skipAnnotation(j)
+      } else if (c.tokens[j]?.kind === 'keyword' && LOCAL_CLASS_MODIFIERS.has(c.texts[j])) j++
       else break
     }
-    if (this.x.isTypeDeclStart(j)) return this.localClass(j)
+    const keep = (): void => {
+      for (const at of annotations) this.x.annotation(at, this.cls, this.scope)
+    }
+    if (this.x.isTypeDeclStart(j)) {
+      keep()
+      return this.localClass(j)
+    }
     const t = this.x.parseType(j, this.scope)
     if (!t || !c.ident(t.end)) return -1
     const nameTok = t.end
@@ -1297,6 +1376,7 @@ class Walker {
     )) {
       return -1
     }
+    keep()
     this.x.emitTypeUse(t.ref, 'decl', '', ` ${c.texts[nameTok]}`)
     const type = isPrimitiveRef(t.ref) ? null : t.ref
     this.decl = { type, depth: this.brackets.length }
@@ -1353,7 +1433,7 @@ class Walker {
     const block = close + 1
     let j = open + 1
     while (c.kw(j, 'final') || (c.op(j, '@') && !c.kw(j + 1, 'interface')))
-      j = c.kw(j, 'final') ? j + 1 : c.skipAnnotation(j)
+      j = c.kw(j, 'final') ? j + 1 : this.x.annotation(j, this.cls, this.scope)
     const types: TypeRef[] = []
     let t = this.x.parseType(j, this.scope)
     while (t) {
@@ -1383,7 +1463,8 @@ class Walker {
     const token = c.tokens[i]
     switch (token.kind) {
       case 'string':
-        this.stringLiteral(i)
+        // 애너테이션 안의 문자열은 사용처가 아니다(@TeleOp(name = "arm"), spec §1.3)
+        if (!this.range.annotation) this.stringLiteral(i)
         return i + 1
       case 'identifier':
         return this.identifier(i)
@@ -1434,7 +1515,7 @@ class Walker {
             if (this.brackets[this.brackets.length - 1]?.role === 'forHeader') this.decl = null
             return i + 1
           case '@':
-            return c.kw(i + 1, 'interface') ? i + 1 : c.skipAnnotation(i)
+            return c.kw(i + 1, 'interface') ? i + 1 : this.x.annotation(i, this.cls, this.scope)
           case '.':
             // 명시한 메서드 형식 인자 a.<T>m(…): 형식 인자와 메서드 이름을 건너뛴다(연쇄 미리 보기가 이미 읽었다)
             if (c.op(i + 1, '<')) {
@@ -1457,6 +1538,8 @@ class Walker {
     const c = this.c
     // 세그먼트(머리의 미리 보기가 읽었다)와 메서드 참조 이름은 머리가 아니다
     if (c.op(i - 1, '.') || c.op(i - 1, '::')) return i + 1
+    // 애너테이션 요소 이름(group = …)은 변수가 아니다
+    if (this.range.annotation && c.op(i + 1, '=')) return i + 1
     // 형식 없는 람다 매개변수 하나(x -> …)
     if (c.op(i + 1, '->')) {
       const body = i + 2
@@ -1493,6 +1576,11 @@ class Walker {
       )
     }
     return i + 1
+  }
+
+  // this.f·Outer.this.f의 f: 그 클래스(this의 클래스, 같은 파일)에 HardwareMap 형식으로 선언한 필드인가
+  private thisFieldIsHardwareMap(cls: number, name: string): boolean {
+    return isHardwareMapType(this.x.classes[cls]?.fields.get(name)?.type)
   }
 
   private fieldIsHardwareMap(name: string): boolean {
@@ -1595,7 +1683,10 @@ class Walker {
         } else {
           plainNames.push(name)
           plainTokens.push(nameTok)
-          hwLast = name === 'hardwareMap'
+          // this.hwMap(그 클래스에 HardwareMap 형식으로 선언한 필드)도 hardwareMap처럼 HardwareMap 식이다
+          hwLast =
+            name === 'hardwareMap' ||
+            (head.k === 'this' && segs.length === 0 && this.thisFieldIsHardwareMap(head.cls, name))
           if (hwLast) hw = true
           receiverText += `.${name}`
         }
@@ -1822,7 +1913,7 @@ class Walker {
     let j = open + 1
     while (j < close) {
       while (c.kw(j, 'final') || (c.op(j, '@') && !c.kw(j + 1, 'interface')))
-        j = c.kw(j, 'final') ? j + 1 : c.skipAnnotation(j)
+        j = c.kw(j, 'final') ? j + 1 : this.x.annotation(j, this.cls, this.scope)
       const t = this.x.parseType(j, this.scope)
       let nameTok: number
       let type: TypeRef | null = null

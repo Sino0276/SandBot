@@ -173,9 +173,9 @@ describe.skipIf(!PERF)('사용처 성능(SANDBOT_PERF=1)', () => {
           timing.extract += performance.now() - start
           return facts
         },
-        resolveUsages: (facts, symbols) => {
+        resolveUsages: (facts, symbols, unscanned) => {
           const start = performance.now()
-          const result = resolveUsages(facts, symbols)
+          const result = resolveUsages(facts, symbols, unscanned)
           timing.match += performance.now() - start
           timing.matches++
           return result

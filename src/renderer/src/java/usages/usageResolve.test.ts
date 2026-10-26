@@ -462,6 +462,126 @@ class A {
     expect(hits(result, GRIP)).toEqual(['A.java:13 field grip'])
   })
 
+  it('생성 클래스의 하위 팀 클래스로 쓴 없는 이름(필드·상수·멤버 형식·static import)은 그 생성 클래스의 키다', () => {
+    const result = resolve({
+      'p/CompBot.java': `package p; ${IMPORT}
+public class CompBot extends RobotHardware {
+  private int hidden;
+  CompBot() { super(null); }
+  void g() { this.rightFront.setPower(1); rightBack.setPower(1); }
+}`,
+      'p/Practice.java': 'package p; public class Practice extends CompBot { }',
+      'p/Runner.java': `package p; ${IMPORT}
+public class Runner extends RobotHardware implements Runnable { Runner() { super(null); } public void run() { } }`,
+      'q/Uses.java': `package q;
+import static p.CompBot.PAR_X_MM;
+import static p.CompBot.PAR_Y_MM;
+import p.CompBot;
+import p.Practice;
+import p.Runner;
+class Uses {
+  void f(CompBot bot, Practice practice, Runner runner) {
+    bot.leftFront.setPower(PAR_X_MM + CompBot.PAR_X_MM);
+    CompBot.Lift l = bot.lift;
+    bot.rightFront.setPower(PAR_Y_MM);
+    double y = CompBot.PAR_Y_MM;
+    CompBot.Intake in = bot.intake;
+    practice.rightFront.setPower(0);
+    practice.hidden = 1;
+    bot.drive();
+    runner.rightFront.setPower(0);
+  }
+}`
+    })
+    // javac의 cannot find symbol과 같다. 팀 클래스가 선언한 이름(private hidden), 팀 클래스의 메서드, 알 수 없는 상위
+    // 형식(Runnable)이 있는 계층, 받는 쪽 없는 이름(rightBack, spec §12)은 알리지 않는다.
+    expect(unresolved(result)).toEqual([
+      'p/CompBot.java:5 r:bot rightFront',
+      'q/Uses.java:11 r:bot PAR_Y_MM',
+      'q/Uses.java:11 r:bot rightFront',
+      'q/Uses.java:12 r:bot PAR_Y_MM',
+      'q/Uses.java:13 r:bot Intake',
+      'q/Uses.java:13 r:bot intake',
+      'q/Uses.java:14 r:bot rightFront',
+      'q/Uses.java:3 r:bot PAR_Y_MM'
+    ])
+    expect(hits(result, LF)).toEqual(['q/Uses.java:9 field leftFront'])
+    expect(hits(result, PAR)).toEqual([
+      'q/Uses.java:9 constant PAR_X_MM',
+      'q/Uses.java:9 constant PAR_X_MM'
+    ])
+    expect(hits(result, LIFT)).toEqual(['q/Uses.java:10 type Lift', 'q/Uses.java:10 field lift'])
+  })
+
+  it('경계가 둘 이상인 형식 매개변수: 다른 경계의 메서드는 없는 이름이 아니고, 필드는 푼 경계에서 찾는다', () => {
+    const result = resolve({
+      'g/HasArm.java': `package g; ${IMPORT} public interface HasArm { RobotHardware ARM = null; RobotHardware arm(); }`,
+      'g/Stopper.java': `package g; ${IMPORT}
+final class Stopper {
+  static <R extends RobotHardware & Runnable> void stop(R r) { r.run(); r.leftFront.setPower(0); r.rightFront.setPower(0); }
+  static <R extends RobotHardware & HasArm, S extends R> void arm(S s) { s.arm().leftFront.setPower(0); s.ARM.lift.liftLeft.setPower(0); }
+  static <R extends RobotHardware & Runnable> void many(R[] rs) { rs[0].run(); }
+}`
+    })
+    expect(unresolved(result)).toEqual(['g/Stopper.java:3 r:bot rightFront'])
+    expect(hits(result, LF)).toEqual([
+      'g/Stopper.java:3 field leftFront',
+      'g/Stopper.java:4 field leftFront'
+    ])
+    expect(hits(result, LIFT_LEFT)).toEqual(['g/Stopper.java:4 field liftLeft'])
+  })
+
+  it('공변 반환으로 재정의한 메서드는 가장 아래 형식을 돌려준다(관계없는 형식이 섞이면 알 수 없다)', () => {
+    const result = resolve({
+      'c/CompBot.java': `package c; ${IMPORT} public class CompBot extends RobotHardware { CompBot() { super(null); } }`,
+      'c/Provider.java': `package c; ${IMPORT} public interface Provider { RobotHardware robot(); }`,
+      'c/CompProvider.java': `package c;
+public class CompProvider implements Provider {
+  public CompBot robot() { return null; }
+  CompBot pick() { return null; }
+}`,
+      'c/Sub.java': `package c; class Sub extends CompProvider { Other pick(int k) { return null; } }
+class Other { }`,
+      'c/Use.java': `package c;
+class Use { void f(CompProvider c, Provider p, Sub s) {
+  c.robot().leftFront.setPower(0);
+  p.robot().lift.liftLeft.setPower(0);
+  s.robot().par.setPower(0);
+  s.pick().leftFront.setPower(0);
+  c.robot().gone.setPower(0);
+} }`
+    })
+    expect(hits(result, LF)).toEqual(['c/Use.java:3 field leftFront'])
+    expect(hits(result, LIFT_LEFT)).toEqual(['c/Use.java:4 field liftLeft'])
+    expect(hits(result, PAR, ['field'])).toEqual(['c/Use.java:5 field par'])
+    expect(unresolved(result)).toEqual(['c/Use.java:7 r:bot gone'])
+  })
+
+  it('enum의 values()·valueOf()는 그 enum을 돌려준다', () => {
+    const result = resolve({
+      'e/Slots.java': `package e; ${IMPORT}
+public enum Slots {
+  MAIN;
+  public RobotHardware robot;
+  public static Slots valueOf(int k) { return MAIN; }
+  static void f() {
+    Slots.values()[0].robot.lift.liftLeft.setPower(0);
+    for (Slots s : values()) s.robot.leftFront.setPower(0);
+    values()[0].robot.leftFront.setPower(1);
+  }
+}`,
+      'e/Use.java': `package e;
+class Use { void f() { Slots.valueOf("MAIN").robot.par.setPower(0); Slots.MAIN.robot.leftFront.setPower(0); } }`
+    })
+    expect(hits(result, LIFT_LEFT)).toEqual(['e/Slots.java:7 field liftLeft'])
+    expect(hits(result, LF)).toEqual([
+      'e/Slots.java:8 field leftFront',
+      'e/Slots.java:9 field leftFront',
+      'e/Use.java:2 field leftFront'
+    ])
+    expect(hits(result, PAR, ['field'])).toEqual(['e/Use.java:2 field par'])
+  })
+
   it('…sandbot.*로 들여온 이름은 없는 형식으로 알리지 않는다(SDK의 on-demand 이름과 가를 수 없다)', () => {
     const result = resolve({
       'A.java': `package a; import ${GEN}.*; class A { OldBot old; void f() { OldBot.X.y(); } }`
@@ -657,6 +777,80 @@ describe('결과', () => {
       tooLarge: ['a/Big.java', 'b/Capped.java'],
       unicodeEscape: [],
       failed: []
+    })
+  })
+
+  it('사실이 없는 파일은 경로의 이름으로 자리 클래스를 둔다(on-demand로 보이는 생성 이름이 대신 풀리지 않는다)', () => {
+    const S = 'src/main/java/'
+    const escape = String.fromCharCode(92) + 'u00b0'
+    const sources: Record<string, string> = {
+      [`${S}sub/Command.java`]: `package sub;
+import ${GEN}.RobotHardware.*;
+import ${GEN}.RobotHardware.Lift.*;
+class Command { Lift lift; Claw claw; Holder holder; void f() {
+  lift.setPower(1); lift.liftLeft.setPower(0); claw.grip.setPosition(0); holder.lift.liftLeft.setPower(0);
+} }`,
+      // 이스케이프로 건너뛴 같은 패키지의 Lift
+      [`${S}sub/Lift.java`]: `package sub; // 30${escape}\npublic class Lift { public void setPower(double p) { } }`,
+      // 다른 경로의 파일이 sub.Holder를 선언했다(읽은 파일이 이긴다)
+      [`${S}other/Holders.java`]: `package sub; ${IMPORT} class Holder { RobotHardware.Lift lift; }`
+    }
+    // 워커가 읽지 않은 같은 패키지의 Claw(너무 큼·읽지 못함)와 Holder
+    const result = resolveUsages(factsOf(sources), SYMBOLS, [
+      `${S}sub/Claw.java`,
+      `${S}sub/Holder.java`
+    ])
+    // javac는 Lift·Claw를 같은 패키지의 팀 클래스로 묶는다. 그 멤버는 모르므로 사용처도 없는 이름도 없다.
+    expect(codeHits(result)).toEqual([
+      `${S}other/Holders.java:1 type g:lift`,
+      `${S}sub/Command.java:5 field ${LIFT_LEFT}`
+    ])
+    expect(hits(result, LIFT_LEFT)).toEqual([`${S}sub/Command.java:5 field liftLeft`])
+    expect(result.unresolved).toEqual(new Map())
+    // 워커가 읽지 않은 파일은 워커가 센다
+    expect(result.files).toEqual({
+      scanned: 2,
+      tooLarge: [],
+      unicodeEscape: [`${S}sub/Lift.java`],
+      failed: []
+    })
+
+    // 목록에 없으면(그런 팀 클래스가 없으면) on-demand의 생성 이름이다
+    const absent = resolveUsages(
+      factsOf({ [`${S}sub/Command.java`]: sources[`${S}sub/Command.java`] }),
+      SYMBOLS
+    )
+    expect(hits(absent, LIFT, ['type'])).toEqual([`${S}sub/Command.java:4 type Lift`])
+    expect(hits(absent, CLAW, ['type'])).toEqual([`${S}sub/Command.java:4 type Claw`])
+  })
+
+  it('워커가 읽지 않은 파일의 경로를 맞추기에 넘겨 자리 클래스를 둔다', () => {
+    const S = 'src/main/java/'
+    const state = createUsageWorkerState()
+    handleMessage(state, {
+      type: 'files',
+      batch: 1,
+      upserts: [
+        { path: `${S}sub/Lift.java`, stamp: '1:1', text: null, problem: 'tooLarge' },
+        { path: `${S}sub/Claw.java`, stamp: '1:1', text: null, problem: 'failed' },
+        {
+          path: `${S}sub/Command.java`,
+          stamp: '1:1',
+          text: `package sub; import ${GEN}.RobotHardware.*; import ${GEN}.RobotHardware.Lift.*;
+class Command { Lift lift; Claw claw; void f() { lift.spin(1); lift.liftLeft.setPower(0); claw.grip.setPosition(0); } }`
+        }
+      ],
+      removes: []
+    })
+    const reply = handleMessage(state, { type: 'match', seq: 1, symbols: SYMBOLS })
+    if (reply.type !== 'result') throw new Error(reply.type)
+    expect(codeHits(reply.result)).toEqual([])
+    expect(reply.result.unresolved).toEqual(new Map())
+    expect(reply.result.files).toEqual({
+      scanned: 1,
+      tooLarge: [`${S}sub/Lift.java`],
+      unicodeEscape: [],
+      failed: [`${S}sub/Claw.java`]
     })
   })
 
