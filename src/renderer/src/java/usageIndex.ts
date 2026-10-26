@@ -95,6 +95,12 @@ function errorText(error: unknown): string {
 let worker: UsageWorkerLike | null = null
 // 워커가 가진 파일의 stamp(경로 → 'size:mtimeMs'). 워커를 끝내면 비운다(새 워커는 처음부터 다 읽는다).
 const known = new Map<string, string>()
+
+// 읽기 오류(failed)로 둔 파일이 있는가(그 stamp는 'failed:'로 시작해 목록과 같아지지 않는다)
+function hasFailedReads(): boolean {
+  for (const stamp of known.values()) if (stamp.startsWith('failed:')) return true
+  return false
+}
 // 마지막 읽기가 목록의 파일을 끝까지 워커에 넘겼다. 아니면 이름을 바꿔도 맞추지 않는다(일부 사실로 맞추지 않게).
 let complete = false
 // 파일을 읽어 넘기는 중(그동안 온 맞추기 결과는 scanning으로 둔다)
@@ -234,6 +240,9 @@ function rematchIfChanged(): void {
 
 // 저장 뒤 확인의 순번. 새로 생성 코드를 맞춘 저장과 다른 프로젝트 열기가 올려, 기다리던 이전 확인을 멈춘다.
 let saveToken = 0
+// 생성 코드를 맞춘 저장들이 디스크 구성에서 없앤 찾기 이름(이 프로젝트를 연 뒤로). 다음 저장이 그 이름을 다시 넣으면
+// 뺀다. 바꾼 것 없이 다시 저장해도 아직 깨진 이름 알림을 지우지 않게 한다(이번 저장만 비교하면 없앤 이름이 없다).
+let removedLookupNames = new Set<string>()
 
 // 스토어를 이 프로젝트(root·session) 것으로 맞춘다. 바뀌었으면 워커를 끝내고 결과를 비운다(기준 씬도 비운다.
 // projectActions가 경로를 고친 뒤 다시 넣는다).
@@ -243,6 +252,7 @@ function syncScope(root: string | null, session: number): void {
   stopWorker()
   blockedRevision = null
   saveToken++
+  removedLookupNames = new Set()
   useUsageIndexStore.setState({
     ...INITIAL_USAGE_INDEX,
     root,
@@ -497,8 +507,11 @@ export function initUsageIndex(): void {
       state.revision === previous.revision &&
       state.status === previous.status &&
       state.root === previous.root
-    )
+    ) {
+      // 목록은 그대로지만 다시 읽었다(창 포커스 등). 읽기 오류가 난 파일(잠금이 풀림 등)만 다시 읽어 본다.
+      if (state.listedAt !== previous.listedAt && hasFailedReads()) void refreshUsages()
       return
+    }
     void refreshUsages()
   })
 
@@ -590,7 +603,8 @@ async function matchFor(symbols: UsageSymbols): Promise<UsageResult | null> {
 
 // 저장해 생성 코드를 맞춘 뒤(generation synced): 저장 뒤 파일을 저장한 씬으로 맞춘 결과에서 깨지는 곳이 있으면
 // 경고 알림 하나.
-// - previous는 그 전에 생성 코드를 맞춘(또는 연) 씬(없으면 null)이다. 이번 저장이 없앤 구성 이름을 그것과 비교해 찾는다.
+// - previous는 그 전에 생성 코드를 맞춘(또는 연) 씬(없으면 null)이다. 이번 저장이 없앤 구성 이름을 그것과 비교해 찾고,
+//   이 프로젝트를 연 뒤 앞선 저장이 없앤 이름(removedLookupNames, 다시 넣은 것은 뺌)도 함께 센다.
 // - listed는 저장 뒤 TeamCode Java 목록을 다시 읽는 약속(projectActions의 refreshJavaIndex)이다. 그 목록으로 바뀐
 //   파일(저장이 쓴 튜닝 값, 저장 직전 다른 편집기에서 고친 파일)을 워커에 넘긴 뒤 맞춘다. 저장 전 사실로 판정하지 않는다.
 // - 스토어의 지금 상태(failed 등)는 보지 않는다. 그 뒤 읽기가 끝까지 가지 못했을 때만(TeamCode 없음, 읽기 실패, 워커
@@ -615,9 +629,13 @@ export async function checkUsagesAfterSave(
   let symbols: UsageSymbols
   try {
     const savedNames = lookupNamesOf(saved)
+    // 이전 저장들이 없앤 이름 + 이번 저장이 없앤 이름, 이번에 다시 넣은 이름은 뺀다
     removedNames = new Set(
-      previous ? [...lookupNamesOf(previous).keys()].filter((name) => !savedNames.has(name)) : []
+      [...removedLookupNames, ...(previous ? lookupNamesOf(previous).keys() : [])].filter(
+        (name) => !savedNames.has(name)
+      )
     )
+    removedLookupNames = removedNames
     symbols = usageSymbols(saved)
   } catch (error) {
     console.error('사용처: 저장한 씬의 기호표를 만들지 못했다', error)
@@ -645,6 +663,7 @@ export function resetUsageIndexState(): void {
   symbolsTimer = null
   stopWorker()
   saveToken++
+  removedLookupNames = new Set()
   blockedRevision = null
   reading = false
   inFlight = null

@@ -11,6 +11,7 @@ import UsageTree from './UsageTree'
 import {
   hasUsageSection,
   searchedTerms,
+  unlistedCount,
   usageView,
   type UsageCardKind,
   type UsageSectionView,
@@ -119,8 +120,9 @@ function Section({
   const setPartOpen = useUsageOpenStore((state) => state.setPartOpen)
   const titleId = useId()
   const bodyId = useId()
-  // 결과의 한도(키마다 200개 등)로 받지 못한 행. 파일 묶음에 넣을 수 없어 부분 끝에 개수만 보인다.
-  const beyond = section.total - section.hits.length
+  // 결과의 한도(키마다 200개 등)로 받지 못한 행. 파일 묶음에 넣을 수 없어 부분 끝에 개수만 보인다. 파일별 개수를
+  // 알면 행이 있는 파일의 나머지는 그 묶음의 '외 N곳'이 세므로, 행이 하나도 없는 파일의 것만 남는다.
+  const beyond = unlistedCount(section)
   const body = (
     <>
       <UsageTree
@@ -128,6 +130,7 @@ function Section({
         describedBy={titleId}
         hits={section.hits}
         cut={section.cut}
+        fileCounts={section.fileCounts}
         defaultKind={section.defaultKind}
       />
       {beyond > 0 && <p className="usage-more">{t('usages.more', { count: beyond })}</p>}

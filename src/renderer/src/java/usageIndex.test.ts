@@ -90,6 +90,7 @@ function fakeResolveUsages(
   const result: UsageResult = {
     hits: new Map(),
     totals: new Map(),
+    fileTotals: new Map(),
     unresolved: new Map(),
     unknownNames: new Map(),
     files: { scanned: files.size, tooLarge: [], unicodeEscape: [], failed: [] }
@@ -553,6 +554,35 @@ describe('사용처 조율', () => {
     expect(hitsOf(LIFT)).toHaveLength(2)
   })
 
+  it('창 포커스로 다시 읽은 목록이 그대로여도(listedAt만 오름) 읽기 오류 파일만 다시 읽는다', async () => {
+    write('A.java', 'field liftLeft')
+    write('Bad.java', 'field liftLeft')
+    readJavaSources.mockImplementationOnce(async (_root, paths) => {
+      const result = answer(paths)
+      if (!result.ok) return result
+      return {
+        ok: true,
+        files: result.files.map((file) =>
+          file.path.endsWith('Bad.java') ? { path: file.path, status: 'failed' } : file
+        )
+      }
+    })
+    await openProject()
+    expect(usage().result?.files.failed).toEqual([P + 'Bad.java'])
+    readJavaSources.mockClear()
+    const bump = (): void =>
+      useJavaIndexStore.setState({ listedAt: useJavaIndexStore.getState().listedAt + 1 })
+    bump()
+    await settle()
+    expect(readPaths()).toEqual([[P + 'Bad.java']])
+    expect(usage().result?.files.failed).toEqual([])
+    // 읽기 오류가 없으면 목록이 그대로인 포커스에는 읽지 않는다
+    readJavaSources.mockClear()
+    bump()
+    await settle()
+    expect(readJavaSources).not.toHaveBeenCalled()
+  })
+
   it('다른 프로젝트를 열면 워커를 끝내고, 늦게 끝난 이전 읽기는 버리고 새로 읽는다', async () => {
     write('A.java', 'field liftLeft')
     holdReads = true
@@ -942,6 +972,22 @@ describe('사용처 조율', () => {
       error.mockRestore()
     })
 
+    it('바꾼 것 없이 다시 저장해도 앞선 저장이 없앤 구성 이름의 알림은 남고, 이름을 되돌려 저장하면 사라진다', async () => {
+      write('A.java', 'lookup liftLeft')
+      await openProject()
+      const opened = useSceneStore.getState().objects
+      useProjectStore.setState({ generation: SYNCED })
+      const saved = scene(['liftL'])
+      await checkUsagesAfterSave(opened, saved, Promise.resolve())
+      expect(noticeKeys()).toEqual(['usagesBrokenByName'])
+      // 같은 씬으로 다시 저장(이번 저장만 보면 없앤 이름이 없다)
+      await checkUsagesAfterSave(saved, saved, Promise.resolve())
+      expect(noticeKeys()).toEqual(['usagesBrokenByName'])
+      // 이름을 되돌려 저장하면 디스크 구성에 다시 있다
+      await checkUsagesAfterSave(saved, opened, Promise.resolve())
+      expect(noticeKeys()).toEqual([])
+    })
+
     it('처음 읽는 중에 저장하고 또 이름을 바꿔도 저장한 씬의 기호로 맞춰 알린다', async () => {
       write('A.java', 'lookup liftLeft')
       write('B.java', 'nothing')
@@ -1005,6 +1051,7 @@ describe('사용처 조율', () => {
             { field: 0, constant: 0, type: 0, new: 0, lookup: 0, text: 0, unresolved: 250 }
           ]
         ]),
+        fileTotals: new Map(),
         unresolved: new Map([
           ['r:robot', [hit('a/D.java'), hit('a/B.java'), hit('a/A.java'), hit('a/C.java')]],
           ['*', [hit('a/A.java')]]

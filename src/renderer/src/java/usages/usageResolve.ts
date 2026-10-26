@@ -385,6 +385,20 @@ class Collector {
       }
       return entry
     }
+    const fileTotals = new Map<UsageKey, Map<string, UsageCounts>>()
+    // 자른 키의 파일별 개수(자르기 전)
+    const countFiles = (key: UsageKey, list: readonly RawHit[]): void => {
+      const byPath = new Map<string, UsageCounts>()
+      for (const raw of list) {
+        let entry = byPath.get(raw.path)
+        if (!entry) {
+          entry = emptyCounts()
+          byPath.set(raw.path, entry)
+        }
+        entry[raw.kind]++
+      }
+      fileTotals.set(key, byPath)
+    }
     const hits = new Map<UsageKey, UsageHit[]>()
     for (const key of [...this.hits.keys()].sort(comparePath)) {
       const list = dedupe(this.hits.get(key)!.sort(compareHits))
@@ -392,6 +406,7 @@ class Collector {
       for (const raw of list) entry[raw.kind]++
       let kept = list
       if (list.length > MAX_HITS_PER_KEY) {
+        countFiles(key, list)
         kept = [...list]
           .sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || compareHits(a, b))
           .slice(0, MAX_HITS_PER_KEY)
@@ -403,6 +418,7 @@ class Collector {
     for (const key of [...this.unresolved.keys()].sort(comparePath)) {
       const list = dedupe(this.unresolved.get(key)!.sort(compareHits))
       counts(key).unresolved += list.length
+      if (list.length > MAX_HITS_PER_KEY) countFiles(key, list)
       unresolved.set(key, list.slice(0, MAX_HITS_PER_KEY).map(materialize))
     }
     const unknownNames = new Map<string, UsageHit[]>()
@@ -411,7 +427,7 @@ class Collector {
       unknownNames.set(name, list.slice(0, MAX_HITS_PER_UNKNOWN_NAME).map(materialize))
     }
     const sortedTotals = new Map([...totals].sort(([a], [b]) => comparePath(a, b)))
-    return { hits, totals: sortedTotals, unresolved, unknownNames, files }
+    return { hits, totals: sortedTotals, fileTotals, unresolved, unknownNames, files }
   }
 }
 

@@ -18,6 +18,7 @@ import {
   FILE_GROUP_CAPS,
   fileGroups,
   groupsStartOpen,
+  unlistedCount,
   groupUsageView,
   hasUsageSection,
   robotUsageView,
@@ -144,6 +145,7 @@ function result(
     totals?: [UsageKey, Partial<UsageCounts>][]
     unresolved?: [UsageKey, UsageHit[]][]
     unknownNames?: [string, UsageHit[]][]
+    fileTotals?: [UsageKey, [string, Partial<UsageCounts>][]][]
   } = {}
 ): UsageResult {
   const totals = new Map<UsageKey, UsageCounts>()
@@ -159,6 +161,12 @@ function result(
   return {
     hits: new Map(parts.hits ?? []),
     totals,
+    fileTotals: new Map(
+      (parts.fileTotals ?? []).map(([key, byPath]) => [
+        key,
+        new Map(byPath.map(([path, counts]) => [path, { ...zero(), ...counts }]))
+      ])
+    ),
     unresolved: new Map(parts.unresolved ?? []),
     unknownNames: new Map(parts.unknownNames ?? []),
     files: { scanned: 2, tooLarge: [], unicodeEscape: [], failed: [] }
@@ -806,6 +814,35 @@ describe('파일 묶음', () => {
     )!
     expect(whole.cut).toEqual([])
     expect(fileGroups(whole.hits).every((g) => !g.atLeast)).toBe(true)
+  })
+
+  it('맞추기가 파일별 개수를 넘기면 잘린 파일도 정확한 수이고, 행이 없는 파일의 것만 부분 끝에 남는다', () => {
+    const many = (path: string, n: number): UsageHit[] =>
+      Array.from({ length: n }, (_, i) => hit(path, i + 1, 'field'))
+    const objects = scene(...baseScene())
+    // A 150곳, B 110곳(앞 50곳만 받음), C 30곳(하나도 받지 못함)
+    const res = result({
+      hits: [[LL, [...many(PATH_A, 150), ...many(PATH_B, 50)]]],
+      totals: [[LL, { field: 290 }]],
+      fileTotals: [
+        [
+          LL,
+          [
+            [PATH_A, { field: 150 }],
+            [PATH_B, { field: 110 }],
+            ['src/main/java/C.java', { field: 30 }]
+          ]
+        ]
+      ]
+    })
+    const code = section(deviceUsageView(objects, res, null, 'liftMotor', 'll'), 'code')!
+    expect(code.cut).toEqual([])
+    const groups = fileGroups(code.hits, FILE_GROUP_CAPS, code.cut, code.fileCounts)
+    expect(groups.map((g) => [g.path, g.count, g.atLeast, g.more])).toEqual([
+      [PATH_A, 150, false, 100],
+      [PATH_B, 110, false, 60]
+    ])
+    expect(unlistedCount(code)).toBe(30)
   })
 
   it('행이 20개 이하면 펼쳐서 시작한다', () => {

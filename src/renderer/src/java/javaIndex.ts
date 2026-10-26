@@ -42,6 +42,8 @@ type JavaIndexState = {
   truncated: boolean
   // 목록이 바뀔 때마다 오른다
   revision: number
+  // 목록을 읽을 때마다(바뀌지 않았어도) 오른다. 사용처가 읽기 오류 파일을 창 포커스 때 다시 읽는 데 쓴다.
+  listedAt: number
 }
 
 const INITIAL: JavaIndexState = {
@@ -49,7 +51,8 @@ const INITIAL: JavaIndexState = {
   root: null,
   files: [],
   truncated: false,
-  revision: 0
+  revision: 0,
+  listedAt: 0
 }
 
 export const useJavaIndexStore = create<JavaIndexState>()(() => INITIAL)
@@ -306,8 +309,10 @@ async function refreshOnce(): Promise<void> {
     current.status === 'ready' &&
     current.truncated === list.truncated &&
     sameFiles(current.files, files)
-  )
+  ) {
+    useJavaIndexStore.setState({ listedAt: current.listedAt + 1 })
     return
+  }
   useJavaIndexStore.setState({
     status: 'ready',
     files,

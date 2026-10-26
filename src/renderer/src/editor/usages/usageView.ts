@@ -66,8 +66,11 @@ export type UsageSectionView = {
   hits: UsageHit[]
   // 한도로 자르기 전의 개수(hits보다 많으면 끝에 '외 N곳')
   total: number
-  // 결과 한도로 뒤가 잘렸을 수 있는 파일(그 묶음의 개수는 전체 수가 아니라 'N+'로 보인다)
+  // 결과 한도로 뒤가 잘렸을 수 있는 파일(그 묶음의 개수는 전체 수가 아니라 'N+'로 보인다). 맞추기가 파일별 개수를
+  // 넘긴 키(fileTotals)는 fileCounts로 정확한 수를 보이므로 여기 넣지 않는다.
   cut: readonly string[]
+  // 결과 한도로 자른 파일의 자르기 전 개수(경로 → 이 부분 종류의 개수)
+  fileCounts?: ReadonlyMap<string, number>
   // 이전 이름 부분: 사용처가 쓰는 이전 이름(robot.lift.liftLeft, MyBot.Lift.PAR_X_MM 등, 쉼표로 이음)
   old?: string
 }
@@ -123,9 +126,40 @@ const total = (result: UsageResult, key: UsageKey, kinds: readonly UsageKind[]):
 
 // 결과 한도로 자른 키에서 개수가 모자랄 수 있는 파일. 맞추기는 같은 등급(코드·찾기·같은 글자) 안에서 자리 순서로
 // 앞의 것을 남기므로 마지막으로 남은 행의 파일만 뒤가 잘렸을 수 있다(그 뒤 파일은 행이 하나도 없다).
-// 파일마다 전체 수를 보이려면 맞추기가 자르기 전의 파일별 개수를 넘겨야 한다.
+// 맞추기가 파일별 개수(fileTotals)를 넘긴 키는 정확한 수를 알므로 쓰지 않는다(그 결과가 없을 때의 대비).
 function cutPaths(hits: readonly UsageHit[], count: number): string[] {
   return count > hits.length && hits.length > 0 ? [hits[hits.length - 1].path] : []
+}
+
+// 자른 키들의 자르기 전 파일별 개수(이 종류들만). 자른 키가 하나도 없으면 undefined.
+function fileCountsOf(
+  result: UsageResult,
+  keys: readonly UsageKey[],
+  kinds: readonly UsageKind[]
+): Map<string, number> | undefined {
+  let counts: Map<string, number> | undefined
+  for (const key of keys) {
+    const byPath = result.fileTotals?.get(key)
+    if (!byPath) continue
+    counts ??= new Map()
+    for (const [path, entry] of byPath) {
+      const n = kinds.reduce((sum, kind) => sum + (entry[kind] ?? 0), 0)
+      if (n > 0) counts.set(path, (counts.get(path) ?? 0) + n)
+    }
+  }
+  return counts
+}
+
+// 자른 키는 파일별 개수로, 그 결과가 없으면 마지막 파일을 'N+'로
+function cutInfo(
+  result: UsageResult,
+  keys: readonly UsageKey[],
+  kinds: readonly UsageKind[],
+  hits: readonly UsageHit[],
+  count: number
+): Pick<UsageSectionView, 'cut' | 'fileCounts'> {
+  const fileCounts = fileCountsOf(result, keys, kinds)
+  return fileCounts ? { cut: [], fileCounts } : { cut: cutPaths(hits, count) }
 }
 
 // 키의 사용처 중 이 종류들. 개수는 한도 전 개수(totals)와 남은 행 수 중 큰 것이다.
@@ -139,7 +173,14 @@ function kindSection(
 ): UsageSectionView {
   const hits = (result.hits.get(key) ?? []).filter((hit) => kinds.includes(hit.kind))
   const count = Math.max(hits.length, total(result, key, kinds))
-  return { id, tone, defaultKind, hits, total: count, cut: cutPaths(hits, count) }
+  return {
+    id,
+    tone,
+    defaultKind,
+    hits,
+    total: count,
+    ...cutInfo(result, [key], kinds, hits, count)
+  }
 }
 
 function warningSection(
@@ -148,7 +189,7 @@ function warningSection(
   count = hits.length,
   defaultKind: UsageKind = 'unresolved',
   old?: string,
-  cut: readonly string[] = []
+  cut: Pick<UsageSectionView, 'cut' | 'fileCounts'> = { cut: [] }
 ): UsageSectionView {
   return {
     id,
@@ -156,7 +197,7 @@ function warningSection(
     defaultKind,
     hits,
     total: Math.max(count, hits.length),
-    cut,
+    ...cut,
     ...(old !== undefined ? { old } : {})
   }
 }
@@ -464,7 +505,7 @@ export function groupUsageView(
       inClassCount,
       'unresolved',
       undefined,
-      cutPaths(inClass, inClassCount)
+      cutInfo(result, [key], ['unresolved'], inClass, inClassCount)
     )
   )
   const code = kindSection(result, key, 'code', ['field', 'type', 'new'], 'field')
@@ -516,22 +557,42 @@ export function robotUsageView(
   const unresolved: UsageHit[] = []
   let unresolvedTotal = 0
   const cut = new Set<string>()
-  const keys = [
+  const unresolvedKeys = [
     ...allScopes(scopes.root).map((scope) => scopeKey(scope, robotId)),
     MISSING_GENERATED_TYPE
   ]
-  for (const unresolvedKey of keys) {
+  // 자른 키가 있으면 파일별 개수(자르지 않은 키는 행 그대로, 이전 이름 부분에 넣은 행은 뺀다)
+  const truncated = unresolvedKeys.some((unresolvedKey) => result.fileTotals?.has(unresolvedKey))
+  const fileCounts = new Map<string, number>()
+  const addCount = (path: string, n: number): void => {
+    fileCounts.set(path, (fileCounts.get(path) ?? 0) + n)
+  }
+  for (const unresolvedKey of unresolvedKeys) {
     const hits = result.unresolved.get(unresolvedKey) ?? []
     const rest = hits.filter((hit) => !listed.has(hit))
     unresolved.push(...rest)
     // 한도로 잘랐으면 자르기 전의 개수에서 이전 이름 부분에 넣은 것을 뺀다
     const count = Math.max(hits.length, total(result, unresolvedKey, ['unresolved']))
     unresolvedTotal += count - (hits.length - rest.length)
-    for (const path of cutPaths(hits, count)) cut.add(path)
+    if (!truncated) {
+      for (const path of cutPaths(hits, count)) cut.add(path)
+      continue
+    }
+    const byPath = result.fileTotals?.get(unresolvedKey)
+    if (byPath) for (const [path, entry] of byPath) addCount(path, entry.unresolved)
+    else for (const hit of hits) addCount(hit.path, 1)
+    for (const hit of hits) if (listed.has(hit)) addCount(hit.path, -1)
   }
   unresolved.sort(compareHits)
   sections.push(
-    warningSection('unresolved', unresolved, unresolvedTotal, 'unresolved', undefined, [...cut])
+    warningSection(
+      'unresolved',
+      unresolved,
+      unresolvedTotal,
+      'unresolved',
+      undefined,
+      truncated ? { cut: [], fileCounts } : { cut: [...cut] }
+    )
   )
 
   sections.push(
@@ -632,11 +693,13 @@ export const FILE_GROUP_CAPS: FileGroupCaps = {
   perSection: MAX_ROWS_PER_SECTION
 }
 
-// 행을 파일별로 묶는다(경로 순서, 파일 안은 줄·열 순서). cut은 부분의 결과 한도로 잘렸을 수 있는 파일이다.
+// 행을 파일별로 묶는다(경로 순서, 파일 안은 줄·열 순서). cut은 부분의 결과 한도로 잘렸을 수 있는 파일이고,
+// fileCounts는 결과 한도로 자른 파일의 자르기 전 개수다(있으면 그 수를 보이고 남은 것은 '외 N곳').
 export function fileGroups(
   hits: readonly UsageHit[],
   caps: FileGroupCaps = FILE_GROUP_CAPS,
-  cut: readonly string[] = []
+  cut: readonly string[] = [],
+  fileCounts?: ReadonlyMap<string, number>
 ): UsageFileGroup[] {
   const byPath = new Map<string, UsageHit[]>()
   for (const hit of hits) {
@@ -649,15 +712,29 @@ export function fileGroups(
     const all = byPath.get(path)!.sort(compareHits)
     const shown = Math.max(0, Math.min(all.length, caps.perFile, budget))
     budget -= shown
+    const count = Math.max(all.length, fileCounts?.get(path) ?? 0)
     return {
       path,
-      count: all.length,
+      count,
       atLeast: cut.includes(path),
       first: all[0],
       rows: all.slice(0, shown),
-      more: all.length - shown
+      more: count - shown
     }
   })
+}
+
+// 파일 묶음 어디에도 넣지 못한 개수(결과 한도로 행을 하나도 받지 못한 파일들의 것). 파일별 개수가 없으면 받지 못한
+// 행 전체다.
+export function unlistedCount(
+  section: Pick<UsageSectionView, 'hits' | 'total' | 'fileCounts'>
+): number {
+  if (!section.fileCounts) return section.total - section.hits.length
+  const listed = new Map<string, number>()
+  for (const hit of section.hits) listed.set(hit.path, (listed.get(hit.path) ?? 0) + 1)
+  let inGroups = 0
+  for (const [path, rows] of listed) inGroups += Math.max(rows, section.fileCounts.get(path) ?? 0)
+  return Math.max(0, section.total - inGroups)
 }
 
 // 파일 묶음을 펼쳐서 시작할지(부분의 행이 적을 때만)
