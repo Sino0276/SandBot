@@ -53,7 +53,7 @@ public class Oracle {
         StandardJavaFileManager fm = compiler.getStandardFileManager(diagnostics, Locale.ROOT, null);
         JavacTask task = (JavacTask) compiler.getTask(
                 null, fm, diagnostics,
-                Arrays.asList("--release", "8", "-proc:none", "-Xlint:-options", "-encoding", "UTF-8", "-d", out),
+                Arrays.asList("--release", "8", "-proc:none", "-Xlint:-options", "-Xmaxerrs", "100000", "-encoding", "UTF-8", "-d", out),
                 null, fm.getJavaFileObjectsFromFiles(files));
         Iterable<? extends CompilationUnitTree> units = task.parse();
         task.analyze();
