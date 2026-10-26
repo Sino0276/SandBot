@@ -42,6 +42,10 @@ let loading = false
 
 // 마지막으로 저장하거나 연 씬. 실행 취소로 이 상태로 돌아오면 저장할 변경이 없는 것으로 본다.
 let savedObjects: SceneObjects | null = null
+// 마지막으로 생성 코드를 맞춘(synced) 저장의 씬. 열 때는 연 씬이다(디스크의 생성 코드·구성이 그것과 같다고 본다).
+// 생성이 막히거나 실패한 저장은 디스크를 바꾸지 않으므로 옮기지 않는다. 사용처의 기준 씬("이전 이름")과 저장 뒤
+// 확인(이번 저장이 구성에서 없앤 이름)이 이것과 비교한다.
+let generatedObjects: SceneObjects | null = null
 
 // 열린 프로젝트에 딸린 알림(TeamCode 없음, CAD 못 찾음, 버린 스크립트 연결). 다른 프로젝트를 열면 지운다.
 const projectNotices = { noTeamCode: 0, cadMissing: 0, scriptLinksDropped: 0 }
@@ -153,6 +157,8 @@ export function saveProject(): Promise<boolean> {
   // 열기·저장 중에는 단축키로 또 시작하지 않는다
   if (useProjectStore.getState().busy) return Promise.resolve(false)
   let wrote = false
+  // 생성 코드를 맞췄으면 저장 뒤 확인할 두 씬(그 전에 맞춘 씬, 이번에 저장한 씬)
+  let usageCheck: { previous: SceneObjects | null; saved: SceneObjects } | null = null
   return withBusy(async () => {
     let { root } = useProjectStore.getState()
     if (!root) {
@@ -188,23 +194,29 @@ export function saveProject(): Promise<boolean> {
     }
     wrote = true
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
-    // 이번 저장이 없앤 구성 이름을 찾으려고 이전에 저장한(연) 씬을 잡아 둔다
-    const previous = savedObjects
     savedObjects = objects
-    setUsageBaseline(objects)
     setDirty(computeDirty(useSceneStore.getState()))
     // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
     const tunableOutcome = await saveTunables(projectRoot, tunables)
     applyTunableSaveOutcome(projectRoot, tunableOutcome)
     setDirty(computeDirty(useSceneStore.getState()))
     await syncTeamCode(projectRoot, objects)
-    // 생성 코드를 쓴 저장만 TeamCode가 깨지는지 본다(막히거나 실패하면 디스크에는 이전 클래스가 그대로 있다)
-    if (useProjectStore.getState().generation?.status === 'synced')
-      void checkUsagesAfterSave(previous, objects)
+    // 생성 코드를 쓴 저장만 기준 씬을 옮기고 TeamCode가 깨지는지 본다. 막히거나 실패하면 디스크에는 이전 클래스·구성이
+    // 그대로라, 카드의 "이전 이름"을 남기고 다음에 생성 코드를 맞추는 저장이 없앤 이름을 알린다.
+    // 이어서 저장해도 이전 저장과 차례로 비교하도록 여기서 바로 옮긴다.
+    if (useProjectStore.getState().generation?.status === 'synced') {
+      usageCheck = { previous: generatedObjects, saved: objects }
+      generatedObjects = objects
+      setUsageBaseline(objects)
+    }
     return isCompleteTunableSave(tunableOutcome)
   }).then((saved) => {
-    // 처음 저장해 프로젝트가 생겼거나 생성 파일·튜닝 값이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
-    if (wrote) void refreshJavaIndex()
+    if (wrote) {
+      // 처음 저장해 프로젝트가 생겼거나 생성 파일·튜닝 값이 바뀌었을 수 있으므로 TeamCode Java 목록을 다시 읽는다
+      const listed = refreshJavaIndex()
+      // 사용처 확인은 그 목록으로 바뀐 파일(저장이 쓴 튜닝 값 포함)을 다시 읽은 뒤에 한다
+      if (usageCheck) void checkUsagesAfterSave(usageCheck.previous, usageCheck.saved, listed)
+    }
     return saved
   })
 }
@@ -288,6 +300,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
       savedObjects = useSceneStore.getState().objects
+      generatedObjects = savedObjects
       // 사용처의 "이전 이름"은 연 씬(고친 경로 포함)과 비교한다
       setUsageBaseline(savedObjects)
       setDirty(false)

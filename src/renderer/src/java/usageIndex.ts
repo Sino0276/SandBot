@@ -6,7 +6,7 @@
 // - refreshJavaIndex의 묶음에 넣지 않고 javaIndex 스토어를 구독한다(튜닝 값 다시 읽기가 이것을 기다리지 않게).
 //   읽는 중에 온 요청은 모아서 끝난 뒤 한 번 더 한다(inFlight·again).
 // - 다른 프로젝트를 열면(projectStore.session·root) 워커를 끝내고 처음부터 다시 읽는다. 늦게 온 읽기·결과는 버린다.
-// - 저장해 생성 코드를 맞춘 뒤 저장한 씬으로 맞춘 결과에서 깨지는 곳을 찾아 경고 알림 하나(교체)를 띄운다.
+// - 저장해 생성 코드를 맞춘 뒤 저장 뒤의 파일을 저장한 씬으로 맞춘 결과에서 깨지는 곳을 찾아 경고 알림 하나(교체)를 띄운다.
 import { create } from 'zustand'
 import {
   MAX_SOURCE_BATCH_BYTES,
@@ -37,7 +37,8 @@ export type UsageIndexState = {
   resultSignature: string | null
   // 찾을 때의 javaIndex.truncated(목록이 5000개 한도를 넘어 일부만 찾음)
   truncated: boolean
-  // 마지막으로 열거나 저장한 씬(projectActions의 savedObjects). 이름 바꾸기를 그 카드에 "이전 이름"으로 붙인다.
+  // 마지막으로 열거나 생성 코드를 맞춘(synced) 저장의 씬(projectActions의 generatedObjects). 이름 바꾸기를 그 카드에
+  // "이전 이름"으로 붙인다. 생성이 막히거나 실패한 저장은 디스크의 생성 코드·구성을 바꾸지 않으므로 옮기지 않는다.
   baseline: SceneObjects | null
   detail: string | null
 }
@@ -101,15 +102,31 @@ let reading = false
 // 이 javaIndex revision의 목록으로는 다시 읽지 않는다(읽기 실패, 한 번의 다시 읽기에서 워커가 두 번 멈춤).
 // 목록이 바뀌거나(새 revision) 열기·저장이 끝나면 다시 해 본다. 그사이 이름을 바꿔도 다시 읽지 않는다.
 let blockedRevision: number | null = null
+// 워커에 보낸 파일 묶음의 순번(워커의 사실이 바뀔 때마다 오른다)
 let batchSeq = 0
 let matchSeq = 0
 let appliedSeq = 0
+// 스토어의 결과를 맞출 때의 batchSeq(지금 batchSeq와 같으면 결과가 워커의 지금 사실로 맞춘 것이다). 워커를 끝내면 -1.
+let resultBatch = -1
 // 마지막으로 보낸 맞추기의 기호 signature(같으면 다시 맞추지 않는다)
 let postedSignature: string | null = null
-// 답을 기다리는 맞추기: seq → 그 기호의 signature, 끝났을 때(결과를 받았으면 true, 워커가 끝났으면 false)
-const pendingMatches = new Map<number, { signature: string; finish: (ok: boolean) => void }>()
+// 답을 기다리는 맞추기: seq → 그 기호의 signature, 보낼 때의 batchSeq, 결과를 스토어에 둘지(저장 확인의 맞추기는
+// 받기만 한다), 끝났을 때(결과, 워커가 끝났으면 null)
+type PendingMatch = {
+  signature: string
+  batch: number
+  store: boolean
+  finish: (result: UsageResult | null) => void
+}
+const pendingMatches = new Map<number, PendingMatch>()
 // 결과와 함께 두는 목록의 truncated(마지막으로 읽을 때의 것)
 let scanTruncated = false
+
+// 스토어에 둘 맞추기의 답을 기다린다(그동안은 scanning)
+function storeMatchPending(): boolean {
+  for (const pending of pendingMatches.values()) if (pending.store) return true
+  return false
+}
 
 function stopWorker(): void {
   worker?.terminate()
@@ -117,9 +134,10 @@ function stopWorker(): void {
   known.clear()
   complete = false
   postedSignature = null
+  resultBatch = -1
   const pending = [...pendingMatches.values()]
   pendingMatches.clear()
-  for (const { finish } of pending) finish(false)
+  for (const { finish } of pending) finish(null)
 }
 
 function eventDetail(event: unknown): string {
@@ -158,19 +176,20 @@ function onWorkerMessage(message: FromWorker): void {
   const pending = pendingMatches.get(message.seq)
   pendingMatches.delete(message.seq)
   // 워커는 받은 순서대로 답하지만, 더 새 결과를 이미 반영했으면 버린다
-  if (pending && message.seq > appliedSeq) {
+  if (pending?.store && message.seq > appliedSeq) {
     appliedSeq = message.seq
+    resultBatch = pending.batch
     const current = useUsageIndexStore.getState()
     useUsageIndexStore.setState({
       result: message.result,
       resultSignature: pending.signature,
       truncated: scanTruncated,
       // 아직 읽는 중이거나 더 새 맞추기를 기다리면 scanning. 읽기가 끝까지 가지 못했으면(실패) 그 상태를 둔다.
-      status: reading || pendingMatches.size > 0 ? 'scanning' : complete ? 'ready' : current.status,
+      status: reading || storeMatchPending() ? 'scanning' : complete ? 'ready' : current.status,
       detail: complete ? null : current.detail
     })
   }
-  pending?.finish(true)
+  pending?.finish(message.result)
 }
 
 // 지금 씬의 기호표. 만들지 못하면(코드 생성 쪽 버그) failed로 두고 null.
@@ -194,7 +213,12 @@ function postMatch(): Promise<boolean> {
   postedSignature = symbols.signature
   useUsageIndexStore.setState({ status: 'scanning' })
   return new Promise((resolve) => {
-    pendingMatches.set(seq, { signature: symbols.signature, finish: resolve })
+    pendingMatches.set(seq, {
+      signature: symbols.signature,
+      batch: batchSeq,
+      store: true,
+      finish: (result) => resolve(result !== null)
+    })
     target.postMessage({ type: 'match', seq, symbols })
   })
 }
@@ -208,14 +232,8 @@ function rematchIfChanged(): void {
 
 // ---- 프로젝트 ----
 
+// 저장 뒤 확인의 순번. 새로 생성 코드를 맞춘 저장과 다른 프로젝트 열기가 올려, 기다리던 이전 확인을 멈춘다.
 let saveToken = 0
-let cancelPendingCheck: (() => void) | null = null
-
-function cancelSaveCheck(): void {
-  const cancel = cancelPendingCheck
-  cancelPendingCheck = null
-  cancel?.()
-}
 
 // 스토어를 이 프로젝트(root·session) 것으로 맞춘다. 바뀌었으면 워커를 끝내고 결과를 비운다(기준 씬도 비운다.
 // projectActions가 경로를 고친 뒤 다시 넣는다).
@@ -224,7 +242,7 @@ function syncScope(root: string | null, session: number): void {
   if (state.root === root && state.session === session) return
   stopWorker()
   blockedRevision = null
-  cancelSaveCheck()
+  saveToken++
   useUsageIndexStore.setState({
     ...INITIAL_USAGE_INDEX,
     root,
@@ -325,7 +343,7 @@ async function scan(
     const symbols = currentSymbols()
     if (!symbols) return 'failed'
     if (symbols.signature === postedSignature) {
-      if (pendingMatches.size === 0)
+      if (!storeMatchPending())
         useUsageIndexStore.setState({ status: 'ready', truncated, detail: null })
       return 'done'
     }
@@ -492,7 +510,7 @@ export function initUsageIndex(): void {
   })
 }
 
-// 이름 바꾸기를 붙일 기준 씬(열 때 경로를 고친 뒤, 저장한 뒤)
+// 이름 바꾸기를 붙일 기준 씬(열 때 경로를 고친 뒤, 생성 코드를 맞춘 저장 뒤)
 export function setUsageBaseline(objects: SceneObjects | null): void {
   useUsageIndexStore.setState({ baseline: objects })
 }
@@ -549,61 +567,74 @@ export function usageSaveNotices(
   return notices
 }
 
-// 이 기호로 맞춘 결과가 준비되면 그것을 돌려준다. 찾을 수 없는 상태가 되거나(TeamCode 없음, 실패, 프로젝트 없음)
-// 새 저장·다른 프로젝트가 확인을 멈추면 null.
-function resultMatching(signature: string): Promise<UsageResult | null> {
+// 워커의 지금 사실을 이 기호로 맞춘 결과. 읽는 중이면 끝나기를 기다린다. 스토어의 결과가 이미 그것이면(같은 기호,
+// 그 뒤로 넘긴 파일 없음) 그대로 쓰고, 아니면 따로 맞춰 받기만 한다(스토어는 지금 씬의 결과로 둔다).
+// 워커가 목록의 파일을 끝까지 갖고 있지 않으면(읽기 실패, TeamCode 없음, 워커 멈춤) null.
+async function matchFor(symbols: UsageSymbols): Promise<UsageResult | null> {
+  while (inFlight) await inFlight
+  const target = worker
+  if (!target || !complete) return null
+  const { result, resultSignature } = useUsageIndexStore.getState()
+  if (result && resultSignature === symbols.signature && resultBatch === batchSeq) return result
+  const seq = ++matchSeq
   return new Promise((resolve) => {
-    let unsubscribe: (() => void) | null = null
-    let done = false
-    const finish = (result: UsageResult | null): void => {
-      if (done) return
-      done = true
-      unsubscribe?.()
-      if (cancelPendingCheck === cancel) cancelPendingCheck = null
-      resolve(result)
-    }
-    const cancel = (): void => finish(null)
-    const check = (state: UsageIndexState): void => {
-      if (state.status === 'none' || state.status === 'noTeamCode' || state.status === 'failed')
-        finish(null)
-      else if (state.status === 'ready' && state.result && state.resultSignature === signature)
-        finish(state.result)
-    }
-    cancelPendingCheck = cancel
-    check(useUsageIndexStore.getState())
-    if (!done) unsubscribe = useUsageIndexStore.subscribe(check)
+    pendingMatches.set(seq, {
+      signature: symbols.signature,
+      batch: batchSeq,
+      store: false,
+      finish: resolve
+    })
+    target.postMessage({ type: 'match', seq, symbols })
   })
 }
 
-// 저장해 생성 코드를 맞춘 뒤(generation synced): 저장한 씬으로 맞춘 결과를 기다려 깨지는 곳이 있으면 경고 알림 하나.
-// previous는 이번 저장 전의 savedObjects(없으면 null)다. 이번 저장이 없앤 구성 이름을 그것과 비교해 찾는다.
-// 기다리는 동안 새로 저장하거나 다른 프로젝트를 열면 멈춘다.
+// 저장해 생성 코드를 맞춘 뒤(generation synced): 저장 뒤 파일을 저장한 씬으로 맞춘 결과에서 깨지는 곳이 있으면
+// 경고 알림 하나.
+// - previous는 그 전에 생성 코드를 맞춘(또는 연) 씬(없으면 null)이다. 이번 저장이 없앤 구성 이름을 그것과 비교해 찾는다.
+// - listed는 저장 뒤 TeamCode Java 목록을 다시 읽는 약속(projectActions의 refreshJavaIndex)이다. 그 목록으로 바뀐
+//   파일(저장이 쓴 튜닝 값, 저장 직전 다른 편집기에서 고친 파일)을 워커에 넘긴 뒤 맞춘다. 저장 전 사실로 판정하지 않는다.
+// - 스토어의 지금 상태(failed 등)는 보지 않는다. 그 뒤 읽기가 끝까지 가지 못했을 때만(TeamCode 없음, 읽기 실패, 워커
+//   멈춤) 알리지 않고 이전 알림을 둔다. 그사이 이름을 또 바꿔도 저장한 씬의 기호로 맞춘다.
+// - 새로 생성 코드를 맞춘 저장이나 다른 프로젝트 열기가 기다리는 확인을 멈춘다.
 // 생성이 막혔거나 실패했으면 하지 않는다(projectActions도 synced일 때만 부른다). 디스크에는 이전 클래스가 그대로라
 // 이전 알림·기다리는 확인도 그대로 둔다.
 export async function checkUsagesAfterSave(
   previous: SceneObjects | null,
-  saved: SceneObjects
+  saved: SceneObjects,
+  listed: Promise<unknown>
 ): Promise<void> {
   if (useProjectStore.getState().generation?.status !== 'synced') return
-  cancelSaveCheck()
   const token = ++saveToken
   const { root, session } = useProjectStore.getState()
   if (!root) return
+  const current = (): boolean => {
+    const project = useProjectStore.getState()
+    return token === saveToken && project.root === root && project.session === session
+  }
   let removedNames: Set<string>
-  let signature: string
+  let symbols: UsageSymbols
   try {
     const savedNames = lookupNamesOf(saved)
     removedNames = new Set(
       previous ? [...lookupNamesOf(previous).keys()].filter((name) => !savedNames.has(name)) : []
     )
-    signature = usageSymbols(saved).signature
+    symbols = usageSymbols(saved)
   } catch (error) {
     console.error('사용처: 저장한 씬의 기호표를 만들지 못했다', error)
     return
   }
-  const result = await resultMatching(signature)
-  const project = useProjectStore.getState()
-  if (!result || token !== saveToken || project.root !== root || project.session !== session) return
+  try {
+    await listed
+  } catch (error) {
+    // 목록을 읽지 못했으면 javaIndex가 failed로 둔다(아래 읽기가 끝까지 가지 못해 알리지 않는다)
+    console.error('사용처: 저장 뒤 TeamCode Java 목록을 읽지 못했다', error)
+  }
+  if (!current()) return
+  // 목록이 바뀌었으면 javaIndex 구독이 이미 읽기 시작했다. 아니면 지금 목록과 한 번 맞춰 본다(읽기 실패한 파일 등).
+  await (inFlight ?? refreshUsages())
+  if (!current()) return
+  const result = await matchFor(symbols)
+  if (!result || !current()) return
   // 이전 저장의 알림을 바꾼다(깨지는 곳이 없으면 지운다). 확인을 멈추면 이전 알림은 그대로 둔다.
   replaceUsageNotices(usageSaveNotices(result, removedNames))
 }
@@ -613,7 +644,7 @@ export function resetUsageIndexState(): void {
   if (symbolsTimer) clearTimeout(symbolsTimer)
   symbolsTimer = null
   stopWorker()
-  cancelSaveCheck()
+  saveToken++
   blockedRevision = null
   reading = false
   inFlight = null

@@ -493,7 +493,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
       }
     })
     setUsageBaseline(saved)
-    await checkUsagesAfterSave(objects, saved)
+    await checkUsagesAfterSave(objects, saved, Promise.resolve())
     expect(readCount()).toBe(reads)
 
     const typed = [...result().unresolved.values()].flat()
@@ -517,7 +517,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     // 다시 저장한 이름으로 되돌려 저장하면 알림이 사라진다(교체)
     await edit(objects)
     setUsageBaseline(objects)
-    await checkUsagesAfterSave(saved, objects)
+    await checkUsagesAfterSave(saved, objects, Promise.resolve())
     expect(useNoticeStore.getState().notices).toEqual([])
     expect(readCount()).toBe(reads)
   })

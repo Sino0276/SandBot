@@ -798,59 +798,98 @@ describe('사용처 조율', () => {
   })
 
   describe('저장 뒤 확인', () => {
-    it('저장한 씬의 기호로 맞춘 결과를 기다렸다가, 없는 이름·없앤 구성 이름을 알림 하나씩으로 띄운다', async () => {
+    it('저장한 씬의 기호로 따로 맞춰, 없는 이름·없앤 구성 이름을 알림 하나씩으로 띄운다. 스토어는 지금 씬의 것이다', async () => {
       write('A.java', 'field liftLeft\nlookup liftLeft')
       write('B.java', 'lookup ghost\nlookup arm')
       useSceneStore.setState({ objects: scene(['liftLeft', 'arm']) })
       await openProject()
       const previous = useSceneStore.getState().objects
 
-      // 이름을 바꾸고 묶음 시간 안에 저장했다(결과는 아직 이전 기호의 것)
+      // 이름을 바꿔 저장하고, 확인이 끝나기 전에 또 바꿨다
       const saved = scene(['liftL', 'arm'])
-      useSceneStore.setState({ objects: saved })
+      useSceneStore.setState({ objects: scene(['liftX', 'arm']) })
       useProjectStore.setState({ generation: SYNCED })
-      const done = checkUsagesAfterSave(previous, saved)
-      await settle()
-      expect(noticeKeys()).toEqual([])
-
-      vi.advanceTimersByTime(SYMBOLS_DEBOUNCE_MS)
-      await done
+      await checkUsagesAfterSave(previous, saved, Promise.resolve())
       const notices = useNoticeStore.getState().notices
       expect(notices.map((n) => [n.level, n.key, n.params])).toEqual([
         ['warning', 'usagesBroken', { count: 1, files: 'A.java' }],
         // ghost는 이번 저장이 없앤 이름이 아니라 알리지 않는다
         ['warning', 'usagesBrokenByName', { count: 1, files: 'A.java' }]
       ])
+      const signatures = worker().matches.map((m) => m.symbols.signature)
+      expect(signatures.at(-1)).toContain('liftL"')
+      // 확인의 맞추기는 받기만 한다(스토어는 지금 씬의 결과다)
+      expect(usage()).toMatchObject({ status: 'ready', resultSignature: signatures.at(-2) })
+      expect(usage().resultSignature).toContain('liftX"')
 
       // 다시 저장하면 알림을 바꾼다(쌓지 않는다). 이름을 되돌리면 알림이 없다.
       const restored = scene(['liftLeft', 'arm'])
       useSceneStore.setState({ objects: restored })
       vi.advanceTimersByTime(SYMBOLS_DEBOUNCE_MS)
       await settle()
-      await checkUsagesAfterSave(saved, restored)
+      await checkUsagesAfterSave(saved, restored, Promise.resolve())
       expect(noticeKeys()).toEqual([])
     })
 
-    it('결과가 이미 저장한 씬의 것이면 다시 맞추지 않는다. 새 저장이 시작되면 이전 확인은 멈춘다', async () => {
+    it('스토어의 결과가 저장한 씬과 지금 파일의 것이면 다시 맞추지 않는다', async () => {
       write('A.java', 'field liftLeft\nlookup liftL')
       await openProject()
       await rename(['liftL'])
       useProjectStore.setState({ generation: SYNCED })
       const saved = useSceneStore.getState().objects
       const matches = worker().matches.length
-      await checkUsagesAfterSave(null, saved)
+      await checkUsagesAfterSave(null, saved, Promise.resolve())
       expect(noticeKeys()).toEqual(['usagesBroken'])
       expect(worker().matches).toHaveLength(matches)
+    })
 
-      // 아직 맞추지 않은 기호를 기다리는 확인은 다음 저장이 멈춘다(그 뒤 그 기호로 맞춰도 알리지 않는다)
-      const first = checkUsagesAfterSave(saved, scene(['liftLL']))
+    it('저장 뒤 목록으로 바뀐 파일(저장이 쓴 튜닝 값, 밖에서 고친 파일)을 읽은 뒤에 판정한다', async () => {
+      write('A.java', 'field liftLeft\nlookup liftLeft')
+      await openProject()
+      const previous = useSceneStore.getState().objects
+      await rename(['liftL'])
+      const saved = useSceneStore.getState().objects
+      // 저장 전 사실로는 둘 다 깨진다
+      expect(usage().result?.unresolved.size).toBe(1)
+      useProjectStore.setState({ generation: SYNCED })
+      // 저장하는 동안(또는 직전에 다른 편집기에서) 파일이 새 이름으로 바뀌었고, 저장 뒤 목록이 그것을 보인다
+      write('A.java', 'field liftL\nlookup liftL', 2)
+      const listed = Promise.resolve().then(() => publishListing())
+      await checkUsagesAfterSave(previous, saved, listed)
+      expect(readPaths().at(-1)).toEqual([P + 'A.java'])
+      expect(usage().result?.unresolved.size).toBe(0)
+      expect(noticeKeys()).toEqual([])
+    })
+
+    it('새로 생성 코드를 맞춘 저장이 기다리는 이전 확인을 멈춘다. 막히거나 실패한 저장은 멈추지 않는다', async () => {
+      write('A.java', 'field liftLeft')
+      await openProject()
+      const opened = useSceneStore.getState().objects
+      useProjectStore.setState({ generation: SYNCED })
+      worker().holdReplies = true
+      const first = checkUsagesAfterSave(opened, scene(['liftL']), Promise.resolve())
       await settle()
-      const second = checkUsagesAfterSave(saved, saved)
-      await Promise.all([first, second])
-      await rename(['liftLL'])
-      expect(useNoticeStore.getState().notices.map((n) => [n.key, n.params])).toEqual([
-        ['usagesBroken', { count: 1, files: 'A.java' }]
-      ])
+      expect(worker().matches.at(-1)!.symbols.signature).toContain('liftL"')
+      // 생성이 막힌 저장은 확인하지 않고 기다리는 확인도 그대로 둔다(디스크에는 그 전 저장의 생성 코드가 있다)
+      useProjectStore.setState({ generation: { status: 'blocked', errors: 1 } })
+      await checkUsagesAfterSave(opened, scene(['other']), Promise.resolve())
+      worker().holdReplies = false
+      worker().flush()
+      await first
+      expect(noticeKeys()).toEqual(['usagesBroken'])
+
+      // 다음 저장(synced)이 시작되면 앞 확인은 답이 와도 알리지 않는다
+      useProjectStore.setState({ generation: SYNCED })
+      worker().holdReplies = true
+      const stale = checkUsagesAfterSave(opened, scene(['liftLL']), Promise.resolve())
+      await settle()
+      const latest = checkUsagesAfterSave(opened, opened, Promise.resolve())
+      await latest
+      expect(noticeKeys()).toEqual([])
+      worker().holdReplies = false
+      worker().flush()
+      await stale
+      expect(noticeKeys()).toEqual([])
     })
 
     it('생성이 막히거나 실패한 저장은 확인하지 않고 이전 알림을 둔다', async () => {
@@ -859,14 +898,14 @@ describe('사용처 조율', () => {
       await rename(['liftL'])
       const saved = useSceneStore.getState().objects
       useProjectStore.setState({ generation: SYNCED })
-      await checkUsagesAfterSave(null, saved)
+      await checkUsagesAfterSave(null, saved, Promise.resolve())
       expect(noticeKeys()).toEqual(['usagesBroken'])
 
       useProjectStore.setState({ generation: { status: 'blocked', errors: 2 } })
-      await checkUsagesAfterSave(saved, scene(['other']))
+      await checkUsagesAfterSave(saved, scene(['other']), Promise.resolve())
       expect(noticeKeys()).toEqual(['usagesBroken'])
       useProjectStore.setState({ generation: { status: 'failed', detail: 'x' } })
-      await checkUsagesAfterSave(saved, scene(['other']))
+      await checkUsagesAfterSave(saved, scene(['other']), Promise.resolve())
       expect(noticeKeys()).toEqual(['usagesBroken'])
 
       // 프로젝트를 열면 알림 자리를 비운다(projectActions가 부른다)
@@ -874,11 +913,62 @@ describe('사용처 조율', () => {
       expect(noticeKeys()).toEqual([])
     })
 
-    it('기다리는 동안 다른 프로젝트를 열거나 찾을 수 없는 상태가 되면 알리지 않는다', async () => {
+    it('저장할 때 failed여도 저장 뒤 다시 읽어 알린다. 그 읽기가 끝까지 가지 못하면 이전 알림을 둔다', async () => {
+      write('A.java', 'lookup liftLeft')
+      await openProject()
+      const opened = useSceneStore.getState().objects
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // 저장 전에 워커가 멈췄다(또는 목록 읽기가 한 번 실패했다)
+      worker().onerror?.({ message: 'boom' })
+      expect(usage().status).toBe('failed')
+      useProjectStore.setState({ generation: SYNCED })
+      const saved = scene(['liftL'])
+      await checkUsagesAfterSave(opened, saved, Promise.resolve())
+      expect(workers).toHaveLength(2)
+      expect(useNoticeStore.getState().notices.map((n) => [n.key, n.params])).toEqual([
+        ['usagesBrokenByName', { count: 1, files: 'A.java' }]
+      ])
+
+      // 저장 뒤 읽기가 실패하면(목록과 맞는 사실이 없다) 알리지 않고 이전 알림을 그대로 둔다
+      worker().onerror?.({ message: 'boom' })
+      readJavaSources.mockImplementationOnce(async () => ({
+        ok: false,
+        code: 'notAllowed',
+        detail: 'x'
+      }))
+      await checkUsagesAfterSave(saved, scene(['other']), Promise.resolve())
+      expect(usage().status).toBe('failed')
+      expect(noticeKeys()).toEqual(['usagesBrokenByName'])
+      error.mockRestore()
+    })
+
+    it('처음 읽는 중에 저장하고 또 이름을 바꿔도 저장한 씬의 기호로 맞춰 알린다', async () => {
+      write('A.java', 'lookup liftLeft')
+      write('B.java', 'nothing')
+      holdReads = true
+      await openProject()
+      expect(held).toHaveLength(1)
+      const opened = useSceneStore.getState().objects
+      const saved = scene(['liftL'])
+      useSceneStore.setState({ objects: saved })
+      useProjectStore.setState({ generation: SYNCED })
+      const check = checkUsagesAfterSave(opened, saved, Promise.resolve())
+      await settle()
+      // 읽기가 끝나기 전에 또 바꾼다(스토어에는 저장한 씬의 결과가 오지 않는다)
+      await rename(['liftLL'])
+      holdReads = false
+      held[0].release()
+      await check
+      expect(noticeKeys()).toEqual(['usagesBrokenByName'])
+      await settle()
+      expect(usage().resultSignature).toContain('liftLL"')
+    })
+
+    it('기다리는 동안 다른 프로젝트를 열거나, 맞추는 사이 워커가 멈추면 알리지 않는다', async () => {
       write('A.java', 'field liftLeft')
       await openProject()
       useProjectStore.setState({ generation: SYNCED })
-      const waiting = checkUsagesAfterSave(null, scene(['liftL']))
+      const waiting = checkUsagesAfterSave(null, scene(['liftL']), Promise.resolve())
       useProjectStore.setState({ session: 2, busy: true })
       await waiting
       useProjectStore.setState({ busy: false })
@@ -887,7 +977,9 @@ describe('사용처 조율', () => {
 
       await openProject('/p', 3)
       useProjectStore.setState({ generation: SYNCED })
-      const failing = checkUsagesAfterSave(null, scene(['liftLL']))
+      worker().holdReplies = true
+      const failing = checkUsagesAfterSave(null, scene(['liftLL']), Promise.resolve())
+      await settle()
       const error = vi.spyOn(console, 'error').mockImplementation(() => {})
       worker().onerror?.({ message: 'boom' })
       await failing
