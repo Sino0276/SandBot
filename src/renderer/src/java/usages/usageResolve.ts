@@ -7,6 +7,10 @@
 // - 형식 이름(JLS 6.4.1, 7.5): 형식 범위를 안쪽부터(형식 매개변수 → 감싸는 클래스의 멤버 형식, 상속 포함) → 파일
 //   (최상위 클래스 → 단일 import → 단일 static import의 멤버 형식) → 같은 패키지 → on-demand(후보가 하나일 때만)
 //   → 전체 이름. 나머지 이름은 멤버 형식이다(선언 → 상속).
+// - 깨진 단일 import(생성 코드에 없는 이름을 들여옴)는 javac처럼 범위에 들어가지 않는다. 그 이름은 다음 단계(같은
+//   패키지, on-demand, 변수는 static on-demand)로 이어서 찾고, 아무 데도 없을 때만 쓰는 자리마다 생성 코드에 없는
+//   이름이다. 이어서 찾은 팀 클래스는 깨진 import의 키(via)를 지니고, 상속 계층을 모두 아는데 없는 멤버를 그 키에
+//   둔다(이름을 바꾸기 전에는 생성 클래스의 멤버였다).
 // - 변수 이름(JLS 6.5.2): 감싸는 클래스를 안쪽부터(선언 필드 → 상속 필드 → 지역·익명 클래스가 잡은 지역 변수) →
 //   단일 static import → static on-demand(한 형식만) → 형식 → 패키지. 그래서 변수가 형식을 가린다.
 // - 상속(JLS 8.2): private은 물려받지 않고, package-private는 하위 클래스가 같은 패키지일 때만 물려받는다. 알 수 없는
@@ -125,7 +129,8 @@ type Cls = GenClass | TeamClass
 // 생성 형식의 사용처가 아니다. more는 경계가 둘 이상인 형식 매개변수(<R extends RobotHardware & Runnable>)의
 // 둘째부터의 경계 중 푼 것이다. 첫 경계에 없는 메서드(r.run())는 다른 경계의 것일 수 있어 생성 코드에 없는 이름으로
 // 알리지 않는다. 필드는 푼 경계에서 찾고, 알 수 없는 경계(Runnable)는 상위 형식처럼 필드를 보태지 않는다.
-type Ty = { cls: Cls; dims: number; param?: true; more?: readonly Cls[] }
+// via는 깨진 단일 import 뒤에 같은 패키지·on-demand로 이어서 찾은 형식이다(그 import가 찾지 못한 범위의 키).
+type Ty = { cls: Cls; dims: number; param?: true; more?: readonly Cls[]; via?: UsageKey }
 
 // 생성 패키지에 없는 형식이나 생성 클래스에 없는 멤버 형식: key 범위(r:·g:·'*')에 member가 없다.
 // index는 ref.names에서 그 이름의 자리(위치·표시용).
@@ -160,7 +165,7 @@ type Member =
 
 // 연쇄를 따라가는 중의 받는 쪽: 형식(static이면 형식 이름으로 쓴 자리, more는 Ty의 것), 패키지 이름, 알 수 없음(null)
 type WalkState =
-  | { k: 'type'; cls: Cls; dims: number; static: boolean; more?: readonly Cls[] }
+  | { k: 'type'; cls: Cls; dims: number; static: boolean; more?: readonly Cls[]; via?: UsageKey }
   | { k: 'pkg'; names: string[] }
   | null
 
@@ -170,8 +175,15 @@ type HeadResult = { state: WalkState; member: Member | null; missing: Missing | 
 
 const UNKNOWN_HEAD: HeadResult = { state: null, member: null, missing: null }
 
-// 형식의 받는 쪽 상태. 차원이 없으면 클래스마다 만들어 둔 것을 쓴다(연쇄마다 새로 만들지 않게).
-function typeState(cls: Cls, dims: number, isStatic: boolean, more?: readonly Cls[]): WalkState {
+// 형식의 받는 쪽 상태. 차원·more·via가 없으면 클래스마다 만들어 둔 것을 쓴다(연쇄마다 새로 만들지 않게).
+function typeState(
+  cls: Cls,
+  dims: number,
+  isStatic: boolean,
+  more?: readonly Cls[],
+  via?: UsageKey
+): WalkState {
+  if (via) return { k: 'type', cls, dims, static: isStatic && dims === 0, more, via }
   if (more) return { k: 'type', cls, dims, static: isStatic, more }
   if (dims !== 0) return { k: 'type', cls, dims, static: false }
   if (isStatic) return (cls.stat ??= { k: 'type', cls, dims: 0, static: true })
@@ -180,7 +192,7 @@ function typeState(cls: Cls, dims: number, isStatic: boolean, more?: readonly Cl
 
 // 값(필드·지역 변수·반환)의 형식인 받는 쪽 상태
 function valueState(t: Ty): WalkState {
-  return typeState(t.cls, t.dims, false, t.more)
+  return typeState(t.cls, t.dims, false, t.more, t.via)
 }
 
 function sameNames(a: readonly string[], b: readonly string[], length: number): boolean {
@@ -611,6 +623,18 @@ class Resolver {
     name: string,
     has: (gen: GenClass) => boolean
   ): GenClass | null {
+    return this.absentInHierarchy(start, name, has, false)?.gen ?? null
+  }
+
+  // 팀 클래스 start의 상속 계층을 모두 알고 그 계층 어디에도 name이 없으면 계층에서 만난 첫 생성 클래스(없으면 null)를
+  // 담아 돌려준다. 계층을 다 알지 못하거나 그 이름이 있으면 null. method면 enum·애너테이션은 모른다고 본다(암묵 상위
+  // 형식 Enum·Annotation의 메서드). Object의 메서드는 부르는 쪽이 따진다.
+  private absentInHierarchy(
+    start: TeamClass,
+    name: string,
+    has: (gen: GenClass) => boolean,
+    method: boolean
+  ): { gen: GenClass | null } | null {
     let found: GenClass | null = null
     const visiting = new Set<Cls>()
     // 계층을 모두 알고 그 이름이 팀 클래스에 없으면 참
@@ -624,12 +648,13 @@ class Resolver {
       if (cls.unscanned || depth > MAX_DEPTH) return false
       visiting.add(cls)
       const facts = cls.facts
+      if (method && (facts.kind === 'enum' || facts.kind === 'annotation')) return false
       if (facts.fields.has(name) || facts.methods.has(name) || facts.members.has(name)) return false
       const supers = this.superTypes(cls)
       if (supers.length !== (facts.superRef ? 1 : 0) + facts.ifaceRefs.length) return false
       return supers.every((sup) => known(sup, depth + 1))
     }
-    return known(start, 0) ? found : null
+    return known(start, 0) ? { gen: found } : null
   }
 
   // 받는 쪽 형식 cls에 없는 name을 생성 코드에 없는 이름으로 둘 생성 클래스(생성 클래스면 그것, 팀 클래스면
@@ -746,9 +771,9 @@ class Resolver {
     const first = this.resolveFirst(file, scope, names[0])
     let result: TypeResult
     if (first === NOT_FOUND) result = this.resolveQualified(names)
-    else if (first === null || isMissing(first)) result = first
+    else if (first === null || isMissing(first) || names.length === 1) result = first
     // 형식 매개변수의 멤버 형식(T.Inner)은 Java에 없다
-    else if (first.param) result = names.length === 1 ? first : null
+    else if (first.param) result = null
     else result = this.memberTypes(first.cls, names, 1)
     file.typeMemo.set(memoKey, result)
     return result
@@ -791,34 +816,40 @@ class Resolver {
       }
     }
     const imports = file.facts.imports
+    // 깨진 단일 import는 범위에 들어가지 않는다(javac). 아래 단계로 이어서 찾고, 아무 데도 없으면 쓰는 자리마다
+    // 생성 코드에 없는 이름이다.
+    let broken: Missing | null = null
     const single = imports.single.get(name)
     if (single) {
       const t = this.resolveQualified(single)
-      // 깨진 import로 들여온 이름은 쓰는 자리마다 javac가 그 이름을 알린다
-      if (isMissing(t)) return { missing: true, key: t.key, member: name, index: 0 }
-      return t
+      if (!isMissing(t)) return t
+      broken = { missing: true, key: t.key, member: name, index: 0 }
     }
     const statics = imports.staticSingle.get(name)
     if (statics) {
       for (const entry of statics) {
         const owner = this.resolveQualified(entry.slice(0, -1))
-        if (isMissing(owner)) return { missing: true, key: owner.key, member: name, index: 0 }
+        if (isMissing(owner)) {
+          broken ??= { missing: true, key: owner.key, member: name, index: 0 }
+          continue
+        }
         // 들여온 형식을 알 수 없으면 그 멤버 형식일 수 있다
         if (!isTy(owner)) return null
         const member = this.memberType(owner.cls, name)
         if (member) return { cls: member, dims: 0 }
-        // 생성 클래스(또는 그 하위 팀 클래스)에 그런 static 멤버가 없으면 import가 깨졌다(쓰는 자리마다 javac가 알린다)
+        // 생성 클래스(또는 그 하위 팀 클래스)에 그런 static 멤버가 없으면 import가 깨졌다
         const gen = this.missingOwner(owner.cls, name, (g) => g.members.has(name))
-        if (gen) return { missing: true, key: gen.key, member: name, index: 0 }
+        if (gen) broken ??= { missing: true, key: gen.key, member: name, index: 0 }
       }
     }
+    const via = broken?.key
     // 4. 같은 패키지(on-demand보다 먼저). 생성 패키지는 로봇 클래스다.
     if (file.pkg === GENERATED_JAVA_PACKAGE) {
       const robot = this.robots.get(name)
-      if (robot) return { cls: robot, dims: 0 }
+      if (robot) return via ? { cls: robot, dims: 0, via } : { cls: robot, dims: 0 }
     } else {
       const same = this.packages.get(file.pkg)?.get(name)
-      if (same) return { cls: same, dims: 0 }
+      if (same) return via ? { cls: same, dims: 0, via } : { cls: same, dims: 0 }
     }
     // 5. on-demand: 후보가 하나일 때만(둘 이상이면 javac가 모호하다고 알린다). 알 수 없는 패키지는 보태지 않는다.
     const candidates = new Set<Cls>()
@@ -848,9 +879,12 @@ class Resolver {
       const member = this.memberType(owner.cls, name)
       if (member) candidates.add(member)
     }
-    if (candidates.size === 1) return { cls: [...candidates][0], dims: 0 }
+    if (candidates.size === 1) {
+      const cls = [...candidates][0]
+      return via ? { cls, dims: 0, via } : { cls, dims: 0 }
+    }
     if (candidates.size > 1) return null
-    return NOT_FOUND
+    return broken ?? NOT_FOUND
   }
 
   // ── 필드·메서드 ──
@@ -1049,39 +1083,20 @@ class Resolver {
       c = C.facts.outer
     }
     const imports = file.facts.imports
-    // 4. 단일 static import의 필드
+    // 4. 단일 static import의 필드. 깨진 것(생성 코드에 없는 이름)은 범위에 들어가지 않아 아래로 이어서 찾고, 아무
+    //    데도 없으면 6의 형식 이름 풀이가 그 이름을 생성 코드에 없는 이름으로 돌려준다(resolveFirst).
     const statics = imports.staticSingle.get(name)
     if (statics) {
       let unknownOwner = false
       for (const entry of statics) {
         const owner = this.resolveQualified(entry.slice(0, -1))
-        if (isMissing(owner)) {
-          // 깨진 static import로 들여온 이름은 쓰는 자리마다 javac가 알린다
-          return {
-            state: null,
-            member: null,
-            missing: { missing: true, key: owner.key, member: name, index: 0 }
-          }
-        }
+        if (isMissing(owner)) continue
         if (!isTy(owner)) {
           unknownOwner = true
           continue
         }
         const member = this.findField(owner.cls, name)
         if (member) return this.fromMember(member)
-        // 생성 클래스(또는 그 하위 팀 클래스)에 없는 이름. 멤버 형식이면 아래 형식 이름으로 푼다.
-        const gen = this.missingOwner(
-          owner.cls,
-          name,
-          (g) => g.members.has(name) || g.nested.has(name)
-        )
-        if (gen) {
-          return {
-            state: null,
-            member: null,
-            missing: { missing: true, key: gen.key, member: name, index: 0 }
-          }
-        }
       }
       if (unknownOwner) return UNKNOWN_HEAD
     }
@@ -1104,7 +1119,8 @@ class Resolver {
     const first = this.resolveFirst(file, scope >= 0 ? scope : 0, name)
     const t = first === NOT_FOUND ? this.resolveQualified([name]) : first
     if (isMissing(t)) return { state: null, member: null, missing: t }
-    if (isTy(t)) return { state: typeState(t.cls, 0, true), member: null, missing: null }
+    if (isTy(t))
+      return { state: typeState(t.cls, 0, true, undefined, t.via), member: null, missing: null }
     if (first !== NOT_FOUND) return UNKNOWN_HEAD
     // 7. 패키지 이름
     return { state: { k: 'pkg', names: [name] }, member: null, missing: null }
@@ -1124,6 +1140,8 @@ class Resolver {
     if (statics) {
       for (const entry of statics) {
         const owner = this.resolveQualified(entry.slice(0, -1))
+        // 깨진 import는 범위에 들어가지 않는다(static on-demand로 이어서 찾는다)
+        if (isMissing(owner)) continue
         if (!isTy(owner)) return null
         const state = this.methodState(owner.cls, name)
         if (state !== undefined) return state
@@ -1204,7 +1222,16 @@ class Resolver {
           complete = false
           break
         }
-        // 팀 클래스의 메서드는 알 수 없는 형식(Object, SDK)에서 올 수 있어 따지지 않는다
+        // 팀 클래스의 메서드는 알 수 없는 형식(Object, SDK)에서 올 수 있어 따지지 않는다. 깨진 import 뒤에 이어서 찾은
+        // 형식(via)은 계층을 모두 알고 Object의 메서드도 아니면 javac가 알린다.
+        if (next === undefined && emit && state.via && !cls.gen && !more) {
+          const name = seg.name
+          if (
+            !OBJECT_METHODS.has(name) &&
+            this.absentInHierarchy(cls, name, (gen) => gen.members.has(name), true)
+          )
+            this.unresolvedAt(file, chain, i, state.via, name)
+        }
         state = next ?? null
       } else {
         let member = this.findField(cls, seg.name)
@@ -1234,6 +1261,19 @@ class Resolver {
                 )
               : null
             if (owner) this.unresolvedAt(file, chain, i, owner.key, name)
+            // 깨진 import 뒤에 이어서 찾은 팀 클래스(via)에 없는 이름도 javac가 알린다(계층을 모두 알 때)
+            else if (
+              emit &&
+              state.via &&
+              !cls.gen &&
+              this.absentInHierarchy(
+                cls,
+                name,
+                (gen) => gen.members.has(name) || (isStatic && gen.nested.has(name)),
+                false
+              )
+            )
+              this.unresolvedAt(file, chain, i, state.via, name)
             state = null
             complete = false
             break
@@ -1249,7 +1289,7 @@ class Resolver {
   private index(state: WalkState, count: number): WalkState {
     if (!state || count === 0) return state
     if (state.k !== 'type' || state.dims < count) return null
-    return typeState(state.cls, state.dims - count, false, state.more)
+    return typeState(state.cls, state.dims - count, false, state.more, state.via)
   }
 
   // 패키지 이름 뒤의 이름 하나: 형식(static 자리), 더 긴 패키지, 없는 생성 형식

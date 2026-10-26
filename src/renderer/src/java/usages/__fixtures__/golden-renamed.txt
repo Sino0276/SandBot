@@ -1,4 +1,4 @@
-# corpus-sha256 651a8598949a6d53f1ca556a7ce1d4178989ac1fbc84fe1b94561d45b7a6c518
+# corpus-sha256 2862b2c7e058af151a24b81c63670a4ab2729f847b2332c7a43da271f9c8df01
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:12 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:13 claw
 src/main/java/org/firstinspires/ftc/teamcode/AutoLeft.java:15 liftLeft
@@ -64,7 +64,16 @@ src/main/java/org/firstinspires/ftc/teamcode/enums/Slots.java:13 par
 src/main/java/org/firstinspires/ftc/teamcode/generic/Stopper.java:10 par
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:12 claw
 src/main/java/org/firstinspires/ftc/teamcode/opmodes/AutoRight.java:17 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:3 Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:11 grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:12 grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenImport.java:14 grip
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:4 Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:5 PAR_X_MM
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/BrokenStatic.java:14 grip
 src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/SingleWins.java:7 liftLeft
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:4 Claw
+src/main/java/org/firstinspires/ftc/teamcode/pkgshadow/other/OnDemandFallback.java:9 grip
 src/main/java/org/firstinspires/ftc/teamcode/precedence/C.java:9 liftLeft
 src/main/java/org/firstinspires/ftc/teamcode/precedence/D.java:9 PAR_X_MM
 src/main/java/org/firstinspires/ftc/teamcode/precedence/E.java:3 PAR_X_MM

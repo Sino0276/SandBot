@@ -513,6 +513,64 @@ class Uses {
     expect(hits(result, LIFT)).toEqual(['q/Uses.java:10 type Lift', 'q/Uses.java:10 field lift'])
   })
 
+  it('깨진 단일 import는 범위에 들어가지 않는다: 같은 패키지·on-demand로 이어서 찾고, 그 팀 클래스에 없는 멤버만 알린다', () => {
+    const result = resolve({
+      'p/Fancy.java': 'package p;\npublic enum Fancy { A }',
+      'p/Gripper.java':
+        'package p;\npublic class Gripper { public double open; public void close() { } }',
+      'p/Offsets.java':
+        'package p;\npublic class Offsets { public static final double LIFT_X_MM = 1; }',
+      'p/Util.java': `package p;\n${IMPORT}\npublic class Util { public static RobotHardware robot() { return null; } }`,
+      'p/Wrapped.java': 'package p;\npublic class Wrapped extends com.acme.Base { }',
+      'p/Uses.java': `package p;
+import ${GEN}.RobotHardware.Lift.Gripper;
+import ${GEN}.RobotHardware.Lift.Fancy;
+import ${GEN}.RobotHardware.Lift.Wrapped;
+import ${GEN}.RobotHardware.Lift.Arm;
+import static ${GEN}.RobotHardware.LIFT_X_MM;
+import static p.Offsets.*;
+import static ${GEN}.OldBot.robot;
+import static p.Util.*;
+class Uses {
+  Gripper g;
+  Fancy f;
+  Wrapped w;
+  Arm a;
+  void m() {
+    g.grip.hashCode();
+    g.open = 1;
+    g.close();
+    g.toString();
+    g.release();
+    f.ordinal();
+    Object b = Fancy.B;
+    w.grip.hashCode();
+    double x = LIFT_X_MM;
+    robot().lift.liftLeft.setPower(1);
+  }
+}`
+    })
+    // javac의 cannot find symbol과 같다. 이어서 찾은 팀 클래스의 선언(11–13줄), 있는 멤버, Object·enum의 메서드, 알 수
+    // 없는 상위 형식(com.acme.Base)이 있는 계층, static on-demand로 찾은 상수(24줄)와 메서드(25줄)는 알리지 않는다.
+    // 아무 데도 없는 이름(Arm)은 쓰는 자리마다 알린다.
+    expect(unresolved(result)).toEqual([
+      'p/Uses.java:14 g:lift Arm',
+      'p/Uses.java:16 g:lift grip',
+      'p/Uses.java:2 g:lift Gripper',
+      'p/Uses.java:20 g:lift release',
+      'p/Uses.java:22 g:lift B',
+      'p/Uses.java:3 g:lift Fancy',
+      'p/Uses.java:4 g:lift Wrapped',
+      'p/Uses.java:5 g:lift Arm',
+      'p/Uses.java:6 r:bot LIFT_X_MM',
+      'p/Uses.java:8 * OldBot'
+    ])
+    expect(hits(result, LIFT_LEFT)).toEqual(['p/Uses.java:25 field liftLeft'])
+    expect(codeHits(result).filter((line) => line.startsWith('p/Uses.java'))).toEqual([
+      'p/Uses.java:25 field d:liftMotor\nll'
+    ])
+  })
+
   it('경계가 둘 이상인 형식 매개변수: 다른 경계의 메서드는 없는 이름이 아니고, 필드는 푼 경계에서 찾는다', () => {
     const result = resolve({
       'g/HasArm.java': `package g; ${IMPORT} public interface HasArm { RobotHardware ARM = null; RobotHardware arm(); }`,
