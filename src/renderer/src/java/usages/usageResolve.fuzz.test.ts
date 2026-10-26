@@ -173,13 +173,15 @@ function checkShape(result: UsageResult): void {
 }
 
 describe('맞추기 퍼즈', () => {
+  // 예외가 없는지만 본다. 파일 1만 개의 사실 만들기와 사용처마다의 모양 확인으로 혼자 4초쯤 걸려, 전체 실행의 부하에서
+  // 기본 한도(5초)를 넘지 않게 한도를 넉넉히 둔다(시간은 '시간은 파일 수에 거의 비례한다'가 본다).
   it('얽힌 토큰 수프 파일 10 000개(200개씩)에 예외를 던지지 않는다', () => {
     for (let seed = 1; seed <= 50; seed++) {
       const files = fuzzFiles(seed, 200, 120)
       checkShape(resolveUsages(files, SYMBOLS))
       checkShape(resolveUsages(files, RENAMED))
     }
-  })
+  }, 60_000)
 
   it('말뭉치 파일을 토큰 단위로 망가뜨려도(지우기·겹치기·바꾸기) 예외를 던지지 않는다', () => {
     const root = join(__dirname, '__fixtures__', 'corpus', 'src', 'main', 'java')
