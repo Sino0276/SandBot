@@ -127,6 +127,7 @@ function resultWith(
   return {
     hits: new Map(entries),
     totals: new Map(entries.map(([key, hits]) => [key, counts(hits)])),
+    fileTotals: new Map(),
     unresolved: new Map(),
     unknownNames: new Map(),
     files: { scanned: 1, tooLarge: [], unicodeEscape: [], failed: [] },
@@ -214,6 +215,7 @@ describe('사용처 칸 그리기', () => {
       root: '/p',
       baseline,
       result: resultWith([], {
+        fileTotals: new Map(),
         unresolved: new Map([
           [groupUsageKey('lift'), [hit(7, 'unresolved', { member: 'liftLeft' })]]
         ])

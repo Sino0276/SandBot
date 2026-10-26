@@ -13,6 +13,7 @@ function emptyResult(files: ReadonlyMap<string, FileFacts>): UsageResult {
   return {
     hits: new Map(),
     totals: new Map(),
+    fileTotals: new Map(),
     unresolved: new Map(),
     unknownNames: new Map(),
     files: { scanned: files.size, tooLarge: [], unicodeEscape: [], failed: [] }

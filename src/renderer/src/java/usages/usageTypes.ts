@@ -79,6 +79,8 @@ export type UsageResult = {
   hits: Map<UsageKey, UsageHit[]>
   // 한도로 자르기 전의 개수
   totals: Map<UsageKey, UsageCounts>
+  // 한도로 자른 키만: 자르기 전의 파일별 개수(경로 → 종류별 개수). 화면이 잘린 파일도 정확한 개수를 보인다.
+  fileTotals: Map<UsageKey, Map<string, UsageCounts>>
   // 찾지 못한 멤버가 있던 범위의 키(r:·g:), 또는 '*'
   unresolved: Map<UsageKey, UsageHit[]>
   // 어느 장치에도 없는 찾기 이름(앞뒤 공백 뺀 글자) → 찾기 사용처

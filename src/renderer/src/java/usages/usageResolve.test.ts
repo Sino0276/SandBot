@@ -797,6 +797,23 @@ describe('결과', () => {
     })
     expect(result.unresolved.get(ROBOT)).toHaveLength(MAX_HITS_PER_KEY)
     expect(result.totals.get(ROBOT)?.unresolved).toBe(230)
+    expect(result.fileTotals.get(ROBOT)?.get('A.java')?.unresolved).toBe(230)
+  })
+
+  it('자른 키만 자르기 전의 파일별 개수를 남긴다', () => {
+    const uses = (n: number): string =>
+      Array.from({ length: n }, () => 'r.leftFront.setPower(0);').join('\n')
+    const result = resolve({
+      'A.java': `package a; ${IMPORT}\nclass A { void f(RobotHardware r) {\n${uses(150)}\n} }`,
+      'B.java': `package a; ${IMPORT}\nclass B { void f(RobotHardware r) {\n${uses(120)}\n} }`,
+      'C.java': `package a; ${IMPORT}\nclass C { void f(RobotHardware r) { r.par.setPower(0); } }`
+    })
+    expect(result.hits.get(LF)).toHaveLength(MAX_HITS_PER_KEY)
+    const byPath = result.fileTotals.get(LF)!
+    expect(byPath.get('A.java')?.field).toBe(150)
+    expect(byPath.get('B.java')?.field).toBe(120)
+    // 자르지 않은 키는 없다(행이 곧 전체다)
+    expect(result.fileTotals.has(PAR)).toBe(false)
   })
 
   it('파일: 사실을 만든 수, 유니코드 이스케이프로 건너뛴 파일, 한도를 넘은 파일(tooLarge)', () => {

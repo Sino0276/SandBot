@@ -59,6 +59,8 @@ type UsageTreeProps = {
   hits: UsageHit[]
   // 결과 한도로 뒤가 잘렸을 수 있는 파일(머리줄 개수를 'N+'로)
   cut: readonly string[]
+  // 결과 한도로 자른 파일의 자르기 전 개수
+  fileCounts?: ReadonlyMap<string, number>
   // 이 종류와 다른 행에만 배지를 단다
   defaultKind: UsageKind
 }
@@ -73,6 +75,7 @@ function UsageTree({
   describedBy,
   hits,
   cut,
+  fileCounts,
   defaultKind
 }: UsageTreeProps): React.JSX.Element {
   const { t } = useTranslation()
@@ -85,7 +88,10 @@ function UsageTree({
   // 포커스가 있는 행(사용자가 트리 밖으로 옮기면 null). 그 행이 지워지면 이 행 자리로 되돌린다.
   const focusedRef = useRef<UsageTreeRow | null>(null)
 
-  const groups = useMemo(() => fileGroups(hits, FILE_GROUP_CAPS, cut), [hits, cut])
+  const groups = useMemo(
+    () => fileGroups(hits, FILE_GROUP_CAPS, cut, fileCounts),
+    [hits, cut, fileCounts]
+  )
   const startOpen = groupsStartOpen(hits.length)
   const rows = useMemo(
     () => usageTreeRows(groups, (path) => overrides[path] ?? startOpen),
