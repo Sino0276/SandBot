@@ -377,6 +377,8 @@ const en: Messages = {
     byNameHint:
       'Strings that look a device up by its configuration name (hardwareMap.get, …Name(…) and the like).',
     sharedName: 'Another robot has a device with the same name; these may belong to it.',
+    samePortName:
+      'The motor and dead wheel on this port share this configuration name; these may belong to the other one.',
     sameText: 'Other strings with this text ({{count}})',
     sameTextHint:
       'Strings not used to look the device up (telemetry captions and the like). Not counted.',
@@ -393,6 +395,8 @@ const en: Messages = {
     },
     listLabel: 'Usages of {{name}}',
     fileLabel: '{{file}}, {{count}} usage(s)',
+    fileLabelAtLeast: '{{file}}, {{count}}+ usages',
+    fileCountAtLeast: '{{count}}+',
     rowLabel: '{{file}} line {{line}}, {{kind}}: {{code}}',
     openHint: 'Double-click or press Enter to open this line in the external script editor.',
     noLineHint:

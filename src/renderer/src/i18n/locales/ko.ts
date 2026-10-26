@@ -384,6 +384,8 @@ const ko = {
     sectionByName: '이름으로',
     byNameHint: '구성 이름으로 장치를 찾는 문자열입니다(hardwareMap.get, …Name(…) 등).',
     sharedName: '다른 로봇에도 같은 구성 이름의 장치가 있어 그 로봇의 사용처일 수도 있습니다.',
+    samePortName:
+      '같은 포트의 모터와 데드휠이 이 구성 이름을 함께 써서 다른 쪽 장치의 사용처일 수도 있습니다.',
     sameText: '같은 글자의 다른 문자열 {{count}}',
     sameTextHint:
       '장치를 찾는 데 쓰지 않는 문자열(텔레메트리 문구 등)입니다. 개수에 넣지 않습니다.',
@@ -401,6 +403,9 @@ const ko = {
     },
     listLabel: '{{name}} 사용처',
     fileLabel: '{{file}}, {{count}}곳',
+    // 결과 한도로 파일의 뒤가 잘렸을 수 있을 때(키마다 200곳까지만 받는다)
+    fileLabelAtLeast: '{{file}}, {{count}}곳 이상',
+    fileCountAtLeast: '{{count}}+',
     rowLabel: '{{file}} {{line}}번째 줄, {{kind}}: {{code}}',
     openHint: '더블클릭하거나 Enter를 누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
     noLineHint:

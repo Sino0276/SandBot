@@ -346,14 +346,22 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     expect([...result().unknownNames.keys()]).toEqual(['leftBack', 'rightBack', 'rightFront'])
     const comp = robotUsageView(objects, result(), usage().baseline, COMP_ROBOT_ID)!
     expect(section(comp, 'constructs')!.hits.length).toBeGreaterThan(0)
-    expect(comp.counts.descendants).toBe(
-      [
-        { objectId: 'drive', componentId: 'lf' },
-        { objectId: 'odometry', componentId: 'par' },
-        ...LIFT_DEVICES
-      ]
-        .map(deviceCount)
-        .reduce((a, b) => a + b, 0)
+    // 로봇의 하위 장치 수는 자리 수다. par 데드휠은 같은 포트 모터(leftFront)의 찾기 문자열을 함께 가져 한 번만 센다.
+    const compDevices = [
+      { objectId: 'drive', componentId: 'lf' },
+      { objectId: 'odometry', componentId: 'par' },
+      ...LIFT_DEVICES
+    ]
+    const places = new Set(
+      compDevices.flatMap((device) => {
+        const view = deviceView(objects, device)
+        return ['code', 'byName'].flatMap((id) => section(view, id)?.hits ?? []).map(at)
+      })
+    )
+    expect(comp.counts.descendants).toBe(places.size)
+    expect(places.size).toBeLessThan(compDevices.map(deviceCount).reduce((a, b) => a + b, 0))
+    expect(deviceView(objects, { objectId: 'odometry', componentId: 'par' }).samePortName).toBe(
+      true
     )
   })
 

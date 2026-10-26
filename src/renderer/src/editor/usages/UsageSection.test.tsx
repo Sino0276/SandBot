@@ -157,6 +157,8 @@ describe('사용처 칸 그리기', () => {
     expect(html).toContain('찾은 것: robot.lift.liftLeft, &quot;liftLeft&quot;')
     expect(html).toContain(ko.usages.kotlin)
     expect(html).not.toContain('aria-expanded')
+    // 펼치지 않지만 사라진 트리에서 포커스를 되돌릴 곳이다(탭 순서에는 넣지 않는다)
+    expect(html).toMatch(/class="usage-header is-muted"[^>]*tabindex="-1"/)
   })
 
   it('접힌 머리줄: 코드·이름 개수, 찾는 중 표시, 본문 없음', () => {
@@ -220,6 +222,57 @@ describe('사용처 칸 그리기', () => {
     const html = renderToStaticMarkup(device)
     expect(html).toContain('aria-label="문제 1곳"')
     expect(html).toContain('⚠ 이전 이름 robot.lift.liftLeft을(를) 쓰는 곳 1곳')
+  })
+
+  it('같은 포트의 데드휠이 이름을 함께 쓰면 그 안내(다른 로봇 안내가 아니다)', () => {
+    setStore(useSceneStore, {
+      objects: {
+        ...objects,
+        wheel: {
+          ...objects.liftMotor,
+          id: 'wheel',
+          name: 'wheel',
+          components: [
+            {
+              id: 'dw',
+              type: 'deadWheel',
+              name: 'par',
+              hub: 'controlHub',
+              port: 0,
+              props: propertyDefaults('deadWheel')
+            }
+          ]
+        }
+      }
+    })
+    setStore(useUsageOpenStore, { open: { device: true, group: false, robot: false } })
+    setStore(useUsageIndexStore, {
+      status: 'ready',
+      root: '/p',
+      result: resultWith([
+        [LL, [hit(5, 'lookup')]],
+        [deviceUsageKey('wheel', 'dw'), [hit(5, 'lookup')]]
+      ])
+    })
+    const html = renderToStaticMarkup(device)
+    expect(html).toContain(ko.usages.samePortName)
+    expect(html).not.toContain(ko.usages.sharedName)
+  })
+
+  it('결과 한도로 잘린 파일은 머리줄 개수가 N+이다', () => {
+    setStore(useUsageOpenStore, { open: { device: true, group: false, robot: false } })
+    const hits = [hit(3, 'field'), hit(4, 'field')]
+    setStore(useUsageIndexStore, {
+      status: 'ready',
+      root: '/p',
+      result: resultWith([[LL, hits]], {
+        totals: new Map([[LL, { ...counts(hits), field: 300 }]])
+      })
+    })
+    const html = renderToStaticMarkup(device)
+    expect(html).toContain('aria-label="org/firstinspires/ftc/teamcode/LiftOp.java, 2곳 이상"')
+    expect(html).toContain('<span class="usage-file-count">2+</span>')
+    expect(html).toContain('외 298곳')
   })
 
   it('실패하면 이전 결과를 흐리게 보이고 이유를 알린다', () => {

@@ -15,6 +15,7 @@ import type { HardwareComponent, SceneObject, SceneObjects } from '../../scene/m
 import {
   canExpand,
   deviceUsageView,
+  FILE_GROUP_CAPS,
   fileGroups,
   groupsStartOpen,
   groupUsageView,
@@ -23,6 +24,7 @@ import {
   scriptUsesHardware,
   searchedTerms,
   snippetWindow,
+  usageFocusFallback,
   usageRowTarget,
   usageTreeKey,
   usageTreeRows,
@@ -214,6 +216,8 @@ describe('장치 카드', () => {
     expect(view.counts.code).toBe(260)
     expect(section(view, 'code')).toMatchObject({ total: 260 })
     expect(section(view, 'code')!.hits).toHaveLength(2)
+    // 남은 행의 마지막 파일은 뒤가 잘렸을 수 있다
+    expect(section(view, 'code')!.cut).toEqual([PATH_A])
   })
 
   it('찾은 것이 없으면 빈 보기이고, 찾은 이름은 생성 필드·상수·구성 이름이다', () => {
@@ -243,8 +247,12 @@ describe('장치 카드', () => {
     )
     const view = deviceUsageView(objects, result(), null, 'w', 'dw')!
     expect(view.terms.at(-1)).toBe('"leftFront"')
-    // 같은 이름을 모터와 데드휠이 함께 쓴다
-    expect(view.sharedName).toBe(true)
+    // 같은 이름을 같은 포트의 모터와 데드휠이 함께 쓴다(로봇은 하나라 다른 로봇 안내가 아니다)
+    expect(view).toMatchObject({ sharedName: false, samePortName: true })
+    expect(deviceUsageView(objects, result(), null, 'm', 'mm')).toMatchObject({
+      sharedName: false,
+      samePortName: true
+    })
   })
 
   it('다른 로봇에 같은 구성 이름이 있으면 sharedName', () => {
@@ -253,8 +261,35 @@ describe('장치 카드', () => {
       robot('other', 'OtherBot'),
       part('otherPart', 'other', component('ol', 'motor', 'liftLeft', 0))
     )
-    expect(deviceUsageView(objects, result(), null, 'liftMotor', 'll')!.sharedName).toBe(true)
+    expect(deviceUsageView(objects, result(), null, 'liftMotor', 'll')).toMatchObject({
+      sharedName: true,
+      samePortName: false
+    })
     expect(deviceUsageView(objects, result(), null, 'drive', 'fl')!.sharedName).toBe(false)
+  })
+
+  it('데드휠 쌍과 다른 로봇이 함께 이름을 쓰면 둘 다, 같은 로봇의 겹친 이름(검증 오류)은 둘 다 아니다', () => {
+    const objects = scene(
+      robot('robot', 'MyBot'),
+      part('m', 'robot', component('mm', 'motor', 'leftFront', 2)),
+      part('w', 'robot', component('dw', 'deadWheel', 'par', 2)),
+      part(
+        'dup',
+        'robot',
+        component('d1', 'servo', 'claw', 0),
+        component('d2', 'servo', 'claw', 1)
+      ),
+      robot('other', 'OtherBot'),
+      part('otherPart', 'other', component('ol', 'motor', 'leftFront', 0))
+    )
+    expect(deviceUsageView(objects, result(), null, 'w', 'dw')).toMatchObject({
+      sharedName: true,
+      samePortName: true
+    })
+    expect(deviceUsageView(objects, result(), null, 'dup', 'd1')).toMatchObject({
+      sharedName: false,
+      samePortName: false
+    })
   })
 
   it('로봇 밖 장치와 카탈로그에 없는 종류는 사용처가 없다', () => {
@@ -348,6 +383,88 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
     })
     const view = deviceUsageView(objects, res, baseline, 'drive', 'fl')!
     expect(section(view, 'renamedCode')).toMatchObject({ old: 'robot.frontLeft', total: 1 })
+  })
+
+  it('장치가 하나뿐인 그룹에서 꺼낸 장치: 그룹이 클래스를 잃어 로봇 클래스에 없는 lift·Lift', () => {
+    const start = scene(
+      robot('robot', 'MyBot'),
+      group('lift', 'robot', 'Lift'),
+      part('liftMotor', 'lift', component('ll', 'motor', 'liftLeft', 1)),
+      group('wrist', 'robot', 'Wrist'),
+      part('wristPart', 'wrist', component('ws', 'servo', 'wristServo', 0))
+    )
+    // javac는 robot.lift.liftLeft의 lift와 MyBot.Lift.X의 Lift에서 멈춘다(맞추기도 r:robot에 둔다)
+    const res = result({
+      unresolved: [
+        [
+          ROBOT,
+          [
+            hit(PATH_A, 5, 'unresolved', { member: 'lift' }),
+            hit(PATH_A, 6, 'unresolved', { member: 'Lift' }),
+            hit(PATH_B, 2, 'unresolved', { member: 'frontRight' })
+          ]
+        ]
+      ]
+    })
+    // 다른 그룹 안으로, 로봇 바로 아래로
+    for (const parentId of ['wrist', 'robot']) {
+      const moved = renamed(start, 'liftMotor', { parentId })
+      expect(groupUsageView(moved, res, start, 'lift')).toBeNull()
+      const view = deviceUsageView(moved, res, start, 'liftMotor', 'll')!
+      expect(section(view, 'renamedCode')).toMatchObject({
+        old: 'robot.lift, MyBot.Lift',
+        total: 2
+      })
+      expect(view.counts.warnings).toBe(2)
+      expect(view.empty).toBe(false)
+    }
+  })
+
+  it('클래스를 잃은 그룹이 여럿이면 지금도 있는 범위 바로 아래의 사라진 그룹 이름', () => {
+    const start = scene(
+      robot('robot', 'MyBot'),
+      part('drive', 'robot', component('fl', 'motor', 'frontLeft', 0)),
+      group('arm', 'robot', 'Arm'),
+      group('lift', 'arm', 'Lift'),
+      part('liftMotor', 'lift', component('ll', 'motor', 'liftLeft', 1))
+    )
+    const moved = renamed(start, 'liftMotor', { parentId: 'robot' })
+    const res = result({
+      unresolved: [
+        [
+          ROBOT,
+          [
+            hit(PATH_A, 5, 'unresolved', { member: 'arm' }),
+            // 기준 씬에서도 컴파일되지 않던 이름(robot.lift)은 붙이지 않는다
+            hit(PATH_A, 6, 'unresolved', { member: 'lift' })
+          ]
+        ]
+      ]
+    })
+    expect(
+      section(deviceUsageView(moved, res, start, 'liftMotor', 'll'), 'renamedCode')
+    ).toMatchObject({ old: 'robot.arm', total: 1 })
+
+    // Arm에 장치가 있으면 Arm은 남고 Arm 안에서 lift·Lift를 찾지 못한다
+    const withArm = scene(
+      ...Object.values(start),
+      part('armMotor', 'arm', component('am', 'motor', 'arm', 2))
+    )
+    const armRes = result({
+      unresolved: [[groupUsageKey('arm'), [hit(PATH_A, 5, 'unresolved', { member: 'lift' })]]]
+    })
+    expect(
+      section(
+        deviceUsageView(
+          renamed(withArm, 'liftMotor', { parentId: 'robot' }),
+          armRes,
+          withArm,
+          'liftMotor',
+          'll'
+        ),
+        'renamedCode'
+      )
+    ).toMatchObject({ old: 'robot.arm.lift', total: 1 })
   })
 
   it('상수도 이전 이름이다(제목에는 사용처가 쓰는 이전 이름만)', () => {
@@ -450,6 +567,36 @@ describe('그룹 카드', () => {
     })
   })
 
+  it('장치 없는 부모(Arm)에서 꺼낸 그룹: 부모가 클래스를 잃어 로봇 클래스에 없는 arm·Arm', () => {
+    const start = scene(
+      robot('robot', 'MyBot'),
+      part('drive', 'robot', component('fl', 'motor', 'frontLeft', 0)),
+      group('arm', 'robot', 'Arm'),
+      group('wrist', 'arm', 'Wrist'),
+      part('clawPart', 'wrist', component('cl', 'servo', 'claw', 0))
+    )
+    const moved = renamed(start, 'wrist', { parentId: 'robot' })
+    // robot.arm.wrist.claw, MyBot.Arm.Wrist w = robot.arm.wrist
+    const res = result({
+      unresolved: [
+        [
+          ROBOT,
+          [
+            hit(PATH_A, 5, 'unresolved', { member: 'arm' }),
+            hit(PATH_A, 6, 'unresolved', { member: 'Arm' }),
+            hit(PATH_A, 6, 'unresolved', { member: 'arm', col: 30 })
+          ]
+        ]
+      ]
+    })
+    const view = groupUsageView(moved, res, start, 'wrist')!
+    expect(section(view, 'renamedCode')).toMatchObject({
+      old: 'robot.arm, MyBot.Arm',
+      total: 3
+    })
+    expect(view.empty).toBe(false)
+  })
+
   it('장치가 없어 클래스를 만들지 않는 그룹과 로봇 밖 그룹은 사용처가 없다', () => {
     const objects = scene(
       ...baseScene(),
@@ -523,8 +670,9 @@ describe('로봇 카드', () => {
       [PATH_A, 3],
       [PATH_B, 1]
     ])
-    // 로봇 키는 한도로 잘려 40개였다
+    // 로봇 키는 한도로 잘려 40개였다(남은 마지막 행의 파일은 뒤가 잘렸을 수 있다)
     expect(unresolved.total).toBe(42)
+    expect(unresolved.cut).toEqual([PATH_B])
     expect(view.counts.warnings).toBe(42)
     // 다른 로봇 카드는 자기 범위와 *만
     const other = section(robotUsageView(objects, res, null, 'other'), 'unresolved')!
@@ -553,6 +701,33 @@ describe('로봇 카드', () => {
     expect(section(view, 'unresolved')!.hits.map((h) => h.member)).toEqual(['Ghost'])
     expect(section(view, 'unresolved')!.total).toBe(1)
     expect(view.counts.warnings).toBe(3)
+  })
+
+  it('하위 장치 수는 자리 수다: 같은 포트의 모터·데드휠이 함께 가진 찾기 문자열은 한 번, 한도로 잘린 것은 더한다', () => {
+    const objects = scene(
+      robot('robot', 'MyBot'),
+      part('m', 'robot', component('mm', 'motor', 'leftFront', 2)),
+      part('w', 'robot', component('dw', 'deadWheel', 'par', 2))
+    )
+    const motor = deviceUsageKey('m', 'mm')
+    const wheel = deviceUsageKey('w', 'dw')
+    // hardwareMap.get(DcMotorEx.class, "leftFront") 하나를 두 키가 가진다
+    const shared = hit(PATH_A, 6, 'lookup', { col: 60 })
+    const res = result({
+      hits: [
+        [motor, [hit(PATH_A, 3, 'field'), shared]],
+        [wheel, [{ ...shared }, hit(PATH_B, 1, 'constant'), hit(PATH_B, 2, 'text')]]
+      ]
+    })
+    expect(robotUsageView(objects, res, null, 'robot')!.counts.descendants).toBe(3)
+    const capped = result({
+      hits: [
+        [motor, [shared]],
+        [wheel, [{ ...shared }]]
+      ],
+      totals: [[motor, { lookup: 250 }]]
+    })
+    expect(robotUsageView(objects, capped, null, 'robot')!.counts.descendants).toBe(250)
   })
 
   it('장치가 없는 로봇도 보인다(*가 남는다)', () => {
@@ -605,6 +780,32 @@ describe('파일 묶음', () => {
     expect(starved[1].rows).toEqual([])
     expect(starved[1].first.line).toBe(1)
     expect(canExpand(starved[1])).toBe(false)
+  })
+
+  it('결과 한도로 잘린 부분은 마지막으로 남은 파일의 개수가 그 아래 수(N+)다', () => {
+    const many = (path: string, n: number): UsageHit[] =>
+      Array.from({ length: n }, (_, i) => hit(path, i + 1, 'field'))
+    const objects = scene(...baseScene())
+    // A 150곳, B 110곳 중 앞의 50곳만 남고(키마다 200곳) C 30곳은 없다
+    const res = result({
+      hits: [[LL, [...many(PATH_A, 150), ...many(PATH_B, 50)]]],
+      totals: [[LL, { field: 290 }]]
+    })
+    const code = section(deviceUsageView(objects, res, null, 'liftMotor', 'll'), 'code')!
+    expect(code).toMatchObject({ total: 290, cut: [PATH_B] })
+    expect(
+      fileGroups(code.hits, FILE_GROUP_CAPS, code.cut).map((g) => [g.path, g.count, g.atLeast])
+    ).toEqual([
+      [PATH_A, 150, false],
+      [PATH_B, 50, true]
+    ])
+    // 자르지 않았으면 모두 전체 수다
+    const whole = section(
+      deviceUsageView(objects, result({ hits: [[LL, many(PATH_A, 3)]] }), null, 'liftMotor', 'll'),
+      'code'
+    )!
+    expect(whole.cut).toEqual([])
+    expect(fileGroups(whole.hits).every((g) => !g.atLeast)).toBe(true)
   })
 
   it('행이 20개 이하면 펼쳐서 시작한다', () => {
@@ -768,5 +969,29 @@ describe('트리 행과 키보드', () => {
     expect(rows[2].type === 'file' && rows[2].open).toBe(false)
     expect(usageTreeKey(rows, rows[2].id, 'ArrowRight')).toBeNull()
     expect(usageTreeKey(rows, rows[2].id, 'Enter')).toMatchObject({ hit: { path: PATH_B } })
+  })
+
+  it('포커스한 행이 사라지면 같은 파일의 남은 줄, 그 파일, 같은 순번의 파일로 옮긴다', () => {
+    // openAll: [A 파일, A 1줄, A 2줄, B 파일, B 3줄]
+    const [fileA, , lastA, fileB] = openAll
+    // 같은 id가 남았으면 그 행
+    expect(usageFocusFallback(openAll, lastA)).toBe(lastA.id)
+    // A의 마지막 줄을 고쳤다: A의 남은 마지막 줄
+    const fewer = usageTreeRows(
+      fileGroups([hit(PATH_A, 1, 'field'), hit(PATH_B, 3, 'field')]),
+      () => true
+    )
+    expect(usageFocusFallback(fewer, lastA)).toBe(fewer[1].id)
+    // 행이 20개를 넘어 파일을 접었다: 그 파일 행
+    const closed = usageTreeRows(groups, () => false)
+    expect(usageFocusFallback(closed, lastA)).toBe(fileA.id)
+    // A가 통째로 사라졌다: 같은 순번의 파일(B)
+    const onlyB = usageTreeRows(fileGroups([hit(PATH_B, 3, 'field')]), () => true)
+    expect(usageFocusFallback(onlyB, lastA)).toBe(onlyB[0].id)
+    expect(usageFocusFallback(onlyB, fileA)).toBe(onlyB[0].id)
+    // 마지막 파일이 사라졌다: 이제 마지막 파일
+    const onlyA = usageTreeRows(fileGroups([hit(PATH_A, 1, 'field')]), () => true)
+    expect(usageFocusFallback(onlyA, fileB)).toBe(onlyA[0].id)
+    expect(usageFocusFallback([], fileB)).toBeNull()
   })
 })

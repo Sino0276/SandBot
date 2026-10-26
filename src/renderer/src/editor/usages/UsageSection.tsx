@@ -1,10 +1,11 @@
-import { useId, useMemo } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useJavaIndexStore } from '../../java/javaIndex'
 import { useUsageIndexStore } from '../../java/usageIndex'
 import type { UsageResult } from '../../java/usages/usageTypes'
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import { focusDropped, focusMovedOut } from './focusRestore'
 import { useUsageOpenStore } from './usageOpenStore'
 import UsageTree from './UsageTree'
 import {
@@ -126,6 +127,7 @@ function Section({
         label={t('usages.listLabel', { name: view.name })}
         describedBy={titleId}
         hits={section.hits}
+        cut={section.cut}
         defaultKind={section.defaultKind}
       />
       {beyond > 0 && <p className="usage-more">{t('usages.more', { count: beyond })}</p>}
@@ -160,6 +162,9 @@ function Section({
       {section.id === 'byName' && view.sharedName && (
         <p className="inspector-note usage-note">{t('usages.sharedName')}</p>
       )}
+      {section.id === 'byName' && view.samePortName && (
+        <p className="inspector-note usage-note">{t('usages.samePortName')}</p>
+      )}
     </div>
   )
 }
@@ -175,6 +180,39 @@ function Busy(): React.JSX.Element {
     >
       {' …'}
     </span>
+  )
+}
+
+// 사용처 칸의 바깥 틀. 안에 포커스가 있었는데 다시 찾아 트리·부분이 통째로 사라지면(마지막 사용처를 고침) 포커스가
+// <body>로 떨어진다. 그때 머리줄로 되돌려 인스펙터(localKeys) 안에 남긴다(트리 안의 행 되돌리기는 UsageTree).
+// 상태마다 같은 자리에 그려 칸이 바뀌어도 기억이 남는다.
+function SectionFrame({
+  stale,
+  children
+}: {
+  stale: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const frameRef = useRef<HTMLDivElement>(null)
+  const hadFocusRef = useRef(false)
+  useLayoutEffect(() => {
+    const frame = frameRef.current
+    if (!frame || !hadFocusRef.current || frame.contains(document.activeElement)) return
+    if (focusDropped()) frame.querySelector<HTMLElement>('.usage-header')?.focus()
+  })
+  return (
+    <div
+      ref={frameRef}
+      className={stale ? 'usage-section is-stale' : 'usage-section'}
+      onFocus={() => {
+        hadFocusRef.current = true
+      }}
+      onBlur={(event) => {
+        if (focusMovedOut(event)) hadFocusRef.current = false
+      }}
+    >
+      {children}
+    </div>
   )
 }
 
@@ -225,16 +263,17 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
           : null
 
   // 아직 결과가 없다: 찾는 중이면 그렇게, 프로젝트 없음·TeamCode 없음·실패면 그 이유
+  // 흐린 머리줄은 펼치지 않지만 포커스는 받는다(tabIndex -1, 사라진 트리에서 포커스를 되돌릴 곳)
   if (!view) {
     return (
-      <div className="usage-section">
-        <div className="usage-header is-muted">
+      <SectionFrame stale={false}>
+        <div className="usage-header is-muted" tabIndex={-1}>
           <span className="usage-twisty" aria-hidden="true" />
           {title}
           {status === 'scanning' && <span className="usage-summary">{t('usages.scanning')}</span>}
         </div>
         {stateNote && <p className="inspector-note usage-note">{stateNote}</p>}
-      </div>
+      </SectionFrame>
     )
   }
 
@@ -249,8 +288,8 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
   // 찾은 것이 없고 일부만 찾지도 않았다: 흐린 머리줄(펼치지 않음), 도움말은 찾은 것
   if (view.empty && !partial && !stale) {
     return (
-      <div className="usage-section">
-        <div className="usage-header is-muted" title={searched}>
+      <SectionFrame stale={false}>
+        <div className="usage-header is-muted" title={searched} tabIndex={-1}>
           <span className="usage-twisty" aria-hidden="true" />
           {title}
           <span className="usage-summary">
@@ -258,7 +297,7 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
             {scanning && <Busy />}
           </span>
         </div>
-      </div>
+      </SectionFrame>
     )
   }
 
@@ -278,7 +317,7 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
       .map((section) => <Section key={section.id} kind={kind} section={section} view={view} />)
 
   return (
-    <div className={stale ? 'usage-section is-stale' : 'usage-section'}>
+    <SectionFrame stale={stale}>
       <button
         type="button"
         className="usage-header"
@@ -324,7 +363,7 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
           {sectionsOf('folded')}
         </div>
       )}
-    </div>
+    </SectionFrame>
   )
 }
 
