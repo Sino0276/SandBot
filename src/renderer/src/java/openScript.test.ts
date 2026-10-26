@@ -130,6 +130,24 @@ describe('스크립트 열기', () => {
     expect(support()).toBe('unknown')
   })
 
+  it('여는 사이 편집기 설정을 바꾸면 이전 편집기의 답으로 줄 번호 지원을 정하지 않는다', async () => {
+    const support = (): string => useLineSupportStore.getState().support
+    let answer: (result: OpenJavaFileResult) => void = () => {}
+    openJavaFile.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const opening = openScriptFile(PATH, 7)
+    // 환경 설정 창이 다른 편집기를 고른 뒤(setExternalEditor) 부른다
+    resetLineSupport()
+    answer({ ok: true, lineIgnored: true })
+    await opening
+    expect(support()).toBe('unknown')
+    // 그 열기는 줄을 넘기지 못했으므로 알림은 그대로 띄운다
+    expect(notices().map((notice) => notice.key)).toEqual(['lineIgnored'])
+    // 새 편집기로 연 답은 쓴다
+    openJavaFile.mockResolvedValueOnce({ ok: true })
+    await openScriptFile(PATH, 7)
+    expect(support()).toBe('yes')
+  })
+
   it('IPC 오류 메시지의 채널 머리말을 뗀다', () => {
     expect(ipcErrorDetail(new Error("Error invoking remote method 'x:y': Error: bad"))).toBe('bad')
     expect(ipcErrorDetail('plain')).toBe('plain')

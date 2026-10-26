@@ -15,8 +15,12 @@ export const useLineSupportStore = create<{ support: LineSupport }>()(() => ({
   support: 'unknown'
 }))
 
+// resetLineSupport마다 오른다. 열기를 보낸 뒤 편집기 설정이 바뀌었으면 그 열기의 답(이전 편집기의 것)은 쓰지 않는다.
+let lineSupportEpoch = 0
+
 // 편집기 설정을 바꾸면 다시 모른다(환경 설정 창이 부른다)
 export function resetLineSupport(): void {
+  lineSupportEpoch++
   useLineSupportStore.setState({ support: 'unknown' })
 }
 
@@ -41,6 +45,7 @@ export async function openScriptFile(path: string, line?: number): Promise<void>
   const fileName = fileNameOf(path)
   dismissNotice(lastNotice)
   lastNotice = 0
+  const epoch = lineSupportEpoch
   let result
   try {
     result = await window.api.openJavaFile(root, path, line)
@@ -52,8 +57,8 @@ export async function openScriptFile(path: string, line?: number): Promise<void>
     return
   }
   if (result.ok) {
-    // 줄을 넘기지 않았으면 편집기가 줄을 받는지 알 수 없다
-    if (line !== undefined)
+    // 줄을 넘기지 않았으면 편집기가 줄을 받는지 알 수 없다. 여는 사이 편집기를 바꿨으면 이 답은 이전 편집기의 것이다.
+    if (line !== undefined && epoch === lineSupportEpoch)
       useLineSupportStore.setState({ support: result.lineIgnored ? 'no' : 'yes' })
     if (result.lineIgnored && !lineIgnoredShown) {
       lineIgnoredShown = true
