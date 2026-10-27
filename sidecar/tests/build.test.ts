@@ -20,7 +20,9 @@ import {
 const sdkDir = join(repoRoot, 'sidecar', 'build', 'ftc-sdk')
 // 빌드가 들여오기·stub에 쓰는 실제 jar(build-sidecar.mjs의 liftableJars와 같다)
 const realJars = [
-  ...['RobotCore', 'Hardware', 'FtcCommon', 'Vision'].map((n) => join(sdkDir, '12.0.0', `${n}.jar`)),
+  ...['RobotCore', 'Hardware', 'FtcCommon', 'Vision'].map((n) =>
+    join(sdkDir, '12.0.0', `${n}.jar`)
+  ),
   ...['gson-2.8.0', 'gson-extras-0.2.1'].map((n) => join(sdkDir, '12.0.0', 'libs', `${n}.jar`))
 ]
 const androidJar = join(sdkDir, 'android-4.1.1.4.jar')

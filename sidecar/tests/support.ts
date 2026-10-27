@@ -119,7 +119,13 @@ export type SidecarReport = {
   lifted: string[]
   stubs: Record<string, string>
   missingTypes: string[]
-  topBlockers: { name: string; kind: string; unlocks: number; liftedAfter: number; reason?: string }[]
+  topBlockers: {
+    name: string
+    kind: string
+    unlocks: number
+    liftedAfter: number
+    reason?: string
+  }[]
   incomplete: string[]
   warnings: string[]
 }
