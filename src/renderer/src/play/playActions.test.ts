@@ -435,6 +435,20 @@ describe('끝난 뒤와 프로젝트 바꾸기', () => {
       })
     )
     expect(usePlayStore.getState().selectedClass).toBeNull()
+    // 그 실행(텔레메트리·장치·시간)은 지운다
+    expect(usePlayStore.getState().run).toBeNull()
+  })
+
+  it('끝난 실행은 다른 프로젝트를 열 때 지우고, Console은 남긴다', async () => {
+    await initPlay()
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().run).not.toBeNull()
+    const entries = usePlayStore.getState().entries
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(usePlayStore.getState().entries).toBe(entries)
   })
 
   it('다른 프로젝트를 열면 지금 실행에 STOP을 보내고 그 프로젝트의 목록을 읽는다', async () => {
