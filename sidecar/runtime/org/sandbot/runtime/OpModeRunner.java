@@ -95,6 +95,9 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             // 런타임 자체의 잘못(여기까지 오면 안 된다)
             internalError("sidecar runtime failure: " + StackFrames.describe(t), t);
             finish("exception");
+        } finally {
+            // finish는 돌아오지 않는다. 그래도 여기 오면(끝내기 중 오류) JVM이 남지 않게
+            Main.halt();
         }
     }
 

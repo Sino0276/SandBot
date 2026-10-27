@@ -41,7 +41,8 @@ final class HardwareHooks {
 
     static HardwareHooks load(ClassLoader loader) {
         try {
-            Class<?> type = Class.forName(CLASS_NAME, true, loader);
+            // 초기화는 처음 부를 때(OpMode 스레드, Sim을 넣은 뒤)
+            Class<?> type = Class.forName(CLASS_NAME, false, loader);
             return new HardwareHooks(type.getMethod("create", File.class), type.getMethod("beforeInit", HardwareMap.class),
                     type.getMethod("afterStop", HardwareMap.class));
         } catch (ClassNotFoundException | NoSuchMethodException e) {

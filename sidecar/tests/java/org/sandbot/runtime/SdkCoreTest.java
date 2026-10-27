@@ -329,6 +329,31 @@ public final class SdkCoreTest {
         Check.isTrue(!SystemClock.setCurrentTimeMillis(0), "cannot set the clock");
     }
 
+    // ---- 기다리는 시간 API의 한 스레드 규칙 ----
+
+    public static void testJoinOnRunningThreadIsThreadError() throws Exception {
+        TestSim.fresh();
+        Object gate = new Object();
+        Thread other = new Thread(() -> {
+            synchronized (gate) {
+                try {
+                    gate.wait(); // 테스트 코드는 패치하지 않으므로 진짜 대기
+                } catch (InterruptedException e) {
+                    // 끝
+                }
+            }
+        }, "Blocked");
+        other.setDaemon(true);
+        other.start();
+        org.sandbot.sim.SimThreadError e = Check.throwsType(org.sandbot.sim.SimThreadError.class,
+                () -> org.sandbot.sim.TimeRedirects.join(other, 10), "join on a running thread");
+        Check.isTrue(!e.reported(), "the runner reports it as kind thread");
+        Check.isTrue(e.getMessage().contains("\"Blocked\""), e.getMessage());
+        other.interrupt();
+        other.join();
+        org.sandbot.sim.TimeRedirects.join(other, 10); // 끝난 스레드는 바로 돌아온다
+    }
+
     // ---- OpMode 다리 ----
 
     static final class Services implements OpModeServices {
