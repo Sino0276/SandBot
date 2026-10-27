@@ -35,6 +35,15 @@ public class Drive extends LinearOpMode {
     ])
   })
 
+  it("SDK가 받지 않는 시스템 이름('$'로 시작하고 끝남)은 뺀다", () => {
+    const text = `${HEADER}${IMPORTS}
+@TeleOp(name = "$Stop$Robot$") public class A extends LinearOpMode {}
+@TeleOp(name = "$x") public class B extends LinearOpMode {}
+@TeleOp public class $C$ extends LinearOpMode {}
+`
+    expect(parseOpModes(text).map((opMode) => opMode.name)).toEqual(['$x'])
+  })
+
   it('on-demand import와 전체 이름, 애너테이션 없는 클래스는 뺀다', () => {
     const onDemand = `${HEADER}import com.qualcomm.robotcore.eventloop.opmode.*;
 @Autonomous

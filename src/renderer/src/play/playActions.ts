@@ -356,8 +356,14 @@ export function handlePlayEvent(event: PlayEvent): void {
   usePlayStore.getState().applyEvent(event)
   const after = usePlayStore.getState().run
   if (!isRunActive(after)) stopGamepads()
-  // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다
-  if (event.type === 'finished' && before.opMode.flavor === 'Autonomous') {
+  // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다. 그사이 다른 프로젝트를 열었으면
+  // (STOP을 보내고 끝을 기다리는 중) 그 프로젝트의 같은 이름 OpMode를 고르지 않는다.
+  if (
+    event.type === 'finished' &&
+    before.opMode.flavor === 'Autonomous' &&
+    before.root === useProjectStore.getState().root &&
+    usePlayStore.getState().opModeList.root === before.root
+  ) {
     const teleOp = preselectedTeleOp(
       usePlayStore.getState().opModeList.opModes,
       event.preselectTeleOp

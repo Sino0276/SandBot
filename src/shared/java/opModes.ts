@@ -7,6 +7,7 @@
 // - checkOpModeClassConstraints: public이 아니거나 static이 아닌 중첩 클래스(inner class)면 버린다. OpMode를
 //   상속했는지는 글자로 알 수 없어 보지 않는다(아니면 사이드카가 load 오류로 알린다).
 // - getOpModeName: 애너테이션 name이 비었거나 공백뿐이면 클래스 단순 이름. group이 비면 기본 그룹('').
+// - checkUserOpModeName: 그 이름이 '$'로 시작하고 끝나면(시스템 OpMode 이름) 버린다.
 // SandBot에서 정한 것: abstract 클래스는 만들 수 없으므로 뺀다. name·group·preselectTeleOp는 글자 리터럴(+로 이은 것
 // 포함)일 때만 읽고, 상수 이름 같은 식이면 기본값(name은 단순 이름, 나머지는 '')을 쓴다. 메서드 안의 지역 클래스·익명
 // 클래스는 public일 수 없으므로 보지 않는다.
@@ -516,12 +517,15 @@ export function parseOpModes(text: string): ParsedOpMode[] {
     const annotation = (teleOp ?? autonomous)!
     const flavor: OpModeFlavor = teleOp ? 'TeleOp' : 'Autonomous'
     const values = elementValues(parser, annotation)
-    const name = values.get('name') ?? null
+    const value = values.get('name') ?? null
+    const name = value !== null && value.trim() !== '' ? value : decl.name
+    // checkUserOpModeName: '$'로 시작하고 끝나는 이름은 SDK 시스템 OpMode의 것이라 버린다(OpModeMeta.isSystemName)
+    if (name.startsWith('$') && name.endsWith('$')) continue
     found.push({
       className: binaryName(parser, decl),
       line: lineAt(raw.lineStarts, toRaw(tokens[annotation.at].start)),
       flavor,
-      name: name !== null && name.trim() !== '' ? name : decl.name,
+      name,
       group: values.get('group') ?? '',
       preselectTeleOp: flavor === 'Autonomous' ? (values.get('preselectTeleOp') ?? '') : ''
     })

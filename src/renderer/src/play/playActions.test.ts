@@ -419,6 +419,24 @@ describe('끝난 뒤와 프로젝트 바꾸기', () => {
     expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
   })
 
+  it('다른 프로젝트를 연 뒤 끝난 Autonomous는 새 프로젝트의 TeleOp을 고르지 않는다', async () => {
+    selectOpMode(AUTO.className)
+    await initPlay()
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    await settle()
+    expect(usePlayStore.getState().opModeList.root).toBe('/other')
+    handlePlayEvent(
+      event({
+        type: 'finished',
+        tNanos: 1,
+        reason: 'stopped',
+        detail: '',
+        preselectTeleOp: 'Drive'
+      })
+    )
+    expect(usePlayStore.getState().selectedClass).toBeNull()
+  })
+
   it('다른 프로젝트를 열면 지금 실행에 STOP을 보내고 그 프로젝트의 목록을 읽는다', async () => {
     await initPlay()
     api.listOpModes.mockClear()
