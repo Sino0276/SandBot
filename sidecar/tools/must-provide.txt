@@ -1,0 +1,85 @@
+# 가짜 SDK에 반드시 손 구현이나 들여온 실제 클래스로 있어야 할 형식(바이너리 이름, 중첩은 $).
+# 하나라도 껍데기(stub)면 빌드가 실패한다(scripts/build-sidecar.mjs, --allow-missing이면 경고).
+# 샘플(FtcRobotController 12.0)·생성 코드(src/renderer/src/hardware/javaCodegen.ts)·카탈로그(catalog.ts의 javaType)가
+# 실행 때 쓰는 형식이다. 카탈로그에 종류를 더하면 여기에도 더한다.
+
+# OpMode
+com.qualcomm.robotcore.eventloop.opmode.OpMode
+com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
+com.qualcomm.robotcore.eventloop.opmode.TeleOp
+com.qualcomm.robotcore.eventloop.opmode.Autonomous
+com.qualcomm.robotcore.eventloop.opmode.Disabled
+org.firstinspires.ftc.robotcore.external.Telemetry
+org.firstinspires.ftc.robotcore.external.Telemetry$Item
+org.firstinspires.ftc.robotcore.external.Telemetry$Line
+org.firstinspires.ftc.robotcore.external.Telemetry$Log
+org.firstinspires.ftc.robotcore.external.Telemetry$DisplayFormat
+com.qualcomm.robotcore.hardware.Gamepad
+com.qualcomm.robotcore.hardware.HardwareMap
+com.qualcomm.robotcore.hardware.HardwareDevice
+com.qualcomm.robotcore.util.RobotLog
+
+# 유틸리티(실제 동작 그대로 들여온다)
+com.qualcomm.robotcore.util.ElapsedTime
+com.qualcomm.robotcore.util.ElapsedTime$Resolution
+com.qualcomm.robotcore.util.Range
+com.qualcomm.robotcore.hardware.PIDFCoefficients
+com.qualcomm.robotcore.hardware.PIDCoefficients
+org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
+org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit
+org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit
+org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit
+org.firstinspires.ftc.robotcore.external.navigation.Orientation
+org.firstinspires.ftc.robotcore.external.navigation.AxesOrder
+org.firstinspires.ftc.robotcore.external.navigation.AxesReference
+org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles
+org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity
+org.firstinspires.ftc.robotcore.external.navigation.Position
+org.firstinspires.ftc.robotcore.external.navigation.Pose2D
+org.firstinspires.ftc.robotcore.external.navigation.Pose3D
+org.firstinspires.ftc.robotcore.external.navigation.Quaternion
+
+# 모터·서보
+com.qualcomm.robotcore.hardware.DcMotor
+com.qualcomm.robotcore.hardware.DcMotor$RunMode
+com.qualcomm.robotcore.hardware.DcMotor$ZeroPowerBehavior
+com.qualcomm.robotcore.hardware.DcMotorEx
+com.qualcomm.robotcore.hardware.DcMotorSimple
+com.qualcomm.robotcore.hardware.DcMotorSimple$Direction
+com.qualcomm.robotcore.hardware.Servo
+com.qualcomm.robotcore.hardware.Servo$Direction
+com.qualcomm.robotcore.hardware.CRServo
+com.qualcomm.robotcore.hardware.VoltageSensor
+
+# 센서
+com.qualcomm.robotcore.hardware.IMU
+com.qualcomm.robotcore.hardware.IMU$Parameters
+com.qualcomm.robotcore.hardware.ImuOrientationOnRobot
+com.qualcomm.hardware.rev.RevHubOrientationOnRobot
+com.qualcomm.hardware.rev.RevHubOrientationOnRobot$LogoFacingDirection
+com.qualcomm.hardware.rev.RevHubOrientationOnRobot$UsbFacingDirection
+com.qualcomm.robotcore.hardware.DistanceSensor
+com.qualcomm.robotcore.hardware.NormalizedColorSensor
+com.qualcomm.robotcore.hardware.NormalizedRGBA
+com.qualcomm.robotcore.hardware.TouchSensor
+com.qualcomm.robotcore.hardware.DigitalChannel
+com.qualcomm.robotcore.hardware.DigitalChannel$Mode
+com.qualcomm.robotcore.hardware.AnalogInput
+com.qualcomm.robotcore.hardware.LED
+
+# 허브
+com.qualcomm.hardware.lynx.LynxModule
+com.qualcomm.hardware.lynx.LynxModule$BulkCachingMode
+
+# 카탈로그의 구체 장치
+com.qualcomm.hardware.rev.RevBlinkinLedDriver
+com.qualcomm.hardware.rev.RevBlinkinLedDriver$BlinkinPattern
+org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
+com.qualcomm.hardware.limelightvision.Limelight3A
+com.qualcomm.hardware.dfrobot.HuskyLens
+com.qualcomm.hardware.gobilda.GoBildaPinpointDriver
+com.qualcomm.hardware.gobilda.GoBildaPinpointDriver$EncoderDirection
+com.qualcomm.hardware.gobilda.GoBildaPinpointDriver$GoBildaOdometryPods
+com.qualcomm.hardware.sparkfun.SparkFunOTOS
+com.qualcomm.hardware.sparkfun.SparkFunOTOS$Pose2D
+com.qualcomm.hardware.digitalchickenlabs.OctoQuad
