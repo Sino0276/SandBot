@@ -692,6 +692,7 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       const classes = await compileJavaTests(b, [resolve(__dirname, 'java')])
       const result = await runJavaTests(b, classes, [
         'org.sandbot.runtime.JsonTest',
+        'org.sandbot.runtime.OutputCaptureTest',
         'org.sandbot.runtime.patch.ClassPatcherTest',
         'org.sandbot.runtime.VirtualClockTest',
         'org.sandbot.runtime.SdkCoreTest'
