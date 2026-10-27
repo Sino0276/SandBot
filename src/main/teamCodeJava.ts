@@ -227,7 +227,7 @@ async function resolveOnDisk(base: string, segments: readonly string[]): Promise
   return current
 }
 
-type Located =
+export type Located =
   | { ok: true; projectRoot: string; file: string; real: string; realJavaRoot: string }
   | { ok: false; code: 'notAllowed' | 'missing' | 'failed'; detail: string }
 
@@ -235,7 +235,8 @@ type Located =
 // 열린 프로젝트이고, 연결 경로 규칙에 맞고, 보통 파일이고, 링크를 풀어도 TeamCode/src/main/java 안의 .java여야 한다.
 // file은 받은 경로의 디스크 위치(NFD 이름이면 그 이름), real은 링크를 푼 실제 위치다.
 // knownRealJavaRoot는 미리 푼 TeamCode/src/main/java의 실제 위치다(여러 파일을 읽을 때 한 번만 푼다).
-async function locateJavaFile(
+// 실행(sidecar/launch.ts)도 고른 OpMode 소스를 이것으로 확인한다.
+export async function locateJavaFile(
   root: unknown,
   relPath: unknown,
   knownRealJavaRoot?: string

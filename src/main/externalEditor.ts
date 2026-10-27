@@ -457,7 +457,7 @@ function consoleCodePage(): Promise<number | null> {
   return oemCodePage
 }
 
-async function queryRegistry(key: string): Promise<string> {
+export async function queryRegistry(key: string): Promise<string> {
   const [out, codePage] = await Promise.all([runReg(['query', key, '/s']), consoleCodePage()])
   return out ? decodeConsoleOutput(out, codePage) : ''
 }
