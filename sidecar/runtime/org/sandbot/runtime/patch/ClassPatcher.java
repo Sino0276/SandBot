@@ -21,7 +21,7 @@ import java.util.Set;
  *       그 항목을 가리키는 MethodHandle(REF_invokeVirtual 등)은 REF_invokeStatic + 새 Methodref로 돌린다.
  *   <li>코드 길이·오프셋이 그대로라 StackMapTable·예외 표·줄 번호 표를 고치지 않는다.
  * </ul>
- * 바뀐 것이 없으면 받은 배열을 그대로 돌려준다. org.sandbot.sim·org.sandbot.runtime 클래스는 바꾸지 않는다.
+ * 바뀐 것이 없으면 받은 배열을 그대로 돌려준다. org.sandbot.sim 클래스(TimeRedirects 자신)는 바꾸지 않는다.
  */
 public final class ClassPatcher {
     public static final String REDIRECTS = "org/sandbot/sim/TimeRedirects";
@@ -137,8 +137,7 @@ public final class ClassPatcher {
 
     public Result apply(byte[] bytes) throws PatchException {
         ClassFile cf = new ClassFile(bytes);
-        if (cf.thisName.startsWith("org/sandbot/sim/") || cf.thisName.startsWith("org/sandbot/runtime/"))
-            return new Result(bytes, 0, new ArrayList<>());
+        if (cf.thisName.startsWith("org/sandbot/sim/")) return new Result(bytes, 0, new ArrayList<>());
         ClassInfo self = new ClassInfo(cf.thisName, cf.superName, (cf.accessFlags & ClassFile.ACC_INTERFACE) != 0,
                 cf.methods);
         ClassHierarchy h = name -> name.equals(self.name) ? self : hierarchy.lookup(name);
