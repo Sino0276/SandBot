@@ -47,6 +47,7 @@ final class VirtualClock implements SimClock {
     private volatile boolean waitingHost;
 
     // 다른 스레드가 시계를 썼다(처음 한 번 정함)
+    private boolean violationClaimed;
     private volatile String fatalMessage;
     private volatile long fatalAtRealNanos;
     /** 런타임이 끝내는 중: OpMode 스레드에서도 fatal을 다시 던지지 않는다(afterStop 등) */
@@ -211,14 +212,18 @@ final class VirtualClock implements SimClock {
                 + "thread may do so in this version of SandBot (other threads are not supported yet)";
         boolean first = false;
         synchronized (this) {
-            if (fatalMessage == null) {
-                fatalMessage = "The OpMode was stopped because " + message.substring(0, 1).toLowerCase()
-                        + message.substring(1);
-                fatalAtRealNanos = System.nanoTime();
+            if (!violationClaimed) {
+                violationClaimed = true;
                 first = true;
             }
         }
-        if (first) violation.report(t, message, new Throwable().getStackTrace());
+        if (first) {
+            // 알린 뒤에 OpMode 스레드를 멈춘다(먼저 멈추면 finished가 이 error보다 먼저 나갈 수 있다)
+            violation.report(t, message, new Throwable().getStackTrace());
+            fatalAtRealNanos = System.nanoTime();
+            fatalMessage = "The OpMode was stopped because " + message.substring(0, 1).toLowerCase()
+                    + message.substring(1);
+        }
         throw new SimThreadError(message, true);
     }
 

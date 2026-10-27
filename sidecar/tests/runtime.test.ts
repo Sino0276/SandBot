@@ -220,7 +220,10 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   it(
     'hello가 첫 줄이고 stdout은 모두 JSON이며, 틱은 0부터 차례로 tick × tickNanos에 온다',
     async () => {
-      const run = await runSidecar(b, { opMode: 'WaitForStartLinear', events: { 10: ['start'], 30: ['stop'] } })
+      const run = await runSidecar(b, {
+        opMode: 'WaitForStartLinear',
+        events: { 10: ['start'], 30: ['stop'] }
+      })
       expect(run.raw.length).toBe(run.messages.length)
       expect(run.messages[0]).toMatchObject({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION })
       expect(run.messages[1]).toMatchObject({ type: 'compiled', ok: true })
@@ -297,10 +300,15 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   it(
     '반복 OpMode는 init → init_loop → start → loop → stop 순서이고 루프 사이에 sleep(1)이 있다',
     async () => {
-      const run = await runSidecar(b, { opMode: 'IterativeOrder', events: { 20: ['start'], 60: ['stop'] } })
+      const run = await runSidecar(b, {
+        opMode: 'IterativeOrder',
+        events: { 20: ['start'], 60: ['stop'] }
+      })
       const r = results(run)
       // order는 공백이 있는 값이라 로그 줄 전체로 확인한다
-      const orderLine = run.messages.find((m) => m.type === 'log' && m.text.startsWith('RESULT order='))
+      const orderLine = run.messages.find(
+        (m) => m.type === 'log' && m.text.startsWith('RESULT order=')
+      )
       expect(orderLine).toMatchObject({ text: 'RESULT order=init init_loop start loop stop' })
       expect(r['initLoops>0']).toBe('true')
       expect(r['loops>1']).toBe('true')
@@ -397,7 +405,9 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       const run = await runSidecar(b, { opMode: 'OtherThreadSleep' })
       const [error] = errors(run)
       expect(error).toMatchObject({ kind: 'thread', thread: 'Worker' })
-      expect(error.stack[0]).toMatchObject({ className: expect.stringContaining('OtherThreadSleep') })
+      expect(error.stack[0]).toMatchObject({
+        className: expect.stringContaining('OtherThreadSleep')
+      })
       expect(finishedReason(run)).toBe('exception')
     },
     TIMEOUT
@@ -427,7 +437,10 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   it(
     'STOP 뒤 900 ms(가상) 안에 끝나지 않으면 error stuckInStop 뒤 finished stuck',
     async () => {
-      const run = await runSidecar(b, { opMode: 'StuckInStop', events: { 2: ['start'], 50: ['stop'] } })
+      const run = await runSidecar(b, {
+        opMode: 'StuckInStop',
+        events: { 2: ['start'], 50: ['stop'] }
+      })
       const [error] = errors(run)
       expect(error.kind).toBe('stuckInStop')
       const finished = run.messages[run.messages.length - 1] as { tNanos: number; reason: string }
@@ -447,12 +460,61 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
           (m) =>
             m.type === 'log' &&
             m.stream === 'robotLog' &&
-            m.text.startsWith('W/GlobalWarning: The OpMode which was just initialized ended prematurely')
+            m.text.startsWith(
+              'W/GlobalWarning: The OpMode which was just initialized ended prematurely'
+            )
         )
       ).toBe(true)
-      expect(run.messages.some((m) => m.type === 'telemetry' && m.frame.lines[0] === 'status : done')).toBe(
-        true
-      )
+      expect(
+        run.messages.some((m) => m.type === 'telemetry' && m.frame.lines[0] === 'status : done')
+      ).toBe(true)
+    },
+    TIMEOUT
+  )
+
+  it(
+    '반복 OpMode의 requestOpModeStop은 stop()까지 돈 뒤 finished returned',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'RequestsStop', events: { 2: ['start'] } })
+      expect(results(run)).toMatchObject({ stopCalled: 'true', loopsAtLeast5: 'true' })
+      expect(states(run)).toEqual(['init', 'running', 'stopping'])
+      expect(finishedReason(run)).toBe('returned')
+    },
+    TIMEOUT
+  )
+
+  it(
+    'OpMode 정적 초기화는 OpMode 스레드에서 돌고, 그 예외는 원인으로 알린다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'ConstructorThrows' })
+      expect(results(run)).toMatchObject({ staticInitThread: 'OpModeThread' })
+      const [error] = errors(run)
+      expect(error).toMatchObject({
+        kind: 'exception',
+        exception: 'java.lang.IllegalArgumentException',
+        message: 'IllegalArgumentException: bad table'
+      })
+      expect(error.stack[0]).toMatchObject({ method: 'build', line: 14 })
+      expect(finishedReason(run)).toBe('exception')
+    },
+    TIMEOUT
+  )
+
+  it(
+    '가상 1초에 500줄을 넘는 출력은 버리고 한 번 알리며, 줄바꿈 없는 끝도 보낸다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'Spammer' })
+      const logs = run.messages.flatMap((m) => (m.type === 'log' ? [m] : []))
+      const lines = logs.filter((m) => m.text.startsWith('line '))
+      expect(lines.length).toBe(500)
+      expect(lines[499].text).toBe('line 499')
+      const rest = logs.slice(logs.indexOf(lines[499]) + 1).map((m) => [m.stream, m.text])
+      expect(rest.slice(0, 2)).toEqual([
+        ['out', '\u2026 1500 lines dropped'],
+        ['out', 'after']
+      ])
+      expect(rest).toContainEqual(['err', 'err'])
+      expect(rest).toContainEqual(['out', 'partial'])
     },
     TIMEOUT
   )
@@ -560,7 +622,10 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     '오차가 켜지면 시드마다 루프 시간이 다르고, 같은 시드면 같다',
     async () => {
       const loopNanos = async (jitter: number, seed: number): Promise<number> =>
-        Number(results(await runSidecar(b, { opMode: 'LoopTiming', request: { jitter, seed } })).loopNanos)
+        Number(
+          results(await runSidecar(b, { opMode: 'LoopTiming', request: { jitter, seed } }))
+            .loopNanos
+        )
       const plain = await loopNanos(0, 0)
       const seed1 = await loopNanos(0.3, 1)
       const seed1Again = await loopNanos(0.3, 1)
