@@ -7,6 +7,7 @@ import { useUnitStore } from '../units/unitStore'
 import { openPreferences } from './dialogStore'
 import { redo, undo, useHistoryStore } from './history'
 import { isLengthUnit, LENGTH_UNITS } from '../units/units'
+import PlayControls from '../play/ui/PlayControls'
 
 function Toolbar(): React.JSX.Element {
   const { t, i18n } = useTranslation()
@@ -64,14 +65,16 @@ function Toolbar(): React.JSX.Element {
           {t('toolbar.redo')}
         </button>
       </div>
-      <div className="toolbar-group">
+      {/* Unity 툴바 가운데의 Play·Pause·Step 자리 */}
+      <PlayControls />
+      <div className="toolbar-group toolbar-group--end">
         <button
           type="button"
           className="panel-button"
           title={t('toolbar.preferencesTooltip')}
           aria-haspopup="dialog"
           // 창이 포커스를 가져가고, 닫으면 이 버튼으로 돌려준다
-          onClick={openPreferences}
+          onClick={() => openPreferences()}
         >
           {t('toolbar.preferences')}
         </button>

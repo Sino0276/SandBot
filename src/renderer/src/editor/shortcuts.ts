@@ -23,13 +23,17 @@ export type ShortcutCommand =
   | 'search'
   | 'toggleVisibility'
   | 'isolate'
+  | 'play'
+  | 'pause'
+  | 'step'
 
 // 표시용 조합. ctrl은 macOS에서 Cmd다(키 처리도 Ctrl·Cmd를 같이 받는다).
 type Chord = { ctrl?: boolean; alt?: boolean; shift?: boolean; key: string }
 
 // Unity와 같은 키(UnityCsReference GOCreationCommands.cs: Create Empty %#n, Create Empty Child &#n,
 // Create Empty Parent %#g). 잘라내기·붙여넣기·자식으로 붙여넣기(Paste As Child %#v)·전체 선택·검색(Ctrl+F)과
-// 보이기·숨기기(H)·고립 보기(Shift+H)도 Unity와 같다.
+// 보이기·숨기기(H)·고립 보기(Shift+H)도 Unity와 같다. 실행(Play %p: INIT → START → STOP), 일시 정지(Pause %#p),
+// 한 단계(Step %&p)도 Unity의 Edit 메뉴 키다.
 export const SHORTCUTS: Readonly<Record<ShortcutCommand, Chord>> = {
   save: { ctrl: true, key: 'S' },
   open: { ctrl: true, key: 'O' },
@@ -51,7 +55,10 @@ export const SHORTCUTS: Readonly<Record<ShortcutCommand, Chord>> = {
   pasteAsChild: { ctrl: true, shift: true, key: 'V' },
   search: { ctrl: true, key: 'F' },
   toggleVisibility: { key: 'H' },
-  isolate: { shift: true, key: 'H' }
+  isolate: { shift: true, key: 'H' },
+  play: { ctrl: true, key: 'P' },
+  pause: { ctrl: true, shift: true, key: 'P' },
+  step: { ctrl: true, alt: true, key: 'P' }
 }
 
 export function isMacPlatform(): boolean {
@@ -114,13 +121,24 @@ const TOOL_COMMANDS: Partial<Record<string, ShortcutCommand>> = {
 }
 
 // 키 입력 → 명령. 처리 순서:
-// 1. 대화상자·메뉴·비행 중이면 무시 2. 저장·열기, 검색(Ctrl+F) 3. 실행 취소 4. 새 조합키(Create Empty 등),
-// 잘라내기·붙여넣기·전체 선택(입력칸 안에서는 입력칸의 것) 5. 입력칸·Ctrl·Alt·핸들 드래그 중이면 여기서 끝
-// 6. F2, F, Q/W/E, X, H·Shift+H, Delete
+// 1. 대화상자·메뉴·비행 중이면 무시 2. 저장·열기, 검색(Ctrl+F), 실행(Ctrl+P·Ctrl+Shift+P·Ctrl+Alt+P) 3. 실행 취소
+// 4. 새 조합키(Create Empty 등), 잘라내기·붙여넣기·전체 선택(입력칸 안에서는 입력칸의 것)
+// 5. 입력칸·Ctrl·Alt·핸들 드래그 중이면 여기서 끝 6. F2, F, Q/W/E, X, H·Shift+H, Delete
 export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): ShortcutResult {
   if (state.blocked) return NONE
   const command = event.ctrlKey || event.metaKey
   const { code } = event
+
+  // 실행 키는 Unity처럼 포커스가 어디 있든(입력칸·Console·인스펙터 안에서도) 받는다. 입력칸에는 Ctrl+P의 뜻이 없다.
+  // 누르고 있어 반복되면 INIT → START → STOP을 연달아 하지 않도록 한 번만(한 단계는 반복해 여러 루프를 진행한다).
+  // INIT은 저장을 물을 수 있으므로 핸들을 드래그하는 중에는 하지 않는다.
+  if (command && code === 'KeyP') {
+    if (event.altKey && !event.shiftKey) return run('step')
+    if (event.repeat) return SWALLOW
+    if (event.shiftKey && !event.altKey) return run('pause')
+    if (!event.shiftKey && !event.altKey) return state.dragging ? SWALLOW : run('play')
+    return SWALLOW
+  }
 
   // Ctrl/Cmd+S 저장, Ctrl/Cmd+O 열기
   if (command && !event.altKey && (code === 'KeyS' || code === 'KeyO'))

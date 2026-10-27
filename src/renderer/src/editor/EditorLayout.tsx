@@ -4,6 +4,8 @@ import { importStepFiles, isStepFileName } from '../cad/importStep'
 import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
+import { initPlaySession, playButton, stepPlay, togglePause } from '../play/playActions'
+import PlayDock from '../play/ui/PlayDock'
 import ContextMenu from './ContextMenu'
 import { isModalOpen } from './dialogStore'
 import { useEditorStore, type EditorTool } from './editorStore'
@@ -31,6 +33,8 @@ import { shortcutCommand, type ShortcutCommand } from './shortcuts'
 import Toolbar from './Toolbar'
 
 const LAYOUT_ID = 'editor-main'
+// 씬 뷰와 그 아래 패널(Console·텔레메트리·장치)
+const SCENE_LAYOUT_ID = 'editor-scene'
 
 const TOOLS: Partial<Record<ShortcutCommand, EditorTool>> = {
   toolView: 'view',
@@ -123,6 +127,16 @@ function runShortcut(command: ShortcutCommand): void {
     case 'isolate':
       toggleSelectedIsolation()
       return
+    case 'play':
+      // INIT은 저장을 물을 수 있으므로 입력 중인 칸은 playActions가 먼저 확정한다
+      playButton()
+      return
+    case 'pause':
+      togglePause()
+      return
+    case 'step':
+      stepPlay()
+      return
   }
 }
 
@@ -176,7 +190,12 @@ function EditorLayout(): React.JSX.Element {
     id: LAYOUT_ID,
     storage: localStorage
   })
+  const sceneLayout = useDefaultLayout({ id: SCENE_LAYOUT_ID, storage: localStorage })
   useEditorShortcuts()
+  // 실행(Play): 메인의 PlayEvent 구독, 프로젝트를 바꾸면 STOP, OpMode 목록(한 번만, StrictMode 재실행에도 그대로)
+  useEffect(() => {
+    initPlaySession()
+  }, [])
 
   return (
     <div className="editor">
@@ -193,7 +212,21 @@ function EditorLayout(): React.JSX.Element {
         </Panel>
         <Separator className="panel-separator" />
         <Panel id="scene" minSize={320}>
-          <ScenePanel />
+          <Group
+            id={SCENE_LAYOUT_ID}
+            className="editor-scene-column"
+            orientation="vertical"
+            defaultLayout={sceneLayout.defaultLayout}
+            onLayoutChanged={sceneLayout.onLayoutChanged}
+          >
+            <Panel id="scene-view" minSize={160}>
+              <ScenePanel />
+            </Panel>
+            <Separator className="panel-separator panel-separator--row" />
+            <Panel id="play-dock" defaultSize="28%" minSize={90}>
+              <PlayDock />
+            </Panel>
+          </Group>
         </Panel>
         <Separator className="panel-separator" />
         <Panel id="inspector" defaultSize="25%" minSize={220}>

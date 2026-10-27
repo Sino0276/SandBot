@@ -18,7 +18,7 @@ const ko = {
     redoShortcut: '다시 실행 (Ctrl+Shift+Z 또는 Ctrl+Y)',
     // 환경 설정 창(Unity의 Edit > Preferences)
     preferences: '환경 설정',
-    preferencesTooltip: '환경 설정 (외부 스크립트 편집기)'
+    preferencesTooltip: '환경 설정 (외부 스크립트 편집기, JDK, 시뮬레이션)'
   },
   project: {
     chooseFolderTitle: 'FtcRobotController 폴더 선택',
@@ -138,7 +138,23 @@ const ko = {
     tunableFileUnicodeEscape:
       '{{file}}의 리터럴 밖(주석 등)에 \\u 이스케이프가 있어(javac가 먼저 바꾸므로 위치를 믿을 수 없음) 튜닝 값을 쓰지 못했습니다. 그 \\u를 지운 뒤 다시 저장하세요. 값은 저장하지 않은 채로 남아 있습니다.',
     tunableFileNotAllowed:
-      '{{file}}이(가) 이제 TeamCode/src/main/java 안의 보통 파일이 아니라(밖을 가리키는 링크 등) 튜닝 값을 쓰지 않고 버렸습니다: {{fields}}'
+      '{{file}}이(가) 이제 TeamCode/src/main/java 안의 보통 파일이 아니라(밖을 가리키는 링크 등) 튜닝 값을 쓰지 않고 버렸습니다: {{fields}}',
+    // 실행(사이드카 1단계): playInit이 받지 않은 이유. {{detail}}은 메인 프로세스의 영어 문장이다.
+    playNotAllowed:
+      '이 프로젝트에서는 실행할 수 없습니다 ({{detail}}). 프로젝트를 다시 열어 보세요.',
+    playMissing:
+      'OpMode 파일이나 TeamCode 폴더를 찾지 못해 실행하지 않았습니다 ({{detail}}). OpMode 목록을 다시 읽었습니다.',
+    playNoJdk:
+      '실행할 JDK를 찾지 못했습니다. Android Studio를 설치했다면 자동으로 찾습니다. JDK 17 이상이 필요합니다.',
+    playNoSidecar:
+      '실행기(사이드카)가 빌드되지 않았습니다. 개발 중이면 pnpm build:sidecar를 실행한 뒤 다시 INIT하세요.',
+    playBusy: '이전 실행이 아직 끝나지 않았습니다. 잠시 뒤 다시 INIT하세요.',
+    playFailed: 'JVM을 시작하지 못했습니다 ({{detail}}).',
+    playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).'
+  },
+  // 알림의 행동 버튼
+  noticeAction: {
+    openJdkPreferences: 'JDK 설정 열기'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {
@@ -172,7 +188,12 @@ const ko = {
   panels: {
     hierarchy: '하이어라키',
     scene: '씬',
-    inspector: '인스펙터'
+    inspector: '인스펙터',
+    // 씬 뷰 아래 패널(Unity의 Console 자리)의 탭
+    dock: '콘솔·텔레메트리·장치',
+    console: '콘솔',
+    telemetry: '텔레메트리',
+    devices: '장치'
   },
   objectKind: {
     robot: '로봇',
@@ -472,7 +493,213 @@ const ko = {
         '이 PC에서 Android Studio, IntelliJ IDEA, VS Code를 찾지 못했습니다. 다른 편집기는 [찾아보기…]로 고르세요.',
       loading: '불러오는 중…',
       loadFailed: '외부 스크립트 편집기 설정을 읽지 못했습니다. 창을 닫았다 다시 열어 보세요.'
+    },
+    // 외부 도구의 JDK 칸(Unity External Tools의 JDK처럼). 실행(사이드카)에 쓴다.
+    jdk: {
+      title: 'JDK',
+      label: '실행에 쓸 JDK',
+      auto: '자동 (권장)',
+      browse: '찾아보기…',
+      browseTitle: 'JDK 폴더 선택',
+      option: 'JDK {{version}} · {{source}} — {{home}}',
+      optionTooOld: 'JDK {{version}} · {{source}} — {{home}} ({{min}} 미만이라 쓸 수 없음)',
+      sources: {
+        setting: '직접 고름',
+        androidStudio: 'Android Studio',
+        javaHome: 'JAVA_HOME',
+        path: 'PATH'
+      },
+      errors: {
+        notJdk:
+          '고른 폴더는 JDK가 아닙니다(bin/java·bin/javac·release 파일이 없음, JRE일 수 있음). 설정은 그대로입니다.',
+        tooOld: '고른 JDK는 {{min}}보다 오래되어 쓸 수 없습니다. 설정은 그대로입니다.'
+      },
+      applyFailed: 'JDK 설정을 바꾸지 못했습니다 ({{detail}}).',
+      active: '사용 중',
+      activeValue: 'JDK {{version}} ({{source}}) {{home}}',
+      none: 'JDK를 찾지 못했습니다. Android Studio를 설치했다면 자동으로 찾습니다. JDK {{min}} 이상이 필요합니다.',
+      customMissing:
+        '고른 JDK 폴더를 쓸 수 없습니다(지웠거나 옮김). 자동으로 바꾸거나 다시 고르세요. JDK {{min}} 이상이 필요합니다.',
+      hint: '자동은 Android Studio에 들어 있는 JDK(jbr) → JAVA_HOME → PATH 순으로 찾습니다. JDK {{min}} 이상이 필요합니다.',
+      loading: 'JDK 찾는 중…',
+      loadFailed: 'JDK를 찾지 못했습니다 ({{detail}}). 창을 닫았다 다시 열어 보세요.'
+    },
+    // 시뮬레이션(개인 설정, 다음 INIT부터)
+    simulation: {
+      title: '시뮬레이션',
+      jitter: 'Hub 타이밍 오차',
+      jitterOff: '끔 (늘 같은 결과)',
+      jitterValue: '±{{percent}}%',
+      jitterHint:
+        '하드웨어 호출마다 가상 시간이 Hub 타이밍 표만큼 흐릅니다. 오차를 켜면 비용마다 그 범위 안에서 고르게 뽑아 실제 허브처럼 루프 시간이 조금씩 달라집니다. 시드가 같으면 결과도 같습니다.',
+      seed: '시드',
+      seedHint: '오차를 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
+      autoStop: 'Autonomous는 START 뒤 {{seconds}}초에 자동으로 STOP (Driver Station과 같음)',
+      nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
+  },
+  // 실행(사이드카 1단계): 툴바의 OpMode 선택·INIT/START/STOP·일시 정지·한 단계·속도·가상 시간.
+  // INIT·START·STOP은 Driver Station 버튼 이름 그대로다.
+  play: {
+    controls: '실행',
+    opMode: 'OpMode',
+    opModeList: 'OpMode 목록',
+    chooseOpMode: 'OpMode 선택',
+    chooseOpModeTooltip: '실행할 OpMode 선택 (Driver Station의 OpMode 목록)',
+    noOpModes: 'OpMode 없음',
+    noProjectShort: 'OpMode',
+    opModeTooltip: '{{flavor}} · {{name}}\n{{className}} ({{file}})',
+    flavors: {
+      TeleOp: 'TeleOp',
+      Autonomous: 'Autonomous'
+    },
+    flavorShort: {
+      TeleOp: 'TeleOp',
+      Autonomous: 'Auto'
+    },
+    list: {
+      loading: 'OpMode 찾는 중…',
+      failed: 'OpMode 목록을 읽지 못했습니다 ({{detail}}).',
+      noTeamCode: '프로젝트에 TeamCode 폴더가 없습니다.',
+      empty: 'TeamCode에 @TeleOp·@Autonomous OpMode가 없습니다(@Disabled는 보이지 않습니다).',
+      truncated: 'TeamCode 파일이 너무 많아 일부 OpMode만 보입니다.'
+    },
+    init: 'INIT',
+    start: 'START',
+    stop: 'STOP',
+    initTooltip: 'INIT: 저장한 TeamCode를 컴파일해 OpMode를 초기화합니다 ({{shortcut}})',
+    startTooltip: 'START ({{shortcut}})',
+    stopTooltip: 'STOP ({{shortcut}})',
+    stoppingTooltip: '정지하는 중…',
+    stopInit: 'START하지 않고 STOP',
+    stopInitTooltip: 'START하지 않고 STOP',
+    pause: '일시 정지',
+    pauseTooltip: '일시 정지 ({{shortcut}}). 실행 전에 켜 두면 INIT 뒤 바로 멈춥니다.',
+    step: '한 단계',
+    stepTooltip: '한 단계: 일시 정지 중에 루프 하나만 진행합니다 ({{shortcut}})',
+    speed: '실행 속도',
+    speedTooltip:
+      '실행 속도(가상 시간 ÷ 실제 시간). 최대는 기다리지 않고 최대한 빨리 돌립니다. 결과는 속도와 관계없이 같습니다.',
+    speedMax: '최대',
+    speedValue: '{{speed}}×',
+    timeTooltip: '가상 시간 {{time}} (팀 코드가 보는 시간)',
+    autonomousTooltip: 'Autonomous 남은 시간 · 가상 시간 {{time}}',
+    timeIdleTooltip: '가상 시간 (실행하면 흐릅니다)',
+    phase: {
+      preparing: '준비 중…',
+      compiling: '컴파일 중…',
+      init: 'INIT',
+      running: '실행 중',
+      stopping: '정지 중…',
+      finished: '끝남'
+    },
+    slow: '느림 {{ratio}}×',
+    slowTooltip:
+      '이 PC가 설정한 속도({{speed}}×)를 따라가지 못해 실제로는 {{ratio}}× 속도로 돌고 있습니다. 가상 시간 기준의 결과는 같습니다.',
+    // INIT을 누를 수 없는 이유(버튼 도움말)
+    disabled: {
+      noProject:
+        'FtcRobotController 프로젝트를 열거나 저장하면 TeamCode의 OpMode를 실행할 수 있습니다.',
+      noTeamCode: '프로젝트에 TeamCode 폴더가 없어 실행할 수 없습니다.',
+      noOpMode: '실행할 OpMode를 고르세요.',
+      busy: '프로젝트를 열거나 저장하는 중입니다.',
+      running: '실행 중입니다.'
+    },
+    saveBeforeRun:
+      '저장하지 않은 변경 사항이 있습니다. 실행은 디스크의 TeamCode와 생성한 로봇 구성을 쓰므로 먼저 저장해야 합니다. 저장하고 실행할까요?',
+    saveAndRun: '저장하고 실행',
+    // 사이드카 오류의 머리말(뒤에 영어 원문이 붙는다)
+    errorKind: {
+      exception: '예외',
+      unsupported: '지원하지 않는 SDK 기능',
+      thread: '다른 스레드에서 호출',
+      stall: '응답 없음',
+      stuckInStop: 'STOP 뒤 끝나지 않음',
+      load: 'OpMode를 불러오지 못함',
+      config: '로봇 구성 오류',
+      internal: '사이드카 내부 오류'
+    },
+    stallHint:
+      '무한 루프일 수 있습니다. while 조건에 opModeIsActive()를 넣고, 루프 안에서 하드웨어를 쓰거나 sleep·idle()을 부르는지 확인하세요(가상 시계는 SDK 호출로만 흐릅니다). STOP을 누르면 JVM을 끝냅니다.',
+    finishReason: {
+      stopped: 'STOP으로 끝남',
+      returned: 'OpMode가 스스로 끝남',
+      terminated: '강제로 끝남 (terminateOpModeNow 또는 System.exit)',
+      exception: '오류로 끝남',
+      compileFailed: '컴파일 오류',
+      loadFailed: 'OpMode나 로봇 구성을 불러오지 못함',
+      stuck: 'STOP 뒤 끝나지 않아 포기함',
+      shutdown: '정리하며 끝냄',
+      killed: 'JVM을 강제로 끝냄 (응답 없음 또는 정지 시간 초과)',
+      crashed: '실행기가 비정상 종료됨'
+    },
+    gamepad: {
+      disconnected: '게임패드 {{slot}}: 연결 안 됨',
+      connected: '게임패드 {{slot}}: {{id}}',
+      nonStandard: '게임패드 {{slot}}: {{id}} (표준 배치가 아니라 입력을 보내지 않음)',
+      hint: '실행 중에만 읽습니다. 연결한 뒤 버튼을 한 번 눌러야 보입니다. 처음·둘째로 연결한 패드가 gamepad1·gamepad2입니다.'
+    }
+  },
+  // Console(Unity Console). 팀 코드·javac의 영어 문장은 그대로 보인다.
+  console: {
+    clear: '지우기',
+    clearOnPlay: '실행할 때 지우기',
+    clearOnPlayHint: 'INIT할 때마다 Console을 지웁니다.',
+    search: 'Console 검색',
+    levels: '보일 항목',
+    levelToggle: {
+      info: '로그 {{count}}개 보이기·숨기기',
+      warning: '경고 {{count}}개 보이기·숨기기',
+      error: '오류 {{count}}개 보이기·숨기기'
+    },
+    list: 'Console 항목',
+    empty:
+      '로그가 없습니다. OpMode를 실행하면 System.out·RobotLog 출력, 컴파일 오류, 실행 오류가 여기에 보입니다.',
+    noMatch: '검색어나 보일 항목에 맞는 것이 없습니다.',
+    noSelection: '항목을 고르면 전체 내용과 스택이 보입니다.',
+    openHint: '더블클릭하거나 Enter를 누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
+    openLink: '누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
+    diagnosticKind: {
+      error: '오류',
+      warning: '경고',
+      note: '참고'
+    },
+    compiled: '컴파일 완료 ({{millis}} ms)',
+    compiledWithWarnings: '컴파일 완료, 경고 {{count}}개 ({{millis}} ms)',
+    compileFailed: '컴파일 오류 {{count}}개 ({{millis}} ms). 항목을 더블클릭하면 그 줄을 엽니다.',
+    runStarted: '{{name}} INIT · 로봇 구성 {{config}}',
+    runStartedNoConfig:
+      '{{name}} INIT · 하드웨어가 있는 로봇이 없어 장치 없는 hardwareMap으로 실행합니다',
+    finished: 'OpMode 끝: {{reason}}',
+    exception: '예외',
+    thread: '스레드',
+    code: '진단 코드',
+    // 실행 흐름이 남기는 안내
+    notices: {
+      generationBlocked:
+        '마지막 저장에서 하드웨어 설정 오류 {{count}}개 때문에 생성 코드를 만들지 않았습니다. TeamCode에 남아 있는 이전 하드웨어 클래스·구성으로 실행합니다.',
+      generationFailed:
+        '마지막 저장에서 생성 코드를 쓰지 못했습니다 ({{detail}}). TeamCode의 하드웨어 클래스·구성이 지금 씬과 다를 수 있습니다.',
+      configNotGenerated:
+        '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.'
+    }
+  },
+  // 텔레메트리 탭(Driver Station 화면처럼)
+  telemetry: {
+    noRun: 'OpMode를 실행하면 Driver Station처럼 텔레메트리가 보입니다.',
+    empty: '아직 받은 텔레메트리가 없습니다(telemetry.update()가 보낼 때 보입니다).',
+    log: '텔레메트리 로그',
+    sentAt: '보낸 가상 시간'
+  },
+  // 장치 탭(장치 출력 표)
+  devices: {
+    noRun: 'OpMode를 실행하면 장치 출력(모터 출력, 서보 위치 등)이 보입니다.',
+    noConfig: '하드웨어가 있는 로봇이 없어 장치 없이 실행했습니다.',
+    empty: '아직 받은 장치 출력이 없습니다.',
+    name: '이름',
+    type: '종류',
+    values: '출력',
+    selectHint: '누르면 {{name}}을(를) 고릅니다.'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)

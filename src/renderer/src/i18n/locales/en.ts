@@ -19,7 +19,7 @@ const en: Messages = {
     redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)',
     // Preferences window (Unity's Edit > Preferences)
     preferences: 'Preferences',
-    preferencesTooltip: 'Preferences (external script editor)'
+    preferencesTooltip: 'Preferences (external script editor, JDK, simulation)'
   },
   project: {
     chooseFolderTitle: 'Choose the FtcRobotController folder',
@@ -139,7 +139,22 @@ const en: Messages = {
     tunableFileUnicodeEscape:
       '{{file}} has \\u escapes outside literals (in comments, etc.; javac translates them first, so positions cannot be trusted), so its tunables were not written. Remove those \\u escapes, then save again. The values are still unsaved.',
     tunableFileNotAllowed:
-      '{{file}} is no longer a regular file inside TeamCode/src/main/java (for example, a link pointing outside), so its tunables were discarded without being written: {{fields}}'
+      '{{file}} is no longer a regular file inside TeamCode/src/main/java (for example, a link pointing outside), so its tunables were discarded without being written: {{fields}}',
+    // Play (sidecar phase 1): why playInit refused. {{detail}} is the main process's English sentence.
+    playNotAllowed: 'This project cannot be run ({{detail}}). Try reopening the project.',
+    playMissing:
+      'The OpMode file or the TeamCode folder was not found, so nothing was run ({{detail}}). The OpMode list was reloaded.',
+    playNoJdk:
+      'No JDK to run with was found. If Android Studio is installed it is found automatically. JDK 17 or later is required.',
+    playNoSidecar:
+      'The runner (sidecar) has not been built. During development, run pnpm build:sidecar and INIT again.',
+    playBusy: 'The previous run has not finished yet. INIT again in a moment.',
+    playFailed: 'Could not start the JVM ({{detail}}).',
+    playInitFailed: 'Could not start the run ({{detail}}).'
+  },
+  // Notice action buttons
+  noticeAction: {
+    openJdkPreferences: 'Open JDK settings'
   },
   importPhase: {
     checking: 'checking the file',
@@ -171,7 +186,12 @@ const en: Messages = {
   panels: {
     hierarchy: 'Hierarchy',
     scene: 'Scene',
-    inspector: 'Inspector'
+    inspector: 'Inspector',
+    // Tabs of the panel below the Scene view (Unity's Console spot)
+    dock: 'Console, Telemetry, Devices',
+    console: 'Console',
+    telemetry: 'Telemetry',
+    devices: 'Devices'
   },
   objectKind: {
     robot: 'Robot',
@@ -460,7 +480,214 @@ const en: Messages = {
         'Android Studio, IntelliJ IDEA and VS Code were not found on this PC. Choose another editor with [Browse…].',
       loading: 'Loading…',
       loadFailed: 'Could not read the external script editor setting. Close and reopen this window.'
+    },
+    // JDK field of External Tools (like Unity's JDK setting). Used to run the sidecar.
+    jdk: {
+      title: 'JDK',
+      label: 'JDK for running',
+      auto: 'Automatic (recommended)',
+      browse: 'Browse…',
+      browseTitle: 'Choose a JDK folder',
+      option: 'JDK {{version}} · {{source}} — {{home}}',
+      optionTooOld: 'JDK {{version}} · {{source}} — {{home}} (older than {{min}}, cannot be used)',
+      sources: {
+        setting: 'Chosen',
+        androidStudio: 'Android Studio',
+        javaHome: 'JAVA_HOME',
+        path: 'PATH'
+      },
+      errors: {
+        notJdk:
+          'The chosen folder is not a JDK (no bin/java, bin/javac or release file; it may be a JRE). The setting was not changed.',
+        tooOld:
+          'The chosen JDK is older than {{min}} and cannot be used. The setting was not changed.'
+      },
+      applyFailed: 'Could not change the JDK setting ({{detail}}).',
+      active: 'In use',
+      activeValue: 'JDK {{version}} ({{source}}) {{home}}',
+      none: 'No JDK was found. If Android Studio is installed it is found automatically. JDK {{min}} or later is required.',
+      customMissing:
+        'The chosen JDK folder can no longer be used (deleted or moved). Switch to Automatic or choose again. JDK {{min}} or later is required.',
+      hint: 'Automatic looks for the JDK bundled with Android Studio (jbr), then JAVA_HOME, then PATH. JDK {{min}} or later is required.',
+      loading: 'Looking for JDKs…',
+      loadFailed: 'Could not look for JDKs ({{detail}}). Close and reopen this window.'
+    },
+    // Simulation (personal settings, used from the next INIT)
+    simulation: {
+      title: 'Simulation',
+      jitter: 'Hub timing jitter',
+      jitterOff: 'Off (always the same result)',
+      jitterValue: '±{{percent}}%',
+      jitterHint:
+        'Each hardware call advances virtual time by the Hub timing table. With jitter on, each cost is drawn uniformly within the range so loop times vary a little like a real hub. The same seed gives the same result.',
+      seed: 'Seed',
+      seedHint:
+        'The order the jitter is drawn in (an integer). Same code, inputs and seed give the same result.',
+      autoStop: 'Stop Autonomous automatically {{seconds}} s after START (like the Driver Station)',
+      nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
+  },
+  // Play (sidecar phase 1): toolbar OpMode picker, INIT/START/STOP, pause, step, speed, virtual time.
+  // INIT, START and STOP are the Driver Station button names.
+  play: {
+    controls: 'Play',
+    opMode: 'OpMode',
+    opModeList: 'OpModes',
+    chooseOpMode: 'Choose OpMode',
+    chooseOpModeTooltip: 'Choose the OpMode to run (the Driver Station OpMode list)',
+    noOpModes: 'No OpModes',
+    noProjectShort: 'OpMode',
+    opModeTooltip: '{{flavor}} · {{name}}\n{{className}} ({{file}})',
+    flavors: {
+      TeleOp: 'TeleOp',
+      Autonomous: 'Autonomous'
+    },
+    flavorShort: {
+      TeleOp: 'TeleOp',
+      Autonomous: 'Auto'
+    },
+    list: {
+      loading: 'Looking for OpModes…',
+      failed: 'Could not read the OpMode list ({{detail}}).',
+      noTeamCode: 'The project has no TeamCode folder.',
+      empty: 'TeamCode has no @TeleOp or @Autonomous OpModes (@Disabled ones are not shown).',
+      truncated: 'TeamCode has too many files; only some OpModes are shown.'
+    },
+    init: 'INIT',
+    start: 'START',
+    stop: 'STOP',
+    initTooltip: 'INIT: compile the saved TeamCode and initialize the OpMode ({{shortcut}})',
+    startTooltip: 'START ({{shortcut}})',
+    stopTooltip: 'STOP ({{shortcut}})',
+    stoppingTooltip: 'Stopping…',
+    stopInit: 'STOP without START',
+    stopInitTooltip: 'STOP without START',
+    pause: 'Pause',
+    pauseTooltip: 'Pause ({{shortcut}}). Turn it on before running to stop right after INIT.',
+    step: 'Step',
+    stepTooltip: 'Step: while paused, advance one loop ({{shortcut}})',
+    speed: 'Run speed',
+    speedTooltip:
+      'Run speed (virtual time ÷ real time). Max runs as fast as possible without waiting. The result is the same at any speed.',
+    speedMax: 'Max',
+    speedValue: '{{speed}}×',
+    timeTooltip: 'Virtual time {{time}} (the time team code sees)',
+    autonomousTooltip: 'Autonomous time left · virtual time {{time}}',
+    timeIdleTooltip: 'Virtual time (advances while running)',
+    phase: {
+      preparing: 'Preparing…',
+      compiling: 'Compiling…',
+      init: 'INIT',
+      running: 'Running',
+      stopping: 'Stopping…',
+      finished: 'Finished'
+    },
+    slow: 'Slow {{ratio}}×',
+    slowTooltip:
+      'This PC cannot keep up with the chosen speed ({{speed}}×) and is actually running at {{ratio}}×. Results in virtual time are the same.',
+    // Why INIT cannot be pressed (button tooltip)
+    disabled: {
+      noProject: 'Open or save an FtcRobotController project to run its TeamCode OpModes.',
+      noTeamCode: 'The project has no TeamCode folder, so nothing can be run.',
+      noOpMode: 'Choose an OpMode to run.',
+      busy: 'A project is being opened or saved.',
+      running: 'Running.'
+    },
+    saveBeforeRun:
+      'You have unsaved changes. Running uses the TeamCode and the generated robot configuration on disk, so they must be saved first. Save and run?',
+    saveAndRun: 'Save and run',
+    // Prefix of sidecar errors (followed by the English original)
+    errorKind: {
+      exception: 'Exception',
+      unsupported: 'Unsupported SDK feature',
+      thread: 'Called from another thread',
+      stall: 'Not responding',
+      stuckInStop: 'Did not finish after STOP',
+      load: 'Could not load the OpMode',
+      config: 'Robot configuration error',
+      internal: 'Sidecar internal error'
+    },
+    stallHint:
+      'This may be an infinite loop. Put opModeIsActive() in the while condition and make sure the loop uses hardware or calls sleep or idle() (virtual time only advances through SDK calls). Pressing STOP ends the JVM.',
+    finishReason: {
+      stopped: 'Stopped with STOP',
+      returned: 'The OpMode ended by itself',
+      terminated: 'Terminated (terminateOpModeNow or System.exit)',
+      exception: 'Ended with an error',
+      compileFailed: 'Compile error',
+      loadFailed: 'Could not load the OpMode or the robot configuration',
+      stuck: 'Gave up: did not finish after STOP',
+      shutdown: 'Shut down',
+      killed: 'The JVM was killed (not responding or stop timeout)',
+      crashed: 'The runner exited unexpectedly'
+    },
+    gamepad: {
+      disconnected: 'Gamepad {{slot}}: not connected',
+      connected: 'Gamepad {{slot}}: {{id}}',
+      nonStandard: 'Gamepad {{slot}}: {{id}} (not a standard layout; no input is sent)',
+      hint: 'Read only while running. Press a button once after connecting to make it visible. The first and second connected pads are gamepad1 and gamepad2.'
+    }
+  },
+  // Console (Unity Console). English sentences from team code and javac are shown as they are.
+  console: {
+    clear: 'Clear',
+    clearOnPlay: 'Clear on Play',
+    clearOnPlayHint: 'Clear the Console every time you INIT.',
+    search: 'Search Console',
+    levels: 'Shown entries',
+    levelToggle: {
+      info: 'Show or hide {{count}} log entries',
+      warning: 'Show or hide {{count}} warnings',
+      error: 'Show or hide {{count}} errors'
+    },
+    list: 'Console entries',
+    empty:
+      'No logs. When an OpMode runs, System.out and RobotLog output, compile errors and run errors appear here.',
+    noMatch: 'Nothing matches the search or the shown entries.',
+    noSelection: 'Select an entry to see its full text and stack.',
+    openHint: 'Double-click or press Enter to open this line in the external script editor.',
+    openLink: 'Click to open this line in the external script editor.',
+    diagnosticKind: {
+      error: 'error',
+      warning: 'warning',
+      note: 'note'
+    },
+    compiled: 'Compiled ({{millis}} ms)',
+    compiledWithWarnings: 'Compiled with {{count}} warnings ({{millis}} ms)',
+    compileFailed:
+      '{{count}} compile errors ({{millis}} ms). Double-click an entry to open its line.',
+    runStarted: '{{name}} INIT · robot configuration {{config}}',
+    runStartedNoConfig: '{{name}} INIT · no robot has hardware, running with an empty hardwareMap',
+    finished: 'OpMode finished: {{reason}}',
+    exception: 'Exception',
+    thread: 'Thread',
+    code: 'Diagnostic code',
+    // Notes left by the run flow
+    notices: {
+      generationBlocked:
+        'The last save did not generate code because of {{count}} hardware errors. Running with the previous hardware class and configuration left in TeamCode.',
+      generationFailed:
+        'The last save could not write the generated code ({{detail}}). The hardware class and configuration in TeamCode may differ from the scene.',
+      configNotGenerated:
+        '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.'
+    }
+  },
+  // Telemetry tab (like the Driver Station screen)
+  telemetry: {
+    noRun: 'Run an OpMode to see telemetry like on the Driver Station.',
+    empty: 'No telemetry received yet (it appears when telemetry.update() sends).',
+    log: 'Telemetry log',
+    sentAt: 'Virtual time sent'
+  },
+  // Devices tab (device output table)
+  devices: {
+    noRun: 'Run an OpMode to see device outputs (motor power, servo position and so on).',
+    noConfig: 'No robot has hardware, so it ran without devices.',
+    empty: 'No device outputs received yet.',
+    name: 'Name',
+    type: 'Type',
+    values: 'Outputs',
+    selectHint: 'Click to select {{name}}.'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
