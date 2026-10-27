@@ -21,7 +21,9 @@ import java.util.concurrent.TimeUnit;
  *   <li>원래 정적 메서드는 같은 이름·서술자를 쓴다(nanoTime()J 등). 이름이 겹치는 것(now())은 다른 이름을 쓴다.
  *   <li>원래 인스턴스 메서드는 수신 객체를 첫 인수로 받는다(wait(Object, long) 등).
  *   <li>인수 검사·끼어들기(interrupt)의 뜻은 JDK의 원래 메서드와 같다. 다른 것은 시간이 가상이라는 것뿐이다.
- *   <li>시계 읽기는 SimCost.CLOCK_READ를 청구한다(바쁜 대기 루프에서도 가상 시간이 흐르게).
+ *   <li>시계 읽기는 SimCost.CLOCK_READ를 청구한다(바쁜 대기 루프에서도 가상 시간이 흐르게). 기다리는 함수(sleep·wait·park·join)도
+ *       들어올 때 한 번 청구한다: 끼어들기가 남아 바로 돌아오는 sleep을 되풀이하는 루프(LinearOpMode.sleep은 끼어들기를 삼킨다)에서도
+ *       시간이 흘러 STOP 뒤 정지 대기 감시가 동작하게.
  * </ul>
  * 1단계는 OpMode 스레드 하나만 부를 수 있다(다른 스레드면 SimClock 구현이 SimThreadError를 던진다).
  */
@@ -63,6 +65,7 @@ public final class TimeRedirects {
 
     public static void sleep(long millis) throws InterruptedException {
         if (millis < 0) throw new IllegalArgumentException("timeout value is negative");
+        enter();
         Sim.clock().sleep(millisToNanos(millis));
     }
 
@@ -71,6 +74,7 @@ public final class TimeRedirects {
         if (nanos < 0 || nanos > 999999) throw new IllegalArgumentException("nanosecond timeout value out of range");
         long total = millisToNanos(millis);
         total += Math.min(Long.MAX_VALUE - total, nanos);
+        enter();
         Sim.clock().sleep(total);
     }
 
@@ -83,13 +87,17 @@ public final class TimeRedirects {
             nanos = duration.isNegative() ? Long.MIN_VALUE : Long.MAX_VALUE;
         }
         if (nanos < 0) return;
+        enter();
         Sim.clock().sleep(nanos);
     }
 
     /** TimeUnit.sleep(long): 0 이하면 아무것도 하지 않는다(JDK와 같음, 끼어들기도 보지 않음) */
     public static void sleep(TimeUnit unit, long timeout) throws InterruptedException {
         if (unit == null) throw new NullPointerException();
-        if (timeout > 0) Sim.clock().sleep(unit.toNanos(timeout));
+        if (timeout > 0) {
+            enter();
+            Sim.clock().sleep(unit.toNanos(timeout));
+        }
     }
 
     // ---- Object.wait ----
@@ -102,6 +110,7 @@ public final class TimeRedirects {
         if (target == null) throw new NullPointerException();
         if (timeoutMillis < 0) throw new IllegalArgumentException("timeout value is negative");
         if (!Thread.holdsLock(target)) throw new IllegalMonitorStateException("current thread is not owner");
+        enter();
         if (timeoutMillis == 0) waitForever();
         else Sim.clock().sleep(millisToNanos(timeoutMillis));
     }
@@ -128,6 +137,7 @@ public final class TimeRedirects {
             throw new SimThreadError("Thread.join() on the running thread \"" + thread.getName()
                     + "\" is not supported yet: the simulator runs the OpMode thread only");
         }
+        enter();
         if (millis == 0) waitForever();
         else Sim.clock().sleep(millisToNanos(millis));
     }
@@ -144,7 +154,9 @@ public final class TimeRedirects {
 
     /** LockSupport.parkNanos: 끼어들기가 있으면(있었거나 기다리는 중에 생기면) 플래그를 그대로 두고 돌아온다 */
     public static void parkNanos(long nanos) {
-        if (nanos <= 0 || Thread.currentThread().isInterrupted()) return;
+        if (nanos <= 0) return;
+        enter();
+        if (Thread.currentThread().isInterrupted()) return;
         try {
             Sim.clock().sleep(nanos);
         } catch (InterruptedException e) {
@@ -211,6 +223,11 @@ public final class TimeRedirects {
     }
 
     // ---- 내부 ----
+
+    /** 기다리는 함수에 들어올 때의 비용(시계 읽기 하나) */
+    private static void enter() {
+        Sim.charge(SimCost.CLOCK_READ);
+    }
 
     private static long millisToNanos(long millis) {
         return millis >= Long.MAX_VALUE / NANOS_PER_MILLI ? Long.MAX_VALUE : millis * NANOS_PER_MILLI;
