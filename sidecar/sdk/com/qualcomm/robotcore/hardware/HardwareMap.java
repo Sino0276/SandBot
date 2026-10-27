@@ -28,27 +28,24 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
+// SandBot: Control Hub로 본다(Device.isRevControlHub), 문자열 리소스(R) 대신 같은 영어 문장, 전체 장치 목록·entrySet은 넣은 순서(결정성: 실제는 HashSet이라 순서가 정해지지 않는다), androidx 애너테이션 없음.
 
 package com.qualcomm.robotcore.hardware;
 
 import android.content.Context;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
-import com.qualcomm.robotcore.R;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier;
-import com.qualcomm.robotcore.util.Device;
 import com.qualcomm.robotcore.util.RobotLog;
 import com.qualcomm.robotcore.util.SerialNumber;
 
-import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 import org.firstinspires.ftc.robotcore.internal.system.Assert;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +116,8 @@ public class HardwareMap implements Iterable<HardwareDevice> {
   protected final Object lock = new Object();
 
   private static final String TAG = "HardwareMap";
+  // SandBot: 시뮬레이터는 Control Hub로 본다(BNO055 대신 BHI260AP 경고를 실제 Control Hub처럼)
+  private static final boolean SANDBOT_IS_CONTROL_HUB = true;
   @SuppressWarnings("rawtypes") // We have to use the raw type here as far as I (Noah) can tell
   private static final Class<I2cDeviceSynchDevice> i2cDriverBaseClass = I2cDeviceSynchDevice.class;
 
@@ -228,11 +227,11 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    *
    * @see #get(Class, String)
    */
-  public @Nullable <T> T tryGet(Class<? extends T> classOrInterface, String deviceName) {
+  public <T> T tryGet(Class<? extends T> classOrInterface, String deviceName) {
     synchronized (lock) {
       deviceName = deviceName.trim();
       List<HardwareDevice> list = allDevicesMap.get(deviceName);
-      @Nullable T result = null;
+      T result = null;
 
       if (list != null) {
         for (HardwareDevice device : list) {
@@ -246,7 +245,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
 
       // Show a warning if the user tried to get the BNO055 IMU when a BHI260 IMU is configured on
       // a Control Hub (Expansion Hubs never have a BHI260)
-      if (Device.isRevControlHub() && result == null &&
+      if (SANDBOT_IS_CONTROL_HUB && result == null &&
               (classOrInterface.getSimpleName().contains("BNO055") ||
                       classOrInterface.getSimpleName().contains("LynxEmbeddedIMU"))) {
         // Unfortunately, we can't check which IMU is physically present from RobotCore.
@@ -291,7 +290,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    * may take some time. As a result, you should ONLY call this method during the Init phase of your
    * OpMode.
    */
-  public @Nullable <T> T get(Class<? extends T> classOrInterface, SerialNumber serialNumber) {
+  public <T> T get(Class<? extends T> classOrInterface, SerialNumber serialNumber) {
     synchronized (lock) {
       HardwareDevice device = serialNumberMap.get(serialNumber);
       if (device != null) {
@@ -429,12 +428,12 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    * @param deviceName   the name by which the device is to be known (case sensitive)
    * @param device       the device to be stored by that name
    */
-  public void put(@NonNull SerialNumber serialNumber, @NonNull String deviceName, HardwareDevice device) {
+  public void put(SerialNumber serialNumber, String deviceName, HardwareDevice device) {
     Assert.assertNotNull(serialNumber);
     internalPut(serialNumber, deviceName, device);
   }
 
-  protected void internalPut(@Nullable SerialNumber serialNumber, @NonNull String deviceName, HardwareDevice device) {
+  protected void internalPut(SerialNumber serialNumber, String deviceName, HardwareDevice device) {
     synchronized (lock) {
       deviceName = deviceName.trim();
       List<HardwareDevice> list = allDevicesMap.get(deviceName);
@@ -481,7 +480,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    * @param device      the device to remove under that name
    * @return whether a device was removed or not
    */
-  public boolean remove(@Nullable SerialNumber serialNumber, String deviceName, HardwareDevice device) {
+  public boolean remove(SerialNumber serialNumber, String deviceName, HardwareDevice device) {
     synchronized (lock) {
       deviceName = deviceName.trim();
       List<HardwareDevice> list = allDevicesMap.get(deviceName);
@@ -508,7 +507,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    * @param device the device whose names are desired.
    * @return the set of names by which that device is known
    */
-  public @NonNull Set<String> getNamesOf(HardwareDevice device) {
+  public Set<String> getNamesOf(HardwareDevice device) {
     synchronized (lock) {
       rebuildDeviceNamesIfNecessary();
       Set<String> result = this.deviceNames.get(device);
@@ -542,7 +541,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
 
   private void buildAllDevicesList() {
     if (allDevicesList == null) {
-      Set<HardwareDevice> set = new HashSet<HardwareDevice>();
+      Set<HardwareDevice> set = new LinkedHashSet<HardwareDevice>(); // SandBot: 결정성
       for (String key : allDevicesMap.keySet()) {
         set.addAll(allDevicesMap.get(key));
       }
@@ -570,7 +569,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    * @see #size()
    */
   @Override
-  public @NonNull Iterator<HardwareDevice> iterator() {
+  public Iterator<HardwareDevice> iterator() {
     RobotLog.ww(TAG, new RuntimeException(), "HardwareMap iterator was used, which blindly initializes all uninitialized devices");
     synchronized (lock) {
       buildAllDevicesList();
@@ -585,9 +584,9 @@ public class HardwareMap implements Iterable<HardwareDevice> {
    *
    * @return an Iterable for all the devices in the HardwareMap.
    */
-  public @NonNull Iterable<HardwareDevice> unsafeIterable() {
+  public Iterable<HardwareDevice> unsafeIterable() {
     return new Iterable<HardwareDevice>() {
-      @NonNull @Override public Iterator<HardwareDevice> iterator() {
+      @Override public Iterator<HardwareDevice> iterator() {
         synchronized (lock) {
           buildAllDevicesList();
           return new ArrayList<>(allDevicesList).iterator(); // make copy for locking reasons
@@ -696,11 +695,11 @@ public class HardwareMap implements Iterable<HardwareDevice> {
      * @param device      the new device to be named
      * @see HardwareMap#put(String, HardwareDevice)
      */
-    public void put(@NonNull SerialNumber serialNumber, String deviceName, DEVICE_TYPE device) {
+    public void put(SerialNumber serialNumber, String deviceName, DEVICE_TYPE device) {
       internalPut(serialNumber, deviceName, device);
     }
 
-    protected void internalPut(@Nullable SerialNumber serialNumber, String deviceName, DEVICE_TYPE device) {
+    protected void internalPut(SerialNumber serialNumber, String deviceName, DEVICE_TYPE device) {
       synchronized (lock) {
         // remove whitespace at start & end
         deviceName = deviceName.trim();
@@ -757,7 +756,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
      * @return            whether any modifications were made to this DeviceMapping
      * @see HardwareMap#remove
      */
-     public boolean remove(@Nullable SerialNumber serialNumber, String deviceName) {
+     public boolean remove(SerialNumber serialNumber, String deviceName) {
       synchronized (lock) {
         deviceName = deviceName.trim();
         HardwareDevice device = map.remove(deviceName);
@@ -776,7 +775,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
      *
      * @return an iterator over all the devices in this DeviceMapping.
      */
-    @Override public @NonNull Iterator<DEVICE_TYPE> iterator() {
+    @Override public Iterator<DEVICE_TYPE> iterator() {
       synchronized (lock) {
         initializeMultipleDevicesIfNecessary(map.values());
         return new ArrayList<>(map.values()).iterator();
@@ -793,7 +792,7 @@ public class HardwareMap implements Iterable<HardwareDevice> {
     public Set<Map.Entry<String, DEVICE_TYPE>> entrySet() {
       synchronized (lock) {
         initializeMultipleDevicesIfNecessary(map.values());
-        return new HashSet<>(map.entrySet());
+        return new LinkedHashSet<>(map.entrySet()); // SandBot: 결정성
       }
     }
 
@@ -864,7 +863,8 @@ public class HardwareMap implements Iterable<HardwareDevice> {
       }
 
       if (containsProvidedInstance && anotherInstanceWasRetrieved) {
-        RobotLog.addGlobalWarningMessage(AppUtil.getDefContext().getString(R.string.warningRetrievedMultipleDeviceInstances, name));
+        // SandBot: R.string.warningRetrievedMultipleDeviceInstances와 같은 문장
+        RobotLog.addGlobalWarningMessage(String.format("Multiple drivers were used to access device \"%1$s\". This may result in unexpected behavior.", name));
         return true;
       } else {
         return false;

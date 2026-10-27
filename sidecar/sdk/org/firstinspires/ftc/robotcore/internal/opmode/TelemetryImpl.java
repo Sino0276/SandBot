@@ -30,31 +30,27 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
 TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+// SandBot: 전송은 TelemetryMessage·네트워크 대신 Sim.host().telemetry(DS 화면 줄)와 TELEMETRY_UPDATE 비용 청구, setDisplayFormat은 다음 전송의 형식으로 기억, speak는 무시, androidx 애너테이션 없음.
 package org.firstinspires.ftc.robotcore.internal.opmode;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
-import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
-import com.qualcomm.robotcore.robocol.Command;
 import com.qualcomm.robotcore.robocol.TelemetryMessage;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Func;
 import org.firstinspires.ftc.robotcore.external.Predicate;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.robotcore.internal.network.NetworkConnectionHandler;
-import org.firstinspires.ftc.robotcore.internal.network.RobotCoreCommandList;
-import org.firstinspires.ftc.robotcore.internal.network.RobotCoreCommandList.TextToSpeech;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 
-import static org.firstinspires.ftc.robotcore.internal.network.RobotCoreCommandList.CMD_TEXT_TO_SPEECH;
+import org.sandbot.sim.Sim;
+import org.sandbot.sim.SimCost;
+import org.sandbot.sim.TelemetryFrame;
 
 /**
  * {@link TelemetryImpl} is the system-provided implementation of the {@link Telemetry} interface.
@@ -117,7 +113,7 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
             return this.valueProducer != null;
             }
 
-        @NonNull String getComposed(boolean recompose)
+        String getComposed(boolean recompose)
             {
             if (recompose || composed==null)
                 {
@@ -330,7 +326,7 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
                 }
             }
 
-        @Override public Item setRetained(@Nullable Boolean retained)
+        @Override public Item setRetained(Boolean retained)
             {
             synchronized (theLock)
                 {
@@ -601,6 +597,17 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
                 this.markDirty();
                 }
             }
+        // SandBot: saveToTransmitter와 같은 순서(DisplayOrder)의 로그 줄
+        List<String> sandbotDisplayLines()
+            {
+            synchronized (getLock())
+                {
+                List<String> result = new ArrayList<>(entries);
+                if (displayOrder != DisplayOrder.OLDEST_FIRST) java.util.Collections.reverse(result);
+                return result;
+                }
+            }
+
         public void saveToTransmitter(TelemetryMessage transmitter, int iLine)
            {
                synchronized (getLock())
@@ -643,6 +650,8 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
     protected String              captionValueSeparator;
     protected String              itemSeparator;
     protected DecimalFormat       decimalFormat = new DecimalFormat("0.####");
+    // SandBot: setDisplayFormat으로 고른 DS 표시 형식(classic·monospace·html)
+    private String                sandbotDisplayFormat = "classic";
 
     //----------------------------------------------------------------------------------------------
     // Construction
@@ -742,14 +751,15 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
                     action.run();
                     }
 
-                // Build an object to cary our telemetry data
-                TelemetryMessage transmitter = new TelemetryMessage();
-                this.saveToTransmitter(recompose, transmitter);
+                // SandBot: TelemetryMessage(saveToTransmitter와 같은 내용) 대신 DS 화면의 줄을 시뮬레이터 호스트로 보낸다
+                List<String> screenLines = this.sandbotComposeLines(recompose);
+                List<String> logLines = this.log.sandbotDisplayLines();
 
                 // Transmit if there's anything to transmit
-                if (transmitter.hasData())
+                if (!screenLines.isEmpty() || !logLines.isEmpty())
                     {
-                    OpModeManagerImpl.updateTelemetryNow(this.opMode, transmitter);
+                    Sim.host().telemetry(new TelemetryFrame(screenLines, logLines, this.sandbotDisplayFormat));
+                    Sim.charge(SimCost.TELEMETRY_UPDATE);
                     }
 
                 // We've definitely got nothing lingering to transmit
@@ -778,6 +788,20 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
 
             return result;
             }
+        }
+
+    // SandBot: saveToTransmitter의 앞부분(recompose)과 같다. DS가 보이는 데이터 줄(캡션 + 구분자 + 값)을 돌려준다.
+    List<String> sandbotComposeLines(boolean recompose)
+        {
+        if (recompose)
+            {
+            this.composedLines = new ArrayList<String>();
+            for (Lineable lineable : this.lines)
+                {
+                this.composedLines.add(lineable.getComposed(recompose));
+                }
+            }
+        return new ArrayList<String>(this.composedLines);
         }
 
     protected void saveToTransmitter(boolean recompose, TelemetryMessage transmitter)
@@ -870,8 +894,11 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
 
     @Override public void setDisplayFormat(DisplayFormat displayFormat)
         {
-        NetworkConnectionHandler.getInstance().sendCommand(
-                new Command(RobotCoreCommandList.CMD_SET_TELEMETRY_DISPLAY_FORMAT, displayFormat.toString()));
+        // SandBot: 실제는 DS에 명령을 바로 보낸다. 다음에 보내는 화면부터 이 형식으로 보인다.
+        synchronized (theLock)
+            {
+            this.sandbotDisplayFormat = displayFormat.toString().toLowerCase(Locale.ROOT);
+            }
         }
 
         //----------------------------------------------------------------------------------------------
@@ -999,8 +1026,6 @@ public class TelemetryImpl implements Telemetry, TelemetryInternal
 
     @Override public void speak(String text, String languageCode, String countryCode)
         {
-        TextToSpeech textToSpeech = new TextToSpeech(text, languageCode, countryCode);
-        NetworkConnectionHandler.getInstance()
-            .sendCommand(new Command(CMD_TEXT_TO_SPEECH, textToSpeech.serialize()));
+        // SandBot: 음성 출력은 무시한다
         }
     }

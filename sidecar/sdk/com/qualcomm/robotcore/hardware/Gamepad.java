@@ -27,22 +27,22 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// SandBot: 시간(진동 끝 추정)은 가상 시계, 효과 직렬화(Gson)는 SimUnsupportedException. 진동·LED 효과는 실제처럼 큐에 넣기만 한다(보낼 곳이 없다). 사이드카 런타임이 틱마다 GamepadState로 만든 새 자료를 org.sandbot.sdk.core.SandbotGamepads로 넣는다.
 
 package com.qualcomm.robotcore.hardware;
 
 import android.os.SystemClock;
 
-import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
-import com.qualcomm.robotcore.exception.RobotCoreException;
 import com.qualcomm.robotcore.robocol.RobocolParsable;
 import com.qualcomm.robotcore.robocol.RobocolParsableBase;
 import com.qualcomm.robotcore.util.Range;
 import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.robotcore.internal.collections.EvictingBlockingQueue;
-import org.firstinspires.ftc.robotcore.internal.collections.SimpleGson;
 import org.firstinspires.ftc.robotcore.internal.network.SendOnceRunnable;
 import org.firstinspires.ftc.robotcore.internal.ui.GamepadUser;
+import org.sandbot.sim.SimUnsupportedException;
+import org.sandbot.sim.TimeRedirects;
 
 import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
@@ -652,12 +652,13 @@ public class Gamepad extends RobocolParsableBase {
       this.repeating = repeating;
     }
 
+    // SandBot: Gson(SimpleGson)이 없다. DS로 보내는 직렬화는 시뮬레이터에 필요 없다.
     public String serialize() {
-      return SimpleGson.getInstance().toJson(this);
+      throw new SimUnsupportedException("com.qualcomm.robotcore.hardware.Gamepad$LedEffect#serialize()");
     }
 
     public static LedEffect deserialize(String serialized) {
-      return SimpleGson.getInstance().fromJson(serialized, LedEffect.class);
+      throw new SimUnsupportedException("com.qualcomm.robotcore.hardware.Gamepad$LedEffect#deserialize(java.lang.String)");
     }
 
     public static class Builder {
@@ -769,12 +770,13 @@ public class Gamepad extends RobocolParsableBase {
       this.steps = steps;
     }
 
+    // SandBot: Gson(SimpleGson)이 없다
     public String serialize() {
-      return SimpleGson.getInstance().toJson(this);
+      throw new SimUnsupportedException("com.qualcomm.robotcore.hardware.Gamepad$RumbleEffect#serialize()");
     }
 
     public static RumbleEffect deserialize(String serialized) {
-      return SimpleGson.getInstance().fromJson(serialized, RumbleEffect.class);
+      throw new SimUnsupportedException("com.qualcomm.robotcore.hardware.Gamepad$RumbleEffect#deserialize(java.lang.String)");
     }
 
     public static class Builder {
@@ -909,7 +911,7 @@ public class Gamepad extends RobocolParsableBase {
     } else if(nextRumbleApproxFinishTime == RUMBLE_FINISH_TIME_FLAG_INFINITE) {
       return true;
     } else {
-      return System.currentTimeMillis() < nextRumbleApproxFinishTime;
+      return TimeRedirects.currentTimeMillis() < nextRumbleApproxFinishTime;
     }
   }
 
@@ -923,7 +925,7 @@ public class Gamepad extends RobocolParsableBase {
         return RUMBLE_FINISH_TIME_FLAG_INFINITE;
       }
     } else { // If the effect has more than one step (or one step with non-infinite duration) we need to sum the step times
-      long time = System.currentTimeMillis();
+      long time = TimeRedirects.currentTimeMillis();
       long overhead = 50 /* rumbleGamepadsInterval in FtcEventLoopHandler */ +
                       SendOnceRunnable.MS_BATCH_TRANSMISSION_INTERVAL +
                       5  /* Slop */;

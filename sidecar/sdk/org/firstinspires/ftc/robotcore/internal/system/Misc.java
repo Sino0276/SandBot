@@ -30,10 +30,10 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
 TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+// SandBot: 들여오기를 막는 문자열 리소스 함수(formatForUser(int…))만 SimUnsupportedException, androidx 애너테이션 없음. 나머지는 실제와 같다.
 package org.firstinspires.ftc.robotcore.internal.system;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.StringRes;
+import org.sandbot.sim.SimUnsupportedException;
 
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
@@ -59,31 +59,31 @@ public class Misc
     //----------------------------------------------------------------------------------------------
 
     /** Formats the string using what in C# is called the 'invariant' culture */
-    public static String formatInvariant(@NonNull String format, Object...args)
+    public static String formatInvariant(String format, Object...args)
         {
         return String.format(Locale.ROOT, format, args);
         }
-    public static String formatInvariant(@NonNull String format)
+    public static String formatInvariant(String format)
         {
         return format;
         }
 
-    public static String formatForUser(@NonNull String format, Object...args)
+    public static String formatForUser(String format, Object...args)
         {
         return String.format(Locale.getDefault(), format, args);
         }
-    public static String formatForUser(@NonNull String format)
+    public static String formatForUser(String format)
         {
         return format;
         }
 
-    public static String formatForUser(@StringRes int resId, Object...args)
+    public static String formatForUser(int resId, Object...args)
         {
-        return AppUtil.getDefContext().getString(resId, args);
+        throw new SimUnsupportedException("org.firstinspires.ftc.robotcore.internal.system.Misc#formatForUser(int,java.lang.Object[])");
         }
-    public static String formatForUser(@StringRes int resId)
+    public static String formatForUser(int resId)
         {
-        return AppUtil.getDefContext().getString(resId);
+        throw new SimUnsupportedException("org.firstinspires.ftc.robotcore.internal.system.Misc#formatForUser(int)");
         }
 
     public static String encodeEntity(String string)
