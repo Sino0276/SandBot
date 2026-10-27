@@ -5,13 +5,17 @@
  * {@link org.sandbot.sdk.devices.SandbotHardware}: {@code create(File)}(구성 XML, null이면 빈 맵; 틀리면
  * {@link org.sandbot.sdk.devices.SandbotConfigException}, 영어 메시지), {@code beforeInit(map)}(실제
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
- * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
+ * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
+ * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
+ * preventDangerousHardwareAccess), {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
  * <h2>시뮬레이터 장치(SimDevice)</h2>
  * 구성 이름마다 하나({@code Sim.devices()}, 구성에 넣은 순서). 출력은 가짜 SDK가 허브에 보낸 명령의 결과(허브 펌웨어가 보는 값)이고,
  * 입력은 시뮬레이터가 넣는 측정값이다. 물리는 없다. 단위는 따로 적지 않으면 SI(m, rad, s, V, A)다.
  * 허브 모터 값은 허브 방향이다: SDK가 모터 형식의 회전 방향(CCW 형식은 FORWARD에서 반대, 실제 DcMotorImpl)과
  * setDirection을 적용한 뒤의 값이므로, 시뮬레이터는 출력 power의 부호대로 돌리고 같은 부호로 position을 세면 된다.
+ * 그래서 goBILDA 모터(CCW)에 FORWARD로 setPower(0.5)를 하면 power는 −0.5다. 장치 표에서 팀 코드의 값과 헷갈리지 않게
+ * 모터는 첫 출력으로 apiPower(팀 코드의 getPower가 돌려줄 값)를 함께 보인다. 시뮬레이터는 apiPower를 쓰지 않는다.
  *
  * <table border="1">
  * <caption>종류(kind) · 출력 · 입력</caption>
@@ -20,7 +24,8 @@
  *     <td>bulkCachingMode(OFF·AUTO·MANUAL), led(한 색이면 "#RRGGBB", 여러 단계면 "pattern", 없으면 null)</td>
  *     <td>voltage(배터리 V, 기본 12.5), current·gpioCurrent·i2cCurrent(A, 기본 0), auxVoltage(V, 기본 5), temperature(°C, 기본 25)</td></tr>
  * <tr><td>motor(모터 태그 전부, 데드휠의 Motor 태그)</td>
- *     <td>motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
+ *     <td>apiPower(−1..1, 팀 코드 기준: 허브 power에 이 포트 DcMotor의 실제 방향을 되돌려 적용한 값 = getPower가 LastKnown 없이
+ *         돌려줄 값, RUN_TO_POSITION이면 |power|; 표시용), motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
  *         power(−1..1: 엔코더 없음이면 정전력 값, 엔코더 모드면 목표 속도 ÷ 형식의 최대 틱/s, 꺼져 있거나 리셋이면 0),
  *         velocity(엔코더 모드의 목표 속도 틱/s, 아니면 null), enabled, zeroPower(BRAKE·FLOAT),
  *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5)</td>

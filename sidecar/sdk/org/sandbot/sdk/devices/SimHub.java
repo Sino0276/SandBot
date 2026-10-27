@@ -40,6 +40,12 @@ public final class SimHub {
     /** 비용 청구 여부(beforeInit ~ afterStop) */
     private static volatile boolean charging = false;
 
+    /**
+     * STOP을 받은 뒤인가(실제 OpModeManagerImpl.preventDangerousHardwareAccess). 그동안 위험한 명령은 보내지 않는다
+     * ({@link #cancelledForSafety}). beforeInit이 끈다.
+     */
+    private static volatile boolean preventDangerousHardwareAccess = false;
+
     final String name;
     final int address;
     final boolean parent;
@@ -84,6 +90,19 @@ public final class SimHub {
 
     static boolean isCharging() {
         return charging;
+    }
+
+    static void setPreventDangerousHardwareAccess(boolean value) {
+        preventDangerousHardwareAccess = value;
+    }
+
+    /**
+     * 위험한 명령(실제 LynxMessage.isDangerous가 true: 0이 아닌 모터 power·목표 속도, 목표 위치, 서보 펄스 폭, 서보 PWM 켜기)을
+     * 지금 보낼 수 없는가. true면 컨트롤러는 명령을 보내지 않는다(비용·허브 상태 변화 없음). 실제 LynxModule은 STOP 뒤의 위험한
+     * 명령을 보내지 않고 CANCELLED_FOR_SAFETY NACK으로 끝내며, 컨트롤러의 예외 처리가 그것을 조용히 버린다.
+     */
+    boolean cancelledForSafety(boolean dangerous) {
+        return dangerous && preventDangerousHardwareAccess;
     }
 
     public String name() {

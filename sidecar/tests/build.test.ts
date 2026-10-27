@@ -90,104 +90,10 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
       expect(entries.has(`${name.replace(/\./g, '/')}.class`), name).toBe(true)
   })
 
-  it('sdk jar의 public·protected API가 실제 SDK와 같다(상수 값 포함)', async () => {
-    const result = await runProcess(build.java, [
-      '-cp',
-      tools,
-      'org.sandbot.tools.ApiCheck',
-      '--real',
-      realJars.join(delimiter),
-      '--android',
-      androidJar,
-      '--sdk',
-      build.sdkJar
-    ])
-    expect(result.output.match(/^error: .*/gm)?.slice(0, 20) ?? []).toEqual([])
-    expect(result.code).toBe(0)
-    const summary = /checked (\d+) classes, (\d+) constants, 0 errors/.exec(result.output)
-    expect(summary).not.toBeNull()
-    expect(Number(summary![1])).toBeGreaterThan(1000)
-    expect(Number(summary![2])).toBeGreaterThan(500)
-  })
-
-  it('stub의 메서드·생성자는 SimUnsupportedException을 던지고 정적 초기화는 던지지 않는다', async () => {
-    const report = sidecarReport(build)
-    const stubTops = new Set(Object.keys(report.stubs))
-    const stubClasses = jarEntries(build.sdkJar)
-      .filter((e) => e.endsWith('.class'))
-      .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
-      .filter((name) => stubTops.has(name.split('$')[0]))
-    expect(stubClasses.length).toBeGreaterThan(100)
-    const dir = testTempDir('stub-probe')
-    const list = join(dir, 'stubs.txt')
-    writeFileSync(list, `${stubClasses.join('\n')}\n`)
-    const compiled = await runProcess(build.javac, [
-      '--release',
-      '8',
-      '-Xlint:-options',
-      '-cp',
-      build.sdkJar,
-      '-d',
-      dir,
-      join(fixtures, 'stub', 'StubProbe.java')
-    ])
-    expect(compiled.code, compiled.output).toBe(0)
-    const run = await runProcess(build.java, [
-      '-cp',
-      [dir, build.sdkJar].join(delimiter),
-      'StubProbe',
-      list
-    ])
-    expect(run.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
-    expect(run.code).toBe(0)
-    const checked = /CHECKED classes=(\d+) methods=(\d+) constructors=(\d+)/.exec(run.output)
-    expect(checked).not.toBeNull()
-    expect(Number(checked![2])).toBeGreaterThan(100)
-    expect(Number(checked![3])).toBeGreaterThan(100)
-  })
-
-  it('상수는 컴파일 시간 상수로 남고, 상수가 아닌 static final은 상수가 되지 않는다', async () => {
-    const dir = testTempDir('constants')
-    const javac = (file: string): ReturnType<typeof runProcess> =>
-      runProcess(build.javac, [
-        '--release',
-        '8',
-        '-Xlint:-options',
-        '-cp',
-        build.sdkJar,
-        '-d',
-        dir,
-        join(fixtures, 'constants', file)
-      ])
-    const ok = await javac('ConstantUse.java')
-    expect(ok.code, ok.output).toBe(0)
-    const run = await runProcess(build.java, [
-      '-cp',
-      [dir, build.sdkJar].join(delimiter),
-      'ConstantUse'
-    ])
-    expect(run.stdout.trim()).toBe('1 1')
-    const notConstant = await javac('NotConstant.java')
-    expect(notConstant.code).not.toBe(0)
-    expect(notConstant.output).toMatch(/constant expression required/)
-  })
-
-  it('API 대조가 실제와 다른 손 구현을 잡는다', async () => {
-    const check = async (fixture: string): Promise<{ code: number; output: string }> => {
-      const dir = testTempDir(`apicheck-${fixture}`)
-      const compiled = await runProcess(build.javac, [
-        '--release',
-        '8',
-        '-Xlint:-options',
-        '-proc:none',
-        '-cp',
-        realJars.join(delimiter),
-        '-d',
-        dir,
-        ...javaFiles(join(fixtures, 'apicheck', fixture))
-      ])
-      expect(compiled.code, compiled.output).toBe(0)
-      return runProcess(build.java, [
+  it(
+    'sdk jar의 public·protected API가 실제 SDK와 같다(상수 값 포함)',
+    async () => {
+      const result = await runProcess(build.java, [
         '-cp',
         tools,
         'org.sandbot.tools.ApiCheck',
@@ -195,42 +101,193 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
         realJars.join(delimiter),
         '--android',
         androidJar,
-        '--hand',
-        dir
+        '--sdk',
+        build.sdkJar
       ])
-    }
-    const good = await check('good')
-    expect(good.output).toMatch(/checked \d+ classes, \d+ constants, 0 errors/)
-    expect(good.code).toBe(0)
+      expect(result.output.match(/^error: .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(result.code).toBe(0)
+      const summary = /checked (\d+) classes, (\d+) constants, 0 errors/.exec(result.output)
+      expect(summary).not.toBeNull()
+      expect(Number(summary![1])).toBeGreaterThan(1000)
+      expect(Number(summary![2])).toBeGreaterThan(500)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
 
-    const bad = await check('bad')
-    expect(bad.code).toBe(1)
-    const errors = bad.output.match(/^error: .*/gm) ?? []
-    const expected = [
-      'com.qualcomm.robotcore.util.Range#scale(DDDDD)D: modifiers [public static] (real) vs [public]',
-      'com.qualcomm.robotcore.util.Range#clip(BBB)B: missing method',
-      'com.qualcomm.robotcore.util.Range#throwIfRangeIsInvalid(DDD)V: throws [java/lang/IllegalArgumentException] (real) vs []',
-      'com.qualcomm.robotcore.util.Range#extra()I: method not in the real API',
-      'com.qualcomm.robotcore.util.RangeHelper: not a class of the FTC SDK',
-      'com.qualcomm.robotcore.util.ElapsedTime.SECOND_IN_NANO: constant value long 1000000000 (real) vs long 1000000001',
-      'com.qualcomm.robotcore.util.ElapsedTime$Resolution: enum constants [SECONDS, MILLISECONDS] (real) vs [MILLISECONDS, SECONDS]'
-    ]
-    for (const message of expected)
-      expect(
-        errors.some((line) => line.includes(message)),
-        message
-      ).toBe(true)
-    expect(errors).toHaveLength(expected.length)
-  })
+  it(
+    'stub의 메서드·생성자는 SimUnsupportedException을 던지고 정적 초기화는 던지지 않는다',
+    async () => {
+      const report = sidecarReport(build)
+      const stubTops = new Set(Object.keys(report.stubs))
+      const stubClasses = jarEntries(build.sdkJar)
+        .filter((e) => e.endsWith('.class'))
+        .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
+        .filter((name) => stubTops.has(name.split('$')[0]))
+      expect(stubClasses.length).toBeGreaterThan(100)
+      const dir = testTempDir('stub-probe')
+      const list = join(dir, 'stubs.txt')
+      writeFileSync(list, `${stubClasses.join('\n')}\n`)
+      const compiled = await runProcess(build.javac, [
+        '--release',
+        '8',
+        '-Xlint:-options',
+        '-cp',
+        build.sdkJar,
+        '-d',
+        dir,
+        join(fixtures, 'stub', 'StubProbe.java')
+      ])
+      expect(compiled.code, compiled.output).toBe(0)
+      const run = await runProcess(build.java, [
+        '-cp',
+        [dir, build.sdkJar].join(delimiter),
+        'StubProbe',
+        list
+      ])
+      expect(run.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(run.code).toBe(0)
+      const checked = /CHECKED classes=(\d+) methods=(\d+) constructors=(\d+)/.exec(run.output)
+      expect(checked).not.toBeNull()
+      expect(Number(checked![2])).toBeGreaterThan(100)
+      expect(Number(checked![3])).toBeGreaterThan(100)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
 
-  it('Java 테스트를 컴파일하고 돌려 PASS·FAIL을 읽는다(support.ts)', async () => {
-    const classes = await compileJavaTests(build, ['sidecar/tests/fixtures/javatest'])
-    const result = await runJavaTests(build, classes, ['org.sandbot.fixture.SampleTests'])
-    expect(result.passed).toEqual(['org.sandbot.fixture.SampleTests#testPasses'])
-    expect(result.failed.map((f) => f.id)).toEqual(['org.sandbot.fixture.SampleTests#testFails'])
-    // 실패 내용은 여러 줄(스택)이다
-    expect(result.failed[0].detail).toContain('deliberate failure: expected <1> but was <2>')
-    expect(result.failed[0].detail).toContain('at org.sandbot.fixture.SampleTests.testFails')
-    expect(result.output).toContain('DONE tests=2 failures=1')
-  })
+  it(
+    '들여온 클래스와 손 구현은 JVM에서 불러오고 초기화되며 모든 멤버 참조가 풀린다',
+    async () => {
+      // 빌드의 링크 확인(Lifter)과 따로, 실제 JVM으로 확인한다: 실행하지 않은 길의 NoSuchMethodError 등도 미리 찾는다
+      const report = sidecarReport(build)
+      const tops = new Set([...report.lifted, ...report.hand])
+      const classes = jarEntries(build.sdkJar)
+        .filter((e) => e.endsWith('.class') && !e.endsWith('package-info.class'))
+        .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
+        .filter((name) => tops.has(name.split('$')[0]))
+      expect(classes.length).toBeGreaterThan(report.lifted.length)
+      const dir = testTempDir('link-probe')
+      const list = join(dir, 'classes.txt')
+      writeFileSync(list, `${classes.join('\n')}\n`)
+      const compiled = await runProcess(build.javac, [
+        '--release',
+        '17',
+        '-d',
+        dir,
+        join(fixtures, 'link', 'LinkProbe.java')
+      ])
+      expect(compiled.code, compiled.output).toBe(0)
+      const run = await runProcess(build.java, [
+        '-cp',
+        [dir, build.sdkJar].join(delimiter),
+        'LinkProbe',
+        list
+      ])
+      expect(run.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(run.code).toBe(0)
+      const linked = /LINKED classes=(\d+) refs=(\d+)/.exec(run.output)
+      expect(Number(linked?.[1])).toBe(classes.length)
+      expect(Number(linked?.[2])).toBeGreaterThan(5000)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    '상수는 컴파일 시간 상수로 남고, 상수가 아닌 static final은 상수가 되지 않는다',
+    async () => {
+      const dir = testTempDir('constants')
+      const javac = (file: string): ReturnType<typeof runProcess> =>
+        runProcess(build.javac, [
+          '--release',
+          '8',
+          '-Xlint:-options',
+          '-cp',
+          build.sdkJar,
+          '-d',
+          dir,
+          join(fixtures, 'constants', file)
+        ])
+      const ok = await javac('ConstantUse.java')
+      expect(ok.code, ok.output).toBe(0)
+      const run = await runProcess(build.java, [
+        '-cp',
+        [dir, build.sdkJar].join(delimiter),
+        'ConstantUse'
+      ])
+      expect(run.stdout.trim()).toBe('1 1')
+      const notConstant = await javac('NotConstant.java')
+      expect(notConstant.code).not.toBe(0)
+      expect(notConstant.output).toMatch(/constant expression required/)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'API 대조가 실제와 다른 손 구현을 잡는다',
+    async () => {
+      const check = async (fixture: string): Promise<{ code: number; output: string }> => {
+        const dir = testTempDir(`apicheck-${fixture}`)
+        const compiled = await runProcess(build.javac, [
+          '--release',
+          '8',
+          '-Xlint:-options',
+          '-proc:none',
+          '-cp',
+          realJars.join(delimiter),
+          '-d',
+          dir,
+          ...javaFiles(join(fixtures, 'apicheck', fixture))
+        ])
+        expect(compiled.code, compiled.output).toBe(0)
+        return runProcess(build.java, [
+          '-cp',
+          tools,
+          'org.sandbot.tools.ApiCheck',
+          '--real',
+          realJars.join(delimiter),
+          '--android',
+          androidJar,
+          '--hand',
+          dir
+        ])
+      }
+      const good = await check('good')
+      expect(good.output).toMatch(/checked \d+ classes, \d+ constants, 0 errors/)
+      expect(good.code).toBe(0)
+
+      const bad = await check('bad')
+      expect(bad.code).toBe(1)
+      const errors = bad.output.match(/^error: .*/gm) ?? []
+      const expected = [
+        'com.qualcomm.robotcore.util.Range#scale(DDDDD)D: modifiers [public static] (real) vs [public]',
+        'com.qualcomm.robotcore.util.Range#clip(BBB)B: missing method',
+        'com.qualcomm.robotcore.util.Range#throwIfRangeIsInvalid(DDD)V: throws [java/lang/IllegalArgumentException] (real) vs []',
+        'com.qualcomm.robotcore.util.Range#extra()I: method not in the real API',
+        'com.qualcomm.robotcore.util.RangeHelper: not a class of the FTC SDK',
+        'com.qualcomm.robotcore.util.ElapsedTime.SECOND_IN_NANO: constant value long 1000000000 (real) vs long 1000000001',
+        'com.qualcomm.robotcore.util.ElapsedTime$Resolution: enum constants [SECONDS, MILLISECONDS] (real) vs [MILLISECONDS, SECONDS]'
+      ]
+      for (const message of expected)
+        expect(
+          errors.some((line) => line.includes(message)),
+          message
+        ).toBe(true)
+      expect(errors).toHaveLength(expected.length)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'Java 테스트를 컴파일하고 돌려 PASS·FAIL을 읽는다(support.ts)',
+    async () => {
+      const classes = await compileJavaTests(build, ['sidecar/tests/fixtures/javatest'])
+      const result = await runJavaTests(build, classes, ['org.sandbot.fixture.SampleTests'])
+      expect(result.passed).toEqual(['org.sandbot.fixture.SampleTests#testPasses'])
+      expect(result.failed.map((f) => f.id)).toEqual(['org.sandbot.fixture.SampleTests#testFails'])
+      // 실패 내용은 여러 줄(스택)이다
+      expect(result.failed[0].detail).toContain('deliberate failure: expected <1> but was <2>')
+      expect(result.failed[0].detail).toContain('at org.sandbot.fixture.SampleTests.testFails')
+      expect(result.output).toContain('DONE tests=2 failures=1')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
 })

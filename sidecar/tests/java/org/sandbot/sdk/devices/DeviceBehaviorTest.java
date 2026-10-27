@@ -61,6 +61,10 @@ public final class DeviceBehaviorTest {
             return output(p + name, key);
         }
 
+        org.sandbot.sim.SimDevice device(String name) {
+            return SimTestSupport.device(p + name);
+        }
+
         void in(String name, String key, Object value) {
             input(p + name, key, value);
         }
@@ -111,6 +115,73 @@ public final class DeviceBehaviorTest {
         Check.equal("BRAKE", bot.out("gobilda", "zeroPower"), "zero power behavior");
         Check.equal(DcMotor.ZeroPowerBehavior.BRAKE, gobilda.getZeroPowerBehavior(), "zero power read back");
         SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testApiPowerIsWhatGetPowerReturns() {
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotor tetrix = bot.get(DcMotor.class, "tetrix");
+        // 장치 표의 첫 키는 팀 코드가 보는 값(getPower), 허브 값 power는 그 뒤
+        Check.equal("apiPower", bot.device("gobilda").outputs().keySet().iterator().next(), "apiPower is listed first");
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "OpMode starts at zero power");
+        gobilda.setPower(0.5);
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("gobilda", "apiPower")), 1e-4, "goBILDA FORWARD: apiPower is the API power");
+        Check.near(-0.5, num(bot.out("gobilda", "power")), 1e-4, "goBILDA FORWARD: power is the hub power");
+        Check.near(0.5, num(bot.out("tetrix", "apiPower")), 1e-4, "Tetrix FORWARD apiPower");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-4, "apiPower equals getPower");
+        gobilda.setDirection(DcMotorSimple.Direction.REVERSE);
+        Check.near(-0.5, num(bot.out("gobilda", "apiPower")), 1e-4, "setDirection flips what getPower returns");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-4, "apiPower equals getPower after setDirection");
+        gobilda.setPower(-0.25);
+        Check.near(-0.25, num(bot.out("gobilda", "apiPower")), 1e-4, "goBILDA REVERSE apiPower");
+        Check.near(-0.25, num(bot.out("gobilda", "power")), 1e-4, "goBILDA REVERSE hub power");
+        // RUN_USING_ENCODER: 목표 속도의 비율(getPower가 LastKnown이 없을 때 돌려주는 값)
+        gobilda.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        Check.near(-0.25, num(bot.out("gobilda", "apiPower")), 1e-3, "RUN_USING_ENCODER apiPower");
+        // RUN_TO_POSITION: getPower는 |power|
+        gobilda.setTargetPosition(10);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(-0.5);
+        Check.near(0.5, num(bot.out("gobilda", "apiPower")), 1e-3, "RUN_TO_POSITION apiPower is |power|");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-3, "apiPower equals getPower (RUN_TO_POSITION)");
+        gobilda.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "reset stops the motor");
+        SandbotHardware.afterStop(bot.map);
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "fail safe stops motors");
+    }
+
+    public static void testStopBlocksDangerousCommands() {
+        // 실제 OpModeManagerImpl.callActiveOpModeStop: STOP을 받으면 곧바로 허브 fail safe, 그 뒤 위험한 명령(0이 아닌 power·
+        // 속도, 목표 위치, 서보 펄스·PWM 켜기)은 CANCELLED_FOR_SAFETY로 버려진다(팀 코드가 아직 돌아도 모터가 다시 돌지 않는다)
+        Bot bot = new Bot(null, MOTORS + "            <Servo name=\"servo\" port=\"0\" />\n", null);
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Servo servo = bot.get(Servo.class, "servo");
+        tetrix.setPower(0.5);
+        servo.setPosition(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "running before STOP");
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(0.0, bot.out("tetrix", "power"), "STOP fail safe stops the motor at once");
+        Check.equal(false, bot.out("tetrix", "enabled"), "STOP fail safe disables the motor");
+        Check.equal(false, bot.out("servo", "pwm"), "STOP fail safe turns servo PWM off");
+        long before = SimTestSupport.now();
+        tetrix.setPower(0.8);
+        servo.setPosition(0.9);
+        tetrix.setTargetPosition(100);
+        tetrix.setVelocity(300);
+        Check.equal(0.0, bot.out("tetrix", "power"), "power after STOP is cancelled");
+        Check.equal(false, bot.out("servo", "pwm"), "servo PWM stays off after STOP");
+        Check.equal(null, bot.out("tetrix", "targetPosition"), "target position after STOP is cancelled");
+        Check.isTrue(SimTestSupport.now() - before < ms(1.5 * 6), "cancelled commands are not sent (no hub time)");
+        tetrix.setPower(0);
+        Check.equal(0.0, bot.out("tetrix", "power"), "zero power is not dangerous");
+        SandbotHardware.afterStop(bot.map);
+
+        // 다음 OpMode(beforeInit)부터는 다시 보낸다
+        Bot next = new Bot(null, MOTORS, null);
+        next.get(DcMotor.class, "tetrix").setPower(0.5);
+        Check.near(0.5, num(next.out("tetrix", "power")), 1e-4, "commands work again after beforeInit");
+        SandbotHardware.afterStop(next.map);
     }
 
     public static void testStopAndResetEncoder() {
