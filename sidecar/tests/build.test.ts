@@ -155,6 +155,43 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
   )
 
   it(
+    '들여온 클래스와 손 구현은 JVM에서 불러오고 초기화되며 모든 멤버 참조가 풀린다',
+    async () => {
+      // 빌드의 링크 확인(Lifter)과 따로, 실제 JVM으로 확인한다: 실행하지 않은 길의 NoSuchMethodError 등도 미리 찾는다
+      const report = sidecarReport(build)
+      const tops = new Set([...report.lifted, ...report.hand])
+      const classes = jarEntries(build.sdkJar)
+        .filter((e) => e.endsWith('.class') && !e.endsWith('package-info.class'))
+        .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
+        .filter((name) => tops.has(name.split('$')[0]))
+      expect(classes.length).toBeGreaterThan(report.lifted.length)
+      const dir = testTempDir('link-probe')
+      const list = join(dir, 'classes.txt')
+      writeFileSync(list, `${classes.join('\n')}\n`)
+      const compiled = await runProcess(build.javac, [
+        '--release',
+        '17',
+        '-d',
+        dir,
+        join(fixtures, 'link', 'LinkProbe.java')
+      ])
+      expect(compiled.code, compiled.output).toBe(0)
+      const run = await runProcess(build.java, [
+        '-cp',
+        [dir, build.sdkJar].join(delimiter),
+        'LinkProbe',
+        list
+      ])
+      expect(run.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(run.code).toBe(0)
+      const linked = /LINKED classes=(\d+) refs=(\d+)/.exec(run.output)
+      expect(Number(linked?.[1])).toBe(classes.length)
+      expect(Number(linked?.[2])).toBeGreaterThan(5000)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
     '상수는 컴파일 시간 상수로 남고, 상수가 아닌 static final은 상수가 되지 않는다',
     async () => {
       const dir = testTempDir('constants')
