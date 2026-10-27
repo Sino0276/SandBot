@@ -134,8 +134,17 @@ public final class SandbotHardware {
             BUILT.put(map, built);
         }
         if (configXmlOrNull == null) return map;
+        boolean charging = SimHub.isCharging();
+        SimHub.setCharging(false);
+        try {
+            build(map, built, parse(configXmlOrNull).getDocumentElement());
+        } finally {
+            SimHub.setCharging(charging);
+        }
+        return map;
+    }
 
-        Element robot = parse(configXmlOrNull).getDocumentElement();
+    private static void build(HardwareMap map, List<HardwareDevice> built, Element robot) throws SandbotConfigException {
         if (!"Robot".equals(robot.getTagName()))
             throw new SandbotConfigException("Robot configuration must start with <Robot>, found <" + robot.getTagName() + ">");
         Builder builder = new Builder(map, built);
@@ -154,7 +163,6 @@ public final class SandbotHardware {
                     throw new SandbotConfigException("Unsupported device <" + child.getTagName() + "> in the robot configuration");
             }
         }
-        return map;
     }
 
     private static Document parse(File file) throws SandbotConfigException {
