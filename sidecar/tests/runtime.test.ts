@@ -15,6 +15,7 @@ import {
   type SidecarMessage,
   type TelemetryMessage
 } from '../../src/shared/sidecarProtocol'
+import { MAX_LINE_CHARS } from '../../src/main/sidecar/protocol'
 import { compileJavaTests, runJavaTests, sidecarBuild, type SidecarBuild } from './support'
 
 const OPMODES = resolve(__dirname, 'opmodes')
@@ -69,6 +70,10 @@ function runSidecar(b: SidecarBuild, script: Script): Promise<RunResult> {
     const child = spawn(
       b.java,
       [
+        // 호스트(src/main/sidecar/launch.ts의 javaArgs)와 같은 인자
+        '-Xlog:disable',
+        '-Xlog:all=warning:stderr',
+        '-XX:+DisplayVMOutputToStderr',
         '-Xss4m',
         '-XX:+UseSerialGC',
         '-Dfile.encoding=UTF-8',
@@ -515,6 +520,9 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       ])
       expect(rest).toContainEqual(['err', 'err'])
       expect(rest).toContainEqual(['out', 'partial'])
+      // 알림은 다음 출력("after", 가상 1.1초)을 기다리지 않고 그 구간이 끝난 틱(가상 1초)에 온다
+      const notice = logs.find((m) => m.text.endsWith('lines dropped'))
+      expect(notice?.tNanos).toBe(1_000_000_000)
     },
     TIMEOUT
   )
@@ -536,6 +544,45 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       expect(diagnostics[0].message).toContain('cannot find symbol')
       expect(finishedReason(run)).toBe('compileFailed')
       expect(run.messages.some((m) => m.type === 'state')).toBe(false)
+    },
+    TIMEOUT
+  )
+
+  it(
+    '탭으로 들여 쓴 줄의 진단 열은 글자 단위다(편집기의 열과 같다)',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'TabCompileError' })
+      const compiled = run.messages.find((m) => m.type === 'compiled')
+      const diagnostics = compiled?.type === 'compiled' ? compiled.diagnostics : []
+      // "\t\tString s = \"가나\"; int x = undefinedVariable;"의 undefinedVariable은 28번째 글자
+      expect(diagnostics[0]).toMatchObject({ line: 11, column: 28 })
+    },
+    TIMEOUT
+  )
+
+  it(
+    '아주 긴 글자도 호스트의 줄 한도 안에서 보내고, 긴 출력 줄은 UTF-8 글자를 가르지 않고 나눈다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'HugeOutput', events: { 1: ['start'] } })
+      expect(Math.max(...run.raw.map((line) => line.length))).toBeLessThan(MAX_LINE_CHARS)
+      const robotLog = run.messages.find((m) => m.type === 'log' && m.stream === 'robotLog')
+      expect(robotLog?.type === 'log' && robotLog.text.length).toBe(64 * 1024)
+      expect(robotLog?.type === 'log' && robotLog.text.endsWith('…')).toBe(true)
+      const telemetry = run.messages.find((m): m is TelemetryMessage => m.type === 'telemetry')
+      expect(telemetry?.frame.lines.length).toBeLessThan(21)
+      expect(telemetry?.frame.lines[telemetry.frame.lines.length - 1]).toBe('…')
+      const out = run.messages.flatMap((m) =>
+        m.type === 'log' && m.stream === 'out' ? [m.text] : []
+      )
+      expect(out.length).toBeGreaterThan(1)
+      expect(out.join('')).toBe('가'.repeat(70_000))
+      const error = errors(run)[0]
+      expect(error).toMatchObject({
+        kind: 'exception',
+        exception: 'java.lang.IllegalStateException'
+      })
+      expect(error.message.length).toBe(64 * 1024)
+      expect(finishedReason(run)).toBe('exception')
     },
     TIMEOUT
   )

@@ -253,6 +253,9 @@ describe('사이드카 빌드 결과와 명령', () => {
   it('JVM 인자와 RunRequest', () => {
     const files = { dir: '/s', runtimeJar: '/s/sandbot-runtime.jar', sdkJar: '/s/sandbot-sdk.jar' }
     expect(javaArgs(files, 'linux')).toEqual([
+      '-Xlog:disable',
+      '-Xlog:all=warning:stderr',
+      '-XX:+DisplayVMOutputToStderr',
       '-Xss4m',
       '-XX:+UseSerialGC',
       '-Dfile.encoding=UTF-8',
@@ -263,7 +266,7 @@ describe('사이드카 빌드 결과와 명령', () => {
       '/s/sandbot-runtime.jar:/s/sandbot-sdk.jar',
       'org.sandbot.runtime.Main'
     ])
-    expect(javaArgs(files, 'win32')[7]).toBe('/s/sandbot-runtime.jar;/s/sandbot-sdk.jar')
+    expect(javaArgs(files, 'win32')[10]).toBe('/s/sandbot-runtime.jar;/s/sandbot-sdk.jar')
     const run = buildRunRequest(
       {
         projectRoot: '/proj',

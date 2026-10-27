@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -68,12 +69,13 @@ final class TeamCompiler {
 
         List<Map<String, Object>> diagnostics = new ArrayList<>();
         int[] errors = {0};
+        Map<JavaFileObject, CharSequence> contents = new HashMap<>();
         DiagnosticListener<JavaFileObject> listener = d -> {
             if (d.getKind() == Diagnostic.Kind.ERROR) {
                 if (errors[0] >= MAX_ERRORS) return;
                 errors[0]++;
             }
-            diagnostics.add(diagnostic(d));
+            diagnostics.add(diagnostic(d, contents));
         };
 
         Map<String, byte[]> classes = new LinkedHashMap<>();
@@ -110,7 +112,8 @@ final class TeamCompiler {
         }
     }
 
-    private static Map<String, Object> diagnostic(Diagnostic<? extends JavaFileObject> d) {
+    private static Map<String, Object> diagnostic(Diagnostic<? extends JavaFileObject> d,
+            Map<JavaFileObject, CharSequence> contents) {
         String kind;
         switch (d.getKind()) {
             case ERROR:
@@ -127,9 +130,29 @@ final class TeamCompiler {
         JavaFileObject source = d.getSource();
         if (source != null) file = absolutePath(source.toUri());
         long line = d.getLineNumber();
-        long column = d.getColumnNumber();
+        long column = characterColumn(source, d.getPosition(), contents);
+        if (column <= 0) column = d.getColumnNumber();
         return Json.obj("kind", kind, "file", file, "line", line < 0 ? 0L : line, "column", column < 0 ? 0L : column,
                 "message", d.getMessage(Locale.ENGLISH), "code", d.getCode() == null ? "" : d.getCode());
+    }
+
+    /**
+     * 진단 위치의 열(1부터, 글자 단위). javac의 getColumnNumber는 탭을 8칸 탭 정지로 펼쳐 세므로(탭으로 들여 쓴 줄이면 편집기의
+     * 열과 다르다) 소스의 글자 위치에서 줄 시작까지 센다. 알 수 없으면 0.
+     */
+    static long characterColumn(JavaFileObject source, long position, Map<JavaFileObject, CharSequence> contents) {
+        if (source == null || position < 0) return 0;
+        CharSequence text = contents.computeIfAbsent(source, s -> {
+            try {
+                return s.getCharContent(true);
+            } catch (IOException | RuntimeException e) {
+                return "";
+            }
+        });
+        if (position > text.length()) return 0;
+        int start = (int) position;
+        while (start > 0 && text.charAt(start - 1) != '\n' && text.charAt(start - 1) != '\r') start--;
+        return position - start + 1;
     }
 
     static String absolutePath(URI uri) {

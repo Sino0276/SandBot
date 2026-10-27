@@ -204,7 +204,8 @@ describe('진짜 JVM(작은 프로토콜 흉내)', () => {
   })
 
   const run = async (
-    name: string
+    name: string,
+    javaToolOptions = '-Dsandbot.test=1'
   ): Promise<{ events: PlayEvent[]; finished: Extract<PlayEvent, { type: 'finished' }> }> => {
     const root = join(dir, 'project')
     const file = join(root, `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/${name}.java`)
@@ -220,7 +221,7 @@ describe('진짜 JVM(작은 프로토콜 흉내)', () => {
       makeRunDir: () => mkdtemp(join(dir, 'run-')),
       removeRunDir: (path) => rm(path, { recursive: true, force: true }),
       platform: process.platform,
-      env: { ...process.env, JAVA_TOOL_OPTIONS: '-Dsandbot.test=1' }
+      env: { ...process.env, JAVA_TOOL_OPTIONS: javaToolOptions }
     }
     const controller = new PlayController(deps)
     const owner = { send: (event: PlayEvent): void => void events.push(event) }
@@ -259,6 +260,17 @@ describe('진짜 JVM(작은 프로토콜 흉내)', () => {
       event.type === 'log' ? event.entries.map((entry) => entry.text) : []
     )
     expect(texts).toContain('안녕 SandBot °')
+  }, 120_000)
+
+  // 통합 로깅(-Xlog)의 기본 출력은 stdout이다. 큰 페이지가 없는 Linux에서 UseLargePages는 경고 줄을 쓰는데, 그 줄이
+  // 프로토콜 줄 사이에 섞이면 실행이 crashed로 끝난다(스레드를 더 만들지 못함·코드 캐시 가득 참 같은 실행 중 경고도 같다).
+  it('JVM 경고는 stdout(프로토콜)에 섞이지 않는다', async (context) => {
+    if (!jdk) {
+      context.skip()
+      return
+    }
+    const { finished } = await run('Warns', '-XX:+UseLargePages')
+    expect(finished).toMatchObject({ reason: 'returned' })
   }, 120_000)
 
   it('finished 없이 끝나면 crashed이고 detail은 stderr(한글 포함, JVM 안내 줄 제외)', async (context) => {
