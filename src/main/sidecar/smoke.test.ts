@@ -1,0 +1,272 @@
+import { execFile } from 'child_process'
+import { existsSync } from 'fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { homedir, tmpdir } from 'os'
+import { dirname, join } from 'path'
+import { promisify } from 'util'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { MIN_JDK_MAJOR, type JdkInfo, type PlayEvent } from '../../shared/play'
+import { detectJdks, javaTool, nodeJdkFs } from '../jdk'
+import { clearTrustedRoots, trustRoot } from '../projectRoots'
+import { PlayController, type ControllerDeps } from './controller'
+import { spawnSidecar } from './process'
+
+// 진짜 사이드카(JVM) 연기 테스트. sidecar/tests/support.ts(툴체인)가 지금 소스로 빌드한 사이드카를 주고, JDK가 없으면
+// null을 준다(그러면 건너뛴다). support.ts가 아직 없는 브랜치에서도 이 파일은 통과해야 하므로 경로로 불러온다.
+
+type SidecarBuild = {
+  jdkHome: string
+  java: string
+  javac: string
+  sdkJar: string
+  runtimeJar: string
+  dir: string
+}
+
+const SUPPORT = join(process.cwd(), 'sidecar', 'tests', 'support.ts')
+
+const SMOKE = `package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
+
+@TeleOp(name = "Smoke")
+public class Smoke extends LinearOpMode {
+    @Override
+    public void runOpMode() {
+        telemetry.addData("hello", "world");
+        telemetry.update();
+        System.out.println("waiting");
+        waitForStart();
+        sleep(100);
+        telemetry.addData("done", true);
+        telemetry.update();
+    }
+}
+`
+
+async function waitFor(check: () => boolean, ms: number): Promise<void> {
+  const start = Date.now()
+  while (!check()) {
+    if (Date.now() - start > ms) throw new Error('timed out')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
+  let build: SidecarBuild | null = null
+  let dir: string
+
+  beforeAll(async () => {
+    const support = (await import(/* @vite-ignore */ SUPPORT)) as {
+      sidecarBuild: () => Promise<SidecarBuild | null>
+    }
+    build = await support.sidecarBuild()
+    dir = await mkdtemp(join(tmpdir(), 'sandbot-smoke-'))
+  }, 600_000)
+
+  afterAll(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true })
+  })
+
+  it('LinearOpMode가 텔레메트리를 보내고 START 뒤 스스로 끝난다', async (context) => {
+    if (!build) {
+      context.skip()
+      return
+    }
+    const sidecar = build
+    const root = join(dir, 'project')
+    const file = join(root, 'TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Smoke.java')
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, SMOKE)
+    clearTrustedRoots()
+    trustRoot(root)
+
+    const events: PlayEvent[] = []
+    const controller = new PlayController({
+      resolveJdk: async () => ({ home: sidecar.jdkHome, version: '', major: 21, source: 'path' }),
+      locateSidecar: async () => ({
+        dir: sidecar.dir,
+        runtimeJar: sidecar.runtimeJar,
+        sdkJar: sidecar.sdkJar
+      }),
+      spawn: spawnSidecar,
+      makeRunDir: () => mkdtemp(join(dir, 'run-')),
+      removeRunDir: (path) => rm(path, { recursive: true, force: true }),
+      platform: process.platform,
+      env: process.env
+    })
+    const owner = { send: (event: PlayEvent): void => void events.push(event) }
+    const result = await controller.init(
+      {
+        runId: 'smoke',
+        root,
+        opMode: {
+          className: 'org.firstinspires.ftc.teamcode.Smoke',
+          path: 'src/main/java/org/firstinspires/ftc/teamcode/Smoke.java',
+          flavor: 'TeleOp'
+        },
+        configPath: null,
+        settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+      },
+      owner
+    )
+    expect(result).toEqual({ ok: true })
+    const phases = (): string[] =>
+      events.flatMap((event) => (event.type === 'phase' ? [event.phase] : []))
+    const finished = (): Extract<PlayEvent, { type: 'finished' }> | undefined =>
+      events.find(
+        (event): event is Extract<PlayEvent, { type: 'finished' }> => event.type === 'finished'
+      )
+    try {
+      await waitFor(() => phases().includes('init') || finished() !== undefined, 120_000)
+      expect(finished(), JSON.stringify(events.slice(-5))).toBeUndefined()
+      controller.command({ type: 'start' }, owner)
+      await waitFor(() => finished() !== undefined, 60_000)
+    } finally {
+      await controller.disposeAll()
+    }
+    expect(finished()).toMatchObject({ reason: 'returned' })
+    expect(events.find((event) => event.type === 'compiled')).toMatchObject({ ok: true })
+    const lines = events.flatMap((event) => (event.type === 'telemetry' ? event.frame.lines : []))
+    expect(lines.some((line) => line.includes('hello') && line.includes('world'))).toBe(true)
+    const logs = events.flatMap((event) => (event.type === 'log' ? event.entries : []))
+    expect(logs.some((entry) => entry.stream === 'out' && entry.text.includes('waiting'))).toBe(
+      true
+    )
+    expect(events.every((event) => event.runId === 'smoke')).toBe(true)
+  }, 600_000)
+})
+
+// 사이드카 빌드 없이 이 PC의 JDK로 진짜 JVM을 띄운다: 프로토콜의 사이드카 쪽을 아주 작게 흉내 내는 Main을 컴파일해
+// 런타임 jar 자리(클래스 폴더)에 둔다. JVM 인자(-D…encoding 등)가 받아들여지는지, 한글이 UTF-8로 오가는지,
+// stderr의 JVM 안내 줄(Picked up JAVA_TOOL_OPTIONS)이 crashed detail에서 빠지는지 본다.
+const STUB_MAIN = `package org.sandbot.runtime;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        PrintStream out = new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8");
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+        out.println("{\\"type\\":\\"hello\\",\\"protocol\\":1,\\"runtime\\":\\"stub\\",\\"java\\":\\"" + System.getProperty("java.version") + "\\"}");
+        String run = in.readLine();
+        boolean crash = run.contains("Crash");
+        out.println("{\\"type\\":\\"compiled\\",\\"ok\\":true,\\"diagnostics\\":[],\\"millis\\":1}");
+        out.println("{\\"type\\":\\"state\\",\\"tNanos\\":0,\\"phase\\":\\"init\\"}");
+        out.println("{\\"type\\":\\"log\\",\\"tNanos\\":0,\\"stream\\":\\"out\\",\\"text\\":\\"안녕 SandBot \\u00b0\\"}");
+        out.println("{\\"type\\":\\"tick\\",\\"tick\\":0,\\"tNanos\\":0,\\"phase\\":\\"init\\",\\"loops\\":0,\\"outputs\\":{}}");
+        String reply = in.readLine();
+        if (crash) {
+            System.err.println("치명적 오류: " + reply.length());
+            System.exit(3);
+        }
+        out.println("{\\"type\\":\\"finished\\",\\"tNanos\\":0,\\"reason\\":\\"returned\\"}");
+        out.flush();
+        Runtime.getRuntime().halt(0);
+    }
+}
+`
+
+describe('진짜 JVM(작은 프로토콜 흉내)', () => {
+  let jdk: JdkInfo | null = null
+  let dir: string
+  let classes: string
+
+  beforeAll(async () => {
+    const found = await detectJdks({
+      platform: process.platform,
+      env: process.env,
+      home: homedir(),
+      fs: nodeJdkFs,
+      queryRegistry: async () => ''
+    })
+    jdk = found.find((info) => info.major >= MIN_JDK_MAJOR) ?? null
+    dir = await mkdtemp(join(tmpdir(), 'sandbot-stub-jvm-'))
+    if (!jdk) return
+    const source = join(dir, 'src', 'org', 'sandbot', 'runtime', 'Main.java')
+    await mkdir(dirname(source), { recursive: true })
+    await writeFile(source, STUB_MAIN)
+    classes = join(dir, 'classes')
+    await promisify(execFile)(javaTool(jdk.home, 'javac', process.platform), [
+      '-encoding',
+      'UTF-8',
+      '-d',
+      classes,
+      source
+    ])
+  }, 120_000)
+
+  afterAll(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true })
+  })
+
+  const run = async (
+    name: string
+  ): Promise<{ events: PlayEvent[]; finished: Extract<PlayEvent, { type: 'finished' }> }> => {
+    const root = join(dir, 'project')
+    const file = join(root, `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/${name}.java`)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, `@TeleOp public class ${name} {}\n`)
+    clearTrustedRoots()
+    trustRoot(root)
+    const events: PlayEvent[] = []
+    const deps: ControllerDeps = {
+      resolveJdk: async () => jdk,
+      locateSidecar: async () => ({ dir: classes, runtimeJar: classes, sdkJar: classes }),
+      spawn: spawnSidecar,
+      makeRunDir: () => mkdtemp(join(dir, 'run-')),
+      removeRunDir: (path) => rm(path, { recursive: true, force: true }),
+      platform: process.platform,
+      env: { ...process.env, JAVA_TOOL_OPTIONS: '-Dsandbot.test=1' }
+    }
+    const controller = new PlayController(deps)
+    const owner = { send: (event: PlayEvent): void => void events.push(event) }
+    const result = await controller.init(
+      {
+        runId: `stub-${name}`,
+        root,
+        opMode: {
+          className: `org.firstinspires.ftc.teamcode.${name}`,
+          path: `src/main/java/org/firstinspires/ftc/teamcode/${name}.java`,
+          flavor: 'TeleOp'
+        },
+        configPath: null,
+        settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+      },
+      owner
+    )
+    expect(result).toEqual({ ok: true })
+    const finished = (): Extract<PlayEvent, { type: 'finished' }> | undefined =>
+      events.find(
+        (event): event is Extract<PlayEvent, { type: 'finished' }> => event.type === 'finished'
+      )
+    await waitFor(() => finished() !== undefined, 60_000)
+    await controller.disposeAll()
+    return { events, finished: finished()! }
+  }
+
+  it('JVM 인자를 받아들이고, 한글 로그가 UTF-8로 온다', async (context) => {
+    if (!jdk) {
+      context.skip()
+      return
+    }
+    const { events, finished } = await run('Hello')
+    expect(finished).toMatchObject({ reason: 'returned' })
+    const texts = events.flatMap((event) =>
+      event.type === 'log' ? event.entries.map((entry) => entry.text) : []
+    )
+    expect(texts).toContain('안녕 SandBot °')
+  }, 120_000)
+
+  it('finished 없이 끝나면 crashed이고 detail은 stderr(한글 포함, JVM 안내 줄 제외)', async (context) => {
+    if (!jdk) {
+      context.skip()
+      return
+    }
+    const { finished } = await run('Crash')
+    expect(finished.reason).toBe('crashed')
+    expect(finished.detail).toMatch(/^exit code 3\n치명적 오류: \d+$/)
+  }, 120_000)
+})

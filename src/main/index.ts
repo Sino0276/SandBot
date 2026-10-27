@@ -8,6 +8,9 @@ import { registerStepConverterIpc } from './stepConverter'
 import { registerTeamCodeIpc } from './teamCode'
 import { registerTeamCodeJavaIpc } from './teamCodeJava'
 import { registerExternalEditorIpc } from './externalEditor'
+import { registerJdkIpc } from './jdk'
+import { registerOpModesIpc } from './opModes'
+import { registerPlayIpc } from './sidecar'
 
 function isHttpsUrl(url: string): boolean {
   try {
@@ -85,6 +88,9 @@ app.whenReady().then(() => {
   registerExternalEditorIpc()
   registerMeshCacheIpc()
   registerStepConverterIpc()
+  registerJdkIpc()
+  registerOpModesIpc()
+  registerPlayIpc()
   createWindow()
 
   app.on('activate', function () {
