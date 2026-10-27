@@ -676,7 +676,9 @@ const en: Messages = {
       generationFailed:
         'The last save could not write the generated code ({{detail}}). The hardware class and configuration in TeamCode may differ from the scene.',
       configNotGenerated:
-        '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.'
+        '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
+      configMissing:
+        'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.'
     }
   },
   // Telemetry tab (like the Driver Station screen)

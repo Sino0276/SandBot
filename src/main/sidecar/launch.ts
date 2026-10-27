@@ -136,6 +136,8 @@ export type PreparedRun = {
   sourceRoots: string[]
   opModeSource: string
   configXml: string | null
+  // 요청한 구성 XML이 없다(장치 없는 hardwareMap으로 실행)
+  configMissing: boolean
   preselectTeleOp: string
 }
 
@@ -193,6 +195,7 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
     sourceRoots,
     opModeSource: located.file,
     configXml,
+    configMissing: request.configPath !== null && configXml === null,
     preselectTeleOp:
       request.opMode.flavor === 'Autonomous'
         ? await preselectOf(located.file, request.opMode.className)

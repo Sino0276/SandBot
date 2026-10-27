@@ -100,8 +100,9 @@ export type PlayInitRequest = {
 // - noSidecar: 사이드카가 빌드되지 않았다(개발 중: pnpm build:sidecar)
 // - busy: 다른 실행이 아직 끝나지 않았다
 // - failed: JVM을 띄우지 못했다(detail에 이유)
+// ok의 configMissing: 요청한 구성 XML이 디스크에 없어 장치 없는 hardwareMap으로 실행한다(렌더러가 Console에 경고)
 export type PlayInitResult =
-  | { ok: true }
+  | { ok: true; configMissing?: true }
   | {
       ok: false
       code: 'notAllowed' | 'missing' | 'noJdk' | 'noSidecar' | 'busy' | 'failed'

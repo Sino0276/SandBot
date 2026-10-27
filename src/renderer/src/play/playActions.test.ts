@@ -251,6 +251,20 @@ describe('INIT → START → STOP', () => {
       level: 'warning'
     })
   })
+
+  it('메인이 구성 XML이 없다고 하면 Console에 경고 한 줄', async () => {
+    initResult = async () => ({ ok: true, configMissing: true })
+    await initPlay()
+    await settle()
+    const configPath = lastRequest().configPath
+    expect(configPath).not.toBeNull()
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'notice',
+      key: 'configMissing',
+      params: { file: configPath },
+      level: 'warning'
+    })
+  })
 })
 
 describe('INIT 전 저장', () => {

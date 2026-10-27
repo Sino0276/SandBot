@@ -148,6 +148,7 @@ describe('prepareRun', () => {
       sourceRoots: [join(root, 'TeamCode', 'src', 'main', 'java')],
       opModeSource: source,
       configXml: null,
+      configMissing: true,
       preselectTeleOp: ''
     })
     const config = await write(CONFIG, '<Robot/>')
@@ -155,6 +156,7 @@ describe('prepareRun', () => {
     const withConfig = await prepareRun(valid(request({ root, configPath: CONFIG })))
     expect(withConfig).toMatchObject({
       configXml: config,
+      configMissing: false,
       sourceRoots: [
         join(root, 'TeamCode', 'src', 'main', 'java'),
         join(root, 'FtcRobotController', 'src', 'main', 'java')
@@ -273,6 +275,7 @@ describe('사이드카 빌드 결과와 명령', () => {
         sourceRoots: ['/proj/TeamCode/src/main/java'],
         opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
         configXml: null,
+        configMissing: false,
         preselectTeleOp: ''
       },
       valid(request({ settings: { speed: 2, jitter: 0.1, seed: 42, autoStopAutonomous: true } })),

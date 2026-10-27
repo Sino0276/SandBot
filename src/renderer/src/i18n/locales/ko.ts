@@ -687,7 +687,9 @@ const ko = {
       generationFailed:
         '마지막 저장에서 생성 코드를 쓰지 못했습니다 ({{detail}}). TeamCode의 하드웨어 클래스·구성이 지금 씬과 다를 수 있습니다.',
       configNotGenerated:
-        '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.'
+        '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
+      configMissing:
+        '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.'
     }
   },
   // 텔레메트리 탭(Driver Station 화면처럼)

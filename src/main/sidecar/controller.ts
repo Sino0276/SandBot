@@ -178,7 +178,7 @@ export class PlayController {
         void session.dispose()
         return { ok: false, code: 'failed', detail: 'the window was closed' }
       }
-      return { ok: true }
+      return prepared.configMissing ? { ok: true, configMissing: true } : { ok: true }
     } finally {
       this.starting = false
     }

@@ -235,6 +235,14 @@ async function runInit(): Promise<void> {
     return
   }
   updateRun(runId, () => ({ accepted: true }))
+  if (result.configMissing && run.configPath)
+    usePlayStore
+      .getState()
+      .addConsole(
+        { type: 'notice', key: 'configMissing', params: { file: run.configPath } },
+        null,
+        'warning'
+      )
   if (run.stopRequested) {
     command({ type: 'stop' })
     return
