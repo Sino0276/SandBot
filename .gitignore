@@ -34,3 +34,7 @@ out
 # 네이티브 STEP 변환기: 받은 소스·빌드 폴더와 빌드한 실행 파일(scripts/build-step-converter.mjs)
 native/step-converter/.cache/
 resources/step-converter/
+
+# JVM 사이드카: 받은 FTC SDK·생성한 stub·클래스(sidecar/build)와 빌드한 jar(scripts/build-sidecar.mjs)
+sidecar/build/
+resources/sidecar/
