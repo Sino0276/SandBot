@@ -145,7 +145,7 @@ const en: Messages = {
     playMissing:
       'The OpMode file or the TeamCode folder was not found, so nothing was run ({{detail}}). The OpMode list was reloaded.',
     playNoJdk:
-      'No JDK to run with was found. If Android Studio is installed it is found automatically. JDK 17 or later is required.',
+      'There is no JDK to run with. The JDK folder chosen in Preferences can no longer be used, or no JDK 17 or later was found on this PC (one bundled with Android Studio is found automatically).',
     playNoSidecar:
       'The runner (sidecar) has not been built. During development, run pnpm build:sidecar and INIT again.',
     playBusy: 'The previous run has not finished yet. INIT again in a moment.',

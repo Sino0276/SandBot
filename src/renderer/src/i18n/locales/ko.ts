@@ -145,7 +145,7 @@ const ko = {
     playMissing:
       'OpMode 파일이나 TeamCode 폴더를 찾지 못해 실행하지 않았습니다 ({{detail}}). OpMode 목록을 다시 읽었습니다.',
     playNoJdk:
-      '실행할 JDK를 찾지 못했습니다. Android Studio를 설치했다면 자동으로 찾습니다. JDK 17 이상이 필요합니다.',
+      '실행할 JDK가 없습니다. 환경 설정에서 고른 JDK 폴더를 쓸 수 없거나, 이 PC에서 JDK 17 이상을 찾지 못했습니다(Android Studio를 설치했다면 자동으로 찾습니다).',
     playNoSidecar:
       '실행기(사이드카)가 빌드되지 않았습니다. 개발 중이면 pnpm build:sidecar를 실행한 뒤 다시 INIT하세요.',
     playBusy: '이전 실행이 아직 끝나지 않았습니다. 잠시 뒤 다시 INIT하세요.',
