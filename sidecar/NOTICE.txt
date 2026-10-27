@@ -131,5 +131,10 @@ either express or implied. See the License for the specific language governing p
 and limitations under the License.
 ------------------------------------------------------------------------------------------
 
-Android and other library type names that appear in the SDK API are declared as empty
-placeholder types; no Android code is included.
+4. android.util.Size, compiled from a source file derived from the Android Open Source Project
+   (Copyright (C) 2014 The Android Open Source Project), licensed under the Apache License,
+   Version 2.0 (the license text above).
+
+The other Android and library type names that appear in the SDK API are declared as empty
+placeholder types or written by SandBot (android.graphics.Color, android.opengl.Matrix,
+android.util.Log, android.os.SystemClock); no other Android code is included.

@@ -552,7 +552,11 @@ describe.skipIf(build === null)('사이드카 장치', () => {
       const last = ticks.filter((tick) => tick.phase === 'running').pop()
       if (!last) throw new Error('no running tick')
       expect(ticks[ticks.length - 1].outputs.motor.power).toBe(0)
+      expect(ticks[ticks.length - 1].outputs.motor.apiPower).toBe(0)
       expect(ticks[ticks.length - 1].outputs.motor.enabled).toBe(false)
+      // 팀 코드는 setPower(0.5): 장치 표의 apiPower는 그 값, 허브 값 power는 goBILDA(CCW) FORWARD라 부호가 반대
+      expect(Object.keys(last.outputs.motor)[0]).toBe('apiPower')
+      expect(last.outputs.motor.apiPower).toBeCloseTo(0.5, 3)
       expect(last.outputs.motor.power).toBeCloseTo(-0.5, 3)
       expect(last.outputs.motor.mode).toBe('RUN_WITHOUT_ENCODER')
       expect(last.outputs.claw.position).toBeCloseTo(0.75, 9)

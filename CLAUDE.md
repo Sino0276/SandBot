@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 도구다. 씬 뷰에 팀의 로봇 CAD(STEP)를 불러온다. 파트를 선택하면 인스펙터에서 하드웨어 컴포넌트를 설정하고, 하이어라키에서 메커니즘을 묶는다(생성 하드웨어 클래스의 중첩 클래스). 동작 로직은 팀의 일반 FTC Java(TeamCode)로 작성하고, 오브젝트에 그 파일을 연결해 외부 편집기로 연다. 작성한 코드는 필드 위 운동학 시뮬레이션으로 확인한다.
 
-**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, Unity식 하이어라키 편집(다중 선택, Create Empty·Create Empty Parent, 드래그·잘라내기/붙여넣기로 부모 바꾸기, 이름 바꾸기, 검색, 전체·하위 선택, 씬 뷰 보이기·숨기기와 고립 보기)과 메커니즘 그룹(생성 하드웨어 클래스의 중첩 클래스), 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 연결(오브젝트 → TeamCode Java 파일, Unity식 외부 스크립트 편집기로 열기)과 튜닝 값(연결한 파일의 FTC Dashboard `@Config` 필드를 인스펙터에서 고치고 Ctrl+S에 리터럴만 씀)이 있다. 사용처(생성 하드웨어 클래스의 필드·형식·상수를 TeamCode에서 쓰는 곳과 구성 이름 문자열을 장치·그룹·로봇 카드에 보이고, 더블클릭하면 외부 편집기로 그 줄을 연다. 스크립트 카드에는 그 파일이 쓰는 하드웨어)가 있다. 코드 단위 프로젝트 설정, 사이드카·시뮬레이터는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
+**현재 상태:** 에디터 뼈대 단계다. 툴바, 크기 조절이 되는 3패널(하이어라키 · 씬 뷰 · 인스펙터), i18n, 핸들 축 전역/로컬 전환, STEP 임포트(방향 맞춤 포함), 프로젝트 열기·저장이 있다. 프로젝트 없이 시작하면 임시 씬(18 in 상자 로봇과 웹캠, `scene/sceneStore.ts`)이 보이고, 첫 STEP 임포트 때 사라진다. 하드웨어 컴포넌트(인스펙터 편집, 검증, 저장 때 TeamCode에 하드웨어 클래스·로봇 구성 XML 생성), 표시 단위 설정, 실행 취소, 메시 캐시, Unity식 씬 뷰 조작, Unity식 하이어라키 편집(다중 선택, Create Empty·Create Empty Parent, 드래그·잘라내기/붙여넣기로 부모 바꾸기, 이름 바꾸기, 검색, 전체·하위 선택, 씬 뷰 보이기·숨기기와 고립 보기)과 메커니즘 그룹(생성 하드웨어 클래스의 중첩 클래스), 네이티브 STEP 변환기(Windows x64는 CI가 빌드해 GitHub Release로 배포)와 불러오기 진행·취소가 있다. 스크립트 연결(오브젝트 → TeamCode Java 파일, Unity식 외부 스크립트 편집기로 열기)과 튜닝 값(연결한 파일의 FTC Dashboard `@Config` 필드를 인스펙터에서 고치고 Ctrl+S에 리터럴만 씀)이 있다. 사용처(생성 하드웨어 클래스의 필드·형식·상수를 TeamCode에서 쓰는 곳과 구성 이름 문자열을 장치·그룹·로봇 카드에 보이고, 더블클릭하면 외부 편집기로 그 줄을 연다. 스크립트 카드에는 그 파일이 쓰는 하드웨어)가 있다. 실행(Play, 1단계)이 있다: 툴바에서 OpMode를 골라 DS처럼 INIT → START → STOP 하면 JVM 사이드카가 TeamCode를 가짜 FTC SDK로 컴파일·실행하고(가상 시계와 Hub 타이밍), 씬 뷰 아래 Console·텔레메트리·장치 탭에 보인다(Unity처럼 일시 정지·한 단계·속도). 코드 단위 프로젝트 설정과 운동학 시뮬레이터(센서 값은 아직 기본값)는 아직 없다. 아래 내용은 사용자와 합의한 설계 결정이며 구현은 이를 따른다.
 
 **설계 원칙:** Unity 환경을 최대한 그대로 가져온다. Unity를 써 본 사람이 익숙하게 바로 쓸 수 있는 것이 개발 효율과 직관성의 기준이다. 기능을 설계할 때 Unity에 대응하는 것이 있으면 그 이름·조작·동작을 먼저 따르고, FTC 구조와 맞지 않는 부분만 바꾼다.
 
@@ -18,7 +18,8 @@ SandBot은 Unity 에디터 스타일의 FTC(FIRST Tech Challenge) 로봇 개발 
 | 인스펙터    | Unity 방식. 파트에 하드웨어 컴포넌트(DcMotorEx, Servo, 센서 등)를 붙여 속성(설정 이름, 허브/포트, 방향, 런 모드 등)을 편집한다. 동작 로직은 일반 FTC Java로 쓰고(SandBot 전용 런타임·생명주기 없음), 스크립트 카드는 그 파일로 가는 연결이다. 생성 코드는 연결 파일을 참조하지 않는다                                                                                                                |
 | CAD         | STEP(.step/.stp)만 지원. occt-import-js(OpenCascade WASM, LGPL-2.1)로 워커에서 읽는다. 같은 C++ 코드를 네이티브로 빌드한 변환기(`native/step-converter`)가 이 PC에서 실행되면 메인 프로세스가 그것으로 변환한다(WASM의 2 GB 메모리 한도가 없음). CAD 프로그램마다 위·앞 축이 달라서(팀이 여러 CAD를 섞어 씀) 파일마다 방향을 고른다. 기본값은 마지막에 고른 방향이고, 처음에는 Y-up(Fusion 360 기본) |
 | 시뮬레이션  | 운동학 수준. 드라이브트레인/메커니즘을 OpMode 코드와 게임패드로 구동하고, 충돌·물리는 단순화                                                                                                                                                                                                                                                                                                         |
-| OpMode 실행 | JVM 사이드카 + 가짜 FTC SDK. 팀의 실제 Java OpMode를 수정 없이 실행                                                                                                                                                                                                                                                                                                                                  |
+| OpMode 실행 | JVM 사이드카 + 가짜 FTC SDK(12.0). 팀의 실제 Java OpMode를 수정 없이 실행. 메인 프로세스와 stdio JSON 줄로 통신(포트 없음). JDK는 번들하지 않고 찾는다(환경 설정 → Android Studio `jbr` → `JAVA_HOME` → `PATH`, 17 이상), 없으면 안내                                                                                                                                                                |
+| 시간        | 가상 시계 + Hub 타이밍(Unity FixedUpdate처럼). 팀 코드가 보는 시간은 사이드카가 정하고, 하드웨어 호출마다 Hub 타이밍 표의 비용만큼 흐른다(PC 성능과 관계없이 실제 로봇과 비슷한 루프 시간, 결정적). 표는 덮어쓸 수 있고 ±오차·시드를 켤 수 있다(기본 끔). 실시간 실행은 구현하지 않고 길만 열어 둔다(`SimClock`, 프로토콜 `clock: 'virtual'`)                                                        |
 | 배포        | 팀의 FtcRobotController 프로젝트 `TeamCode`에 Java 파일을 직접 저장. 빌드/설치는 Android Studio에서 함 (도구 내 ADB 배포, OnBot Java 업로드는 범위 밖)                                                                                                                                                                                                                                               |
 | 언어        | UI는 i18n(한국어 기본, 영어). CLAUDE.md·코드 주석·커밋 메시지는 한국어                                                                                                                                                                                                                                                                                                                               |
 | 툴체인      | pnpm · electron-vite(빌드) · electron-builder(패키징) · ESLint + Prettier · Vitest                                                                                                                                                                                                                                                                                                                   |
@@ -80,15 +81,17 @@ STEP 파일 ─▶ OCCT(WASM, 워커) ─▶ 파트 계층 메시 ─▶ 씬 그
 - **사용처는 읽기만 한다.** TeamCode에 쓰지 않고, project.json·실행 취소 기록·localStorage에 넣지 않는다. 결과는 파일 내용과 지금 씬으로 다시 계산한다. 생성 코드의 이름은 `codeScopes`의 결과(`usageSymbols`)에서만 가져오고 다시 만들지 않는다. 생성 패키지의 형식은 씬(기호표)만 정의한다(팀 파일이 같은 패키지를 선언해도 쓰지 않는다).
 - **하드웨어 카탈로그(`hardware/catalog.ts`)에는 FTC SDK 소스에서 확인한 값만 넣는다.** 구성 XML 태그는 대소문자를 구분하고, 틀린 태그는 SDK가 오류 없이 장치를 버린다. Java 타입·메서드·I2C 주소도 SDK 소스로 확인한다. 가짜 SDK는 카탈로그의 Java 타입을 모두 지원해야 한다.
 - **하드웨어 검증 오류가 하나라도 있으면 아무 파일도 생성하지 않는다.** 이전 생성 파일도 그대로 둔다. 경고는 생성을 막지 않는다(`hardware/validation.ts`의 심각도).
+- **팀 코드가 보는 시간은 모두 `org.sandbot.sim.SimClock`을 거친다.** 구현은 가상 시계(`VirtualClock`) 하나다. 패처가 팀 클래스(와 들여온 SDK 클래스)의 시간 API 호출을 `TimeRedirects`로 바꾸고, 가짜 SDK는 `Sim`으로 하드웨어 비용을 청구한다. 벽시계·HashMap 순서처럼 실행마다 달라지는 것이 프로토콜 메시지에 들어가면 안 된다(같은 입력 → 바이트 단위로 같은 메시지, 시드가 같으면 오차도 같다). 실시간 실행을 더할 때도 `SimClock` 구현과 `RunRequest.clock` 값만 늘린다.
+- **사이드카 1단계는 OpMode 스레드 하나만 시계·하드웨어를 쓴다.** 다른 스레드가 쓰면 error `thread`로 알리고 실행을 멈춘다(여러 스레드는 라이브러리 단계의 스케줄러로).
+- **가짜 SDK는 세 층이다: 손 구현(`sidecar/sdk`) > 들여온 실제 클래스(lifted) > 껍데기(stub).** 손 구현의 public·protected API는 실제 SDK 12.0과 같아야 하고(`ApiCheck`가 빌드를 막는다), SDK 패키지에 더하는 클래스는 `Sandbot`로 시작한다. 손 구현은 실제 소스에서 출발해 BSD 머리말과 `// SandBot:` 줄을 둔다. 최상위 클래스가 손 구현이면 그 중첩 클래스도 모두 손 구현이다. 들여오기는 참조가 JDK·손 구현·들여온 것으로만 닫힐 때만 한다(링크 확인). `sidecar/tools/must-provide.txt`의 형식이 stub이면 빌드가 실패한다.
+- **사이드카의 stdout은 프로토콜 전용이다**(한 줄에 JSON 하나, `src/shared/sidecarProtocol.ts`). 팀 코드의 System.out·err와 RobotLog는 log 메시지로 감싼다. 사이드카는 TeamCode에 쓰지 않는다(javax.tools로 메모리에 컴파일).
 
 ## 미결정 사항
 
 아래 항목은 아직 정하지 않았다. 스캐폴딩이나 구현 중에 이 항목을 만나면 추측해서 정하지 말고 사용자에게 확인한다.
 
 - 필드 X·Y축이 어느 벽(얼라이언스·관중석)을 향하는지. FTC가 시즌별로 정하므로 시즌별 필드 모델과 함께 정한다.
-- 사이드카 IPC 방식(stdio JSON-RPC 또는 WebSocket)과 시뮬레이션 동기화 방식(lockstep 또는 실시간)
-- JDK를 앱에 번들할지 여부
-- 지원할 FTC 라이브러리 범위(Road Runner, Pedro Pathing 등)와 시즌별 필드 모델. 튜닝 값은 FTC Dashboard의 `@Config` 규칙을 따르기로 정했다. 사이드카가 Dashboard API(`@Config`, `FtcDashboard`, `TelemetryPacket`)를 제공할지, Pedro Pathing Panels의 `@Configurable`도 인식할지는 아직 정하지 않았다.
+- 지원할 FTC 라이브러리 범위(Road Runner, Pedro Pathing 등)와 시즌별 필드 모델. 사이드카 1단계는 FTC SDK 기본만 지원한다(라이브러리를 쓰는 코드는 컴파일 오류로 보인다). 튜닝 값은 FTC Dashboard의 `@Config` 규칙을 따르기로 정했다. 사이드카가 Dashboard API(`@Config`, `FtcDashboard`, `TelemetryPacket`)를 제공할지, Pedro Pathing Panels의 `@Configurable`도 인식할지는 아직 정하지 않았다.
 - macOS·Linux용 네이티브 STEP 변환기 배포(macOS 서명, Linux는 오래된 glibc 환경에서 빌드할지). 쓰는 사람이 생기면 정한다. 그전까지는 직접 빌드한다(`pnpm build:step-converter`).
 
 ## 개발 명령어
@@ -108,6 +111,9 @@ pnpm build:win | build:mac | build:linux   # electron-builder로 설치 파일 �
 pnpm fetch:step-converter    # 네이티브 STEP 변환기(Windows x64)를 GitHub Release에서 받기(지금 소스와 같은 빌드만)
 pnpm build:step-converter    # 네이티브 STEP 변환기 직접 빌드(git·CMake·C++ 컴파일러 필요, OCCT 전체 컴파일로 오래 걸림)
 pnpm usage-oracle            # 사용처 정답표(javac) 다시 만들기(JDK 11+ 필요, CI는 쓰지 않음)
+pnpm fetch:ftc-sdk           # FTC SDK 12.0 AAR·android jar·샘플을 Maven·GitHub에서 받기(해시 고정, sidecar/build/)
+pnpm build:sidecar           # 사이드카 빌드(JDK 17+): resources/sidecar/에 sandbot-sdk.jar·sandbot-runtime.jar(pnpm dev·build:*가 --if-stale로 먼저 돌림)
+SANDBOT_SIDECAR_LENIENT=1 pnpm test   # 손 구현이 덜 된 사이드카로 시험(must-provide 실패를 경고로)
 ```
 
 root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm start --noSandbox`로 실행해야 한다.
@@ -174,6 +180,13 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - 카드: 장치·그룹·로봇 카드의 접힌 "사용처"(코드 N · 이름 N · ⚠ N, 파일별 묶음, 한 번 누르면 고르고 더블클릭·Enter로 그 줄 열기, Unity Console과 같음). 펼침 상태는 메모리에만 둔다. 다시 찾아 포커스한 행이 사라지면 옆 행·파일 행·머리줄로 포커스를 옮긴다(`<body>`로 떨어지면 Delete·F·Q/W/E가 씬에 간다, `editor/usages/focusRestore.ts`). 하위 장치 수는 자리 수다(같은 포트의 모터·데드휠이 함께 가진 찾기 문자열은 한 번). 키마다 200곳 한도로 자른 키는 맞추기가 자르기 전의 파일별 개수(`fileTotals`)를 넘겨, 잘린 파일도 정확한 개수와 '외 N곳'을 보인다(행을 하나도 받지 못한 파일의 것만 부분 끝에 남는다). 스크립트 카드의 "이 스크립트가 쓰는 하드웨어" 칩을 누르면 그 오브젝트를 고른다.
   - 정답표: `scripts/usage-oracle`(javac Tree API)이 `java/usages/__fixtures__/golden*.txt`를 만든다(JDK 11+, CI는 쓰지 않음, 말뭉치 해시가 머리에 있어 말뭉치가 바뀌면 테스트가 다시 만들라고 알린다). 말뭉치의 생성 클래스는 generateHardwareJava 출력과 같아야 한다(테스트가 확인). 차분 테스트는 코드 사용처가 정답표에서 받아들인 누락(`ACCEPTED_FN`)만 빼고 같아야 하고 거짓 양성이 없어야 한다.
   - 한계: Kotlin, 리플렉션, 제네릭 치환·제네릭 메서드 반환, 형식 없는 람다 매개변수, 조건식·대입식 받는 쪽, 지역 클래스 이름, 알 수 없는(SDK) 상위 클래스의 필드(없는 것으로 봄), 생성 로봇 클래스를 상속한 팀 클래스 안에서 받는 쪽 없이 쓴 이름과 상속 계층에 알 수 없는 형식이 있는 하위 클래스로 쓴 없는 이름(알리지 않음), `…sandbot.*`로 들여온 이름의 클래스 이름 바꾸기, 256 KB 넘는 파일, 리터럴 밖 `\u`가 있는 파일, 5000개 넘는 목록, 크기·시각이 같은 내용 변경(다시 열면 찾음)은 찾지 못하거나 다를 수 있다. 생성이 막힌 저장 뒤 닫은 프로젝트를 다시 열면 연 씬이 baseline이라, 디스크 구성에 남은 이전 구성 이름을 다음 저장이 "없앤 이름"으로 알리지 못한다(생성 코드에 없는 이름은 알린다).
+- 실행(Play)과 JVM 사이드카(1단계, 운동학 시뮬레이터 없음):
+  - `sidecar/`(Java, Gradle 없이 javac): `sim/`(`org.sandbot.sim`: 가짜 SDK와 런타임 사이의 계약 — `SimClock`, `Sim`, `HubTiming`(기본 비용표·덮어쓰기·시드 있는 오차), `SimDevice`, `TimeRedirects`), `sdk/`(손 구현, `--release 8`), `runtime/`(`org.sandbot.runtime`, `--release 17`), `tools/`(빌드 도구: StubGen·Lifter·ApiCheck·SdkBuild), `tests/`(vitest 감싸개 `*.test.ts`, `support.ts`, Java 테스트 `java/`, 테스트 OpMode).
+  - 빌드(`scripts/build-sidecar.mjs`): `fetch-ftc-sdk.mjs`가 받은 실제 SDK jar(해시 고정, `sidecar/build/`)에서 stub을 만들고, 손 구현·stub을 컴파일하고, 들여올 클래스를 런타임의 `PatchTool`로 패치해 넣고, API를 대조해 `resources/sidecar/`(gitignore)에 `sandbot-sdk.jar`(팀 코드의 SDK, sim 포함)·`sandbot-runtime.jar`·`sidecar.json`·`NOTICE.txt`(들여온 BSD·Gson 바이너리 고지)를 쓴다. 소스 해시(`scripts/sidecar-source.mjs`)가 같으면 `--if-stale`이 건너뛴다. 배포 앱에는 `extraResources`로 `resources/sidecar`가 들어간다. 빌드 보고(`sidecar/build/report.json`)에 손 구현·들여옴·stub 목록과 들여오기를 막는 클래스 순위가 있다. Gson은 RobotCore AAR의 `libs/`에서 들여온다.
+  - 런타임(`org.sandbot.runtime.Main`): `hello` → `run` → 컴파일(`-sourcepath` TeamCode·FtcRobotController, 시작은 고른 OpMode 파일, 진단은 영어) → 구성 XML로 hardwareMap(`org.sandbot.sdk.devices.SandbotHardware`, 리플렉션) → OpMode 스레드에서 실행 → finished → `Runtime.halt`. 이벤트 루프 스레드는 따로 없다: 틱 경계(기본 5 ms 가상)가 이벤트 루프 한 바퀴이고, OpMode 스레드가 시계 호출 안에서 호스트와 틱을 주고받아 DS 사건(START·STOP)·게임패드·센서 값을 적용한다(`SandbotOpModeBridge`가 package-private 훅을 연다). 무한 대기(`waitForStart`)는 `awaitNextTick`이다. 실시간 감시가 가상 시계를 2초 넘게 쓰지 않는 루프를 stall로 알린다. 바꾸지 않는 시간 API(`new Date()`, 시간 없는 `wait()`·`join()`, JDK 동시성 도구의 시간 제한 대기, `Math.random`)는 결정성 밖이다.
+  - 장치(`sidecar/sdk/org/sandbot/sdk/devices`, 키·비용 규칙은 `package-info.java`): 생성한 구성 XML(`configXml.ts`의 출력)을 실제 SDK처럼 hardwareMap으로 만든다. 실제 이름의 손 구현(LynxModule, DcMotorImplEx, GoBildaPinpointDriver, SparkFunOTOS …)은 실제 드라이버 코드를 옮기고 칩 레지스터를 흉내 낸다. 비용은 실제 컨트롤러 규칙대로다: 같은 값 쓰기는 보내지 않음(LastKnown), BulkCachingMode OFF·AUTO·MANUAL, I2C 트랜잭션 수, Expansion Hub가 더 비쌈.
+  - 메인(`src/main/sidecar/`): `controller.ts`(실행 하나, 경로 확인 — TeamCode 안 OpMode 소스·`res/xml/sandbot_*.xml` 구성만), `session.ts`(호스트 상태 기계: 틱 답을 벽시계 × 속도에 맞춰 보냄, 일시 정지는 답 보류, Step은 `loops`가 늘 때까지, START·STOP은 다음 답에 싣고 일시 정지를 풂, Autonomous 30초 자동 정지, STOP 뒤 5초 또는 stall이면 JVM을 끝냄, 이벤트는 runId를 붙여 묶어 보냄), `world.ts`(나중에 운동학이 센서 값을 채울 자리), `launch.ts`·`process.ts`(셸 없이 java 실행). 사이드카 위치는 개발 `resources/sidecar`, 배포 `process.resourcesPath/sidecar`(`SANDBOT_SIDECAR_DIR`로 바꿀 수 있음). JDK는 `src/main/jdk.ts`, OpMode 목록은 `src/shared/java/opModes.ts`(SDK `AnnotatedOpModeClassFilter`와 같은 규칙: @Disabled·abstract·비공개 제외, 중첩 클래스는 `Outer$Inner`)와 `src/main/opModes.ts`.
+  - 렌더러(`src/renderer/src/play/`): 툴바 가운데(Unity Play 버튼 자리)에 OpMode 고르기(DS처럼 TeleOp·Autonomous 묶음), INIT → START → STOP 한 버튼, 일시 정지·Step·속도, 가상 시계(Autonomous는 30초 거꾸로). 단축키 Ctrl+P(실행 버튼)·Ctrl+Shift+P(일시 정지)·Ctrl+Alt+P(Step)는 입력칸·인스펙터 안에서도 동작한다(Unity와 같음, 대화상자·비행 중은 무시). 씬 뷰 아래 패널: Console(Unity Console: 정보·경고·오류 거르기, 실행할 때 지우기, 더블클릭·Enter로 컴파일 진단·팀 코드 스택 줄을 외부 편집기로), 텔레메트리(DS 화면, HTML 형식도 글자로만), 장치(출력 표, 누르면 그 오브젝트를 고름). 실행 전 저장하지 않은 변경이 있으면 "저장하고 실행"을 묻는다(생성 코드·구성 XML이 디스크에 있어야 하므로). 로봇 구성은 활성 오브젝트의 로봇(하드웨어가 있으면), 아니면 하드웨어가 있는 첫 로봇이다. 게임패드는 실행 중에만 표준 배치를 읽어 바뀔 때 보낸다. 환경 설정에 JDK(External Tools)와 시뮬레이션(Hub 타이밍 오차·시드, Autonomous 자동 정지) 칸이 있다.
 - 진행·경고·오류 알림은 `editor/noticeStore.ts`로 띄우고, 하이어라키 위에 표시한다. 문구 키는 `notice.*`다.
 - 하드웨어 컴포넌트는 `src/renderer/src/hardware/`에 있다.
   - 컴포넌트는 씬 오브젝트의 `components`(종류·장치 이름·허브·포트·속성)이고, 로봇별 생성 설정(클래스 이름, DS 구성 이름, Expansion Hub)은 로봇의 `hardware`다. 프로젝트 파일 `PROJECT_VERSION` 2에서 추가했고 v1도 읽는다. `PROJECT_VERSION` 4에서 group·`cadOrigin`·`codeClassName`을, 5에서 `scripts`를 추가했다.
@@ -202,12 +215,12 @@ root 권한·디스플레이가 없는 컨테이너에서는 `xvfb-run -a pnpm s
   - `locales/ko.ts`가 키 구조의 기준이다. `en.ts`는 같은 타입(`Messages`)을 따라야 하고, `i18next.d.ts`가 `t()` 키를 타입 검사한다. 따라서 키 오타나 누락 번역은 `pnpm typecheck`에서 실패한다.
   - 문자열을 추가할 때는 `ko.ts`와 `en.ts`에 같은 키를 넣고 `t('그룹.키')`로 쓴다.
   - 언어 이름(`LANGUAGE_NAMES`)과 제품명 "SandBot"은 의도적으로 번역하지 않는다.
-- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`)은 렌더러 `localStorage`에 저장된다. 외부 스크립트 편집기만 메인의 `userData/external-editor.json`이다(실행 파일 경로라서).
+- 개인 UI 설정(언어 `sandbot:language`, 길이 단위 `sandbot:lengthUnit`, 패널 크기 `react-resizable-panels:editor-main`, 마지막 CAD 방향 `sandbot:cadAlignment`, 마지막 프로젝트 `sandbot:lastProject`, 실행 설정 `sandbot:playSettings`, 프로젝트별 마지막 OpMode `sandbot:lastOpMode`, Console 설정 `sandbot:console`, 아래 패널 탭 `sandbot:playDock`)은 렌더러 `localStorage`에 저장된다. 실행 파일 경로를 담는 외부 스크립트 편집기(`userData/external-editor.json`)와 JDK 선택(`userData/jdk.json`)만 메인에 둔다.
 - 렌더러에서만 쓰는 라이브러리는 Vite가 번들하므로 `devDependencies`에 넣는다. `dependencies`는 main/preload가 런타임에 쓰는 것만 둔다(electron-builder가 패키지에 포함).
 - ESLint의 `react/no-unknown-property`는 R3F 요소 속성을 오인해서 껐다. JSX 속성은 TypeScript가 검사한다.
 - 테스트는 `src/**/*.test.{ts,tsx}`에 소스와 나란히 두고 `vitest`에서 명시적으로 import한다(globals 미사용). Vitest는 electron-vite 설정이 아니라 `vitest.config.ts`를 읽는다.
 - pnpm은 11을 쓴다(`package.json`의 `packageManager`). pnpm 설정은 `pnpm-workspace.yaml`에 둔다(pnpm 11은 `package.json`의 `pnpm` 필드를 읽지 않는다).
   - 설치 스크립트가 있는 의존성은 `allowBuilds`에 실행 여부(`true`/`false`)를 적는다. 정하지 않은 스크립트가 있으면 설치가 실패한다.
   - pnpm 11은 배포된 지 하루가 안 된 패키지를 lockfile에 두면 설치를 막는다(`minimumReleaseAge`). 의존성을 올릴 때 너무 새 버전이 잡히면 하루 지난 버전으로 지정한다.
-- `.gitignore`의 Java 항목은 원래 템플릿에서 온 것이다. 나중에 만들 JVM 사이드카에 필요하므로 유지한다.
+- `.gitignore`의 Java 항목(`*.class`, `*.jar`)은 원래 템플릿에서 온 것이고 사이드카 빌드 결과도 그래서 git에 들어가지 않는다.
 - `.mcp.json`은 sequential-thinking MCP 서버를 등록한다.

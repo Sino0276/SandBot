@@ -2,7 +2,9 @@ package org.sandbot.sdk.devices;
 
 import com.qualcomm.robotcore.exception.TargetPositionNotSetException;
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorController;
 import com.qualcomm.robotcore.hardware.DcMotorControllerEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.MotorControlAlgorithm;
 import com.qualcomm.robotcore.hardware.PIDCoefficients;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
@@ -81,6 +83,11 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         final MotorControlAlgorithm[] algorithm = new MotorControlAlgorithm[2];
         double currentAlertMilliamps = 0;
         double maxTicksPerSecond;
+        /**
+         * 이 포트의 DcMotorImpl이 쓰는 실제 방향(setDirection과 모터 형식의 회전 방향을 합친 getOperationalDirection).
+         * 출력 apiPower(팀 코드의 getPower 값)를 허브 값에서 계산할 때만 쓴다. 허브는 이것을 모른다.
+         */
+        DcMotorSimple.Direction operationalDirection = DcMotorSimple.Direction.FORWARD;
 
         Channel(int port) {
             this.port = port;
@@ -155,6 +162,10 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                             : 0.0;
             }
             if (commandedMode == DcMotor.RunMode.STOP_AND_RESET_ENCODER) power = 0.0;
+            // 팀 코드가 보는 값(DcMotorImpl.getPower와 같은 변환: RUN_TO_POSITION은 |power|, 아니면 실제 방향이 REVERSE면 부호 반대)
+            double apiPower = mode == DcMotor.RunMode.RUN_TO_POSITION ? Math.abs(power)
+                    : operationalDirection == DcMotorSimple.Direction.REVERSE ? -power : power;
+            device.output("apiPower", apiPower == 0 ? 0.0 : apiPower);
             device.output("power", power);
             device.output("velocity", mode == DcMotor.RunMode.RUN_WITHOUT_ENCODER ? null : (Object) targetVelocity);
             device.output("enabled", enabled);
@@ -180,6 +191,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     SimDevice attach(int port, String name, String motorTypeTag) {
         Channel channel = channels[port];
         channel.device = org.sandbot.sim.Sim.devices().add(name, KIND);
+        // 장치 표의 첫 키는 팀 코드가 보는 power(apiPower), 허브 값(power)은 뒤에 둔다
+        channel.device.output("apiPower", 0.0);
         channel.device.output("motorType", motorTypeTag);
         channel.publish();
         return channel.device;
@@ -187,6 +200,20 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     Channel channel(int motorZ) {
         return channels[motorZ];
+    }
+
+    /**
+     * DcMotorImpl(손 구현)이 만들 때와 setDirection 때 알린다: 이 포트 모터의 실제 방향(getOperationalDirection).
+     * 시뮬레이터 컨트롤러가 아니면 무시한다. 같은 포트를 여러 DcMotorImpl이 감싸면 마지막에 알린 것을 쓴다.
+     */
+    public static void sandbotOperationalDirection(DcMotorController controller, int motor, DcMotorSimple.Direction direction) {
+        if (!(controller instanceof SimDcMotorController) || motor < API_MOTOR_FIRST || motor > API_MOTOR_LAST) return;
+        SimDcMotorController self = (SimDcMotorController) controller;
+        synchronized (self) {
+            Channel c = self.channels[motor - API_MOTOR_FIRST];
+            c.operationalDirection = direction;
+            c.publish();
+        }
     }
 
     /** 구성 읽기 때 실제 하드웨어 초기화(LynxController.hook → initializeHardware)와 같은 일을 한다 */
@@ -428,6 +455,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 case RUN_TO_POSITION:
                 case RUN_USING_ENCODER: {
                     power = Math.signum(power) * Range.scale(Math.abs(power), 0, API_POWER_LAST, 0, getDefaultMaxMotorSpeed(motorZ));
+                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
                     hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
                     c.targetVelocity = (int) power;
                     c.publish();
@@ -436,6 +464,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 }
                 case RUN_WITHOUT_ENCODER: {
                     power = Range.scale(power, API_POWER_FIRST, API_POWER_LAST, -HUB_POWER_LAST, HUB_POWER_LAST);
+                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
                     hub.lynxCommand(); // LynxSetMotorConstantPowerCommand
                     c.constantPower = (int) power;
                     c.publish();
@@ -517,6 +546,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized void setMotorTargetPosition(int motor, int position, int tolerance) {
         validateMotor(motor);
+        if (hub.cancelledForSafety(true)) return; // STOP 뒤의 목표 위치는 보내지 않는다
         hub.lynxCommand(); // LynxSetMotorTargetPositionCommand(목표 위치를 캐시하지 않으므로 부를 때마다 보낸다)
         Channel c = channels[motor - API_MOTOR_FIRST];
         c.targetPosition = position;
@@ -553,6 +583,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         validateMotor(motor);
         int motorZ = motor - API_MOTOR_FIRST;
         int iTicksPerSecond = Range.clip((int) Math.round(ticksPerSecond), -HUB_VELOCITY_LAST, HUB_VELOCITY_LAST);
+        if (hub.cancelledForSafety(iTicksPerSecond != 0)) return; // STOP 뒤: 보내지 않고 켜지도 않는다
         hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
         Channel c = channels[motorZ];
         c.targetVelocity = iTicksPerSecond;
