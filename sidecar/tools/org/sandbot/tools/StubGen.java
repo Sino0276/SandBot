@@ -93,8 +93,15 @@ final class StubGen {
         this.outDir = outDir;
     }
 
-    /** 공개 stub 묶음과 그 서명이 부르는 것을 모두 쓴다. extraOpaque: 손 구현이 쓰는 안드로이드·없는 형식. */
-    int run(Collection<String> extraOpaque) throws IOException {
+    /**
+     * 공개 stub 묶음과 그 서명이 부르는 것을 모두 쓴다.
+     *
+     * @param extraOpaque 손 구현이 쓰는 안드로이드·없는 형식
+     * @param writeStubs false면 stub 소스는 쓰지 않는다(없는 형식만 미리 모을 때)
+     * @param opaqueFilter 불투명 껍데기로 쓸 최상위(내부 이름)와 그것이 안드로이드 jar에 있는지 → 쓸지
+     */
+    int run(Collection<String> extraOpaque, boolean writeStubs,
+            java.util.function.BiPredicate<String, Boolean> opaqueFilter) throws IOException {
         Set<String> toWrite = new TreeSet<>();
         for (String nest : stubNests) {
             TypeElement type = topLevel(nest);
@@ -118,8 +125,8 @@ final class StubGen {
             }
             if (required.size() == requiredBefore && toWrite.size() == tops.size()) break;
         }
-        for (Map.Entry<String, String> e : sources.entrySet()) writeFile(e.getKey(), e.getValue());
-        writeOpaque();
+        if (writeStubs) for (Map.Entry<String, String> e : sources.entrySet()) writeFile(e.getKey(), e.getValue());
+        writeOpaque(opaqueFilter);
         return sources.size();
     }
 
@@ -942,7 +949,7 @@ final class StubGen {
     }
 
     /** 불투명 껍데기: 최상위마다 파일 하나, 필요한 중첩만 */
-    private void writeOpaque() throws IOException {
+    private void writeOpaque(java.util.function.BiPredicate<String, Boolean> filter) throws IOException {
         // 형식 매개변수 경계·Throwable 상위가 다른 불투명 형식을 부를 수 있다(줄어들지 않으므로 끝난다)
         Map<String, Set<String>> byTop = new TreeMap<>();
         Set<String> done = new HashSet<>();
@@ -970,6 +977,7 @@ final class StubGen {
         }
         for (Map.Entry<String, Set<String>> e : byTop.entrySet()) {
             String top = e.getKey();
+            if (!filter.test(top, android.has(top))) continue;
             if (top.startsWith("java/")) {
                 warnings.add("missing JDK type " + dotted(top) + " (cannot make an opaque stub in java.*)");
                 continue;

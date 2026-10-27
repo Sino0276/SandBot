@@ -42,6 +42,12 @@ import {
 const JAVA_RELEASE = 8
 const buildDir = join(repoRoot, 'sidecar', 'build')
 
+// 들여오기·stub의 대상: SDK의 classes.jar 넷과, RobotCore AAR이 함께 싣는 Gson(SDK가 쓰고 팀 코드도 쓸 수 있다,
+// Apache 2.0). 같은 AAR의 slf4j는 SDK 클래스가 쓰지 않으므로 넣지 않는다.
+function liftableJars(sdk) {
+  return [...sdk.jars, ...sdk.libs.filter((path) => /[\\/]gson(-extras)?-[\d.]+\.jar$/.test(path))]
+}
+
 function option(name) {
   const index = process.argv.indexOf(`--${name}`)
   return index >= 0 ? process.argv[index + 1] : undefined
@@ -235,7 +241,7 @@ async function main() {
       '--work',
       join(buildDir, 'work'),
       '--real',
-      sdk.jars.join(delimiter),
+      liftableJars(sdk).join(delimiter),
       '--android',
       sdk.androidJar,
       '--sim',

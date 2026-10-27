@@ -28,6 +28,7 @@ final class ApiCheck {
     final List<String> errors = new ArrayList<>();
     final List<String> warnings = new ArrayList<>();
     int checkedClasses;
+    int checkedConstants;
     int androidPartial;
     /**
      * 비교할 런타임 애너테이션 형식(내부 이름)을 고른다. stub 확인은 가짜 SDK에 없는 형식(Gson 등)의 애너테이션을 뺀다
@@ -196,6 +197,7 @@ final class ApiCheck {
             errors.add(id + ": field modifiers " + memberFlags(a.access & FIELD_MASK, false) + " (real) vs "
                     + memberFlags(b.access & FIELD_MASK, false));
         if (!genericOf(a).equals(genericOf(b))) errors.add(id + ": type " + genericOf(a) + " (real) vs " + genericOf(b));
+        if (a.constant != null) checkedConstants++;
         String ca = a.constant == null ? "none" : ClassFile.constantText(a.constant);
         String cb = b.constant == null ? "none" : ClassFile.constantText(b.constant);
         if (!ca.equals(cb)) errors.add(id + ": constant value " + ca + " (real) vs " + cb);
@@ -296,8 +298,14 @@ final class ApiCheck {
     }
 
     /**
-     * 명령행: ApiCheck --real a.jar[:b.jar…] --android android.jar --hand 클래스폴더 [--nests 이름…]
-     * 손 구현 폴더의 클래스(org.sandbot.** 제외)를 대조한다. 다르면 종료 코드 1.
+     * 명령행: ApiCheck --real a.jar[:b.jar…] --android android.jar (--hand 클래스폴더 | --sdk sandbot-sdk.jar)
+     *
+     * <ul>
+     *   <li>--hand: 손 구현 폴더의 클래스(org.sandbot.** 제외)를 대조한다(빌드와 같은 규칙).
+     *   <li>--sdk: 실제 SDK의 보이는 클래스마다 빌드한 sdk jar의 같은 클래스(손 구현·들여옴·stub 무엇이든)와 대조한다.
+     *       sdk jar에 없는 형식의 애너테이션은 뺀다.
+     * </ul>
+     * 다르면 종료 코드 1. 마지막 줄: "checked N classes, M constants, E errors".
      */
     public static void main(String[] args) throws Exception {
         Map<String, String> options = new LinkedHashMap<>();
@@ -307,14 +315,31 @@ final class ApiCheck {
             realJars.add(ClassSource.jar(Paths.get(path)));
         ClassSource real = ClassSource.chain(realJars);
         ClassSource android = ClassSource.jar(Paths.get(options.get("--android")));
-        Path handDir = Paths.get(options.get("--hand"));
-        ClassSource hand = ClassSource.directory(handDir);
+        ClassSource jdk = ClassSource.jdk();
         ApiCheck check = new ApiCheck();
-        Lifter nests = new Lifter(hand, real, ClassSource.jdk());
-        check.checkHand(hand, hand.names(), real, android, nests);
+        if (options.containsKey("--sdk")) {
+            ClassSource sdk = ClassSource.jar(Paths.get(options.get("--sdk")));
+            check.annotationFilter = type -> sdk.has(type) || jdk.has(type);
+            for (String name : real.names()) {
+                ClassFile r = real.get(name);
+                if (!visible(real, r)) continue;
+                ClassFile mine = sdk.get(name);
+                if (mine == null) {
+                    check.errors.add(dotted(name) + ": missing in the sdk jar");
+                    continue;
+                }
+                check.compare(r, mine, true);
+            }
+        } else {
+            Path handDir = Paths.get(options.get("--hand"));
+            ClassSource hand = ClassSource.directory(handDir);
+            check.annotationFilter = type -> hand.has(type) || real.has(type) || jdk.has(type);
+            check.checkHand(hand, hand.names(), real, android, new Lifter(hand, real, jdk));
+        }
         for (String w : check.warnings) System.out.println("warning: " + w);
         for (String e : check.errors) System.out.println("error: " + e);
-        System.out.println("checked " + check.checkedClasses + " classes, " + check.errors.size() + " errors");
+        System.out.println("checked " + check.checkedClasses + " classes, " + check.checkedConstants + " constants, "
+                + check.errors.size() + " errors");
         System.exit(check.errors.isEmpty() ? 0 : 1);
     }
 }

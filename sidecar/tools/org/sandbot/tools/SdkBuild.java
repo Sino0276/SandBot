@@ -118,21 +118,49 @@ public final class SdkBuild {
         report.put("handSourceFiles", handSources.size());
         report.put("runtimeSourceFiles", runtimeSources.size());
 
+        // 0. 실제 SDK의 API가 부르지만 어디에도 없는 형식(OpenCV, threeten, API 16에 없는 안드로이드 형식 …)의 불투명 껍데기.
+        //    손 구현도 실제 API를 그대로 따르므로 이 형식을 쓴다: 미리 만들어 두 컴파일에 같이 넣는다. 손 구현이 만든 형식은 뺀다.
+        step("collect types missing from the SDK's dependencies");
+        Path missingDir = work.resolve("missing");
+        Set<String> handTops = new TreeSet<>();
+        Path sdkRoot = path("--sdk");
+        for (Path file : handSources) {
+            String rel = sdkRoot.relativize(file).toString().replace(File.separatorChar, '/');
+            handTops.add(rel.substring(0, rel.length() - ".java".length()));
+        }
+        List<ClassSource> realSources = new ArrayList<>();
+        for (Path jar : realJars) realSources.add(ClassSource.jar(jar));
+        ClassSource real = ClassSource.chain(realSources);
+        ClassSource android = ClassSource.jar(androidJar);
+        Set<String> allRealNests = new TreeSet<>();
+        {
+            Lifter nests = new Lifter(ClassSource.directory(handPre), real, ClassSource.jdk());
+            for (String name : real.names()) allRealNests.add(nests.nest(real, name));
+        }
+        int missingCount = generateStubs(real, android, Collections.<Path>emptyList(), allRealNests,
+                Collections.<String>emptySet(), Collections.<String>emptySet(), missingDir, false,
+                (top, inAndroid) -> !inAndroid && !handTops.contains(top));
+        Set<String> missingTops = new TreeSet<>();
+        for (Path file : javaFiles(missingDir)) {
+            String rel = missingDir.relativize(file).toString().replace(File.separatorChar, '/');
+            missingTops.add(rel.substring(0, rel.length() - ".java".length()));
+        }
+        report.put("missingTypes", missingTops.stream().map(ApiCheck::dotted).collect(Collectors.toList()));
+
         // 1. sim + 손 구현을 실제 SDK에 대고(들여오기 분석용)
-        step("compile sim + " + handSources.size() + " hand sources against the real SDK");
+        step("compile sim + " + handSources.size() + " hand sources against the real SDK (+" + missingCount
+                + " missing types)");
         List<Path> pre = new ArrayList<>(simSources);
         pre.addAll(handSources);
+        pre.addAll(javaFiles(missingDir));
         List<Path> preClasspath = new ArrayList<>(realJars);
         preClasspath.add(androidJar);
         if (!compile(pre, preClasspath, handPre, "8", "hand sources (against the real SDK)")) return false;
 
         // 2. 들여오기
         step("lift");
-        ClassSource hand = ClassSource.directory(handPre);
-        List<ClassSource> realSources = new ArrayList<>();
-        for (Path jar : realJars) realSources.add(ClassSource.jar(jar));
-        ClassSource real = ClassSource.chain(realSources);
-        ClassSource android = ClassSource.jar(androidJar);
+        // 미리 만든 불투명 형식은 손 구현이 아니다(들여온 클래스가 쓰면 막힌다)
+        ClassSource hand = withoutNames(ClassSource.directory(handPre), missingTops);
         ClassSource jdk = ClassSource.jdk();
         Lifter lifter = new Lifter(hand, real, jdk);
         lifter.run();
@@ -158,33 +186,16 @@ public final class SdkBuild {
                 extraOpaque.add(dep);
             }
         }
-        int stubCount;
-        int opaqueCount;
-        {
-            JavaCompiler compiler = compiler();
-            DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-            try (StandardJavaFileManager fm = compiler.getStandardFileManager(diagnostics, Locale.ENGLISH,
-                    StandardCharsets.UTF_8)) {
-                List<Path> cp = new ArrayList<>();
-                cp.add(handPre);
-                cp.addAll(realJars);
-                cp.add(androidJar);
-                fm.setLocationFromPaths(StandardLocation.CLASS_PATH, cp);
-                JavacTask task = (JavacTask) compiler.getTask(null, fm, diagnostics,
-                        Arrays.asList("--release", "8", "-proc:none"), null, Collections.<JavaFileObject>emptyList());
-                StubGen gen = new StubGen(task.getElements(), task.getTypes(), stubNests, provided, real, android,
-                        stubs);
-                stubCount = gen.run(extraOpaque);
-                opaqueCount = gen.opaqueCount();
-                for (String w : gen.warnings) warnings.add("stub: " + w);
-            }
-        }
+        int stubCount = generateStubs(real, android, Collections.singletonList(handPre), stubNests, provided,
+                extraOpaque, stubs, true, (top, inAndroid) -> !missingTops.contains(top));
+        int opaqueCount = lastOpaqueCount + missingTops.size();
 
         // 4. 최종 sdk 컴파일
         step("compile sim + hand + " + stubCount + " stubs + " + opaqueCount + " opaque (--release 8)");
         List<Path> all = new ArrayList<>(simSources);
         all.addAll(handSources);
         all.addAll(javaFiles(stubs));
+        all.addAll(javaFiles(missingDir));
         if (!compile(all, Collections.singletonList(liftedRaw), classesSdk, "8", "SDK (sim + hand + stubs)"))
             return false;
         copyResources(path("--sdk"), classesSdk);
@@ -226,11 +237,13 @@ public final class SdkBuild {
         step("API check");
         Set<String> handNames = new TreeSet<>(hand.names());
         ApiCheck handCheck = new ApiCheck();
+        // 가짜 SDK에 없는 형식(Gson 등)의 애너테이션은 손 구현이 쓸 수 없다
+        ClassSource finalWorld = ClassSource.chain(Arrays.asList(sdkClasses, liftedSource, jdk));
+        handCheck.annotationFilter = finalWorld::has;
         handCheck.checkHand(sdkClasses, handNames, real, android, lifter);
         for (String e : handCheck.errors) errors.add("api: " + e);
         for (String w : handCheck.warnings) warnings.add("api: " + w);
         ApiCheck stubCheck = new ApiCheck();
-        ClassSource finalWorld = ClassSource.chain(Arrays.asList(sdkClasses, liftedSource, jdk));
         stubCheck.annotationFilter = finalWorld::has;
         int stubClassFiles = 0;
         for (String name : sdkClasses.names()) {
@@ -306,6 +319,52 @@ public final class SdkBuild {
                 Collections.<String, byte[]>emptyMap(), hasMain ? "org.sandbot.runtime.Main" : null);
 
         return true;
+    }
+
+    private int lastOpaqueCount;
+
+    /** javac 모델로 stub(과 불투명 껍데기)을 쓴다. 쓴 stub 최상위 수(writeStubs가 false면 불투명 껍데기 수)를 돌려준다. */
+    private int generateStubs(ClassSource real, ClassSource android, List<Path> handClasses, Set<String> stubNests,
+            Set<String> provided, Set<String> extraOpaque, Path out, boolean writeStubs,
+            java.util.function.BiPredicate<String, Boolean> opaqueFilter) throws IOException, BuildFailure {
+        JavaCompiler compiler = compiler();
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fm = compiler.getStandardFileManager(diagnostics, Locale.ENGLISH,
+                StandardCharsets.UTF_8)) {
+            List<Path> cp = new ArrayList<>(handClasses);
+            for (String p : options.get("--real").split(File.pathSeparator)) cp.add(Paths.get(p));
+            cp.add(path("--android"));
+            fm.setLocationFromPaths(StandardLocation.CLASS_PATH, cp);
+            JavacTask task = (JavacTask) compiler.getTask(null, fm, diagnostics,
+                    Arrays.asList("--release", "8", "-proc:none"), null, Collections.<JavaFileObject>emptyList());
+            StubGen gen = new StubGen(task.getElements(), task.getTypes(), stubNests, provided, real, android, out);
+            int count = gen.run(extraOpaque, writeStubs, opaqueFilter);
+            lastOpaqueCount = gen.opaqueCount();
+            if (writeStubs) for (String w : gen.warnings) warnings.add("stub: " + w);
+            return writeStubs ? count : lastOpaqueCount;
+        }
+    }
+
+    /** 최상위 몇 개를 뺀 묶음 */
+    private static ClassSource withoutNames(ClassSource source, Set<String> excluded) {
+        return new ClassSource() {
+            @Override
+            List<String> names() {
+                List<String> names = new ArrayList<>();
+                for (String n : source.names()) if (!excluded.contains(topOf(n))) names.add(n);
+                return names;
+            }
+
+            @Override
+            byte[] bytes(String internalName) {
+                return excluded.contains(topOf(internalName)) ? null : source.bytes(internalName);
+            }
+        };
+    }
+
+    private static String topOf(String internalName) {
+        int dollar = internalName.indexOf('$');
+        return dollar < 0 ? internalName : internalName.substring(0, dollar);
     }
 
     private void missing(String message) {
