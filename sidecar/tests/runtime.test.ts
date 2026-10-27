@@ -2,6 +2,8 @@
 // 테스트 OpMode는 sidecar/tests/opmodes/(package org.firstinspires.ftc.teamcode)에 있고, 결과를 "RESULT 이름=값" 줄로 쓴다.
 // Java 단위 테스트(패처·JSON·가상 시계 등)는 sidecar/tests/java/org/sandbot/runtime/에 있다. JDK가 없으면 모두 건너뛴다.
 import { spawn } from 'child_process'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { delimiter, join, resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -544,6 +546,44 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       expect(diagnostics[0].message).toContain('cannot find symbol')
       expect(finishedReason(run)).toBe('compileFailed')
       expect(run.messages.some((m) => m.type === 'state')).toBe(false)
+    },
+    TIMEOUT
+  )
+
+  it(
+    'STOP을 받으면 OpMode에 알리기 전에 허브가 fail safe로 가고, 그 뒤의 0이 아닌 power는 보내지 않는다',
+    async () => {
+      const configXml = join(mkdtempSync(join(tmpdir(), 'sandbot-runtime-')), 'robot.xml')
+      writeFileSync(
+        configXml,
+        [
+          '<Robot type="FirstInspires-FTC" name="Test Bot">',
+          '    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">',
+          '        <LynxModule name="Control Hub" port="173">',
+          '            <goBILDA5202SeriesMotor name="drive" port="0" />',
+          '        </LynxModule>',
+          '    </LynxUsbDevice>',
+          '</Robot>',
+          ''
+        ].join('\n')
+      )
+      const run = await runSidecar(b, {
+        opMode: 'StopFailSafe',
+        events: { 2: ['start'], 40: ['stop'] },
+        request: { configXml }
+      })
+      expect(errors(run)).toEqual([])
+      const ticks = run.messages.flatMap((m) => (m.type === 'tick' ? [m] : []))
+      // 허브에 간 power(goBILDA 모터의 기본 방향과 15비트 양자화가 들어간 값)
+      const power = (t: (typeof ticks)[number]): number => Number(t.outputs.drive?.power)
+      expect(
+        ticks.filter((t) => t.phase === 'running').some((t) => Math.abs(power(t)) > 0.49)
+      ).toBe(true)
+      const stopping = ticks.filter((t) => t.phase === 'stopping')
+      // OpMode가 STOP 뒤 가상 100 ms 동안 0.8을 보내려 해도 허브에는 가지 않는다
+      expect(stopping.length).toBeGreaterThan(10)
+      expect(stopping.every((t) => power(t) === 0)).toBe(true)
+      expect(finishedReason(run)).toBe('stopped')
     },
     TIMEOUT
   )
