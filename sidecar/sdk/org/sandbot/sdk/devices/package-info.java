@@ -5,7 +5,9 @@
  * {@link org.sandbot.sdk.devices.SandbotHardware}: {@code create(File)}(구성 XML, null이면 빈 맵; 틀리면
  * {@link org.sandbot.sdk.devices.SandbotConfigException}, 영어 메시지), {@code beforeInit(map)}(실제
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
- * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
+ * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
+ * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
+ * preventDangerousHardwareAccess), {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
  * <h2>시뮬레이터 장치(SimDevice)</h2>
  * 구성 이름마다 하나({@code Sim.devices()}, 구성에 넣은 순서). 출력은 가짜 SDK가 허브에 보낸 명령의 결과(허브 펌웨어가 보는 값)이고,

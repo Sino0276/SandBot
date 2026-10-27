@@ -228,6 +228,7 @@ public final class SimServoController implements ServoControllerEx, RobotCoreLyn
                 lastKnownCommandedPosition[servoZ].invalidate();
                 lastKnownPulseWidthMicroseconds[servoZ].invalidate();
             }
+            if (hub.cancelledForSafety(enable)) return; // STOP 뒤에는 PWM을 다시 켜지 않는다(LastKnown은 실제처럼 이미 바뀜)
             hub.lynxCommand(); // LynxSetServoEnableCommand
             channels[servoZ].enabled = enable;
             channels[servoZ].publish();
@@ -307,9 +308,12 @@ public final class SimServoController implements ServoControllerEx, RobotCoreLyn
 
     private void internalSetPulseWidth(int servoZ, int usWidth) {
         lastKnownPulseWidthMicroseconds[servoZ].updateValue(usWidth);
-        hub.lynxCommand(); // LynxSetServoPulseWidthCommand
-        channels[servoZ].pulseWidth = usWidth;
-        channels[servoZ].publish();
+        // STOP 뒤의 펄스 폭은 보내지 않는다. 실제처럼 그 뒤 PWM 켜기는 부른다(그것도 위험한 명령이라 보내지 않음)
+        if (!hub.cancelledForSafety(true)) {
+            hub.lynxCommand(); // LynxSetServoPulseWidthCommand
+            channels[servoZ].pulseWidth = usWidth;
+            channels[servoZ].publish();
+        }
         internalSetPwmEnable(servoZ, true);
     }
 

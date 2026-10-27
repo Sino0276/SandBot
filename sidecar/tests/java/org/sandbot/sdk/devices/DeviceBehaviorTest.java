@@ -151,6 +151,39 @@ public final class DeviceBehaviorTest {
         Check.equal(0.0, bot.out("gobilda", "apiPower"), "fail safe stops motors");
     }
 
+    public static void testStopBlocksDangerousCommands() {
+        // 실제 OpModeManagerImpl.callActiveOpModeStop: STOP을 받으면 곧바로 허브 fail safe, 그 뒤 위험한 명령(0이 아닌 power·
+        // 속도, 목표 위치, 서보 펄스·PWM 켜기)은 CANCELLED_FOR_SAFETY로 버려진다(팀 코드가 아직 돌아도 모터가 다시 돌지 않는다)
+        Bot bot = new Bot(null, MOTORS + "            <Servo name=\"servo\" port=\"0\" />\n", null);
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Servo servo = bot.get(Servo.class, "servo");
+        tetrix.setPower(0.5);
+        servo.setPosition(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "running before STOP");
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(0.0, bot.out("tetrix", "power"), "STOP fail safe stops the motor at once");
+        Check.equal(false, bot.out("tetrix", "enabled"), "STOP fail safe disables the motor");
+        Check.equal(false, bot.out("servo", "pwm"), "STOP fail safe turns servo PWM off");
+        long before = SimTestSupport.now();
+        tetrix.setPower(0.8);
+        servo.setPosition(0.9);
+        tetrix.setTargetPosition(100);
+        tetrix.setVelocity(300);
+        Check.equal(0.0, bot.out("tetrix", "power"), "power after STOP is cancelled");
+        Check.equal(false, bot.out("servo", "pwm"), "servo PWM stays off after STOP");
+        Check.equal(null, bot.out("tetrix", "targetPosition"), "target position after STOP is cancelled");
+        Check.isTrue(SimTestSupport.now() - before < ms(1.5 * 6), "cancelled commands are not sent (no hub time)");
+        tetrix.setPower(0);
+        Check.equal(0.0, bot.out("tetrix", "power"), "zero power is not dangerous");
+        SandbotHardware.afterStop(bot.map);
+
+        // 다음 OpMode(beforeInit)부터는 다시 보낸다
+        Bot next = new Bot(null, MOTORS, null);
+        next.get(DcMotor.class, "tetrix").setPower(0.5);
+        Check.near(0.5, num(next.out("tetrix", "power")), 1e-4, "commands work again after beforeInit");
+        SandbotHardware.afterStop(next.map);
+    }
+
     public static void testStopAndResetEncoder() {
         Bot bot = new Bot(null, MOTORS, null);
         DcMotor tetrix = bot.get(DcMotor.class, "tetrix");

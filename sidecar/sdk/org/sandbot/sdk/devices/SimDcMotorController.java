@@ -455,6 +455,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 case RUN_TO_POSITION:
                 case RUN_USING_ENCODER: {
                     power = Math.signum(power) * Range.scale(Math.abs(power), 0, API_POWER_LAST, 0, getDefaultMaxMotorSpeed(motorZ));
+                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
                     hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
                     c.targetVelocity = (int) power;
                     c.publish();
@@ -463,6 +464,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 }
                 case RUN_WITHOUT_ENCODER: {
                     power = Range.scale(power, API_POWER_FIRST, API_POWER_LAST, -HUB_POWER_LAST, HUB_POWER_LAST);
+                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
                     hub.lynxCommand(); // LynxSetMotorConstantPowerCommand
                     c.constantPower = (int) power;
                     c.publish();
@@ -544,6 +546,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized void setMotorTargetPosition(int motor, int position, int tolerance) {
         validateMotor(motor);
+        if (hub.cancelledForSafety(true)) return; // STOP 뒤의 목표 위치는 보내지 않는다
         hub.lynxCommand(); // LynxSetMotorTargetPositionCommand(목표 위치를 캐시하지 않으므로 부를 때마다 보낸다)
         Channel c = channels[motor - API_MOTOR_FIRST];
         c.targetPosition = position;
@@ -580,6 +583,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         validateMotor(motor);
         int motorZ = motor - API_MOTOR_FIRST;
         int iTicksPerSecond = Range.clip((int) Math.round(ticksPerSecond), -HUB_VELOCITY_LAST, HUB_VELOCITY_LAST);
+        if (hub.cancelledForSafety(iTicksPerSecond != 0)) return; // STOP 뒤: 보내지 않고 켜지도 않는다
         hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
         Channel c = channels[motorZ];
         c.targetVelocity = iTicksPerSecond;
