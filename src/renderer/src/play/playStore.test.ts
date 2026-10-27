@@ -159,6 +159,8 @@ describe('applyPlayEvent', () => {
       ['diagnostic', 'info']
     ])
     expect(next.entries[0]).toMatchObject({ ok: false, errors: 1, warnings: 1, millis: 812 })
+    // 진단은 실행한 프로젝트를 기억한다(다른 프로젝트를 연 뒤에는 열지 않는다)
+    expect(next.entries[1].root).toBe('/p')
   })
 
   it('로그는 묶음의 줄마다 항목이 되고 System.err는 경고다', () => {

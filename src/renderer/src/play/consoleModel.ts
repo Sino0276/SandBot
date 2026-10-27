@@ -42,6 +42,8 @@ export type ConsoleEntry = ConsoleBody & {
   level: ConsoleLevel
   // 가상 시간(실행 전 안내는 null)
   tNanos: number | null
+  // 실행의 프로젝트 루트(진단·오류의 경로는 이 프로젝트의 TeamCode 기준이다). 없으면 프로젝트와 관계없는 항목.
+  root?: string
 }
 
 const ERROR_FINISH: ReadonlySet<ConsoleFinishReason> = new Set([
@@ -225,8 +227,16 @@ export function visibleEntries(
 
 export type ConsoleTarget = { path: string; line: number }
 
-// 더블클릭·Enter로 외부 편집기에서 열 곳: 컴파일 진단의 줄, 오류 스택의 첫 팀 코드 줄. TeamCode 밖이면 없다.
-export function entryTarget(entry: ConsoleEntry): ConsoleTarget | null {
+// 항목의 경로를 지금 프로젝트에서 열 수 있는지. 다른 프로젝트의 실행이 남긴 항목은 열지 않는다(같은 상대 경로의
+// 다른 파일, 예를 들어 시즌별 사본의 같은 OpMode를 여는 일이 없게).
+export function entryInProject(entry: ConsoleEntry, root: string | null | undefined): boolean {
+  return root === undefined || entry.root === undefined || entry.root === root
+}
+
+// 더블클릭·Enter로 외부 편집기에서 열 곳: 컴파일 진단의 줄, 오류 스택의 첫 팀 코드 줄. TeamCode 밖이거나
+// 다른 프로젝트(root를 주면 비교한다)의 항목이면 없다.
+export function entryTarget(entry: ConsoleEntry, root?: string | null): ConsoleTarget | null {
+  if (!entryInProject(entry, root)) return null
   if (entry.type === 'diagnostic') {
     const { path, line } = entry.diagnostic
     return path ? { path, line: Math.max(1, line) } : null

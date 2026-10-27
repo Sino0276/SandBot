@@ -159,6 +159,10 @@ describe('Console 거르기', () => {
 describe('외부 편집기로 열 곳', () => {
   it('진단은 그 줄, 오류는 첫 팀 코드 줄, 로그는 없음', () => {
     const [log, , error, diagnostic] = sample()
+    // 다른 프로젝트의 실행이 남긴 항목은 지금 프로젝트에서 열지 않는다
+    const other = { ...error, root: '/season-2024' }
+    expect(entryTarget(other, '/season-2025')).toBeNull()
+    expect(entryTarget(other, '/season-2024')).toEqual({ path: LIFT, line: 42 })
     expect(entryTarget(log)).toBeNull()
     expect(entryTarget(error)).toEqual({ path: LIFT, line: 42 })
     expect(entryTarget(diagnostic)).toEqual({ path: LIFT, line: 12 })

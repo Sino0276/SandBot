@@ -106,9 +106,12 @@ let nextEntryId = 1
 export function consoleEntry(
   body: ConsoleBody,
   tNanos: number | null,
-  level: ConsoleLevel = consoleLevel(body)
+  level: ConsoleLevel = consoleLevel(body),
+  root?: string
 ): ConsoleEntry {
-  return { ...body, id: nextEntryId++, level, tNanos } as ConsoleEntry
+  const entry = { ...body, id: nextEntryId++, level, tNanos } as ConsoleEntry
+  if (root !== undefined) entry.root = root
+  return entry
 }
 
 // 항목을 붙이고, 한도로 버려진 항목을 골라 두었으면 고르기를 푼다
@@ -211,7 +214,7 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
           null
         ),
         ...event.diagnostics.map((diagnostic) =>
-          consoleEntry({ type: 'diagnostic', diagnostic }, null)
+          consoleEntry({ type: 'diagnostic', diagnostic }, null, undefined, run.root)
         )
       ]
       return withEntries(data, added)
@@ -238,7 +241,9 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             stack: event.stack,
             thread: event.thread
           },
-          event.tNanos
+          event.tNanos,
+          undefined,
+          run.root
         )
       ])
     case 'finished': {

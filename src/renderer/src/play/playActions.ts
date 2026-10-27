@@ -378,9 +378,9 @@ export function handlePlayEvent(event: PlayEvent): void {
 // 프로젝트를 바꾸면(다른 프로젝트를 열거나 같은 것을 다시 염) 지금 실행을 멈추고 그 프로젝트의 목록·선택을 읽는다
 function onProjectChanged(root: string | null, rootChanged: boolean): void {
   const { run } = usePlayStore.getState()
-  if (isRunActive(run)) stopPlay()
   // 끝난 실행은 바로 지운다(아직 도는 실행은 끝날 때 handlePlayEvent가 지운다)
-  else if (run && run.root !== root) usePlayStore.setState({ run: null })
+  if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
+  if (isRunActive(run)) stopPlay()
   if (rootChanged)
     usePlayStore.setState({
       selectedClass: root ? loadLastOpMode(root) : null,
