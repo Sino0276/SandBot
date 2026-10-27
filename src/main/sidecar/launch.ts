@@ -227,12 +227,18 @@ export function buildRunRequest(
 
 // JVM 인자. 스택은 깊은 재귀(팀 코드·javac)를 위해 늘리고, GC는 작은 힙에 맞는 직렬 GC. 출력 인코딩은 UTF-8로 고정한다
 // (Windows 기본 코드 페이지로 쓰면 한글 로그가 깨진다. stdout.encoding은 JDK 18부터 읽는다).
+// stdout은 프로토콜 전용이라 JVM 자신의 출력은 stderr로 보낸다: 통합 로깅(-Xlog)의 기본 설정은 경고를 stdout에 쓰고
+// (스레드를 더 만들지 못함, 코드 캐시 가득 참, 큰 페이지 없음 등), tty 출력(치명적 오류 안내 등)도 stdout이다. 섞이면
+// 호스트가 프로토콜 오류로 실행을 끝낸다. stderr로 보내면 crashed의 detail에 보인다.
 export function javaArgs(
   files: SidecarFiles,
   platform: NodeJS.Platform = process.platform
 ): string[] {
   const delimiter = platform === 'win32' ? ';' : ':'
   return [
+    '-Xlog:disable',
+    '-Xlog:all=warning:stderr',
+    '-XX:+DisplayVMOutputToStderr',
     '-Xss4m',
     '-XX:+UseSerialGC',
     '-Dfile.encoding=UTF-8',

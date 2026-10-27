@@ -2,6 +2,8 @@
 // 테스트 OpMode는 sidecar/tests/opmodes/(package org.firstinspires.ftc.teamcode)에 있고, 결과를 "RESULT 이름=값" 줄로 쓴다.
 // Java 단위 테스트(패처·JSON·가상 시계 등)는 sidecar/tests/java/org/sandbot/runtime/에 있다. JDK가 없으면 모두 건너뛴다.
 import { spawn } from 'child_process'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { delimiter, join, resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -15,6 +17,7 @@ import {
   type SidecarMessage,
   type TelemetryMessage
 } from '../../src/shared/sidecarProtocol'
+import { MAX_LINE_CHARS } from '../../src/main/sidecar/protocol'
 import { compileJavaTests, runJavaTests, sidecarBuild, type SidecarBuild } from './support'
 
 const OPMODES = resolve(__dirname, 'opmodes')
@@ -69,6 +72,10 @@ function runSidecar(b: SidecarBuild, script: Script): Promise<RunResult> {
     const child = spawn(
       b.java,
       [
+        // 호스트(src/main/sidecar/launch.ts의 javaArgs)와 같은 인자
+        '-Xlog:disable',
+        '-Xlog:all=warning:stderr',
+        '-XX:+DisplayVMOutputToStderr',
         '-Xss4m',
         '-XX:+UseSerialGC',
         '-Dfile.encoding=UTF-8',
@@ -515,6 +522,9 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       ])
       expect(rest).toContainEqual(['err', 'err'])
       expect(rest).toContainEqual(['out', 'partial'])
+      // 알림은 다음 출력("after", 가상 1.1초)을 기다리지 않고 그 구간이 끝난 틱(가상 1초)에 온다
+      const notice = logs.find((m) => m.text.endsWith('lines dropped'))
+      expect(notice?.tNanos).toBe(1_000_000_000)
     },
     TIMEOUT
   )
@@ -536,6 +546,83 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       expect(diagnostics[0].message).toContain('cannot find symbol')
       expect(finishedReason(run)).toBe('compileFailed')
       expect(run.messages.some((m) => m.type === 'state')).toBe(false)
+    },
+    TIMEOUT
+  )
+
+  it(
+    'STOP을 받으면 OpMode에 알리기 전에 허브가 fail safe로 가고, 그 뒤의 0이 아닌 power는 보내지 않는다',
+    async () => {
+      const configXml = join(mkdtempSync(join(tmpdir(), 'sandbot-runtime-')), 'robot.xml')
+      writeFileSync(
+        configXml,
+        [
+          '<Robot type="FirstInspires-FTC" name="Test Bot">',
+          '    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">',
+          '        <LynxModule name="Control Hub" port="173">',
+          '            <goBILDA5202SeriesMotor name="drive" port="0" />',
+          '        </LynxModule>',
+          '    </LynxUsbDevice>',
+          '</Robot>',
+          ''
+        ].join('\n')
+      )
+      const run = await runSidecar(b, {
+        opMode: 'StopFailSafe',
+        events: { 2: ['start'], 40: ['stop'] },
+        request: { configXml }
+      })
+      expect(errors(run)).toEqual([])
+      const ticks = run.messages.flatMap((m) => (m.type === 'tick' ? [m] : []))
+      // 허브에 간 power(goBILDA 모터의 기본 방향과 15비트 양자화가 들어간 값)
+      const power = (t: (typeof ticks)[number]): number => Number(t.outputs.drive?.power)
+      expect(
+        ticks.filter((t) => t.phase === 'running').some((t) => Math.abs(power(t)) > 0.49)
+      ).toBe(true)
+      const stopping = ticks.filter((t) => t.phase === 'stopping')
+      // OpMode가 STOP 뒤 가상 100 ms 동안 0.8을 보내려 해도 허브에는 가지 않는다
+      expect(stopping.length).toBeGreaterThan(10)
+      expect(stopping.every((t) => power(t) === 0)).toBe(true)
+      expect(finishedReason(run)).toBe('stopped')
+    },
+    TIMEOUT
+  )
+
+  it(
+    '탭으로 들여 쓴 줄의 진단 열은 글자 단위다(편집기의 열과 같다)',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'TabCompileError' })
+      const compiled = run.messages.find((m) => m.type === 'compiled')
+      const diagnostics = compiled?.type === 'compiled' ? compiled.diagnostics : []
+      // "\t\tString s = \"가나\"; int x = undefinedVariable;"의 undefinedVariable은 28번째 글자
+      expect(diagnostics[0]).toMatchObject({ line: 11, column: 28 })
+    },
+    TIMEOUT
+  )
+
+  it(
+    '아주 긴 글자도 호스트의 줄 한도 안에서 보내고, 긴 출력 줄은 UTF-8 글자를 가르지 않고 나눈다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'HugeOutput', events: { 1: ['start'] } })
+      expect(Math.max(...run.raw.map((line) => line.length))).toBeLessThan(MAX_LINE_CHARS)
+      const robotLog = run.messages.find((m) => m.type === 'log' && m.stream === 'robotLog')
+      expect(robotLog?.type === 'log' && robotLog.text.length).toBe(64 * 1024)
+      expect(robotLog?.type === 'log' && robotLog.text.endsWith('…')).toBe(true)
+      const telemetry = run.messages.find((m): m is TelemetryMessage => m.type === 'telemetry')
+      expect(telemetry?.frame.lines.length).toBeLessThan(21)
+      expect(telemetry?.frame.lines[telemetry.frame.lines.length - 1]).toBe('…')
+      const out = run.messages.flatMap((m) =>
+        m.type === 'log' && m.stream === 'out' ? [m.text] : []
+      )
+      expect(out.length).toBeGreaterThan(1)
+      expect(out.join('')).toBe('가'.repeat(70_000))
+      const error = errors(run)[0]
+      expect(error).toMatchObject({
+        kind: 'exception',
+        exception: 'java.lang.IllegalStateException'
+      })
+      expect(error.message.length).toBe(64 * 1024)
+      expect(finishedReason(run)).toBe('exception')
     },
     TIMEOUT
   )
@@ -645,6 +732,7 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       const classes = await compileJavaTests(b, [resolve(__dirname, 'java')])
       const result = await runJavaTests(b, classes, [
         'org.sandbot.runtime.JsonTest',
+        'org.sandbot.runtime.OutputCaptureTest',
         'org.sandbot.runtime.patch.ClassPatcherTest',
         'org.sandbot.runtime.VirtualClockTest',
         'org.sandbot.runtime.SdkCoreTest'

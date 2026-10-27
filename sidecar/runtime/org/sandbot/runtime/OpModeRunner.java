@@ -298,7 +298,17 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         dsStop = fromDs;
         stopTimeNanos = clock.peekNanos();
         setPhase("stopping");
-        if (opMode != null && opModeReady) SandbotOpModeBridge.stop(opMode);
+        if (opMode != null && opModeReady) {
+            // 실제 OpModeManagerImpl.callActiveOpModeStop처럼 OpMode에 알리기 전에 허브를 fail safe로(위험한 명령은 끝날 때까지 막힌다)
+            if (hardwareMap != null) {
+                try {
+                    hooks.stopRequested(hardwareMap);
+                } catch (Throwable t) {
+                    internalError("stopping the hardware failed: " + StackFrames.describe(t), t);
+                }
+            }
+            SandbotOpModeBridge.stop(opMode);
+        }
     }
 
     /**
