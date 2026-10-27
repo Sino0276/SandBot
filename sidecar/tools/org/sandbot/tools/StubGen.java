@@ -380,7 +380,8 @@ final class StubGen {
         }
         if (kind != ElementKind.ANNOTATION_TYPE && !type.getInterfaces().isEmpty()) {
             head.append(kind == ElementKind.INTERFACE ? " extends " : " implements ");
-            usage = kind == ElementKind.INTERFACE ? "implements" : "implements";
+            // 클래스의 implements·인터페이스의 extends: 둘 다 인터페이스여야 한다(없는 형식이면 인터페이스로 쓴다)
+            usage = "implements";
             List<String> list = new ArrayList<>();
             for (TypeMirror i : type.getInterfaces()) list.add(type(i));
             usage = null;

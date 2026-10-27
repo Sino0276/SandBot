@@ -97,8 +97,8 @@ public final class StubProbe {
                 fail(api + ": SimUnsupportedException names " + got);
             } else if (cause instanceof ExceptionInInitializerError) {
                 return false; // 정적 초기화는 위에서 셌다
-            } else if (constructor && !stubs.contains(type.getSuperclass().getName())) {
-                return false; // 실제 코드인 상위 생성자가 기본값 인수로 던졌다
+            } else if (constructor && !thrownInStub(cause, stubs)) {
+                return false; // 실제 코드(손 구현·들여옴)인 상위 생성자가 기본값 인수나 시뮬레이터 없음으로 던졌다
             } else {
                 fail(api + ": threw " + cause);
             }
