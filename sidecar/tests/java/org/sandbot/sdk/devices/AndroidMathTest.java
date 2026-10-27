@@ -2,6 +2,7 @@ package org.sandbot.sdk.devices;
 
 import android.graphics.Color;
 import android.opengl.Matrix;
+import android.util.Size;
 
 import org.firstinspires.ftc.robotcore.external.matrices.OpenGLMatrix;
 import org.firstinspires.ftc.robotcore.external.matrices.VectorF;
@@ -11,7 +12,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
 import org.sandbot.testing.Check;
 
-/** android.graphics.Color·android.opengl.Matrix 순수 구현(안드로이드와 같은 값) */
+/** android.graphics.Color·android.opengl.Matrix·android.util.Size 순수 구현(안드로이드와 같은 값) */
 public final class AndroidMathTest {
     private AndroidMathTest() {}
 
@@ -126,5 +127,18 @@ public final class AndroidMathTest {
         Check.near(0, back.get(1), 1e-5, "inverse y");
         Orientation o = Orientation.getOrientation(m, AxesReference.EXTRINSIC, AxesOrder.XYZ, AngleUnit.DEGREES);
         Check.near(90, o.thirdAngle, 1e-3, "orientation from matrix");
+    }
+
+    public static void testSize() {
+        Size size = new Size(640, 480);
+        Check.equal(640, size.getWidth(), "width");
+        Check.equal(480, size.getHeight(), "height");
+        Check.equal("640x480", size.toString(), "toString");
+        Check.equal(size, Size.parseSize("640x480"), "parse x");
+        Check.equal(size, Size.parseSize("640*480"), "parse *");
+        Check.equal(new Size(640, 480).hashCode(), size.hashCode(), "hash");
+        Check.isTrue(!size.equals(new Size(480, 640)), "not equal when swapped");
+        Check.isTrue(new Size(480, 640).hashCode() != size.hashCode(), "swapped hash differs");
+        Check.throwsType(NumberFormatException.class, () -> Size.parseSize("640:480"), "bad separator");
     }
 }

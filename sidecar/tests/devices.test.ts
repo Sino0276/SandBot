@@ -244,7 +244,10 @@ function motorRobots(): Robot[] {
         }
       }
       part(objects, 'robot', [component])
-      expected.push([name, 'motorType', MOTOR_MODEL_TAGS[model]], [name, 'mode', 'RUN_USING_ENCODER'])
+      expected.push(
+        [name, 'motorType', MOTOR_MODEL_TAGS[model]],
+        [name, 'mode', 'RUN_USING_ENCODER']
+      )
     })
     robots.push({ className, objects, expected })
   }
@@ -287,7 +290,10 @@ function writeGenerated(dir: string): { testClass: string; methods: string[] } {
       components.some((m) => m.type === 'motor' && m.hub === c.hub && m.port === c.port)
     const kinds = components
       .filter((component) => isInConfiguration(component) && !sharesMotor(component))
-      .map((component) => `kinds.put(${JSON.stringify(component.name)}, ${JSON.stringify(SIM_KIND[component.type as ComponentType])});`)
+      .map(
+        (component) =>
+          `kinds.put(${JSON.stringify(component.name)}, ${JSON.stringify(SIM_KIND[component.type as ComponentType])});`
+      )
     const method = `test${robot.className}`
     methods.push(method)
     lines.push(
