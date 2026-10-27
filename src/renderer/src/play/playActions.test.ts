@@ -24,6 +24,7 @@ import {
   refreshOpModes,
   resetPlayActionsState,
   selectOpMode,
+  setPlaySpeed,
   stepPlay,
   stopPlay,
   togglePause
@@ -353,6 +354,42 @@ describe('일시 정지·한 단계', () => {
     expect(commands).toEqual([])
     await initPlay()
     expect(commands).toEqual([{ type: 'pause', paused: true }])
+  })
+
+  it('응답 전에 메인이 보낸 처음 status(일시 정지 아님)가 켜 둔 일시 정지를 지우지 않는다', async () => {
+    togglePause()
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    handlePlayEvent(
+      event({
+        type: 'status',
+        tNanos: 0,
+        paused: false,
+        speed: 1,
+        realtime: 0,
+        startedNanos: null
+      })
+    )
+    expect(usePlayStore.getState().paused).toBe(true)
+    pending.resolve({ ok: true })
+    await settle()
+    expect(commands).toEqual([{ type: 'pause', paused: true }])
+  })
+
+  it('응답을 기다리는 동안 바꾼 속도는 받은 뒤 보낸다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    expect(lastRequest().settings.speed).toBe(1)
+    setPlaySpeed(4)
+    expect(commands).toEqual([])
+    expect(usePlayStore.getState().run!.status.speed).toBe(4)
+    pending.resolve({ ok: true })
+    await settle()
+    expect(commands).toEqual([{ type: 'speed', speed: 4 }])
   })
 
   it('한 단계는 일시 정지 중에만 보낸다', async () => {

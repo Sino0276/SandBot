@@ -156,9 +156,17 @@ export async function initPlay(): Promise<void> {
 }
 
 async function runInit(): Promise<void> {
-  // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음)
-  if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement)
-    document.activeElement.blur()
+  // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음). 입력칸이 아니면 포커스를 그대로 둔다
+  // (Console 목록 등에서 Ctrl+P를 눌러도 포커스가 <body>로 떨어져 다음 Delete·F가 씬에 가지 않게).
+  if (typeof document !== 'undefined') {
+    const active = document.activeElement
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      (active instanceof HTMLElement && active.isContentEditable)
+    )
+      active.blur()
+  }
   if (currentInitBlock()) return
   if (useProjectStore.getState().dirty) {
     const answer = await showDialog({
@@ -233,6 +241,9 @@ async function runInit(): Promise<void> {
   }
   // Unity처럼 일시 정지를 켜 둔 채 시작하면 init에서 바로 멈춘다
   if (usePlayStore.getState().paused) command({ type: 'pause', paused: true })
+  // 응답을 기다리는 동안 바꾼 속도
+  const { speed } = usePlayStore.getState().settings
+  if (speed !== play.settings.speed) command({ type: 'speed', speed })
   if (isRunActive(usePlayStore.getState().run)) startGamepads()
 }
 
@@ -283,10 +294,9 @@ export function togglePause(): void {
   const { run, paused } = usePlayStore.getState()
   const next = !paused
   usePlayStore.setState({ paused: next })
-  if (isRunActive(run) && run.accepted) {
-    updateRun(run.runId, (current) => ({ status: { ...current.status, paused: next } }))
-    command({ type: 'pause', paused: next })
-  }
+  if (!isRunActive(run)) return
+  updateRun(run.runId, (current) => ({ status: { ...current.status, paused: next } }))
+  if (run.accepted) command({ type: 'pause', paused: next })
 }
 
 export function canStep(data: Pick<PlayData, 'run' | 'paused'>): boolean {
@@ -305,13 +315,13 @@ export function stepPlay(): void {
   if (canStep(usePlayStore.getState())) command({ type: 'step' })
 }
 
+// playInit 응답 전이면 받은 뒤 보낸다(runInit)
 export function setPlaySpeed(speed: PlaySpeed): void {
   usePlayStore.getState().updateSettings({ speed })
   const { run } = usePlayStore.getState()
-  if (isRunActive(run) && run.accepted) {
-    updateRun(run.runId, (current) => ({ status: { ...current.status, speed } }))
-    command({ type: 'speed', speed })
-  }
+  if (!isRunActive(run)) return
+  updateRun(run.runId, (current) => ({ status: { ...current.status, speed } }))
+  if (run.accepted) command({ type: 'speed', speed })
 }
 
 // ---- 게임패드 ----

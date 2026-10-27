@@ -228,12 +228,8 @@ function ConsoleView(): React.JSX.Element {
   return (
     <div className="console">
       <div className="console-toolbar">
-        <button
-          type="button"
-          className="panel-button"
-          disabled={entries.length === 0}
-          onClick={clearConsole}
-        >
+        {/* Unity처럼 늘 누를 수 있다(눌러서 꺼지면 포커스가 <body>로 떨어진다) */}
+        <button type="button" className="panel-button" onClick={clearConsole}>
           {t('console.clear')}
         </button>
         <label className="console-check" title={t('console.clearOnPlayHint')}>
