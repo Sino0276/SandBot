@@ -630,8 +630,14 @@ const ko = {
       loadFailed: 'OpMode나 로봇 구성을 불러오지 못함',
       stuck: 'STOP 뒤 끝나지 않아 포기함',
       shutdown: '정리하며 끝냄',
-      killed: 'JVM을 강제로 끝냄 (응답 없음 또는 정지 시간 초과)',
+      killed: 'JVM을 강제로 끝냄',
       crashed: '실행기가 비정상 종료됨'
+    },
+    // finished killed의 detail(메인이 JVM을 끝낸 이유)
+    killedDetail: {
+      stopTimeout: 'STOP 뒤 5초 안에 끝나지 않아 JVM을 끝냈습니다.',
+      stalled: '응답하지 않는(무한 루프일 수 있는) OpMode를 STOP해 JVM을 바로 끝냈습니다.',
+      shutdownTimeout: '정리하는 동안 끝나지 않아 JVM을 끝냈습니다.'
     },
     gamepad: {
       disconnected: '게임패드 {{slot}}: 연결 안 됨',
@@ -671,7 +677,7 @@ const ko = {
     runStartedNoConfig:
       '{{name}} INIT · 하드웨어가 있는 로봇이 없어 장치 없는 hardwareMap으로 실행합니다',
     finished: 'OpMode 끝: {{reason}}',
-    exception: '예외',
+    exception: '예외 클래스',
     thread: '스레드',
     code: '진단 코드',
     // 실행 흐름이 남기는 안내

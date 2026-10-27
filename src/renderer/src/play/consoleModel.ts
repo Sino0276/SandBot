@@ -115,9 +115,9 @@ export function frameText(frame: PlayStackFrame): string {
   return `at ${frame.className}.${frame.method}(${where})`
 }
 
-// javac·Unity처럼 file(line,column): message
+// javac·Unity처럼 file(line,column): message. 파일이 없는 진단(file '')은 위치가 없다.
 export function diagnosticLocation(diagnostic: PlayDiagnostic): string {
-  if (diagnostic.line <= 0) return diagnostic.file
+  if (diagnostic.file === '' || diagnostic.line <= 0) return diagnostic.file
   return diagnostic.column > 0
     ? `${diagnostic.file}(${diagnostic.line},${diagnostic.column})`
     : `${diagnostic.file}(${diagnostic.line})`
@@ -142,7 +142,9 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       return `${t(`play.errorKind.${entry.kind}`)}: ${entry.message}`
     case 'diagnostic': {
       const { diagnostic } = entry
-      return `${diagnosticLocation(diagnostic)}: ${t(`console.diagnosticKind.${diagnostic.kind}`)}: ${diagnostic.message}`
+      const location = diagnosticLocation(diagnostic)
+      const message = `${t(`console.diagnosticKind.${diagnostic.kind}`)}: ${diagnostic.message}`
+      return location ? `${location}: ${message}` : message
     }
     case 'compiled':
       return entry.ok
@@ -163,6 +165,16 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
   }
 }
 
+// 메인이 JVM을 끝낸 이유(finished killed의 detail, 기계용 키). 그 밖의 detail(crashed의 stderr 끝부분 등)은 그대로 보인다.
+export const KILLED_DETAILS = ['stopTimeout', 'stalled', 'shutdownTimeout'] as const
+type KilledDetail = (typeof KILLED_DETAILS)[number]
+
+export function finishDetail(reason: ConsoleFinishReason, detail: string, t: TFunction): string {
+  if (reason === 'killed' && (KILLED_DETAILS as readonly string[]).includes(detail))
+    return t(`play.killedDetail.${detail as KilledDetail}`)
+  return detail
+}
+
 // 고른 항목 아래에 보이는 전체 글자(검색도 이 글자로 한다). 스택 줄은 UI가 따로 그린다(팀 코드 줄은 누를 수 있게).
 export function entryDetailLines(entry: ConsoleEntry, t: TFunction): string[] {
   switch (entry.type) {
@@ -179,7 +191,9 @@ export function entryDetailLines(entry: ConsoleEntry, t: TFunction): string[] {
       return lines
     }
     case 'finished':
-      return entry.detail ? [entryHeadline(entry, t), entry.detail] : [entryHeadline(entry, t)]
+      return entry.detail
+        ? [entryHeadline(entry, t), finishDetail(entry.reason, entry.detail, t)]
+        : [entryHeadline(entry, t)]
     default:
       return [entryHeadline(entry, t)]
   }

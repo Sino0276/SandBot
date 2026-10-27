@@ -6,6 +6,7 @@ import {
   diagnosticLocation,
   entryDetailLines,
   entrySummary,
+  finishDetail,
   entryTarget,
   formatCount,
   frameText,
@@ -174,5 +175,40 @@ describe('외부 편집기로 열 곳', () => {
       null
     )
     expect(entryTarget(outside)).toBeNull()
+  })
+})
+
+describe('메인 이벤트의 모양(M)', () => {
+  it("파일 없는 진단(file '')은 위치 없이 보인다", () => {
+    const entry = consoleEntry(
+      {
+        type: 'diagnostic',
+        diagnostic: {
+          kind: 'warning',
+          path: null,
+          file: '',
+          line: 0,
+          column: 0,
+          message: '[options] bootstrap class path not set',
+          code: 'compiler.warn.source.no.bootclasspath'
+        }
+      },
+      null
+    )
+    expect(entrySummary(entry, t)).toBe('경고: [options] bootstrap class path not set')
+  })
+
+  it('killed의 detail(기계용 키)은 번역하고, crashed의 detail은 그대로', () => {
+    expect(finishDetail('killed', 'stalled', t)).toBe(ko.play.killedDetail.stalled)
+    expect(finishDetail('killed', 'stopTimeout', t)).toBe(ko.play.killedDetail.stopTimeout)
+    expect(finishDetail('crashed', 'Exception in thread "main"', t)).toBe(
+      'Exception in thread "main"'
+    )
+    const entry = consoleEntry({ type: 'finished', reason: 'killed', detail: 'shutdownTimeout' }, 0)
+    expect(entryDetailLines(entry, t)).toEqual([
+      `OpMode 끝: ${ko.play.finishReason.killed}`,
+      ko.play.killedDetail.shutdownTimeout
+    ])
+    expect(entry.level).toBe('warning')
   })
 })

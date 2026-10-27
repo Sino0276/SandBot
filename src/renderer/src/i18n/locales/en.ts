@@ -618,8 +618,15 @@ const en: Messages = {
       loadFailed: 'Could not load the OpMode or the robot configuration',
       stuck: 'Gave up: did not finish after STOP',
       shutdown: 'Shut down',
-      killed: 'The JVM was killed (not responding or stop timeout)',
+      killed: 'The JVM was killed',
       crashed: 'The runner exited unexpectedly'
+    },
+    // detail of finished killed (why the main process ended the JVM)
+    killedDetail: {
+      stopTimeout: 'The JVM was ended because it did not finish within 5 seconds after STOP.',
+      stalled:
+        'STOP was pressed on an OpMode that was not responding (possibly an infinite loop), so the JVM was ended right away.',
+      shutdownTimeout: 'The JVM was ended because it did not finish while shutting down.'
     },
     gamepad: {
       disconnected: 'Gamepad {{slot}}: not connected',
@@ -659,7 +666,7 @@ const en: Messages = {
     runStarted: '{{name}} INIT · robot configuration {{config}}',
     runStartedNoConfig: '{{name}} INIT · no robot has hardware, running with an empty hardwareMap',
     finished: 'OpMode finished: {{reason}}',
-    exception: 'Exception',
+    exception: 'Exception class',
     thread: 'Thread',
     code: 'Diagnostic code',
     // Notes left by the run flow
