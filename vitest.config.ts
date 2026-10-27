@@ -9,7 +9,9 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['src/**/*.test.{ts,tsx}'],
+    // sidecar/**: 사이드카(JVM) 빌드·실행 테스트. JDK가 없으면 건너뛴다(sidecar/tests/support.ts).
+    include: ['src/**/*.test.{ts,tsx}', 'sidecar/**/*.test.ts'],
+    exclude: ['**/node_modules/**', 'sidecar/build/**'],
     passWithNoTests: true
   }
 })
