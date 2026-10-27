@@ -1,0 +1,441 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  ListOpModesResult,
+  OpModeInfo,
+  PlayCommand,
+  PlayEvent,
+  PlayInitRequest,
+  PlayInitResult
+} from '../../../shared/play'
+import { useDialogStore, usePreferencesStore } from '../editor/dialogStore'
+import { useEditorStore } from '../editor/editorStore'
+import { runNoticeAction, useNoticeStore } from '../editor/noticeStore'
+import { propertyDefaults } from '../hardware/catalog'
+import { saveProject } from '../project/projectActions'
+import { useProjectStore } from '../project/projectStore'
+import type { SceneObject, SceneObjects } from '../scene/model'
+import { useSceneStore } from '../scene/sceneStore'
+import {
+  handlePlayEvent,
+  initBlock,
+  initPlay,
+  initPlaySession,
+  playButton,
+  refreshOpModes,
+  resetPlayActionsState,
+  selectOpMode,
+  stepPlay,
+  stopPlay,
+  togglePause
+} from './playActions'
+import { EMPTY_OPMODE_LIST, initialPlayData, usePlayStore } from './playStore'
+
+// 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
+vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
+
+const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
+
+function opMode(name: string, flavor: OpModeInfo['flavor'], preselectTeleOp = ''): OpModeInfo {
+  return {
+    className: `org.firstinspires.ftc.teamcode.${name}`,
+    path: `${P}${name}.java`,
+    line: 5,
+    flavor,
+    name,
+    group: '',
+    preselectTeleOp
+  }
+}
+
+const DRIVE = opMode('Drive', 'TeleOp')
+const AUTO = opMode('RedAuto', 'Autonomous', 'Drive')
+const LIST: ListOpModesResult = {
+  ok: true,
+  opModes: [AUTO, DRIVE],
+  truncated: false,
+  hasTeamCode: true
+}
+
+const T0 = { position: [0, 0, 0], rotation: [0, 0, 0] } as SceneObject['transform']
+const SCENE: SceneObjects = {
+  bot: {
+    id: 'bot',
+    name: 'Bot',
+    kind: 'robot',
+    parentId: null,
+    transform: T0,
+    hardware: {
+      className: 'RobotHardware',
+      configName: 'Bot',
+      expansionHub: { enabled: false, address: 2 }
+    }
+  },
+  arm: {
+    id: 'arm',
+    name: 'Arm',
+    kind: 'part',
+    parentId: 'bot',
+    transform: T0,
+    components: [
+      {
+        id: 'm',
+        type: 'motor',
+        name: 'arm',
+        hub: 'controlHub',
+        port: 0,
+        props: propertyDefaults('motor')
+      }
+    ]
+  }
+}
+
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+const commands: PlayCommand[] = []
+const gamepads: unknown[] = []
+const listeners = new Map<string, (() => void)[]>()
+let playEventListener: ((event: PlayEvent) => void) | null = null
+let initResult: () => Promise<PlayInitResult> = async () => ({ ok: true })
+let listResult: () => Promise<ListOpModesResult> = async () => LIST
+
+const api = {
+  listOpModes: vi.fn<(root: string) => Promise<ListOpModesResult>>(() => listResult()),
+  playInit: vi.fn<(request: PlayInitRequest) => Promise<PlayInitResult>>(() => initResult()),
+  playCommand: (command: PlayCommand) => void commands.push(command),
+  playGamepads: (pair: unknown) => void gamepads.push(pair),
+  onPlayEvent: (callback: (event: PlayEvent) => void) => {
+    playEventListener = callback
+    return () => {}
+  }
+}
+
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+const lastRequest = (): PlayInitRequest => api.playInit.mock.calls.at(-1)![0]
+const runId = (): string => usePlayStore.getState().run!.runId
+// 지금 실행의 이벤트(runId를 채운다)
+type WithoutRunId<E> = E extends PlayEvent ? Omit<E, 'runId'> : never
+const event = (patch: WithoutRunId<PlayEvent>): PlayEvent =>
+  ({ runId: runId(), ...patch }) as PlayEvent
+
+beforeAll(() => {
+  vi.stubGlobal('window', {
+    api,
+    addEventListener: (type: string, listener: () => void) =>
+      listeners.set(type, [...(listeners.get(type) ?? []), listener])
+  })
+  useProjectStore.setState({ root: null })
+  initPlaySession()
+})
+
+beforeEach(async () => {
+  commands.length = 0
+  gamepads.length = 0
+  initResult = async () => ({ ok: true })
+  listResult = async () => LIST
+  api.playInit.mockClear()
+  api.listOpModes.mockClear()
+  vi.mocked(saveProject).mockClear()
+  vi.mocked(saveProject).mockImplementation(async () => true)
+  resetPlayActionsState()
+  usePlayStore.setState({ ...initialPlayData() })
+  useNoticeStore.setState({ notices: [] })
+  useDialogStore.setState({ request: null })
+  usePreferencesStore.setState({ open: false, target: null })
+  useSceneStore.setState({ objects: SCENE })
+  useEditorStore.getState().select(null)
+  useProjectStore.setState({ root: '/p', busy: false, dirty: false, generation: null })
+  await settle()
+  await refreshOpModes()
+  selectOpMode(DRIVE.className)
+})
+
+afterEach(() => {
+  resetPlayActionsState()
+})
+
+describe('INIT → START → STOP', () => {
+  it('한 버튼으로 INIT, init에서 START, running에서 STOP을 보낸다', async () => {
+    playButton()
+    await settle()
+    expect(api.playInit).toHaveBeenCalledTimes(1)
+    const request = lastRequest()
+    expect(request).toMatchObject({
+      root: '/p',
+      opMode: { className: DRIVE.className, path: DRIVE.path, flavor: 'TeleOp' },
+      configPath: 'src/main/res/xml/sandbot_robot_hardware.xml',
+      settings: usePlayStore.getState().settings
+    })
+    expect(request.runId).toBe(runId())
+    expect(usePlayStore.getState().run!.accepted).toBe(true)
+    // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다
+    expect(gamepads).toEqual([[null, null]])
+
+    handlePlayEvent(event({ type: 'phase', phase: 'init' }))
+    playButton()
+    expect(commands).toEqual([{ type: 'start' }])
+    // running이 오기 전에 다시 누르면 STOP
+    handlePlayEvent(event({ type: 'phase', phase: 'running' }))
+    playButton()
+    expect(commands).toEqual([{ type: 'start' }, { type: 'stop' }])
+    // STOP을 보낸 뒤에는 다시 보내지 않는다
+    playButton()
+    expect(commands).toHaveLength(2)
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().run!.phase).toBe('finished')
+    // 끝난 뒤 누르면 다시 INIT
+    playButton()
+    await settle()
+    expect(api.playInit).toHaveBeenCalledTimes(2)
+  })
+
+  it('INIT 중의 작은 ■(START하지 않고 STOP)', async () => {
+    await initPlay()
+    handlePlayEvent(event({ type: 'phase', phase: 'init' }))
+    stopPlay()
+    expect(commands).toEqual([{ type: 'stop' }])
+  })
+
+  it('playInit 응답 전의 STOP은 받은 뒤 보낸다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    stopPlay()
+    expect(commands).toEqual([])
+    pending.resolve({ ok: true })
+    await settle()
+    expect(commands).toEqual([{ type: 'stop' }])
+  })
+
+  it('다른 실행의 이벤트는 버린다', async () => {
+    await initPlay()
+    const before = usePlayStore.getState().run
+    handlePlayEvent({ type: 'phase', runId: 'other', phase: 'running' })
+    handlePlayEvent({
+      type: 'log',
+      runId: 'other',
+      entries: [{ tNanos: 0, stream: 'out', text: 'x' }]
+    })
+    expect(usePlayStore.getState().run).toBe(before)
+    expect(usePlayStore.getState().entries.some((entry) => entry.type === 'log')).toBe(false)
+  })
+
+  it('실행할 때 지우기를 켜 두면 Console을 지우고 실행 줄을 남긴다', async () => {
+    usePlayStore.getState().addConsole({ type: 'log', stream: 'out', text: 'old' })
+    await initPlay()
+    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run'])
+    usePlayStore.getState().setClearOnPlay(false)
+    usePlayStore.setState({ run: null })
+    await initPlay()
+    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run', 'run'])
+  })
+
+  it('마지막 저장의 생성이 막혔으면 Console에 경고 한 줄', async () => {
+    useProjectStore.setState({ generation: { status: 'blocked', errors: 3 } })
+    await initPlay()
+    const entries = usePlayStore.getState().entries
+    expect(entries.at(-1)).toMatchObject({
+      type: 'notice',
+      key: 'generationBlocked',
+      level: 'warning'
+    })
+  })
+})
+
+describe('INIT 전 저장', () => {
+  it('저장하지 않은 변경이 있으면 묻고, 취소하면 실행하지 않는다', async () => {
+    useProjectStore.setState({ dirty: true })
+    const run = initPlay()
+    await settle()
+    expect(useDialogStore.getState().request?.buttons.map((button) => button.id)).toEqual([
+      'save',
+      'cancel'
+    ])
+    useDialogStore.getState().answer('cancel')
+    await run
+    expect(saveProject).not.toHaveBeenCalled()
+    expect(api.playInit).not.toHaveBeenCalled()
+  })
+
+  it('저장하고 실행: 저장이 실패하면 멈추고, 성공하면 실행한다', async () => {
+    useProjectStore.setState({ dirty: true })
+    vi.mocked(saveProject).mockImplementation(async () => false)
+    let run = initPlay()
+    await settle()
+    useDialogStore.getState().answer('save')
+    await run
+    expect(saveProject).toHaveBeenCalledTimes(1)
+    expect(api.playInit).not.toHaveBeenCalled()
+
+    vi.mocked(saveProject).mockImplementation(async () => {
+      useProjectStore.setState({ dirty: false })
+      return true
+    })
+    run = initPlay()
+    await settle()
+    useDialogStore.getState().answer('save')
+    await run
+    expect(api.playInit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('INIT을 막는 이유', () => {
+  it('프로젝트 없음, TeamCode 없음, OpMode 없음, 바쁨, 실행 중', () => {
+    const play = usePlayStore.getState()
+    expect(initBlock({ root: '/p', busy: false }, play)).toBeNull()
+    expect(initBlock({ root: null, busy: false }, play)).toBe('noProject')
+    expect(initBlock({ root: '/p', busy: true }, play)).toBe('busy')
+    expect(initBlock({ root: '/q', busy: false }, play)).toBe('noOpMode')
+    expect(initBlock({ root: '/p', busy: false }, { ...play, selectedClass: 'gone' })).toBe(
+      'noOpMode'
+    )
+    expect(
+      initBlock(
+        { root: '/p', busy: false },
+        { ...play, opModeList: { ...play.opModeList, hasTeamCode: false, opModes: [] } }
+      )
+    ).toBe('noTeamCode')
+  })
+})
+
+describe('playInit 실패', () => {
+  it('JDK가 없으면 실행을 지우고, 환경 설정 JDK 칸을 여는 버튼이 있는 알림을 띄운다', async () => {
+    initResult = async () => ({ ok: false, code: 'noJdk', detail: '' })
+    await initPlay()
+    expect(usePlayStore.getState().run).toBeNull()
+    const notice = useNoticeStore.getState().notices.at(-1)!
+    expect(notice).toMatchObject({ level: 'error', key: 'playNoJdk', action: 'openJdkPreferences' })
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'initFailed',
+      notice: 'playNoJdk'
+    })
+    runNoticeAction(notice.id)
+    expect(usePreferencesStore.getState()).toEqual({ open: true, target: 'jdk' })
+    expect(useNoticeStore.getState().notices).toEqual([])
+  })
+
+  it('다시 실패하면 이전 알림을 바꾸고, missing이면 목록을 다시 읽는다', async () => {
+    initResult = async () => ({ ok: false, code: 'noSidecar', detail: 'no sidecar.json' })
+    await initPlay()
+    initResult = async () => ({ ok: false, code: 'missing', detail: 'gone' })
+    api.listOpModes.mockClear()
+    await initPlay()
+    expect(useNoticeStore.getState().notices.map((notice) => notice.key)).toEqual(['playMissing'])
+    expect(api.listOpModes).toHaveBeenCalled()
+  })
+
+  it('IPC가 던지면(메인 처리기 없음) 실행을 지우고 알린다', async () => {
+    initResult = async () => {
+      throw new Error("Error invoking remote method 'play:init': Error: No handler registered")
+    }
+    await initPlay()
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(useNoticeStore.getState().notices.at(-1)).toMatchObject({
+      key: 'playInitFailed',
+      params: { detail: 'No handler registered' }
+    })
+  })
+})
+
+describe('일시 정지·한 단계', () => {
+  it('실행 전에 켜 둔 일시 정지는 INIT을 받은 뒤 보낸다', async () => {
+    togglePause()
+    expect(commands).toEqual([])
+    await initPlay()
+    expect(commands).toEqual([{ type: 'pause', paused: true }])
+  })
+
+  it('한 단계는 일시 정지 중에만 보낸다', async () => {
+    await initPlay()
+    handlePlayEvent(event({ type: 'phase', phase: 'running' }))
+    stepPlay()
+    expect(commands).toEqual([])
+    togglePause()
+    stepPlay()
+    expect(commands).toEqual([{ type: 'pause', paused: true }, { type: 'step' }])
+  })
+})
+
+describe('끝난 뒤와 프로젝트 바꾸기', () => {
+  it('Autonomous가 끝나면 preselectTeleOp의 TeleOp을 고른다', async () => {
+    selectOpMode(AUTO.className)
+    await initPlay()
+    handlePlayEvent(
+      event({
+        type: 'finished',
+        tNanos: 30_000_000_000,
+        reason: 'stopped',
+        detail: '',
+        preselectTeleOp: 'Drive'
+      })
+    )
+    expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
+  })
+
+  it('다른 프로젝트를 열면 지금 실행에 STOP을 보내고 그 프로젝트의 목록을 읽는다', async () => {
+    await initPlay()
+    api.listOpModes.mockClear()
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    expect(commands).toEqual([{ type: 'stop' }])
+    expect(usePlayStore.getState().selectedClass).toBeNull()
+    await settle()
+    expect(api.listOpModes).toHaveBeenCalledWith('/other')
+  })
+
+  it('창을 닫거나 새로 고치면 STOP', async () => {
+    await initPlay()
+    for (const listener of listeners.get('beforeunload') ?? []) listener()
+    expect(commands).toEqual([{ type: 'stop' }])
+  })
+
+  it('PlayEvent 구독은 메인 이벤트를 스토어에 넣는다', async () => {
+    await initPlay()
+    playEventListener!(event({ type: 'phase', phase: 'compiling' }))
+    expect(usePlayStore.getState().run!.phase).toBe('compiling')
+  })
+})
+
+describe('OpMode 목록 읽기', () => {
+  it('늦게 온 이전 결과는 버리고, 실패하면 같은 프로젝트의 이전 목록을 둔다', async () => {
+    const slow = deferred<ListOpModesResult>()
+    listResult = () => slow.promise
+    const first = refreshOpModes()
+    listResult = async () => ({ ...LIST, opModes: [DRIVE] })
+    await refreshOpModes()
+    slow.resolve(LIST)
+    await first
+    expect(usePlayStore.getState().opModeList.opModes).toEqual([DRIVE])
+
+    listResult = async () => ({ ok: false, code: 'notAllowed', detail: 'nope' })
+    await refreshOpModes()
+    expect(usePlayStore.getState().opModeList).toMatchObject({
+      status: 'failed',
+      detail: 'nope',
+      opModes: [DRIVE]
+    })
+  })
+
+  it('정렬해서 두고(TeleOp 먼저), 프로젝트가 없으면 비운다', async () => {
+    await refreshOpModes()
+    expect(usePlayStore.getState().opModeList.opModes).toEqual([DRIVE, AUTO])
+    useProjectStore.setState({ root: null })
+    await refreshOpModes()
+    expect(usePlayStore.getState().opModeList).toEqual(EMPTY_OPMODE_LIST)
+  })
+
+  it('실행 중에는 OpMode를 바꾸지 않는다', async () => {
+    await initPlay()
+    selectOpMode(AUTO.className)
+    expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
+  })
+})

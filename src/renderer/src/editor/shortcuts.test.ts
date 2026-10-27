@@ -144,6 +144,62 @@ describe('하이어라키 보강 단축키', () => {
   })
 })
 
+describe('실행 단축키(Unity Play·Pause·Step)', () => {
+  it('Ctrl+P 실행, Ctrl+Shift+P 일시 정지, Ctrl+Alt+P 한 단계(Cmd도 같다)', () => {
+    expect(command(key('KeyP', { ctrlKey: true }))).toBe('play')
+    expect(command(key('KeyP', { metaKey: true }))).toBe('play')
+    expect(command(key('KeyP', { ctrlKey: true, shiftKey: true }))).toBe('pause')
+    expect(command(key('KeyP', { ctrlKey: true, altKey: true }))).toBe('step')
+    // 한글 입력 상태에서도 키 위치로
+    expect(command(key('KeyP', { key: 'ㅔ', ctrlKey: true }))).toBe('play')
+    // Ctrl 없는 P나 Ctrl+Alt+Shift+P는 아니다(기본 동작만 막는다)
+    expect(command(key('KeyP'))).toBeNull()
+    expect(
+      shortcutCommand(key('KeyP', { ctrlKey: true, altKey: true, shiftKey: true }), IDLE)
+    ).toEqual({ command: null, preventDefault: true })
+  })
+
+  it('입력칸·인스펙터·Console 안에서도 받고, 대화상자·메뉴·비행 중에는 받지 않는다', () => {
+    const play = key('KeyP', { ctrlKey: true })
+    expect(command(play, { handlesOwnKeys: true })).toBe('play')
+    expect(command(play, { pendingTextEdit: true, handlesOwnKeys: true })).toBe('play')
+    expect(command(key('KeyP', { ctrlKey: true, shiftKey: true }), { handlesOwnKeys: true })).toBe(
+      'pause'
+    )
+    expect(shortcutCommand(play, { ...IDLE, blocked: true })).toEqual({
+      command: null,
+      preventDefault: false
+    })
+  })
+
+  it('누르고 있으면 실행·일시 정지는 한 번만, 한 단계는 반복한다. 핸들 드래그 중에는 INIT하지 않는다', () => {
+    expect(shortcutCommand(key('KeyP', { ctrlKey: true, repeat: true }), IDLE)).toEqual({
+      command: null,
+      preventDefault: true
+    })
+    expect(command(key('KeyP', { ctrlKey: true, shiftKey: true, repeat: true }))).toBeNull()
+    expect(command(key('KeyP', { ctrlKey: true, altKey: true, repeat: true }))).toBe('step')
+    expect(shortcutCommand(key('KeyP', { ctrlKey: true }), { ...IDLE, dragging: true })).toEqual({
+      command: null,
+      preventDefault: true
+    })
+    expect(command(key('KeyP', { ctrlKey: true, shiftKey: true }), { dragging: true })).toBe(
+      'pause'
+    )
+  })
+
+  it('툴팁·aria 표기', () => {
+    expect(shortcutLabel('play', false)).toBe('Ctrl+P')
+    expect(shortcutLabel('pause', false)).toBe('Ctrl+Shift+P')
+    expect(shortcutLabel('step', false)).toBe('Ctrl+Alt+P')
+    expect(shortcutLabel('play', true)).toBe('⌘P')
+    expect(shortcutLabel('pause', true)).toBe('⇧⌘P')
+    expect(shortcutLabel('step', true)).toBe('⌥⌘P')
+    expect(ariaKeyShortcut('step', false)).toBe('Control+Alt+P')
+    expect(ariaKeyShortcut('pause', true)).toBe('Meta+Shift+P')
+  })
+})
+
 describe('단축키 표시', () => {
   it('Windows·Linux와 macOS 표기', () => {
     expect(shortcutLabel('createEmpty', false)).toBe('Ctrl+Shift+N')
