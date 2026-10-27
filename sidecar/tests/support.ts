@@ -7,8 +7,16 @@
 //
 // 환경 변수 SANDBOT_SIDECAR_LENIENT=1이면 --allow-missing으로 빌드한다(손 구현·runtime이 아직 없는 작업 폴더에서 개발할 때).
 // 그 빌드는 반드시 있어야 할 클래스가 stub이고 들여온 클래스를 패치하지 않았을 수 있다(sidecar.json의 incomplete).
-import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync
+} from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,7 +36,8 @@ export const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url))
 const buildDir = join(repoRoot, 'sidecar', 'build')
 const testingSources = join(repoRoot, 'sidecar', 'tests', 'java', 'org', 'sandbot', 'testing')
 
-type ProcessResult = { code: number; output: string; stdout: string }
+/** 명령 실행 결과. output은 stdout+stderr(받은 순서), JAVA_TOOL_OPTIONS 안내 줄은 뺀다. */
+export type ProcessResult = { code: number; output: string; stdout: string }
 
 // JVM의 JAVA_TOOL_OPTIONS 안내 줄은 버린다
 function cleanOutput(text: string): string {
@@ -38,7 +47,7 @@ function cleanOutput(text: string): string {
     .join('\n')
 }
 
-function runProcess(
+export function runProcess(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv = process.env
@@ -80,6 +89,45 @@ function sidecarInfo(): Promise<{ sourceHash: string; jdk: JdkInfo | null }> {
   })
 }
 
+let jdkFound: boolean | undefined
+
+/** 빌드할 JDK가 있는가(동기, describe.skipIf에 쓴다). 규칙은 빌드 스크립트와 같다(scripts/sidecar-source.mjs). */
+export function hasJdk(): boolean {
+  if (jdkFound === undefined) {
+    const stdout = execFileSync(
+      process.execPath,
+      [join(repoRoot, 'scripts', 'sidecar-source.mjs'), '--json'],
+      { cwd: repoRoot }
+    ).toString('utf8')
+    jdkFound = JSON.parse(stdout).jdk !== null
+  }
+  return jdkFound
+}
+
+/** SANDBOT_SIDECAR_LENIENT=1(--allow-missing 빌드)인가 */
+export const lenientBuild = process.env.SANDBOT_SIDECAR_LENIENT === '1'
+
+/**
+ * 빌드 보고(scripts/build-sidecar.mjs --report): counts(손 구현·들여옴·stub 수), mustProvide(이름 → hand·lifted·stub·
+ * missing), hand·lifted(최상위 이름), stubs(최상위 → 들여오지 못한 이유), topBlockers, incomplete, warnings.
+ */
+export type SidecarReport = {
+  ok: boolean
+  counts: Record<string, number>
+  mustProvide: Record<string, string>
+  hand: string[]
+  lifted: string[]
+  stubs: Record<string, string>
+  missingTypes: string[]
+  topBlockers: { name: string; kind: string; unlocks: number; liftedAfter: number; reason?: string }[]
+  incomplete: string[]
+  warnings: string[]
+}
+
+export function sidecarReport(build: SidecarBuild): SidecarReport {
+  return JSON.parse(readFileSync(join(build.dir, 'build-report.json'), 'utf8'))
+}
+
 function tail(text: string, lines = 80): string {
   return text.trimEnd().split('\n').slice(-lines).join('\n')
 }
@@ -118,7 +166,7 @@ export function sidecarBuild(): Promise<SidecarBuild | null> {
 async function buildOnce(): Promise<SidecarBuild | null> {
   const { sourceHash, jdk } = await sidecarInfo()
   if (!jdk) return null
-  const lenient = process.env.SANDBOT_SIDECAR_LENIENT === '1'
+  const lenient = lenientBuild
   const outRoot = join(buildDir, 'test-out')
   const dir = join(outRoot, `${sourceHash.slice(0, 16)}${lenient ? '-lenient' : ''}`)
   removeOldOutputs(outRoot, dir)
