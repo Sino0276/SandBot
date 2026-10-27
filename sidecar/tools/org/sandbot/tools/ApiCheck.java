@@ -78,7 +78,8 @@ final class ApiCheck {
                 }
             } else {
                 String simple = nest.substring(nest.lastIndexOf('/') + 1);
-                if (nest.startsWith("android/")) {
+                // org.json도 Android 플랫폼 API다(Maven의 android.jar에는 없다)
+                if (nest.startsWith("android/") || nest.startsWith("org/json/")) {
                     warnings.add(dotted(nest) + ": not in android.jar (API 16); its API cannot be checked");
                 } else if (!simple.startsWith("Sandbot")) {
                     errors.add(dotted(nest) + ": not a class of the FTC SDK. Helper classes in SDK packages must be "

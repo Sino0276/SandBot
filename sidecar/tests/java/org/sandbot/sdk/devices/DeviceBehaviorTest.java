@@ -531,13 +531,36 @@ public final class DeviceBehaviorTest {
         limelight.updateRobotOrientation(90);
         Check.equal(90.0, bot.out("limelight", "robotYaw"), "robot yaw output");
         Check.isTrue(!limelight.isConnected(), "no results in phase 1");
-        Check.throwsType(SimUnsupportedException.class, limelight::getLatestResult, "results are unsupported");
+        // 실제 SDK처럼 응답 없는 카메라의 기본값(빈 JSON으로 만든 무효 결과, 기본 상태)
+        com.qualcomm.hardware.limelightvision.LLResult result = limelight.getLatestResult();
+        Check.isTrue(result != null && !result.isValid(), "latest result is an invalid default");
+        Check.isTrue(result == limelight.getLatestResult(), "latest result is cached");
+        Check.equal(0, result.getFiducialResults().size(), "no fiducials");
+        Check.isTrue(limelight.getStatus() != null, "default status");
+        Check.isTrue(limelight.getCalDefault() != null, "default calibration");
         SandbotHardware.afterStop(bot.map);
     }
 
     // ---------------------------------------------------------------------------------------------
     // 그 밖
     // ---------------------------------------------------------------------------------------------
+
+    public static void testOrgJsonRoundTrip() throws Exception {
+        org.json.JSONObject o = new org.json.JSONObject("{\"a\": 1, \"b\": [1.5, \"x\", true, null], \"c\": {\"d\": \"e\\n\"}}");
+        Check.equal(1, o.optInt("a"), "int");
+        Check.near(1.5, o.optJSONArray("b").optDouble(0), 0, "array double");
+        Check.equal("x", o.getJSONArray("b").getString(1), "array string");
+        Check.isTrue(o.getJSONArray("b").isNull(3), "array null");
+        Check.equal("e\n", o.getJSONObject("c").getString("d"), "nested string escape");
+        Check.isTrue(Double.isNaN(o.optDouble("missing")), "optDouble default NaN");
+        Check.equal("", o.optString("missing"), "optString default");
+        Check.isTrue(o.optJSONArray("a") == null, "optJSONArray on wrong type");
+        Check.throwsType(org.json.JSONException.class, () -> o.get("missing"), "get missing throws");
+        Check.throwsType(org.json.JSONException.class, () -> new org.json.JSONObject("{"), "bad json throws");
+        Check.throwsType(org.json.JSONException.class, () -> new org.json.JSONObject().put("n", Double.NaN), "NaN rejected");
+        Check.equal("[1,2.5,\"s\"]", new org.json.JSONArray(new double[] {1, 2.5}).put("s").toString(), "array toString");
+        Check.equal("{\"k\":\"v\"}", new org.json.JSONObject().put("k", "v").toString(), "object toString");
+    }
 
     public static void testUnnormalizedHeadingVelocity() {
         Bot bot = new Bot(null, I2C, null);

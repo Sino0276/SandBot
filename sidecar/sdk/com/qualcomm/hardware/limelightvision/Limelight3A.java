@@ -31,7 +31,7 @@ TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 // SandBot: 실제 API는 그대로. 카메라의 HTTP 서버가 없으므로 요청을 보내는 메서드는 응답이 없는 카메라처럼 false를 돌려주고,
-// 결과·상태·보정 값을 만드는 메서드(LLResult·LLStatus·CalibrationResult, org.json 필요)는 SimUnsupportedException을 던진다.
+// 결과·상태·보정 값은 실제처럼 응답이 없을 때의 기본값이다(빈 JSON으로 만든 무효 LLResult, 기본 LLStatus·CalibrationResult).
 package com.qualcomm.hardware.limelightvision;
 
 import com.qualcomm.hardware.limelightvision.LLResultTypes.CalibrationResult;
@@ -40,7 +40,6 @@ import com.qualcomm.robotcore.util.SerialNumber;
 
 import org.sandbot.sim.Sim;
 import org.sandbot.sim.SimDevice;
-import org.sandbot.sim.SimUnsupportedException;
 
 import java.net.InetAddress;
 
@@ -75,11 +74,6 @@ public class Limelight3A implements HardwareDevice
         if (device == null) return;
         device.output("running", running);
         device.output("pollRateHz", (int) (1000 / pollIntervalMs));
-    }
-
-    private static SimUnsupportedException unsupported(String method)
-    {
-        return new SimUnsupportedException("com.qualcomm.hardware.limelightvision.Limelight3A#" + method);
     }
 
     public synchronized void start()
@@ -126,14 +120,17 @@ public class Limelight3A implements HardwareDevice
         return getTimeSinceLastUpdate() <= ISCONNECTED_THRESHOLD;
     }
 
+    private LLResult latestResult;
+
     public LLResult getLatestResult()
     {
-        throw unsupported("getLatestResult()");
+        if (latestResult == null) latestResult = LLResult.parse(new org.json.JSONObject());
+        return latestResult;
     }
 
     public LLStatus getStatus()
     {
-        throw unsupported("getStatus()");
+        return new LLStatus();
     }
 
     public boolean reloadPipeline()
@@ -197,22 +194,22 @@ public class Limelight3A implements HardwareDevice
 
     public CalibrationResult getCalDefault()
     {
-        throw unsupported("getCalDefault()");
+        return new CalibrationResult();
     }
 
     public CalibrationResult getCalFile()
     {
-        throw unsupported("getCalFile()");
+        return new CalibrationResult();
     }
 
     public CalibrationResult getCalEEPROM()
     {
-        throw unsupported("getCalEEPROM()");
+        return new CalibrationResult();
     }
 
     public CalibrationResult getCalLatest()
     {
-        throw unsupported("getCalLatest()");
+        return new CalibrationResult();
     }
 
     public void shutdown()
