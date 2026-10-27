@@ -6,6 +6,8 @@ import type {
   ExternalEditorState
 } from '../../../shared/ipc'
 import { ipcErrorDetail, resetLineSupport } from '../java/openScript'
+import JdkSection from '../play/ui/JdkSection'
+import SimulationPreferences from '../play/ui/SimulationPreferences'
 import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
 import {
   EXTERNAL_EDITOR_BROWSE,
@@ -192,16 +194,21 @@ function ExternalToolsPage(): React.JSX.Element {
           )}
         </>
       )}
+      {/* Unity External Tools의 JDK 칸처럼 실행(사이드카)에 쓸 JDK */}
+      <JdkSection />
     </section>
   )
 }
 
-const CATEGORIES = ['externalTools'] as const
+const CATEGORIES = ['externalTools', 'simulation'] as const
 type Category = (typeof CATEGORIES)[number]
 
 function PreferencesDialog(): React.JSX.Element {
   const { t } = useTranslation()
-  const [category, setCategory] = useState<Category>('externalTools')
+  // 연 곳이 정한 분류(실행할 JDK가 없다는 알림은 외부 도구의 JDK 칸을 연다)
+  const [category, setCategory] = useState<Category>(() =>
+    usePreferencesStore.getState().target === 'simulation' ? 'simulation' : 'externalTools'
+  )
   const dialogRef = useRef<HTMLDivElement>(null)
   // 연 곳(툴바 버튼). StrictMode가 effect를 다시 실행하면 그때는 포커스가 이미 창 안이므로 처음 값을 ref에 지킨다.
   const previousFocus = useRef<HTMLElement | null>(null)
@@ -213,11 +220,19 @@ function PreferencesDialog(): React.JSX.Element {
       previousFocus.current = active
     const focusable = (): HTMLElement[] =>
       Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
-    // 처음에는 고른 분류에 둔다
-    ;(
-      dialogRef.current?.querySelector<HTMLElement>('.preferences-category.is-active') ??
-      focusable()[0]
-    )?.focus()
+    // 처음에는 고른 분류에 둔다. JDK 칸을 열라고 했으면 그 칸으로 옮긴다.
+    const section =
+      usePreferencesStore.getState().target === 'jdk'
+        ? dialogRef.current?.querySelector<HTMLElement>('[data-preferences-section="jdk"]')
+        : null
+    if (section) {
+      section.scrollIntoView({ block: 'nearest' })
+      section.focus({ preventScroll: true })
+    } else
+      (
+        dialogRef.current?.querySelector<HTMLElement>('.preferences-category.is-active') ??
+        focusable()[0]
+      )?.focus()
     // 확인 대화상자(창 닫기 확인 등)가 위에 뜨면 키보드·포커스는 그 대화상자 몫이다
     const dialogOnTop = (): boolean => useDialogStore.getState().request !== null
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -313,6 +328,7 @@ function PreferencesDialog(): React.JSX.Element {
             ))}
           </nav>
           {category === 'externalTools' && <ExternalToolsPage />}
+          {category === 'simulation' && <SimulationPreferences />}
         </div>
         <div className="dialog-buttons">
           <button type="button" className="dialog-button" onClick={closePreferences}>

@@ -6,6 +6,8 @@ export type NoticeKey = keyof Messages['notice']
 export type NoticeLevel = 'progress' | 'warning' | 'error'
 // 진행 알림에 덧붙이는 단계(importPhase.*)
 export type ImportPhase = keyof Messages['importPhase']
+// 알림의 행동 버튼 문구(noticeAction.*, 예: 실행할 JDK가 없을 때 [JDK 설정 열기])
+export type NoticeActionKey = keyof Messages['noticeAction']
 
 export type Notice = {
   id: number
@@ -16,12 +18,17 @@ export type Notice = {
   startedAt?: number
   // [취소] 버튼을 보일지. 처리기는 스토어 밖(cancelHandlers)에 둔다(스토어에는 직렬화할 수 있는 값만).
   cancellable?: boolean
+  // 행동 버튼(처리기는 cancelHandlers처럼 스토어 밖 actionHandlers). 누르면 알림을 닫고 처리기를 부른다.
+  action?: NoticeActionKey
   phase?: ImportPhase
   // 단계 안의 진행률(0~1). 모르면 없다.
   fraction?: number
 }
 
-type ShowOptions = { onCancel?: () => void }
+type ShowOptions = {
+  onCancel?: () => void
+  action?: { label: NoticeActionKey; run: () => void }
+}
 
 type NoticeState = {
   notices: Notice[]
@@ -37,6 +44,7 @@ type NoticeState = {
 
 let nextId = 1
 const cancelHandlers = new Map<number, () => void>()
+const actionHandlers = new Map<number, () => void>()
 
 export const useNoticeStore = create<NoticeState>()((set) => ({
   notices: [],
@@ -47,6 +55,10 @@ export const useNoticeStore = create<NoticeState>()((set) => ({
     if (options.onCancel) {
       cancelHandlers.set(id, options.onCancel)
       notice.cancellable = true
+    }
+    if (options.action) {
+      actionHandlers.set(id, options.action.run)
+      notice.action = options.action.label
     }
     set((state) => ({ notices: [...state.notices, notice] }))
     return id
@@ -59,6 +71,7 @@ export const useNoticeStore = create<NoticeState>()((set) => ({
     })),
   dismiss: (id) => {
     cancelHandlers.delete(id)
+    actionHandlers.delete(id)
     set((state) => ({ notices: state.notices.filter((n) => n.id !== id) }))
   }
 }))
@@ -81,6 +94,13 @@ export function cancelNotice(id: number): void {
       notice.id === id ? { ...notice, cancellable: false } : notice
     )
   }))
+  handler?.()
+}
+
+// 알림의 행동 버튼. 알림을 닫고 처리기를 부른다.
+export function runNoticeAction(id: number): void {
+  const handler = actionHandlers.get(id)
+  dismissNotice(id)
   handler?.()
 }
 

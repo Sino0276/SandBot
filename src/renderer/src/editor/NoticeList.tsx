@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cancelNotice, formatElapsed, useNoticeStore } from './noticeStore'
+import { cancelNotice, formatElapsed, runNoticeAction, useNoticeStore } from './noticeStore'
 
 // 진행 알림의 경과 시간(1초마다 갱신)
 function Elapsed({ startedAt }: { startedAt: number }): React.JSX.Element {
@@ -39,6 +39,15 @@ function NoticeList(): React.JSX.Element | null {
               onClick={() => cancelNotice(notice.id)}
             >
               {t('common.cancel')}
+            </button>
+          )}
+          {notice.action && (
+            <button
+              type="button"
+              className="status-dismiss"
+              onClick={() => runNoticeAction(notice.id)}
+            >
+              {t(`noticeAction.${notice.action}`)}
             </button>
           )}
           {notice.level !== 'progress' && (

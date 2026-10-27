@@ -42,11 +42,15 @@ body {
   height: 100%;
 }
 
+/* 왼쪽(프로젝트·저장) · 가운데(실행, Unity의 Play 버튼 자리) · 오른쪽(환경 설정·단위·언어).
+   양쪽은 내용보다 좁아지지 않고(겹치지 않게) 가운데가 남은 자리를 쓴다. 좁으면 OpMode 이름이 먼저 줄고,
+   그래도 모자라면 가운데를 자른다. 좁은 창에서는 제목·프로젝트 이름(창 제목에 있음)을 숨긴다. */
 .toolbar {
-  display: flex;
+  display: grid;
   flex: none;
+  grid-template-columns: minmax(auto, 1fr) minmax(0, auto) minmax(auto, 1fr);
+  gap: 12px;
   align-items: center;
-  justify-content: space-between;
   height: 32px;
   padding: 0 8px;
   background: var(--color-panel-header);
@@ -120,6 +124,12 @@ body {
   width: 4px;
   background: var(--color-border);
   outline: none;
+}
+
+/* 세로 Group(씬 뷰와 아래 패널, Console 목록과 내용)의 가로 막대 */
+.panel-separator--row {
+  width: auto;
+  height: 4px;
 }
 
 .panel-separator[data-separator='hover'],
@@ -1776,4 +1786,697 @@ button.usage-header:hover {
   border-radius: 4px;
   font-size: 12px;
   transform: translateX(-50%);
+}
+
+/* 실행(사이드카 1단계): 툴바 가운데의 OpMode 선택·INIT/START/STOP·일시 정지·한 단계·속도·가상 시간 */
+.toolbar > .toolbar-group:not(.toolbar-play) {
+  min-width: auto;
+}
+
+.toolbar-project {
+  max-width: 16em;
+}
+
+/* 한글은 글자마다 줄을 바꿀 수 있어 좁으면 버튼 글자가 두 줄이 된다 */
+.toolbar .panel-button {
+  white-space: nowrap;
+}
+
+.toolbar-group--end {
+  justify-content: flex-end;
+}
+
+.toolbar-play {
+  gap: 6px;
+  overflow: hidden;
+}
+
+.toolbar-play > * {
+  flex: none;
+}
+
+.toolbar-play > .opmode-button {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .toolbar-title,
+  .toolbar-project {
+    display: none;
+  }
+
+  .toolbar-group--end .toolbar-select {
+    max-width: 84px;
+  }
+}
+
+.opmode-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 4px 0 6px;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.opmode-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.opmode-button:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.opmode-button.is-placeholder .opmode-button-name {
+  color: var(--color-text-muted);
+}
+
+.opmode-button-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opmode-flavor-badge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+.opmode-flavor-badge.is-TeleOp {
+  color: #9cc2ff;
+  background: rgb(76 141 255 / 20%);
+}
+
+.opmode-flavor-badge.is-Autonomous {
+  color: #f0c674;
+  background: rgb(224 179 65 / 20%);
+}
+
+.play-buttons {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.play-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.play-button + .play-button {
+  border-left: 1px solid var(--color-border);
+}
+
+.play-button:hover:not(:disabled) {
+  color: #fff;
+  background: var(--color-panel-header);
+}
+
+.play-button:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.play-icon-button {
+  width: 26px;
+  padding: 0;
+}
+
+.play-main {
+  min-width: 70px;
+}
+
+/* 실행 중에는 Unity처럼 실행 버튼을 강조한다 */
+.play-button.is-active,
+.play-button.is-active:hover:not(:disabled) {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.play-button.is-stop.is-active,
+.play-button.is-stop.is-active:hover:not(:disabled) {
+  background: #3d6fcc;
+}
+
+.play-button.is-pressed,
+.play-button.is-pressed:hover:not(:disabled) {
+  color: #fff;
+  background: var(--color-accent-muted);
+}
+
+.play-speed {
+  width: 58px;
+}
+
+.play-clock {
+  min-width: 76px;
+  padding: 0 6px;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.play-clock.is-idle {
+  color: var(--color-text-muted);
+}
+
+.play-clock.is-countdown {
+  color: #f0c674;
+}
+
+.play-phase {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.play-slow {
+  padding: 0 4px;
+  color: #e0b341;
+  border: 1px solid rgb(224 179 65 / 50%);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* OpMode 선택 목록(DS처럼 TeleOp·Autonomous와 group 머리) */
+.opmode-popup {
+  position: fixed;
+  z-index: 90;
+  max-width: min(420px, calc(100vw - 8px));
+  max-height: min(420px, calc(100vh - 48px));
+  padding: 4px 0;
+  overflow-y: auto;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  outline: none;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.opmode-message {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.opmode-section + .opmode-section {
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.opmode-flavor {
+  padding: 6px 12px 2px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.opmode-group {
+  padding: 4px 12px 2px 20px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.opmode-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 12px 0 6px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.opmode-option.is-active {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.opmode-check {
+  flex: none;
+  width: 12px;
+  text-align: center;
+}
+
+.opmode-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opmode-class {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.opmode-option.is-active .opmode-class {
+  color: rgb(255 255 255 / 75%);
+}
+
+/* 씬 뷰 아래 패널(Unity의 Console 자리): 탭, 게임패드 상태 */
+.editor-scene-column {
+  height: 100%;
+}
+
+.play-dock-header {
+  padding-left: 0;
+}
+
+.dock-tabs {
+  display: flex;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.dock-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dock-tab:hover {
+  color: var(--color-text);
+}
+
+.dock-tab.is-active {
+  color: var(--color-text);
+  background: var(--color-panel);
+  box-shadow: inset 0 2px 0 var(--color-accent);
+}
+
+.dock-tab:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.dock-tab-badge {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.gamepad-status {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.gamepad-slot {
+  min-width: 14px;
+  padding: 0 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.gamepad-slot.is-on {
+  color: #fff;
+  background: #2f7d4f;
+  border-color: #2f7d4f;
+}
+
+/* 표준 배치가 아닌 패드(입력을 보내지 않음) */
+.gamepad-slot.is-odd {
+  color: #1e1f22;
+  background: #e0b341;
+  border-color: #e0b341;
+}
+
+.play-dock-scroll {
+  height: 100%;
+  overflow: auto;
+}
+
+/* Console(Unity Console): 머리줄, 항목 목록, 고른 항목의 전체 */
+.console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.console-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.console-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.console-search {
+  flex: 1;
+  min-width: 80px;
+  max-width: 260px;
+  margin-left: auto;
+}
+
+.console-levels {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
+.console-level {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--color-text-muted);
+  background: var(--color-panel);
+  border: none;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.console-level + .console-level {
+  border-left: 1px solid var(--color-border);
+}
+
+.console-level.is-on {
+  color: var(--color-text);
+  background: var(--color-panel-header);
+  opacity: 1;
+}
+
+.console-split {
+  flex: 1;
+  min-height: 0;
+}
+
+.console-list {
+  height: 100%;
+  overflow: auto;
+  outline: none;
+}
+
+.console-list:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.console-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.console-row.is-odd {
+  background: rgb(255 255 255 / 2.5%);
+}
+
+.console-row.is-selected {
+  background: var(--color-accent-muted);
+}
+
+.console-list:focus .console-row.is-selected {
+  color: #fff;
+  background: var(--color-accent);
+}
+
+.console-icon {
+  flex: none;
+}
+
+.console-icon.is-info {
+  color: #a9b0bd;
+}
+
+.console-icon.is-warning {
+  color: #e0b341;
+}
+
+.console-icon.is-error {
+  color: #ff6b6b;
+}
+
+.console-time {
+  flex: none;
+  min-width: 9ch;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-row.is-selected .console-time {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.console-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+}
+
+.console-empty,
+.console-detail-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.console-detail {
+  height: 100%;
+  overflow: auto;
+  background: var(--color-bg);
+}
+
+.console-detail-text {
+  padding: 6px 10px;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.console-detail-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.console-frame {
+  padding-left: 2ch;
+  white-space: pre;
+}
+
+.console-frame-link {
+  padding: 0;
+  color: #7fb0ff;
+  background: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.console-frame-link:hover {
+  color: #a8c9ff;
+}
+
+/* 텔레메트리(Driver Station 화면처럼) */
+.telemetry {
+  padding: 6px 10px;
+}
+
+.telemetry-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.telemetry-opmode {
+  font-weight: 600;
+}
+
+.telemetry-phase,
+.telemetry-time {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.telemetry-time {
+  margin-left: auto;
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetry-body {
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.telemetry-body.is-monospace {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.telemetry-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.telemetry-log {
+  margin-top: 8px;
+  padding-top: 4px;
+  color: var(--color-text-muted);
+  border-top: 1px dashed var(--color-border);
+}
+
+/* 장치 출력 표 */
+.devices-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.devices-table th {
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  color: var(--color-text-muted);
+  background: var(--color-panel-header);
+  font-weight: 600;
+  text-align: left;
+}
+
+.devices-table td {
+  padding: 3px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.devices-table tr.is-selectable {
+  cursor: pointer;
+}
+
+.devices-table tr.is-selectable:hover {
+  background: var(--color-panel-header);
+}
+
+.devices-table tr.is-selected {
+  background: var(--color-accent-muted);
+}
+
+.devices-table tr:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.devices-name {
+  white-space: nowrap;
+}
+
+.devices-type {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.devices-values {
+  font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.devices-value {
+  display: inline-block;
+  margin-right: 12px;
+  white-space: nowrap;
+}
+
+.devices-key {
+  color: var(--color-text-muted);
+}
+
+/* 환경 설정: 외부 도구의 JDK 칸, 시뮬레이션 */
+.preferences-subsection {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  outline: none;
+}
+
+.preferences-subtitle {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.preferences-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
 }

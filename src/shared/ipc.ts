@@ -1,5 +1,15 @@
 // 메인 프로세스 ↔ preload ↔ 렌더러가 함께 쓰는 IPC 채널과 API 타입
 import type { GeneratedFile, SyncGeneratedResult } from './generatedFiles'
+import type {
+  GamepadState,
+  JdkChoice,
+  JdkState,
+  ListOpModesResult,
+  PlayCommand,
+  PlayEvent,
+  PlayInitRequest,
+  PlayInitResult
+} from './play'
 
 export const IPC = {
   chooseProjectFolder: 'project:choose-folder',
@@ -21,6 +31,13 @@ export const IPC = {
   readJavaSources: 'teamcode:read-java-sources',
   getExternalEditor: 'editor:get-external-editor',
   setExternalEditor: 'editor:set-external-editor',
+  getJdk: 'jdk:get',
+  setJdk: 'jdk:set',
+  listOpModes: 'play:list-opmodes',
+  playInit: 'play:init',
+  playCommand: 'play:command',
+  playGamepads: 'play:gamepads',
+  playEvent: 'play:event',
   setDirty: 'app:set-dirty',
   closeRequested: 'app:close-requested',
   confirmClose: 'app:confirm-close'
@@ -219,6 +236,18 @@ export type SandbotApi = {
   readJavaSources: (root: string, paths: string[]) => Promise<ReadJavaSourcesResult>
   getExternalEditor: () => Promise<ExternalEditorState>
   setExternalEditor: (choice: ExternalEditorChoice) => Promise<ExternalEditorState>
+  // 사이드카가 쓸 JDK(Unity External Tools처럼 환경 설정에서 고름). 설정은 메인의 userData/jdk.json.
+  getJdk: () => Promise<JdkState>
+  setJdk: (choice: JdkChoice) => Promise<JdkState>
+  // 실행(Play). root는 열거나 저장한 프로젝트여야 한다(메인이 확인한다).
+  listOpModes: (root: string) => Promise<ListOpModesResult>
+  // JDK·사이드카를 확인하고 JVM을 띄워 컴파일·INIT까지 시작한다. 진행은 onPlayEvent로 온다.
+  playInit: (request: PlayInitRequest) => Promise<PlayInitResult>
+  // 지금 실행에 보내는 명령(실행이 없으면 무시)
+  playCommand: (command: PlayCommand) => void
+  // 게임패드 1·2의 지금 상태(바뀔 때만). 다음 틱 경계에 사이드카로 간다.
+  playGamepads: (gamepads: [GamepadState | null, GamepadState | null]) => void
+  onPlayEvent: (callback: (event: PlayEvent) => void) => () => void
   // 저장 안 된 변경이 있으면 창을 닫을 때 렌더러에게 먼저 묻는다
   setDirty: (dirty: boolean) => void
   onCloseRequested: (callback: () => void) => () => void
