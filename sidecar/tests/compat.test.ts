@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
@@ -14,6 +14,7 @@ import {
   SIDECAR_TEST_TIMEOUT,
   sidecarBuild,
   sidecarReport,
+  testTempDir,
   type SidecarBuild
 } from './support'
 
@@ -75,12 +76,6 @@ function javaFiles(dir: string): string[] {
     .sort()
 }
 
-function tempDir(prefix: string): string {
-  const root = join(repoRoot, 'sidecar', 'build', 'test-tmp')
-  mkdirSync(root, { recursive: true })
-  return mkdtempSync(join(root, `${prefix}-`))
-}
-
 // 사이드카가 팀 코드를 컴파일하는 옵션(--release 8 -g -proc:none -encoding UTF-8 -Xlint:-options)으로 sdk jar에 대고
 function compileAgainstSdk(build: SidecarBuild, files: string[]): ReturnType<typeof runProcess> {
   return runProcess(build.javac, [
@@ -97,7 +92,7 @@ function compileAgainstSdk(build: SidecarBuild, files: string[]): ReturnType<typ
     '-cp',
     build.sdkJar,
     '-d',
-    tempDir('compat'),
+    testTempDir('compat'),
     ...files
   ])
 }
@@ -239,7 +234,7 @@ describe.skipIf(!hasJdk())('FTC 코드 호환(sandbot-sdk.jar로 컴파일)', ()
       expect(validateScene(objects).filter((issue) => issue.severity === 'error')).toEqual([])
       const { files, blocked } = generateTeamCodeFiles(objects)
       expect(blocked).toBe(false)
-      const dir = tempDir('generated')
+      const dir = testTempDir('generated')
       const javaPaths: string[] = []
       for (const file of files) {
         if (!file.path.endsWith('.java')) continue

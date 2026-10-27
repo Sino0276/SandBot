@@ -82,7 +82,7 @@ final class ApiCheck {
                     warnings.add(dotted(nest) + ": not in android.jar (API 16); its API cannot be checked");
                 } else if (!simple.startsWith("Sandbot")) {
                     errors.add(dotted(nest) + ": not a class of the FTC SDK. Helper classes in SDK packages must be "
-                            + "named Sandbot…, other helpers go in org.sandbot.sdk.**");
+                            + "named Sandbot..., other helpers go in org.sandbot.sdk.**");
                 }
             }
         }

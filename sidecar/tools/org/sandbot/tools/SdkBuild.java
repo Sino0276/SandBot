@@ -220,7 +220,7 @@ public final class SdkBuild {
             if (!patch(classesRuntime, classesSdk, liftedRaw, lifted)) return false;
         } else {
             missing("org.sandbot.runtime.patch.PatchTool is missing: lifted SDK classes are NOT patched "
-                    + "(System.nanoTime, Thread.sleep … would use the real clock)");
+                    + "(System.nanoTime, Thread.sleep and so on would use the real clock)");
             copyTree(liftedRaw, lifted);
         }
         step("link check");
@@ -392,7 +392,7 @@ public final class SdkBuild {
         int shown = 0;
         for (String e : errors) {
             if (shown++ == 200) {
-                System.out.println("error: … " + (errors.size() - 200) + " more errors");
+                System.out.println("error: ... " + (errors.size() - 200) + " more errors");
                 break;
             }
             System.out.println("error: " + e);

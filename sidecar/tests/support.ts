@@ -138,8 +138,8 @@ function tail(text: string, lines = 80): string {
   return text.trimEnd().split('\n').slice(-lines).join('\n')
 }
 
-// 다른 소스 해시로 만든 지 하루 넘은 테스트 출력은 지운다(소스를 고칠 때마다 쌓이지 않게)
-function removeOldOutputs(root: string, keep: string): void {
+// 하루 넘은 항목을 지운다(소스를 고칠 때마다 테스트 출력·임시 폴더가 쌓이지 않게). keep은 남긴다.
+function removeOldOutputs(root: string, keep?: string): void {
   let entries: string[]
   try {
     entries = readdirSync(root)
@@ -156,6 +156,14 @@ function removeOldOutputs(root: string, keep: string): void {
       // 다른 워커가 지웠다
     }
   }
+}
+
+/** 테스트용 빈 임시 폴더(sidecar/build/test-tmp 아래, gitignore). 하루 넘은 것은 지운다. */
+export function testTempDir(prefix: string): string {
+  const root = join(buildDir, 'test-tmp')
+  mkdirSync(root, { recursive: true })
+  removeOldOutputs(root)
+  return mkdtempSync(join(root, `${prefix}-`))
 }
 
 let pending: Promise<SidecarBuild | null> | undefined
@@ -217,9 +225,7 @@ export async function compileJavaTests(build: SidecarBuild, sourceDirs: string[]
   const files = new Set<string>(javaFiles(testingSources))
   for (const dir of sourceDirs)
     for (const file of javaFiles(resolve(repoRoot, dir))) files.add(file)
-  const root = join(buildDir, 'test-classes')
-  mkdirSync(root, { recursive: true })
-  const out = mkdtempSync(join(root, 'run-'))
+  const out = testTempDir('java-tests')
   const result = await runProcess(build.javac, [
     '--release',
     '17',

@@ -1,16 +1,19 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readZip } from '../../scripts/fetch-ftc-sdk.mjs'
 import { SIDECAR_PROTOCOL_VERSION } from '../../src/shared/sidecarProtocol'
 import {
+  compileJavaTests,
   hasJdk,
   lenientBuild,
   repoRoot,
+  runJavaTests,
   runProcess,
   SIDECAR_TEST_TIMEOUT,
   sidecarBuild,
   sidecarReport,
+  testTempDir,
   type SidecarBuild
 } from './support'
 
@@ -28,12 +31,6 @@ const realJars = [
 const androidJar = join(sdkDir, 'android-4.1.1.4.jar')
 const tools = join(repoRoot, 'sidecar', 'build', 'tools-classes')
 const fixtures = join(repoRoot, 'sidecar', 'tests', 'fixtures')
-
-function tempDir(prefix: string): string {
-  const root = join(repoRoot, 'sidecar', 'build', 'test-tmp')
-  mkdirSync(root, { recursive: true })
-  return mkdtempSync(join(root, `${prefix}-`))
-}
 
 function javaFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true, recursive: true })
@@ -121,7 +118,7 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
       .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
       .filter((name) => stubTops.has(name.split('$')[0]))
     expect(stubClasses.length).toBeGreaterThan(100)
-    const dir = tempDir('stub-probe')
+    const dir = testTempDir('stub-probe')
     const list = join(dir, 'stubs.txt')
     writeFileSync(list, `${stubClasses.join('\n')}\n`)
     const compiled = await runProcess(build.javac, [
@@ -150,7 +147,7 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
   })
 
   it('상수는 컴파일 시간 상수로 남고, 상수가 아닌 static final은 상수가 되지 않는다', async () => {
-    const dir = tempDir('constants')
+    const dir = testTempDir('constants')
     const javac = (file: string): ReturnType<typeof runProcess> =>
       runProcess(build.javac, [
         '--release',
@@ -177,7 +174,7 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
 
   it('API 대조가 실제와 다른 손 구현을 잡는다', async () => {
     const check = async (fixture: string): Promise<{ code: number; output: string }> => {
-      const dir = tempDir(`apicheck-${fixture}`)
+      const dir = testTempDir(`apicheck-${fixture}`)
       const compiled = await runProcess(build.javac, [
         '--release',
         '8',
@@ -224,5 +221,16 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
         message
       ).toBe(true)
     expect(errors).toHaveLength(expected.length)
+  })
+
+  it('Java 테스트를 컴파일하고 돌려 PASS·FAIL을 읽는다(support.ts)', async () => {
+    const classes = await compileJavaTests(build, ['sidecar/tests/fixtures/javatest'])
+    const result = await runJavaTests(build, classes, ['org.sandbot.fixture.SampleTests'])
+    expect(result.passed).toEqual(['org.sandbot.fixture.SampleTests#testPasses'])
+    expect(result.failed.map((f) => f.id)).toEqual(['org.sandbot.fixture.SampleTests#testFails'])
+    // 실패 내용은 여러 줄(스택)이다
+    expect(result.failed[0].detail).toContain('deliberate failure: expected <1> but was <2>')
+    expect(result.failed[0].detail).toContain('at org.sandbot.fixture.SampleTests.testFails')
+    expect(result.output).toContain('DONE tests=2 failures=1')
   })
 })

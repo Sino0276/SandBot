@@ -235,6 +235,9 @@ async function main() {
     rmSync(join(out, 'sidecar.json'), { force: true })
     const code = await run(jdk.java, [
       '-Xss8m',
+      '-Dfile.encoding=UTF-8',
+      '-Dstdout.encoding=UTF-8',
+      '-Dstderr.encoding=UTF-8',
       '-cp',
       tools,
       'org.sandbot.tools.SdkBuild',
