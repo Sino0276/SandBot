@@ -156,9 +156,17 @@ export async function initPlay(): Promise<void> {
 }
 
 async function runInit(): Promise<void> {
-  // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음)
-  if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement)
-    document.activeElement.blur()
+  // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음). 입력칸이 아니면 포커스를 그대로 둔다
+  // (Console 목록 등에서 Ctrl+P를 눌러도 포커스가 <body>로 떨어져 다음 Delete·F가 씬에 가지 않게).
+  if (typeof document !== 'undefined') {
+    const active = document.activeElement
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      (active instanceof HTMLElement && active.isContentEditable)
+    )
+      active.blur()
+  }
   if (currentInitBlock()) return
   if (useProjectStore.getState().dirty) {
     const answer = await showDialog({
@@ -233,6 +241,9 @@ async function runInit(): Promise<void> {
   }
   // Unity처럼 일시 정지를 켜 둔 채 시작하면 init에서 바로 멈춘다
   if (usePlayStore.getState().paused) command({ type: 'pause', paused: true })
+  // 응답을 기다리는 동안 바꾼 속도
+  const { speed } = usePlayStore.getState().settings
+  if (speed !== play.settings.speed) command({ type: 'speed', speed })
   if (isRunActive(usePlayStore.getState().run)) startGamepads()
 }
 
@@ -283,10 +294,9 @@ export function togglePause(): void {
   const { run, paused } = usePlayStore.getState()
   const next = !paused
   usePlayStore.setState({ paused: next })
-  if (isRunActive(run) && run.accepted) {
-    updateRun(run.runId, (current) => ({ status: { ...current.status, paused: next } }))
-    command({ type: 'pause', paused: next })
-  }
+  if (!isRunActive(run)) return
+  updateRun(run.runId, (current) => ({ status: { ...current.status, paused: next } }))
+  if (run.accepted) command({ type: 'pause', paused: next })
 }
 
 export function canStep(data: Pick<PlayData, 'run' | 'paused'>): boolean {
@@ -305,13 +315,13 @@ export function stepPlay(): void {
   if (canStep(usePlayStore.getState())) command({ type: 'step' })
 }
 
+// playInit 응답 전이면 받은 뒤 보낸다(runInit)
 export function setPlaySpeed(speed: PlaySpeed): void {
   usePlayStore.getState().updateSettings({ speed })
   const { run } = usePlayStore.getState()
-  if (isRunActive(run) && run.accepted) {
-    updateRun(run.runId, (current) => ({ status: { ...current.status, speed } }))
-    command({ type: 'speed', speed })
-  }
+  if (!isRunActive(run)) return
+  updateRun(run.runId, (current) => ({ status: { ...current.status, speed } }))
+  if (run.accepted) command({ type: 'speed', speed })
 }
 
 // ---- 게임패드 ----
@@ -346,19 +356,31 @@ export function handlePlayEvent(event: PlayEvent): void {
   usePlayStore.getState().applyEvent(event)
   const after = usePlayStore.getState().run
   if (!isRunActive(after)) stopGamepads()
-  // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다
-  if (event.type === 'finished' && before.opMode.flavor === 'Autonomous') {
+  // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다. 그사이 다른 프로젝트를 열었으면
+  // (STOP을 보내고 끝을 기다리는 중) 그 프로젝트의 같은 이름 OpMode를 고르지 않는다.
+  if (
+    event.type === 'finished' &&
+    before.opMode.flavor === 'Autonomous' &&
+    before.root === useProjectStore.getState().root &&
+    usePlayStore.getState().opModeList.root === before.root
+  ) {
     const teleOp = preselectedTeleOp(
       usePlayStore.getState().opModeList.opModes,
       event.preselectTeleOp
     )
     if (teleOp) selectOpMode(teleOp.className)
   }
+  // 다른 프로젝트를 연 뒤 끝난 실행은 지운다(그 프로젝트의 텔레메트리·장치·시간이 남지 않게, Console은 그대로)
+  if (!isRunActive(after) && before.root !== useProjectStore.getState().root)
+    usePlayStore.setState({ run: null })
 }
 
 // 프로젝트를 바꾸면(다른 프로젝트를 열거나 같은 것을 다시 염) 지금 실행을 멈추고 그 프로젝트의 목록·선택을 읽는다
 function onProjectChanged(root: string | null, rootChanged: boolean): void {
-  if (isRunActive(usePlayStore.getState().run)) stopPlay()
+  const { run } = usePlayStore.getState()
+  // 끝난 실행은 바로 지운다(아직 도는 실행은 끝날 때 handlePlayEvent가 지운다)
+  if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
+  if (isRunActive(run)) stopPlay()
   if (rootChanged)
     usePlayStore.setState({
       selectedClass: root ? loadLastOpMode(root) : null,

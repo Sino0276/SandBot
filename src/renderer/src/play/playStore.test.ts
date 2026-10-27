@@ -106,6 +106,7 @@ describe('applyPlayEvent', () => {
   })
 
   it('status는 실행 상태와 일시 정지 토글에 그대로 들어간다', () => {
+    state = { ...state, run: { ...state.run!, accepted: true } }
     const next = apply(state, {
       type: 'status',
       runId: 'r1',
@@ -125,6 +126,24 @@ describe('applyPlayEvent', () => {
     expect(next.paused).toBe(true)
   })
 
+  it('playInit 응답 전의 status는 렌더러의 일시 정지·속도를 바꾸지 않는다', () => {
+    state = data({
+      paused: true,
+      run: { ...state.run!, status: { ...state.run!.status, paused: true, speed: 4 } }
+    })
+    const next = apply(state, {
+      type: 'status',
+      runId: 'r1',
+      tNanos: 0,
+      paused: false,
+      speed: 1,
+      realtime: 0,
+      startedNanos: null
+    })
+    expect(next.paused).toBe(true)
+    expect(next.run!.status).toMatchObject({ paused: true, speed: 4 })
+  })
+
   it('compiled: 요약 한 줄과 진단마다 한 줄(수준은 진단 종류)', () => {
     const next = apply(state, {
       type: 'compiled',
@@ -140,6 +159,8 @@ describe('applyPlayEvent', () => {
       ['diagnostic', 'info']
     ])
     expect(next.entries[0]).toMatchObject({ ok: false, errors: 1, warnings: 1, millis: 812 })
+    // 진단은 실행한 프로젝트를 기억한다(다른 프로젝트를 연 뒤에는 열지 않는다)
+    expect(next.entries[1].root).toBe('/p')
   })
 
   it('로그는 묶음의 줄마다 항목이 되고 System.err는 경고다', () => {

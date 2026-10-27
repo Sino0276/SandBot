@@ -24,6 +24,7 @@ import {
   refreshOpModes,
   resetPlayActionsState,
   selectOpMode,
+  setPlaySpeed,
   stepPlay,
   stopPlay,
   togglePause
@@ -355,6 +356,42 @@ describe('일시 정지·한 단계', () => {
     expect(commands).toEqual([{ type: 'pause', paused: true }])
   })
 
+  it('응답 전에 메인이 보낸 처음 status(일시 정지 아님)가 켜 둔 일시 정지를 지우지 않는다', async () => {
+    togglePause()
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    handlePlayEvent(
+      event({
+        type: 'status',
+        tNanos: 0,
+        paused: false,
+        speed: 1,
+        realtime: 0,
+        startedNanos: null
+      })
+    )
+    expect(usePlayStore.getState().paused).toBe(true)
+    pending.resolve({ ok: true })
+    await settle()
+    expect(commands).toEqual([{ type: 'pause', paused: true }])
+  })
+
+  it('응답을 기다리는 동안 바꾼 속도는 받은 뒤 보낸다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    expect(lastRequest().settings.speed).toBe(1)
+    setPlaySpeed(4)
+    expect(commands).toEqual([])
+    expect(usePlayStore.getState().run!.status.speed).toBe(4)
+    pending.resolve({ ok: true })
+    await settle()
+    expect(commands).toEqual([{ type: 'speed', speed: 4 }])
+  })
+
   it('한 단계는 일시 정지 중에만 보낸다', async () => {
     await initPlay()
     handlePlayEvent(event({ type: 'phase', phase: 'running' }))
@@ -380,6 +417,38 @@ describe('끝난 뒤와 프로젝트 바꾸기', () => {
       })
     )
     expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
+  })
+
+  it('다른 프로젝트를 연 뒤 끝난 Autonomous는 새 프로젝트의 TeleOp을 고르지 않는다', async () => {
+    selectOpMode(AUTO.className)
+    await initPlay()
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    await settle()
+    expect(usePlayStore.getState().opModeList.root).toBe('/other')
+    handlePlayEvent(
+      event({
+        type: 'finished',
+        tNanos: 1,
+        reason: 'stopped',
+        detail: '',
+        preselectTeleOp: 'Drive'
+      })
+    )
+    expect(usePlayStore.getState().selectedClass).toBeNull()
+    // 그 실행(텔레메트리·장치·시간)은 지운다
+    expect(usePlayStore.getState().run).toBeNull()
+  })
+
+  it('끝난 실행은 다른 프로젝트를 열 때 지우고, Console은 남긴다', async () => {
+    await initPlay()
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().run).not.toBeNull()
+    const entries = usePlayStore.getState().entries
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(usePlayStore.getState().entries).toBe(entries)
   })
 
   it('다른 프로젝트를 열면 지금 실행에 STOP을 보내고 그 프로젝트의 목록을 읽는다', async () => {

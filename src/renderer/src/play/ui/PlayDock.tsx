@@ -1,5 +1,7 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { focusDropped, focusMovedOut } from '../../editor/usages/focusRestore'
+import { useSceneStore } from '../../scene/sceneStore'
 import { consoleCounts, formatCount } from '../consoleModel'
 import type { PadInfo } from '../gamepad'
 import { DOCK_TABS, type DockTab } from '../playSettings'
@@ -45,6 +47,28 @@ function PlayDock(): React.JSX.Element {
   const setDockTab = usePlayStore((state) => state.setDockTab)
   const entries = usePlayStore((state) => state.entries)
   const counts = useMemo(() => consoleCounts(entries), [entries])
+  // 포커스가 이 패널 안에 있는지. 안의 요소가 사라지면(지우기, 새 실행으로 비운 장치 표·스택 링크) 브라우저는 포커스를
+  // <body>로 옮기고 다음 Delete·F·Q/W/E가 씬에 간다. 그때는 고른 탭으로 되돌린다(editor/usages/focusRestore.ts와 같은 방식).
+  const focusInside = useRef(false)
+  useEffect(() => {
+    let frame = 0
+    const check = (): void => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        if (!focusInside.current || !focusDropped()) return
+        document
+          .getElementById(`play-dock-tab-${usePlayStore.getState().dockTab}`)
+          ?.focus({ preventScroll: true })
+      })
+    }
+    const unsubscribePlay = usePlayStore.subscribe(check)
+    const unsubscribeScene = useSceneStore.subscribe(check)
+    return () => {
+      unsubscribePlay()
+      unsubscribeScene()
+      cancelAnimationFrame(frame)
+    }
+  }, [])
 
   const onKeyDown = (event: React.KeyboardEvent, current: DockTab): void => {
     const index = DOCK_TABS.indexOf(current)
@@ -61,7 +85,17 @@ function PlayDock(): React.JSX.Element {
   }
 
   return (
-    <section className="panel play-dock" data-local-keys aria-label={t('panels.dock')}>
+    <section
+      className="panel play-dock"
+      data-local-keys
+      aria-label={t('panels.dock')}
+      onFocus={() => {
+        focusInside.current = true
+      }}
+      onBlur={(event) => {
+        if (focusMovedOut(event)) focusInside.current = false
+      }}
+    >
       <header className="panel-header play-dock-header">
         <div className="dock-tabs" role="tablist" aria-label={t('panels.dock')}>
           {DOCK_TABS.map((id) => (

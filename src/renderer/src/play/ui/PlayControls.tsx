@@ -168,9 +168,9 @@ function PlayControls(): React.JSX.Element {
         </span>
       )}
       {slow && run && (
+        // 비율이 10 Hz로 바뀌므로 화면 낭독기가 계속 읽지 않게 라이브 영역으로 두지 않는다(툴팁에 설명)
         <span
           className="play-slow"
-          role="status"
           title={t('play.slowTooltip', {
             speed: typeof speed === 'number' ? formatRatio(speed) : '',
             ratio: formatRatio(run.status.realtime)

@@ -106,9 +106,12 @@ let nextEntryId = 1
 export function consoleEntry(
   body: ConsoleBody,
   tNanos: number | null,
-  level: ConsoleLevel = consoleLevel(body)
+  level: ConsoleLevel = consoleLevel(body),
+  root?: string
 ): ConsoleEntry {
-  return { ...body, id: nextEntryId++, level, tNanos } as ConsoleEntry
+  const entry = { ...body, id: nextEntryId++, level, tNanos } as ConsoleEntry
+  if (root !== undefined) entry.root = root
+  return entry
 }
 
 // 항목을 붙이고, 한도로 버려진 항목을 골라 두었으면 고르기를 푼다
@@ -188,14 +191,19 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
     }
     case 'status': {
       if (run.phase === 'finished') return {}
+      // 메인은 playInit을 받자마자(응답보다 먼저) 처음 상태(일시 정지 아님, 요청의 속도)를 보낸다. 응답을 받기 전에는
+      // 일시 정지·속도를 렌더러의 것으로 둔다(실행 전에 켜 둔 일시 정지와 그사이 바꾼 속도는 받은 뒤 보낸다).
+      const accepted = run.accepted
       const status: RunStatus = {
         tNanos: event.tNanos,
-        paused: event.paused,
-        speed: event.speed,
+        paused: accepted ? event.paused : run.status.paused,
+        speed: accepted ? event.speed : run.status.speed,
         realtime: event.realtime,
         startedNanos: event.startedNanos
       }
-      return { run: { ...run, status }, paused: event.paused }
+      return accepted
+        ? { run: { ...run, status }, paused: event.paused }
+        : { run: { ...run, status } }
     }
     case 'compiled': {
       const errors = event.diagnostics.filter((d) => d.kind === 'error').length
@@ -206,7 +214,7 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
           null
         ),
         ...event.diagnostics.map((diagnostic) =>
-          consoleEntry({ type: 'diagnostic', diagnostic }, null)
+          consoleEntry({ type: 'diagnostic', diagnostic }, null, undefined, run.root)
         )
       ]
       return withEntries(data, added)
@@ -233,7 +241,9 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             stack: event.stack,
             thread: event.thread
           },
-          event.tNanos
+          event.tNanos,
+          undefined,
+          run.root
         )
       ])
     case 'finished': {

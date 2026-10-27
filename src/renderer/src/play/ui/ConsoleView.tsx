@@ -5,9 +5,11 @@ import type { TFunction } from 'i18next'
 import type { PlayStackFrame } from '../../../../shared/play'
 import { displayJavaPath } from '../../java/javaIndex'
 import { openScriptFile, useLineSupportStore } from '../../java/openScript'
+import { useProjectStore } from '../../project/projectStore'
 import {
   consoleCounts,
   entryDetailLines,
+  entryInProject,
   entrySummary,
   entryTarget,
   formatCount,
@@ -26,8 +28,9 @@ const DETAIL_LAYOUT_ID = 'play-console'
 const STICK_PX = 8
 const PAGE = 10
 
+// 지금 프로젝트의 항목만 연다(다른 프로젝트를 연 뒤 남은 항목은 열 곳이 없다)
 const openTarget = (entry: ConsoleEntry): void => {
-  const target = entryTarget(entry)
+  const target = entryTarget(entry, useProjectStore.getState().root)
   if (target) void openScriptFile(target.path, target.line)
 }
 
@@ -37,6 +40,7 @@ type RowProps = {
   selected: boolean
   t: TFunction
   openHint: string
+  root: string | null
 }
 
 // 행 하나. 항목은 바뀌지 않으므로(새 항목만 붙는다) 같은 항목은 다시 그리지 않는다.
@@ -45,9 +49,10 @@ const ConsoleRow = memo(function ConsoleRow({
   index,
   selected,
   t,
-  openHint
+  openHint,
+  root
 }: RowProps): React.JSX.Element {
-  const target = entryTarget(entry)
+  const target = entryTarget(entry, root)
   return (
     <div
       id={`console-entry-${entry.id}`}
@@ -75,13 +80,15 @@ const ConsoleRow = memo(function ConsoleRow({
 
 function FrameLine({
   frame,
-  openHint
+  openHint,
+  openable
 }: {
   frame: PlayStackFrame
   openHint: string
+  openable: boolean
 }): React.JSX.Element {
   const text = frameText(frame)
-  if (!frame.path) return <div className="console-frame">{text}</div>
+  if (!frame.path || !openable) return <div className="console-frame">{text}</div>
   const path = frame.path
   return (
     <div className="console-frame">
@@ -101,12 +108,14 @@ function FrameLine({
 function ConsoleDetail({ entry }: { entry: ConsoleEntry | null }): React.JSX.Element {
   const { t } = useTranslation()
   const lineSupport = useLineSupportStore((state) => state.support)
+  const root = useProjectStore((state) => state.root)
   if (!entry) return <p className="console-detail-empty">{t('console.noSelection')}</p>
   const openHint =
     lineSupport === 'no'
       ? `${t('console.openLink')}\n${t('usages.noLineHint')}`
       : t('console.openLink')
-  const target = entryTarget(entry)
+  const target = entryTarget(entry, root)
+  const openable = entryInProject(entry, root)
   return (
     <div className="console-detail-text">
       {entryDetailLines(entry, t).map((line, index) => (
@@ -116,7 +125,7 @@ function ConsoleDetail({ entry }: { entry: ConsoleEntry | null }): React.JSX.Ele
       ))}
       {entry.type === 'error' &&
         entry.stack.map((frame, index) => (
-          <FrameLine key={index} frame={frame} openHint={openHint} />
+          <FrameLine key={index} frame={frame} openHint={openHint} openable={openable} />
         ))}
       {entry.type === 'diagnostic' && target && (
         <div className="console-frame">
@@ -146,6 +155,7 @@ function ConsoleView(): React.JSX.Element {
   const { clearConsole, selectEntry, setConsoleQuery, toggleLevel, setClearOnPlay } =
     usePlayStore.getState()
   const lineSupport = useLineSupportStore((state) => state.support)
+  const root = useProjectStore((state) => state.root)
   const listRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const storage = useMemo(() => browserStorage() ?? undefined, [])
@@ -228,12 +238,8 @@ function ConsoleView(): React.JSX.Element {
   return (
     <div className="console">
       <div className="console-toolbar">
-        <button
-          type="button"
-          className="panel-button"
-          disabled={entries.length === 0}
-          onClick={clearConsole}
-        >
+        {/* Unity처럼 늘 누를 수 있다(눌러서 꺼지면 포커스가 <body>로 떨어진다) */}
+        <button type="button" className="panel-button" onClick={clearConsole}>
           {t('console.clear')}
         </button>
         <label className="console-check" title={t('console.clearOnPlayHint')}>
@@ -317,6 +323,7 @@ function ConsoleView(): React.JSX.Element {
                 selected={entry.id === selectedId}
                 t={t}
                 openHint={openHint}
+                root={root}
               />
             ))}
           </div>
