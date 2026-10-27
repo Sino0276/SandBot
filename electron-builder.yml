@@ -14,8 +14,16 @@ files:
   - '!scripts{,/**/*}'
   # 변환기 실행 파일은 OS·CPU별로 하나만 extraResources로 넣는다(아래)
   - '!resources/step-converter{,/**/*}'
+  # JVM 사이드카: 소스·빌드 폴더는 넣지 않고, 빌드한 jar(resources/sidecar)는 extraResources로 넣는다(아래)
+  - '!sidecar{,/**/*}'
+  - '!resources/sidecar{,/**/*}'
 asarUnpack:
   - resources/**
+# JVM 사이드카(scripts/build-sidecar.mjs가 만든 jar·sidecar.json·NOTICE.txt)는 모든 OS에 같은 것을 넣는다.
+# 배포 앱에서는 process.resourcesPath/sidecar에 있다. build:win|mac|linux가 먼저 build:sidecar --if-stale을 돈다.
+extraResources:
+  - from: resources/sidecar
+    to: sidecar
 # 대상 OS·CPU용 STEP 변환기(scripts/build-step-converter.mjs가 만든 것)는 OS별 항목의 extraResources로 넣는다.
 # 없으면 앱은 내장 WASM 변환기로 읽는다. 배포 앱에서는 process.resourcesPath/step-converter에 있다(src/main/stepConverter.ts).
 # 폴더 이름의 OS는 직접 적는다. electron-builder의 ${platform}은 대상이 아니라 빌드하는 PC의 OS다(교차 빌드 때 틀림).

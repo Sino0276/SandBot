@@ -7,13 +7,15 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
   {
-    // 변환기 빌드가 받은 occt-import-js·OCCT 소스와 빌드 결과는 검사하지 않는다(flat config는 .gitignore를 읽지 않음)
+    // 변환기·사이드카 빌드가 받은 소스와 빌드 결과는 검사하지 않는다(flat config는 .gitignore를 읽지 않음)
     ignores: [
       '**/node_modules',
       '**/dist',
       '**/out',
       'native/step-converter/.cache',
-      'resources/step-converter'
+      'resources/step-converter',
+      'sidecar/build',
+      'resources/sidecar'
     ]
   },
   tseslint.configs.recommended,

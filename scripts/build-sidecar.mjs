@@ -74,7 +74,9 @@ function isFresh(dir, hash, lenient) {
   const info = readJson(join(dir, 'sidecar.json'))
   if (!info || info.sourceHash !== hash) return false
   if (!lenient && Array.isArray(info.incomplete) && info.incomplete.length > 0) return false
-  return ['sandbot-sdk.jar', 'sandbot-runtime.jar', 'NOTICE.txt'].every((f) => existsSync(join(dir, f)))
+  return ['sandbot-sdk.jar', 'sandbot-runtime.jar', 'NOTICE.txt'].every((f) =>
+    existsSync(join(dir, f))
+  )
 }
 
 // ---- 잠금(폴더 만들기는 원자적이다). 잡은 프로세스가 죽었으면 풀린 것으로 본다.
@@ -167,7 +169,15 @@ async function compileTools(jdk) {
   if (readText(join(dir, '.hash')) === key) return dir
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
-  const code = await run(jdk.javac, ['--release', '17', '-encoding', 'UTF-8', '-d', dir, ...sources])
+  const code = await run(jdk.javac, [
+    '--release',
+    '17',
+    '-encoding',
+    'UTF-8',
+    '-d',
+    dir,
+    ...sources
+  ])
   if (code !== 0) throw new Error('cannot compile the sidecar build tools (sidecar/tools)')
   writeFileSync(join(dir, '.hash'), key)
   return dir
@@ -261,7 +271,9 @@ async function main() {
     }
     writeFileSync(join(out, 'sidecar.json'), `${JSON.stringify(info, null, 2)}\n`)
     if (info.incomplete) {
-      console.warn(`warning: the sidecar is incomplete (--allow-missing): ${info.incomplete.length} problem(s)`)
+      console.warn(
+        `warning: the sidecar is incomplete (--allow-missing): ${info.incomplete.length} problem(s)`
+      )
     }
     console.log(`sidecar: ${out}`)
     return 0

@@ -122,7 +122,9 @@ function homeFromPath() {
 function macJavaHome() {
   if (process.platform !== 'darwin') return null
   try {
-    return execFileSync('/usr/libexec/java_home', ['-v', `${MIN_JDK}+`], { stdio: 'pipe' }).toString().trim()
+    return execFileSync('/usr/libexec/java_home', ['-v', `${MIN_JDK}+`], { stdio: 'pipe' })
+      .toString()
+      .trim()
   } catch {
     return null
   }
@@ -132,12 +134,18 @@ function macJavaHome() {
 function androidStudioJbrs() {
   const home = homedir()
   if (process.platform === 'win32') {
-    const roots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]
+    const roots = [
+      process.env.ProgramFiles,
+      process.env['ProgramFiles(x86)'],
+      process.env.LOCALAPPDATA
+    ]
     return [
-      ...roots.filter(Boolean).flatMap((root) => [
-        join(root, 'Android', 'Android Studio', 'jbr'),
-        join(root, 'Programs', 'Android Studio', 'jbr')
-      ])
+      ...roots
+        .filter(Boolean)
+        .flatMap((root) => [
+          join(root, 'Android', 'Android Studio', 'jbr'),
+          join(root, 'Programs', 'Android Studio', 'jbr')
+        ])
     ]
   }
   if (process.platform === 'darwin') {
