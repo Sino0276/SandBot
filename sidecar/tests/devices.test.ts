@@ -3,8 +3,11 @@
 //  - Java 단위 테스트(sidecar/tests/java/org/sandbot/sdk/devices): 구성 XML → hardwareMap, 허브 비용, 장치 의미, Color·Matrix
 //  - 생성 코드: SandBot이 만드는 구성 XML·하드웨어 클래스(src/renderer/src/hardware)를 그대로 써서, 카탈로그의 모든 종류를
 //    두 허브에 붙인 로봇의 생성 초기화 순서가 예외 없이 돌고 시뮬레이터 장치가 그 설정을 보이는지 본다.
+//  - 런타임을 거쳐: 진짜 사이드카(org.sandbot.runtime.Main)에 생성 구성을 주고 그 하드웨어 클래스를 쓰는 OpMode
+//    (sidecar/tests/opmodes-devices)를 돌려, 틱의 장치 출력·센서 입력·허브 비용(루프 시간)·구성 오류를 본다.
+import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   COMPONENT_TYPE_KEYS,
@@ -18,6 +21,14 @@ import { generateTeamCodeFiles } from '../../src/renderer/src/hardware/generate'
 import { javaIdentifier } from '../../src/renderer/src/hardware/naming'
 import { validateScene } from '../../src/renderer/src/hardware/validation'
 import type { HardwareComponent, HubId, SceneObjects } from '../../src/renderer/src/scene/model'
+import {
+  DEFAULT_TICK_NANOS,
+  SIDECAR_PROTOCOL_VERSION,
+  type DeviceValues,
+  type HostMessage,
+  type RunRequest,
+  type SidecarMessage
+} from '../../src/shared/sidecarProtocol'
 import {
   SIDECAR_TEST_TIMEOUT,
   compileJavaTests,
@@ -329,6 +340,149 @@ function failures(result: { failed: { id: string; detail: string }[] }): string[
   return result.failed.map((f) => `${f.id}\n${f.detail}`)
 }
 
+const DEVICE_OPMODES = resolve(__dirname, 'opmodes-devices')
+
+type SidecarRun = { messages: SidecarMessage[]; stderr: string }
+
+// 작은 호스트: 틱마다 바로 답하고, startTick에 START, 센서 입력·게임패드는 늘 같은 값
+function runSidecar(
+  b: SidecarBuild,
+  request: Partial<RunRequest>,
+  inputs: Record<string, DeviceValues>,
+  leftStickY: number,
+  startTick = 3
+): Promise<SidecarRun> {
+  return new Promise((done, fail) => {
+    const child = spawn(
+      b.java,
+      [
+        '-Xss4m',
+        '-Dfile.encoding=UTF-8',
+        '-Dstdout.encoding=UTF-8',
+        '-cp',
+        [b.runtimeJar, b.sdkJar].join(delimiter),
+        'org.sandbot.runtime.Main'
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+    const messages: SidecarMessage[] = []
+    let stderr = ''
+    let pending = ''
+    let finished = false
+    const send = (message: HostMessage): void => {
+      if (!child.stdin.destroyed) child.stdin.write(JSON.stringify(message) + '\n')
+    }
+    child.stdin.on('error', () => {})
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      fail(new Error(`sidecar timed out\n${stderr}`))
+    }, 120_000)
+    const pad = {
+      left_stick_x: 0,
+      left_stick_y: leftStickY,
+      right_stick_x: 0,
+      right_stick_y: 0,
+      left_trigger: 0,
+      right_trigger: 0
+    }
+    const buttons = [
+      'dpad_up',
+      'dpad_down',
+      'dpad_left',
+      'dpad_right',
+      'a',
+      'b',
+      'x',
+      'y',
+      'guide',
+      'start',
+      'back',
+      'left_bumper',
+      'right_bumper',
+      'left_stick_button',
+      'right_stick_button',
+      'touchpad'
+    ]
+    const gamepad = { ...pad, ...Object.fromEntries(buttons.map((name) => [name, false])) } as never
+    const onLine = (line: string): void => {
+      let message: SidecarMessage
+      try {
+        message = JSON.parse(line) as SidecarMessage
+      } catch {
+        return
+      }
+      messages.push(message)
+      if (message.type === 'finished') finished = true
+      if (finished || message.type !== 'tick') return
+      send({
+        type: 'tickReply',
+        tick: message.tick,
+        events: message.tick === startTick ? ['start'] : [],
+        gamepads: [gamepad, null],
+        inputs
+      })
+    }
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      pending += chunk
+      let newline: number
+      while ((newline = pending.indexOf('\n')) >= 0) {
+        onLine(pending.slice(0, newline))
+        pending = pending.slice(newline + 1)
+      }
+    })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => (stderr += chunk))
+    child.on('error', fail)
+    child.on('close', () => {
+      clearTimeout(timer)
+      if (pending) onLine(pending)
+      done({ messages, stderr })
+    })
+    send({
+      type: 'run',
+      protocol: SIDECAR_PROTOCOL_VERSION,
+      clock: 'virtual',
+      tickNanos: DEFAULT_TICK_NANOS,
+      sourceRoots: [DEVICE_OPMODES],
+      opModeSource: join(
+        DEVICE_OPMODES,
+        'org',
+        'firstinspires',
+        'ftc',
+        'teamcode',
+        'DevicesDrive.java'
+      ),
+      opModeClass: 'org.firstinspires.ftc.teamcode.DevicesDrive',
+      sdkClasspath: [b.sdkJar],
+      configXml: null,
+      timing: {},
+      jitter: 0,
+      seed: 0,
+      startEpochMillis: 1_700_000_000_000,
+      stallMillis: 5000,
+      ...request
+    })
+  })
+}
+
+function results(run: SidecarRun): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const m of run.messages) {
+    if (m.type !== 'log' || m.stream !== 'out' || !m.text.startsWith('RESULT ')) continue
+    for (const pair of m.text.slice('RESULT '.length).split(' ')) {
+      const eq = pair.indexOf('=')
+      if (eq > 0) out[pair.slice(0, eq)] = pair.slice(eq + 1)
+    }
+  }
+  return out
+}
+
+function finishedReason(run: SidecarRun): string | undefined {
+  const last = run.messages[run.messages.length - 1]
+  return last?.type === 'finished' ? last.reason : undefined
+}
+
 describe.skipIf(build === null)('사이드카 장치', () => {
   const sidecar = build as SidecarBuild
 
@@ -359,6 +513,92 @@ describe.skipIf(build === null)('사이드카 장치', () => {
       )
       expect(results.flatMap(failures)).toEqual([])
       expect(results.flatMap((result) => result.passed)).toHaveLength(methods.length)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+  it(
+    '런타임을 거쳐: 생성 구성으로 hardwareMap을 만들고, 틱 출력·센서 입력·허브 비용이 OpMode에 닿는다',
+    async () => {
+      const dir = testTempDir('devices-runtime')
+      const robot = controlRobot()
+      const { files } = generateTeamCodeFiles(robot.objects)
+      let configXml = ''
+      for (const file of files) {
+        const path = join(dir, 'TeamCode', ...file.path.split('/'))
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, file.content)
+        if (file.path.endsWith('.xml')) configXml = path
+      }
+      const run = await runSidecar(
+        sidecar,
+        { sourceRoots: [DEVICE_OPMODES, join(dir, 'TeamCode', 'src', 'main', 'java')], configXml },
+        { motor: { position: 1234 }, imu: { yaw: Math.PI / 4 } },
+        -0.5
+      )
+      const errors = run.messages.filter((m) => m.type === 'error')
+      expect(errors, run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      const result = results(run)
+      expect(result.loops).toBe('200')
+      // goBILDA(CCW) FORWARD: SDK가 허브 엔코더의 부호를 바꾼다
+      expect(result.position).toBe('-1234')
+      expect(result.yaw).toBe('45')
+      // MANUAL 루프 하나 = Control Hub bulk read 2.0 ms(+ 가끔 LastKnown이 끝나 다시 보내는 명령, 텔레메트리, 시계 읽기)
+      const loopMillis = Number(result.loopNanos) / 1e6
+      expect(loopMillis).toBeGreaterThan(1.99)
+      expect(loopMillis).toBeLessThan(2.2)
+      // 마지막으로 running이던 틱(끝난 뒤의 틱은 fail safe가 모터를 멈춘 뒤다)
+      const ticks = run.messages.flatMap((m) => (m.type === 'tick' ? [m] : []))
+      const last = ticks.filter((tick) => tick.phase === 'running').pop()
+      if (!last) throw new Error('no running tick')
+      expect(ticks[ticks.length - 1].outputs.motor.power).toBe(0)
+      expect(ticks[ticks.length - 1].outputs.motor.enabled).toBe(false)
+      expect(last.outputs.motor.power).toBeCloseTo(-0.5, 3)
+      expect(last.outputs.motor.mode).toBe('RUN_WITHOUT_ENCODER')
+      expect(last.outputs.claw.position).toBeCloseTo(0.75, 9)
+      expect(last.outputs.claw.pwm).toBe(true)
+      expect(last.outputs['Control Hub'].bulkCachingMode).toBe('MANUAL')
+      // 다른 장치도 모두 틱 출력에 있다
+      for (const name of ['servo', 'imu', 'pinpoint', 'otos', 'Webcam 1', 'limelight', 'liftLeft'])
+        expect(Object.keys(last.outputs)).toContain(name)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    '런타임을 거쳐: 읽을 수 없는 구성은 config 오류와 loadFailed',
+    async () => {
+      const dir = testTempDir('devices-config')
+      const configXml = join(dir, 'broken.xml')
+      writeFileSync(
+        configXml,
+        '<Robot type="FirstInspires-FTC"><LynxUsbDevice name="Portal" serialNumber="(embedded)" parentModuleAddress="173">' +
+          '<LynxModule name="Control Hub" port="173"><FancyMotor name="motor" port="0" /></LynxModule></LynxUsbDevice></Robot>'
+      )
+      // 구성은 OpMode를 컴파일한 뒤 읽으므로 생성 코드가 필요 없는 OpMode로(sidecar/tests/opmodes, R의 테스트 OpMode)
+      const opmodes = resolve(__dirname, 'opmodes')
+      const run = await runSidecar(
+        sidecar,
+        {
+          configXml,
+          sourceRoots: [opmodes],
+          opModeSource: join(
+            opmodes,
+            'org',
+            'firstinspires',
+            'ftc',
+            'teamcode',
+            'ReturnsEarly.java'
+          ),
+          opModeClass: 'org.firstinspires.ftc.teamcode.ReturnsEarly'
+        },
+        {},
+        0
+      )
+      const errors = run.messages.filter((m) => m.type === 'error')
+      expect(errors.map((e) => e.type === 'error' && e.kind)).toEqual(['config'])
+      expect(errors[0].type === 'error' && errors[0].message).toMatch(/FancyMotor/)
+      expect(finishedReason(run)).toBe('loadFailed')
     },
     SIDECAR_TEST_TIMEOUT
   )
