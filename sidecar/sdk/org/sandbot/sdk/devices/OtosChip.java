@@ -46,8 +46,9 @@ final class OtosChip implements SimI2cChip {
         return device.inputDouble(key, 0);
     }
 
+    /** 가장 가까운 int16(범위 밖은 끝값) */
     private static short int16(double value) {
-        return (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, value));
+        return (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, Math.round(value)));
     }
 
     /** 레지스터 한 바이트(읽는 순간의 값) */
