@@ -61,6 +61,10 @@ public final class DeviceBehaviorTest {
             return output(p + name, key);
         }
 
+        org.sandbot.sim.SimDevice device(String name) {
+            return SimTestSupport.device(p + name);
+        }
+
         void in(String name, String key, Object value) {
             input(p + name, key, value);
         }
@@ -111,6 +115,40 @@ public final class DeviceBehaviorTest {
         Check.equal("BRAKE", bot.out("gobilda", "zeroPower"), "zero power behavior");
         Check.equal(DcMotor.ZeroPowerBehavior.BRAKE, gobilda.getZeroPowerBehavior(), "zero power read back");
         SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testApiPowerIsWhatGetPowerReturns() {
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotor tetrix = bot.get(DcMotor.class, "tetrix");
+        // 장치 표의 첫 키는 팀 코드가 보는 값(getPower), 허브 값 power는 그 뒤
+        Check.equal("apiPower", bot.device("gobilda").outputs().keySet().iterator().next(), "apiPower is listed first");
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "OpMode starts at zero power");
+        gobilda.setPower(0.5);
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("gobilda", "apiPower")), 1e-4, "goBILDA FORWARD: apiPower is the API power");
+        Check.near(-0.5, num(bot.out("gobilda", "power")), 1e-4, "goBILDA FORWARD: power is the hub power");
+        Check.near(0.5, num(bot.out("tetrix", "apiPower")), 1e-4, "Tetrix FORWARD apiPower");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-4, "apiPower equals getPower");
+        gobilda.setDirection(DcMotorSimple.Direction.REVERSE);
+        Check.near(-0.5, num(bot.out("gobilda", "apiPower")), 1e-4, "setDirection flips what getPower returns");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-4, "apiPower equals getPower after setDirection");
+        gobilda.setPower(-0.25);
+        Check.near(-0.25, num(bot.out("gobilda", "apiPower")), 1e-4, "goBILDA REVERSE apiPower");
+        Check.near(-0.25, num(bot.out("gobilda", "power")), 1e-4, "goBILDA REVERSE hub power");
+        // RUN_USING_ENCODER: 목표 속도의 비율(getPower가 LastKnown이 없을 때 돌려주는 값)
+        gobilda.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        Check.near(-0.25, num(bot.out("gobilda", "apiPower")), 1e-3, "RUN_USING_ENCODER apiPower");
+        // RUN_TO_POSITION: getPower는 |power|
+        gobilda.setTargetPosition(10);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(-0.5);
+        Check.near(0.5, num(bot.out("gobilda", "apiPower")), 1e-3, "RUN_TO_POSITION apiPower is |power|");
+        Check.near(gobilda.getPower(), num(bot.out("gobilda", "apiPower")), 1e-3, "apiPower equals getPower (RUN_TO_POSITION)");
+        gobilda.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "reset stops the motor");
+        SandbotHardware.afterStop(bot.map);
+        Check.equal(0.0, bot.out("gobilda", "apiPower"), "fail safe stops motors");
     }
 
     public static void testStopAndResetEncoder() {

@@ -29,7 +29,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-// SandBot: 실제 소스 그대로(장치 이름은 자원 문자열을 글자로, 생성 로그는 뺌).
+// SandBot: 실제 소스 그대로(장치 이름은 자원 문자열을 글자로, 생성 로그는 뺌). 만들 때와 setDirection 때 실제 방향을 시뮬레이터에 알린다.
 package com.qualcomm.robotcore.hardware;
 
 
@@ -97,6 +97,12 @@ public class DcMotorImpl implements DcMotor {
     // fields of the type from the type used here at construction, which is usually / often the master
     // SDK instance for a given type, which ought not to be messed with.
     controller.setMotorType(portNumber, motorType.clone());
+    sandbotPublishDirection();
+  }
+
+  // SandBot: 시뮬레이터 장치 출력 apiPower(팀 코드의 getPower 값)를 허브 값에서 계산하도록 실제 방향을 알린다
+  private void sandbotPublishDirection() {
+    org.sandbot.sdk.devices.SimDcMotorController.sandbotOperationalDirection(controller, portNumber, getOperationalDirection());
   }
 
   //------------------------------------------------------------------------------------------------
@@ -161,6 +167,7 @@ public class DcMotorImpl implements DcMotor {
    */
   synchronized public void setDirection(Direction direction) {
     this.direction = direction;
+    sandbotPublishDirection();
   }
 
   /**

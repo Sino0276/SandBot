@@ -12,6 +12,8 @@
  * 입력은 시뮬레이터가 넣는 측정값이다. 물리는 없다. 단위는 따로 적지 않으면 SI(m, rad, s, V, A)다.
  * 허브 모터 값은 허브 방향이다: SDK가 모터 형식의 회전 방향(CCW 형식은 FORWARD에서 반대, 실제 DcMotorImpl)과
  * setDirection을 적용한 뒤의 값이므로, 시뮬레이터는 출력 power의 부호대로 돌리고 같은 부호로 position을 세면 된다.
+ * 그래서 goBILDA 모터(CCW)에 FORWARD로 setPower(0.5)를 하면 power는 −0.5다. 장치 표에서 팀 코드의 값과 헷갈리지 않게
+ * 모터는 첫 출력으로 apiPower(팀 코드의 getPower가 돌려줄 값)를 함께 보인다. 시뮬레이터는 apiPower를 쓰지 않는다.
  *
  * <table border="1">
  * <caption>종류(kind) · 출력 · 입력</caption>
@@ -20,7 +22,8 @@
  *     <td>bulkCachingMode(OFF·AUTO·MANUAL), led(한 색이면 "#RRGGBB", 여러 단계면 "pattern", 없으면 null)</td>
  *     <td>voltage(배터리 V, 기본 12.5), current·gpioCurrent·i2cCurrent(A, 기본 0), auxVoltage(V, 기본 5), temperature(°C, 기본 25)</td></tr>
  * <tr><td>motor(모터 태그 전부, 데드휠의 Motor 태그)</td>
- *     <td>motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
+ *     <td>apiPower(−1..1, 팀 코드 기준: 허브 power에 이 포트 DcMotor의 실제 방향을 되돌려 적용한 값 = getPower가 LastKnown 없이
+ *         돌려줄 값, RUN_TO_POSITION이면 |power|; 표시용), motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
  *         power(−1..1: 엔코더 없음이면 정전력 값, 엔코더 모드면 목표 속도 ÷ 형식의 최대 틱/s, 꺼져 있거나 리셋이면 0),
  *         velocity(엔코더 모드의 목표 속도 틱/s, 아니면 null), enabled, zeroPower(BRAKE·FLOAT),
  *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5)</td>
