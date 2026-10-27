@@ -11,6 +11,7 @@ import {
   stopPlay,
   togglePause
 } from '../playActions'
+import { findOpMode } from '../opModeList'
 import { formatRatio, formatVirtualTime, isRunningSlow, toolbarClock } from '../playFormat'
 import { isPlaySpeed } from '../playSettings'
 import { isRunActive, usePlayStore } from '../playStore'
@@ -58,11 +59,14 @@ function PlayControls(): React.JSX.Element {
           })
   const mainDisabled = mode === 'init' ? block !== null : stopping
 
-  // 시간: 실행이 있으면 그 실행의 가상 시간(Autonomous는 30초에서 거꾸로), 없으면 0
+  // 시간: 실행이 있으면(끝난 실행도) 그 실행의 가상 시간(Autonomous는 30초에서 거꾸로), 없으면 고른 OpMode의 0
+  // (Autonomous는 DS처럼 30초)
   const flavor = run?.opMode.flavor ?? null
+  const selectedFlavor =
+    opModeList.root === root ? findOpMode(opModeList.opModes, selectedClass)?.flavor : undefined
   const clock = run
     ? toolbarClock(run.opMode.flavor, run.status.tNanos, run.status.startedNanos)
-    : { text: formatVirtualTime(0), countdown: false }
+    : toolbarClock(selectedFlavor ?? 'TeleOp', 0, null)
   const clockTitle = run
     ? flavor === 'Autonomous'
       ? t('play.autonomousTooltip', { time: formatVirtualTime(run.status.tNanos) })

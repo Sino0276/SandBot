@@ -1,5 +1,5 @@
 import i18n from 'i18next'
-import type { PlayEvent, PlayInitResult, PlaySpeed } from '../../../shared/play'
+import type { ListOpModesResult, PlayEvent, PlayInitResult, PlaySpeed } from '../../../shared/play'
 import { openPreferences, showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
@@ -38,28 +38,34 @@ export async function refreshOpModes(): Promise<void> {
   // 같은 프로젝트면 이전 목록을 보인 채로 읽는다
   if (current.root !== root)
     usePlayStore.setState({ opModeList: { ...EMPTY_OPMODE_LIST, root, status: 'loading' } })
-  let result
+  let result: ListOpModesResult
   try {
     result = await window.api.listOpModes(root)
   } catch (error) {
-    if (request !== opModeRequest) return
+    result = { ok: false, code: 'notAllowed', detail: ipcErrorDetail(error) }
+  }
+  if (request !== opModeRequest || useProjectStore.getState().root !== root) return
+  if (result.ok) {
     usePlayStore.setState({
-      opModeList: { ...EMPTY_OPMODE_LIST, root, status: 'failed', detail: ipcErrorDetail(error) }
+      opModeList: {
+        root,
+        status: 'ready',
+        opModes: [...result.opModes].sort(compareOpModes),
+        truncated: result.truncated,
+        hasTeamCode: result.hasTeamCode,
+        detail: ''
+      }
     })
     return
   }
-  if (request !== opModeRequest || useProjectStore.getState().root !== root) return
+  // 읽지 못하면 이 프로젝트의 이전 목록은 그대로 두고(잠깐의 실패로 고른 OpMode를 잃지 않게) 이유만 보인다
+  const previous = usePlayStore.getState().opModeList
   usePlayStore.setState({
-    opModeList: result.ok
-      ? {
-          root,
-          status: 'ready',
-          opModes: [...result.opModes].sort(compareOpModes),
-          truncated: result.truncated,
-          hasTeamCode: result.hasTeamCode,
-          detail: ''
-        }
-      : { ...EMPTY_OPMODE_LIST, root, status: 'failed', detail: result.detail }
+    opModeList: {
+      ...(previous.root === root ? previous : { ...EMPTY_OPMODE_LIST, root }),
+      status: 'failed',
+      detail: result.detail
+    }
   })
 }
 
