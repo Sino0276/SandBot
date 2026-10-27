@@ -643,9 +643,9 @@ const en: Messages = {
     search: 'Search Console',
     levels: 'Shown entries',
     levelToggle: {
-      info: 'Show or hide {{count}} log entries',
-      warning: 'Show or hide {{count}} warnings',
-      error: 'Show or hide {{count}} errors'
+      info: 'Show or hide {{count}} log(s)',
+      warning: 'Show or hide {{count}} warning(s)',
+      error: 'Show or hide {{count}} error(s)'
     },
     list: 'Console entries',
     empty:
@@ -660,9 +660,9 @@ const en: Messages = {
       note: 'note'
     },
     compiled: 'Compiled ({{millis}} ms)',
-    compiledWithWarnings: 'Compiled with {{count}} warnings ({{millis}} ms)',
+    compiledWithWarnings: 'Compiled with {{count}} warning(s) ({{millis}} ms)',
     compileFailed:
-      '{{count}} compile errors ({{millis}} ms). Double-click an entry to open its line.',
+      '{{count}} compile error(s) ({{millis}} ms). Double-click an entry to open its line.',
     runStarted: '{{name}} INIT · robot configuration {{config}}',
     runStartedNoConfig: '{{name}} INIT · no robot has hardware, running with an empty hardwareMap',
     finished: 'OpMode finished: {{reason}}',
@@ -672,7 +672,7 @@ const en: Messages = {
     // Notes left by the run flow
     notices: {
       generationBlocked:
-        'The last save did not generate code because of {{count}} hardware errors. Running with the previous hardware class and configuration left in TeamCode.',
+        'The last save did not generate code because of {{count}} hardware error(s). Running with the previous hardware class and configuration left in TeamCode.',
       generationFailed:
         'The last save could not write the generated code ({{detail}}). The hardware class and configuration in TeamCode may differ from the scene.',
       configNotGenerated:
