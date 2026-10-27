@@ -30,10 +30,11 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
 TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-// SandBot: 실제 소스 그대로(gson @Expose와 Assert·Misc 의존을 뺌).
+// SandBot: 실제 소스 그대로(Assert·Misc 의존을 뺌).
 package com.qualcomm.robotcore.hardware.configuration;
 
 
+import com.google.gson.annotations.Expose;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.MotorControlAlgorithm;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
@@ -55,12 +56,12 @@ public class ExpansionHubMotorControllerParamsState implements Serializable, Clo
     {
     /** Only {@link DcMotor.RunMode#RUN_USING_ENCODER} and {@link DcMotor.RunMode#RUN_TO_POSITION}
      * are legal for {@link #mode}. */
-    public DcMotor.RunMode mode = null;
-    public double p = 0;
-    public double i = 0;
-    public double d = 0;
-    public double f = 0;
-    public MotorControlAlgorithm algorithm;
+    public @Expose DcMotor.RunMode mode = null;
+    public @Expose double p = 0;
+    public @Expose double i = 0;
+    public @Expose double d = 0;
+    public @Expose double f = 0;
+    public @Expose MotorControlAlgorithm algorithm;
 
     public ExpansionHubMotorControllerParamsState()
         {

@@ -219,7 +219,8 @@ public final class HubCostTest {
         long second = elapsed(() -> distance.getDistance(DistanceUnit.MM));
         Check.isTrue(second >= ms(VL53L0XChip.MEASUREMENT_MS - 1), "reading faster than the measurement period waits: " + second);
         CLOCK.nanos += ms(100);
-        Check.equal(ms(3 * 2.5), elapsed(() -> distance.getDistance(DistanceUnit.MM)), "fresh measurement: 3 transactions");
+        // 드라이버의 ElapsedTime(들여온 클래스) 시계 읽기 비용이 조금 더해진다
+        Check.near(ms(3 * 2.5), elapsed(() -> distance.getDistance(DistanceUnit.MM)), ms(0.05), "fresh measurement: 3 transactions");
         bot.stop();
     }
 }

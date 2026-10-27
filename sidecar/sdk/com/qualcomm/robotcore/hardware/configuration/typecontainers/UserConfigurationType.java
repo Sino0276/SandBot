@@ -30,10 +30,11 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
 TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-// SandBot: 실제 소스에서 gson @Expose·ClassUtil·ConfigurationTypeManager 의존을 뺌.
+// SandBot: 실제 소스에서 ClassUtil·ConfigurationTypeManager 의존을 뺌.
 package com.qualcomm.robotcore.hardware.configuration.typecontainers;
 
 
+import com.google.gson.annotations.Expose;
 import com.qualcomm.robotcore.hardware.ControlSystem;
 import com.qualcomm.robotcore.hardware.DeviceManager;
 import com.qualcomm.robotcore.hardware.configuration.ConfigurationType;
@@ -62,18 +63,18 @@ public abstract class UserConfigurationType implements ConfigurationType, Serial
     //----------------------------------------------------------------------------------------------
     // State
     //----------------------------------------------------------------------------------------------
-    protected String name = ""; // TODO(Noah): Make private once we get rid of the deprecated annotations
-    protected String         description; // TODO(Noah): Make private once we get rid of the deprecated annotations
+    protected @Expose String name = ""; // TODO(Noah): Make private once we get rid of the deprecated annotations
+    protected @Expose String         description; // TODO(Noah): Make private once we get rid of the deprecated annotations
 
-    private final DeviceFlavor flavor;
-    private String xmlTag;
-    private @Deprecated String[] xmlTagAliases = new String[]{}; // TODO(Noah): Delete this the next time we bump Robocol
-    private boolean builtIn = false;
-    private ControlSystem[] compatibleControlSystems = {REV_HUB};
-    private boolean isDeprecated;
+    private @Expose final DeviceFlavor flavor;
+    private @Expose String xmlTag;
+    private @Deprecated @Expose String[] xmlTagAliases = new String[]{}; // TODO(Noah): Delete this the next time we bump Robocol
+    private @Expose boolean builtIn = false;
+    private @Expose ControlSystem[] compatibleControlSystems = {REV_HUB};
+    private @Expose boolean isDeprecated;
     /** May be null if running on the DS and used with an RC of a different version
         (including hypothetical future versions that add new ClassSource entries) */
-    private ClassSource classSource;
+    private @Expose ClassSource classSource;
 
     // These are used only for serialization backwards-compatibility.
     // TODO(Noah): Delete after the next Robocol bump
