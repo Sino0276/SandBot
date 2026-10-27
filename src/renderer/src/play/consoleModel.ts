@@ -123,9 +123,14 @@ export function diagnosticLocation(diagnostic: PlayDiagnostic): string {
     : `${diagnostic.file}(${diagnostic.line})`
 }
 
-// 목록 한 줄에 보이는 요약(여러 줄 글자는 첫 줄)
+// 목록 한 줄에 보이는 글자 수 한도. 팀 코드가 아주 긴 줄(로그는 64 KB까지 온다)을 찍어도 행마다 그 글자 전체를
+// 배치하지 않게 자른다(전체는 고른 항목 아래와 검색에 그대로 있다).
+export const SUMMARY_MAX_CHARS = 500
+
+// 목록 한 줄에 보이는 요약(여러 줄 글자는 첫 줄, 길면 자름)
 export function entrySummary(entry: ConsoleEntry, t: TFunction): string {
-  return firstLine(entryHeadline(entry, t))
+  const line = firstLine(entryHeadline(entry, t))
+  return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS)}…` : line
 }
 
 function firstLine(text: string): string {

@@ -10,6 +10,7 @@ import {
   entryTarget,
   formatCount,
   frameText,
+  SUMMARY_MAX_CHARS,
   visibleEntries,
   type ConsoleEntry
 } from './consoleModel'
@@ -84,6 +85,9 @@ describe('Console 항목 글자', () => {
   it('요약은 첫 줄이고, 오류는 kind 머리말을 번역해 붙인다', () => {
     const [log, , error, diagnostic] = sample()
     expect(entrySummary(log, t)).toBe('loop 1')
+    // 아주 긴 줄은 행에서 자른다
+    const long = consoleEntry({ type: 'log', stream: 'out', text: 'x'.repeat(70_000) }, 0)
+    expect(entrySummary(long, t)).toBe(`${'x'.repeat(SUMMARY_MAX_CHARS)}…`)
     expect(entrySummary(error, t)).toBe('예외: java.lang.NullPointerException: lift is null')
     expect(entrySummary(diagnostic, t)).toBe(
       'org/firstinspires/ftc/teamcode/Lift.java(12,9): 오류: cannot find symbol'
