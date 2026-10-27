@@ -708,7 +708,8 @@ final class StubGen {
             case DOUBLE:
                 return "0.0";
             default:
-                return "(" + type(types.erasure(p)) + ") null";
+                // 상위 생성자의 (치환한) 매개변수 형식 그대로: 형식 변수·제네릭이어도 받는 쪽과 맞는다
+                return "(" + type(p) + ") null";
         }
     }
 

@@ -3,7 +3,6 @@ package org.sandbot.tools;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +29,11 @@ final class ApiCheck {
     final List<String> warnings = new ArrayList<>();
     int checkedClasses;
     int androidPartial;
+    /**
+     * 비교할 런타임 애너테이션 형식(내부 이름)을 고른다. stub 확인은 가짜 SDK에 없는 형식(Gson 등)의 애너테이션을 뺀다
+     * (javac가 쓸 수 없고, 런타임 리플렉션도 없는 형식의 애너테이션은 건너뛴다).
+     */
+    java.util.function.Predicate<String> annotationFilter = type -> true;
 
     private static final int CLASS_MASK = ClassFile.ACC_PUBLIC | ClassFile.ACC_PROTECTED | ClassFile.ACC_PRIVATE
             | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL | ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT
@@ -215,9 +219,19 @@ final class ApiCheck {
     }
 
     private void compareAnnotations(String id, List<String> a, List<String> b) {
-        Set<String> sa = new TreeSet<>(a);
-        Set<String> sb = new TreeSet<>(b);
+        Set<String> sa = filtered(a);
+        Set<String> sb = filtered(b);
         if (!sa.equals(sb)) errors.add(id + ": runtime annotations " + sa + " (real) vs " + sb);
+    }
+
+    private Set<String> filtered(List<String> annotations) {
+        Set<String> result = new TreeSet<>();
+        for (String a : annotations) {
+            int at = a.indexOf("@L");
+            String type = at < 0 ? "" : a.substring(at + 2, a.indexOf(';', at));
+            if (annotationFilter.test(type)) result.add(a);
+        }
+        return result;
     }
 
     private static Map<String, ClassFile.Member> visibleMembers(List<ClassFile.Member> members) {
@@ -302,9 +316,5 @@ final class ApiCheck {
         for (String e : check.errors) System.out.println("error: " + e);
         System.out.println("checked " + check.checkedClasses + " classes, " + check.errors.size() + " errors");
         System.exit(check.errors.isEmpty() ? 0 : 1);
-    }
-
-    static List<String> list(String... items) {
-        return new ArrayList<>(Arrays.asList(items));
     }
 }

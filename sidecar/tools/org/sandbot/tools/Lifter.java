@@ -99,7 +99,7 @@ final class Lifter {
             if (providedNests.contains(n)) continue;
             String failure = null;
             for (Map.Entry<String, String> f : hardFailures.get(n).entrySet()) {
-                if (!providedKeys.contains(f.getKey())) {
+                if (!providedKeys.contains(classKey(f.getKey()))) {
                     failure = f.getValue();
                     break;
                 }
@@ -133,20 +133,6 @@ final class Lifter {
                 for (String d : e.getValue()) reverseCache.computeIfAbsent(d, k -> new ArrayList<>()).add(e.getKey());
         }
         return reverseCache;
-    }
-
-    /** 이 묶음 때문에(직접·간접) 들여오지 못한 묶음 수(묶음 자신 제외) */
-    int dependentsBlocked(String nest) {
-        Set<String> seen = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>();
-        queue.add(nest);
-        while (!queue.isEmpty()) {
-            for (String user : reverseDeps().getOrDefault(queue.poll(), Collections.<String>emptyList())) {
-                if (!lifted.contains(user) && seen.add(user)) queue.add(user);
-            }
-        }
-        seen.remove(nest);
-        return seen.size();
     }
 
     // ---- 분석
@@ -323,52 +309,142 @@ final class Lifter {
         return internalName.replace('/', '.');
     }
 
+    /** 막는 이유의 열쇠에서 클래스 이름만(멤버 열쇠 "소유#멤버"는 소유 클래스) */
+    static String classKey(String key) {
+        int hash = key.indexOf('#');
+        return hash < 0 ? key : key.substring(0, hash);
+    }
+
     /**
-     * 들여오기를 가장 많이 막은 것들. 열쇠마다 "그것이 있다면(손 구현) 더 들여올 수 있는 묶음 수"로 순위를 매긴다.
-     * 열쇠는 들여오지 못한 SDK 묶음(손 구현 후보)과, 닫히지 않는 외부 클래스·멤버다.
+     * 들여오기를 가장 많이 막은 것들: 손 구현하면 들여올 수 있는 묶음이 가장 많이 느는 것을 하나씩 고른다(욕심쟁이 순서).
+     * 하나만으로는 풀리지 않는 고리(서로 쓰는 묶음들)가 많아서, 앞에서 고른 것이 이미 있다고 치고 다음 것을 고른다.
+     * 열쇠는 들여오지 못한 SDK 묶음(손 구현 후보)이나, 닫히지 않는 외부 클래스(안드로이드·없는 라이브러리)다.
      */
     List<Blocker> topBlockers(int limit) {
-        Map<String, Integer> score = new LinkedHashMap<>();
-        // 외부 열쇠: 직접 막힌 묶음 수
-        Map<String, Set<String>> byKey = new TreeMap<>();
-        for (Map.Entry<String, Map<String, String>> e : hardFailures.entrySet())
-            for (String key : e.getValue().keySet()) byKey.computeIfAbsent(key, k -> new TreeSet<>()).add(e.getKey());
-        List<Blocker> candidatesList = new ArrayList<>();
-        for (Map.Entry<String, Set<String>> e : byKey.entrySet())
-            candidatesList.add(new Blocker(e.getKey(), false, e.getValue().size(), 0));
-        for (String n : candidates.keySet()) {
-            if (lifted.contains(n)) continue;
-            int d = dependentsBlocked(n);
-            if (d > 0) candidatesList.add(new Blocker(n, true, d, 0));
+        // 정수 번호로 바꾼 그래프(반사실 고정점을 수천 번 돌리므로)
+        List<String> nests = new ArrayList<>(candidates.keySet());
+        Map<String, Integer> nestIndex = new HashMap<>();
+        for (int i = 0; i < nests.size(); i++) nestIndex.put(nests.get(i), i);
+        List<String> keys = new ArrayList<>();
+        Map<String, Integer> keyIndex = new HashMap<>();
+        int[][] failureKeys = new int[nests.size()][];
+        int[][] reverse = new int[nests.size()][];
+        List<List<Integer>> reverseLists = new ArrayList<>();
+        for (int i = 0; i < nests.size(); i++) reverseLists.add(new ArrayList<Integer>());
+        for (int i = 0; i < nests.size(); i++) {
+            Set<Integer> ks = new TreeSet<>();
+            for (String key : hardFailures.get(nests.get(i)).keySet()) {
+                String k = classKey(key);
+                Integer id = keyIndex.get(k);
+                if (id == null) {
+                    id = keys.size();
+                    keys.add(k);
+                    keyIndex.put(k, id);
+                }
+                ks.add(id);
+            }
+            failureKeys[i] = ks.stream().mapToInt(Integer::intValue).toArray();
+            for (String d : nestDeps.get(nests.get(i))) reverseLists.get(nestIndex.get(d)).add(i);
         }
-        // 대략적 순위로 먼저 줄이고, 상위 몇 개만 반사실(있다면) 계산
-        candidatesList.sort((a, b) -> b.direct - a.direct);
+        for (int i = 0; i < nests.size(); i++)
+            reverse[i] = reverseLists.get(i).stream().mapToInt(Integer::intValue).toArray();
+        boolean[] keyGiven = new boolean[keys.size()];
+        boolean[] nestGiven = new boolean[nests.size()];
+        boolean[] liftedNow = new boolean[nests.size()];
+        int current = fastFixpoint(failureKeys, reverse, keyGiven, nestGiven, liftedNow);
         List<Blocker> result = new ArrayList<>();
-        int base = lifted.size();
-        for (Blocker b : candidatesList.subList(0, Math.min(candidatesList.size(), limit * 4))) {
-            Set<String> after = b.isNest
-                    ? fixpoint(Collections.<String>emptySet(), Collections.singleton(b.key), null)
-                    : fixpoint(Collections.singleton(b.key), Collections.<String>emptySet(), null);
-            result.add(new Blocker(b.key, b.isNest, b.direct, after.size() - base));
+        boolean[] scratch = new boolean[nests.size()];
+        for (int step = 0; step < limit; step++) {
+            int bestSize = current;
+            int bestKey = -1;
+            boolean bestIsNest = false;
+            // 지금 들여오지 못한 묶음이 직접 막힌 외부 열쇠와, 다른 묶음이 쓰는 막힌 묶음만 후보
+            Set<Integer> keyCandidates = new TreeSet<>();
+            Set<Integer> nestCandidates = new TreeSet<>();
+            for (int i = 0; i < nests.size(); i++) {
+                if (liftedNow[i] || nestGiven[i]) continue;
+                for (int k : failureKeys[i])
+                    if (!keyGiven[k] && !candidates.containsKey(keys.get(k))) keyCandidates.add(k);
+                if (reverse[i].length > 0) nestCandidates.add(i);
+            }
+            for (int k : keyCandidates) {
+                keyGiven[k] = true;
+                int size = fastFixpoint(failureKeys, reverse, keyGiven, nestGiven, scratch);
+                keyGiven[k] = false;
+                if (size > bestSize) {
+                    bestSize = size;
+                    bestKey = k;
+                    bestIsNest = false;
+                }
+            }
+            for (int n : nestCandidates) {
+                nestGiven[n] = true;
+                int size = fastFixpoint(failureKeys, reverse, keyGiven, nestGiven, scratch);
+                nestGiven[n] = false;
+                if (size > bestSize) {
+                    bestSize = size;
+                    bestKey = n;
+                    bestIsNest = true;
+                }
+            }
+            if (bestKey < 0) break;
+            if (bestIsNest) nestGiven[bestKey] = true;
+            else keyGiven[bestKey] = true;
+            current = fastFixpoint(failureKeys, reverse, keyGiven, nestGiven, liftedNow);
+            result.add(new Blocker(bestIsNest ? nests.get(bestKey) : keys.get(bestKey), bestIsNest,
+                    bestSize - (result.isEmpty() ? lifted.size() : result.get(result.size() - 1).total), bestSize));
         }
-        result.sort((a, b) -> a.unlock != b.unlock ? b.unlock - a.unlock : b.direct - a.direct);
-        for (Blocker b : result) score.put(b.key, b.unlock);
-        return result.subList(0, Math.min(limit, result.size()));
+        return result;
+    }
+
+    /** 정수 그래프의 최대 고정점. alive에 결과를 쓰고 수를 돌려준다(주어진 묶음은 세지 않는다). */
+    private static int fastFixpoint(int[][] failureKeys, int[][] reverse, boolean[] keyGiven, boolean[] nestGiven,
+            boolean[] alive) {
+        int n = failureKeys.length;
+        int[] queue = new int[n];
+        int head = 0;
+        int tail = 0;
+        int count = 0;
+        for (int i = 0; i < n; i++) {
+            boolean ok = !nestGiven[i];
+            if (ok) {
+                for (int k : failureKeys[i]) {
+                    if (!keyGiven[k]) {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            alive[i] = ok;
+            if (ok) count++;
+            else if (!nestGiven[i]) queue[tail++] = i;
+        }
+        while (head < tail) {
+            int gone = queue[head++];
+            for (int user : reverse[gone]) {
+                if (alive[user]) {
+                    alive[user] = false;
+                    count--;
+                    queue[tail++] = user;
+                }
+            }
+        }
+        return count;
     }
 
     static final class Blocker {
         final String key;
         final boolean isNest;
-        /** 묶음이면 막힌 하위(간접 포함) 묶음 수, 외부 열쇠면 직접 막힌 묶음 수 */
-        final int direct;
-        /** 이것이 손 구현으로 있으면 더 들여올 수 있는 묶음 수 */
+        /** 앞에서 고른 것들에 더해 이것을 손 구현하면 더 들여올 수 있는 묶음 수 */
         final int unlock;
+        /** 그때 들여오는 묶음 수(누적) */
+        final int total;
 
-        Blocker(String key, boolean isNest, int direct, int unlock) {
+        Blocker(String key, boolean isNest, int unlock, int total) {
             this.key = key;
             this.isNest = isNest;
-            this.direct = direct;
             this.unlock = unlock;
+            this.total = total;
         }
     }
 

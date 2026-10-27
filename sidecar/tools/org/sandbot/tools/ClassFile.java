@@ -291,10 +291,12 @@ final class ClassFile {
                     member.signature = utf8(in.readUnsignedShort());
                     Signatures.collect(member.signature, dependencies);
                     break;
-                case "ConstantValue":
-                    member.constant = values[in.readUnsignedShort()];
+                case "ConstantValue": {
+                    int index = in.readUnsignedShort();
+                    member.constant = tags[index] == STRING ? utf8(refA[index]) : values[index];
                     if (member.constant == null) throw new IOException("bad ConstantValue in " + member);
                     break;
+                }
                 case "Exceptions": {
                     int n = in.readUnsignedShort();
                     for (int k = 0; k < n; k++) {
@@ -399,8 +401,8 @@ final class ClassFile {
 
     // ---- 코드
 
-    private void walkCode(byte[] attribute) throws IOException {
-        DataInputStream in = new DataInputStream(new ByteArrayInputStream(attribute));
+    private void walkCode(byte[] attributeBytes) throws IOException {
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(attributeBytes));
         in.readUnsignedShort();
         in.readUnsignedShort();
         int length = in.readInt();
@@ -483,10 +485,10 @@ final class ClassFile {
         }
         int attributes = in.readUnsignedShort();
         for (int i = 0; i < attributes; i++) {
-            String attribute = utf8(in.readUnsignedShort());
+            String codeAttribute = utf8(in.readUnsignedShort());
             int attributeLength = in.readInt();
-            if (attribute.equals("StackMapTable")) readStackMap(in);
-            else if (attribute.equals("RuntimeVisibleTypeAnnotations")) readTypeAnnotations(in);
+            if (codeAttribute.equals("StackMapTable")) readStackMap(in);
+            else if (codeAttribute.equals("RuntimeVisibleTypeAnnotations")) readTypeAnnotations(in);
             else in.skipBytes(attributeLength);
         }
     }
