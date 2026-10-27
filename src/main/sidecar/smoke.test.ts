@@ -129,7 +129,8 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
     expect(finished()).toMatchObject({ reason: 'returned' })
     expect(events.find((event) => event.type === 'compiled')).toMatchObject({ ok: true })
     const lines = events.flatMap((event) => (event.type === 'telemetry' ? event.frame.lines : []))
-    expect(lines.some((line) => line.includes('hello') && line.includes('world'))).toBe(true)
+    // 최대 속도라 텔레메트리는 최신 것만 넘어온다(34 ms 묶음). 끝날 때 마지막 화면은 반드시 보낸다.
+    expect(lines.some((line) => line.includes('done') && line.includes('true'))).toBe(true)
     const logs = events.flatMap((event) => (event.type === 'log' ? event.entries : []))
     expect(logs.some((entry) => entry.stream === 'out' && entry.text.includes('waiting'))).toBe(
       true

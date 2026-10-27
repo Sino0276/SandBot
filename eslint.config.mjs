@@ -15,6 +15,8 @@ export default defineConfig(
       'native/step-converter/.cache',
       'resources/step-converter',
       'sidecar/build',
+      // Claude Code 작업 폴더(git worktree)
+      '.claude',
       'resources/sidecar'
     ]
   },

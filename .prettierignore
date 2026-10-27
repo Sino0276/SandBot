@@ -6,3 +6,4 @@ tsconfig.json
 tsconfig.*.json
 sidecar/build
 resources/sidecar
+.claude
