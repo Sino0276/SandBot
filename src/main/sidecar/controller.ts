@@ -111,6 +111,9 @@ function errorText(error: unknown): string {
 export class PlayController {
   private active: Active | null = null
   private starting = false
+  // 창마다 disposeOwner를 부른 횟수. 준비(await) 중에 그 창이 닫히거나 새로고침되면 띄운 실행을 바로 정리한다
+  // (아니면 받을 창이 없는 JVM이 남아 다른 실행을 busy로 막는다).
+  private readonly disposals = new WeakMap<PlayOwner, number>()
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -120,6 +123,8 @@ export class PlayController {
   }
 
   async init(input: unknown, owner: PlayOwner): Promise<PlayInitResult> {
+    const generation = this.disposals.get(owner) ?? 0
+    const ownerGone = (): boolean => (this.disposals.get(owner) ?? 0) !== generation
     const request = validateRequest(input)
     if (isFailure(request)) return request
     const prepared = await prepareRun(request)
@@ -128,6 +133,7 @@ export class PlayController {
     if (isFailure(files)) return files
     const jdk = await this.deps.resolveJdk()
     if (!jdk) return { ok: false, code: 'noJdk', detail: '' }
+    if (ownerGone()) return { ok: false, code: 'failed', detail: 'the window was closed' }
     // 확인과 표시를 같은 동기 구간에서 한다(동시에 온 playInit 둘이 같이 통과하지 않게)
     if (this.starting || (this.active && !this.active.session.finished))
       return { ok: false, code: 'busy', detail: '' }
@@ -168,6 +174,10 @@ export class PlayController {
         await this.deps.removeRunDir(runDir).catch(() => undefined)
         if (this.active === active) this.active = null
       })
+      if (ownerGone()) {
+        void session.dispose()
+        return { ok: false, code: 'failed', detail: 'the window was closed' }
+      }
       return { ok: true }
     } finally {
       this.starting = false
@@ -190,6 +200,7 @@ export class PlayController {
 
   // 창이 닫히거나 새로고침되면 그 창의 실행을 정리한다
   disposeOwner(owner: PlayOwner): Promise<void> {
+    this.disposals.set(owner, (this.disposals.get(owner) ?? 0) + 1)
     const active = this.active
     if (!active || active.owner !== owner) return Promise.resolve()
     return active.session.dispose()

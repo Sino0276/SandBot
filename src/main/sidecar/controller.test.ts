@@ -352,6 +352,24 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(finished(rude.runId)).toMatchObject({ reason: 'killed', detail: 'shutdownTimeout' })
   })
 
+  it('준비 중(JVM을 띄우기 전)에 창이 닫히면 띄운 실행을 바로 정리하고 다른 창의 실행을 막지 않는다', async () => {
+    let releaseJdk: () => void = () => undefined
+    const jdkGate = new Promise<void>((resolve) => (releaseJdk = resolve))
+    controller = make({ resolveJdk: () => jdkGate.then(() => JDK) })
+    const closing = opModeRequest('Normal')
+    const pending = controller.init(closing, owner)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await controller.disposeOwner(owner)
+    releaseJdk()
+    expect(await pending).toMatchObject({ ok: false, code: 'failed' })
+    await waitFor(() => !controller.hasProcess)
+
+    const other = { send: (event: PlayEvent): void => void events.push(event) }
+    const next = opModeRequest('Normal')
+    expect(await controller.init(next, other)).toEqual({ ok: true })
+    await waitFor(() => of('phase', next.runId).some((event) => event.phase === 'init'))
+  })
+
   it('확인 실패: 열지 않은 루트, TeamCode 밖 경로, 잘못된 구성 경로, 없는 파일, JDK·사이드카 없음, 실행 실패', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'sandbot-controller-outside-'))
     try {
