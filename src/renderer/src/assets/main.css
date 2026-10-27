@@ -42,11 +42,13 @@ body {
   height: 100%;
 }
 
-/* 왼쪽(프로젝트·저장) · 가운데(실행, Unity의 Play 버튼 자리) · 오른쪽(환경 설정·단위·언어) */
+/* 왼쪽(프로젝트·저장) · 가운데(실행, Unity의 Play 버튼 자리) · 오른쪽(환경 설정·단위·언어).
+   양쪽은 내용보다 좁아지지 않고(겹치지 않게) 가운데가 남은 자리를 쓴다. 좁으면 OpMode 이름이 먼저 줄고,
+   그래도 모자라면 가운데를 자른다. 좁은 창에서는 제목·프로젝트 이름(창 제목에 있음)을 숨긴다. */
 .toolbar {
   display: grid;
   flex: none;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(auto, 1fr) minmax(0, auto) minmax(auto, 1fr);
   gap: 12px;
   align-items: center;
   height: 32px;
@@ -1787,12 +1789,46 @@ button.usage-header:hover {
 }
 
 /* 실행(사이드카 1단계): 툴바 가운데의 OpMode 선택·INIT/START/STOP·일시 정지·한 단계·속도·가상 시간 */
+.toolbar > .toolbar-group:not(.toolbar-play) {
+  min-width: auto;
+}
+
+.toolbar-project {
+  max-width: 16em;
+}
+
+/* 한글은 글자마다 줄을 바꿀 수 있어 좁으면 버튼 글자가 두 줄이 된다 */
+.toolbar .panel-button {
+  white-space: nowrap;
+}
+
 .toolbar-group--end {
   justify-content: flex-end;
 }
 
 .toolbar-play {
   gap: 6px;
+  overflow: hidden;
+}
+
+.toolbar-play > * {
+  flex: none;
+}
+
+.toolbar-play > .opmode-button {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .toolbar-title,
+  .toolbar-project {
+    display: none;
+  }
+
+  .toolbar-group--end .toolbar-select {
+    max-width: 84px;
+  }
 }
 
 .opmode-button {
