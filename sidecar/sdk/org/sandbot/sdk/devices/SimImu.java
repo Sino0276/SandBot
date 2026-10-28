@@ -114,6 +114,22 @@ public final class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSy
         return new AngularVelocity(AngleUnit.DEGREES, raw.get(0), raw.get(1), raw.get(2), now);
     }
 
+    // ---- 같은 칩의 옛 BNO055IMU 드라이버(SimBNO055IMU)가 쓰는 칩 좌표 값(같은 상태, 같은 I2C 비용) ----
+
+    Chip chip() {
+        return chip;
+    }
+
+    /** 칩 좌표의 방향(쿼터니언 읽기 한 번) */
+    Quaternion chipQuaternion() {
+        return getRawQuaternion();
+    }
+
+    /** 칩 좌표의 각속도(°/s, 각속도 읽기 한 번) */
+    AngularVelocity chipAngularVelocity() {
+        return getRawAngularVelocity();
+    }
+
     // ---- IMU ----
 
     @Override public void resetYaw() {

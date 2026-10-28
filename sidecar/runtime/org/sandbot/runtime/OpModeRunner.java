@@ -478,8 +478,20 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
 
     /** 다른 스레드가 시계를 썼다(VirtualClock.Violation) */
     void reportForeignThread(Thread thread, String message, StackTraceElement[] stack) {
-        protocol.error(clock.peekNanos(), "thread", message, SimThreadError.class.getName(),
-                StackFrames.of(stack, sources, true), thread.getName());
+        protocol.error(clock.peekNanos(), "thread", message + threadHint(thread.getName(), stack),
+                SimThreadError.class.getName(), StackFrames.of(stack, sources, true), thread.getName());
+    }
+
+    /** FTCLib의 낡은 command.old.CommandOpMode는 스레드 풀(Executors)에서 명령을 돌린다: 지금 것을 쓰라고 덧붙인다 */
+    static String threadHint(String threadName, StackTraceElement[] stack) {
+        if (!threadName.startsWith("pool-")) return "";
+        for (StackTraceElement e : stack) {
+            if (e.getClassName().startsWith("com.arcrobotics.ftclib.command.old.")) {
+                return ". The deprecated FTCLib com.arcrobotics.ftclib.command.old.CommandOpMode runs commands on a "
+                        + "thread pool; use com.arcrobotics.ftclib.command.CommandOpMode (CommandScheduler) instead";
+            }
+        }
+        return "";
     }
 
     /** 감시: OpMode 스레드가 stallMillis 동안 시계를 쓰지 않았다 */

@@ -1,5 +1,7 @@
 package org.sandbot.runtime;
 
+import org.sandbot.runtime.patch.ClassPatcher;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -12,7 +14,7 @@ import java.util.Set;
 
 /**
  * 라이브러리 jar의 링크 검사(RunRequest.libraryClasspath가 있을 때 컴파일 전에 한 번, 프로토콜 linkReport). 각 jar 클래스의 상수 풀에서
- * 클래스·필드·메서드 참조를 모아, 실행 때 보이는 세계(앱 로더: JDK·sandbot-sdk.jar·런타임, 그다음 라이브러리 jar들 — 실제 로더와 같은
+ * 클래스·필드·메서드 참조(클래스 상수는 코드·상위 형식·catch가 쓰는 것만 — InnerClasses 속성만 가리키는 것은 실행 때 풀리지 않는다)를 모아, 실행 때 보이는 세계(앱 로더: JDK·sandbot-sdk.jar·런타임, 그다음 라이브러리 jar들 — 실제 로더와 같은
  * 부모 우선 순서)에 대어 본다. 클래스는 정의하지 않고 바이트로만 읽는다.
  *
  * <ul>
@@ -343,8 +345,15 @@ final class LinkCheck {
             m.superName = superIndex == 0 ? null : cp.className(superIndex);
             int interfaceCount = r.u2(p + 6);
             m.interfaces = new String[interfaceCount];
+            // 실행 때 실제로 풀리는 클래스 상수(상위 형식, 코드의 new·checkcast·instanceof·anewarray·multianewarray·ldc, catch 형식).
+            // InnerClasses 속성만 가리키는 것(인라인된 상수의 Build$VERSION_CODES 등)은 풀리지 않는다.
+            boolean[] usedClasses = new boolean[count];
+            if (superIndex != 0) usedClasses[superIndex] = true;
             p += 8;
-            for (int i = 0; i < interfaceCount; i++, p += 2) m.interfaces[i] = cp.className(r.u2(p));
+            for (int i = 0; i < interfaceCount; i++, p += 2) {
+                usedClasses[r.u2(p)] = true;
+                m.interfaces[i] = cp.className(r.u2(p));
+            }
             boolean methodHandleOwner = m.name.equals("java/lang/invoke/MethodHandle")
                     || m.name.equals("java/lang/invoke/VarHandle");
             for (int pass = 0; pass < 2; pass++) {
@@ -366,10 +375,14 @@ final class LinkCheck {
                     }
                     for (int a = 0; a < attributes; a++) {
                         int length = r.u4(p + 2);
-                        if (pass == 1 && jar == null && "Code".equals(cp.utf8(r.u2(p))) && !memberName.equals("<clinit>")) {
-                            m.codeMethods++;
+                        if (pass == 1 && "Code".equals(cp.utf8(r.u2(p)))) {
                             int start = p + 14;
-                            if (throwsUnsupported(r, cp, start, start + r.u4(p + 10))) m.unsupported.add(memberName + desc);
+                            int end = start + r.u4(p + 10);
+                            if (jar == null && !memberName.equals("<clinit>")) {
+                                m.codeMethods++;
+                                if (throwsUnsupported(r, cp, start, end)) m.unsupported.add(memberName + desc);
+                            }
+                            if (jar != null) markUsedClasses(r, start, end, offsets, usedClasses);
                         }
                         p += 6 + length;
                     }
@@ -382,6 +395,7 @@ final class LinkCheck {
                     if (offsets[i] == 0) continue;
                     int tag = r.u1(offsets[i]);
                     if (tag == 7) {
+                        if (!usedClasses[i]) continue;
                         String c = cp.className(i);
                         if (!c.equals(m.name)) m.refs.add(new Ref(Ref.CLASS, c, null, null));
                     } else if (tag == 9 || tag == 10 || tag == 11) {
@@ -393,6 +407,27 @@ final class LinkCheck {
                 }
             }
             return m;
+        }
+
+        /** 바이트코드 [start, end)와 그 예외 표(end 바로 뒤)가 쓰는 클래스 상수를 표시한다 */
+        private static void markUsedClasses(Reader r, int start, int end, int[] offsets, boolean[] used) {
+            int pc = start;
+            while (pc < end) {
+                int op = r.u1(pc);
+                int index = -1;
+                if (op == 0xBB || op == 0xBD || op == 0xC0 || op == 0xC1 || op == 0xC5 || op == 0x13) index = r.u2(pc + 1);
+                else if (op == 0x12) index = r.u1(pc + 1);
+                if (index > 0 && index < offsets.length && offsets[index] != 0 && r.u1(offsets[index]) == 7)
+                    used[index] = true;
+                int length = ClassPatcher.instructionLength(r.b, pc, start);
+                if (length <= 0) return;
+                pc += length;
+            }
+            int handlers = r.u2(end);
+            for (int i = 0; i < handlers; i++) {
+                int catchType = r.u2(end + 2 + i * 8 + 6);
+                if (catchType != 0) used[catchType] = true;
+            }
         }
 
         /**

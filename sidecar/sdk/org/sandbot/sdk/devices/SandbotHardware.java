@@ -370,8 +370,18 @@ public final class SandbotHardware {
                     boolean bhi = "ControlHubImuBHI260AP".equals(tag);
                     SimDevice sim = Sim.devices().add(name, SimImu.KIND);
                     SimI2cDeviceSynch client = new SimI2cDeviceSynch(hub, bus, I2cAddr.create7bit(0x28), name, new SilentChip());
-                    result = new SimImu(client, bhi ? SimImu.Chip.BHI260AP : SimImu.Chip.BNO055, sim);
+                    SimImu imu = new SimImu(client, bhi ? SimImu.Chip.BHI260AP : SimImu.Chip.BNO055, sim);
                     if (bus == 0) hub.imuType = bhi ? LynxModuleImuType.BHI260 : LynxModuleImuType.BNO055;
+                    if (!bhi) {
+                        // 실제 SDK처럼 한 구성 항목에 두 드라이버(IMU와 옛 BNO055IMU, 같은 칩): HardwareFactory.addUserDevicesToMap
+                        List<HardwareDevice> drivers = new ArrayList<>();
+                        drivers.add(imu);
+                        drivers.add(new SimBNO055IMU(client, imu));
+                        for (HardwareDevice driver : drivers) addUserDevice(name, driver);
+                        map.put(name, drivers);
+                        return;
+                    }
+                    result = imu;
                     break;
                 }
                 case "REV_VL53L0X_RANGE_SENSOR": {

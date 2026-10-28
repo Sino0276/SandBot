@@ -426,7 +426,7 @@ public final class ClassPatcher {
     }
 
     /** JVMS 6.5의 명령 길이(오퍼랜드 포함). 0이면 모르는 opcode. */
-    static int instructionLength(byte[] code, int pc, int codeStart) {
+    public static int instructionLength(byte[] code, int pc, int codeStart) {
         int op = code[pc] & 0xFF;
         if (op <= 0x0F) return 1;
         switch (op) {
