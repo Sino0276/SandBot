@@ -766,7 +766,9 @@ export class SidecarSession {
       type: 'devices',
       runId: this.runId,
       tNanos: latest.tNanos,
-      outputs: latest.outputs
+      outputs: latest.outputs,
+      // 2단계(A): 세계가 보낸 센서 값의 누적 상태
+      inputs: {}
     })
   }
 

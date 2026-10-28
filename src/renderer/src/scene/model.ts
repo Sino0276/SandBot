@@ -63,6 +63,24 @@ export type RobotHardwareSettings = {
   expansionHub: { enabled: boolean; address: number }
 }
 
+// 바퀴(Unity WheelCollider처럼 바퀴 파트에 붙인다). 하드웨어 장치가 아니라 시뮬레이터 설정이라 생성 코드·구성 XML과
+// 관계없다. 위치는 그 오브젝트(그룹이면 하위 파트들의 중심)에서 나온다. PROJECT_VERSION 6.
+export type WheelKind = 'mecanum' | 'omni' | 'traction'
+// 메카넘 롤러 형: auto는 로봇 중심 기준 사분면으로 정한다(표준 X 배치), flbr = 앞왼쪽·뒤오른쪽형, frbl = 앞오른쪽·뒤왼쪽형
+export type WheelRollers = 'auto' | 'flbr' | 'frbl'
+export type WheelSettings = {
+  kind: WheelKind
+  // 지름(m)
+  diameter: number
+  // 구동 모터 컴포넌트 id(같은 로봇의 motor 컴포넌트). ''이면 구동하지 않는 바퀴.
+  motor: string
+  // 모터 출력축 → 바퀴 외부 감속비(> 0, 1이면 직결)
+  gearRatio: number
+  // 굴림 방향 각(라디안, 로봇 +X 기준 반시계). CAD 파트의 회전과 관계없다.
+  angle: number
+  rollers: WheelRollers
+}
+
 export type SceneObject = {
   id: string
   name: string
@@ -83,6 +101,8 @@ export type SceneObject = {
   // 연결한 TeamCode Java 파일(Unity의 스크립트 컴포넌트처럼 인스펙터 카드가 된다). 탐색용 연결이라 생성 코드는
   // 이 파일을 참조하지 않는다. 한 오브젝트에 여럿을 둘 수 있고 같은 경로는 한 번만 둔다. 비면 필드를 지운다.
   scripts?: ScriptLink[]
+  // 바퀴(assembly·part·group에만, robot·CAD 루트에는 두지 않는다)
+  wheel?: WheelSettings
 }
 
 // 스크립트 연결. path는 TeamCode 기준 상대 경로('/' 구분, src/shared/teamCodePaths.ts의 isLinkableJavaPath),

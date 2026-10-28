@@ -58,7 +58,13 @@ describe('실행 설정(localStorage)', () => {
   it('저장하고 다시 읽는다', () => {
     const storage = memoryStorage()
     expect(loadPlaySettings(storage)).toEqual(DEFAULT_PLAY_SETTINGS)
-    const settings = { speed: 'max' as const, jitter: 0.1, seed: 42, autoStopAutonomous: false }
+    const settings = {
+      speed: 'max' as const,
+      jitter: 0.1,
+      seed: 42,
+      autoStopAutonomous: false,
+      batteryVoltage: 13
+    }
     savePlaySettings(settings, storage)
     expect(loadPlaySettings(storage)).toEqual(settings)
   })

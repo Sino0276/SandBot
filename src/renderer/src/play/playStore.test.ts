@@ -202,7 +202,7 @@ describe('applyPlayEvent', () => {
       state,
       { type: 'telemetry', runId: 'r1', tNanos: 5, frame },
       { type: 'telemetry', runId: 'r1', tNanos: 9, frame: { ...frame, lines: ['b'] } },
-      { type: 'devices', runId: 'r1', tNanos: 9, outputs: { lift: { power: 0.5 } } }
+      { type: 'devices', runId: 'r1', tNanos: 9, outputs: { lift: { power: 0.5 } }, inputs: {} }
     )
     expect(next.run!.telemetry).toEqual({ tNanos: 9, frame: { ...frame, lines: ['b'] } })
     expect(next.run!.devices).toEqual({ tNanos: 9, outputs: { lift: { power: 0.5 } } })

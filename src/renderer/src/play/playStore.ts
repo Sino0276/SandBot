@@ -223,6 +223,10 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       return { run: { ...run, telemetry: { tNanos: event.tNanos, frame: event.frame } } }
     case 'devices':
       return { run: { ...run, devices: { tNanos: event.tNanos, outputs: event.outputs } } }
+    // 2단계(C): 시뮬레이터 자세·안내
+    case 'pose':
+    case 'simNotice':
+      return {}
     case 'log':
       return withEntries(
         data,

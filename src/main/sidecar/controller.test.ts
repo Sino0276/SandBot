@@ -101,7 +101,8 @@ describe('PlayController + 가짜 사이드카', () => {
       flavor: 'TeleOp'
     },
     configPath: null,
-    settings: { speed: 1, jitter: 0, seed: 7, autoStopAutonomous: true },
+    settings: { speed: 1, jitter: 0, seed: 7, autoStopAutonomous: true, batteryVoltage: 12.5 },
+    world: null,
     ...overrides
   })
 
@@ -315,7 +316,7 @@ describe('PlayController + 가짜 사이드카', () => {
 
   it('오류 스택의 팀 코드 줄은 TeamCode 기준 경로를 갖는다', async () => {
     const request = opModeRequest('Errors', {
-      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
     })
     await controller.init(request, owner)
     await waitFor(() => finished(request.runId) !== undefined)
@@ -330,7 +331,7 @@ describe('PlayController + 가짜 사이드카', () => {
         path: `${PKG}/Returns.java`,
         flavor: 'Autonomous'
       },
-      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
     })
     await controller.init(request, owner)
     await waitFor(() => finished(request.runId) !== undefined)

@@ -219,7 +219,9 @@ async function runInit(): Promise<void> {
       root,
       opMode: { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
-      settings: play.settings
+      settings: play.settings,
+      // 2단계(B): 고른 로봇의 세계 설명(play/worldSpec.ts)
+      world: null
     })
   } catch (error) {
     failRun(runId, 'error', 'playInitFailed', ipcErrorDetail(error))

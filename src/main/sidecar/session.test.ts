@@ -667,7 +667,9 @@ describe('SidecarSession 이벤트 묶기', () => {
         step: (tNanos) => {
           seen.push(tNanos)
           return { imu: { yaw: tNanos / 1e9 } }
-        }
+        },
+        pose: () => null,
+        drainNotices: () => []
       }
     })
     boot(proc)
