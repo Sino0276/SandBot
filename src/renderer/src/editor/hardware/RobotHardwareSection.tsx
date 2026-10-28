@@ -13,7 +13,7 @@ import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
 import { usePlayStore } from '../../play/playStore'
 import IssueList from './IssueList'
-import { drivetrainSummary } from './wheelCard'
+import { drivetrainSummary } from './wheelCardModel'
 
 type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
 

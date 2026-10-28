@@ -18,7 +18,7 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { openScriptPicker } from '../dialogStore'
 import ScriptCard from '../scripts/ScriptCard'
 import ComponentCard from './ComponentCard'
-import { canAddWheel, newWheel } from './wheelCard'
+import { canAddWheel, newWheel } from './wheelCardModel'
 import WheelCard from './WheelCard'
 
 // Add Component 선택 상자에서 스크립트 선택창을 여는 항목·바퀴 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)

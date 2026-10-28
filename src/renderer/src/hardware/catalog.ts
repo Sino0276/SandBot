@@ -92,7 +92,7 @@ export const MOTOR_MODEL_TAGS = {
 export type MotorModel = keyof typeof MOTOR_MODEL_TAGS
 
 // 모터 종류의 SDK 형식 값(@MotorType의 ticksPerRev·gearing·maxRPM). FTC SDK 12.0의 com.qualcomm.hardware.motors.*와
-// UnspecifiedMotor에서 확인한 값이고, 사이드카 MotorConfigurationType 표와 같다(hardware.test.ts가 그 Java 파일과 대조한다).
+// UnspecifiedMotor에서 확인한 값이고, 사이드카 MotorConfigurationType 표와 같다(catalog.test.ts가 그 Java 파일과 대조한다).
 // SDK 형식은 계열당 감속비 하나만 안다(goBILDA 5202 계열은 99.5:1, ticksPerRev는 그 감속비의 출력축 틱).
 export const MOTOR_MODEL_SDK: Record<
   MotorModel,
@@ -114,7 +114,7 @@ export const MOTOR_MODEL_SDK: Record<
 }
 
 export function isMotorModel(value: unknown): value is MotorModel {
-  return typeof value === 'string' && value in MOTOR_MODEL_TAGS
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(MOTOR_MODEL_TAGS, value)
 }
 
 // 모터 gearbox 속성의 값 0은 "모델 기본"(그 모델의 SDK gearing)이다. 기본값이 모델마다 다른데 propertyDefaults는

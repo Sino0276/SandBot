@@ -20,7 +20,7 @@ import {
   wheelCardView,
   wheelKindPatch,
   wheelMotorOptions
-} from './wheelCard'
+} from './wheelCardModel'
 import WheelCard from './WheelCard'
 
 // 단위 스토어는 불러올 때 localStorage를 읽는다(Node 테스트에는 없다)

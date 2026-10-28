@@ -18,7 +18,7 @@ import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
 import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
-import { buildWorldSpec } from './worldSpec'
+import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -196,9 +196,7 @@ async function runInit(): Promise<void> {
   const warning = generationWarning(generation, configPath)
   // 운동학 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
-  const world = config
-    ? buildWorldSpec(useSceneStore.getState().objects, config.robotId, play.settings)
-    : null
+  const world = config ? worldFor(config.robotId, play.settings) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
   usePlayStore.setState({
@@ -264,6 +262,18 @@ async function runInit(): Promise<void> {
   const { speed } = usePlayStore.getState().settings
   if (speed !== play.settings.speed) command({ type: 'speed', speed })
   if (isRunActive(usePlayStore.getState().run)) startGamepads()
+}
+
+// 세계 설명을 만들다 예상하지 못한 오류가 나도 실행은 시뮬레이터 없이 계속한다(Console에 알림)
+function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecResult {
+  try {
+    return buildWorldSpec(useSceneStore.getState().objects, robotId, settings)
+  } catch (error) {
+    return {
+      spec: null,
+      warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }]
+    }
+  }
 }
 
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {

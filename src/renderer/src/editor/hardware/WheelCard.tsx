@@ -24,7 +24,12 @@ import {
   toDisplayLength
 } from '../../units/units'
 import NumberField from '../NumberField'
-import { suggestWheelDiameter, wheelCardView, wheelKindPatch, wheelMotorOptions } from './wheelCard'
+import {
+  suggestWheelDiameter,
+  wheelCardView,
+  wheelKindPatch,
+  wheelMotorOptions
+} from './wheelCardModel'
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))

@@ -19,11 +19,11 @@ import {
 import {
   deadWheelTicksPerMeter,
   isComponentType,
+  isMotorModel,
   MOTOR_MODEL_TAGS,
   motorGearbox,
   motorOutput,
-  pinpointPodTicksPerMm,
-  type MotorModel
+  pinpointPodTicksPerMm
 } from '../hardware/catalog'
 import { robotComponents, robotHardwareSettings, type ComponentEntry } from '../hardware/components'
 import { lynxModules } from '../hardware/configXml'
@@ -259,10 +259,11 @@ export function buildWorldSpec(
       continue
     }
     motorDevices.set(component.id, device)
-    const model = component.props.motorModel as MotorModel
+    const model = component.props.motorModel
     motors.push({
       device,
-      modelTag: MOTOR_MODEL_TAGS[model] ?? MOTOR_MODEL_TAGS.unspecified,
+      // 구성 XML과 같은 태그(configXml deviceTag)
+      modelTag: MOTOR_MODEL_TAGS[isMotorModel(model) ? model : 'unspecified'],
       gearbox: motorGearbox(component.props),
       directionSign: component.props.direction === 'reverse' ? -1 : 1
     })
