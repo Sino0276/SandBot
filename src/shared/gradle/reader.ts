@@ -139,11 +139,16 @@ function newProject(): ProjectState {
   return { ext: new Map(), props: new Map() }
 }
 
-function unresolved(reason: string, flags: { missing?: boolean; catalog?: boolean } = {}): Unresolved {
+function unresolved(
+  reason: string,
+  flags: { missing?: boolean; catalog?: boolean } = {}
+): Unresolved {
   return { kind: 'unresolved', reason, ...flags }
 }
 
-function isScalar(value: Value): value is Extract<Value, { kind: 'string' | 'number' | 'boolean' }> {
+function isScalar(
+  value: Value
+): value is Extract<Value, { kind: 'string' | 'number' | 'boolean' }> {
   return value.kind === 'string' || value.kind === 'number' || value.kind === 'boolean'
 }
 
@@ -208,7 +213,9 @@ function mentions(expr: Expr | ClosureExpr | null, names: ReadonlySet<string>): 
     case 'call':
       return (
         mentions(expr.callee, names) ||
-        expr.args.some((arg) => (arg.name !== null && names.has(arg.name)) || mentions(arg.value, names)) ||
+        expr.args.some(
+          (arg) => (arg.name !== null && names.has(arg.name)) || mentions(arg.value, names)
+        ) ||
         mentions(expr.closure, names)
       )
     case 'closure':
@@ -253,6 +260,7 @@ class GradleReader {
   private readonly repositoryKeys = new Set<string>()
   private readonly diagnostics: GradleDiagnostic[] = []
   private readonly diagnosticKeys = new Set<string>()
+  private readonly limits = new Set<string>()
   private readonly files: string[] = []
   private compileSdk: number | null = null
   private catalog: VersionCatalog | null = null
@@ -285,7 +293,11 @@ class GradleReader {
       includes.names.length > 0 &&
       !includes.names.some((name) => name.replace(/^:/, '') === TEAMCODE_MODULE_DIR)
     )
-      this.diag('unsupportedSyntax', { file: includes.file, line: 1 }, `settings does not include ':TeamCode'`)
+      this.diag(
+        'unsupportedSyntax',
+        { file: includes.file, line: 1 },
+        `settings does not include ':TeamCode'`
+      )
     return {
       dependencies: this.dependencies,
       repositories: this.repositories,
@@ -302,14 +314,21 @@ class GradleReader {
     if (cached) return cached
     let result: FileRead
     if (this.reads >= MAX_GRADLE_FILES) {
-      result = { kind: 'problem', code: 'tooDeep', detail: `more than ${MAX_GRADLE_FILES} Gradle files` }
+      result = {
+        kind: 'problem',
+        code: 'tooDeep',
+        detail: `more than ${MAX_GRADLE_FILES} Gradle files`
+      }
     } else {
       this.reads++
       let raw: Awaited<ReturnType<GradleFileSource['read']>>
       try {
         raw = await this.source.read(path)
       } catch (error) {
-        raw = { problem: 'unreadable', detail: error instanceof Error ? error.message : String(error) }
+        raw = {
+          problem: 'unreadable',
+          detail: error instanceof Error ? error.message : String(error)
+        }
       }
       if (raw === null) result = { kind: 'missing' }
       else if (typeof raw === 'string')
@@ -320,7 +339,11 @@ class GradleReader {
       else if (raw.problem === 'tooLarge')
         result = { kind: 'problem', code: 'tooLarge', detail: `${path} is larger than 256 KB` }
       else if (raw.problem === 'outsideProject')
-        result = { kind: 'problem', code: 'outsideProject', detail: `${path} links outside the project` }
+        result = {
+          kind: 'problem',
+          code: 'outsideProject',
+          detail: `${path} links outside the project`
+        }
       else
         result = {
           kind: 'problem',
@@ -343,11 +366,16 @@ class GradleReader {
 
   private async loadCatalog(): Promise<void> {
     const read = await this.read(VERSION_CATALOG_PATH)
-    if (read.kind === 'problem') this.diag(read.code, { file: VERSION_CATALOG_PATH, line: 1 }, read.detail)
+    if (read.kind === 'problem')
+      this.diag(read.code, { file: VERSION_CATALOG_PATH, line: 1 }, read.detail)
     if (read.kind !== 'text') return
     this.catalog = parseVersionCatalog(read.text)
     for (const problem of this.catalog.problems)
-      this.diag('unsupportedSyntax', { file: VERSION_CATALOG_PATH, line: problem.line }, problem.detail)
+      this.diag(
+        'unsupportedSyntax',
+        { file: VERSION_CATALOG_PATH, line: problem.line },
+        problem.detail
+      )
   }
 
   // 같은 스크립트의 Groovy·Kotlin 이름 중 먼저 있는 것을 읽는다(Gradle도 .gradle을 먼저 찾는다)
@@ -410,11 +438,22 @@ class GradleReader {
     this.diagnostics.push({ code, at, detail: clipped })
   }
 
+  // 개수 한도는 처음 넘은 자리에서 한 번만 알린다
+  private limitOnce(what: string, at: GradleLocation, detail: string): void {
+    if (this.limits.has(what)) return
+    this.limits.add(what)
+    this.diag('tooLarge', at, detail)
+  }
+
   private at(ctx: Ctx, node: { line: number }): GradleLocation {
     return { file: ctx.file, line: node.line }
   }
 
-  private unresolvedDiag(ctx: Ctx, node: Expr | { start: number; end: number; line: number }, value: Unresolved): void {
+  private unresolvedDiag(
+    ctx: Ctx,
+    node: Expr | { start: number; end: number; line: number },
+    value: Unresolved
+  ): void {
     this.diag(
       value.catalog ? 'versionCatalogEntry' : 'unresolvedValue',
       this.at(ctx, node),
@@ -422,9 +461,13 @@ class GradleReader {
     )
   }
 
-  // 조건문·읽지 못한 문장 안에 선언이 숨어 있으면 알린다
-  private hidden(ctx: Ctx, stmt: Extract<Stmt, { kind: 'control' | 'unknown' }>, names = RELEVANT_NAMES): void {
-    if (!stmt.idents.some((name) => names.has(name))) return
+  // 조건문·읽지 못한 문장 안에 선언이 숨어 있으면 알린다(names가 null이면 늘: dependencies·repositories 블록 안)
+  private hidden(
+    ctx: Ctx,
+    stmt: Extract<Stmt, { kind: 'control' | 'unknown' }>,
+    names: ReadonlySet<string> | null = RELEVANT_NAMES
+  ): void {
+    if (names && !stmt.idents.some((name) => names.has(name))) return
     const what =
       stmt.kind === 'control'
         ? `declarations inside '${stmt.keyword}' are not read`
@@ -453,10 +496,14 @@ class GradleReader {
     if (!call) return false
     const { path } = call
     if (path && path[path.length - 1] === 'set' && call.call.args.length === 2) {
-      const owner = this.evaluate(call.call.callee.kind === 'member' ? call.call.callee.target : call.call.callee, ctx)
+      const owner = this.evaluate(
+        call.call.callee.kind === 'member' ? call.call.callee.target : call.call.callee,
+        ctx
+      )
       if (owner.kind === 'ext') {
         const key = this.evaluate(call.call.args[0].value, ctx)
-        if (key.kind === 'string') this.setExt(ctx, owner.project, key.value, this.evaluate(call.call.args[1].value, ctx))
+        if (key.kind === 'string')
+          this.setExt(ctx, owner.project, key.value, this.evaluate(call.call.args[1].value, ctx))
         return true
       }
     }
@@ -484,7 +531,8 @@ class GradleReader {
       const call = callOf(stmt)
       if (call && samePath(call.path, 'set') && call.call.args.length === 2) {
         const key = this.evaluate(call.call.args[0].value, inner)
-        if (key.kind === 'string') this.setExt(inner, project, key.value, this.evaluate(call.call.args[1].value, inner))
+        if (key.kind === 'string')
+          this.setExt(inner, project, key.value, this.evaluate(call.call.args[1].value, inner))
         continue
       }
       this.common(stmt, inner)
@@ -512,13 +560,26 @@ class GradleReader {
         return
       }
       const owner = pathOf(by)
-      if (samePath(owner, 'extra') || samePath(owner, 'project', 'extra')) {
-        scope.set(stmt.name, this.projects[this.projectOf(ctx)].ext.get(stmt.name) ?? unresolved(`extra property '${stmt.name}' is not set`, { missing: true }))
+      if (
+        samePath(owner, 'extra') ||
+        samePath(owner, 'project', 'extra') ||
+        samePath(owner, 'rootProject', 'extra')
+      ) {
+        const project = owner?.[0] === 'rootProject' ? 'root' : this.projectOf(ctx)
+        scope.set(
+          stmt.name,
+          this.projects[project].ext.get(stmt.name) ??
+            unresolved(`extra property '${stmt.name}' is not set`, { missing: true })
+        )
         return
       }
       if (samePath(owner, 'project') || samePath(owner, 'rootProject')) {
         const project = owner?.[0] === 'rootProject' ? 'root' : this.projectOf(ctx)
-        scope.set(stmt.name, this.property(project, stmt.name) ?? unresolved(`project property '${stmt.name}' is not set`, { missing: true }))
+        scope.set(
+          stmt.name,
+          this.property(project, stmt.name) ??
+            unresolved(`project property '${stmt.name}' is not set`, { missing: true })
+        )
         return
       }
       scope.set(stmt.name, unresolved(`cannot evaluate delegate '${this.snippet(ctx, by)}'`))
@@ -552,7 +613,8 @@ class GradleReader {
     const keyText = typeof key === 'string' ? key : key.kind === 'string' ? key.value : null
     if (keyText === null) return
     const owner = this.evaluate(target.target, ctx)
-    if (owner.kind === 'ext') this.setExt(ctx, owner.project, keyText, this.evaluate(stmt.value, ctx))
+    if (owner.kind === 'ext')
+      this.setExt(ctx, owner.project, keyText, this.evaluate(stmt.value, ctx))
     else if (owner.kind === 'map' && owner.entries.size < MAX_COLLECTION)
       owner.entries.set(keyText, this.evaluate(stmt.value, ctx))
   }
@@ -566,7 +628,11 @@ class GradleReader {
         continue
       }
       if (stmt.kind === 'assign' && this.relocatesTeamCode(stmt)) {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `TeamCode project directory is changed: ${this.snippet(ctx, stmt)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `TeamCode project directory is changed: ${this.snippet(ctx, stmt)}`
+        )
         continue
       }
       if (this.common(stmt, ctx)) continue
@@ -600,10 +666,15 @@ class GradleReader {
   // project(':TeamCode').projectDir = …
   private relocatesTeamCode(stmt: Extract<Stmt, { kind: 'assign' }>): boolean {
     const target = stmt.target
-    if (target.kind !== 'member' || target.name !== 'projectDir' || target.target.kind !== 'call') return false
+    if (target.kind !== 'member' || target.name !== 'projectDir' || target.target.kind !== 'call')
+      return false
     const call = target.target
     const arg = positional(call.args)[0]
-    return samePath(pathOf(call.callee), 'project') && arg !== undefined && literalString(arg)?.replace(/^:/, '') === TEAMCODE_MODULE_DIR
+    return (
+      samePath(pathOf(call.callee), 'project') &&
+      arg !== undefined &&
+      literalString(arg)?.replace(/^:/, '') === TEAMCODE_MODULE_DIR
+    )
   }
 
   private include(call: Extract<Expr, { kind: 'call' }>, ctx: Ctx): void {
@@ -658,12 +729,14 @@ class GradleReader {
     for (const stmt of closure.body) {
       if (stmt.kind === 'assign') {
         const path = pathOf(stmt.target)
-        if (path && (path[0] === 'ext' || path[0] === 'rootProject' || path[0] === 'project')) this.assign(stmt, inner)
+        if (path && (path[0] === 'ext' || path[0] === 'rootProject' || path[0] === 'project'))
+          this.assign(stmt, inner)
         continue
       }
       if (stmt.kind === 'decl') continue
       const call = callOf(stmt)
-      if (call && (samePath(call.path, 'ext') || call.path?.[call.path.length - 1] === 'set')) this.common(stmt, inner)
+      if (call && (samePath(call.path, 'ext') || call.path?.[call.path.length - 1] === 'set'))
+        this.common(stmt, inner)
     }
   }
 
@@ -677,7 +750,10 @@ class GradleReader {
       }
       if (stmt.kind === 'assign') {
         const path = pathOf(stmt.target)
-        if (samePath(path, 'android', 'compileSdk') || samePath(path, 'android', 'compileSdkVersion')) {
+        if (
+          samePath(path, 'android', 'compileSdk') ||
+          samePath(path, 'android', 'compileSdkVersion')
+        ) {
           this.setCompileSdk(stmt.value, ctx)
           continue
         }
@@ -696,10 +772,33 @@ class GradleReader {
       } else if (name === 'apply') await this.applyFrom(call.call, ctx)
       else if (name === 'buildscript' && closure) this.buildscriptBlock(closure, ctx)
       else if (call.path[0] === 'configurations') {
-        if (mentions(call.call, new Set(['exclude', 'resolutionStrategy', 'force', 'dependencySubstitution'])))
-          this.diag('unsupportedSyntax', this.at(ctx, stmt), `configurations rules are not read: ${this.snippet(ctx, stmt)}`)
+        if (
+          mentions(
+            call.call,
+            new Set(['exclude', 'resolutionStrategy', 'force', 'dependencySubstitution'])
+          )
+        )
+          this.diag(
+            'unsupportedSyntax',
+            this.at(ctx, stmt),
+            `configurations rules are not read: ${this.snippet(ctx, stmt)}`
+          )
       } else if (name === 'afterEvaluate' && closure && mentions(call.call, RELEVANT_NAMES))
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `declarations inside 'afterEvaluate' are not read`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `declarations inside 'afterEvaluate' are not read`
+        )
+      else if (
+        (call.path[0] === 'dependencies' || call.path[0] === 'repositories') &&
+        call.path.length > 1
+      )
+        // dependencies.add('implementation', …), repositories.maven { … } 등
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `${name} is not read: ${this.snippet(ctx, stmt)}`
+        )
     }
   }
 
@@ -708,7 +807,11 @@ class GradleReader {
     const from = namedArg(call.args, 'from')
     if (!from) return
     if (namedArg(call.args, 'to')) {
-      this.diag('unsupportedSyntax', this.at(ctx, call), `apply ... to: is not read: ${this.snippet(ctx, call)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, call),
+        `apply ... to: is not read: ${this.snippet(ctx, call)}`
+      )
       return
     }
     const value = this.evaluate(from.value, ctx)
@@ -719,7 +822,11 @@ class GradleReader {
       this.unresolvedDiag(ctx, from.value, value)
       return
     } else {
-      this.diag('unsupportedSyntax', this.at(ctx, call), `apply from: ${this.snippet(ctx, from.value)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, call),
+        `apply from: ${this.snippet(ctx, from.value)}`
+      )
       return
     }
     if (!resolved.ok) {
@@ -728,11 +835,19 @@ class GradleReader {
     }
     const path = resolved.path
     if (ctx.chain.includes(path)) {
-      this.diag('tooDeep', this.at(ctx, call), `apply from cycle: ${[...ctx.chain, path].join(' -> ')}`)
+      this.diag(
+        'tooDeep',
+        this.at(ctx, call),
+        `apply from cycle: ${[...ctx.chain, path].join(' -> ')}`
+      )
       return
     }
     if (ctx.chain.length >= MAX_APPLY_DEPTH) {
-      this.diag('tooDeep', this.at(ctx, call), `apply from is nested more than ${MAX_APPLY_DEPTH} levels: ${path}`)
+      this.diag(
+        'tooDeep',
+        this.at(ctx, call),
+        `apply from is nested more than ${MAX_APPLY_DEPTH} levels: ${path}`
+      )
       return
     }
     const read = await this.read(path)
@@ -761,14 +876,19 @@ class GradleReader {
         this.declare(stmt, inner)
         continue
       }
-      const path = stmt.kind === 'assign' ? pathOf(stmt.target) : callOf(stmt)?.path ?? null
+      const path = stmt.kind === 'assign' ? pathOf(stmt.target) : (callOf(stmt)?.path ?? null)
       if (!path || path.length !== 1) continue
       const name = path[0]
       if (name === 'compileSdkPreview') {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `compileSdkPreview is not supported: ${this.snippet(ctx, stmt)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `compileSdkPreview is not supported: ${this.snippet(ctx, stmt)}`
+        )
         continue
       }
-      if (name !== 'compileSdk' && name !== 'compileSdkVersion' && name !== 'setCompileSdkVersion') continue
+      if (name !== 'compileSdk' && name !== 'compileSdkVersion' && name !== 'setCompileSdkVersion')
+        continue
       if (stmt.kind === 'assign') {
         this.setCompileSdk(stmt.value, inner)
         continue
@@ -789,7 +909,12 @@ class GradleReader {
       if (value.kind === 'call' && samePath(pathOf(value.callee), 'release')) {
         const arg = positional(value.args)[0]
         if (arg) this.setCompileSdk(arg, ctx)
-      } else this.diag('unsupportedSyntax', this.at(ctx, stmt), `compileSdk ${this.snippet(ctx, stmt)} is not supported`)
+      } else
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `compileSdk ${this.snippet(ctx, stmt)} is not supported`
+        )
     }
   }
 
@@ -803,7 +928,11 @@ class GradleReader {
     const match = /^(?:android-)?(\d{1,4})$/.exec(text)
     const api = match ? Number(match[1]) : NaN
     if (!(api >= 1 && api <= 1000)) {
-      this.diag('unsupportedSyntax', this.at(ctx, expr), `compileSdk '${this.snippet(ctx, expr)}' is not an API level`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, expr),
+        `compileSdk '${this.snippet(ctx, expr)}' is not an API level`
+      )
       return
     }
     this.compileSdk = api
@@ -815,17 +944,22 @@ class GradleReader {
     const inner = this.child(ctx)
     for (const stmt of closure.body) {
       if (stmt.kind === 'control' || stmt.kind === 'unknown') {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `repository could not be read: ${this.snippet(ctx, stmt)}`)
+        this.hidden(ctx, stmt, null)
         continue
       }
       if (this.common(stmt, inner)) continue
       const call = callOf(stmt)
       const name = call?.path?.length === 1 ? call.path[0] : null
       if (!call || name === null) {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `repository could not be read: ${this.snippet(ctx, stmt)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `repository could not be read: ${this.snippet(ctx, stmt)}`
+        )
         continue
       }
-      if (REPOSITORY_KINDS.has(name)) this.addRepository(name as GradleRepositoryKind, null, this.at(ctx, stmt))
+      if (REPOSITORY_KINDS.has(name))
+        this.addRepository(name as GradleRepositoryKind, null, this.at(ctx, stmt))
       else if (name === 'flatDir') this.addRepository('flatDir', null, this.at(ctx, stmt))
       else if (name === 'maven') this.mavenRepository(call.call, inner)
       else if (name === 'exclusiveContent' && call.call.closure) {
@@ -865,14 +999,18 @@ class GradleReader {
     if (value.kind === 'string') this.addRepository('maven', value.value, this.at(ctx, urlExpr))
     else if (value.kind === 'unresolved') this.unresolvedDiag(ctx, urlExpr, value)
     else
-      this.diag('unsupportedSyntax', this.at(ctx, urlExpr), `local maven repository is not read: ${this.snippet(ctx, urlExpr)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, urlExpr),
+        `local maven repository is not read: ${this.snippet(ctx, urlExpr)}`
+      )
   }
 
   private addRepository(kind: GradleRepositoryKind, url: string | null, at: GradleLocation): void {
     const key = `${kind}\u0000${url ?? ''}\u0000${at.file}\u0000${at.line}`
     if (this.repositoryKeys.has(key)) return
     if (this.repositories.length >= MAX_REPOSITORIES) {
-      this.diag('tooLarge', at, `more than ${MAX_REPOSITORIES} repositories`)
+      this.limitOnce('repositories', at, `more than ${MAX_REPOSITORIES} repositories`)
       return
     }
     this.repositoryKeys.add(key)
@@ -885,34 +1023,66 @@ class GradleReader {
     const inner = this.child(ctx)
     for (const stmt of closure.body) {
       if (stmt.kind === 'control' || stmt.kind === 'unknown') {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `dependency could not be read: ${this.snippet(ctx, stmt)}`)
+        this.hidden(ctx, stmt, null)
         continue
       }
       if (this.common(stmt, inner)) continue
       const call = callOf(stmt)
-      const name = call?.path?.length === 1 ? call.path[0] : null
+      // Kotlin 스크립트 플러그인(apply(from = "x.gradle.kts"))에는 형식 있는 접근자가 없어 "implementation"(…)로 쓴다
+      const name =
+        call?.path?.length === 1 ? call.path[0] : call ? literalString(call.call.callee) : null
       if (!call || name === null) {
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `dependency could not be read: ${this.snippet(ctx, stmt)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `dependency could not be read: ${this.snippet(ctx, stmt)}`
+        )
         continue
       }
-      if (SUPPORTED_CONFIGURATIONS.has(name)) this.declaration(name as GradleConfiguration, call.call, inner)
-      else if (/^(?:test|androidTest|testFixtures)[A-Z]/.test(name) || SILENT_CONFIGURATIONS.has(name)) continue
+      if (SUPPORTED_CONFIGURATIONS.has(name))
+        this.declaration(name as GradleConfiguration, call.call, inner)
+      else if (
+        /^(?:test|androidTest|testFixtures)[A-Z]/.test(name) ||
+        SILENT_CONFIGURATIONS.has(name)
+      )
+        continue
       else if (PROCESSOR_CONFIGURATIONS.has(name))
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `${name} is not run by SandBot: ${this.snippet(ctx, stmt)}`)
-      else if (name === 'constraints' || name === 'components' || name === 'modules' || name === 'add')
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `${name} is not run by SandBot: ${this.snippet(ctx, stmt)}`
+        )
+      else if (
+        name === 'constraints' ||
+        name === 'components' ||
+        name === 'modules' ||
+        name === 'add'
+      )
         this.diag('unsupportedSyntax', this.at(ctx, stmt), `dependencies ${name} is not read`)
       else if (VARIANT_CONFIGURATION.test(name))
-        this.diag('unsupportedSyntax', this.at(ctx, stmt), `build variant configuration '${name}' is not read`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `build variant configuration '${name}' is not read`
+        )
       // 그 밖의 구성(팀이 만든 구성 등)은 TeamCode 컴파일과 관계없다
     }
   }
 
-  private declaration(configuration: GradleConfiguration, call: Extract<Expr, { kind: 'call' }>, ctx: Ctx): void {
+  private declaration(
+    configuration: GradleConfiguration,
+    call: Extract<Expr, { kind: 'call' }>,
+    ctx: Ctx
+  ): void {
     const named = call.args.filter((arg) => arg.name !== null)
     const notations: Array<{ notation: Notation; line: number }> = []
     if (named.length > 0) {
       if (named.length !== call.args.length) {
-        this.diag('unsupportedSyntax', this.at(ctx, call), `mixed dependency notation: ${this.snippet(ctx, call)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, call),
+          `mixed dependency notation: ${this.snippet(ctx, call)}`
+        )
         return
       }
       const entries = new Map<string, Value>()
@@ -921,10 +1091,13 @@ class GradleReader {
       if (notation) notations.push({ notation, line: call.line })
     } else {
       for (const arg of call.args)
-        for (const notation of this.notations(arg.value, ctx)) notations.push({ notation, line: arg.value.line })
+        for (const notation of this.notations(arg.value, ctx))
+          notations.push({ notation, line: arg.value.line })
     }
     if (notations.length === 0) return
-    const modifiers = call.closure ? this.dependencyModifiers(call.closure, ctx) : { excludes: [], transitive: true }
+    const modifiers = call.closure
+      ? this.dependencyModifiers(call.closure, ctx)
+      : { excludes: [], transitive: true }
     for (const { notation, line } of notations)
       this.addDependency({
         configuration,
@@ -943,7 +1116,7 @@ class GradleReader {
     const key = JSON.stringify(dependency)
     if (this.dependencyKeys.has(key)) return
     if (this.dependencies.length >= MAX_DEPENDENCIES) {
-      this.diag('tooLarge', dependency.at, `more than ${MAX_DEPENDENCIES} dependencies`)
+      this.limitOnce('dependencies', dependency.at, `more than ${MAX_DEPENDENCIES} dependencies`)
       return
     }
     this.dependencyKeys.add(key)
@@ -967,7 +1140,11 @@ class GradleReader {
         return []
       }
       if (name === 'platform' || name === 'enforcedPlatform' || name === 'testFixtures') {
-        this.diag('unsupportedSyntax', this.at(ctx, expr), `${name}(...) dependencies are not read: ${this.snippet(ctx, expr)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, expr),
+          `${name}(...) dependencies are not read: ${this.snippet(ctx, expr)}`
+        )
         return []
       }
       if (name === 'gradleApi' || name === 'localGroovy') {
@@ -1002,7 +1179,11 @@ class GradleReader {
         this.unresolvedDiag(ctx, expr, value)
         return []
       default:
-        this.diag('unsupportedSyntax', this.at(ctx, expr), `not a dependency notation: ${this.snippet(ctx, expr)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, expr),
+          `not a dependency notation: ${this.snippet(ctx, expr)}`
+        )
         return []
     }
   }
@@ -1012,7 +1193,11 @@ class GradleReader {
     const text: Record<string, string> = {}
     for (const [key, value] of entries) {
       if (!['group', 'name', 'version', 'classifier', 'ext'].includes(key)) {
-        this.diag('unsupportedSyntax', this.at(ctx, node), `dependency attribute '${key}' is not read`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, node),
+          `dependency attribute '${key}' is not read`
+        )
         return null
       }
       if (value.kind === 'unresolved') {
@@ -1020,7 +1205,11 @@ class GradleReader {
         return null
       }
       if (value.kind !== 'string') {
-        this.diag('unsupportedSyntax', this.at(ctx, node), `dependency ${key} is not a string: ${this.snippet(ctx, node)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, node),
+          `dependency ${key} is not a string: ${this.snippet(ctx, node)}`
+        )
         return null
       }
       text[key] = value.value
@@ -1030,7 +1219,11 @@ class GradleReader {
       return null
     }
     if (text.group === undefined || text.name === undefined || text.version === undefined) {
-      this.diag('unsupportedSyntax', this.at(ctx, node), `dependency needs group, name and version: ${this.snippet(ctx, node)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, node),
+        `dependency needs group, name and version: ${this.snippet(ctx, node)}`
+      )
       return null
     }
     const classifier = text.classifier ?? null
@@ -1042,7 +1235,11 @@ class GradleReader {
       (classifier !== null && !isNotationName(classifier)) ||
       (extension !== null && !/^[A-Za-z0-9]+$/.test(extension))
     ) {
-      this.diag('unsupportedSyntax', this.at(ctx, node), `invalid dependency: ${this.snippet(ctx, node)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, node),
+        `invalid dependency: ${this.snippet(ctx, node)}`
+      )
       return null
     }
     return { group: text.group, artifact: text.name, version: text.version, classifier, extension }
@@ -1063,7 +1260,11 @@ class GradleReader {
       return []
     }
     if (module?.kind !== 'string' || version?.kind !== 'string') {
-      this.diag('unsupportedSyntax', this.at(ctx, expr), `kotlin(...) needs a module and a version: ${this.snippet(ctx, expr)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, expr),
+        `kotlin(...) needs a module and a version: ${this.snippet(ctx, expr)}`
+      )
       return []
     }
     const notation = parseNotation(`org.jetbrains.kotlin:kotlin-${module.value}:${version.value}`)
@@ -1078,13 +1279,21 @@ class GradleReader {
     const catalog = this.catalog
     const accessor = path.join('.')
     if (!catalog) {
-      this.diag('versionCatalogEntry', this.at(ctx, expr), `libs.${accessor}: ${VERSION_CATALOG_PATH} not found`)
+      this.diag(
+        'versionCatalogEntry',
+        this.at(ctx, expr),
+        `libs.${accessor}: ${VERSION_CATALOG_PATH} not found`
+      )
       return []
     }
     if (path[0] === 'bundles') {
       const bundle = catalog.bundles.get(path.slice(1).join('.'))
       if (!bundle) {
-        this.diag('versionCatalogEntry', this.at(ctx, expr), `libs.${accessor} is not in ${VERSION_CATALOG_PATH}`)
+        this.diag(
+          'versionCatalogEntry',
+          this.at(ctx, expr),
+          `libs.${accessor} is not in ${VERSION_CATALOG_PATH}`
+        )
         return []
       }
       return bundle.aliases.flatMap((alias) => this.catalogLibrary(alias, expr, ctx))
@@ -1100,7 +1309,11 @@ class GradleReader {
     const catalog = this.catalog as VersionCatalog
     const library = catalog.libraries.get(accessor)
     if (!library) {
-      this.diag('versionCatalogEntry', this.at(ctx, expr), `libs.${accessor} is not in ${VERSION_CATALOG_PATH}`)
+      this.diag(
+        'versionCatalogEntry',
+        this.at(ctx, expr),
+        `libs.${accessor} is not in ${VERSION_CATALOG_PATH}`
+      )
       return []
     }
     if (library.problem) {
@@ -1133,7 +1346,10 @@ class GradleReader {
   }
 
   // implementation('…') { exclude group: …; transitive = false }
-  private dependencyModifiers(closure: ClosureExpr, ctx: Ctx): { excludes: GradleExclude[]; transitive: boolean } {
+  private dependencyModifiers(
+    closure: ClosureExpr,
+    ctx: Ctx
+  ): { excludes: GradleExclude[]; transitive: boolean } {
     const inner = this.child(ctx)
     const excludes: GradleExclude[] = []
     let transitive = true
@@ -1141,7 +1357,12 @@ class GradleReader {
       const value = expr ? this.evaluate(expr, inner) : null
       if (value?.kind === 'boolean') transitive = value.value
       else if (value?.kind === 'unresolved') this.unresolvedDiag(ctx, expr as Expr, value)
-      else this.diag('unsupportedSyntax', this.at(ctx, node), `transitive is not a boolean: ${this.snippet(ctx, node)}`)
+      else
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, node),
+          `transitive is not a boolean: ${this.snippet(ctx, node)}`
+        )
     }
     for (const stmt of closure.body) {
       if (stmt.kind === 'decl' || stmt.kind === 'skip') {
@@ -1150,9 +1371,15 @@ class GradleReader {
       }
       if (stmt.kind === 'assign') {
         const path = pathOf(stmt.target)
-        if (samePath(path, 'transitive') || samePath(path, 'isTransitive')) setTransitive(stmt.value, stmt)
+        if (samePath(path, 'transitive') || samePath(path, 'isTransitive'))
+          setTransitive(stmt.value, stmt)
         else if (samePath(path, 'changing') || samePath(path, 'isChanging')) continue
-        else this.diag('unsupportedSyntax', this.at(ctx, stmt), `dependency setting is not read: ${this.snippet(ctx, stmt)}`)
+        else
+          this.diag(
+            'unsupportedSyntax',
+            this.at(ctx, stmt),
+            `dependency setting is not read: ${this.snippet(ctx, stmt)}`
+          )
         continue
       }
       const call = callOf(stmt)
@@ -1160,9 +1387,15 @@ class GradleReader {
       if (call && name === 'exclude') {
         const exclude = this.exclude(call.call, inner)
         if (exclude) excludes.push(exclude)
-      } else if (call && (name === 'transitive' || name === 'setTransitive')) setTransitive(positional(call.call.args)[0], stmt)
+      } else if (call && (name === 'transitive' || name === 'setTransitive'))
+        setTransitive(positional(call.call.args)[0], stmt)
       else if (call && (name === 'because' || name === 'changing')) continue
-      else this.diag('unsupportedSyntax', this.at(ctx, stmt), `dependency setting is not read: ${this.snippet(ctx, stmt)}`)
+      else
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `dependency setting is not read: ${this.snippet(ctx, stmt)}`
+        )
     }
     return { excludes, transitive }
   }
@@ -1184,13 +1417,21 @@ class GradleReader {
         return null
       }
       if ((key !== 'group' && key !== 'module') || value.kind !== 'string') {
-        this.diag('unsupportedSyntax', this.at(ctx, call), `exclude is not read: ${this.snippet(ctx, call)}`)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, call),
+          `exclude is not read: ${this.snippet(ctx, call)}`
+        )
         return null
       }
       exclude[key] = value.value
     }
     if (exclude.group === null && exclude.module === null) {
-      this.diag('unsupportedSyntax', this.at(ctx, call), `exclude is not read: ${this.snippet(ctx, call)}`)
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, call),
+        `exclude is not read: ${this.snippet(ctx, call)}`
+      )
       return null
     }
     return exclude
@@ -1252,10 +1493,17 @@ class GradleReader {
         if (name === 'ext' || name === 'extra') return { kind: 'ext', project: base.project }
         if (name === 'rootProject') return { kind: 'project', project: 'root' }
         if (name === 'rootDir') return { kind: 'path', base: '', rest: '' }
-        if (name === 'projectDir') return { kind: 'path', base: this.projectDir(base.project), rest: '' }
-        return this.property(base.project, name) ?? unresolved(`project property '${name}' is not set`, { missing: true })
+        if (name === 'projectDir')
+          return { kind: 'path', base: this.projectDir(base.project), rest: '' }
+        return (
+          this.property(base.project, name) ??
+          unresolved(`project property '${name}' is not set`, { missing: true })
+        )
       case 'ext':
-        return this.projects[base.project].ext.get(name) ?? unresolved(`extra property '${name}' is not set`, { missing: true })
+        return (
+          this.projects[base.project].ext.get(name) ??
+          unresolved(`extra property '${name}' is not set`, { missing: true })
+        )
       case 'map':
         return base.entries.get(name) ?? unresolved(`no key '${name}'`, { missing: true })
       case 'catalog':
@@ -1274,11 +1522,13 @@ class GradleReader {
       case 'number': {
         const text = expr.text.replace(/_/g, '').replace(/[lLiIgG]$/, '')
         if (/^[0-9]+$/.test(text)) return { kind: 'number', value: Number(text) }
-        if (/^0[xX][0-9a-fA-F]+$/.test(text)) return { kind: 'number', value: parseInt(text.slice(2), 16) }
+        if (/^0[xX][0-9a-fA-F]+$/.test(text))
+          return { kind: 'number', value: parseInt(text.slice(2), 16) }
         return unresolved(`number '${expr.text}' is not an integer`)
       }
       case 'name':
-        if (expr.name === 'true' || expr.name === 'false') return { kind: 'boolean', value: expr.name === 'true' }
+        if (expr.name === 'true' || expr.name === 'false')
+          return { kind: 'boolean', value: expr.name === 'true' }
         if (expr.name === 'null') return { kind: 'null' }
         return this.lookup(expr.name, ctx)
       case 'member':
@@ -1290,7 +1540,9 @@ class GradleReader {
         if (key.kind === 'string') return this.member(base, key.value)
         if (key.kind === 'number' && base.kind === 'list')
           return base.items[key.value] ?? unresolved(`index ${key.value} is out of range`)
-        return base.kind === 'unresolved' ? base : unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
+        return base.kind === 'unresolved'
+          ? base
+          : unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
       }
       case 'call':
         return this.call(expr, ctx)
@@ -1301,7 +1553,8 @@ class GradleReader {
       case 'map': {
         if (expr.entries.length > MAX_COLLECTION) return unresolved('map is too long')
         const entries = new Map<string, Value>()
-        for (const entry of expr.entries) if (entry.key !== null) entries.set(entry.key, this.evaluate(entry.value, ctx))
+        for (const entry of expr.entries)
+          if (entry.key !== null) entries.set(entry.key, this.evaluate(entry.value, ctx))
         return { kind: 'map', entries }
       }
       case 'binary':
@@ -1309,8 +1562,10 @@ class GradleReader {
       case 'cast': {
         const value = this.evaluate(expr.expr, ctx)
         if (value.kind === 'unresolved' || !isScalar(value)) return value
-        if (['String', 'CharSequence', 'GString'].includes(expr.type)) return { kind: 'string', value: scalarText(value) }
-        if (['int', 'Integer', 'Int', 'long', 'Long'].includes(expr.type)) return this.toInteger(value)
+        if (['String', 'CharSequence', 'GString'].includes(expr.type))
+          return { kind: 'string', value: scalarText(value) }
+        if (['int', 'Integer', 'Int', 'long', 'Long'].includes(expr.type))
+          return this.toInteger(value)
         return value
       }
       default:
@@ -1320,7 +1575,8 @@ class GradleReader {
 
   private toInteger(value: Value): Value {
     if (value.kind === 'number') return value
-    if (value.kind === 'string' && /^\s*-?[0-9]+\s*$/.test(value.value)) return { kind: 'number', value: Number(value.value.trim()) }
+    if (value.kind === 'string' && /^\s*-?[0-9]+\s*$/.test(value.value))
+      return { kind: 'number', value: Number(value.value.trim()) }
     return unresolved('not an integer')
   }
 
@@ -1339,9 +1595,12 @@ class GradleReader {
           path = { base: value.base, dir: value.rest === '' }
           text += value.rest
         } else if (isScalar(value)) text += scalarText(value)
-        else if (value.kind === 'null') return unresolved(`'${this.snippet(ctx, part)}' is null`, { missing: true })
+        else if (value.kind === 'null')
+          return unresolved(`'${this.snippet(ctx, part)}' is null`, { missing: true })
         else if (value.kind === 'catalog')
-          return unresolved(`use libs.${value.path.join('.')}.get() for the value`, { catalog: true })
+          return unresolved(`use libs.${value.path.join('.')}.get() for the value`, {
+            catalog: true
+          })
         else return unresolved(`cannot use '${this.snippet(ctx, part)}' in a string`)
       }
       if (text.length > MAX_VALUE_LENGTH) return unresolved('string is too long')
@@ -1354,7 +1613,8 @@ class GradleReader {
   private binary(expr: Extract<Expr, { kind: 'binary' }>, ctx: Ctx): Value {
     if (expr.op === '?:') {
       const left = this.evaluate(expr.left, ctx)
-      if (left.kind === 'null' || (left.kind === 'unresolved' && left.missing)) return this.evaluate(expr.right, ctx)
+      if (left.kind === 'null' || (left.kind === 'unresolved' && left.missing))
+        return this.evaluate(expr.right, ctx)
       return left
     }
     if (expr.op !== '+') return unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
@@ -1362,10 +1622,13 @@ class GradleReader {
     if (left.kind === 'unresolved') return left
     const right = this.evaluate(expr.right, ctx)
     if (right.kind === 'unresolved') return right
-    if (left.kind === 'number' && right.kind === 'number') return { kind: 'number', value: left.value + right.value }
+    if (left.kind === 'number' && right.kind === 'number')
+      return { kind: 'number', value: left.value + right.value }
     if (left.kind === 'string' && isScalar(right)) {
       const value = left.value + scalarText(right)
-      return value.length > MAX_VALUE_LENGTH ? unresolved('string is too long') : { kind: 'string', value }
+      return value.length > MAX_VALUE_LENGTH
+        ? unresolved('string is too long')
+        : { kind: 'string', value }
     }
     if (left.kind === 'path' && right.kind === 'string')
       return {
@@ -1373,14 +1636,19 @@ class GradleReader {
         base: left.base,
         rest: left.rest === '' ? right.value.replace(/^[\\/]+/, '') : left.rest + right.value
       }
-    if (left.kind === 'list' && right.kind === 'list' && left.items.length + right.items.length <= MAX_COLLECTION)
+    if (
+      left.kind === 'list' &&
+      right.kind === 'list' &&
+      left.items.length + right.items.length <= MAX_COLLECTION
+    )
       return { kind: 'list', items: [...left.items, ...right.items] }
     return unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
   }
 
   private call(expr: Extract<Expr, { kind: 'call' }>, ctx: Ctx): Value {
     const args = positional(expr.args)
-    const arg = (index: number): Value => (args[index] ? this.evaluate(args[index], ctx) : unresolved('missing argument'))
+    const arg = (index: number): Value =>
+      args[index] ? this.evaluate(args[index], ctx) : unresolved('missing argument')
     const project = this.projectOf(ctx)
     const propertyCall = (owner: ProjectId, method: string): Value | null => {
       const key = arg(0)
@@ -1388,7 +1656,8 @@ class GradleReader {
       if (key.kind !== 'string') return null
       const value = this.property(owner, key.value)
       if (method === 'findProperty') return value ?? { kind: 'null' }
-      if (method === 'property') return value ?? unresolved(`project property '${key.value}' is not set`, { missing: true })
+      if (method === 'property')
+        return value ?? unresolved(`project property '${key.value}' is not set`, { missing: true })
       if (method === 'hasProperty') return { kind: 'boolean', value: value !== null }
       return null
     }
@@ -1399,7 +1668,9 @@ class GradleReader {
         if (name === 'uri' && args.length === 1) return arg(0)
         if (name === 'file' && args.length === 1) {
           const value = arg(0)
-          return value.kind === 'string' ? { kind: 'path', base: ctx.dir, rest: value.value } : value
+          return value.kind === 'string'
+            ? { kind: 'path', base: ctx.dir, rest: value.value }
+            : value
         }
         if (['findProperty', 'property', 'hasProperty'].includes(name)) {
           const value = propertyCall(project, name)
@@ -1417,37 +1688,56 @@ class GradleReader {
         }
         if (method === 'file' && args.length === 1) {
           const value = arg(0)
-          return value.kind === 'string' ? { kind: 'path', base: this.projectDir(owner.project), rest: value.value } : value
+          return value.kind === 'string'
+            ? { kind: 'path', base: this.projectDir(owner.project), rest: value.value }
+            : value
         }
         if (method === 'uri' && args.length === 1) return arg(0)
       }
-      if (owner.kind === 'ext' && (method === 'get' || method === 'getProperty') && args.length === 1) {
+      if (
+        owner.kind === 'ext' &&
+        (method === 'get' || method === 'getProperty') &&
+        args.length === 1
+      ) {
         const key = arg(0)
         if (key.kind === 'string')
-          return this.projects[owner.project].ext.get(key.value) ?? unresolved(`extra property '${key.value}' is not set`, { missing: true })
+          return (
+            this.projects[owner.project].ext.get(key.value) ??
+            unresolved(`extra property '${key.value}' is not set`, { missing: true })
+          )
       }
       if (owner.kind === 'ext' && method === 'has' && args.length === 1) {
         const key = arg(0)
-        if (key.kind === 'string') return { kind: 'boolean', value: this.projects[owner.project].ext.has(key.value) }
+        if (key.kind === 'string')
+          return { kind: 'boolean', value: this.projects[owner.project].ext.has(key.value) }
       }
       if (owner.kind === 'providers' && method === 'gradleProperty' && args.length === 1) {
         // Gradle 속성(gradle.properties)만 본다(ext는 아니다)
         const key = arg(0)
         if (key.kind === 'unresolved') return key
         if (key.kind === 'string')
-          return { kind: 'provider', value: this.projects.root.props.get(key.value) ?? { kind: 'null' } }
+          return {
+            kind: 'provider',
+            value: this.projects.root.props.get(key.value) ?? { kind: 'null' }
+          }
       }
       if (owner.kind === 'provider') {
         if (method === 'get' && args.length === 0)
-          return owner.value.kind === 'null' ? unresolved('Gradle property is not set', { missing: true }) : owner.value
-        if (method === 'getOrElse' && args.length === 1) return owner.value.kind === 'null' ? arg(0) : owner.value
+          return owner.value.kind === 'null'
+            ? unresolved('Gradle property is not set', { missing: true })
+            : owner.value
+        if (method === 'getOrElse' && args.length === 1)
+          return owner.value.kind === 'null' ? arg(0) : owner.value
         if (method === 'getOrNull' && args.length === 0) return owner.value
       }
-      if (owner.kind === 'catalog' && method === 'get' && args.length === 0) return this.catalogVersion(owner.path)
+      if (owner.kind === 'catalog' && method === 'get' && args.length === 0)
+        return this.catalogVersion(owner.path)
       if (isScalar(owner) && args.length === 0) {
         if (method === 'toString') return { kind: 'string', value: scalarText(owner) }
-        if (method === 'trim' && owner.kind === 'string') return { kind: 'string', value: owner.value.trim() }
-        if (method === 'toInteger' || method === 'toInt' || method === 'toLong') return this.toInteger(owner)
+        if (method === 'trim' && owner.kind === 'string')
+          return { kind: 'string', value: owner.value.trim() }
+        if (method === 'toInteger' || method === 'toInt' || method === 'toLong')
+          return this.toInteger(owner)
       }
     }
     return unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
@@ -1459,9 +1749,14 @@ class GradleReader {
       return unresolved(`libs.${path.join('.')} is not a version`, { catalog: true })
     const accessor = path.slice(1).join('.')
     const entry = this.catalog?.versions.get(accessor)
-    if (!entry) return unresolved(`libs.versions.${accessor} is not in ${VERSION_CATALOG_PATH}`, { catalog: true })
+    if (!entry)
+      return unresolved(`libs.versions.${accessor} is not in ${VERSION_CATALOG_PATH}`, {
+        catalog: true
+      })
     if (entry.problem || entry.version === null)
-      return unresolved(`libs.versions.${accessor}: ${entry.problem ?? 'no version'}`, { catalog: true })
+      return unresolved(`libs.versions.${accessor}: ${entry.problem ?? 'no version'}`, {
+        catalog: true
+      })
     return { kind: 'string', value: entry.version }
   }
 }

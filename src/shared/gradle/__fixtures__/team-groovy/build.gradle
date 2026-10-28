@@ -1,0 +1,36 @@
+/**
+ * Top-level build file for ftc_app project.
+ */
+
+buildscript {
+    ext.kotlin_version = '1.9.0'
+    repositories {
+        mavenCentral()
+        google()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+plugins {
+    id 'com.android.application' version '8.13.2' apply false
+    id 'com.android.library' version '8.13.2' apply false
+}
+
+ext {
+    rrVersion = '1.0.1'
+    versions = [dash: '0.4.16', ejml: '0.39']
+}
+
+allprojects {
+    repositories {
+        mavenCentral()
+        google()
+        maven { url = 'https://maven.brott.dev/' }
+    }
+}
+
+repositories {
+    mavenCentral()
+}

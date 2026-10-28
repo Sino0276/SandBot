@@ -17,7 +17,8 @@ export type StringPart =
   // $a.b.c(Groovy) / $a(Kotlin)
   | { kind: 'path'; names: string[]; start: number; end: number; line: number }
 
-export type GradleTokenKind = 'ident' | 'number' | 'string' | 'punct' | 'newline' | 'invalid' | 'eof'
+export type GradleTokenKind =
+  'ident' | 'number' | 'string' | 'punct' | 'newline' | 'invalid' | 'eof'
 
 export type GradleToken = {
   kind: GradleTokenKind
@@ -365,7 +366,11 @@ class Lexer {
       !triple
     )
     if (this.text.startsWith(delimiter, this.pos)) this.pos += delimiter.length
-    else this.problem(line, 'unterminated string')
+    else {
+      // 닫히지 않은 문자열은 값으로 쓰지 않는다(그 문장은 읽지 못한 문장이 된다)
+      this.problem(line, 'unterminated string')
+      return { kind: 'invalid', text: quote, start, end: this.pos, line }
+    }
     return { kind: 'string', text: '', start, end: this.pos, line, parts }
   }
 
@@ -478,7 +483,9 @@ class Lexer {
     }
     const kotlin = this.dialect === 'kotlin'
     const identStart = kotlin ? isKotlinIdentStart : (ch: string): boolean => /[\p{L}_]/u.test(ch)
-    const identPart = kotlin ? isKotlinIdentPart : (ch: string): boolean => /[\p{L}\p{Nd}_]/u.test(ch)
+    const identPart = kotlin
+      ? isKotlinIdentPart
+      : (ch: string): boolean => /[\p{L}\p{Nd}_]/u.test(ch)
     const names: string[] = []
     let at = this.pos + 1
     for (;;) {

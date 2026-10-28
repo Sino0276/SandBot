@@ -71,15 +71,7 @@ const KOTLIN_MODIFIERS = new Set([
   'override'
 ])
 const CONTROL = new Set(['if', 'for', 'while', 'switch', 'try', 'do', 'synchronized', 'when'])
-const SKIP_TO_END = new Set([
-  'import',
-  'package',
-  'return',
-  'throw',
-  'assert',
-  'break',
-  'continue'
-])
+const SKIP_TO_END = new Set(['import', 'package', 'return', 'throw', 'assert', 'break', 'continue'])
 const TYPE_DEFS = new Set(['class', 'interface', 'enum', 'trait', 'object'])
 // 명령식 인자가 될 수 없는 이름(이항 연산자 낱말)
 const OPERATOR_WORDS = new Set(['as', 'in', 'instanceof', 'is', 'to', 'by', 'else'])
@@ -467,7 +459,8 @@ class Parser {
     for (let i = from; i < to; i++) {
       const token = this.tokens[i]
       if (token.kind === 'ident') names.add(token.text)
-      if (token.kind === 'string') for (const name of stringIdents(token.parts ?? [])) names.add(name)
+      if (token.kind === 'string')
+        for (const name of stringIdents(token.parts ?? [])) names.add(name)
     }
     return [...names]
   }
@@ -687,7 +680,12 @@ class Parser {
     let expr: Expr = { kind: 'call', callee, args, closure, ...this.spanFrom(callee) }
     while (this.peek().kind === 'ident' && !OPERATOR_WORDS.has(this.peek().text)) {
       const nameToken = this.next()
-      const member: Expr = { kind: 'member', target: expr, name: nameToken.text, ...this.spanFrom(expr) }
+      const member: Expr = {
+        kind: 'member',
+        target: expr,
+        name: nameToken.text,
+        ...this.spanFrom(expr)
+      }
       if (this.startsCommandArg()) {
         const chained: Arg[] = []
         for (;;) {
@@ -696,10 +694,22 @@ class Parser {
           this.next()
           this.skipNewlinesOnly()
         }
-        expr = { kind: 'call', callee: member, args: chained, closure: null, ...this.spanFrom(expr) }
+        expr = {
+          kind: 'call',
+          callee: member,
+          args: chained,
+          closure: null,
+          ...this.spanFrom(expr)
+        }
       } else if (this.isPunct('(')) {
         const parenArgs = this.parenArgs()
-        expr = { kind: 'call', callee: member, args: parenArgs, closure: null, ...this.spanFrom(expr) }
+        expr = {
+          kind: 'call',
+          callee: member,
+          args: parenArgs,
+          closure: null,
+          ...this.spanFrom(expr)
+        }
       } else {
         expr = member
       }
@@ -772,7 +782,10 @@ class Parser {
           this.pos += offset + 1
           break
         }
-        if (token.kind !== 'ident' && !(token.kind === 'punct' && [',', ':', '.', '<', '>', '?'].includes(token.text)))
+        if (
+          token.kind !== 'ident' &&
+          !(token.kind === 'punct' && [',', ':', '.', '<', '>', '?'].includes(token.text))
+        )
           break
       }
       if (!sawArrow) this.pos = save
@@ -858,7 +871,11 @@ class Parser {
           this.next()
           this.skipNewlinesOnly()
           const name =
-            key.kind === 'string' ? stringLiteralText(key) : key.kind === 'ident' ? key.text : key.text
+            key.kind === 'string'
+              ? stringLiteralText(key)
+              : key.kind === 'ident'
+                ? key.text
+                : key.text
           entries.push({ key: name, value: this.expression(false) })
         } else {
           items.push(this.expression(false))
@@ -893,8 +910,17 @@ class Parser {
 
   // ${…} 안의 토큰을 식 하나로(비었거나 읽지 못하면 other)
   private interpolated(part: Extract<StringPart, { kind: 'expr' }>): Expr {
-    const eof: GradleToken = { kind: 'eof', text: '', start: part.end, end: part.end, line: part.line }
-    const inner = new Parser([...part.tokens.filter((t) => t.kind !== 'newline'), eof], this.dialect)
+    const eof: GradleToken = {
+      kind: 'eof',
+      text: '',
+      start: part.end,
+      end: part.end,
+      line: part.line
+    }
+    const inner = new Parser(
+      [...part.tokens.filter((t) => t.kind !== 'newline'), eof],
+      this.dialect
+    )
     inner.depth = this.depth
     try {
       if (inner.peek().kind === 'eof') throw new Bail()

@@ -109,7 +109,8 @@ class TomlReader {
       this.skipSpaces()
       const name = this.keys()
       this.skipSpaces()
-      if (this.peek() !== ']' || (array && this.peek(1) !== ']')) throw new TomlError('bad table header')
+      if (this.peek() !== ']' || (array && this.peek(1) !== ']'))
+        throw new TomlError('bad table header')
       this.pos += array ? 2 : 1
       this.endOfLine()
       return { kind: 'table', name: array ? ['[]', ...name] : name, line }
@@ -277,7 +278,8 @@ function versionOf(
   ref: TomlValue | undefined
 ): { version: string | null; versionRef: string | null; problem: string | null } {
   if (ref !== undefined) {
-    if (ref.kind !== 'string') return { version: null, versionRef: null, problem: 'version.ref is not a string' }
+    if (ref.kind !== 'string')
+      return { version: null, versionRef: null, problem: 'version.ref is not a string' }
     return { version: null, versionRef: ref.value, problem: null }
   }
   if (value === undefined) return { version: null, versionRef: null, problem: null }
@@ -287,9 +289,14 @@ function versionOf(
     if (inner.has('ref')) return versionOf(undefined, inner.get('ref'))
     for (const key of ['strictly', 'prefer', 'reject', 'rejectAll'])
       if (inner.has(key))
-        return { version: null, versionRef: null, problem: `rich version '${key}' is not supported` }
+        return {
+          version: null,
+          versionRef: null,
+          problem: `rich version '${key}' is not supported`
+        }
     const require = inner.get('require')
-    if (require?.kind === 'string') return { version: require.value, versionRef: null, problem: null }
+    if (require?.kind === 'string')
+      return { version: require.value, versionRef: null, problem: null }
   }
   return { version: null, versionRef: null, problem: 'unsupported version' }
 }
@@ -305,7 +312,8 @@ function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   })
   if (value.kind === 'string') {
     const parts = value.value.split(':')
-    if (parts.length !== 2 && parts.length !== 3) return bad(`'${value.value}' is not group:name[:version]`)
+    if (parts.length !== 2 && parts.length !== 3)
+      return bad(`'${value.value}' is not group:name[:version]`)
     return {
       group: parts[0],
       artifact: parts[1],
@@ -328,7 +336,8 @@ function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   } else {
     const g = entries.get('group')
     const n = entries.get('name')
-    if (g?.kind !== 'string' || n?.kind !== 'string') return bad('library needs module or group and name')
+    if (g?.kind !== 'string' || n?.kind !== 'string')
+      return bad('library needs module or group and name')
     group = g.value
     artifact = n.value
   }
@@ -381,7 +390,10 @@ export function parseVersionCatalog(text: string): VersionCatalog {
     } else if (table === 'bundles') {
       const value = statement.value
       if (value.kind !== 'array' || !value.items.every((item) => item.kind === 'string')) {
-        catalog.problems.push({ line: statement.line, detail: `bundle '${alias}' is not a list of aliases` })
+        catalog.problems.push({
+          line: statement.line,
+          detail: `bundle '${alias}' is not a list of aliases`
+        })
         continue
       }
       catalog.bundles.set(accessor, {
