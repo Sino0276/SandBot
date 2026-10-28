@@ -30,7 +30,10 @@
  *         velocity(엔코더 모드의 목표 속도 틱/s, 아니면 null), enabled, zeroPower(BRAKE·FLOAT),
  *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5),
  *         encoderOffset(마지막 STOP_AND_RESET_ENCODER 때의 원시 position, 정수, 처음 0, 늘 보냄, OpMode 사이에도 그대로:
- *         팀 코드의 엔코더 = position − encoderOffset, RUN_TO_POSITION의 원시 목표 = targetPosition + encoderOffset)</td>
+ *         팀 코드의 엔코더 = position − encoderOffset, RUN_TO_POSITION의 원시 목표 = targetPosition + encoderOffset),
+ *         encoderResets(허브에 보낸 STOP_AND_RESET_ENCODER 횟수, 정수, 처음 0, 리셋마다 1씩, 늘 보냄, OpMode 사이에도 그대로:
+ *         원시 position이 그대로여서 encoderOffset이 같아도, 한 루프에서 리셋 → RUN_TO_POSITION을 해 틱 경계의 mode가
+ *         STOP_AND_RESET_ENCODER를 보이지 않아도 리셋을 알 수 있다. 데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)</td>
  *     <td>position(원시 허브 엔코더 틱: 리셋을 빼기 전 값, 정수), velocity(틱/s, 정수), current(A),
  *         overCurrent(boolean, 없으면 current &gt; 경보 값). 데드휠(엔코더 포트의 포드)은 같은 장치 이름의 position·velocity가
  *         포드 값이고, 그 부호는 포드 엔코더가 세는 원시 방향(인스펙터 reversed, DcMotor 방향을 적용하기 전)이다</td></tr>

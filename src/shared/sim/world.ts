@@ -64,7 +64,8 @@ type Motor = {
   pod: DeadWheel | null
   // RUN_TO_POSITION의 원시 목표를 만드는 기준(축 틱). 포드와 포트를 함께 쓰지 않으면 encoderOffset 그대로다.
   shaftOffset: number
-  lastEncoderOffset: number
+  // 지난 구간에 본 사이드카의 리셋 횟수(encoderResets)
+  lastEncoderResets: number
 }
 
 type Pinpoint = {
@@ -135,7 +136,7 @@ export class KinematicWorld {
         forwardSign: rotationSign(model.type) * m.directionSign,
         pod: podByName.get(m.device) ?? null,
         shaftOffset: 0,
-        lastEncoderOffset: 0
+        lastEncoderResets: 0
       }
     })
     this.wheelMotors = spec.wheels.map((w) =>
@@ -192,14 +193,15 @@ export class KinematicWorld {
     const commands: MotorCommand[] = this.motors.map((motor) => {
       const out = readMotorOutputs(own(this.outputsPrev, motor.spec.device))
       // 포드와 포트를 함께 쓰면 사이드카의 encoderOffset은 포드 틱이다. 시뮬레이터는 축 엔코더로 제어하므로 리셋을
-      // 본 때의 축 틱을 기준으로 삼는다.
+      // 본 때(사이드카의 리셋 횟수가 바뀐 때)의 축 틱을 기준으로 삼는다. 포드가 그대로면 encoderOffset도 그대로이고,
+      // 한 루프에서 리셋 → RUN_TO_POSITION을 하면 틱 경계가 STOP_AND_RESET_ENCODER 모드를 보지 못할 수 있다.
       if (motor.pod) {
-        if (out.encoderOffset !== motor.lastEncoderOffset || out.mode === 'STOP_AND_RESET_ENCODER')
+        if (out.encoderResets !== motor.lastEncoderResets)
           motor.shaftOffset = Math.floor(motor.model.raw)
       } else {
         motor.shaftOffset = out.encoderOffset
       }
-      motor.lastEncoderOffset = out.encoderOffset
+      motor.lastEncoderResets = out.encoderResets
       return motor.model.command(out, voltage, motor.shaftOffset)
     })
     const rolls = new Array<number>(this.spec.wheels.length).fill(0)

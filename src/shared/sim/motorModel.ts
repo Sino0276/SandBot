@@ -53,6 +53,8 @@ export type MotorOutputs = {
   targetPosition: number | null
   // 마지막 STOP_AND_RESET_ENCODER 때의 원시 틱
   encoderOffset: number
+  // 허브에 보낸 STOP_AND_RESET_ENCODER 횟수(리셋마다 1씩, 원시 틱이 그대로여도 는다)
+  encoderResets: number
 }
 
 const MODES: readonly MotorMode[] = [
@@ -76,7 +78,8 @@ export function readMotorOutputs(values: DeviceValues | undefined): MotorOutputs
     enabled: values?.enabled === true,
     zeroPower: values?.zeroPower === 'FLOAT' ? 'FLOAT' : 'BRAKE',
     targetPosition: typeof target === 'number' && Number.isFinite(target) ? target : null,
-    encoderOffset: finiteOr(values?.encoderOffset, 0)
+    encoderOffset: finiteOr(values?.encoderOffset, 0),
+    encoderResets: finiteOr(values?.encoderResets, 0)
   }
 }
 

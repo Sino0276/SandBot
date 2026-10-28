@@ -143,6 +143,105 @@ describe('구동계 최소제곱', () => {
     expectTwist(parallel.twist([0.01, 0.01]), { dx: 0.01, dy: 0, dTheta: 0 })
     expectTwist(parallel.twist([-0.004, 0.004]), { dx: 0, dy: 0, dTheta: 0.004 / 0.2 })
   })
+
+  // 행 하나 a·x' = b(x' = (vx, vy, ωL))의 최소 노름 해 x' = a·b/|a|²(= Aᵀ(AAᵀ)⁻¹b)를 로봇 변위로
+  function singleRowMinNorm(coef: [number, number, number], b: number, scale: number): Twist {
+    const n = coef[0] ** 2 + coef[1] ** 2 + coef[2] ** 2
+    return { dx: (coef[0] * b) / n, dy: (coef[1] * b) / n, dTheta: (coef[2] * b) / n / scale }
+  }
+
+  it('특이 배치: 축에 놓이지 않은 바퀴 하나도 최소 노름 해(정규 방정식의 상쇄 오차가 없다)', () => {
+    // 결정적인 의사 난수(LCG)로 아무 자리·각의 구동 옴니 하나
+    let seed = 12345
+    const next = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    for (let i = 0; i < 500; i++) {
+      const x = (next() - 0.5) * 0.4
+      const y = (next() - 0.5) * 0.4
+      const angle = (next() - 0.5) * 2 * Math.PI
+      const roll = 0.01
+      const scale = Math.hypot(x, y)
+      const u = { x: Math.cos(angle), y: Math.sin(angle) }
+      const expected = singleRowMinNorm([u.x, u.y, (-u.x * y + u.y * x) / scale], roll, scale)
+      const t = new Drivetrain([wheel(x, y, 'omni', { angle })]).twist([roll])
+      expectTwist(t, expected, 12)
+      // 바퀴 접점의 굴림 방향 이동은 굴림과 같다(행을 정확히 만족)
+      expect(u.x * (t.dx - t.dTheta * y) + u.y * (t.dy + t.dTheta * x)).toBeCloseTo(roll, 12)
+    }
+    // 리뷰에서 찾은 자리: (−0.103, −0.161), −2.85 rad
+    const x = -0.103
+    const y = -0.161
+    const angle = -2.85
+    const u = { x: Math.cos(angle), y: Math.sin(angle) }
+    const scale = Math.hypot(x, y)
+    expectTwist(
+      new Drivetrain([wheel(x, y, 'omni', { angle })]).twist([0.01]),
+      singleRowMinNorm([u.x, u.y, (-u.x * y + u.y * x) / scale], 0.01, scale),
+      12
+    )
+  })
+
+  it('메카넘 네 바퀴 중 하나만 구동하면 그 롤러 행 하나의 최소 노름 해', () => {
+    // 앞왼(flbr)만 모터가 있다(worldSpec이 모터를 찾지 못한 바퀴도 motor: null)
+    const lx = 0.15
+    const ly = 0.16
+    const wheels = [
+      wheel(lx, ly, 'mecanum', { radius: 0.052 }),
+      wheel(lx, -ly, 'mecanum', { radius: 0.052, motor: null }),
+      wheel(-lx, ly, 'mecanum', { radius: 0.052, motor: null }),
+      wheel(-lx, -ly, 'mecanum', { radius: 0.052, motor: null })
+    ]
+    const drive = new Drivetrain(wheels)
+    const s = -0.031
+    // 구속 방향 a = R(−45°)·(1, 0), 오른쪽 값 = s·(a·u), 척도 L = 네 바퀴의 평균 거리
+    const scale = Math.hypot(lx, ly)
+    const a = { x: Math.SQRT1_2, y: -Math.SQRT1_2 }
+    const expected = singleRowMinNorm(
+      [a.x, a.y, (-a.x * ly + a.y * lx) / scale],
+      s * Math.SQRT1_2,
+      scale
+    )
+    const t = drive.twist([s, 0, 0, 0])
+    expectTwist(t, expected, 12)
+    // 리뷰의 기댓값: Δx ≈ −0.00775, Δy ≈ +0.00775, Δθ ≈ +0.0500
+    expect(t.dx).toBeCloseTo(-0.00775, 4)
+    expect(t.dy).toBeCloseTo(0.00775, 4)
+    expect(t.dTheta).toBeCloseTo(0.05, 3)
+  })
+
+  it('두 바퀴만 구동한 메카넘(행 둘)은 Aᵀ(AAᵀ)⁻¹b', () => {
+    // 앞왼(flbr)·뒤오른(flbr) 구동: 두 행이 평행하지 않으면 2×2 AAᵀ를 풀어 최소 노름 해를 만든다
+    const wheels = [
+      wheel(LX, LY, 'mecanum'),
+      wheel(LX, -LY, 'mecanum', { motor: null }),
+      wheel(-LX, LY, 'mecanum', { motor: null }),
+      wheel(-LX, -LY, 'mecanum')
+    ]
+    const scale = Math.hypot(LX, LY)
+    const a = { x: Math.SQRT1_2, y: -Math.SQRT1_2 }
+    const rows: [number, number, number][] = [
+      [a.x, a.y, (-a.x * LY + a.y * LX) / scale],
+      [a.x, a.y, (-a.x * -LY + a.y * -LX) / scale]
+    ]
+    const s = [0.01, -0.004]
+    const b = s.map((v) => v * Math.SQRT1_2)
+    const dot = (p: number[], q: number[]): number => p[0] * q[0] + p[1] * q[1] + p[2] * q[2]
+    const g = [
+      [dot(rows[0], rows[0]), dot(rows[0], rows[1])],
+      [dot(rows[1], rows[0]), dot(rows[1], rows[1])]
+    ]
+    const det = g[0][0] * g[1][1] - g[0][1] * g[1][0]
+    const y0 = (g[1][1] * b[0] - g[0][1] * b[1]) / det
+    const y1 = (-g[1][0] * b[0] + g[0][0] * b[1]) / det
+    const x = [0, 1, 2].map((k) => rows[0][k] * y0 + rows[1][k] * y1)
+    expectTwist(new Drivetrain(wheels).twist([s[0], 0, 0, s[1]]), {
+      dx: x[0],
+      dy: x[1],
+      dTheta: x[2] / scale
+    })
+  })
 })
 
 describe('SE(2)', () => {

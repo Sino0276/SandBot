@@ -481,6 +481,59 @@ describe('KinematicWorld 오도메트리', () => {
     world.step(3 * TICK, out())
     expect(world.drainNotices()).toEqual([])
   })
+
+  it('데드휠과 포트를 함께 쓰는 모터: 포드가 멈춰 있어도 리셋 횟수가 바뀌면 그때의 축 틱을 RUN_TO_POSITION 기준으로', () => {
+    // fr 포트에는 가운데 strafe 포드: 앞으로만 가면 포드(사이드카의 encoderOffset)는 늘 0이다
+    const spec = mecanumSpec({
+      deadWheels: [
+        {
+          device: 'fr',
+          position: { x: 0, y: 0 },
+          measures: 'strafe',
+          reversed: false,
+          ticksPerMeter: 2000
+        }
+      ]
+    })
+    // 0.2초 앞으로 간 뒤 멈춰 선다(축은 ±수백 틱, 리셋 때 바퀴는 서 있다)
+    const warm = run(spec, 1, (k) => driveOutputs(spec, k < 40 ? mecanum(0.5, 0, 0) : {}))
+    const target = 500
+    const travel = (target / ticksPerOutputRev(motorType(GOBILDA), GEARBOX)) * 2 * Math.PI * RADIUS
+    // 팀 코드가 한 루프에서 리셋 → 목표 → RUN_TO_POSITION을 해서 틱 경계가 STOP_AND_RESET_ENCODER를 보지 못했다.
+    // 축 엔코더 모터는 사이드카의 encoderOffset(리셋 때 position)이, 포드 포트는 리셋 횟수(encoderResets)만 바뀐다.
+    const rtp = (resets: number, from: Run): ((k: number) => Record<string, DeviceValues>) => {
+      const state = latest(from.inputs)
+      const out: Record<string, DeviceValues> = {}
+      for (const m of spec.motors) {
+        const hubSign = rotationSign(motorType(GOBILDA)) * m.directionSign
+        out[m.device] = motorOut(0.5, m.directionSign, {
+          mode: 'RUN_TO_POSITION',
+          power: 0.5,
+          velocity: 1184,
+          targetPosition: target * hubSign,
+          encoderOffset: num(state[m.device].position),
+          encoderResets: resets
+        })
+      }
+      return () => out
+    }
+    let r = warm
+    let x = warm.world.pose().x
+    expect(x).toBeGreaterThan(0.1)
+    expect(latest(warm.inputs).fr.position).toBe(0)
+    // 두 번 리셋한다(두 번째도 포드는 그대로라 encoderOffset이 같다)
+    // 왼쪽·오른쪽 축 틱의 소수부를 정수 오프셋이 다르게 잘라(1323.35 → 1323, −1323.35 → −1324) 양쪽 굴림이 1틱까지
+    // 다를 수 있다(요 ~1e-3). 기준을 놓치면 fr이 수백 틱 거꾸로 돌아 수 cm 옆으로 밀리고 크게 돈다.
+    for (const resets of [1, 2]) {
+      r = run(spec, 3, rtp(resets, r), r)
+      expect(Math.abs(num(latest(r.inputs).fr.position))).toBeLessThanOrEqual(1)
+      const pose = r.world.pose()
+      expect(pose.x - x).toBeCloseTo(travel, 3)
+      expect(Math.abs(pose.y)).toBeLessThan(1e-3)
+      expect(Math.abs(pose.yaw)).toBeLessThan(5e-3)
+      x = pose.x
+    }
+  })
 })
 
 describe('KinematicWorld 벽', () => {

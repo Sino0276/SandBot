@@ -372,6 +372,9 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       expect(Math.max(...positions)).toBeLessThanOrEqual(travel + 1e-6)
       const reset = run.ticks.at(-1)?.outputs.frontRight.encoderOffset as number
       expect(typeof reset).toBe('number')
+      // 리셋 횟수는 늘 보내고, 리셋 한 번이면 1(데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)
+      expect(run.ticks[0].outputs.frontRight.encoderResets).toBe(0)
+      expect(run.ticks.at(-1)?.outputs.frontRight.encoderResets).toBe(1)
       const counted = run.encoders.map((e) => -(e.position.frontRight - reset))
       expect(Math.max(...counted)).toBeLessThanOrEqual(1000)
     },
