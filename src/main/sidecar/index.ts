@@ -3,12 +3,11 @@ import { mkdir, mkdtemp, readdir, rm, stat } from 'fs/promises'
 import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { PlayEvent } from '../../shared/play'
-import { KinematicWorld } from '../../shared/sim/world'
 import { resolveActiveJdk } from '../jdk'
 import { PlayController, type PlayOwner } from './controller'
 import { readSidecarFiles } from './launch'
 import { spawnSidecar } from './process'
-import { EMPTY_WORLD, type WorldFactory } from './world'
+import { kinematicWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
@@ -35,11 +34,6 @@ async function sweepRunDirs(root: string): Promise<void> {
       await rm(path, { recursive: true, force: true }).catch(() => undefined)
   }
 }
-
-// 실행마다 새 운동학 시뮬레이터(요청의 세계 설명은 launch.validateRequest가 parseWorldSpec으로 확인한 값). 로봇이 없으면
-// 빈 세계(센서는 사이드카 기본값).
-export const kinematicWorld: WorldFactory = (spec) =>
-  spec ? new KinematicWorld(spec) : EMPTY_WORLD
 
 // 앱을 끝낼 때 사이드카를 정리하는 데 기다리는 최대 시간
 const QUIT_WAIT_MS = 3000
