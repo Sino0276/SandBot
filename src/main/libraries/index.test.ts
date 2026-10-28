@@ -579,6 +579,71 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     expect(Object.keys(JSON.parse(firstUse)).filter((k) => k.endsWith('.pom'))).toEqual([])
   })
 
+  it('FTCLib core 2.1.1(실제 POM): androidx.core는 제공, ejml-all은 제외, JSR 305(javax.annotation)는 쓴다', async () => {
+    const routes = new Map<string, Route>()
+    const ftclibPom = (
+      await readFile(join(__dirname, '__fixtures__', 'ftclib-core-2.1.1.pom'), 'utf8')
+    ).replace(/\r\n/g, '\n')
+    publish(routes, CENTRAL, 'org.ftclib.ftclib:core:2.1.1', 'core-2.1.1.pom', ftclibPom)
+    publish(
+      routes,
+      CENTRAL,
+      'org.ftclib.ftclib:core:2.1.1',
+      'core-2.1.1.aar',
+      makeAar(['com/arcrobotics/ftclib/command/CommandOpMode'])
+    )
+    const simple = 'org.ejml:ejml-simple:0.39'
+    publish(
+      routes,
+      CENTRAL,
+      simple,
+      'ejml-simple-0.39.pom',
+      pom({
+        coordinate: simple,
+        dependencies: [
+          { coordinate: 'com.google.code.findbugs:jsr305:3.0.2' },
+          { coordinate: 'org.ejml:ejml-core:0.39' },
+          { coordinate: 'org.ejml:ejml-all:0.39' },
+          { coordinate: 'org.ejml:ejml-experimental:0.39', scope: 'test' }
+        ]
+      })
+    )
+    publish(
+      routes,
+      CENTRAL,
+      simple,
+      'ejml-simple-0.39.jar',
+      makeJar(['org/ejml/simple/SimpleMatrix'])
+    )
+    for (const [coordinate, classes] of [
+      ['com.google.code.findbugs:jsr305:3.0.2', ['javax/annotation/Nonnull']],
+      ['org.ejml:ejml-core:0.39', ['org/ejml/data/DMatrix']],
+      ['org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.6.10', ['kotlin/jdk7/AutoCloseableKt']]
+    ] as const) {
+      const [, artifact, version] = coordinate.split(':')
+      publish(routes, CENTRAL, coordinate, `${artifact}-${version}.pom`, pom({ coordinate }))
+      publish(routes, CENTRAL, coordinate, `${artifact}-${version}.jar`, makeJar([...classes]))
+    }
+    const { result, requests } = await run(project([dep('org.ftclib.ftclib:core:2.1.1')]), routes)
+    expect(statuses(result.report.entries)).toEqual([
+      'org.ftclib.ftclib:core:2.1.1 used',
+      'androidx.core:core-ktx:1.6.0 provided',
+      'com.google.code.findbugs:jsr305:3.0.2 used',
+      'org.ejml:ejml-core:0.39 used',
+      'org.ejml:ejml-simple:0.39 used',
+      'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.6.10 used'
+    ])
+    // 제외한 것·제공·시험 범위는 묻지도 않는다
+    expect(requests.some((url) => /ejml-all|ejml-experimental|androidx/.test(url))).toBe(false)
+    expect(coordinatesOf(result, result.compileClasspath)).toEqual([
+      'org.ftclib.ftclib:core:2.1.1',
+      'com.google.code.findbugs:jsr305:3.0.2',
+      'org.ejml:ejml-core:0.39',
+      'org.ejml:ejml-simple:0.39',
+      'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.6.10'
+    ])
+  })
+
   it('그룹의 저장소를 선언하지 않았으면: 허용하지 않은 저장소만 있으면 repositoryNotAllowed, 없으면 notFound', async () => {
     const notAllowed = await run(
       project(
