@@ -1,0 +1,110 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.pedropathing",
+    "module": "revhub",
+    "version": "3.0.2",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.0.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "com.pedropathing",
+          "module": "core",
+          "version": {
+            "requires": "3.0.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.3.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "revhub-3.0.2.aar",
+          "url": "revhub-3.0.2.aar",
+          "size": 40216,
+          "sha512": "0519a33020e238256db9372bc26da9371e19f1c5d0c5d6835a485c53e98e3320ee9a3168f2e4148fe0deaa97202c380d77d0a608701b8011d869e0a7dc9615ea",
+          "sha256": "e1c00eb5aa2e767b7045811070045e06ac14363475bcdb09e0ad1cee24ce723e",
+          "sha1": "5740970f170130fbd79473ecc85f20c7b047bf79",
+          "md5": "1013e66f0ba3961fc567154d8bcf8fe5"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.pedropathing",
+          "module": "core",
+          "version": {
+            "requires": "3.0.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.3.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "revhub-3.0.2.aar",
+          "url": "revhub-3.0.2.aar",
+          "size": 40216,
+          "sha512": "0519a33020e238256db9372bc26da9371e19f1c5d0c5d6835a485c53e98e3320ee9a3168f2e4148fe0deaa97202c380d77d0a608701b8011d869e0a7dc9615ea",
+          "sha256": "e1c00eb5aa2e767b7045811070045e06ac14363475bcdb09e0ad1cee24ce723e",
+          "sha1": "5740970f170130fbd79473ecc85f20c7b047bf79",
+          "md5": "1013e66f0ba3961fc567154d8bcf8fe5"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "revhub-3.0.2-sources.jar",
+          "url": "revhub-3.0.2-sources.jar",
+          "size": 24961,
+          "sha512": "224dacff0217727a240e1da66f208c448ff9e36fa6d6f7a50787240945aa97213c12007a71b0bf81617f0f01c35cc9aa50fe91b3b966fe224c54617fda6d6feb",
+          "sha256": "f5bc01ede1724d8a2bc757874b45d928fd33d9247d27c68767fcff497ae1d09f",
+          "sha1": "764a1913a7175783a47cf7832b0c1aaab72ccfaf",
+          "md5": "724d7924946048392db864e4f989a25c"
+        }
+      ]
+    }
+  ]
+}

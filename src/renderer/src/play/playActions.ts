@@ -23,6 +23,7 @@ import {
   useKeyboardPadStore,
   type PadKeyEvent
 } from './keyboardGamepad'
+import { installLibraryNotice } from './libraryNotice'
 import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
 import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
@@ -313,12 +314,13 @@ export function startPlay(): void {
   focusSceneView()
 }
 
-// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다.
+// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다. 라이브러리를 받는 중이면(응답 전) 바로 보낸다:
+// 메인이 받기를 멈추고 INIT을 cancelled로 끝낸다(라이브러리 진행 알림의 [취소]도 이것이다).
 export function stopPlay(): void {
   const { run } = usePlayStore.getState()
   if (!isRunActive(run) || run.stopRequested) return
   updateRun(run.runId, () => ({ stopRequested: true }))
-  if (run.accepted) command({ type: 'stop' })
+  if (run.accepted || run.libraryProgress) command({ type: 'stop' })
 }
 
 // 툴바의 한 버튼과 Ctrl+P: INIT → START → STOP 순서
@@ -489,6 +491,7 @@ export function initPlaySession(): void {
   window.addEventListener('gamepadconnected', updateGamepadSlots)
   window.addEventListener('gamepaddisconnected', updateGamepadSlots)
   installKeyboardGamepad(keyboardPad, window)
+  installLibraryNotice(stopPlay)
   const { root } = useProjectStore.getState()
   if (root) onProjectChanged(root, true)
 }

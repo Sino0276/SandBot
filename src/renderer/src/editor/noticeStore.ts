@@ -39,6 +39,8 @@ type NoticeState = {
     options?: ShowOptions
   ) => number
   setPhase: (id: number, phase: ImportPhase | undefined, fraction?: number | null) => void
+  // 진행 알림의 문구·값을 바꾼다(경과 시간은 그대로, 예: 라이브러리 받기의 개수·바이트)
+  update: (id: number, key: NoticeKey, params: Record<string, string | number>) => void
   dismiss: (id: number) => void
 }
 
@@ -69,6 +71,12 @@ export const useNoticeStore = create<NoticeState>()((set) => ({
         notice.id === id ? { ...notice, phase, fraction: fraction ?? undefined } : notice
       )
     })),
+  update: (id, key, params) =>
+    set((state) => ({
+      notices: state.notices.map((notice) =>
+        notice.id === id ? { ...notice, key, params } : notice
+      )
+    })),
   dismiss: (id) => {
     cancelHandlers.delete(id)
     actionHandlers.delete(id)
@@ -79,6 +87,11 @@ export const useNoticeStore = create<NoticeState>()((set) => ({
 export const showNotice = (...args: Parameters<NoticeState['show']>): number =>
   useNoticeStore.getState().show(...args)
 export const dismissNotice = (id: number): void => useNoticeStore.getState().dismiss(id)
+export const updateNotice = (
+  id: number,
+  key: NoticeKey,
+  params: Record<string, string | number>
+): void => useNoticeStore.getState().update(id, key, params)
 export const setNoticePhase = (
   id: number,
   phase: ImportPhase | undefined,

@@ -1,0 +1,237 @@
+import i18n, { type TFunction } from 'i18next'
+import { beforeAll, describe, expect, it } from 'vitest'
+import type { LibraryEntry, LibraryReason, LibraryReport } from '../../../shared/libraries'
+import en from '../i18n/locales/en'
+import ko from '../i18n/locales/ko'
+import { entryDetailLines, entrySummary, entryTarget, hintText, libraryText } from './consoleModel'
+import { formatBytes, libraryReportLines, linkWarningLines } from './libraryConsole'
+import { consoleEntry } from './playStore'
+
+let t: TFunction
+let tEn: TFunction
+
+beforeAll(async () => {
+  const make = async (lng: 'ko' | 'en'): Promise<TFunction> => {
+    const instance = i18n.createInstance()
+    await instance.init({
+      resources: { [lng]: { translation: lng === 'ko' ? ko : en } },
+      lng,
+      initAsync: false,
+      interpolation: { escapeValue: false }
+    })
+    return instance.t
+  }
+  t = await make('ko')
+  tEn = await make('en')
+})
+
+function entry(coordinate: string, patch: Partial<LibraryEntry> = {}): LibraryEntry {
+  const [group, artifact, version] = coordinate.split(':')
+  return {
+    group,
+    artifact,
+    version,
+    requested: [version],
+    status: 'used',
+    reason: 'none',
+    detail: '',
+    declaredAt: null,
+    requestedBy: [],
+    source: 'download',
+    integrity: 'checksum',
+    ...patch
+  }
+}
+
+const REPORT: LibraryReport = {
+  entries: [
+    entry('org.firstinspires.ftc:RobotCore:12.0.0', {
+      status: 'provided',
+      source: null,
+      integrity: null,
+      declaredAt: { file: 'build.dependencies.gradle', line: 5 }
+    }),
+    entry('com.pedropathing:revhub:3.0.2', {
+      declaredAt: { file: 'TeamCode/build.gradle', line: 28 }
+    }),
+    entry('com.pedropathing:tuning:1.0.1', {
+      status: 'unsupported',
+      reason: 'pedroTuning',
+      source: null,
+      integrity: null,
+      declaredAt: { file: 'build.dependencies.gradle', line: 12 }
+    }),
+    entry('com.acmerobotics.roadrunner:core:1.0.0', { integrity: 'firstUse' }),
+    entry('org.ejml:ejml-core:0.39', {
+      status: 'failed',
+      reason: 'offline',
+      detail: 'https://repo1.maven.org/...: getaddrinfo ENOTFOUND',
+      requestedBy: ['org.ftclib.ftclib:core:2.1.1', 'org.ejml:ejml-simple:0.39'],
+      requested: ['0.39', '0.38'],
+      source: null,
+      integrity: null
+    })
+  ],
+  gradle: [
+    {
+      code: 'remoteScript',
+      at: { file: 'build.gradle', line: 3 },
+      detail: 'https://example.com/x.gradle'
+    }
+  ],
+  compileSdk: null,
+  platform: { api: 34, guessed: true }
+}
+
+describe('의존성 보고 → Console', () => {
+  it('요약·플랫폼 짐작·문제 좌표·처음 받은 해시·Gradle 진단', () => {
+    const lines = libraryReportLines(REPORT)
+    expect(lines.map((l) => `${l.level} ${l.body.type}`)).toEqual([
+      'warning notice',
+      'warning notice',
+      'warning library',
+      'info library',
+      'warning library',
+      'warning gradle'
+    ])
+    const entries = lines.map((line) => consoleEntry(line.body, null, line.level, '/p'))
+    expect(entrySummary(entries[0], t)).toBe(
+      '팀 Gradle의 라이브러리 5개: 사용 2 · 제공 1 · 불러오지 않음 1 · 받지 못함 1'
+    )
+    expect(entrySummary(entries[1], t)).toContain('API 34')
+    expect(entrySummary(entries[2], t)).toMatch(
+      /^build\.dependencies\.gradle:12: com\.pedropathing:tuning:1\.0\.1: Pedro AutoTune/
+    )
+    expect(entrySummary(entries[3], tEn)).toContain('first download was recorded')
+    expect(entrySummary(entries[5], t)).toBe(
+      'build.gradle:3: 원격 스크립트(apply from: https://…)는 읽지 않습니다 (https://example.com/x.gradle)'
+    )
+    // 자세히: 세부·끌어온 쪽·요청된 버전
+    expect(entryDetailLines(entries[4], t)).toEqual([
+      expect.stringContaining('org.ejml:ejml-core:0.39: 네트워크에 닿지 못했고'),
+      '세부: https://repo1.maven.org/...: getaddrinfo ENOTFOUND',
+      '끌어온 쪽: org.ftclib.ftclib:core:2.1.1 → org.ejml:ejml-simple:0.39',
+      '요청된 버전: 0.39, 0.38'
+    ])
+    // Gradle 파일은 외부 편집기 대상(TeamCode Java)이 아니라 열지 않는다
+    expect(entryTarget(entries[2], '/p')).toBeNull()
+  })
+
+  it('좌표가 없으면 요약을 쓰지 않고, 플랫폼을 알면 요약에 넣는다', () => {
+    expect(
+      libraryReportLines({
+        entries: [],
+        gradle: [],
+        compileSdk: 30,
+        platform: { api: 30, guessed: false }
+      })
+    ).toEqual([])
+    const lines = libraryReportLines({
+      entries: [entry('com.pedropathing:revhub:3.0.2')],
+      gradle: [],
+      compileSdk: 30,
+      platform: { api: 30, guessed: false }
+    })
+    expect(lines).toHaveLength(1)
+    expect(entrySummary(consoleEntry(lines[0].body, null, lines[0].level), tEn)).toBe(
+      '1 libraries in the team Gradle files: 1 used · 0 provided · 0 not loaded · 0 not downloaded · compiled against Android API 30'
+    )
+    expect(lines[0].level).toBe('info')
+  })
+
+  it('모든 이유에 문장이 있다(ko·en), FTC Dashboard는 대체 안내', () => {
+    const reasons: LibraryReason[] = [
+      'pedroTuning',
+      'pedro2',
+      'panels',
+      'dairy',
+      'ftcLibVision',
+      'notSupported',
+      'dynamicVersion',
+      'localModule',
+      'repositoryNotAllowed',
+      'notFound',
+      'offline',
+      'rateLimited',
+      'checksumMismatch',
+      'tooLarge',
+      'badArchive',
+      'protectedPackage',
+      'badMetadata',
+      'cancelled'
+    ]
+    for (const reason of reasons)
+      for (const translate of [t, tEn]) {
+        const text = libraryText(entry('x:y:1', { status: 'failed', reason }), translate)
+        expect(text, reason).toMatch(/^x:y:1: ./)
+        expect(text).not.toContain('console.')
+      }
+    expect(
+      libraryText(
+        entry('com.acmerobotics.dashboard:dashboard:0.6.0', {
+          status: 'unsupported',
+          reason: 'notSupported'
+        }),
+        tEn
+      )
+    ).toContain('SandBot Dashboard replacement')
+  })
+
+  it('컴파일 진단의 안내', () => {
+    expect(
+      hintText(
+        {
+          kind: 'libraryNotLoaded',
+          coordinate: 'com.pedropathing:tuning:1.0.1',
+          reason: 'pedroTuning'
+        },
+        t
+      )
+    ).toContain('com.pedropathing:tuning:1.0.1의 것이지만')
+    expect(hintText({ kind: 'undeclared', packageName: 'com.bylazar.telemetry' }, tEn)).toContain(
+      'com.bylazar.telemetry'
+    )
+    const diagnostic = consoleEntry(
+      {
+        type: 'diagnostic',
+        diagnostic: {
+          kind: 'error',
+          path: 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java',
+          file: 'Tuning.java',
+          line: 3,
+          column: 1,
+          message: 'package com.pedropathing.tuning does not exist',
+          code: 'compiler.err.doesnt.exist',
+          hint: { kind: 'undeclared', packageName: 'com.pedropathing.tuning' }
+        }
+      },
+      null
+    )
+    expect(entryDetailLines(diagnostic, t)[1]).toContain('선언하지 않았습니다')
+  })
+
+  it('링크 검사 경고는 라이브러리별로 묶는다', () => {
+    const lines = linkWarningLines([
+      { library: 'a:b:1', kind: 'missingClass', from: 'a.X', target: 'android.os.Foo' },
+      { library: 'c:d:2', kind: 'unsupported', from: 'c.Y', target: 'com.qualcomm.Z#run()V' },
+      { library: 'a:b:1', kind: 'missingMember', from: 'a.X', target: 'q.R#f(I)V' }
+    ])
+    expect(
+      lines.map(
+        (l) => l.body.type === 'linkWarnings' && `${l.body.library}:${l.body.warnings.length}`
+      )
+    ).toEqual(['a:b:1:2', 'c:d:2:1'])
+    const first = consoleEntry(lines[0].body, null, lines[0].level)
+    expect(entrySummary(first, t)).toContain('a:b:1: 링크 검사에서 문제 2개')
+    expect(entryDetailLines(first, t).slice(1)).toEqual([
+      '없는 클래스: a.X → android.os.Foo',
+      '없는 멤버: a.X → q.R#f(I)V'
+    ])
+  })
+
+  it('바이트 형식', () => {
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(2048)).toBe('2 KB')
+    expect(formatBytes(3.5 * 1024 * 1024)).toBe('3.5 MB')
+  })
+})
