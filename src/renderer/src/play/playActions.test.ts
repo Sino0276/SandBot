@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/play'
 import { useDialogStore, usePreferencesStore } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
-import { runNoticeAction, useNoticeStore } from '../editor/noticeStore'
+import { cancelNotice, runNoticeAction, useNoticeStore } from '../editor/noticeStore'
 import { propertyDefaults } from '../hardware/catalog'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
@@ -222,6 +222,29 @@ describe('INIT → START → STOP', () => {
     pending.resolve({ ok: true })
     await settle()
     expect(commands).toEqual([{ type: 'stop' }])
+  })
+
+  it('라이브러리를 받는 중(playInit 응답 전)의 STOP·[취소]는 바로 보내 INIT을 취소한다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 1, total: 3, bytes: 10 })
+    )
+    const progress = useNoticeStore.getState().notices.find((n) => n.level === 'progress')
+    expect(progress).toMatchObject({ key: 'libraryDownloading', cancellable: true })
+    cancelNotice(progress!.id)
+    expect(commands).toEqual([{ type: 'stop' }])
+    // 두 번 보내지 않는다
+    stopPlay()
+    expect(commands).toHaveLength(1)
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    expect(usePlayStore.getState().run).toBeNull()
+    const notices = useNoticeStore.getState().notices
+    expect(notices.map((n) => n.key)).toEqual(['playCancelled'])
+    expect(commands).toHaveLength(1)
   })
 
   it('다른 실행의 이벤트는 버린다', async () => {

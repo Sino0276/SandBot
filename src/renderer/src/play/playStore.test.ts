@@ -434,3 +434,84 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
     ).toEqual({})
   })
 })
+
+describe('라이브러리 진행·보고·링크 검사', () => {
+  const progress: PlayEvent = {
+    type: 'libraryProgress',
+    runId: 'r1',
+    phase: 'downloading',
+    done: 1,
+    total: 4,
+    bytes: 2048
+  }
+
+  it('진행은 준비 중에만 run에 두고, 보고가 오면 지운다', () => {
+    const state = data()
+    const next = apply(state, progress)
+    expect(next.run!.libraryProgress).toEqual({
+      phase: 'downloading',
+      done: 1,
+      total: 4,
+      bytes: 2048
+    })
+    const reported = apply(next, {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: { entries: [], gradle: [], compileSdk: null, platform: null }
+    })
+    expect(reported.run!.libraryProgress).toBeNull()
+    // 좌표가 없으면 Console에 아무것도 쓰지 않는다
+    expect(reported.entries).toEqual([])
+    const compiling = apply(data(), { type: 'phase', runId: 'r1', phase: 'compiling' }, progress)
+    expect(compiling.run!.libraryProgress).toBeNull()
+  })
+
+  it('보고는 요약과 문제 좌표를 Console에(실행의 프로젝트 루트와 함께)', () => {
+    const next = apply(data(), {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: {
+        entries: [
+          {
+            group: 'com.pedropathing',
+            artifact: 'tuning',
+            version: '1.0.1',
+            requested: ['1.0.1'],
+            status: 'unsupported',
+            reason: 'pedroTuning',
+            detail: '',
+            declaredAt: { file: 'build.dependencies.gradle', line: 12 },
+            requestedBy: [],
+            source: null,
+            integrity: null
+          }
+        ],
+        gradle: [],
+        compileSdk: 30,
+        platform: { api: 30, guessed: false }
+      }
+    })
+    expect(next.entries.map((e) => `${e.level} ${e.type}`)).toEqual([
+      'warning notice',
+      'warning library'
+    ])
+    expect(next.entries.every((e) => e.root === '/p')).toBe(true)
+  })
+
+  it('링크 검사 경고는 라이브러리별 한 줄', () => {
+    const next = apply(data(), {
+      type: 'linkWarnings',
+      runId: 'r1',
+      warnings: [
+        { library: 'a:b:1', kind: 'missingClass', from: 'a.X', target: 'q.Y' },
+        { library: 'a:b:1', kind: 'missingMember', from: 'a.X', target: 'q.Y#f()V' }
+      ]
+    })
+    expect(next.entries).toHaveLength(1)
+    expect(next.entries[0]).toMatchObject({
+      type: 'linkWarnings',
+      library: 'a:b:1',
+      level: 'warning'
+    })
+  })
+})

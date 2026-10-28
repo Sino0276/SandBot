@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { LibraryProgress } from '../../../shared/libraries'
 import type {
   OpModeInfo,
   PlayEvent,
@@ -19,6 +20,7 @@ import {
   type ConsoleNoticeKey
 } from './consoleModel'
 import type { PadSlots } from './gamepad'
+import { libraryReportLines, linkWarningLines } from './libraryConsole'
 import {
   loadConsolePrefs,
   loadDockTab,
@@ -81,6 +83,8 @@ export type PlayRun = {
     inputs: Record<string, DeviceValues>
   } | null
   finished: { tNanos: number; reason: ConsoleFinishReason; detail: string } | null
+  // INIT 중 라이브러리 받기 진행(받는 동안만, 의존성 보고가 오면 지운다). 진행 알림이 이것을 보인다.
+  libraryProgress: LibraryProgress | null
 }
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
@@ -220,7 +224,8 @@ export function newRun(options: {
     },
     telemetry: null,
     devices: null,
-    finished: null
+    finished: null,
+    libraryProgress: null
   }
 }
 
@@ -306,11 +311,26 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         }
       }
     }
-    // 라이브러리 진행·보고·링크 검사(계약: 표시는 라이브러리 갈래가 채운다)
-    case 'libraryProgress':
+    case 'libraryProgress': {
+      if (run.phase !== 'preparing') return {}
+      const { phase, done, total, bytes } = event
+      return { run: { ...run, libraryProgress: { phase, done, total, bytes } } }
+    }
     case 'libraryReport':
+      return {
+        run: { ...run, libraryProgress: null },
+        ...withEntries(
+          data,
+          libraryReportLines(event.report).map((line) =>
+            consoleEntry(line.body, null, line.level, run.root)
+          )
+        )
+      }
     case 'linkWarnings':
-      return {}
+      return withEntries(
+        data,
+        linkWarningLines(event.warnings).map((line) => consoleEntry(line.body, null, line.level))
+      )
     case 'simNotice': {
       // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다)
       const key: ConsoleNoticeKey = `sim.${event.code}`
