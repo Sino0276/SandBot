@@ -66,8 +66,9 @@ export function closeContextMenu(restoreFocus = false): void {
 }
 
 // 환경 설정 창(Unity의 Edit > Preferences, editor/PreferencesWindow.tsx). 툴바 버튼으로 연다.
-// target은 열 때 보일 분류나 칸이다(jdk: 외부 도구의 JDK 칸, 실행할 JDK가 없다는 알림이 연다). 없으면 마지막 분류.
-export type PreferencesTarget = 'externalTools' | 'jdk' | 'simulation'
+// target은 열 때 보일 분류나 칸이다(jdk: 외부 도구의 JDK 칸, 실행할 JDK가 없다는 알림이 연다. androidSdk: 외부 도구의
+// Android SDK 칸, Android SDK·플랫폼이 없다는 알림이 연다). 없으면 마지막 분류.
+export type PreferencesTarget = 'externalTools' | 'jdk' | 'androidSdk' | 'simulation'
 type PreferencesState = { open: boolean; target: PreferencesTarget | null }
 
 export const usePreferencesStore = create<PreferencesState>()(() => ({ open: false, target: null }))

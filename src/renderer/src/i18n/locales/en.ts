@@ -537,6 +537,36 @@ const en: Messages = {
       loading: 'Looking for JDKs…',
       loadFailed: 'Could not look for JDKs ({{detail}}). Close and reopen this window.'
     },
+    // The Android SDK that team code is compiled against (the Java API of the project's compileSdk platform)
+    androidSdk: {
+      title: 'Android SDK',
+      label: 'Android SDK for compiling',
+      auto: 'Automatic (recommended)',
+      browse: 'Browse…',
+      browseTitle: 'Choose an Android SDK folder',
+      option: '{{source}} — {{home}} ({{platforms}})',
+      sources: {
+        setting: 'Chosen',
+        localProperties: 'local.properties',
+        env: 'Environment variable',
+        default: 'Default location'
+      },
+      errors: {
+        notSdk:
+          'The chosen folder is not an Android SDK (no platforms folder). The setting was not changed.'
+      },
+      applyFailed: 'Could not change the Android SDK setting ({{detail}}).',
+      active: 'In use',
+      activeValue: '{{home}} ({{source}})',
+      platforms: 'Installed platforms',
+      noPlatforms: 'no platforms',
+      none: 'No Android SDK was found. If Android Studio is installed it is found automatically.',
+      customMissing:
+        'The chosen Android SDK folder can no longer be used (deleted or moved). Switch to Automatic or choose again.',
+      hint: "Like Android Studio, team code is compiled against the Java API of the project's compileSdk platform (install missing platforms with Android Studio's SDK Manager). Automatic looks at sdk.dir in the project's local.properties, then ANDROID_HOME and ANDROID_SDK_ROOT, then the default location.",
+      loading: 'Looking for Android SDKs…',
+      loadFailed: 'Could not look for Android SDKs ({{detail}}). Close and reopen this window.'
+    },
     // Simulation (personal settings, used from the next INIT)
     simulation: {
       title: 'Simulation',

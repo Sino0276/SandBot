@@ -550,6 +550,35 @@ const ko = {
       loading: 'JDK 찾는 중…',
       loadFailed: 'JDK를 찾지 못했습니다 ({{detail}}). 창을 닫았다 다시 열어 보세요.'
     },
+    // 팀 코드를 컴파일할 Android SDK(프로젝트 compileSdk 플랫폼의 Java API)
+    androidSdk: {
+      title: 'Android SDK',
+      label: '컴파일에 쓸 Android SDK',
+      auto: '자동 (권장)',
+      browse: '찾아보기…',
+      browseTitle: 'Android SDK 폴더 선택',
+      option: '{{source}} — {{home}} ({{platforms}})',
+      sources: {
+        setting: '직접 고름',
+        localProperties: 'local.properties',
+        env: '환경 변수',
+        default: '기본 위치'
+      },
+      errors: {
+        notSdk: '고른 폴더는 Android SDK가 아닙니다(platforms 폴더가 없음). 설정은 그대로입니다.'
+      },
+      applyFailed: 'Android SDK 설정을 바꾸지 못했습니다 ({{detail}}).',
+      active: '사용 중',
+      activeValue: '{{home}} ({{source}})',
+      platforms: '설치된 플랫폼',
+      noPlatforms: '플랫폼 없음',
+      none: 'Android SDK를 찾지 못했습니다. Android Studio를 설치했다면 자동으로 찾습니다.',
+      customMissing:
+        '고른 Android SDK 폴더를 쓸 수 없습니다(지웠거나 옮김). 자동으로 바꾸거나 다시 고르세요.',
+      hint: '팀 코드는 Android Studio처럼 프로젝트 compileSdk 플랫폼의 Java API로 컴파일합니다(없는 플랫폼은 Android Studio의 SDK Manager에서 설치). 자동은 프로젝트 local.properties의 sdk.dir → ANDROID_HOME·ANDROID_SDK_ROOT → 기본 위치 순으로 찾습니다.',
+      loading: 'Android SDK 찾는 중…',
+      loadFailed: 'Android SDK를 찾지 못했습니다 ({{detail}}). 창을 닫았다 다시 열어 보세요.'
+    },
     // 시뮬레이션(개인 설정, 다음 INIT부터)
     simulation: {
       title: '시뮬레이션',
