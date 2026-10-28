@@ -54,8 +54,3 @@ export function resolveProjectPath(dir: string, target: string): ProjectPathResu
     return { ok: false, code: 'unsupportedSyntax', detail: `unsupported file name ${target}` }
   return { ok: true, path }
 }
-
-export function dirnameOf(path: string): string {
-  const slash = path.lastIndexOf('/')
-  return slash < 0 ? '' : path.slice(0, slash)
-}

@@ -1,7 +1,9 @@
 // 팀 Gradle 파일 읽기(GradleProject 만들기). Gradle이 TeamCode 모듈을 구성하는 순서를 글자로만 따라간다:
 // gradle.properties(루트·TeamCode) → settings.gradle(.kts) → gradle/libs.versions.toml → 루트 build.gradle(.kts)
 // (allprojects·subprojects·project(':TeamCode') 블록은 TeamCode에 적용) → TeamCode/build.gradle(.kts). 각 파일의
-// apply from: '…'은 그 자리에서 따라간다(대상은 적용하는 스크립트의 폴더 기준, 프로젝트 안만, 깊이 한도).
+// apply from: '…'은 그 자리에서 따라간다(프로젝트 안만, 깊이 한도). 상대 경로는 Gradle처럼 그 스크립트가 구성하는
+// 프로젝트의 폴더 기준이다(ProjectScript.apply가 Project.apply로 넘긴다: TeamCode에 적용한 build.common.gradle 안의
+// 'x.gradle'은 TeamCode/x.gradle, allprojects { } 안도 TeamCode 기준). file('…')도 같다.
 //
 // 값은 리터럴로 풀 수 있는 것만 쓴다: 문자열·숫자·불리언, 문자열 보간과 +, def·val 지역 변수(같은 파일, 블록 범위),
 // ext·extra 속성(그 프로젝트, TeamCode에서는 루트 것도 물려받음), gradle.properties, findProperty·property,
@@ -11,7 +13,7 @@
 import { type GradleDialect } from './lexer'
 import { parseNotation, isNotationName, isNotationVersion, type Notation } from './notation'
 import { parseGradleScript, type Arg, type ClosureExpr, type Expr, type Stmt } from './parser'
-import { dirnameOf, MAX_GRADLE_FILE_BYTES, resolveProjectPath } from './paths'
+import { MAX_GRADLE_FILE_BYTES, resolveProjectPath } from './paths'
 import { parseGradleProperties } from './properties'
 import { parseVersionCatalog, type VersionCatalog } from './toml'
 import type {
@@ -67,7 +69,6 @@ type ProjectState = { ext: Map<string, Value>; props: Map<string, Value> }
 
 type Ctx = {
   file: string
-  dir: string
   text: string
   dialect: GradleDialect
   // 이 스크립트가 구성하는 프로젝트
@@ -409,7 +410,6 @@ class GradleReader {
       this.diag('unsupportedSyntax', { file: path, line: problem.line }, problem.detail)
     const ctx: Ctx = {
       file: path,
-      dir: dirnameOf(path),
       text,
       dialect,
       target,
@@ -816,7 +816,8 @@ class GradleReader {
     }
     const value = this.evaluate(from.value, ctx)
     let resolved: ReturnType<typeof resolveProjectPath>
-    if (value.kind === 'string') resolved = resolveProjectPath(ctx.dir, value.value)
+    if (value.kind === 'string')
+      resolved = resolveProjectPath(this.projectDir(ctx.target), value.value)
     else if (value.kind === 'path') resolved = resolveProjectPath(value.base, value.rest)
     else if (value.kind === 'unresolved') {
       this.unresolvedDiag(ctx, from.value, value)
@@ -1669,7 +1670,7 @@ class GradleReader {
         if (name === 'file' && args.length === 1) {
           const value = arg(0)
           return value.kind === 'string'
-            ? { kind: 'path', base: ctx.dir, rest: value.value }
+            ? { kind: 'path', base: this.projectDir(project), rest: value.value }
             : value
         }
         if (['findProperty', 'property', 'hasProperty'].includes(name)) {

@@ -126,4 +126,17 @@ describe('readProjectGradle', () => {
     trustRoot(root)
     expect(await readProjectGradle(root)).toEqual(await readGradleProject(fixtureSource('ftc12')))
   })
+
+  it('읽기가 예외를 던져도 INIT을 깨지 않고 진단 하나로 알린다', async () => {
+    trustRoot(root)
+    const project = await readProjectGradle(root, () => Promise.reject(new Error('boom')))
+    expect(project.dependencies).toEqual([])
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'unsupportedSyntax',
+        at: { file: 'TeamCode/build.gradle', line: 1 },
+        detail: 'Gradle files could not be read: boom'
+      }
+    ])
+  })
 })

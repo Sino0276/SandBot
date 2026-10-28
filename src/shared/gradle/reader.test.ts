@@ -122,7 +122,7 @@ describe('파일 찾기', () => {
 })
 
 describe('apply from', () => {
-  it('적용하는 스크립트의 폴더 기준으로 풀고, rootDir·rootProject.file·역슬래시도 받는다', async () => {
+  it('상대 경로는 구성하는 프로젝트(TeamCode)의 폴더 기준이고, rootDir·rootProject.file·역슬래시도 받는다', async () => {
     const project = await read({
       [TEAMCODE]: [
         "apply from: '../gradle/a.gradle'",
@@ -130,15 +130,19 @@ describe('apply from', () => {
         "apply from: rootProject.file('gradle/c.gradle')",
         'apply from: "${project.rootDir}/gradle/d.gradle"',
         "apply from: '..\\\\gradle\\\\e.gradle'",
-        "apply from: 'local.gradle'"
+        "apply from: 'local.gradle'",
+        "apply from: file('local2.gradle')"
       ].join('\n'),
+      // gradle/a.gradle 안의 'nested.gradle'도 TeamCode 기준이다(Gradle의 Project.apply)
       'gradle/a.gradle': "dependencies { implementation 'g:a:1' }\napply from: 'nested.gradle'",
-      'gradle/nested.gradle': "dependencies { implementation 'g:nested:1' }",
+      'TeamCode/nested.gradle': "dependencies { implementation 'g:nested:1' }",
+      'gradle/nested.gradle': "dependencies { implementation 'g:wrong:1' }",
       'gradle/b.gradle': "dependencies { implementation 'g:b:1' }",
       'gradle/c.gradle': "dependencies { implementation 'g:c:1' }",
       'gradle/d.gradle': "dependencies { implementation 'g:d:1' }",
       'gradle/e.gradle': "dependencies { implementation 'g:e:1' }",
-      'TeamCode/local.gradle': "dependencies { implementation 'g:local:1' }"
+      'TeamCode/local.gradle': "dependencies { implementation 'g:local:1' }",
+      'TeamCode/local2.gradle': "dependencies { implementation 'g:local2:1' }"
     })
     expect(coords(project)).toEqual([
       'implementation g:a:1',
@@ -147,10 +151,21 @@ describe('apply from', () => {
       'implementation g:c:1',
       'implementation g:d:1',
       'implementation g:e:1',
-      'implementation g:local:1'
+      'implementation g:local:1',
+      'implementation g:local2:1'
     ])
     expect(project.diagnostics).toEqual([])
-    expect(project.dependencies[1].at).toEqual({ file: 'gradle/nested.gradle', line: 1 })
+    expect(project.dependencies[1].at).toEqual({ file: 'TeamCode/nested.gradle', line: 1 })
+  })
+
+  it('루트의 상대 경로는 루트 기준, allprojects { } 안은 TeamCode 기준', async () => {
+    const project = await read({
+      'build.gradle': "apply from: 'gradle/root.gradle'\nallprojects { apply from: 'each.gradle' }",
+      'gradle/root.gradle': "ext.v = '1'",
+      'TeamCode/each.gradle': 'dependencies { implementation "g:each:$v" }',
+      'each.gradle': "dependencies { implementation 'g:wrong:1' }"
+    })
+    expect(coords(project)).toEqual(['implementation g:each:1'])
   })
 
   it('원격·프로젝트 밖·절대 경로·이상한 이름·풀 수 없는 경로는 읽지 않고 알린다', async () => {
@@ -186,8 +201,8 @@ describe('apply from', () => {
   it('순환과 너무 깊은 사슬은 tooDeep', async () => {
     const cycle = await read({
       [TEAMCODE]: "apply from: '../a.gradle'",
-      'a.gradle': "apply from: 'b.gradle'",
-      'b.gradle': "apply from: 'a.gradle'"
+      'a.gradle': "apply from: '../b.gradle'",
+      'b.gradle': 'apply from: "$rootDir/a.gradle"'
     })
     expect(cycle.diagnostics).toEqual([
       {
@@ -199,7 +214,7 @@ describe('apply from', () => {
     const files: MemoryFiles = { [TEAMCODE]: "apply from: '../s1.gradle'" }
     for (let i = 1; i <= MAX_APPLY_DEPTH + 2; i++)
       files[`s${i}.gradle`] =
-        `dependencies { implementation 'g:s${i}:1' }\napply from: 's${i + 1}.gradle'`
+        `dependencies { implementation 'g:s${i}:1' }\napply from: '../s${i + 1}.gradle'`
     const deep = await read(files)
     // TeamCode/build.gradle + s1…s7 = 8단계
     expect(deep.dependencies).toHaveLength(MAX_APPLY_DEPTH - 1)

@@ -93,10 +93,27 @@ export function gradleFileSource(
   }
 }
 
+function emptyProject(): GradleProject {
+  return { dependencies: [], repositories: [], compileSdk: null, diagnostics: [], files: [] }
+}
+
 // 열거나 저장한 프로젝트가 아니면 읽지 않는다(빈 결과). 실행 준비(sidecar/launch.ts의 prepareRun)가 이미 확인하지만
-// 이 함수만 따로 불러도 다른 폴더를 읽지 않게 한다.
-export async function readProjectGradle(projectRoot: string): Promise<GradleProject> {
-  if (!isTrustedRoot(projectRoot))
-    return { dependencies: [], repositories: [], compileSdk: null, diagnostics: [], files: [] }
-  return readGradleProject(gradleFileSource(projectRoot))
+// 이 함수만 따로 불러도 다른 폴더를 읽지 않게 한다. 읽기는 예외를 던지지 않지만, 혹시 던지면 INIT을 깨지 않고
+// 진단 하나로 알린다(라이브러리 없이 실행된다).
+export async function readProjectGradle(
+  projectRoot: string,
+  read: (source: GradleFileSource) => Promise<GradleProject> = readGradleProject
+): Promise<GradleProject> {
+  if (!isTrustedRoot(projectRoot)) return emptyProject()
+  try {
+    return await read(gradleFileSource(projectRoot))
+  } catch (error) {
+    const project = emptyProject()
+    project.diagnostics.push({
+      code: 'unsupportedSyntax',
+      at: { file: 'TeamCode/build.gradle', line: 1 },
+      detail: `Gradle files could not be read: ${error instanceof Error ? error.message : String(error)}`
+    })
+    return project
+  }
 }
