@@ -122,7 +122,8 @@ function ScenePanel(): React.JSX.Element {
         // 손 도구(Q)에서는 손 모양 커서
         style={{ cursor: tool === 'view' ? 'grab' : undefined }}
         // 키보드 게임패드(play/keyboardGamepad.ts): 씬 뷰는 포커스를 받을 수 있고(SCENE_VIEW_ATTRIBUTE), 누르면 포커스가
-        // 온다. 실행 중 포커스가 있는 동안만 키보드가 게임패드다.
+        // 온다. 실행 중 포커스가 있는 동안만 키보드가 게임패드다. OrbitControls의 키 조작(keyEvents)은 켜지 않는다
+        // (EditorCameraControls, 방향키가 카메라 대신 오른쪽 스틱이 되게).
         tabIndex={0}
         data-scene-view=""
         className="scene-canvas"
