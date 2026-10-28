@@ -10,21 +10,52 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 클래스 파일의 시간 API 호출을 org.sandbot.sim.TimeRedirects로 바꾼다(ASM 없이 직접 고침, spec §2.3).
+ * 클래스 파일의 시간 API 호출을 org.sandbot.sim.TimeRedirects로, 해시 순서 컬렉션을 만드는 호출을 삽입 순서 컬렉션
+ * (org.sandbot.sim.OrderedCollections, LinkedHashMap·LinkedHashSet)으로 바꾼다(ASM 없이 직접 고침, spec §2.3, 라이브러리 L1 §D-3).
  *
  * <ul>
  *   <li>상수 풀에 항목을 덧붙이기만 하고 기존 항목의 번호는 바꾸지 않는다.
- *   <li>정적 호출(System.nanoTime 등)은 Methodref 항목을 그 자리에서 TimeRedirects의 같은 뜻 메서드로 돌린다. 그래서
- *       invokestatic도, 그 항목을 가리키는 MethodHandle(메서드 참조 {@code System::nanoTime})도 함께 바뀐다.
+ *   <li>정적 호출(System.nanoTime, Set.of 등)은 Methodref 항목을 그 자리에서 대리 클래스의 같은 뜻 메서드로 돌린다. 그래서
+ *       invokestatic도, 그 항목을 가리키는 MethodHandle(메서드 참조 {@code System::nanoTime})도 함께 바뀐다. 인터페이스의
+ *       정적 메서드(Set.of·Map.of)는 InterfaceMethodref라 태그도 Methodref로 바꾼다(대리 클래스는 클래스다, 클래스 파일 52 이상).
  *   <li>인스턴스 호출(obj.wait(t) 등)은 수신 객체를 첫 인수로 받는 정적 메서드로 바꾸고 명령을 같은 길이로 바꾼다:
  *       invokevirtual·invokespecial(3바이트) → invokestatic, invokeinterface(5바이트) → invokestatic + nop nop.
  *       그 항목을 가리키는 MethodHandle(REF_invokeVirtual 등)은 REF_invokeStatic + 새 Methodref로 돌린다.
+ *   <li>{@code new java/util/HashMap}·{@code HashSet}과 짝인 {@code invokespecial <init>}은 LinkedHashMap·LinkedHashSet의 같은
+ *       서술자 생성자로 바꾼다(메서드마다 new와 그 <init>을 차례대로 짝짓고, 짝이 맞지 않는 메서드는 그대로 둔다). 하위 클래스의
+ *       super(...) 호출({@code extends HashMap})은 짝인 new가 없어 바꾸지 않는다. 생성자 참조 {@code HashMap::new}
+ *       (REF_newInvokeSpecial MethodHandle)도 바꾼다. 결과는 원래 형식의 하위 클래스라 검증을 통과하고 반복 순서만 삽입 순서가 된다.
  *   <li>코드 길이·오프셋이 그대로라 StackMapTable·예외 표·줄 번호 표를 고치지 않는다.
  * </ul>
- * 바뀐 것이 없으면 받은 배열을 그대로 돌려준다. org.sandbot.sim 클래스(TimeRedirects 자신)는 바꾸지 않는다.
+ * 바뀐 것이 없으면 받은 배열을 그대로 돌려준다. org.sandbot.sim 클래스(대리 클래스 자신)는 바꾸지 않는다.
+ * 남는 구멍(결정적이지 않을 수 있는 것): JDK 내부가 만드는 HashMap(예: Collectors.partitioningBy 밖의 JDK API 결과),
+ * IdentityHashMap·WeakHashMap·ConcurrentHashMap·Hashtable, Object.toString·hashCode의 identity 해시 값 자체.
  */
 public final class ClassPatcher {
     public static final String REDIRECTS = "org/sandbot/sim/TimeRedirects";
+    /** 해시 순서 컬렉션의 삽입 순서 대리 함수(결정성) */
+    public static final String ORDERED = "org/sandbot/sim/OrderedCollections";
+    /** new로 만들 때 삽입 순서 형식으로 바꾸는 형식(원래 → 바꿀 형식, 둘의 공개 생성자 서술자가 같다) */
+    static final Map<String, String> ORDERED_TYPES;
+    /** 바꿀 수 있는 생성자 서술자(원래 형식의 공개 생성자) */
+    static final Set<String> ORDERED_CONSTRUCTORS;
+
+    static {
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("java/util/HashMap", "java/util/LinkedHashMap");
+        types.put("java/util/HashSet", "java/util/LinkedHashSet");
+        ORDERED_TYPES = Collections.unmodifiableMap(types);
+        Set<String> ctors = new LinkedHashSet<>();
+        ctors.add("java/util/HashMap()V");
+        ctors.add("java/util/HashMap(I)V");
+        ctors.add("java/util/HashMap(IF)V");
+        ctors.add("java/util/HashMap(Ljava/util/Map;)V");
+        ctors.add("java/util/HashSet()V");
+        ctors.add("java/util/HashSet(I)V");
+        ctors.add("java/util/HashSet(IF)V");
+        ctors.add("java/util/HashSet(Ljava/util/Collection;)V");
+        ORDERED_CONSTRUCTORS = Collections.unmodifiableSet(ctors);
+    }
 
     /** 수신 형식(owner)을 어떻게 맞추나 */
     enum Match {
@@ -41,16 +72,27 @@ public final class ClassPatcher {
         final String name;
         final String desc;
         final boolean isStatic;
+        /** 인터페이스의 정적 메서드(Set.of 등): InterfaceMethodref로만 부른다 */
+        final boolean ownerIsInterface;
         final Match match;
+        /** 대리 클래스(TimeRedirects 또는 OrderedCollections) */
+        final String redirectClass;
         final String newName;
         final String newDesc;
 
         Target(String owner, String name, String desc, boolean isStatic, Match match, String newName) {
+            this(owner, name, desc, isStatic, false, match, REDIRECTS, newName);
+        }
+
+        Target(String owner, String name, String desc, boolean isStatic, boolean ownerIsInterface, Match match,
+                String redirectClass, String newName) {
             this.owner = owner;
             this.name = name;
             this.desc = desc;
             this.isStatic = isStatic;
+            this.ownerIsInterface = ownerIsInterface;
             this.match = match;
+            this.redirectClass = redirectClass;
             this.newName = newName;
             // 인스턴스 메서드는 수신 객체를 첫 인수로 받는다
             this.newDesc = isStatic ? desc : "(L" + (match == Match.ANY ? "java/lang/Object" : owner) + ";" + desc.substring(1);
@@ -60,6 +102,12 @@ public final class ClassPatcher {
         public String toString() {
             return owner.replace('/', '.') + "." + name + desc;
         }
+    }
+
+    /** 해시 순서 컬렉션을 만드는 정적 메서드 → OrderedCollections(같은 서술자) */
+    private static void ordered(List<Target> t, String owner, boolean isInterface, String name, String desc,
+            String newName) {
+        t.add(new Target(owner, name, desc, true, isInterface, Match.EXACT, ORDERED, newName));
     }
 
     /** 바꾸는 대상 표(spec §2.3). TimeRedirects에 newName·newDesc 메서드가 모두 있어야 한다(테스트가 확인). */
@@ -100,6 +148,34 @@ public final class ClassPatcher {
         String runtime = "java/lang/Runtime";
         t.add(new Target(runtime, "exit", "(I)V", false, Match.EXACT, "runtimeExit"));
         t.add(new Target(runtime, "halt", "(I)V", false, Match.EXACT, "runtimeHalt"));
+
+        // 결정성(삽입 순서): Set.of·Map.of(JDK가 JVM마다 SALT로 섞음), Collectors(HashSet·HashMap)
+        String obj = "Ljava/lang/Object;";
+        for (int n = 0; n <= 10; n++) {
+            ordered(t, "java/util/Set", true, "of", "(" + obj.repeat(n) + ")Ljava/util/Set;", "setOf");
+            ordered(t, "java/util/Map", true, "of", "(" + obj.repeat(2 * n) + ")Ljava/util/Map;", "mapOf");
+        }
+        ordered(t, "java/util/Set", true, "of", "([Ljava/lang/Object;)Ljava/util/Set;", "setOf");
+        ordered(t, "java/util/Set", true, "copyOf", "(Ljava/util/Collection;)Ljava/util/Set;", "setCopyOf");
+        ordered(t, "java/util/Map", true, "ofEntries", "([Ljava/util/Map$Entry;)Ljava/util/Map;", "mapOfEntries");
+        ordered(t, "java/util/Map", true, "copyOf", "(Ljava/util/Map;)Ljava/util/Map;", "mapCopyOf");
+        ordered(t, "java/util/HashMap", false, "newHashMap", "(I)Ljava/util/HashMap;", "newHashMap");
+        ordered(t, "java/util/HashSet", false, "newHashSet", "(I)Ljava/util/HashSet;", "newHashSet");
+        String collectors = "java/util/stream/Collectors";
+        String collector = ")Ljava/util/stream/Collector;";
+        String function = "Ljava/util/function/Function;";
+        String merge = "Ljava/util/function/BinaryOperator;";
+        ordered(t, collectors, false, "toSet", "(" + collector, "toSet");
+        ordered(t, collectors, false, "toMap", "(" + function + function + collector, "toMap");
+        ordered(t, collectors, false, "toMap", "(" + function + function + merge + collector, "toMap");
+        ordered(t, collectors, false, "toUnmodifiableSet", "(" + collector, "toUnmodifiableSet");
+        ordered(t, collectors, false, "toUnmodifiableMap", "(" + function + function + collector,
+                "toUnmodifiableMap");
+        ordered(t, collectors, false, "toUnmodifiableMap", "(" + function + function + merge + collector,
+                "toUnmodifiableMap");
+        ordered(t, collectors, false, "groupingBy", "(" + function + collector, "groupingBy");
+        ordered(t, collectors, false, "groupingBy", "(" + function + "Ljava/util/stream/Collector;" + collector,
+                "groupingBy");
         TARGETS = Collections.unmodifiableList(t);
     }
 
@@ -142,12 +218,19 @@ public final class ClassPatcher {
                 cf.methods);
         ClassHierarchy h = name -> name.equals(self.name) ? self : hierarchy.lookup(name);
 
-        // 1. 바꿀 Methodref·InterfaceMethodref 찾기
+        // 1. 바꿀 Methodref·InterfaceMethodref 찾기(그리고 new로 바꿀 HashMap·HashSet의 Class·<init> 항목)
         Map<Integer, Target> staticRefs = new LinkedHashMap<>();
         Map<Integer, Target> instanceRefs = new LinkedHashMap<>();
+        Map<Integer, String> orderedClasses = new LinkedHashMap<>();
+        Map<Integer, String[]> orderedInits = new LinkedHashMap<>();
         for (int i = 1; i < cf.cpCount; i++) {
             if (cf.cpOffset[i] == 0) continue;
             int tag = cf.tag(i);
+            if (tag == ClassFile.CLASS) {
+                String name = cf.className(i);
+                if (ORDERED_TYPES.containsKey(name)) orderedClasses.put(i, name);
+                continue;
+            }
             if (tag != ClassFile.METHODREF && tag != ClassFile.INTERFACE_METHODREF) continue;
             int off = cf.cpOffset[i];
             String owner = cf.className(cf.u2(off + 1));
@@ -155,28 +238,47 @@ public final class ClassPatcher {
             if (cf.tag(nat) != ClassFile.NAME_AND_TYPE) throw new PatchException("bad NameAndType at entry " + nat);
             String name = cf.utf8(cf.u2(cf.cpOffset[nat] + 1));
             String desc = cf.utf8(cf.u2(cf.cpOffset[nat] + 3));
+            if (tag == ClassFile.METHODREF && name.equals("<init>") && ORDERED_TYPES.containsKey(owner)) {
+                orderedInits.put(i, new String[] {owner, desc});
+                continue;
+            }
             Target target = find(owner, name, desc, tag == ClassFile.INTERFACE_METHODREF, h);
             if (target == null) continue;
             (target.isStatic ? staticRefs : instanceRefs).put(i, target);
         }
-        if (staticRefs.isEmpty() && instanceRefs.isEmpty()) return new Result(bytes, 0, new ArrayList<>());
+        // new HashMap·HashSet과 그 <init>의 짝(메서드마다, 바이트코드 위치)
+        List<int[]> orderedPairs = new ArrayList<>();
+        if (!orderedClasses.isEmpty() && !orderedInits.isEmpty()) {
+            for (int[] range : cf.codeRanges)
+                pairConstructions(bytes, range[0], range[1], orderedClasses, orderedInits, orderedPairs);
+        }
+        // 생성자 참조 HashMap::new(REF_newInvokeSpecial = 8)
+        List<Integer> orderedHandles = new ArrayList<>();
+        for (int i = 1; i < cf.cpCount && !orderedInits.isEmpty(); i++) {
+            if (cf.cpOffset[i] == 0 || cf.tag(i) != ClassFile.METHOD_HANDLE) continue;
+            int off = cf.cpOffset[i];
+            if (cf.u1(off + 1) == 8 && constructorReplaceable(orderedInits.get(cf.u2(off + 2)))) orderedHandles.add(i);
+        }
+        if (staticRefs.isEmpty() && instanceRefs.isEmpty() && orderedPairs.isEmpty() && orderedHandles.isEmpty())
+            return new Result(bytes, 0, new ArrayList<>());
 
         // 2. 새 상수 풀 항목
         Appender cp = new Appender(cf.cpCount);
-        int redirectsClass = cp.classEntry(REDIRECTS);
         byte[] out = bytes.clone();
         Set<String> redirected = new LinkedHashSet<>();
         for (Map.Entry<Integer, Target> e : staticRefs.entrySet()) {
             Target t = e.getValue();
             int off = cf.cpOffset[e.getKey()];
-            put2(out, off + 1, redirectsClass);
+            // 인터페이스의 정적 메서드(InterfaceMethodref)는 클래스의 메서드가 되므로 태그도 Methodref로
+            out[off] = (byte) ClassFile.METHODREF;
+            put2(out, off + 1, cp.classEntry(t.redirectClass));
             put2(out, off + 3, cp.nameAndType(t.newName, t.newDesc));
             redirected.add(t.toString());
         }
         Map<Integer, Integer> instanceNew = new LinkedHashMap<>();
         for (Map.Entry<Integer, Target> e : instanceRefs.entrySet()) {
             Target t = e.getValue();
-            instanceNew.put(e.getKey(), cp.methodref(redirectsClass, t.newName, t.newDesc));
+            instanceNew.put(e.getKey(), cp.methodref(cp.classEntry(t.redirectClass), t.newName, t.newDesc));
             redirected.add(t.toString());
         }
 
@@ -199,6 +301,22 @@ public final class ClassPatcher {
             }
         }
 
+        // 4. new HashMap·HashSet → LinkedHashMap·LinkedHashSet(짝인 <init>과 함께), 생성자 참조 HashMap::new
+        for (int[] pair : orderedPairs) {
+            String[] init = orderedInits.get(pair[2]);
+            int linked = cp.classEntry(ORDERED_TYPES.get(init[0]));
+            put2(out, pair[0] + 1, linked);
+            put2(out, pair[1] + 1, cp.methodref(linked, "<init>", init[1]));
+            instructions += 2;
+            redirected.add("new " + init[0].replace('/', '.') + init[1]);
+        }
+        for (int i : orderedHandles) {
+            int off = cf.cpOffset[i];
+            String[] init = orderedInits.get(cf.u2(off + 2));
+            put2(out, off + 2, cp.methodref(cp.classEntry(ORDERED_TYPES.get(init[0])), "<init>", init[1]));
+            redirected.add(init[0].replace('/', '.') + "::new" + init[1]);
+        }
+
         int newCount = cp.nextIndex;
         if (newCount > 0xFFFF)
             throw new PatchException("constant pool would exceed 65535 entries (" + newCount + ")");
@@ -216,11 +334,52 @@ public final class ClassPatcher {
     private static Target find(String owner, String name, String desc, boolean interfaceRef, ClassHierarchy h) {
         for (Target t : TARGETS) {
             if (!t.name.equals(name) || !t.desc.equals(desc)) continue;
-            // 정적 대상은 모두 클래스의 메서드다(InterfaceMethodref면 다른 메서드)
-            if (t.isStatic && interfaceRef) continue;
+            // 정적 대상은 클래스의 메서드(Methodref)이거나 인터페이스의 정적 메서드(InterfaceMethodref)다
+            if (t.isStatic && interfaceRef != t.ownerIsInterface) continue;
             if (ownerMatches(owner, t, h)) return t;
         }
         return null;
+    }
+
+    private static boolean constructorReplaceable(String[] init) {
+        return init != null && ORDERED_CONSTRUCTORS.contains(init[0] + init[1]);
+    }
+
+    /**
+     * 메서드 하나의 바이트코드 [start, end)에서 {@code new HashMap}·{@code new HashSet}과 그 객체를 초기화하는
+     * {@code invokespecial <init>}을 짝짓는다. javac·kotlinc는 {@code new X; dup; 인수; invokespecial X.<init>}을 차례대로(중첩은
+     * 안쪽부터) 쓰므로, 앞에서부터 보며 new를 쌓고 같은 형식의 <init>을 만나면 맨 위 new와 짝짓는다. 쌓인 new가 없을 때의 <init>은
+     * 하위 클래스 생성자의 super(...)·this(...)라 그대로 둔다. 짝이 맞지 않거나(다른 형식의 new가 맨 위, 끝까지 짝이 없는 new)
+     * 바꿀 수 없는 생성자가 있으면 이 메서드의 짝은 하나도 넣지 않는다(바꾸지 않으면 검증은 그대로 통과한다).
+     *
+     * @param pairs 결과에 더한다: {new 위치, invokespecial 위치, Methodref 번호}
+     */
+    private static void pairConstructions(byte[] code, int start, int end, Map<Integer, String> classes,
+            Map<Integer, String[]> inits, List<int[]> pairs) throws PatchException {
+        List<int[]> pending = new ArrayList<>();
+        List<int[]> found = new ArrayList<>();
+        boolean consistent = true;
+        int pc = start;
+        while (pc < end) {
+            int op = code[pc] & 0xFF;
+            if (op == 0xBB || op == 0xB7) {
+                int index = ((code[pc + 1] & 0xFF) << 8) | (code[pc + 2] & 0xFF);
+                if (op == 0xBB) {
+                    if (classes.containsKey(index)) pending.add(new int[] {pc, index});
+                } else {
+                    String[] init = inits.get(index);
+                    if (init != null && !pending.isEmpty()) {
+                        int[] top = pending.remove(pending.size() - 1);
+                        if (!classes.get(top[1]).equals(init[0]) || !constructorReplaceable(init)) consistent = false;
+                        else found.add(new int[] {top[0], pc, index});
+                    }
+                }
+            }
+            int length = instructionLength(code, pc, start);
+            if (length <= 0 || pc + length > end) throw new PatchException("bad bytecode at offset " + (pc - start));
+            pc += length;
+        }
+        if (consistent && pending.isEmpty()) pairs.addAll(found);
     }
 
     private static boolean ownerMatches(String owner, Target t, ClassHierarchy h) {
@@ -402,7 +561,9 @@ public final class ClassPatcher {
     /** 대상 표를 사람이 읽는 글자로(문서·진단용) */
     public static List<String> describeTargets() {
         List<String> out = new ArrayList<>();
-        for (Target t : TARGETS) out.add(t + " -> " + REDIRECTS.replace('/', '.') + "." + t.newName + t.newDesc);
+        for (Target t : TARGETS) out.add(t + " -> " + t.redirectClass.replace('/', '.') + "." + t.newName + t.newDesc);
+        for (Map.Entry<String, String> e : ORDERED_TYPES.entrySet())
+            out.add("new " + e.getKey().replace('/', '.') + " -> new " + e.getValue().replace('/', '.'));
         return out;
     }
 }

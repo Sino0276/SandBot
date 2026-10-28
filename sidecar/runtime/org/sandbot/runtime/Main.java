@@ -1,5 +1,6 @@
 package org.sandbot.runtime;
 
+import org.sandbot.runtime.patch.ClassHierarchy;
 import org.sandbot.sim.HubTiming;
 import org.sandbot.sim.Sim;
 
@@ -11,14 +12,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * JVM 사이드카 진입점(spec §R-1, 프로토콜은 src/shared/sidecarProtocol.ts).
  *
  * <p>원래 stdout은 프로토콜 전용으로 잡고 System.out·System.err는 가로채 log 메시지로 보낸다. 흐름:
- * hello → run 읽기·확인 → 컴파일(compiled) → 가상 시계·Hub 타이밍·호스트를 Sim에 넣기 → OpMode 스레드(OpModeRunner) →
- * finished → Runtime.halt(0). 어느 길로 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
+ * hello → run 읽기·확인 → (라이브러리가 있으면) jar 열기·링크 검사(linkReport) → 컴파일(compiled) → 가상 시계·Hub 타이밍·
+ * 호스트를 Sim에 넣기 → OpMode 스레드(OpModeRunner, 클래스는 TeamClassLoader → LibraryClassLoader → 앱 로더) → finished →
+ * Runtime.halt(0). 어느 길로 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
  */
 public final class Main {
     private Main() {}
@@ -138,6 +142,21 @@ public final class Main {
             return;
         }
 
+        // 라이브러리(실행 클래스패스): 열기 → 링크 검사(linkReport, compiled 전)
+        ClassLoader appLoader = Main.class.getClassLoader();
+        LibraryJars libraries = null;
+        if (!request.libraryClasspath.isEmpty()) {
+            try {
+                libraries = LibraryJars.open(request.libraryClasspath);
+            } catch (IOException e) {
+                failBeforeRun(session, e.getMessage(), "loadFailed");
+                return;
+            }
+            List<Map<String, Object>> warnings = new ArrayList<>();
+            for (LinkCheck.Warning w : new LinkCheck(libraries, appLoader).run()) warnings.add(w.toJson());
+            protocol.linkReport(warnings);
+        }
+
         // 컴파일
         long started = System.nanoTime();
         TeamCompiler.Result compiled;
@@ -169,8 +188,14 @@ public final class Main {
         OpModeRunner[] runnerRef = new OpModeRunner[1];
         VirtualClock clock = new VirtualClock(request.tickNanos, request.startEpochMillis,
                 (thread, message, stack) -> runnerRef[0].reportForeignThread(thread, message, stack));
-        ClassLoader appLoader = Main.class.getClassLoader();
-        TeamClassLoader loader = new TeamClassLoader(compiled.classes, appLoader);
+        // 팀 로더 → (라이브러리 로더 →) 앱 로더. 둘 다 정의할 때 같은 패치를 건다.
+        TeamClassLoader loader;
+        if (libraries != null) {
+            LibraryClassLoader libraryLoader = new LibraryClassLoader(libraries, appLoader);
+            loader = new TeamClassLoader(compiled.classes, libraryLoader, libraryLoader.hierarchy);
+        } else {
+            loader = new TeamClassLoader(compiled.classes, appLoader, ClassHierarchy.ofClassLoader(appLoader));
+        }
         OpModeRunner runner = new OpModeRunner(session, clock, input, request, loader, compiled.sources,
                 HardwareHooks.load(appLoader));
         runnerRef[0] = runner;

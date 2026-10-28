@@ -219,10 +219,10 @@ const SAMPLES = [
 // 받지 못한 이유(네트워크·해시). build-sidecar.mjs의 --optional이 경고로 바꾼다.
 export class FetchError extends Error {}
 
-const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
-function fileHash(path) {
+export function fileHash(path) {
   try {
     return sha256(readFileSync(path))
   } catch {
@@ -231,15 +231,16 @@ function fileHash(path) {
 }
 
 // 옆에 임시 파일로 쓰고 바꾼다(받다 끊겨도 반쯤 쓴 파일이 남지 않게)
-function writeAtomic(path, bytes) {
+export function writeAtomic(path, bytes) {
   mkdirSync(dirname(path), { recursive: true })
   const temp = `${path}.${process.pid}.tmp`
   writeFileSync(temp, bytes)
   renameSync(temp, path)
 }
 
-async function download(url, expectedSha256, log) {
-  const attempts = 6
+// 받아서 SHA-256을 확인한다. 네트워크 오류·429·5xx는 attempts번까지 기다렸다가 다시 받는다(scripts/fetch-test-libraries.mjs는
+// 미러로 넘어가려고 attempts를 줄여 부른다). 해시가 다르거나 다른 상태 코드면 바로 FetchError.
+export async function download(url, expectedSha256, log, { attempts = 6 } = {}) {
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt++) {
     let retryAfter = 0
