@@ -8,7 +8,7 @@
 //   FTCLib 2.1.1          org.ftclib.ftclib:core(AAR) + EJML 0.39(ejml-simple가 끌어오는 묶음) + jsr305 3.0.2
 //   androidx.annotation   androidx.annotation:annotation:1.1.0(Google Maven)
 //
-// 사용법: node scripts/fetch-test-libraries.mjs [--json]
+// 사용법: pnpm fetch:test-libraries, node scripts/fetch-test-libraries.mjs [--json]
 //   --json이면 마지막 줄에 { dir, jars: { id: 절대 경로 } }를 쓴다(시험이 child process로 부를 때).
 // 프록시 뒤에서는 NODE_USE_ENV_PROXY=1로 HTTPS_PROXY를 쓰게 한다(Node 22.21 이상). Maven Central은 자주 429를 준다:
 // 그때는 Google의 Maven Central 미러로 넘어가고, 둘 다 안 되면 기다렸다가(지수) 다시 한 바퀴 돈다.

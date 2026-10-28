@@ -149,7 +149,7 @@ const ko = {
     playNoSidecar:
       '실행기(사이드카)가 빌드되지 않았습니다. 개발 중이면 pnpm build:sidecar를 실행한 뒤 다시 INIT하세요.',
     playBusy: '이전 실행이 아직 끝나지 않았습니다. 잠시 뒤 다시 INIT하세요.',
-    playFailed: 'JVM을 시작하지 못했습니다 ({{detail}}).',
+    playFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
     playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
     playNoAndroidSdk:
       'Android SDK를 찾지 못했습니다. 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android API로 컴파일하므로 Android SDK가 필요합니다. 환경 설정에서 SDK 폴더를 고르세요(Android Studio를 설치했다면 자동으로 찾습니다).',

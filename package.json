@@ -25,6 +25,7 @@
     "build:step-converter": "node scripts/build-step-converter.mjs",
     "fetch:step-converter": "node scripts/fetch-step-converter.mjs",
     "fetch:ftc-sdk": "node scripts/fetch-ftc-sdk.mjs",
+    "fetch:test-libraries": "node scripts/fetch-test-libraries.mjs",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "usage-oracle": "node scripts/usage-oracle/run.mjs"
   },

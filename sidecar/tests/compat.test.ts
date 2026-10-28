@@ -18,8 +18,9 @@ import {
   type SidecarBuild
 } from './support'
 
-// 호환 테스트: 팀 코드가 보는 sandbot-sdk.jar로 실제 FTC 코드가 수정 없이 컴파일되는지(--release 8, 사이드카의 팀 코드
-// 컴파일과 같은 옵션). 실행 동작은 런타임·장치 테스트가 본다. JDK가 없으면 건너뛴다.
+// 호환 테스트: 팀 코드가 보는 sandbot-sdk.jar로 실제 FTC 코드가 수정 없이 컴파일되는지(--release 8, 사이드카가 플랫폼 jar
+// 없이(bootClasspath가 빔) 팀 코드를 컴파일하는 옵션. Android API 기준 컴파일은 platform.test.ts가 본다). 실행 동작은 런타임·
+// 장치 테스트가 본다. JDK가 없으면 건너뛴다.
 
 // 컴파일되지 않는 샘플과 이유. 1단계 밖(비전 처리의 OpenCV 형식, 안드로이드 UI·리소스)만 뺀다.
 // until: 이 형식이 손 구현으로 생기면(빌드 보고의 hand) 그 샘플은 컴파일되어야 한다(목록에서 지운다).
@@ -76,7 +77,7 @@ function javaFiles(dir: string): string[] {
     .sort()
 }
 
-// 사이드카가 팀 코드를 컴파일하는 옵션(--release 8 -g -proc:none -encoding UTF-8 -Xlint:-options)으로 sdk jar에 대고
+// 사이드카가 플랫폼 jar 없이 팀 코드를 컴파일하는 옵션(--release 8 -g -proc:none -encoding UTF-8 -Xlint:-options)으로 sdk jar에 대고
 function compileAgainstSdk(build: SidecarBuild, files: string[]): ReturnType<typeof runProcess> {
   return runProcess(build.javac, [
     '--release',

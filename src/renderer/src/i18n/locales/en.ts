@@ -149,7 +149,7 @@ const en: Messages = {
     playNoSidecar:
       'The runner (sidecar) has not been built. During development, run pnpm build:sidecar and INIT again.',
     playBusy: 'The previous run has not finished yet. INIT again in a moment.',
-    playFailed: 'Could not start the JVM ({{detail}}).',
+    playFailed: 'Could not start the run ({{detail}}).',
     playInitFailed: 'Could not start the run ({{detail}}).',
     playNoAndroidSdk:
       'Android SDK not found. Team code is compiled against the project compileSdk Android API, as in Android Studio, so an Android SDK is required. Choose the SDK folder in Preferences (it is found automatically if Android Studio is installed).',
