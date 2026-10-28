@@ -19,9 +19,9 @@ import java.util.zip.ZipOutputStream;
 
 /**
  * 시험용 Android 플랫폼 jar 대역(사이드카 시험의 bootClasspath). CI·컨테이너에는 Android SDK가 없어서, 이 JVM의 jrt:/ 모듈(기본
- * java.base)에서 java/**·javax/** 클래스 파일을 골라 jar 하나로 쓴다. 실제 android.jar처럼 java.base 밖(java.net.http,
- * java.desktop 등)은 없다. 이름순·고정 시각이라 같은 JDK면 같은 바이트다. --exclude 접두어로 일부를 뺄 수 있다(예: 람다 바탕
- * 클래스를 빼 TeamCompiler가 채우는지 시험).
+ * java.base)에서 java/**·javax/** 클래스 파일(과 그것들이 단 jdk.internal.javac.PreviewFeature 애너테이션)을 골라 jar 하나로
+ * 쓴다. 실제 android.jar처럼 java.base 밖(java.net.http, java.desktop 등)은 없다. 이름순·고정 시각이라 같은 JDK면 같은
+ * 바이트다. --exclude 접두어로 일부를 뺄 수 있다(예: 람다 바탕 클래스를 빼 TeamCompiler가 채우는지 시험).
  *
  * <p>사용법: java PlatformJar.java --out &lt;jar&gt; [--module &lt;이름&gt;]... [--exclude &lt;접두어&gt;]... (소스 파일 하나로
  * 바로 실행할 수 있다: java sidecar/tools/org/sandbot/tools/PlatformJar.java …)
@@ -66,7 +66,11 @@ public final class PlatformJar {
                 walk.filter(Files::isRegularFile).forEach(file -> {
                     String name = root.relativize(file).toString().replace('\\', '/');
                     if (!name.endsWith(".class") || name.equals("module-info.class")) return;
-                    if (!name.startsWith("java/") && !name.startsWith("javax/")) return;
+                    // jdk/internal/javac: java.base의 클래스가 단 @PreviewFeature(호스트 JDK의 미리 보기 API 표시) 애너테이션.
+                    // 없으면 javac가 그 클래스를 읽을 때마다 "unknown enum constant … PreviewFeature.Feature" 경고를 낸다
+                    // (실제 android.jar에는 이 애너테이션이 없다).
+                    if (!name.startsWith("java/") && !name.startsWith("javax/")
+                            && !name.startsWith("jdk/internal/javac/PreviewFeature")) return;
                     for (String prefix : excludes) {
                         if (name.startsWith(prefix)) return;
                     }
