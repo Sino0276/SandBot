@@ -8,9 +8,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 이번에 컴파일한 팀 클래스만 정의하는 클래스 로더(부모 = 앱 로더: 가짜 SDK·sim·런타임). 정의하기 전에 ClassPatcher로 시간 API를
- * 가상 시계로 바꾼다. 부모를 먼저 찾으므로 팀이 SDK와 같은 이름의 클래스를 두면 SDK 것이 쓰인다(실제 앱 빌드에서는 충돌).
- * 라이브러리 jar 패치는 나중 단계.
+ * 이번에 컴파일한 팀 클래스만 정의하는 클래스 로더(부모 = 라이브러리가 있으면 LibraryClassLoader, 없으면 앱 로더: 가짜 SDK·sim·
+ * 런타임). 정의하기 전에 ClassPatcher로 시간 API를 가상 시계로, 해시 순서 컬렉션을 삽입 순서로 바꾼다. 부모를 먼저 찾으므로 팀이
+ * SDK·라이브러리와 같은 이름의 클래스를 두면 그쪽이 쓰인다(실제 앱 빌드에서는 충돌).
  */
 final class TeamClassLoader extends ClassLoader {
     static {
@@ -20,14 +20,17 @@ final class TeamClassLoader extends ClassLoader {
     private final Map<String, byte[]> classes;
     private final ClassPatcher patcher;
 
-    /** @param classes 바이너리 이름(Outer$Inner) → 클래스 파일 */
-    TeamClassLoader(Map<String, byte[]> classes, ClassLoader parent) {
+    /**
+     * @param classes 바이너리 이름(Outer$Inner) → 클래스 파일
+     * @param parentHierarchy 부모 쪽 클래스의 상속 관계(LibraryClassLoader.hierarchy 또는 앱 로더). 라이브러리 클래스를
+     *     부모 로더로 찾으면 패치하면서 정의하게 되므로 바이트로 읽는 것을 받는다.
+     */
+    TeamClassLoader(Map<String, byte[]> classes, ClassLoader parent, ClassHierarchy parentHierarchy) {
         super("SandBotTeamCode", parent);
         this.classes = classes;
         Map<String, byte[]> byInternalName = new HashMap<>();
         for (Map.Entry<String, byte[]> e : classes.entrySet()) byInternalName.put(e.getKey().replace('.', '/'), e.getValue());
-        this.patcher = new ClassPatcher(ClassHierarchy.chain(ClassHierarchy.ofClassFiles(byInternalName),
-                ClassHierarchy.ofClassLoader(parent)));
+        this.patcher = new ClassPatcher(ClassHierarchy.chain(ClassHierarchy.ofClassFiles(byInternalName), parentHierarchy));
     }
 
     @Override

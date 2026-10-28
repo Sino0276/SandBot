@@ -67,6 +67,13 @@ com.qualcomm.robotcore.hardware.DigitalChannel$Mode
 com.qualcomm.robotcore.hardware.AnalogInput
 com.qualcomm.robotcore.hardware.LED
 
+# 라이브러리가 쓰는 SDK·Android 형식(FTCLib RevIMU의 옛 BNO055 인터페이스, TrajectoryGenerator의 Build.VERSION.SDK_INT)
+com.qualcomm.hardware.bosch.BNO055IMU
+com.qualcomm.hardware.bosch.BNO055IMU$Parameters
+com.qualcomm.hardware.bosch.BNO055IMU$AngleUnit
+android.os.Build
+android.os.Build$VERSION
+
 # 허브
 com.qualcomm.hardware.lynx.LynxModule
 com.qualcomm.hardware.lynx.LynxModule$BulkCachingMode
