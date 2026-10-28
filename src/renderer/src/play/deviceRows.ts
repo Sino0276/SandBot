@@ -1,6 +1,7 @@
 import type { DeviceValues } from '../../../shared/sidecarProtocol'
 import { isComponentType, type ComponentType } from '../hardware/catalog'
 import { robotComponents } from '../hardware/components'
+import { sidecarDeviceName } from '../hardware/naming'
 import type { SceneObjects } from '../scene/model'
 
 // 장치 탭의 표. 사이드카가 보낸 출력(구성 이름 → 값)과 시뮬레이터가 보낸 센서 값(허브 원시 값)을 씬의 컴포넌트
@@ -38,7 +39,8 @@ export function deviceRows(
   const entries =
     robotId !== null && objects[robotId]?.kind === 'robot' ? robotComponents(objects, robotId) : []
   for (const { objectId, component } of entries) {
-    const name = component.name.trim()
+    // 사이드카가 보내는 장치 이름(앞뒤 공백을 Java trim으로 뺀 구성 이름)
+    const name = sidecarDeviceName(component.name)
     if (seen.has(name) || !has(name)) continue
     seen.add(name)
     rows.push({

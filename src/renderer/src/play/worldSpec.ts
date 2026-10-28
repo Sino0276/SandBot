@@ -29,6 +29,7 @@ import { robotComponents, robotHardwareSettings, type ComponentEntry } from '../
 import { lynxModules } from '../hardware/configXml'
 import { deadWheelDeviceName } from '../hardware/javaCodegen'
 import { normalizeDegrees, robotFramePose } from '../hardware/mounting'
+import { sidecarDeviceName } from '../hardware/naming'
 import { DEG, ROBOT_SIZE } from '../scene/coordinates'
 import {
   findRobotId,
@@ -43,8 +44,9 @@ import { wrapAngle } from '../scene/wheel'
 import type { ConsoleNoticeKey } from './consoleModel'
 
 // 운동학 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
-// 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트에서 온다. 이름은 구성 이름(사이드카 장치 이름)이다.
-// 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점 로봇 중심 바닥)이고, 형상 로딩과 관계없이 씬 문서만으로 정해진다(결정적).
+// 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트에서 온다. 이름은 사이드카 장치 이름(구성 이름을
+// Java trim, sidecarDeviceName)이다. 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점 로봇 중심 바닥)이고, 형상 로딩과
+// 관계없이 씬 문서만으로 정해진다(결정적).
 
 // Console 경고(console.notices.world*)
 export type WorldWarningKey = Extract<ConsoleNoticeKey, `world${string}`>
@@ -56,9 +58,6 @@ const ROLLER_ANGLE_EPSILON = 1 * DEG
 
 // CAD가 없을 때의 외곽: 18 in 정사각형(시작 크기 한도)
 const DEFAULT_HALF_FOOTPRINT = ROBOT_SIZE / 2
-
-// 사이드카는 구성 XML의 이름을 trim해서 장치 이름으로 쓴다(SandbotHardware)
-const deviceName = (name: string): string => name.trim()
 
 // 바퀴 오브젝트의 위치(로봇 좌표). 보이는 형상이 있으면 그 피벗(CAD 파트는 경계 상자 중심), 없으면(그룹·형상 없는
 // 어셈블리) 하위에서 형상이 있는 오브젝트 피벗들의 경계 상자 중심, 그것도 없으면 자기 피벗. 로봇 밖이면 null.
@@ -93,6 +92,8 @@ export type ResolvedWheel = {
   position: Vec2
   // 메카넘만(auto를 푼 값), 나머지는 null
   rollers: MecanumRollers | null
+  // 메카넘만: auto라면 고를 형(롤러를 직접 골랐어도 계산한다, 바퀴 카드의 [자동 (…)]), 나머지는 null
+  autoRollers: MecanumRollers | null
   // rollers가 auto에서 정한 값인지
   rollersAuto: boolean
   // auto를 위치로 정하지 못해 flbr로 둠(경고)
@@ -134,7 +135,10 @@ export function robotWheels(objects: SceneObjects, robotId: string): ResolvedWhe
       .filter((entry) => entry.component.type === 'motor')
       .map((entry) => [entry.component.id, entry.component])
   )
-  const wheels: Omit<ResolvedWheel, 'rollers' | 'rollersAuto' | 'rollersAmbiguous'>[] = []
+  const wheels: Omit<
+    ResolvedWheel,
+    'rollers' | 'autoRollers' | 'rollersAuto' | 'rollersAmbiguous'
+  >[] = []
   for (const id of subtreeIds(objects, robotId)) {
     const object = objects[id]
     if (!object.wheel || id === robotId) continue
@@ -157,11 +161,23 @@ export function robotWheels(objects: SceneObjects, robotId: string): ResolvedWhe
   }
   return wheels.map((w) => {
     if (w.wheel.kind !== 'mecanum')
-      return { ...w, rollers: null, rollersAuto: false, rollersAmbiguous: false }
-    if (w.wheel.rollers !== 'auto')
-      return { ...w, rollers: w.wheel.rollers, rollersAuto: false, rollersAmbiguous: false }
+      return { ...w, rollers: null, autoRollers: null, rollersAuto: false, rollersAmbiguous: false }
     const auto = autoRollers(w.position, center, w.wheel.angle)
-    return { ...w, rollers: auto.rollers, rollersAuto: true, rollersAmbiguous: auto.ambiguous }
+    if (w.wheel.rollers !== 'auto')
+      return {
+        ...w,
+        rollers: w.wheel.rollers,
+        autoRollers: auto.rollers,
+        rollersAuto: false,
+        rollersAmbiguous: false
+      }
+    return {
+      ...w,
+      rollers: auto.rollers,
+      autoRollers: auto.rollers,
+      rollersAuto: true,
+      rollersAmbiguous: auto.ambiguous
+    }
   })
 }
 
@@ -215,10 +231,11 @@ export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
 
 const xy = (pose: { x: number; y: number }): Vec2 => ({ x: pose.x, y: pose.y })
 
-// 한도를 넘는 목록은 앞의 것만 쓰고 알린다
-function capped<T>(items: T[], max: number, what: string, warnings: WorldWarning[]): T[] {
+// 한도를 넘는 목록은 앞의 것만 쓰고 알린다(목록마다 문장이 따로 있다: 무엇이 넘었는지도 번역한다)
+type TooManyKey = Extract<WorldWarningKey, `worldTooMany${string}`>
+function capped<T>(items: T[], max: number, key: TooManyKey, warnings: WorldWarning[]): T[] {
   if (items.length <= max) return items
-  warnings.push({ key: 'worldTooMany', params: { what, max } })
+  warnings.push({ key, params: { max } })
   return items.slice(0, max)
 }
 
@@ -246,7 +263,7 @@ export function buildWorldSpec(
   const motors: SimMotorSpec[] = []
   let motorsCapped = false
   for (const { component } of ofType('motor')) {
-    const device = deviceName(component.name)
+    const device = sidecarDeviceName(component.name)
     if (!device || motors.some((motor) => motor.device === device)) {
       warnings.push({ key: 'worldDuplicateMotor', params: { name: component.name } })
       continue
@@ -254,7 +271,7 @@ export function buildWorldSpec(
     // 한도를 넘는 모터는 바퀴도 찾지 못하게 장치 이름 표에 넣지 않는다(세계 설명이 모르는 모터를 가리키지 않게)
     if (motors.length === MAX_WORLD_MOTORS) {
       if (!motorsCapped)
-        warnings.push({ key: 'worldTooMany', params: { what: 'motors', max: MAX_WORLD_MOTORS } })
+        warnings.push({ key: 'worldTooManyMotors', params: { max: MAX_WORLD_MOTORS } })
       motorsCapped = true
       continue
     }
@@ -293,7 +310,7 @@ export function buildWorldSpec(
   const deadWheels: SimDeadWheelSpec[] = []
   for (const entry of ofType('deadWheel')) {
     const { component } = entry
-    const device = deviceName(deadWheelDeviceName(entry, entries))
+    const device = sidecarDeviceName(deadWheelDeviceName(entry, entries))
     const pose = robotFramePose(objects, entry.objectId)
     if (!device || !pose) continue
     const shared = entries.find(
@@ -324,7 +341,7 @@ export function buildWorldSpec(
   }
   const pinpoints: SimPinpointSpec[] = []
   for (const { component } of ofType('pinpoint')) {
-    const device = deviceName(component.name)
+    const device = sidecarDeviceName(component.name)
     if (!device) continue
     pinpoints.push({
       device,
@@ -338,7 +355,7 @@ export function buildWorldSpec(
 
   const otos: SimOtosSpec[] = []
   for (const { objectId, component } of ofType('otos')) {
-    const device = deviceName(component.name)
+    const device = sidecarDeviceName(component.name)
     const pose = robotFramePose(objects, objectId)
     if (!device || !pose) continue
     otos.push({
@@ -349,7 +366,7 @@ export function buildWorldSpec(
   }
 
   const imus: SimImuSpec[] = ofType('imu')
-    .map(({ component }) => ({ device: deviceName(component.name) }))
+    .map(({ component }) => ({ device: sidecarDeviceName(component.name) }))
     .filter((imu) => imu.device !== '')
 
   const [x, y] = robot.transform.position
@@ -362,11 +379,11 @@ export function buildWorldSpec(
     batteryVoltage: settings.batteryVoltage,
     hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),
     motors,
-    wheels: capped(wheels, MAX_WORLD_WHEELS, 'wheels', warnings),
-    deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'deadWheels', warnings),
-    pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'pinpoints', warnings),
-    otos: capped(otos, MAX_WORLD_SENSORS, 'otos', warnings),
-    imus: capped(imus, MAX_WORLD_SENSORS, 'imus', warnings)
+    wheels: capped(wheels, MAX_WORLD_WHEELS, 'worldTooManyWheels', warnings),
+    deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'worldTooManyDeadWheels', warnings),
+    pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
+    otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
+    imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings)
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {

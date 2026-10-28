@@ -64,10 +64,11 @@ function WheelCard({ object }: { object: SceneObject }): React.JSX.Element | nul
     view.motorState === 'ok' && view.motor
       ? wheelTopSpeed(wheel, view.motor.props, batteryVoltage)
       : null
+  // [자동 (…)]은 롤러를 직접 골랐어도 자동이 고를 형을 보인다(지금 쓰는 형이 아니라)
   const rollerLabel = (rollers: WheelRollers): string =>
-    rollers === 'auto' && view.rollers
+    rollers === 'auto' && view.autoRollers
       ? t('hardware.wheel.rollersAuto', {
-          type: t(`hardware.wheel.rollerOptions.${view.rollers}`)
+          type: t(`hardware.wheel.rollerOptions.${view.autoRollers}`)
         })
       : t(`hardware.wheel.rollerOptions.${rollers}`)
 

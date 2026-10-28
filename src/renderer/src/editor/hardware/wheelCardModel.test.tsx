@@ -52,6 +52,8 @@ beforeAll(async () => {
   })
 })
 
+const DEG = Math.PI / 180
+
 const at = (x: number, y: number, z = 0): Transform => ({
   position: [x, y, z],
   rotation: [0, 0, 0]
@@ -188,7 +190,7 @@ describe('바퀴 카드 보기 계산', () => {
     expect(wheelCardView(orphan, 'loose')).toMatchObject({ inRobot: false, motorState: 'none' })
   })
 
-  it('[파트 크기로]: 오브젝트 축으로 잰 경계 상자의 둘째로 긴 변, 형상이 없으면 null', () => {
+  it('[파트 크기로]: 로봇 축으로 잰 경계 상자의 높이, 형상이 없으면 null', () => {
     const objects = scene()
     expect(suggestWheelDiameter(objects, 'flTire')).toBeNull()
     // 바퀴(지름 0.1 m, 폭 0.03 m)를 Y축 둘레로 둔 CAD 메시
@@ -201,6 +203,46 @@ describe('바퀴 카드 보기 계산', () => {
       expect(suggestWheelDiameter(objects, 'flMotor')).toBeNull()
     } finally {
       disposeGeometry('cad:0')
+    }
+  })
+
+  it('[파트 크기로]: X 드라이브처럼 45°로 둔 바퀴, Y-up CAD, 축 방향 샤프트에도 지름', () => {
+    const objects: SceneObjects = {
+      ...scene(),
+      // 로봇이 필드에서 돌아가 있어도 로봇 축으로 잰다
+      R: { ...scene().R, transform: { position: [0, 0, 0], rotation: [0, 0, 30 * DEG] } },
+      // Y-up CAD의 파트: 메시 축은 Y가 위이고, 로봇 축으로는 X축 둘레로 90° 돌아가 있다
+      yUp: {
+        id: 'yUp',
+        name: 'yup.step',
+        kind: 'part',
+        parentId: 'R',
+        transform: { position: [-0.15, 0.15, 0.048], rotation: [90 * DEG, 0, 0] },
+        visual: { type: 'mesh', geometryId: 'yup:0', color: [1, 1, 1] }
+      },
+      shaft: {
+        id: 'shaft',
+        name: 'shaft',
+        kind: 'part',
+        parentId: 'flGroup',
+        transform: at(0, 0),
+        visual: { type: 'mesh', geometryId: 'shaft:0', color: [1, 1, 1] }
+      }
+    }
+    // 96 mm 옴니(폭 25 mm)를 CAD에서 45° 돌려 둔 메시(CAD 노드는 회전 없이 위치만 가진다).
+    // CAD 파일 축으로 잰 상자는 0.0856 × 0.0856 × 0.096이라 둘째로 긴 변은 지름보다 11% 짧다.
+    registerGeometry('cad:0', new BoxGeometry(0.096, 0.025, 0.096).rotateZ(Math.PI / 4))
+    registerGeometry('yup:0', new BoxGeometry(0.096, 0.096, 0.025).rotateY(Math.PI / 4))
+    // 바퀴 축(Y) 방향으로 긴 샤프트
+    registerGeometry('shaft:0', new BoxGeometry(0.01, 0.2, 0.01))
+    try {
+      expect(suggestWheelDiameter(objects, 'flTire')).toBeCloseTo(0.096, 6)
+      expect(suggestWheelDiameter(objects, 'yUp')).toBeCloseTo(0.096, 6)
+      expect(suggestWheelDiameter(objects, 'flGroup')).toBeCloseTo(0.096, 6)
+    } finally {
+      disposeGeometry('cad:0')
+      disposeGeometry('yup:0')
+      disposeGeometry('shaft:0')
     }
   })
 
@@ -261,6 +303,12 @@ describe('바퀴 카드 그리기', () => {
     const fr = render(objects, 'fr')
     expect(fr).toContain('구동 모터를 고르면 최고 속도를 보입니다.')
     expect(fr).toContain('자동 (앞오른·뒤왼형)')
+    // 롤러를 직접 (위치와 다르게) 골라도 [자동]은 자동이 고를 형을 보인다
+    const manual = withWheel(objects, 'fr', { rollers: 'flbr' })
+    expect(wheelCardView(manual, 'fr')).toMatchObject({ rollers: 'flbr', autoRollers: 'frbl' })
+    const frManual = render(manual, 'fr')
+    expect(frManual).toContain('<option value="flbr" selected="">앞왼·뒤오른형</option>')
+    expect(frManual).toContain('<option value="auto">자동 (앞오른·뒤왼형)</option>')
   })
 
   it('지운 모터는 참조를 남긴 채 경고하고, 일반 바퀴에는 롤러 칸이 없다', () => {
