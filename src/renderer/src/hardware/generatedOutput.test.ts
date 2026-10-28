@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HardwareComponent, SceneObjects } from '../scene/model'
-import { COMPONENT_TYPE_KEYS } from './catalog'
+import { defaultWheel } from '../scene/wheel'
+import { COMPONENT_TYPE_KEYS, componentDef, type ComponentType } from './catalog'
 import { createComponent } from './components'
 import { generateTeamCodeFiles } from './generate'
 import { validateScene } from './validation'
@@ -76,5 +77,47 @@ describe('생성 파일 출력 고정', () => {
         `./__snapshots__/${file.path.split('/').pop()}`
       )
     }
+  })
+
+  it('시뮬레이터 전용 속성(감속비·포드 종류 등)과 바퀴는 생성 파일을 바꾸지 않는다', () => {
+    const objects = everyComponentScene()
+    const before = generateTeamCodeFiles(objects).files
+    const simulated: string[] = []
+    const changed: SceneObjects = Object.fromEntries(
+      Object.entries(objects).map(([id, object]) => [
+        id,
+        {
+          ...object,
+          ...(object.kind !== 'robot' && {
+            wheel: { ...defaultWheel('traction'), motor: 'c0', angle: 1 }
+          }),
+          components: object.components?.map((component) => {
+            const props = { ...component.props }
+            for (const property of componentDef(component.type as ComponentType).properties) {
+              if (!property.simulation) continue
+              simulated.push(`${component.type}.${property.key}`)
+              props[property.key] =
+                property.kind === 'enum'
+                  ? property.options[property.options.length - 1]
+                  : property.kind === 'length'
+                    ? property.max
+                    : property.kind === 'number'
+                      ? (property.max ?? 0) / 2
+                      : props[property.key]
+            }
+            return { ...component, props }
+          })
+        }
+      ])
+    )
+    expect([...new Set(simulated)]).toEqual([
+      'motor.gearbox',
+      'deadWheel.podType',
+      'deadWheel.podDiameter',
+      'deadWheel.podCpr'
+    ])
+    const after = generateTeamCodeFiles(changed)
+    expect(after.blocked).toBe(false)
+    expect(after.files).toEqual(before)
   })
 })

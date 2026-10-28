@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_EXPANSION_HUB_ADDRESS } from '../../hardware/catalog'
 import { robotComponents, robotHardwareSettings } from '../../hardware/components'
@@ -10,7 +11,9 @@ import { useSceneStore } from '../../scene/sceneStore'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
+import { usePlayStore } from '../../play/playStore'
 import IssueList from './IssueList'
+import { drivetrainSummary } from './wheelCardModel'
 
 type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
 
@@ -68,6 +71,50 @@ function GeneratedFiles({ paths }: { paths: string[] }): React.JSX.Element {
         )
       })}
       {status && <p className="inspector-note">{status}</p>}
+    </div>
+  )
+}
+
+// 구동계 요약(시뮬레이터): 바퀴 수·종류와 INIT 때 Console에 남을 경고. 바퀴는 생성 코드와 관계없다.
+function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const objects = useSceneStore((state) => state.objects)
+  const batteryVoltage = usePlayStore((state) => state.settings.batteryVoltage)
+  const summary = useMemo(
+    () => drivetrainSummary(objects, robotId, { batteryVoltage }),
+    [objects, robotId, batteryVoltage]
+  )
+  // 바퀴가 없다는 경고는 아래 안내 문장이 대신한다
+  const warnings = summary.warnings.filter((warning) => warning.key !== 'worldNoWheels')
+  return (
+    <div className="hw-files">
+      <span className="hw-row-label">{t('hardware.drivetrain.title')}</span>
+      {summary.count === 0 ? (
+        <p className="inspector-note">{t('hardware.drivetrain.none')}</p>
+      ) : (
+        <span className="hw-static">
+          {t('hardware.drivetrain.summary', {
+            count: summary.count,
+            kinds: summary.kinds
+              .map(({ kind, count }) =>
+                t('hardware.drivetrain.kindCount', {
+                  kind: t(`hardware.wheel.kinds.${kind}`),
+                  count
+                })
+              )
+              .join(', ')
+          })}
+        </span>
+      )}
+      {warnings.length > 0 && (
+        <ul className="hw-issues">
+          {warnings.map((warning, index) => (
+            <li key={index} className="hw-issue is-warning">
+              {t(`console.notices.${warning.key}`, warning.params)}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -162,6 +209,7 @@ function RobotHardwareSection({ robot }: { robot: SceneObject }): React.JSX.Elem
           </div>
         </>
       )}
+      <Drivetrain robotId={robot.id} />
       {/* 장치가 없는 로봇도 보인다(마지막 장치를 지운 뒤에도 TeamCode가 쓰는 없는 형식이 보이게) */}
       <UsageSection target={{ kind: 'robot', robotId: robot.id }} />
       {issues.length > 0 && (

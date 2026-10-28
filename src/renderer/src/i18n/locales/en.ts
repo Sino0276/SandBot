@@ -671,6 +671,23 @@ const en: Messages = {
     code: 'Diagnostic code',
     // Notes left by the run flow
     notices: {
+      // Warnings left while building the kinematic simulator's world description (play/worldSpec.ts) at INIT
+      worldNoWheels:
+        'The robot has no wheel components, so it will not move. Add [Add component → Wheel] to the wheel parts (or groups).',
+      worldWheelNoMotor: 'Wheel {{name}} has no drive motor, so it only rolls along.',
+      worldWheelMotorMissing:
+        'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
+      worldRollersAmbiguous:
+        'The roller type of mecanum wheel {{name}} cannot be told from its position, so it is treated as front-left/back-right. Choose the rollers in the wheel card.',
+      worldSharedEncoder:
+        'Dead wheel {{deadWheel}} shares its encoder port with motor {{motor}}, whose run mode uses the encoder. On the robot the pod encoder controls it, but the simulator assumes the motor shaft encoder does.',
+      worldDuplicateMotor:
+        'The motor device name {{name}} is empty or used twice, so the simulator does not use that motor.',
+      worldTooMany:
+        'There are more {{what}} than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldGenerationStale:
+        'Device names may differ from the generated configuration, so the wheels may not move.',
+      worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
       generationBlocked:
         'The last save did not generate code because of {{count}} hardware error(s). Running with the previous hardware class and configuration left in TeamCode.',
       generationFailed:
@@ -736,6 +753,61 @@ const en: Messages = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB port',
     objectNone: '(none)',
+    // Simulator-only properties (not in the generated code)
+    simulationOnly:
+      'Simulator-only setting (not written to the generated code or configuration XML).',
+    gearboxModelDefault: 'Model default',
+    gearboxReset: 'Model default',
+    gearboxResetHint: 'Go back to the SDK gear ratio of the motor type.',
+    // Wheel (simulator setting, attached to wheel parts like a Unity WheelCollider)
+    wheel: {
+      addGroup: 'Simulation',
+      addOption: 'Wheel',
+      title: 'Wheel',
+      kind: 'Type',
+      kinds: {
+        mecanum: 'Mecanum',
+        omni: 'Omni',
+        traction: 'Traction'
+      },
+      diameter: 'Diameter',
+      fitSize: 'From part size',
+      fitSizeHint:
+        'Uses the second-longest side of the bounding box of this object (its child parts for a group) as the diameter (a wheel box is diameter × diameter × width).',
+      fitSizeNone: 'There is no shape to measure.',
+      motor: 'Drive motor',
+      motorNone: '(none: rolls along)',
+      motorMissing: '(motor not found)',
+      gearRatio: 'External ratio',
+      gearRatioHint: 'Reduction from the motor output shaft to the wheel (1 when direct).',
+      angle: 'Rolling direction (°)',
+      angleHint:
+        'The direction the wheel pushes when it rolls forward. 0° is the robot front (+X), counterclockwise is +. Independent of the CAD part rotation.',
+      rollers: 'Rollers',
+      rollerOptions: {
+        auto: 'Auto',
+        flbr: 'Front-left/back-right type',
+        frbl: 'Front-right/back-left type'
+      },
+      rollersAuto: 'Auto ({{type}})',
+      rollersHint:
+        'In the standard layout where the rollers form an X seen from above, the wheels at the front-left and back-right are the front-left/back-right type. Auto uses the quadrant around the center of the mecanum wheels.',
+      topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
+      topSpeedNoMotor: 'Choose a drive motor to see the top speed.',
+      motorMissingWarning:
+        'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
+      rollersAmbiguousWarning:
+        'The roller type cannot be told from the position (on a center line of the mecanum wheels, or not rolling forward/backward), so it is treated as front-left/back-right. Choose the rollers.',
+      orphan: 'This object is not in a robot, so the simulator does not use it.',
+      hint: 'A wheel is a simulator setting. It is independent of the generated code and configuration XML, and its position comes from this object (the center of its child parts for a group). The drive motor direction (inspector) is taken as the one where +power rolls this wheel forward.'
+    },
+    // Drivetrain summary in the robot card
+    drivetrain: {
+      title: 'Drivetrain (simulator)',
+      summary: '{{count}} wheel(s) · {{kinds}}',
+      kindCount: '{{kind}} {{count}}',
+      none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
+    },
     categories: {
       actuator: 'Actuators',
       sensor: 'Sensors',
@@ -788,7 +860,10 @@ const en: Messages = {
       linearScalar: 'Linear scalar',
       angularScalar: 'Angular scalar',
       measures: 'Measures',
-      reversed: 'Encoder reversed'
+      reversed: 'Encoder reversed',
+      gearbox: 'Gearbox ratio',
+      podDiameter: 'Pod wheel diameter',
+      podCpr: 'Encoder CPR'
     },
     options: {
       motorModel: {
@@ -841,7 +916,9 @@ const en: Messages = {
       },
       podType: {
         fourBar: '4-Bar pod',
-        swingarm: 'Swingarm pod'
+        swingarm: 'Swingarm pod',
+        revThroughBore: 'REV Through Bore (8192 CPR)',
+        custom: 'Custom'
       },
       encoderDirection: {
         forward: 'Forward',
@@ -871,7 +948,9 @@ const en: Messages = {
     derived: {
       pinpoint: 'Offsets: X {{x}} mm, Y {{y}} mm',
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
-      deadWheel: 'Position: X {{x}} mm, Y {{y}} mm'
+      deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
+      motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
     },
     robot: {
       title: 'Robot hardware',
