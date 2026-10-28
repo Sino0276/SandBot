@@ -1,4 +1,4 @@
-import type { HubId, SceneObjects } from '../scene/model'
+import type { HubId, RobotHardwareSettings, SceneObjects } from '../scene/model'
 import {
   componentDef,
   CONTROL_HUB_ADDRESS,
@@ -142,26 +142,35 @@ function moduleDevices(hub: HubId, entries: ComponentEntry[]): string[] {
   return lines
 }
 
+// 구성의 허브(LynxModule) 이름과 주소, 구성 XML에 쓰는 순서(Expansion Hub, Control Hub). 사이드카는 이 이름으로
+// 허브 장치를 만든다(세계 설명의 hubs도 이 이름을 쓴다).
+export function lynxModules(
+  settings: RobotHardwareSettings
+): { name: string; address: number; hub: HubId }[] {
+  const modules: { name: string; address: number; hub: HubId }[] = []
+  if (settings.expansionHub.enabled) {
+    modules.push({
+      name: `Expansion Hub ${settings.expansionHub.address}`,
+      address: settings.expansionHub.address,
+      hub: 'expansionHub'
+    })
+  }
+  modules.push({ name: 'Control Hub', address: CONTROL_HUB_ADDRESS, hub: 'controlHub' })
+  return modules
+}
+
 export function generateConfigXml(objects: SceneObjects, robotId: string): string {
   const settings = robotHardwareSettings(objects, robotId)
   const entries = robotComponents(objects, robotId).filter((e) => isComponentType(e.component.type))
   const pad = (depth: number, line: string): string => `${INDENT.repeat(depth)}${line}`
 
   const modules: string[] = []
-  const addModule = (name: string, address: number, hub: HubId): void => {
+  for (const { name, address, hub } of lynxModules(settings)) {
     const devices = moduleDevices(hub, entries)
     modules.push(pad(2, `<LynxModule name="${xmlAttribute(name)}" port="${address}">`))
     modules.push(...devices.map((line) => pad(3, line)))
     modules.push(pad(2, '</LynxModule>'))
   }
-  if (settings.expansionHub.enabled) {
-    addModule(
-      `Expansion Hub ${settings.expansionHub.address}`,
-      settings.expansionHub.address,
-      'expansionHub'
-    )
-  }
-  addModule('Control Hub', CONTROL_HUB_ADDRESS, 'controlHub')
 
   // 웹캠·Limelight는 허브 밖, <Robot> 바로 아래. 시리얼이 없으면 연결되지 않으므로 넣지 않는다(검증 경고).
   const usbDevices: string[] = []

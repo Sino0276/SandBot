@@ -50,7 +50,8 @@ const objects: SceneObjects = {
           motorModel: 'goBilda5202',
           direction: 'reverse',
           runMode: 'usingEncoder',
-          zeroPowerBehavior: 'brake'
+          zeroPowerBehavior: 'brake',
+          gearbox: 19.2
         }
       }
     ]
@@ -71,7 +72,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 5 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 6 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -297,6 +298,118 @@ describe('스크립트 연결(버전 5)', () => {
   })
 })
 
+describe('바퀴(버전 6)', () => {
+  const WHEEL = {
+    kind: 'mecanum',
+    diameter: 0.104,
+    motor: 'm1',
+    gearRatio: 1,
+    angle: 0,
+    rollers: 'auto'
+  } as const
+  const withWheel = (): SceneObjects => ({
+    ...objects,
+    plate: { ...objects.plate, wheel: { ...WHEEL } }
+  })
+  // 저장한 파일의 오브젝트(index)에 wheel을 넣는다
+  const fileWith = (index: number, wheel: unknown, version = 6): string => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.version = version
+    data.objects[index].wheel = wheel
+    return JSON.stringify(data)
+  }
+
+  it('바퀴를 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다)', () => {
+    const content = serializeProject(withWheel(), relativize)
+    expect(JSON.parse(content).objects[2].wheel).toEqual(WHEEL)
+    const { objects: loaded } = parseProject(content)
+    expect(loaded).toEqual(withWheel())
+    expect(serializeProject(loaded, relativize)).toBe(content)
+  })
+
+  it('바퀴가 없으면 wheel을 쓰지 않는다', () => {
+    for (const object of JSON.parse(serializeProject(objects, relativize)).objects) {
+      expect(object).not.toHaveProperty('wheel')
+    }
+  })
+
+  it('지운 모터를 가리키는 참조는 그대로 남는다', () => {
+    const { objects: loaded } = parseProject(fileWith(2, { ...WHEEL, motor: 'deleted-motor' }))
+    expect(loaded.plate.wheel?.motor).toBe('deleted-motor')
+  })
+
+  it('로봇·CAD 루트의 바퀴, 모양·형식이 틀린 바퀴는 invalidData', () => {
+    expect(() => parseProject(fileWith(0, WHEEL))).toThrow(ProjectFileError)
+    expect(() => parseProject(fileWith(1, WHEEL))).toThrow(ProjectFileError)
+    for (const wheel of [
+      'mecanum',
+      [WHEEL],
+      { ...WHEEL, kind: 'swerve' },
+      { ...WHEEL, kind: undefined },
+      { ...WHEEL, diameter: '0.1' },
+      { ...WHEEL, motor: 3 },
+      { ...WHEEL, motor: null },
+      { ...WHEEL, gearRatio: null },
+      { ...WHEEL, angle: '0' },
+      { ...WHEEL, rollers: 'left' }
+    ]) {
+      expect(() => parseProject(fileWith(2, wheel))).toThrow(ProjectFileError)
+    }
+  })
+
+  it('범위 밖 수는 기본값으로 바꾸고 각은 (−π, π]로 감는다', () => {
+    const { objects: loaded } = parseProject(
+      fileWith(2, { ...WHEEL, kind: 'traction', diameter: 5, gearRatio: 0, angle: 3 * Math.PI })
+    )
+    expect(loaded.plate.wheel).toEqual({
+      kind: 'traction',
+      // 일반 바퀴의 기본 지름
+      diameter: 0.096,
+      motor: 'm1',
+      gearRatio: 1,
+      angle: Math.PI,
+      rollers: 'auto'
+    })
+    const { objects: negative } = parseProject(
+      fileWith(2, { ...WHEEL, diameter: -0.1, gearRatio: 1e6, angle: -Math.PI / 2 })
+    )
+    expect(negative.plate.wheel).toMatchObject({
+      diameter: 0.104,
+      gearRatio: 1,
+      angle: -Math.PI / 2
+    })
+  })
+
+  it('그룹·어셈블리에도 둘 수 있다', () => {
+    const scene: SceneObjects = {
+      ...objects,
+      lift: {
+        id: 'lift',
+        name: 'FL',
+        kind: 'group',
+        parentId: 'robot',
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+        wheel: { ...WHEEL, kind: 'omni', rollers: 'auto', diameter: 0.096 }
+      }
+    }
+    expect(parseProject(serializeProject(scene, relativize)).objects).toEqual(scene)
+  })
+
+  it('버전 5 파일은 바퀴 없이 그대로 읽는다', () => {
+    const v5 = JSON.parse(serializeProject(objects, relativize))
+    v5.version = 5
+    const { objects: loaded } = parseProject(JSON.stringify(v5))
+    expect(loaded).toEqual(objects)
+    expect(Object.values(loaded).some((object) => object.wheel)).toBe(false)
+  })
+
+  it('더 새 버전(7)은 열지 않는다', () => {
+    expect(() => parseProject(fileWith(2, WHEEL, PROJECT_VERSION + 1))).toThrow(
+      expect.objectContaining({ code: 'newerVersion' })
+    )
+  })
+})
+
 describe('버전과 하위 호환', () => {
   it('버전 2 CAD(meshIndexing 없음)는 예전 형상 id 방식으로 읽고, 모르는 방식은 거부한다', () => {
     const legacy = JSON.parse(serializeProject(objects, relativize))
@@ -334,8 +447,52 @@ describe('버전과 하위 호환', () => {
       motorModel: 'goBilda5202',
       direction: 'forward',
       runMode: 'withoutEncoder',
-      zeroPowerBehavior: 'brake'
+      zeroPowerBehavior: 'brake',
+      // 시뮬레이터 전용 속성(v6)도 기본값(0 = 모델 기본)으로 채운다
+      gearbox: 0
     })
+  })
+
+  it('버전 5 이하 파일의 모터·데드휠은 새 시뮬레이터 속성을 기본값으로 채운다', () => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.version = 5
+    delete data.objects[2].components[0].props.gearbox
+    data.objects[2].components.push({
+      id: 'dw',
+      type: 'deadWheel',
+      name: 'par',
+      hub: 'controlHub',
+      port: 1,
+      props: { measures: 'forward', reversed: 'yes' }
+    })
+    const { objects: loaded } = parseProject(JSON.stringify(data))
+    expect(loaded.plate.components![0].props.gearbox).toBe(0)
+    expect(loaded.plate.components![1].props).toEqual({
+      measures: 'forward',
+      reversed: 'yes',
+      podType: 'fourBar',
+      podDiameter: 0.035,
+      podCpr: 8192
+    })
+  })
+
+  it('길이 속성은 범위 밖이거나 수가 아니면 기본값으로 채운다', () => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    const deadWheel = (podDiameter: unknown): Record<string, unknown> => ({
+      id: `dw${data.objects[2].components.length}`,
+      type: 'deadWheel',
+      name: `dw${data.objects[2].components.length}`,
+      hub: 'controlHub',
+      port: 1,
+      props: { podType: 'custom', podDiameter, podCpr: 4000 }
+    })
+    for (const value of [0.048, 5, -0.01, '0.04', null])
+      data.objects[2].components.push(deadWheel(value))
+    const { objects: loaded } = parseProject(JSON.stringify(data))
+    expect(loaded.plate.components!.slice(1).map((c) => c.props.podDiameter)).toEqual([
+      0.048, 0.035, 0.035, 0.035, 0.035
+    ])
+    expect(loaded.plate.components![1].props.podCpr).toBe(4000)
   })
 })
 

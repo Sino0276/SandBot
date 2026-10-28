@@ -15,17 +15,20 @@ import {
   type SceneObject,
   type SceneObjects,
   type ScriptLink,
-  type Vec3
+  type Vec3,
+  type WheelSettings
 } from '../scene/model'
+import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
 export const PROJECT_FORMAT = 'sandbot-project'
 // 1: 오브젝트·CAD, 2: 하드웨어 컴포넌트(components)와 로봇 코드 생성 설정(hardware) 추가,
 // 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수),
 // 4: group 종류(Create Empty), CAD 밖으로 옮긴 노드의 cadOrigin, 그룹의 Java 클래스 이름 codeClassName,
-// 5: 오브젝트에 연결한 TeamCode Java 파일 scripts([{ path, className }]).
-// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식). objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 5
+// 5: 오브젝트에 연결한 TeamCode Java 파일 scripts([{ path, className }]),
+// 6: 바퀴 wheel({ kind, diameter, motor, gearRatio, angle, rollers }, 시뮬레이터 설정, assembly·part·group에만).
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음). objects 배열의 순서가 형제 순서다.
+export const PROJECT_VERSION = 6
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -97,7 +100,9 @@ function parseProps(
         ? typeof raw === 'string' && def.options.includes(raw)
         : def.kind === 'number'
           ? isFiniteNumber(raw)
-          : typeof raw === 'string'
+          : def.kind === 'length'
+            ? isFiniteNumber(raw) && raw >= def.min && raw <= def.max
+            : typeof raw === 'string'
     props[def.key] = valid ? (raw as string | number) : def.default
   }
   return props
@@ -145,6 +150,30 @@ function parseHardware(value: unknown, index: number): RobotHardwareSettings {
     configName: value.configName,
     expansionHub: { enabled: value.expansionHub.enabled, address: value.expansionHub.address }
   }
+}
+
+// 바퀴(v6). 모양·형식이 틀리면(객체가 아님, 수가 아닌 지름, 모르는 종류·롤러, 문자열이 아닌 모터) 다른 필드처럼
+// 파일 오류이고, 범위 밖 수는 컴포넌트 속성(parseProps)처럼 기본값으로 바꾼다(sanitizeWheel, 각은 (−π, π]로 감음).
+// 모터 id는 그대로 둔다(지운 모터를 가리켜도 바퀴 카드가 경고하고, 실행 취소·다시 연결로 되살릴 수 있다).
+function parseWheel(value: unknown, index: number): WheelSettings {
+  if (
+    !isRecord(value) ||
+    !isWheelKind(value.kind) ||
+    typeof value.diameter !== 'number' ||
+    typeof value.motor !== 'string' ||
+    typeof value.gearRatio !== 'number' ||
+    typeof value.angle !== 'number' ||
+    !isWheelRollers(value.rollers)
+  )
+    invalid(index, 'wheel')
+  return sanitizeWheel({
+    kind: value.kind,
+    diameter: value.diameter,
+    motor: value.motor,
+    gearRatio: value.gearRatio,
+    angle: value.angle,
+    rollers: value.rollers
+  })
 }
 
 // 패키지까지 붙인 클래스 이름(점으로 이은 Java 식별자)
@@ -198,7 +227,8 @@ function parseObject(
     hardware,
     cadOrigin,
     codeClassName,
-    scripts
+    scripts,
+    wheel
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -282,6 +312,11 @@ function parseObject(
   if (scripts !== undefined) {
     const links = parseScripts(scripts, index, droppedScripts)
     if (links.length > 0) object.scripts = links
+  }
+  // 로봇·CAD 루트에는 바퀴를 두지 않는다(scene/wheel.ts canHaveWheel)
+  if (wheel !== undefined) {
+    if (kind === 'robot' || object.cad) invalid(index, 'wheel')
+    object.wheel = parseWheel(wheel, index)
   }
   return object
 }
