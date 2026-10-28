@@ -558,9 +558,23 @@ async function resolveFresh(
           runtime: false
         }
     }
-    const status = statusOf(module!)
+    // 뿌리는 늘 그래프에 있지만(큐의 앞), 한도로 잘린 그래프 등에서 빠지면 실패로 보인다
+    if (!module)
+      return {
+        entry: {
+          ...base,
+          version: item ? declaredVersion(item.declarations) : '',
+          status: 'failed',
+          reason: 'badMetadata',
+          detail: 'not resolved'
+        },
+        jars: [],
+        compile: false,
+        runtime: false
+      }
+    const status = statusOf(module)
     const outcome = artifacts.get(ga)
-    let entry: LibraryEntry = { ...base, version: module!.version, ...status }
+    let entry: LibraryEntry = { ...base, version: module.version, ...status }
     let jars: Jar[] = []
     if (outcome && 'failure' in outcome && outcome.failure) {
       entry = {
@@ -575,12 +589,11 @@ async function resolveFresh(
     }
     if (implicit && ga === gaOf(implicit.root.group, implicit.root.artifact) && !item)
       entry = { ...entry, requestedBy: [implicit.requestedBy] }
-    const policy = module!.policy
     return {
       entry,
       jars,
-      compile: module!.compile,
-      runtime: module!.runtime && policy.kind !== 'compileOnly'
+      compile: module.compile,
+      runtime: module.runtime && module.policy.kind !== 'compileOnly'
     }
   }
 

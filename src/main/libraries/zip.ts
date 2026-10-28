@@ -41,7 +41,12 @@ export type ZipReader = {
   read: (name: string) => Buffer | null
 }
 
-export function readZip(bytes: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMITS): ZipReader {
+// rejectDuplicate: 같은 이름이 두 번 있으면 거부할 엔트리(기본은 모두). 거부하지 않는 중복은 처음 것을 쓴다.
+export function readZip(
+  bytes: Buffer,
+  limits: ZipLimits = DEFAULT_ZIP_LIMITS,
+  rejectDuplicate: (name: string) => boolean = () => true
+): ZipReader {
   if (bytes.length < 22) throw new ZipError('not a ZIP file')
   const minEnd = Math.max(0, bytes.length - 65_557)
   let end = -1
@@ -77,7 +82,11 @@ export function readZip(bytes: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMITS): 
     if (offset + 46 + nameLength > end) throw new ZipError('bad ZIP central directory')
     const name = bytes.toString('utf8', offset + 46, offset + 46 + nameLength)
     if (name.includes('\0')) throw new ZipError('bad ZIP entry name')
-    if (byName.has(name)) throw new ZipError(`duplicate ZIP entry ${name}`)
+    if (byName.has(name)) {
+      if (rejectDuplicate(name)) throw new ZipError(`duplicate ZIP entry ${name}`)
+      offset += 46 + nameLength + extraLength + commentLength
+      continue
+    }
     const entry = { name, method, flags, compressedSize, size, crc, localOffset }
     entries.push(entry)
     byName.set(name, entry)

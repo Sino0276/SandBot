@@ -54,7 +54,8 @@ function className(entryName: string): string | null {
 export function inspectJar(name: string, bytes: Buffer): ClasspathJar {
   let entries
   try {
-    entries = readZip(bytes, JAR_LIMITS).entries
+    // 클래스가 두 번 있으면 어느 것이 쓰일지 모르므로 거부한다(META-INF 자원의 중복은 흔해 받는다)
+    entries = readZip(bytes, JAR_LIMITS, (entry) => entry.endsWith('.class')).entries
   } catch (error) {
     throw new ArchiveError(
       'badArchive',

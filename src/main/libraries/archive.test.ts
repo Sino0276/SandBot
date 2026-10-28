@@ -89,6 +89,20 @@ describe('jar·AAR', () => {
     }
   })
 
+  it('jar 안의 같은 클래스 두 번은 거부하고, META-INF 자원의 중복은 받는다', () => {
+    const resources = makeZip([
+      { name: 'META-INF/LICENSE', data: 'a' },
+      { name: 'META-INF/LICENSE', data: 'b' },
+      { name: 'p/A.class', data: '' }
+    ])
+    expect(inspectJar('x.jar', resources).packages).toEqual(['p'])
+    const classes = makeZip([
+      { name: 'p/A.class', data: '1' },
+      { name: 'p/A.class', data: '2' }
+    ])
+    expect(() => inspectJar('x.jar', classes)).toThrow(/duplicate/)
+  })
+
   it('JSR 305의 javax.annotation은 받는다', () => {
     const jar = inspectJar(
       'jsr305-3.0.2.jar',
