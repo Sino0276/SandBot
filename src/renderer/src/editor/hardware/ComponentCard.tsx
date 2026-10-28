@@ -2,7 +2,12 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   componentDef,
+  deadWheelTicksPerMeter,
   isComponentType,
+  isPropertyVisible,
+  MIN_GEARBOX,
+  motorGearbox,
+  motorOutput,
   PORT_RANGES,
   type ComponentType,
   type PropertyDef
@@ -28,6 +33,14 @@ import {
   type SceneObjects
 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import { useUnitStore } from '../../units/unitStore'
+import {
+  formatNumber,
+  fromDisplayLength,
+  LENGTH_DIGITS,
+  parseLength,
+  toDisplayLength
+} from '../../units/units'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
@@ -35,9 +48,17 @@ import IssueList from './IssueList'
 
 const HUBS: HubId[] = ['controlHub', 'expansionHub']
 
-function FieldRow({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
+function FieldRow({
+  label,
+  title,
+  children
+}: {
+  label: string
+  title?: string
+  children: ReactNode
+}): React.JSX.Element {
   return (
-    <div className="hw-row">
+    <div className="hw-row" title={title}>
       <span className="hw-row-label">{label}</span>
       {children}
     </div>
@@ -95,6 +116,25 @@ function derivedText(
   }
 }
 
+// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다.
+function simulationText(t: ReturnType<typeof looseT>, component: HardwareComponent): string | null {
+  switch (component.type) {
+    case 'motor': {
+      const output = motorOutput(component.props)
+      return t('hardware.derived.motorOutput', {
+        rpm: formatNumber(output.freeRpm, 0),
+        ticks: formatNumber(output.ticksPerRev, 1)
+      })
+    }
+    case 'deadWheel':
+      return t('hardware.derived.deadWheelPod', {
+        ticks: formatNumber(deadWheelTicksPerMeter(component.props) / 1000, 3)
+      })
+    default:
+      return null
+  }
+}
+
 function ComponentCard({
   objects,
   objectId,
@@ -108,6 +148,7 @@ function ComponentCard({
   const tl = looseT(t)
   const updateComponent = useSceneStore((state) => state.updateComponent)
   const removeComponent = useSceneStore((state) => state.removeComponent)
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
   if (!isComponentType(component.type)) return null
   const type: ComponentType = component.type
   const def = componentDef(type)
@@ -150,6 +191,37 @@ function ComponentCard({
           </select>
         )
       case 'number':
+        // 감속비 0은 모델 기본(motorGearbox): 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다
+        if (property.key === 'gearbox') {
+          const modelDefault = Number(value) < MIN_GEARBOX
+          return (
+            <div className="hw-inline">
+              <NumberField
+                ariaLabel={label}
+                value={motorGearbox(component.props)}
+                digits={property.digits}
+                onCommit={(input) =>
+                  setProp(
+                    property.key,
+                    input < MIN_GEARBOX ? 0 : Math.min(property.max ?? Infinity, input)
+                  )
+                }
+              />
+              {modelDefault ? (
+                <span className="hw-static">{t('hardware.gearboxModelDefault')}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="panel-button"
+                  title={t('hardware.gearboxResetHint')}
+                  onClick={() => setProp(property.key, 0)}
+                >
+                  {t('hardware.gearboxReset')}
+                </button>
+              )}
+            </div>
+          )
+        }
         return (
           <NumberField
             ariaLabel={label}
@@ -163,6 +235,27 @@ function ComponentCard({
             }
           />
         )
+      case 'length': {
+        const unit = t(`units.symbols.${lengthUnit}`)
+        return (
+          <NumberField
+            ariaLabel={label}
+            value={toDisplayLength(Number(value), lengthUnit)}
+            digits={LENGTH_DIGITS[lengthUnit]}
+            title={t('units.lengthInputHint', { unit })}
+            parse={(text) => {
+              const meters = parseLength(text, lengthUnit)
+              return meters === null ? null : toDisplayLength(meters, lengthUnit)
+            }}
+            onCommit={(input) =>
+              setProp(
+                property.key,
+                Math.min(property.max, Math.max(property.min, fromDisplayLength(input, lengthUnit)))
+              )
+            }
+          />
+        )
+      }
       case 'text':
         return (
           <TextField
@@ -191,6 +284,11 @@ function ComponentCard({
   }
 
   const derived = derivedText(tl, objects, objectId, component)
+  const simulated = simulationText(tl, component)
+  const rowLabel = (property: PropertyDef): string =>
+    property.kind === 'length'
+      ? `${tl(propertyLabelKey(property.key))} (${t(`units.symbols.${lengthUnit}`)})`
+      : tl(propertyLabelKey(property.key))
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
@@ -276,11 +374,18 @@ function ComponentCard({
           </FieldRow>
         </>
       )}
-      {def.properties.map((property) => (
-        <FieldRow key={property.key} label={tl(propertyLabelKey(property.key))}>
-          {propertyControl(property)}
-        </FieldRow>
-      ))}
+      {def.properties
+        .filter((property) => isPropertyVisible(property, component.props))
+        .map((property) => (
+          <FieldRow
+            key={property.key}
+            label={rowLabel(property)}
+            // 시뮬레이터 전용 속성은 생성 코드에 쓰지 않는다
+            title={property.simulation ? t('hardware.simulationOnly') : undefined}
+          >
+            {propertyControl(property)}
+          </FieldRow>
+        ))}
       {codePath && codePath.constants.length > 0 && (
         <div className="hw-row">
           <span className="hw-row-label">{t('hardware.javaConstants')}</span>
@@ -294,6 +399,11 @@ function ComponentCard({
         </div>
       )}
       {derived && <p className="hw-derived">{derived}</p>}
+      {simulated && (
+        <p className="hw-derived" title={t('hardware.simulationOnly')}>
+          {simulated}
+        </p>
+      )}
       {hasHint(type) && <p className="inspector-note">{t(`hardware.hints.${type}`)}</p>}
       <IssueList issues={issues} />
     </li>

@@ -2,7 +2,15 @@ import { lstat, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
 import { parseOpModes } from '../../shared/java/opModes'
-import type { OpModeFlavor, PlayInitRequest, PlayInitResult, PlaySettings } from '../../shared/play'
+import {
+  MAX_BATTERY_VOLTAGE,
+  MIN_BATTERY_VOLTAGE,
+  type OpModeFlavor,
+  type PlayInitRequest,
+  type PlayInitResult,
+  type PlaySettings
+} from '../../shared/play'
+import { parseWorldSpec, type WorldSpec } from '../../shared/sim/worldSpec'
 import {
   DEFAULT_STALL_MILLIS,
   DEFAULT_TICK_NANOS,
@@ -79,6 +87,7 @@ export type ValidRequest = {
   opMode: { className: string; path: string; flavor: OpModeFlavor }
   configPath: string | null
   settings: PlaySettings
+  world: WorldSpec | null
 }
 
 // OpMode 바이너리 이름이 그 파일의 것인지: 최상위 클래스 이름은 파일 이름과 같다(public 최상위 클래스만 OpMode가
@@ -97,7 +106,7 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   const bad = (what: string): Failure => failure('notAllowed', `invalid request: ${what}`)
   if (typeof input !== 'object' || input === null) return bad('not an object')
   const request = input as Partial<Record<keyof PlayInitRequest, unknown>>
-  const { runId, root, opMode, configPath, settings } = request
+  const { runId, root, opMode, configPath, settings, world } = request
   if (typeof runId !== 'string' || !RUN_ID.test(runId)) return bad('runId')
   if (typeof root !== 'string' || root === '') return bad('root')
   if (typeof opMode !== 'object' || opMode === null) return bad('opMode')
@@ -114,18 +123,29 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   )
     return bad('configPath')
   if (typeof settings !== 'object' || settings === null) return bad('settings')
-  const { speed, jitter, seed, autoStopAutonomous } = settings as Record<string, unknown>
+  const { speed, jitter, seed, autoStopAutonomous, batteryVoltage } = settings as Record<
+    string,
+    unknown
+  >
   if (!isValidSpeed(speed)) return bad('settings.speed')
   // HubTiming: 0 이상 1 미만
   if (typeof jitter !== 'number' || !(jitter >= 0 && jitter < 1)) return bad('settings.jitter')
   if (typeof seed !== 'number' || !Number.isSafeInteger(seed)) return bad('settings.seed')
   if (typeof autoStopAutonomous !== 'boolean') return bad('settings.autoStopAutonomous')
+  if (
+    typeof batteryVoltage !== 'number' ||
+    !(batteryVoltage >= MIN_BATTERY_VOLTAGE && batteryVoltage <= MAX_BATTERY_VOLTAGE)
+  )
+    return bad('settings.batteryVoltage')
+  const parsedWorld = world === undefined || world === null ? null : parseWorldSpec(world)
+  if (typeof parsedWorld === 'string') return bad(`world: ${parsedWorld}`)
   return {
     runId,
     root,
     opMode: { className, path: relPath, flavor },
     configPath: configPath ?? null,
-    settings: { speed, jitter, seed, autoStopAutonomous }
+    settings: { speed, jitter, seed, autoStopAutonomous, batteryVoltage },
+    world: parsedWorld
   }
 }
 

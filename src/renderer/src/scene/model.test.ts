@@ -9,6 +9,7 @@ import {
   isInSubtree,
   matrixToTransform,
   transformToMatrix,
+  worldMatrix,
   type SceneObjects,
   type Transform,
   type Vec3
@@ -71,6 +72,40 @@ describe('getTransformInFrame', () => {
 
   it('로봇에 속하지 않은 오브젝트는 로봇 기준이어도 필드 좌표를 준다', () => {
     expectTransform(getTransformInFrame(objects, 'cone', 'robot'), objects.cone.transform)
+  })
+})
+
+describe('worldMatrix 최상위 덮어쓰기(실행 중 표시 자세)', () => {
+  const position = (matrix: Matrix4): number[] =>
+    new Vector3().setFromMatrixPosition(matrix).toArray()
+  const override = {
+    id: 'robot',
+    transform: { position: [-1, 0.5, 0], rotation: [0, 0, 0] } as Transform
+  }
+
+  it('최상위 로봇의 transform만 바꾸고 하위는 그 자세를 따른다', () => {
+    position(worldMatrix(objects, 'robot', override)).forEach((v, i) =>
+      expect(v).toBeCloseTo([-1, 0.5, 0][i], 12)
+    )
+    // 덮어쓴 로봇은 회전이 없으므로 웹캠은 로봇 앞(+X)에 그대로 붙는다
+    position(worldMatrix(objects, 'webcam', override)).forEach((v, i) =>
+      expect(v).toBeCloseTo([-0.8, 0.5, 0.3][i], 12)
+    )
+  })
+
+  it('덮어쓰기가 없거나 다른 오브젝트면 문서 자세 그대로이고 문서는 바뀌지 않는다', () => {
+    const before = JSON.stringify(objects)
+    expect(worldMatrix(objects, 'webcam', null).elements).toEqual(
+      worldMatrix(objects, 'webcam').elements
+    )
+    expect(worldMatrix(objects, 'cone', override).elements).toEqual(
+      worldMatrix(objects, 'cone').elements
+    )
+    // 최상위가 아닌 오브젝트는 덮어쓰지 않는다
+    expect(
+      worldMatrix(objects, 'webcam', { id: 'webcam', transform: override.transform }).elements
+    ).toEqual(worldMatrix(objects, 'webcam').elements)
+    expect(JSON.stringify(objects)).toBe(before)
   })
 })
 

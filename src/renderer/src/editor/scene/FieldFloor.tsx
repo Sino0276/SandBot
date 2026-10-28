@@ -1,9 +1,8 @@
 import { useMemo } from 'react'
-import { FIELD_SIZE, TILE_SIZE } from '../../scene/coordinates'
+import { FIELD_SIZE, WALL_HEIGHT, WALL_THICKNESS } from '../../../../shared/sim/field'
+import { TILE_SIZE } from '../../scene/coordinates'
 
 const TILES_PER_SIDE = Math.round(FIELD_SIZE / TILE_SIZE)
-const WALL_HEIGHT = 0.3
-const WALL_THICKNESS = 0.025
 
 // 공칭 12 ft 필드: 바닥, 2 ft 타일 경계선, 낮은 벽
 function FieldFloor(): React.JSX.Element {

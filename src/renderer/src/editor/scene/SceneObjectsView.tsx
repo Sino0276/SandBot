@@ -1,15 +1,27 @@
 import { Edges } from '@react-three/drei'
 import { useThree, type ThreeEvent } from '@react-three/fiber'
-import { useEffect } from 'react'
-import { Color, MeshStandardMaterial, SRGBColorSpace } from 'three'
+import { useEffect, useLayoutEffect, useRef } from 'react'
+import {
+  BoxGeometry,
+  Color,
+  EdgesGeometry,
+  LineBasicMaterial,
+  MeshStandardMaterial,
+  SRGBColorSpace,
+  Vector3,
+  type Group
+} from 'three'
 import { useShallow } from 'zustand/react/shallow'
+import { simPoseOf, usePlayStore } from '../../play/playStore'
 import { ROBOT_SIZE } from '../../scene/coordinates'
 import { getGeometry } from '../../scene/geometryRegistry'
 import { cadMeshRaycast } from '../../scene/meshBvh'
-import { childrenInDocument, type ObjectVisual, type Vec3 } from '../../scene/model'
+import { childrenInDocument, type ObjectVisual, type Transform, type Vec3 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { isHiddenInScene, useSceneVisibilityStore } from '../sceneVisibility'
+import { objectWorldBounds } from './bounds'
+import { bindPoseDisplay, GHOST_MESH_LIMIT, meshCount } from './poseDisplay'
 
 const SELECTED_COLOR = '#4c8dff'
 const HIGHLIGHT_EMISSIVE = new Color('#1d4ed8')
@@ -131,12 +143,20 @@ function Visual({
   )
 }
 
+// 실행 중인 로봇의 안쪽 노드(자세는 바깥 그룹이 갖는다). 같은 배열을 계속 써서 R3F가 다시 적용하지 않게 한다.
+const IDENTITY_POSITION: Vec3 = [0, 0, 0]
+const IDENTITY_ROTATION: [number, number, number, 'ZYX'] = [0, 0, 0, 'ZYX']
+const IDENTITY_TRANSFORM: Transform = { position: [0, 0, 0], rotation: [0, 0, 0] }
+
 function ObjectNode({
   id,
-  parentHighlighted
+  parentHighlighted,
+  identity = false
 }: {
   id: string
   parentHighlighted: boolean
+  // 실행 중인 로봇: 문서 자세 대신 항등(바깥 그룹이 시뮬레이터 자세로 움직인다). 시작·끝에만 바뀐다.
+  identity?: boolean
 }): React.JSX.Element | null {
   const object = useSceneStore((state) => state.objects[id])
   const childIds = useSceneStore(
@@ -161,13 +181,166 @@ function ObjectNode({
   }
 
   return (
-    <group position={object.transform.position} rotation={[rx, ry, rz, 'ZYX']}>
+    <group
+      position={identity ? IDENTITY_POSITION : object.transform.position}
+      rotation={identity ? IDENTITY_ROTATION : [rx, ry, rz, 'ZYX']}
+    >
       {object.visual && !hidden && (
         <Visual visual={object.visual} highlighted={highlighted} onClick={handleClick} />
       )}
       {childIds.map((childId) => (
         <ObjectNode key={childId} id={childId} parentHighlighted={highlighted} />
       ))}
+    </group>
+  )
+}
+
+// 최상위 오브젝트. 실행 중 그 로봇이 시뮬레이터 자세를 받으면(playStore.simPose) 바깥 그룹을 명령형으로 움직이고
+// 안쪽 노드는 항등으로 둔다(poseDisplay.ts). 씬 문서는 바뀌지 않는다(실행 취소해도 표시 자세는 그대로).
+function RootNode({ id }: { id: string }): React.JSX.Element {
+  const outer = useRef<Group>(null)
+  const invalidate = useThree((state) => state.invalidate)
+  // 시작(첫 자세)·끝에만 바뀌는 값이라 자세가 올 때마다 하위 트리를 다시 그리지 않는다
+  const posed = usePlayStore((state) => simPoseOf(state)?.robotId === id)
+  // 그리기 전에 바깥 그룹의 자세를 맞춘다(안쪽이 항등으로 바뀐 프레임에 문서 자세가 한 번 보이지 않게)
+  useLayoutEffect(() => {
+    const group = outer.current
+    if (!posed || !group) return
+    return bindPoseDisplay(group, id, usePlayStore, invalidate)
+  }, [posed, id, invalidate])
+  return (
+    <group ref={outer}>
+      <ObjectNode id={id} parentHighlighted={false} identity={posed} />
+    </group>
+  )
+}
+
+// ---- 잔상(끝난 실행의 마지막 자세) ----
+
+// 잔상 재질은 모듈에서 함께 쓰고 해제하지 않는다(StrictMode가 붙였다 떼어도 안전하다). 깊이를 쓰지 않아 뒤의 로봇·필드를
+// 가리지 않는다.
+const GHOST_MATERIAL = new MeshStandardMaterial({
+  color: '#93c5fd',
+  transparent: true,
+  opacity: 0.28,
+  depthWrite: false,
+  metalness: 0,
+  roughness: 0.9
+})
+const GHOST_LINE_MATERIAL = new LineBasicMaterial({
+  color: '#93c5fd',
+  transparent: true,
+  opacity: 0.7,
+  depthWrite: false
+})
+// 임시 모양(SceneObjectsView의 상자와 같은 크기)
+const GHOST_ROBOT_BOX = new BoxGeometry(ROBOT_SIZE, ROBOT_SIZE, ROBOT_SIZE)
+const GHOST_WEBCAM_BOX = new BoxGeometry(0.03, 0.09, 0.03)
+// 큰 CAD 잔상의 외곽선(한 변 1 m, 크기는 scale로)
+const UNIT_BOX_EDGES = new EdgesGeometry(new BoxGeometry(1, 1, 1))
+
+// 잔상은 클릭되지 않는다(BVH도 만들지 않는다)
+const noRaycast = (): void => {}
+
+function GhostMesh({ geometryId }: { geometryId: string }): React.JSX.Element | null {
+  useSceneStore((state) => state.geometryRevision)
+  const invalidate = useThree((state) => state.invalidate)
+  const geometry = getGeometry(geometryId)
+  // 형상이 늦게 등록되면 메시가 새로 붙는다(붙기만 해서는 다시 그려지지 않는다)
+  useEffect(() => {
+    invalidate()
+  }, [geometry, invalidate])
+  if (!geometry) return null
+  return <mesh geometry={geometry} material={GHOST_MATERIAL} raycast={noRaycast} />
+}
+
+function GhostVisual({ visual }: { visual: ObjectVisual }): React.JSX.Element {
+  if (visual.type === 'mesh') return <GhostMesh geometryId={visual.geometryId} />
+  return visual.shape === 'robot' ? (
+    <mesh
+      geometry={GHOST_ROBOT_BOX}
+      material={GHOST_MATERIAL}
+      position={[0, 0, ROBOT_SIZE / 2]}
+      raycast={noRaycast}
+    />
+  ) : (
+    <mesh geometry={GHOST_WEBCAM_BOX} material={GHOST_MATERIAL} raycast={noRaycast} />
+  )
+}
+
+function GhostNode({ id, root }: { id: string; root: boolean }): React.JSX.Element | null {
+  const object = useSceneStore((state) => state.objects[id])
+  const childIds = useSceneStore(
+    useShallow((state) => childrenInDocument(state.objects, id).map((child) => child.id))
+  )
+  // 씬 뷰에서 숨긴 오브젝트는 잔상에도 그리지 않는다
+  const hidden = useSceneVisibilityStore((state) =>
+    isHiddenInScene(state, useSceneStore.getState().objects, id)
+  )
+  if (!object) return null
+  const [rx, ry, rz] = object.transform.rotation
+  return (
+    <group
+      position={root ? IDENTITY_POSITION : object.transform.position}
+      rotation={root ? IDENTITY_ROTATION : [rx, ry, rz, 'ZYX']}
+    >
+      {object.visual && !hidden && <GhostVisual visual={object.visual} />}
+      {childIds.map((childId) => (
+        <GhostNode key={childId} id={childId} root={false} />
+      ))}
+    </group>
+  )
+}
+
+// 큰 CAD의 잔상: 보이는 오브젝트들의 로봇 기준 경계 상자 외곽선만
+function GhostBox({ robotId }: { robotId: string }): React.JSX.Element | null {
+  const objects = useSceneStore((state) => state.objects)
+  // 형상이 늦게 등록되면 경계가 바뀐다. 이 구독들이 바뀔 때만 다시 그리므로 그때마다 계산한다.
+  useSceneStore((state) => state.geometryRevision)
+  const visibility = useSceneVisibilityStore((state) => state)
+  const box = objectWorldBounds(
+    objects,
+    robotId,
+    // 로봇 자신을 항등으로 두면 로봇 기준 경계다
+    { id: robotId, transform: IDENTITY_TRANSFORM },
+    (id) => !isHiddenInScene(visibility, objects, id)
+  )
+  if (!box) return null
+  // 한 변 1 m 상자의 외곽선을 크기만큼 늘린다(형상을 새로 만들지 않아 해제할 것이 없다. 크기 0인 축은 아주 얇게)
+  const size = box
+    .getSize(new Vector3())
+    .toArray()
+    .map((v) => Math.max(v, 1e-6)) as Vec3
+  return (
+    <lineSegments
+      geometry={UNIT_BOX_EDGES}
+      material={GHOST_LINE_MATERIAL}
+      position={box.getCenter(new Vector3()).toArray() as Vec3}
+      scale={size}
+      raycast={noRaycast}
+    />
+  )
+}
+
+// 끝난 실행의 로봇을 마지막 자세에 반투명하게 한 번 더 그린다(다음 INIT·프로젝트를 열 때까지)
+function GhostRobot(): React.JSX.Element | null {
+  const ghost = usePlayStore((state) => state.ghostPose)
+  const exists = useSceneStore(
+    (state) => ghost !== null && state.objects[ghost.robotId]?.parentId === null
+  )
+  const tooMany = useSceneStore(
+    (state) => ghost !== null && meshCount(state.objects, ghost.robotId) > GHOST_MESH_LIMIT
+  )
+  const invalidate = useThree((state) => state.invalidate)
+  // 붙거나 떼거나 자리가 바뀌면 다시 그린다(demand 모드는 붙이기·떼기만으로 다시 그리지 않는다)
+  useEffect(() => {
+    invalidate()
+    return () => invalidate()
+  }, [ghost, exists, tooMany, invalidate])
+  if (!ghost || !exists) return null
+  return (
+    <group position={[ghost.x, ghost.y, 0]} rotation={[0, 0, ghost.yaw, 'ZYX']}>
+      {tooMany ? <GhostBox robotId={ghost.robotId} /> : <GhostNode id={ghost.robotId} root />}
     </group>
   )
 }
@@ -182,8 +355,9 @@ function SceneObjectsView(): React.JSX.Element {
   return (
     <>
       {rootIds.map((id) => (
-        <ObjectNode key={id} id={id} parentHighlighted={false} />
+        <RootNode key={id} id={id} />
       ))}
+      <GhostRobot />
     </>
   )
 }

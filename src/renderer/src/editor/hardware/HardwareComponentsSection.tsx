@@ -18,16 +18,21 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { openScriptPicker } from '../dialogStore'
 import ScriptCard from '../scripts/ScriptCard'
 import ComponentCard from './ComponentCard'
+import { canAddWheel, newWheel } from './wheelCardModel'
+import WheelCard from './WheelCard'
 
-// Add Component 선택 상자에서 스크립트 선택창을 여는 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)
+// Add Component 선택 상자에서 스크립트 선택창을 여는 항목·바퀴 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)
 const SCRIPT_OPTION = '#script'
+const WHEEL_OPTION = '#wheel'
 
-// 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 연결한
-// 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류나 TeamCode 스크립트(검색 선택창)를 고른다.
+// 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 바퀴 카드
+// (시뮬레이터 설정), 그 뒤에 연결한 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류, 바퀴, TeamCode
+// 스크립트(검색 선택창)를 고른다.
 function HardwareComponentsSection({ object }: { object: SceneObject }): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const addComponent = useSceneStore((state) => state.addComponent)
+  const setWheel = useSceneStore((state) => state.setWheel)
   const issues = useSceneIssues()
 
   const robotId = findRobotId(objects, object.id)
@@ -72,7 +77,7 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
       {!robotId && components.length > 0 && (
         <p className="inspector-note">{t('hardware.orphan')}</p>
       )}
-      {components.length === 0 && scripts.length === 0 ? (
+      {components.length === 0 && scripts.length === 0 && !object.wheel ? (
         <p className="inspector-note">{t('inspector.componentsEmpty')}</p>
       ) : (
         <ul className="hw-cards">
@@ -88,6 +93,7 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               issues={issues.filter((issue) => issue.componentId === component.id)}
             />
           ))}
+          {object.wheel && <WheelCard object={object} />}
           {scripts.map((link) => (
             <ScriptCard key={link.path} objectId={object.id} link={link} />
           ))}
@@ -108,7 +114,8 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             })
             return
           }
-          add(event.target.value)
+          if (event.target.value === WHEEL_OPTION) setWheel(object.id, newWheel(objects, object.id))
+          else add(event.target.value)
           // 포커스가 남아 있으면 방향키가 값을 바꿔 컴포넌트가 또 추가된다
           select.blur()
         }}
@@ -127,6 +134,12 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             )}
           </optgroup>
         ))}
+        {/* 바퀴는 오브젝트마다 하나, 로봇·CAD 루트에는 붙이지 않는다 */}
+        <optgroup label={t('hardware.wheel.addGroup')}>
+          <option value={WHEEL_OPTION} disabled={!canAddWheel(object)}>
+            {t('hardware.wheel.addOption')}
+          </option>
+        </optgroup>
         <optgroup label={t('scripts.addGroup')}>
           <option value={SCRIPT_OPTION}>{t('scripts.addOption')}</option>
         </optgroup>

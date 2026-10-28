@@ -1,8 +1,10 @@
 import type { Matrix4 } from 'three'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { cadRootTransform } from '../cad/alignment'
+import { clearHistory, initHistory, undo, useHistoryStore } from '../editor/history'
 import { childrenInDocument, worldMatrix, type SceneObjects, type Vec3 } from './model'
 import { isPlaceholderScene, useSceneStore } from './sceneStore'
+import { defaultWheel } from './wheel'
 
 const BOUNDS: { min: Vec3; max: Vec3 } = { min: [-0.2, 0, -0.1], max: [0.2, 0.3, 0.1] }
 
@@ -297,5 +299,73 @@ describe('스크립트 연결', () => {
     expect(isPlaceholderScene(state().objects)).toBe(false)
     state().removeScriptLink(group, LIFT.path)
     expect(isPlaceholderScene(state().objects)).toBe(true)
+  })
+})
+
+describe('바퀴', () => {
+  beforeEach(() => {
+    initHistory()
+    state().replaceObjects(objects)
+    clearHistory()
+  })
+
+  it('파트·그룹에 붙이고 바꾸고 떼며, 각 변경은 실행 취소 한 단계다', () => {
+    const before = state().objects
+    state().setWheel('P1', defaultWheel())
+    expect(state().objects.P1.wheel).toEqual(defaultWheel())
+    // 다른 오브젝트는 그대로(불변 문서)
+    expect(state().objects.P2).toBe(before.P2)
+    expect(before.P1.wheel).toBeUndefined()
+    state().setWheel('P1', { ...defaultWheel(), motor: 'm', gearRatio: 2 })
+    state().setWheel('G', defaultWheel('omni'))
+    expect(state().objects.G.wheel?.diameter).toBe(0.096)
+    state().setWheel('P1', null)
+    expect(state().objects.P1).not.toHaveProperty('wheel')
+
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.wheel).toMatchObject({ motor: 'm', gearRatio: 2 })
+    expect(undo()).toBe(true)
+    expect(state().objects.G.wheel).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.wheel).toEqual(defaultWheel())
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('로봇·CAD 루트·없는 오브젝트는 거부하고, 바뀐 것이 없으면 씬을 그대로 둔다', () => {
+    const before = state().objects
+    state().setWheel('R', defaultWheel())
+    state().setWheel('C', defaultWheel())
+    state().setWheel('nope', defaultWheel())
+    state().setWheel('P1', null)
+    expect(state().objects).toBe(before)
+    state().setWheel('P1', defaultWheel())
+    const withWheel = state().objects
+    state().setWheel('P1', { ...defaultWheel() })
+    expect(state().objects).toBe(withWheel)
+    expect(useHistoryStore.getState().canUndo).toBe(true)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(false)
+  })
+
+  it('범위 밖 수는 기본값으로 바꾸고 각은 감아 둔다', () => {
+    state().setWheel('P1', {
+      ...defaultWheel('traction'),
+      diameter: 0,
+      gearRatio: Number.NaN,
+      angle: (3 * Math.PI) / 2
+    })
+    expect(state().objects.P1.wheel).toMatchObject({
+      diameter: 0.096,
+      gearRatio: 1,
+      angle: -Math.PI / 2
+    })
+  })
+
+  it('바퀴를 붙인 씬은 임시 씬이 아니다', () => {
+    state().replaceObjects({ G: { ...objects.G, parentId: null } })
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().setWheel('G', defaultWheel())
+    expect(isPlaceholderScene(state().objects)).toBe(false)
   })
 })

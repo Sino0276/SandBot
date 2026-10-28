@@ -78,7 +78,17 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         /** 펌웨어 규칙: RUN_TO_POSITION에서 켜려면 목표 위치를 먼저 받아야 한다(fail safe로 초기화) */
         boolean targetPositionSet = false;
         boolean targetPositionEverSet = false;
+        /**
+         * 마지막 STOP_AND_RESET_ENCODER 때의 원시 엔코더 틱(허브가 엔코더를 0으로 되돌린 것을 원시 값에서 빼서 흉내 낸다).
+         * 처음 0이고 OpMode 사이(resetDeviceConfigurationForOpMode)에도 그대로다(실제 허브도 리셋하지 않으면 계속 센다).
+         */
         long encoderOffset = 0;
+        /**
+         * 허브에 보낸 STOP_AND_RESET_ENCODER(LynxResetMotorEncoderCommand) 횟수. 원시 값이 그대로라 encoderOffset이 같아도
+         * 리셋을 알 수 있게 한다(데드휠과 포트를 함께 쓰면 position은 포드 값이라, 시뮬레이터가 모터 축 기준을 다시 잡는다).
+         * encoderOffset처럼 OpMode 사이에도 그대로다.
+         */
+        long encoderResets = 0;
         final int[][] pidf = new int[2][4];
         final MotorControlAlgorithm[] algorithm = new MotorControlAlgorithm[2];
         double currentAlertMilliamps = 0;
@@ -172,6 +182,10 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             device.output("zeroPower", zeroPowerBehavior.name());
             device.output("targetPosition", targetPositionEverSet ? (Object) targetPosition : null);
             device.output("targetTolerance", targetTolerance);
+            // 시뮬레이터가 RUN_TO_POSITION의 원시 목표(targetPosition + encoderOffset)를 만들 수 있게 늘 보낸다
+            device.output("encoderOffset", encoderOffset);
+            // 틱 경계가 STOP_AND_RESET_ENCODER 모드를 보지 못해도(한 루프에서 리셋 → RUN_TO_POSITION) 리셋을 알 수 있게 늘 보낸다
+            device.output("encoderResets", encoderResets);
         }
     }
 
@@ -374,6 +388,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 internalSetMotorPower(motorZ, 0);
                 hub.lynxCommand(); // LynxResetMotorEncoderCommand
                 c.encoderOffset = c.rawPosition();
+                c.encoderResets++;
             } else {
                 DcMotor.ZeroPowerBehavior zeroPowerBehavior = internalGetZeroPowerBehavior(motorZ);
                 hub.lynxCommand(); // LynxSetMotorChannelModeCommand

@@ -28,7 +28,8 @@ function request(overrides: Partial<PlayInitRequest> = {}): PlayInitRequest {
       flavor: 'TeleOp'
     },
     configPath: null,
-    settings: { speed: 1, jitter: 0, seed: 0, autoStopAutonomous: true },
+    settings: { speed: 1, jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 },
+    world: null,
     ...overrides
   }
 }
@@ -69,11 +70,23 @@ describe('validateRequest', () => {
       request({ configPath: 'src/main/res/xml/other.xml' }),
       request({ configPath: 'src/main/res/xml/../../../../x/sandbot_a.xml' }),
       request({ configPath: `${PKG}/sandbot/RobotHardware.java` }),
-      request({ settings: { speed: 0, jitter: 0, seed: 0, autoStopAutonomous: true } }),
-      request({ settings: { speed: 1, jitter: 1, seed: 0, autoStopAutonomous: true } }),
-      request({ settings: { speed: 1, jitter: 0, seed: 0.5, autoStopAutonomous: true } }),
       request({
-        settings: { speed: 1, jitter: 0, seed: 0, autoStopAutonomous: 'yes' as unknown as boolean }
+        settings: { speed: 0, jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+      }),
+      request({
+        settings: { speed: 1, jitter: 1, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+      }),
+      request({
+        settings: { speed: 1, jitter: 0, seed: 0.5, autoStopAutonomous: true, batteryVoltage: 12.5 }
+      }),
+      request({
+        settings: {
+          speed: 1,
+          jitter: 0,
+          seed: 0,
+          autoStopAutonomous: 'yes' as unknown as boolean,
+          batteryVoltage: 12.5
+        }
       })
     ]
     for (const input of bad) {
@@ -278,7 +291,17 @@ describe('사이드카 빌드 결과와 명령', () => {
         configMissing: false,
         preselectTeleOp: ''
       },
-      valid(request({ settings: { speed: 2, jitter: 0.1, seed: 42, autoStopAutonomous: true } })),
+      valid(
+        request({
+          settings: {
+            speed: 2,
+            jitter: 0.1,
+            seed: 42,
+            autoStopAutonomous: true,
+            batteryVoltage: 12.5
+          }
+        })
+      ),
       files,
       1234
     )

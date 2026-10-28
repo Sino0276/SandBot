@@ -107,7 +107,14 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
           flavor: 'TeleOp'
         },
         configPath: null,
-        settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+        settings: {
+          speed: 'max',
+          jitter: 0,
+          seed: 0,
+          autoStopAutonomous: true,
+          batteryVoltage: 12.5
+        },
+        world: null
       },
       owner
     )
@@ -235,7 +242,14 @@ describe('진짜 JVM(작은 프로토콜 흉내)', () => {
           flavor: 'TeleOp'
         },
         configPath: null,
-        settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true }
+        settings: {
+          speed: 'max',
+          jitter: 0,
+          seed: 0,
+          autoStopAutonomous: true,
+          batteryVoltage: 12.5
+        },
+        world: null
       },
       owner
     )

@@ -105,6 +105,10 @@ export type ShortcutState = {
   pendingTextEdit: boolean
   // 핸들을 드래그하는 중(history.isChangeOpen)
   dragging: boolean
+  // 실행 중 씬 뷰에 포커스가 있어 키보드가 게임패드다(play/keyboardGamepad.ts의 keyboardPadActive), 또는 게임패드로
+  // 누른 키의 반복 입력이다(play/playActions.ts의 isKeyboardPadInput, 그 키를 뗄 때까지). 수정키 없는
+  // 편집 단축키(F2·F·Q/W/E·X·H·Shift+H·Delete/Backspace)는 쓰지 않고 기본 동작만 막는다. Ctrl·Alt 조합은 그대로다.
+  keyboardGamepad: boolean
 }
 
 export type ShortcutResult = { command: ShortcutCommand | null; preventDefault: boolean }
@@ -124,6 +128,7 @@ const TOOL_COMMANDS: Partial<Record<string, ShortcutCommand>> = {
 // 1. 대화상자·메뉴·비행 중이면 무시 2. 저장·열기, 검색(Ctrl+F), 실행(Ctrl+P·Ctrl+Shift+P·Ctrl+Alt+P) 3. 실행 취소
 // 4. 새 조합키(Create Empty 등), 잘라내기·붙여넣기·전체 선택(입력칸 안에서는 입력칸의 것)
 // 5. 입력칸·Ctrl·Alt·핸들 드래그 중이면 여기서 끝 6. F2, F, Q/W/E, X, H·Shift+H, Delete
+//    (키보드 게임패드 중이면 6의 명령은 쓰지 않고 기본 동작만 막는다)
 export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): ShortcutResult {
   if (state.blocked) return NONE
   const command = event.ctrlKey || event.metaKey
@@ -176,6 +181,13 @@ export function shortcutCommand(event: ShortcutKeyEvent, state: ShortcutState): 
 
   if (state.handlesOwnKeys || command || event.altKey || state.dragging) return NONE
 
+  const result = plainKeyCommand(event)
+  return state.keyboardGamepad && result.command ? SWALLOW : result
+}
+
+// 수정키 없는(Shift만 붙을 수 있는) 편집 단축키
+function plainKeyCommand(event: ShortcutKeyEvent): ShortcutResult {
+  const { code } = event
   const isDelete =
     code === 'Delete' || code === 'Backspace' || event.key === 'Delete' || event.key === 'Backspace'
   // 키를 누르고 있어 반복되는 입력(예: 비행 중 Q를 누른 채 우클릭을 먼저 놓은 경우)은 도구를 바꾸지 않는다

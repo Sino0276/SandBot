@@ -3,6 +3,7 @@ import type { ListOpModesResult, PlayEvent, PlayInitResult, PlaySpeed } from '..
 import { openPreferences, showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
+import { commitFocusedInput } from '../editor/useDraft'
 import { ipcErrorDetail } from '../java/ipcError'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
@@ -14,10 +15,19 @@ import {
   samePadSlots,
   type GamepadPair
 } from './gamepad'
+import {
+  createKeyboardPad,
+  focusSceneView,
+  installKeyboardGamepad,
+  keyboardPadActive,
+  useKeyboardPadStore,
+  type PadKeyEvent
+} from './keyboardGamepad'
 import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
 import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
+import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -158,15 +168,7 @@ export async function initPlay(): Promise<void> {
 async function runInit(): Promise<void> {
   // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음). 입력칸이 아니면 포커스를 그대로 둔다
   // (Console 목록 등에서 Ctrl+P를 눌러도 포커스가 <body>로 떨어져 다음 Delete·F가 씬에 가지 않게).
-  if (typeof document !== 'undefined') {
-    const active = document.activeElement
-    if (
-      active instanceof HTMLInputElement ||
-      active instanceof HTMLTextAreaElement ||
-      (active instanceof HTMLElement && active.isContentEditable)
-    )
-      active.blur()
-  }
+  commitFocusedInput()
   if (currentInitBlock()) return
   if (useProjectStore.getState().dirty) {
     const answer = await showDialog({
@@ -193,9 +195,15 @@ async function runInit(): Promise<void> {
   )
   const configPath = config?.configPath ?? null
   const warning = generationWarning(generation, configPath)
+  // 운동학 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
+  // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
+  const world = config ? worldFor(config.robotId, play.settings) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
+  // 이전 실행의 잔상은 다음 INIT에 지운다(Unity처럼 로봇은 편집 위치에서 다시 시작한다)
   usePlayStore.setState({
+    simPose: null,
+    ghostPose: null,
     run: newRun({
       runId,
       root,
@@ -209,6 +217,10 @@ async function runInit(): Promise<void> {
   const { addConsole } = usePlayStore.getState()
   addConsole({ type: 'run', name: opMode.name, config: configPath })
   if (warning) addConsole({ type: 'notice', ...warning }, null, 'warning')
+  if (warning && world?.spec && world.spec.wheels.length > 0)
+    addConsole({ type: 'notice', key: 'worldGenerationStale', params: {} }, null, 'warning')
+  for (const notice of world?.warnings ?? [])
+    addConsole({ type: 'notice', ...notice }, null, 'warning')
   dismissNotice(lastPlayNotice)
   lastPlayNotice = 0
 
@@ -219,7 +231,8 @@ async function runInit(): Promise<void> {
       root,
       opMode: { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
-      settings: play.settings
+      settings: play.settings,
+      world: world?.spec ?? null
     })
   } catch (error) {
     failRun(runId, 'error', 'playInitFailed', ipcErrorDetail(error))
@@ -255,10 +268,22 @@ async function runInit(): Promise<void> {
   if (isRunActive(usePlayStore.getState().run)) startGamepads()
 }
 
+// 세계 설명을 만들다 예상하지 못한 오류가 나도 실행은 시뮬레이터 없이 계속한다(Console에 알림)
+function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecResult {
+  try {
+    return buildWorldSpec(useSceneStore.getState().objects, robotId, settings)
+  } catch (error) {
+    return {
+      spec: null,
+      warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }]
+    }
+  }
+}
+
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
-  usePlayStore.setState({ run: null })
+  usePlayStore.setState({ run: null, simPose: null })
   usePlayStore.getState().addConsole({ type: 'initFailed', notice: key, detail }, null, level)
   replacePlayNotice(
     level,
@@ -276,6 +301,9 @@ export function startPlay(): void {
     return
   updateRun(run.runId, () => ({ startRequested: true }))
   command({ type: 'start' })
+  // Unity의 Play Focused: 씬 뷰에 포커스를 줘 키보드 게임패드가 바로 받고, 툴바 버튼에 남은 포커스로 Enter(start)가
+  // STOP을 누르지 않게 한다
+  focusSceneView()
 }
 
 // STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다.
@@ -334,12 +362,27 @@ export function setPlaySpeed(speed: PlaySpeed): void {
 
 // ---- 게임패드 ----
 
+// 키보드 게임패드(실행 중 씬 뷰에 포커스가 있을 때만, keyboardGamepad.ts). 포커스를 잃는 등으로 모두 떼면 다음 읽기를
+// 기다리지 않고 바로 보낸다(창을 내리면 interval이 1초에 한 번으로 늦어져 그동안 눌린 값으로 달린다).
+const keyboardPad = createKeyboardPad(keyboardPadActive, () => poller.pollNow())
+
+// 단축키 리스너(EditorLayout)의 keyboardGamepad: 키보드가 지금 게임패드이거나, 게임패드로 누른 키의 반복 입력이다
+// (그 키를 뗄 때까지. Backspace(back)를 누른 채 실행이 끝나도 반복 입력이 편집기의 Delete가 되지 않게)
+export function isKeyboardPadInput(event: PadKeyEvent): boolean {
+  return keyboardPadActive() || keyboardPad.isPadRepeat(event)
+}
+
 const poller = createGamepadPoller({
   getGamepads: browserGamepads,
   send: (pair: GamepadPair) => window.api.playGamepads(pair),
   onSlots: (gamepads) => usePlayStore.setState({ gamepads }),
   setInterval: (callback, ms) => setInterval(callback, ms),
-  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>)
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+  keyboard: {
+    state: () => keyboardPad.state(),
+    releaseAll: () => keyboardPad.releaseAll(),
+    setSlot: (slot) => useKeyboardPadStore.setState({ slot })
+  }
 })
 
 function startGamepads(): void {
@@ -350,7 +393,9 @@ function stopGamepads(): void {
   poller.stop()
 }
 
+// 실행 중에는 폴러가 자리(키보드 포함)를 보인다
 function updateGamepadSlots(): void {
+  if (poller.running()) return
   const slots = padInfo(browserGamepads())
   if (!samePadSlots(slots, usePlayStore.getState().gamepads))
     usePlayStore.setState({ gamepads: slots })
@@ -380,7 +425,7 @@ export function handlePlayEvent(event: PlayEvent): void {
   }
   // 다른 프로젝트를 연 뒤 끝난 실행은 지운다(그 프로젝트의 텔레메트리·장치·시간이 남지 않게, Console은 그대로)
   if (!isRunActive(after) && before.root !== useProjectStore.getState().root)
-    usePlayStore.setState({ run: null })
+    usePlayStore.setState({ run: null, simPose: null, ghostPose: null })
 }
 
 // 프로젝트를 바꾸면(다른 프로젝트를 열거나 같은 것을 다시 염) 지금 실행을 멈추고 그 프로젝트의 목록·선택을 읽는다
@@ -388,7 +433,16 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   const { run } = usePlayStore.getState()
   // 끝난 실행은 바로 지운다(아직 도는 실행은 끝날 때 handlePlayEvent가 지운다)
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
-  if (isRunActive(run)) stopPlay()
+  // 잔상은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다)
+  usePlayStore.setState({ ghostPose: null })
+  if (isRunActive(run)) {
+    // 아직 도는 실행은 새로 연 씬과 떼어 놓는다: 그 로봇을 시뮬레이터 자세로 그리거나 잠그지 않고, 끝나도 잔상을 남기지
+    // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다)
+    usePlayStore.setState((state) =>
+      state.run?.runId === run.runId ? { run: { ...state.run, robotId: null }, simPose: null } : {}
+    )
+    stopPlay()
+  }
   if (rootChanged)
     usePlayStore.setState({
       selectedClass: root ? loadLastOpMode(root) : null,
@@ -427,6 +481,7 @@ export function initPlaySession(): void {
   })
   window.addEventListener('gamepadconnected', updateGamepadSlots)
   window.addEventListener('gamepaddisconnected', updateGamepadSlots)
+  installKeyboardGamepad(keyboardPad, window)
   const { root } = useProjectStore.getState()
   if (root) onProjectChanged(root, true)
 }
@@ -437,4 +492,5 @@ export function resetPlayActionsState(): void {
   opModeRequest = 0
   lastPlayNotice = 0
   poller.stop()
+  keyboardPad.releaseAll()
 }

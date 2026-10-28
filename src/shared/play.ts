@@ -8,6 +8,7 @@ import type {
   SimErrorKind,
   TelemetryFrame
 } from './sidecarProtocol'
+import type { SimPose, WorldSpec } from './sim/worldSpec'
 
 // ---- OpMode 목록 ----
 
@@ -80,7 +81,14 @@ export type PlaySettings = {
   seed: number
   // Autonomous는 DS처럼 START 뒤 30초에 자동으로 멈춘다
   autoStopAutonomous: boolean
+  // 시뮬레이터의 배터리 전압(V). 모터 무부하 속도(전압 ÷ 12)와 허브 voltage 입력. 사이드카 기본값과 같은 12.5가 기본.
+  batteryVoltage: number
 }
+
+// 배터리 전압 설정 범위(V)와 기본값(sidecar SimHub.DEFAULT_BATTERY_VOLTS와 같음)
+export const DEFAULT_BATTERY_VOLTAGE = 12.5
+export const MIN_BATTERY_VOLTAGE = 9
+export const MAX_BATTERY_VOLTAGE = 14.5
 
 export const AUTONOMOUS_SECONDS = 30
 
@@ -92,6 +100,8 @@ export type PlayInitRequest = {
   // 로봇 구성 XML의 TeamCode 기준 경로(src/main/res/xml/sandbot_*.xml, generatedFiles.ts 규칙). 없으면 null.
   configPath: string | null
   settings: PlaySettings
+  // 운동학 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
+  world: WorldSpec | null
 }
 
 // - notAllowed: 열린 프로젝트가 아니거나 허용하지 않는 경로
@@ -172,8 +182,24 @@ export type PlayEvent =
       stack: PlayStackFrame[]
       thread: string
     }
-  // 장치 출력(약 20 Hz, 마지막 값)
-  | { type: 'devices'; runId: string; tNanos: number; outputs: Record<string, DeviceValues> }
+  // 장치 출력과 시뮬레이터가 보낸 센서 값(누적, 허브 원시 값)(약 20 Hz, 마지막 값)
+  | {
+      type: 'devices'
+      runId: string
+      tNanos: number
+      outputs: Record<string, DeviceValues>
+      inputs: Record<string, DeviceValues>
+    }
+  // 시뮬레이터의 로봇 자세(필드 좌표, 약 60 Hz와 일시 정지·Step·끝에 바로). 렌더러는 씬 문서를 바꾸지 않고 그린다.
+  | ({ type: 'pose'; runId: string; tNanos: number } & SimPose)
+  // 시뮬레이터 안내(Console 경고 한 줄, 같은 code·params는 실행마다 한 번). code는 렌더러가 번역한다.
+  | {
+      type: 'simNotice'
+      runId: string
+      tNanos: number
+      code: SimNoticeCode
+      params: Record<string, string>
+    }
   // 끝. killed: 호스트가 JVM을 끝냄(STOP 뒤 시간 초과, 멈춘 스레드), crashed: 사이드카가 finished 없이 끝남
   // (detail에 stderr 끝부분 등). preselectTeleOp: Autonomous가 끝나면 DS처럼 그 TeleOp을 고른다('' 없음).
   | {
@@ -184,5 +210,10 @@ export type PlayEvent =
       detail: string
       preselectTeleOp: string
     }
+
+// - sharedEncoderMode: 데드휠과 포트를 함께 쓰는 모터를 엔코더 모드로 돌린다(실제로는 포드 엔코더로 제어되지만
+//   시뮬레이터는 축 엔코더로 제어한다고 가정), params.device
+// - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
+export type SimNoticeCode = 'sharedEncoderMode' | 'worldError'
 
 export type { GamepadState }

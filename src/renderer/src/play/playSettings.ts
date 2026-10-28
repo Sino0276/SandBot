@@ -1,4 +1,11 @@
-import { PLAY_SPEEDS, type PlaySettings, type PlaySpeed } from '../../../shared/play'
+import {
+  DEFAULT_BATTERY_VOLTAGE,
+  MAX_BATTERY_VOLTAGE,
+  MIN_BATTERY_VOLTAGE,
+  PLAY_SPEEDS,
+  type PlaySettings,
+  type PlaySpeed
+} from '../../../shared/play'
 
 // 실행(Play)의 개인 설정. 모두 렌더러 localStorage에 둔다(프로젝트 파일·생성 코드와 관계없다).
 // localStorage는 테스트(Node)에 없거나 막혀 있을 수 있으므로 읽기·쓰기는 모두 try/catch로 감싼다.
@@ -15,7 +22,8 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   speed: 1,
   jitter: 0,
   seed: 1,
-  autoStopAutonomous: true
+  autoStopAutonomous: true,
+  batteryVoltage: DEFAULT_BATTERY_VOLTAGE
 }
 
 // Hub 타이밍 오차의 상한(±50%). 이보다 크면 결과가 실제 허브와 너무 달라진다.
@@ -64,6 +72,12 @@ export function clampJitter(value: number): number {
   return Number.isFinite(value) ? Math.min(MAX_JITTER, Math.max(0, value)) : 0
 }
 
+// 배터리 전압(V)을 설정 범위로. 수가 아니면 기본값.
+export function clampBatteryVoltage(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BATTERY_VOLTAGE
+  return Math.min(MAX_BATTERY_VOLTAGE, Math.max(MIN_BATTERY_VOLTAGE, value))
+}
+
 export function clampSeed(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_PLAY_SETTINGS.seed
   return Math.min(MAX_SEED, Math.max(-MAX_SEED, Math.trunc(value)))
@@ -80,7 +94,13 @@ export function parsePlaySettings(value: unknown): PlaySettings {
     autoStopAutonomous:
       typeof saved.autoStopAutonomous === 'boolean'
         ? saved.autoStopAutonomous
-        : DEFAULT_PLAY_SETTINGS.autoStopAutonomous
+        : DEFAULT_PLAY_SETTINGS.autoStopAutonomous,
+    batteryVoltage:
+      typeof saved.batteryVoltage === 'number' &&
+      saved.batteryVoltage >= MIN_BATTERY_VOLTAGE &&
+      saved.batteryVoltage <= MAX_BATTERY_VOLTAGE
+        ? saved.batteryVoltage
+        : DEFAULT_BATTERY_VOLTAGE
   }
 }
 

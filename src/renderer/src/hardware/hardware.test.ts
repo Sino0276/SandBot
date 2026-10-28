@@ -23,7 +23,8 @@ import {
   generatedConstantNames,
   javaFilePath,
   javaIdentifier,
-  javaString
+  javaString,
+  sidecarDeviceName
 } from './naming'
 import { uniqueIssues, validateScene, type IssueCode } from './validation'
 
@@ -82,6 +83,16 @@ describe('이름 규칙', () => {
 
   it('Java 문자열은 따옴표와 역슬래시를 이스케이프한다', () => {
     expect(javaString('a"b\\c')).toBe('"a\\"b\\\\c"')
+  })
+
+  it('사이드카 장치 이름은 Java String.trim처럼 앞뒤의 U+0020 이하 글자만 뺀다', () => {
+    expect(sidecarDeviceName(' \t\r\n\u0000leftFront \u001f')).toBe('leftFront')
+    expect(sidecarDeviceName('left Front')).toBe('left Front')
+    // JS trim()은 빼지만 Java trim은 남기는 공백(NBSP, 전각 공백, BOM, U+2003)
+    expect(sidecarDeviceName('\u00a0leftFront\u3000')).toBe('\u00a0leftFront\u3000')
+    expect(sidecarDeviceName('\ufeffimu\u2003 ')).toBe('\ufeffimu\u2003')
+    expect(sidecarDeviceName(' \t ')).toBe('')
+    expect(sidecarDeviceName('')).toBe('')
   })
 
   it('생성 파일 경로는 정해진 패키지와 res/xml만 허용한다', () => {

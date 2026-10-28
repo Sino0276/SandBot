@@ -1,6 +1,8 @@
 // 하드웨어 컴포넌트 카탈로그. XML 태그·Java 클래스·I2C 주소는 FTC SDK 12.0 소스(10.3·11.1과 동일)에서 확인한 값만 쓴다.
 // 구성 XML 태그는 대소문자를 구분하고, 틀리면 SDK가 오류 없이 장치를 버리므로 추측한 값을 넣지 않는다.
 
+import { motorType } from '../../../shared/sim/motorTypes'
+
 // 장치가 차지하는 자리
 // - motor/servo/digital/analog: 허브의 해당 포트(번호 범위는 PORT_RANGES)
 // - i2c: 허브의 I2C 버스(0–3). 같은 버스에 주소가 다른 장치 여럿을 달 수 있다.
@@ -22,20 +24,33 @@ export const EMBEDDED_IMU_BUS = 0
 export const CONTROL_HUB_ADDRESS = 173
 export const DEFAULT_EXPANSION_HUB_ADDRESS = 2
 
-export type PropertyDef =
-  | { key: string; kind: 'enum'; options: readonly string[]; default: string }
-  | {
-      key: string
-      kind: 'number'
-      default: number
-      min?: number
-      max?: number
-      // 표시 소수 자릿수
-      digits: number
-    }
-  | { key: string; kind: 'text'; default: string }
-  // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''.
-  | { key: string; kind: 'object'; default: '' }
+// 속성 공통 표시 정보
+type PropertyMeta = {
+  // 다른 enum 속성이 이 값들 중 하나일 때만 인스펙터에 보인다(값은 늘 저장한다)
+  visibleWhen?: { key: string; values: readonly string[] }
+  // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
+  // 바이트 단위로 같아야 한다(generatedOutput.test.ts가 확인).
+  simulation?: true
+}
+
+export type PropertyDef = PropertyMeta &
+  (
+    | { key: string; kind: 'enum'; options: readonly string[]; default: string }
+    | {
+        key: string
+        kind: 'number'
+        default: number
+        min?: number
+        max?: number
+        // 표시 소수 자릿수
+        digits: number
+      }
+    // 길이(내부 미터). 인스펙터는 표시 단위(units/units.ts)로 보이고, 입력칸은 단위를 붙인 값도 받는다.
+    | { key: string; kind: 'length'; default: number; min: number; max: number }
+    | { key: string; kind: 'text'; default: string }
+    // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''.
+    | { key: string; kind: 'object'; default: '' }
+  )
 
 export type ComponentCategory = 'actuator' | 'sensor' | 'imu' | 'odometry' | 'vision' | 'other'
 
@@ -76,6 +91,61 @@ export const MOTOR_MODEL_TAGS = {
   unspecified: 'Motor'
 } as const
 
+export type MotorModel = keyof typeof MOTOR_MODEL_TAGS
+
+// 모터 종류의 SDK 형식 값(@MotorType의 ticksPerRev·gearing·maxRPM). 시뮬레이터와 같은 표(src/shared/sim/motorTypes.ts,
+// 사이드카 MotorConfigurationType과 대조함)에서 구성 태그로 꺼낸다.
+// SDK 형식은 계열당 감속비 하나만 안다(goBILDA 5202 계열은 99.5:1, ticksPerRev는 그 감속비의 출력축 틱).
+export const MOTOR_MODEL_SDK = Object.fromEntries(
+  (Object.keys(MOTOR_MODEL_TAGS) as MotorModel[]).map((model) => {
+    const { ticksPerRev, gearing, maxRPM } = motorType(MOTOR_MODEL_TAGS[model])
+    return [model, { ticksPerRev, gearing, maxRPM }]
+  })
+) as Record<MotorModel, { ticksPerRev: number; gearing: number; maxRPM: number }>
+
+export function isMotorModel(value: unknown): value is MotorModel {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(MOTOR_MODEL_TAGS, value)
+}
+
+// 모터 gearbox 속성의 값 0은 "모델 기본"(그 모델의 SDK gearing)이다. 기본값이 모델마다 다른데 propertyDefaults는
+// 모델을 모르므로 0을 기본으로 두고, 쓰는 곳(세계 설명, 인스펙터 계산값)이 이 함수로 실제 감속비를 구한다.
+// 세계 설명의 하한(0.01)보다 작은 값도 모델 기본으로 본다.
+export const MIN_GEARBOX = 0.01
+export const MAX_GEARBOX = 10000
+
+export function motorGearbox(props: Record<string, string | number>): number {
+  const value = Number(props.gearbox)
+  const model = isMotorModel(props.motorModel) ? props.motorModel : 'unspecified'
+  return Number.isFinite(value) && value >= MIN_GEARBOX && value <= MAX_GEARBOX
+    ? value
+    : MOTOR_MODEL_SDK[model].gearing
+}
+
+// 무부하 출력축 RPM(12 V)과 출력축 1회전 틱. SDK 형식의 값을 실제 감속비(gearbox)로 바꾼다.
+export function motorOutput(props: Record<string, string | number>): {
+  gearbox: number
+  freeRpm: number
+  ticksPerRev: number
+} {
+  const model = isMotorModel(props.motorModel) ? props.motorModel : 'unspecified'
+  const sdk = MOTOR_MODEL_SDK[model]
+  const gearbox = motorGearbox(props)
+  return {
+    gearbox,
+    freeRpm: (sdk.maxRPM * sdk.gearing) / gearbox,
+    ticksPerRev: (sdk.ticksPerRev / sdk.gearing) * gearbox
+  }
+}
+
+// 오도메트리 포드의 해상도. goBILDA 포드는 SDK GoBildaPinpointDriver의 값(틱/mm, 32 mm·48 mm 바퀴에 2000 CPR),
+// REV Through Bore는 8192 CPR에 바퀴 지름을 넣는다.
+export const GOBILDA_POD_TICKS_PER_MM = { fourBar: 19.89436789, swingarm: 13.26291192 } as const
+export const REV_THROUGH_BORE_CPR = 8192
+export const DEAD_WHEEL_POD_TYPES = ['fourBar', 'swingarm', 'revThroughBore', 'custom'] as const
+// 직접 넣는 포드 바퀴 지름(m)과 CPR의 기본값·범위
+const POD_DIAMETER = { default: 0.035, min: 0.005, max: 0.2 } as const
+const POD_CPR = { default: REV_THROUGH_BORE_CPR, min: 1, max: 1000000 } as const
+
 export const HUB_DIRECTIONS = ['up', 'down', 'forward', 'backward', 'left', 'right'] as const
 
 export const COMPONENT_TYPES = {
@@ -103,7 +173,17 @@ export const COMPONENT_TYPES = {
         options: ['withoutEncoder', 'usingEncoder', 'resetThenUsingEncoder'],
         default: 'withoutEncoder'
       },
-      { key: 'zeroPowerBehavior', kind: 'enum', options: ['brake', 'float'], default: 'brake' }
+      { key: 'zeroPowerBehavior', kind: 'enum', options: ['brake', 'float'], default: 'brake' },
+      // 실제 기어박스 감속비(goBILDA 312 RPM은 19.2). 0은 모델 기본(motorGearbox). 시뮬레이터 전용.
+      {
+        key: 'gearbox',
+        kind: 'number',
+        default: 0,
+        min: 0,
+        max: MAX_GEARBOX,
+        digits: 2,
+        simulation: true
+      }
     ]
   },
   servo: {
@@ -293,7 +373,30 @@ export const COMPONENT_TYPES = {
     properties: [
       // 이 포드가 재는 방향(로봇 기준). 위치는 이 컴포넌트가 붙은 파트의 위치다.
       { key: 'measures', kind: 'enum', options: ['forward', 'strafe'], default: 'forward' },
-      { key: 'reversed', kind: 'enum', options: ['no', 'yes'], default: 'no' }
+      { key: 'reversed', kind: 'enum', options: ['no', 'yes'], default: 'no' },
+      // 포드 해상도(시뮬레이터 전용, deadWheelTicksPerMeter). 지름은 REV Through Bore·직접 입력일 때, CPR은 직접 입력일 때만 쓴다.
+      {
+        key: 'podType',
+        kind: 'enum',
+        options: DEAD_WHEEL_POD_TYPES,
+        default: 'fourBar',
+        simulation: true
+      },
+      {
+        key: 'podDiameter',
+        kind: 'length',
+        ...POD_DIAMETER,
+        visibleWhen: { key: 'podType', values: ['revThroughBore', 'custom'] },
+        simulation: true
+      },
+      {
+        key: 'podCpr',
+        kind: 'number',
+        ...POD_CPR,
+        digits: 0,
+        visibleWhen: { key: 'podType', values: ['custom'] },
+        simulation: true
+      }
     ]
   }
 } as const satisfies Record<string, ComponentTypeDef>
@@ -321,4 +424,40 @@ export function componentDef(type: ComponentType): ComponentTypeDef {
 
 export function propertyDefaults(type: ComponentType): Record<string, string | number> {
   return Object.fromEntries(componentDef(type).properties.map((p) => [p.key, p.default]))
+}
+
+// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen)
+export function isPropertyVisible(
+  property: PropertyDef,
+  props: Record<string, string | number>
+): boolean {
+  const when = property.visibleWhen
+  return !when || when.values.includes(String(props[when.key]))
+}
+
+// 데드휠의 원시 엔코더 틱/m(podType). 지름·CPR이 범위 밖이면 그 속성의 기본값을 쓴다.
+export function deadWheelTicksPerMeter(props: Record<string, string | number>): number {
+  const inRange = (key: string, range: { default: number; min: number; max: number }): number => {
+    const value = Number(props[key])
+    return Number.isFinite(value) && value >= range.min && value <= range.max
+      ? value
+      : range.default
+  }
+  switch (props.podType) {
+    case 'swingarm':
+      return GOBILDA_POD_TICKS_PER_MM.swingarm * 1000
+    case 'revThroughBore':
+      return REV_THROUGH_BORE_CPR / (Math.PI * inRange('podDiameter', POD_DIAMETER))
+    case 'custom':
+      return inRange('podCpr', POD_CPR) / (Math.PI * inRange('podDiameter', POD_DIAMETER))
+    default:
+      return GOBILDA_POD_TICKS_PER_MM.fourBar * 1000
+  }
+}
+
+// Pinpoint의 포드 틱/mm(podType: 4-Bar·스윙암, SDK setEncoderResolution과 같은 값)
+export function pinpointPodTicksPerMm(props: Record<string, string | number>): number {
+  return props.podType === 'swingarm'
+    ? GOBILDA_POD_TICKS_PER_MM.swingarm
+    : GOBILDA_POD_TICKS_PER_MM.fourBar
 }

@@ -5,9 +5,12 @@ import { DEFAULT_CONSOLE_PREFS, DEFAULT_PLAY_SETTINGS } from './playSettings'
 import {
   applyPlayEvent,
   consoleEntry,
+  displayRootOverride,
   EMPTY_OPMODE_LIST,
   isRunActive,
   newRun,
+  runningRobotId,
+  simPoseOf,
   withEntries,
   type PlayData
 } from './playStore'
@@ -43,6 +46,8 @@ function data(patch: Partial<PlayData> = {}): PlayData {
     settings: DEFAULT_PLAY_SETTINGS,
     gamepads: [null, null],
     dockTab: 'console',
+    simPose: null,
+    ghostPose: null,
     ...patch
   }
 }
@@ -202,10 +207,10 @@ describe('applyPlayEvent', () => {
       state,
       { type: 'telemetry', runId: 'r1', tNanos: 5, frame },
       { type: 'telemetry', runId: 'r1', tNanos: 9, frame: { ...frame, lines: ['b'] } },
-      { type: 'devices', runId: 'r1', tNanos: 9, outputs: { lift: { power: 0.5 } } }
+      { type: 'devices', runId: 'r1', tNanos: 9, outputs: { lift: { power: 0.5 } }, inputs: {} }
     )
     expect(next.run!.telemetry).toEqual({ tNanos: 9, frame: { ...frame, lines: ['b'] } })
-    expect(next.run!.devices).toEqual({ tNanos: 9, outputs: { lift: { power: 0.5 } } })
+    expect(next.run!.devices).toEqual({ tNanos: 9, outputs: { lift: { power: 0.5 } }, inputs: {} })
   })
 
   it('finished는 한 번만 반영하고 실행을 끝낸다(Console에 한 줄)', () => {
@@ -279,5 +284,152 @@ describe('Console 한도', () => {
     expect(dropped.entries[0]).toBe(first[1])
     // 붙일 것이 없으면 같은 배열
     expect(withEntries(state, []).entries).toBe(state.entries)
+  })
+})
+
+describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
+  // 로봇이 있는 실행
+  const withRobot = (patch: Partial<PlayData> = {}): PlayData => {
+    const base = data()
+    return { ...base, run: { ...base.run!, robotId: 'bot', phase: 'running' }, ...patch }
+  }
+  const pose = (tNanos: number, x: number, extra: Partial<PlayEvent> = {}): PlayEvent =>
+    ({
+      type: 'pose',
+      runId: 'r1',
+      tNanos,
+      x,
+      y: 0.5,
+      yaw: 0.25,
+      blocked: false,
+      ...extra
+    }) as PlayEvent
+
+  it('pose는 run이 아니라 simPose만 바꾼다(실행 상태를 구독하는 화면이 60 Hz로 다시 그리지 않게)', () => {
+    const state = withRobot()
+    const patch = applyPlayEvent(state, pose(5_000_000, 1))
+    expect(Object.keys(patch)).toEqual(['simPose'])
+    expect(patch.simPose).toEqual({
+      robotId: 'bot',
+      tNanos: 5_000_000,
+      x: 1,
+      y: 0.5,
+      yaw: 0.25,
+      blocked: false
+    })
+    const next = apply(state, pose(5_000_000, 1), pose(10_000_000, 2, { blocked: true }))
+    expect(next.run).toBe(state.run)
+    expect(next.simPose).toMatchObject({ x: 2, blocked: true })
+    // 늦게 온 이전 자세로 되돌아가지 않는다
+    expect(applyPlayEvent(next, pose(5_000_000, 9))).toEqual({})
+  })
+
+  it('다른 실행·로봇 없는 실행·끝난 실행의 자세는 버린다', () => {
+    const state = withRobot()
+    expect(applyPlayEvent(state, { ...pose(1, 1), runId: 'old' } as PlayEvent)).toEqual({})
+    expect(applyPlayEvent(data(), pose(1, 1))).toEqual({})
+    const finished = withRobot({ run: { ...withRobot().run!, phase: 'finished' } })
+    expect(applyPlayEvent(finished, pose(1, 1))).toEqual({})
+  })
+
+  it('finished 때 마지막 자세를 잔상으로 옮기고 simPose를 지운다', () => {
+    const next = apply(withRobot(), pose(5, 1), pose(9, 1.5), {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 9,
+      reason: 'stopped',
+      detail: '',
+      preselectTeleOp: ''
+    })
+    expect(next.simPose).toBeNull()
+    expect(next.ghostPose).toEqual({ robotId: 'bot', x: 1.5, y: 0.5, yaw: 0.25 })
+    expect(next.run!.phase).toBe('finished')
+    // 자세가 오기 전에 끝나면 잔상도 없다
+    const early = apply(withRobot(), {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 0,
+      reason: 'compileFailed',
+      detail: '',
+      preselectTeleOp: ''
+    })
+    expect(early.ghostPose).toBeNull()
+  })
+
+  it('호스트 순서(phase finished → finished)에서도 잔상이 남는다', () => {
+    const finished = {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 9,
+      reason: 'stopped',
+      detail: '',
+      preselectTeleOp: ''
+    } as PlayEvent
+    const phase = { type: 'phase', runId: 'r1', phase: 'finished' } as PlayEvent
+    const afterPhase = apply(withRobot(), pose(5, 1), pose(9, 1.5), phase)
+    expect(afterPhase.simPose).toBeNull()
+    expect(afterPhase.ghostPose).toEqual({ robotId: 'bot', x: 1.5, y: 0.5, yaw: 0.25 })
+    const next = apply(afterPhase, finished)
+    expect(next.ghostPose).toEqual({ robotId: 'bot', x: 1.5, y: 0.5, yaw: 0.25 })
+    expect(next.run!.finished).not.toBeNull()
+  })
+
+  it('표시 자세는 실행이 활성이고 그 로봇의 자세일 때만 쓴다', () => {
+    const state = apply(withRobot(), pose(5, 1))
+    expect(simPoseOf(state)).toBe(state.simPose)
+    expect(displayRootOverride(state)).toEqual({
+      id: 'bot',
+      transform: { position: [1, 0.5, 0], rotation: [0, 0, 0.25] }
+    })
+    expect(runningRobotId(state)).toBe('bot')
+    // 실행이 지워졌거나 다른 로봇이면 문서 자세
+    expect(simPoseOf({ ...state, run: null })).toBeNull()
+    expect(simPoseOf({ ...state, run: { ...state.run!, robotId: 'other' } })).toBeNull()
+    expect(displayRootOverride({ ...state, run: null })).toBeNull()
+    expect(runningRobotId({ run: { ...state.run!, phase: 'finished' } })).toBeNull()
+    // INIT부터(자세 전에도) 실행 중인 로봇이다
+    expect(runningRobotId({ run: { ...state.run!, phase: 'init' } })).toBe('bot')
+  })
+
+  it('devices의 센서 값(inputs)을 함께 둔다', () => {
+    const next = apply(withRobot(), {
+      type: 'devices',
+      runId: 'r1',
+      tNanos: 3,
+      outputs: { fl: { power: 1 } },
+      inputs: { fl: { position: 120, velocity: 2400 }, imu: { yaw: 0.1 } }
+    })
+    expect(next.run!.devices).toEqual({
+      tNanos: 3,
+      outputs: { fl: { power: 1 } },
+      inputs: { fl: { position: 120, velocity: 2400 }, imu: { yaw: 0.1 } }
+    })
+  })
+
+  it('simNotice는 Console 경고 한 줄(console.notices.sim.<code>)', () => {
+    const next = apply(withRobot(), {
+      type: 'simNotice',
+      runId: 'r1',
+      tNanos: 7,
+      code: 'sharedEncoderMode',
+      params: { device: 'leftFront' }
+    })
+    expect(next.entries).toHaveLength(1)
+    expect(next.entries[0]).toMatchObject({
+      type: 'notice',
+      key: 'sim.sharedEncoderMode',
+      params: { device: 'leftFront' },
+      level: 'warning',
+      tNanos: 7
+    })
+    expect(
+      applyPlayEvent(withRobot(), {
+        type: 'simNotice',
+        runId: 'old',
+        tNanos: 7,
+        code: 'worldError',
+        params: { detail: 'x' }
+      })
+    ).toEqual({})
   })
 })

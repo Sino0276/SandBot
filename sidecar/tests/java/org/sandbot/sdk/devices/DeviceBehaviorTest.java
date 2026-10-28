@@ -230,6 +230,61 @@ public final class DeviceBehaviorTest {
         Check.equal(0.0, bot2.out("gobilda", "power"), "fail safe stops motors");
     }
 
+    public static void testEncoderOffsetGivesRawRunToPositionTarget() {
+        // 시뮬레이터는 원시 엔코더 틱(position 입력)으로 모터를 돌리므로 RUN_TO_POSITION의 원시 목표를 targetPosition +
+        // encoderOffset으로 만든다. 팀 코드가 한 루프에서 리셋 → 목표 → RUN_TO_POSITION을 해도(틱 하나 안) 맞아야 한다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        Check.equal(0L, bot.out("gobilda", "encoderOffset"), "encoder offset starts at 0 and is always sent");
+        Check.equal(0L, bot.out("tetrix", "encoderOffset"), "every motor port sends its offset");
+        bot.in("gobilda", "position", 700L);
+        gobilda.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        gobilda.setTargetPosition(300);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        Check.equal(700L, bot.out("gobilda", "encoderOffset"), "offset is the raw position at the reset");
+        Check.equal(0, gobilda.getCurrentPosition(), "team code sees zero after the reset");
+        // goBILDA(CCW) FORWARD: 허브 목표는 −300, 원시 목표 = −300 + 700 = 400
+        long rawTarget = ((Number) bot.out("gobilda", "targetPosition")).longValue()
+                + ((Number) bot.out("gobilda", "encoderOffset")).longValue();
+        Check.equal(400L, rawTarget, "raw target = targetPosition + encoderOffset");
+        Check.isTrue(gobilda.isBusy(), "busy before the raw target");
+        bot.in("gobilda", "position", rawTarget);
+        Check.isTrue(!gobilda.isBusy(), "not busy at the raw target");
+        Check.equal(300, gobilda.getCurrentPosition(), "team code sees its target");
+        // 다음 OpMode의 초기화(resetDeviceConfigurationForOpMode)는 오프셋을 지우지 않는다(허브 엔코더는 계속 센다)
+        SandbotHardware.afterStop(bot.map);
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal(700L, bot.out("gobilda", "encoderOffset"), "offset survives the next OpMode");
+        Check.equal(300, gobilda.getCurrentPosition(), "encoder keeps counting from the reset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testEncoderResetsCountEveryReset() {
+        // 데드휠과 포트를 함께 쓰면 position은 포드 값이라 로봇이 서 있으면 리셋해도 encoderOffset이 같다. 한 루프에서
+        // 리셋 → RUN_TO_POSITION을 하면 틱 경계의 mode도 STOP_AND_RESET_ENCODER를 보이지 않으므로 리셋 횟수를 늘 보낸다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        Check.equal(0L, bot.out("gobilda", "encoderResets"), "reset count starts at 0 and is always sent");
+        Check.equal(0L, bot.out("tetrix", "encoderResets"), "every motor port sends its reset count");
+        for (long n = 1; n <= 2; n++) {
+            gobilda.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+            gobilda.setTargetPosition(300);
+            gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+            gobilda.setPower(0.5);
+            Check.equal("RUN_TO_POSITION", bot.out("gobilda", "mode"), "the reset is no longer visible in mode");
+            Check.equal(0L, bot.out("gobilda", "encoderOffset"), "raw position unchanged: same offset");
+            Check.equal(n, bot.out("gobilda", "encoderResets"), "every reset counts");
+        }
+        Check.equal(0L, bot.out("tetrix", "encoderResets"), "other ports do not count");
+        SandbotHardware.afterStop(bot.map);
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal(2L, bot.out("gobilda", "encoderResets"), "count survives the next OpMode");
+        gobilda.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        Check.equal(3L, bot.out("gobilda", "encoderResets"), "a reset in the next OpMode counts on");
+        SandbotHardware.afterStop(bot.map);
+    }
+
     public static void testVelocityControlAndPidf() {
         Bot bot = new Bot(null, MOTORS, null);
         DcMotorEx hex = bot.get(DcMotorEx.class, "hex");

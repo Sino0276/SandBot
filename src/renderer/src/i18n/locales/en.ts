@@ -211,7 +211,23 @@ const en: Messages = {
     global: 'Global',
     local: 'Local',
     isolation: 'Isolation view: only the selected objects are shown',
-    exitIsolation: 'Exit ({{shortcut}})'
+    exitIsolation: 'Exit ({{shortcut}})',
+    // Keyboard gamepad while running (only while the scene view has focus)
+    keyboardPad: {
+      active: 'Keyboard → gamepad {{slot}}',
+      inactive: 'Click the scene view: keyboard → gamepad {{slot}}',
+      helpTitle: 'Keyboard gamepad layout',
+      layout: {
+        leftStick: { keys: 'W A S D', field: 'Left stick' },
+        rightStick: { keys: '↑ ← ↓ →', field: 'Right stick' },
+        buttons: { keys: 'I J K L', field: 'Y X A B (pad shape)' },
+        bumpers: { keys: 'U O', field: 'Left · right bumper' },
+        triggers: { keys: 'Q E', field: 'Left · right trigger' },
+        dpad: { keys: 'T F G H', field: 'D-pad up · left · down · right' },
+        startBack: { keys: 'Enter · Backspace', field: 'start · back' }
+      },
+      hint: 'While the scene view has focus, editing shortcuts (F, Q/W/E, H, Delete and so on) are off. Ctrl combinations (save, undo, Ctrl+P) still work. Clicking elsewhere releases every key.'
+    }
   },
   hierarchy: {
     empty: 'No objects in the scene',
@@ -252,6 +268,9 @@ const en: Messages = {
     frameParent: 'Parent frame',
     frameParentHint:
       "Relative to the position and axes of the parent '{{name}}'. Moves along with the parent.",
+    running: 'Running',
+    runningHint:
+      'While running, the position and rotation of this robot and its children cannot be edited. The scene view draws the simulator pose and returns to the edit position when the run ends (the values do not change).',
     cadAxes: 'Shown in the CAD file axes (up {{up}} · forward {{forward}}).',
     robotCenter: 'From robot center',
     robotCenterHint:
@@ -524,6 +543,10 @@ const en: Messages = {
       seedHint:
         'The order the jitter is drawn in (an integer). Same code, inputs and seed give the same result.',
       autoStop: 'Stop Autonomous automatically {{seconds}} s after START (like the Driver Station)',
+      battery: 'Battery voltage',
+      batteryUnit: 'V',
+      batteryHint:
+        'Battery voltage of the simulator ({{min}}–{{max}} V). Motor free speed scales with voltage ÷ 12, and the hub getVoltage() returns this value.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -632,7 +655,8 @@ const en: Messages = {
       disconnected: 'Gamepad {{slot}}: not connected',
       connected: 'Gamepad {{slot}}: {{id}}',
       nonStandard: 'Gamepad {{slot}}: {{id}} (not a standard layout; no input is sent)',
-      hint: 'Read only while running. Press a button once after connecting to make it visible. The first and second connected pads are gamepad1 and gamepad2.'
+      keyboard: 'Gamepad {{slot}}: keyboard (click the scene view while running to use it)',
+      hint: 'Read only while running. Press a button once after connecting to make it visible. The first and second connected pads are gamepad1 and gamepad2, and the keyboard takes the first slot without a pad when the run starts (slots do not change during a run, so press a pad button before INIT).'
     }
   },
   // Console (Unity Console). English sentences from team code and javac are shown as they are.
@@ -671,6 +695,34 @@ const en: Messages = {
     code: 'Diagnostic code',
     // Notes left by the run flow
     notices: {
+      // Warnings left while building the kinematic simulator's world description (play/worldSpec.ts) at INIT
+      worldNoWheels:
+        'The robot has no wheel components, so it will not move. Add [Add component → Wheel] to the wheel parts (or groups).',
+      worldWheelNoMotor: 'Wheel {{name}} has no drive motor, so it only rolls along.',
+      worldWheelMotorMissing:
+        'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
+      worldRollersAmbiguous:
+        'The roller type of mecanum wheel {{name}} cannot be told from its position, so it is treated as front-left/back-right. Choose the rollers in the wheel card.',
+      worldSharedEncoder:
+        'Dead wheel {{deadWheel}} shares its encoder port with motor {{motor}}, whose run mode uses the encoder. On the robot the pod encoder controls it, but the simulator assumes the motor shaft encoder does.',
+      worldDuplicateMotor:
+        'The motor device name {{name}} is empty or used twice, so the simulator does not use that motor.',
+      // One sentence per list over its limit (worldSpec.ts capped)
+      worldTooManyMotors:
+        'There are more motors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyWheels:
+        'There are more wheels than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyDeadWheels:
+        'There are more dead wheels than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyPinpoints:
+        'There are more Pinpoints than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyOtos:
+        'There are more OTOS sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyImus:
+        'There are more IMUs than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldGenerationStale:
+        'Device names may differ from the generated configuration, so the wheels may not move.',
+      worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
       generationBlocked:
         'The last save did not generate code because of {{count}} hardware error(s). Running with the previous hardware class and configuration left in TeamCode.',
       generationFailed:
@@ -678,7 +730,14 @@ const en: Messages = {
       configNotGenerated:
         '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
       configMissing:
-        'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.'
+        'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.',
+      // Simulator notices (simNotice, SimNoticeCode)
+      sim: {
+        sharedEncoderMode:
+          'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
+        worldError:
+          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).'
+      }
     }
   },
   // Telemetry tab (like the Driver Station screen)
@@ -696,6 +755,9 @@ const en: Messages = {
     name: 'Name',
     type: 'Type',
     values: 'Outputs',
+    inputs: 'Sensor values',
+    inputsHint:
+      'Raw hub values sent by the simulator (encoder ticks, IMU angles and so on). Team code reads them after the SDK applies direction and units.',
     selectHint: 'Click to select {{name}}.'
   },
   hardware: {
@@ -736,6 +798,61 @@ const en: Messages = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB port',
     objectNone: '(none)',
+    // Simulator-only properties (not in the generated code)
+    simulationOnly:
+      'Simulator-only setting (not written to the generated code or configuration XML).',
+    gearboxModelDefault: 'Model default',
+    gearboxReset: 'Model default',
+    gearboxResetHint: 'Go back to the SDK gear ratio of the motor type.',
+    // Wheel (simulator setting, attached to wheel parts like a Unity WheelCollider)
+    wheel: {
+      addGroup: 'Simulation',
+      addOption: 'Wheel',
+      title: 'Wheel',
+      kind: 'Type',
+      kinds: {
+        mecanum: 'Mecanum',
+        omni: 'Omni',
+        traction: 'Traction'
+      },
+      diameter: 'Diameter',
+      fitSize: 'From part size',
+      fitSizeHint:
+        "Uses the height (size along the robot's up axis) of the bounding box of this object (its child parts for a group) as the diameter. A wheel's axle is horizontal, so its height is the diameter whichever way it faces (such as a 45° omni wheel in an X-drive).",
+      fitSizeNone: 'There is no shape to measure.',
+      motor: 'Drive motor',
+      motorNone: '(none: rolls along)',
+      motorMissing: '(motor not found)',
+      gearRatio: 'External ratio',
+      gearRatioHint: 'Reduction from the motor output shaft to the wheel (1 when direct).',
+      angle: 'Rolling direction (°)',
+      angleHint:
+        'The direction the wheel pushes when it rolls forward. 0° is the robot front (+X), counterclockwise is +. Independent of the CAD part rotation.',
+      rollers: 'Rollers',
+      rollerOptions: {
+        auto: 'Auto',
+        flbr: 'Front-left/back-right type',
+        frbl: 'Front-right/back-left type'
+      },
+      rollersAuto: 'Auto ({{type}})',
+      rollersHint:
+        'In the standard layout where the rollers form an X seen from above, the wheels at the front-left and back-right are the front-left/back-right type. Auto uses the quadrant around the center of the mecanum wheels.',
+      topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
+      topSpeedNoMotor: 'Choose a drive motor to see the top speed.',
+      motorMissingWarning:
+        'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
+      rollersAmbiguousWarning:
+        'The roller type cannot be told from the position (on a center line of the mecanum wheels, or not rolling forward/backward), so it is treated as front-left/back-right. Choose the rollers.',
+      orphan: 'This object is not in a robot, so the simulator does not use it.',
+      hint: 'A wheel is a simulator setting. It is independent of the generated code and configuration XML, and its position comes from this object (the center of its child parts for a group). The drive motor direction (inspector) is taken as the one where +power rolls this wheel forward.'
+    },
+    // Drivetrain summary in the robot card
+    drivetrain: {
+      title: 'Drivetrain (simulator)',
+      summary: '{{count}} wheel(s) · {{kinds}}',
+      kindCount: '{{kind}} {{count}}',
+      none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
+    },
     categories: {
       actuator: 'Actuators',
       sensor: 'Sensors',
@@ -788,7 +905,10 @@ const en: Messages = {
       linearScalar: 'Linear scalar',
       angularScalar: 'Angular scalar',
       measures: 'Measures',
-      reversed: 'Encoder reversed'
+      reversed: 'Encoder reversed',
+      gearbox: 'Gearbox ratio',
+      podDiameter: 'Pod wheel diameter',
+      podCpr: 'Encoder CPR'
     },
     options: {
       motorModel: {
@@ -841,7 +961,9 @@ const en: Messages = {
       },
       podType: {
         fourBar: '4-Bar pod',
-        swingarm: 'Swingarm pod'
+        swingarm: 'Swingarm pod',
+        revThroughBore: 'REV Through Bore (8192 CPR)',
+        custom: 'Custom'
       },
       encoderDirection: {
         forward: 'Forward',
@@ -871,7 +993,9 @@ const en: Messages = {
     derived: {
       pinpoint: 'Offsets: X {{x}} mm, Y {{y}} mm',
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
-      deadWheel: 'Position: X {{x}} mm, Y {{y}} mm'
+      deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
+      motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
     },
     robot: {
       title: 'Robot hardware',

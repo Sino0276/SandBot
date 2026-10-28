@@ -7,6 +7,7 @@ import { resolveActiveJdk } from '../jdk'
 import { PlayController, type PlayOwner } from './controller'
 import { readSidecarFiles } from './launch'
 import { spawnSidecar } from './process'
+import { kinematicWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
@@ -51,7 +52,8 @@ export function registerPlayIpc(): void {
     },
     removeRunDir: (dir) => rm(dir, { recursive: true, force: true }),
     platform: process.platform,
-    env: process.env
+    env: process.env,
+    world: kinematicWorld
   })
 
   // 창마다 같은 owner 객체(명령이 실행을 시작한 창의 것인지 본다)

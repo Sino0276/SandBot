@@ -28,8 +28,15 @@
  *         돌려줄 값, RUN_TO_POSITION이면 |power|; 표시용), motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
  *         power(−1..1: 엔코더 없음이면 정전력 값, 엔코더 모드면 목표 속도 ÷ 형식의 최대 틱/s, 꺼져 있거나 리셋이면 0),
  *         velocity(엔코더 모드의 목표 속도 틱/s, 아니면 null), enabled, zeroPower(BRAKE·FLOAT),
- *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5)</td>
- *     <td>position(허브 엔코더 틱), velocity(틱/s), current(A), overCurrent(boolean, 없으면 current &gt; 경보 값)</td></tr>
+ *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5),
+ *         encoderOffset(마지막 STOP_AND_RESET_ENCODER 때의 원시 position, 정수, 처음 0, 늘 보냄, OpMode 사이에도 그대로:
+ *         팀 코드의 엔코더 = position − encoderOffset, RUN_TO_POSITION의 원시 목표 = targetPosition + encoderOffset),
+ *         encoderResets(허브에 보낸 STOP_AND_RESET_ENCODER 횟수, 정수, 처음 0, 리셋마다 1씩, 늘 보냄, OpMode 사이에도 그대로:
+ *         원시 position이 그대로여서 encoderOffset이 같아도, 한 루프에서 리셋 → RUN_TO_POSITION을 해 틱 경계의 mode가
+ *         STOP_AND_RESET_ENCODER를 보이지 않아도 리셋을 알 수 있다. 데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)</td>
+ *     <td>position(원시 허브 엔코더 틱: 리셋을 빼기 전 값, 정수), velocity(틱/s, 정수), current(A),
+ *         overCurrent(boolean, 없으면 current &gt; 경보 값). 데드휠(엔코더 포트의 포드)은 같은 장치 이름의 position·velocity가
+ *         포드 값이고, 그 부호는 포드 엔코더가 세는 원시 방향(인스펙터 reversed, DcMotor 방향을 적용하기 전)이다</td></tr>
  * <tr><td>servo(Servo, ServoFullRange)</td><td>position(0..1, 펄스로 바꾸기 전 컨트롤러 위치; PWM이 꺼져 있으면 null),
  *     pulseUs(µs 또는 null), pwm(boolean, 처음과 fail safe 뒤 false)</td><td>-</td></tr>
  * <tr><td>crServo(ContinuousRotationServo), sparkMini(RevSPARKMini)</td><td>power(−1..1 또는 null), pulseUs, pwm</td><td>-</td></tr>
@@ -47,12 +54,16 @@
  *     <td>red·green·blue·ir(칩 원래 값 0..65535, 드라이버가 red에 1.07, blue에 1.55를 곱한다), distance(m) 또는 proximity(0..2047)</td></tr>
  * <tr><td>huskyLens(HuskyLens)</td><td>algorithm(고른 알고리즘 이름 또는 null)</td><td>-(1단계는 블록·화살표 0개)</td></tr>
  * <tr><td>pinpoint(goBILDAPinpoint)</td>
- *     <td>xOffsetMm, yOffsetMm, ticksPerMm(정하지 않았으면 null), xDirection·yDirection(FORWARD·REVERSED), yawScalar</td>
- *     <td>켜진 뒤 재설정하지 않았을 때 보고할 값: x·y(mm), heading(rad), vx·vy(mm/s), headingVelocity(rad/s),
- *         encoderX·encoderY(틱, 방향 적용 전), pitch·roll(rad), loopTime(µs, 기본 667)</td></tr>
+ *     <td>xOffsetMm(X 포드의 옆 위치, 왼쪽 +), yOffsetMm(Y 포드의 앞 위치, 앞 +), ticksPerMm(정하지 않았으면 null),
+ *         xDirection·yDirection(FORWARD·REVERSED), yawScalar</td>
+ *     <td>켜진 뒤 재설정하지 않았을 때 보고할 값(전원 켠 때의 로봇 틀: X 앞·Y 왼쪽): x·y(mm), heading(rad, 감지 않음 —
+ *         getHeading(UnnormalizedAngleUnit)이 그대로 돌려준다), vx·vy(mm/s, 같은 원시 틀), headingVelocity(rad/s),
+ *         encoderX·encoderY(정수 틱, 포드가 세는 원시 방향 = 장치의 xDirection·yDirection 적용 전), pitch·roll(rad),
+ *         loopTime(µs, 기본 667)</td></tr>
  * <tr><td>otos(SparkFunOTOS)</td><td>offsetX·offsetY(m), offsetH(rad), linearScalar, angularScalar</td>
- *     <td>켜진 뒤 재설정하지 않았을 때 보고할 로봇 중심 자세(오프셋 적용 뒤): x·y(m), h(rad), vx·vy(m/s), vh(rad/s),
- *         ax·ay(m/s²), ah(rad/s²)</td></tr>
+ *     <td>켜진 뒤 재설정하지 않았을 때 보고할 로봇 중심 자세(오프셋 적용 뒤, 원시 틀): x·y(m), h(rad), vx·vy(m/s), vh(rad/s),
+ *         ax·ay(m/s²), ah(rad/s²). 틀의 축은 팀이 쓴 오프셋이 정한다: SDK 샘플 규약(X 오른쪽·Y 앞·반시계 +)이면 그 축,
+ *         Road Runner식(X 앞·Y 왼쪽, 오프셋 h −90°)이면 그 축이다</td></tr>
  * <tr><td>octoQuad(OctoQuadFTC)</td><td>directions(비트 i = 채널 i 반대), channelBankConfig</td>
  *     <td>position0..7(틱, 방향 적용 전), velocity0..7(틱/표본 간격), 로컬라이저 x·y(mm), h(rad), vx·vy(mm/s), vh(rad/s)</td></tr>
  * <tr><td>webcam(Webcam)</td><td>serialNumber</td><td>-(영상 없음)</td></tr>
@@ -61,6 +72,10 @@
  *
  * <p>오도메트리(Pinpoint·OTOS·OctoQuad 로컬라이저)의 입력은 "켜진 뒤 한 번도 재설정하지 않았을 때의 값"이고, 장치가 재설정·자세
  * 쓰기·스칼라를 그 위에 얹는다({@link org.sandbot.sdk.devices.SimTrackedPose}).
+ *
+ * <p>입력을 만드는 쪽은 메인 프로세스의 운동학 시뮬레이터(src/shared/sim/world.ts)다. 틱마다 바뀐 키만 보내고(처음에는 전부),
+ * 정수 키(position·velocity·encoderX·encoderY)는 정수로 보낸다. Pinpoint 자세는 시뮬레이터가 펌웨어처럼 포드 틱과 이 장치의
+ * 출력(ticksPerMm·방향·오프셋)과 내장 IMU 요로 적분한 값이다(그래서 팀이 오프셋을 틀리게 쓰면 실제처럼 결과가 틀어진다).
  *
  * <h2>허브 비용(가상 시간, HubTiming)</h2>
  * Control Hub(구성에서 parentModuleAddress인 허브)는 HubKind.CONTROL, 나머지는 RS-485를 거치는 EXPANSION이다.

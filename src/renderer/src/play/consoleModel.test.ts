@@ -1,6 +1,9 @@
 import i18n, { type TFunction } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { createComponent } from '../hardware/components'
+import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
+import type { SceneObjects } from '../scene/model'
 import {
   consoleCounts,
   diagnosticLocation,
@@ -12,11 +15,14 @@ import {
   frameText,
   SUMMARY_MAX_CHARS,
   visibleEntries,
-  type ConsoleEntry
+  type ConsoleEntry,
+  type ConsoleNoticeKey
 } from './consoleModel'
 import { consoleEntry } from './playStore'
+import { buildWorldSpec } from './worldSpec'
 
 let t: TFunction
+let tEn: TFunction
 
 beforeAll(async () => {
   const instance = i18n.createInstance()
@@ -27,6 +33,14 @@ beforeAll(async () => {
     interpolation: { escapeValue: false }
   })
   t = instance.t
+  const english = i18n.createInstance()
+  await english.init({
+    resources: { en: { translation: en } },
+    lng: 'en',
+    initAsync: false,
+    interpolation: { escapeValue: false }
+  })
+  tEn = english.t
 })
 
 const LIFT = 'src/main/java/org/firstinspires/ftc/teamcode/Lift.java'
@@ -218,5 +232,85 @@ describe('메인 이벤트의 모양(M)', () => {
       ko.play.killedDetail.shutdownTimeout
     ])
     expect(entry.level).toBe('warning')
+  })
+})
+
+describe('시뮬레이터 안내(console.notices.sim.*)', () => {
+  it('code마다 번역한 경고 한 줄과 params', () => {
+    const shared = consoleEntry(
+      { type: 'notice', key: 'sim.sharedEncoderMode', params: { device: 'leftFront' } },
+      5,
+      'warning'
+    )
+    expect(entrySummary(shared, t)).toContain('leftFront')
+    expect(entrySummary(shared, t)).not.toContain('console.notices')
+    const failed = consoleEntry(
+      { type: 'notice', key: 'sim.worldError', params: { detail: 'NaN pose' } },
+      5,
+      'warning'
+    )
+    expect(entryDetailLines(failed, t)).toEqual([
+      t('console.notices.sim.worldError', { detail: 'NaN pose' })
+    ])
+    expect(entryDetailLines(failed, t)[0]).toContain('NaN pose')
+  })
+})
+
+describe('세계 설명 경고(console.notices.world*)', () => {
+  it('한도를 넘은 목록도 번역한 이름으로 보인다(코드 식별자를 문장에 넣지 않는다)', () => {
+    // 데드휠 33개(시뮬레이터 한도 32)
+    const objects: SceneObjects = {
+      R: {
+        id: 'R',
+        name: 'Robot',
+        kind: 'robot',
+        parentId: null,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+      },
+      pods: {
+        id: 'pods',
+        name: 'pods',
+        kind: 'part',
+        parentId: 'R',
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+        components: Array.from({ length: 33 }, (_, i) => ({
+          ...createComponent('deadWheel', [], () => `pod-${i}`),
+          name: `pod${i}`
+        }))
+      }
+    }
+    const notices = buildWorldSpec(objects, 'R', { batteryVoltage: 12 })
+      .warnings.filter((warning) => warning.key !== 'worldNoWheels')
+      .map((warning) => consoleEntry({ type: 'notice', ...warning }, null, 'warning'))
+    expect(notices.map((entry) => entrySummary(entry, t))).toEqual([
+      '데드휠 수가 시뮬레이터 한도(32개)를 넘어 앞의 32개만 씁니다.'
+    ])
+    expect(notices.map((entry) => entrySummary(entry, tEn))).toEqual([
+      'There are more dead wheels than the simulator limit (32); only the first 32 are used.'
+    ])
+  })
+
+  it('목록마다의 한도 문장은 ko·en에 같이 있고 한도만 받는다', () => {
+    const keys = Object.keys(ko.console.notices).filter((key) => key.startsWith('worldTooMany'))
+    expect(keys).toEqual([
+      'worldTooManyMotors',
+      'worldTooManyWheels',
+      'worldTooManyDeadWheels',
+      'worldTooManyPinpoints',
+      'worldTooManyOtos',
+      'worldTooManyImus'
+    ])
+    for (const key of keys) {
+      const entry = consoleEntry(
+        { type: 'notice', key: key as ConsoleNoticeKey, params: { max: 32 } },
+        null,
+        'warning'
+      )
+      for (const translate of [t, tEn]) {
+        const text = entrySummary(entry, translate)
+        expect(text).toContain('32')
+        expect(text).not.toMatch(/\{\{|console\.notices/)
+      }
+    }
   })
 })

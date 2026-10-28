@@ -17,7 +17,7 @@ import {
 } from './launch'
 import type { SidecarProcess, SpawnSidecar } from './process'
 import { isValidSpeed, SidecarSession, type HostClock, type SessionTimeouts } from './session'
-import type { SimWorld } from './world'
+import type { WorldFactory } from './world'
 
 // 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성 → 사이드카 → JDK → 바쁨) 뒤
 // JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만 받는다. 아직 끝나지 않은 실행이
@@ -37,8 +37,8 @@ export type ControllerDeps = {
   env: NodeJS.ProcessEnv
   clock?: HostClock
   timeouts?: Partial<SessionTimeouts>
-  // 실행마다 새 세계(1단계는 비어 있다)
-  world?: () => SimWorld
+  // 실행마다 새 세계(요청의 world로 만든다). 없으면 EMPTY_WORLD.
+  world?: WorldFactory
   // 팀 코드의 currentTimeMillis 시작값
   epochMillis?: () => number
 }
@@ -164,7 +164,7 @@ export class PlayController {
           mapSource: sourceMapper(prepared.projectRoot),
           emit: (event) => owner.send(event),
           clock: this.deps.clock,
-          world: this.deps.world?.(),
+          world: this.deps.world?.(request.world),
           timeouts: this.deps.timeouts
         }
       )

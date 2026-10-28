@@ -15,20 +15,26 @@ import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
+import { defaultWheel } from '../scene/wheel'
 import {
   handlePlayEvent,
   initBlock,
   initPlay,
   initPlaySession,
+  isKeyboardPadInput,
   playButton,
   refreshOpModes,
   resetPlayActionsState,
   selectOpMode,
+  startPlay,
   setPlaySpeed,
   stepPlay,
   stopPlay,
   togglePause
 } from './playActions'
+import { shortcutCommand } from '../editor/shortcuts'
+import { emptyGamepadState } from './gamepad'
+import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
 import { EMPTY_OPMODE_LIST, initialPlayData, usePlayStore } from './playStore'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
@@ -176,8 +182,8 @@ describe('INIT → START → STOP', () => {
     })
     expect(request.runId).toBe(runId())
     expect(usePlayStore.getState().run!.accepted).toBe(true)
-    // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다
-    expect(gamepads).toEqual([[null, null]])
+    // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다(패드가 없으면 키보드가 gamepad1, 모두 뗀 상태)
+    expect(gamepads).toEqual([[emptyGamepadState(), null]])
 
     handlePlayEvent(event({ type: 'phase', phase: 'init' }))
     playButton()
@@ -233,19 +239,25 @@ describe('INIT → START → STOP', () => {
 
   it('실행할 때 지우기를 켜 두면 Console을 지우고 실행 줄을 남긴다', async () => {
     usePlayStore.getState().addConsole({ type: 'log', stream: 'out', text: 'old' })
+    // 실행 안내(바퀴 없음 경고 등)는 빼고 본다
+    const types = (): string[] =>
+      usePlayStore
+        .getState()
+        .entries.filter((entry) => entry.type !== 'notice')
+        .map((entry) => entry.type)
     await initPlay()
-    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run'])
+    expect(types()).toEqual(['run'])
     usePlayStore.getState().setClearOnPlay(false)
     usePlayStore.setState({ run: null })
     await initPlay()
-    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run', 'run'])
+    expect(types()).toEqual(['run', 'run'])
   })
 
   it('마지막 저장의 생성이 막혔으면 Console에 경고 한 줄', async () => {
     useProjectStore.setState({ generation: { status: 'blocked', errors: 3 } })
     await initPlay()
     const entries = usePlayStore.getState().entries
-    expect(entries.at(-1)).toMatchObject({
+    expect(entries[1]).toMatchObject({
       type: 'notice',
       key: 'generationBlocked',
       level: 'warning'
@@ -264,6 +276,69 @@ describe('INIT → START → STOP', () => {
       params: { file: configPath },
       level: 'warning'
     })
+  })
+})
+
+describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
+  // SCENE의 로봇에 구동 바퀴 하나(arm 모터)
+  const withWheel = (): SceneObjects => ({
+    ...SCENE,
+    wheel: {
+      id: 'wheel',
+      name: 'Wheel',
+      kind: 'part',
+      parentId: 'bot',
+      transform: { position: [0.1, 0.2, 0.05], rotation: [0, 0, 0] },
+      visual: { type: 'mesh', geometryId: 'g:0', color: [1, 1, 1] },
+      wheel: { ...defaultWheel('traction'), motor: 'm' }
+    }
+  })
+  const notices = (): unknown[] =>
+    usePlayStore
+      .getState()
+      .entries.filter((entry) => entry.type === 'notice')
+      .map((entry) => (entry.type === 'notice' ? entry.key : null))
+
+  it('구성과 같은 로봇의 세계 설명을 보낸다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world).toMatchObject({
+      version: 1,
+      robot: { start: { x: 0, y: 0, yaw: 0 } },
+      batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
+      hubs: ['Control Hub'],
+      motors: [{ device: 'arm', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5 }],
+      wheels: [{ kind: 'traction', motor: 'arm', radius: 0.048, rollers: null }]
+    })
+    expect(world!.wheels[0].position.x).toBeCloseTo(0.1, 12)
+    expect(notices()).toEqual([])
+  })
+
+  it('바퀴가 없으면 세계는 보내되 Console에 경고한다', async () => {
+    await initPlay()
+    expect(lastRequest().world?.wheels).toEqual([])
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'notice',
+      key: 'worldNoWheels',
+      level: 'warning'
+    })
+  })
+
+  it('생성이 막혔으면 장치 이름이 다를 수 있다고 한 줄 더 알린다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    useProjectStore.setState({ generation: { status: 'blocked', errors: 1 } })
+    await initPlay()
+    expect(notices()).toEqual(['generationBlocked', 'worldGenerationStale'])
+  })
+
+  it('하드웨어가 있는 로봇이 없으면 세계도 없다', async () => {
+    useSceneStore.setState({
+      objects: { bot: { ...SCENE.bot }, wheel: { ...withWheel().wheel } }
+    })
+    await initPlay()
+    expect(lastRequest()).toMatchObject({ configPath: null, world: null })
+    expect(notices()).toEqual([])
   })
 })
 
@@ -520,5 +595,155 @@ describe('OpMode 목록 읽기', () => {
     await initPlay()
     selectOpMode(AUTO.className)
     expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
+  })
+})
+
+describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
+  const fire = (type: string, payload: object): void => {
+    for (const listener of listeners.get(type) ?? [])
+      (listener as (event: unknown) => void)({ ...payload, preventDefault: () => {} })
+  }
+  const keyEvent = (code: string): object => ({
+    code,
+    key: code,
+    repeat: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.stubGlobal('window', {
+      api,
+      addEventListener: (type: string, listener: () => void) =>
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+    })
+    useKeyboardPadStore.setState({ focused: false })
+  })
+
+  it('자세를 받고, 끝나면 잔상으로 남고, 다음 INIT에 지운다', async () => {
+    await initPlay()
+    expect(usePlayStore.getState().run!.robotId).toBe('bot')
+    handlePlayEvent(
+      event({ type: 'pose', tNanos: 5_000_000, x: 0.4, y: -0.1, yaw: 0.2, blocked: false })
+    )
+    expect(usePlayStore.getState().simPose).toMatchObject({ robotId: 'bot', x: 0.4 })
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 6, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().simPose).toBeNull()
+    expect(usePlayStore.getState().ghostPose).toEqual({ robotId: 'bot', x: 0.4, y: -0.1, yaw: 0.2 })
+    // 씬 문서는 바뀌지 않는다
+    expect(useSceneStore.getState().objects).toBe(SCENE)
+    await initPlay()
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  it('프로젝트를 열면 잔상을 지운다', async () => {
+    usePlayStore.setState({ ghostPose: { robotId: 'bot', x: 1, y: 1, yaw: 0 } })
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  it('실행 중 같은 프로젝트를 다시 열면 그 실행을 새 씬과 떼어 놓는다(자세·잠금·잔상 없음)', async () => {
+    await initPlay()
+    handlePlayEvent(event({ type: 'pose', tNanos: 1, x: 0.4, y: 0, yaw: 0, blocked: false }))
+    expect(usePlayStore.getState().simPose).not.toBeNull()
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(commands).toContainEqual({ type: 'stop' })
+    expect(usePlayStore.getState().run!.robotId).toBeNull()
+    expect(usePlayStore.getState().simPose).toBeNull()
+    // STOP 뒤 끝날 때까지 온 자세와 끝은 잔상을 남기지 않는다
+    handlePlayEvent(event({ type: 'pose', tNanos: 2, x: 0.5, y: 0, yaw: 0, blocked: false }))
+    expect(usePlayStore.getState().simPose).toBeNull()
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 3, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  it('START하면 씬 뷰에 포커스를 준다(Unity Play Focused)', async () => {
+    const focus = vi.fn()
+    await initPlay()
+    handlePlayEvent(event({ type: 'phase', phase: 'init' }))
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) => (selector === '[data-scene-view]' ? { focus } : null)
+    })
+    startPlay()
+    expect(commands).toContainEqual({ type: 'start' })
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+  })
+
+  it('씬 뷰에 포커스가 있으면 키보드가 gamepad1이 되고, 실행이 끝나면 뗀 상태를 보낸다', async () => {
+    vi.useFakeTimers()
+    await initPlay()
+    expect(useKeyboardPadStore.getState().slot).toBe(0)
+    expect(usePlayStore.getState().gamepads[0]).toMatchObject({ keyboard: true })
+    // 포커스가 없으면 받지 않는다
+    fire('keydown', keyEvent('KeyW'))
+    vi.advanceTimersByTime(20)
+    expect(gamepads).toHaveLength(1)
+    useKeyboardPadStore.setState({ focused: true })
+    fire('keydown', keyEvent('KeyW'))
+    vi.advanceTimersByTime(20)
+    expect(gamepads.at(-1)).toEqual([{ ...emptyGamepadState(), left_stick_y: -1 }, null])
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    expect(useKeyboardPadStore.getState().slot).toBeNull()
+    expect(usePlayStore.getState().gamepads).toEqual([null, null])
+  })
+
+  it('씬 뷰에서 포커스가 나가거나 창이 포커스를 잃으면 다음 읽기를 기다리지 않고 뗀 상태를 보낸다', async () => {
+    vi.useFakeTimers()
+    await initPlay()
+    const sceneView = { hasAttribute: (name: string) => name === SCENE_VIEW_ATTRIBUTE }
+    const pressW = (): void => {
+      fire('focusin', { target: sceneView })
+      fire('keydown', keyEvent('KeyW'))
+      vi.advanceTimersByTime(20)
+      expect(gamepads.at(-1)).toEqual([{ ...emptyGamepadState(), left_stick_y: -1 }, null])
+    }
+    // 창을 내리면 interval이 1초에 한 번으로 늦어진다: 타이머를 진행하지 않아도 보내야 한다
+    pressW()
+    fire('focusout', { target: sceneView })
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    pressW()
+    fire('blur', {})
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    const sent = gamepads.length
+    // 뗄 키가 없으면 보내지 않는다
+    fire('blur', {})
+    expect(gamepads).toHaveLength(sent)
+  })
+
+  it('게임패드 back(Backspace)을 누른 채 실행이 끝나도 반복 입력이 편집기의 Delete가 되지 않는다', async () => {
+    await initPlay()
+    useKeyboardPadStore.setState({ focused: true })
+    const backspace = keyEvent('Backspace') as Parameters<typeof shortcutCommand>[0]
+    const repeat = { ...backspace, repeat: true }
+    fire('keydown', backspace)
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    // EditorLayout의 단축키 리스너와 같은 판단
+    const shortcut = (): ReturnType<typeof shortcutCommand> =>
+      shortcutCommand(repeat, {
+        blocked: false,
+        handlesOwnKeys: false,
+        pendingTextEdit: false,
+        dragging: false,
+        keyboardGamepad: isKeyboardPadInput(repeat)
+      })
+    expect(isKeyboardPadInput(repeat)).toBe(true)
+    expect(shortcut().command).toBeNull()
+    // 떼면 다시 편집기의 키다(Delete를 누르고 있으면 반복해 지운다)
+    fire('keyup', backspace)
+    expect(isKeyboardPadInput(repeat)).toBe(false)
+    expect(shortcut().command).toBe('delete')
   })
 })

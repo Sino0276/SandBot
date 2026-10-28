@@ -214,7 +214,23 @@ const ko = {
     local: '로컬',
     // 고립 보기(Shift+H)
     isolation: '고립 보기: 선택한 오브젝트만 보입니다',
-    exitIsolation: '나가기 ({{shortcut}})'
+    exitIsolation: '나가기 ({{shortcut}})',
+    // 실행 중 키보드 게임패드(씬 뷰에 포커스가 있을 때만)
+    keyboardPad: {
+      active: '키보드 → 게임패드 {{slot}}',
+      inactive: '씬 뷰를 누르면 키보드 → 게임패드 {{slot}}',
+      helpTitle: '키보드 게임패드 배치',
+      layout: {
+        leftStick: { keys: 'W A S D', field: '왼쪽 스틱' },
+        rightStick: { keys: '↑ ← ↓ →', field: '오른쪽 스틱' },
+        buttons: { keys: 'I J K L', field: 'Y X A B (패드 모양)' },
+        bumpers: { keys: 'U O', field: '왼쪽·오른쪽 범퍼' },
+        triggers: { keys: 'Q E', field: '왼쪽·오른쪽 트리거' },
+        dpad: { keys: 'T F G H', field: '방향 패드 위·왼쪽·아래·오른쪽' },
+        startBack: { keys: 'Enter · Backspace', field: 'start · back' }
+      },
+      hint: '씬 뷰에 포커스가 있는 동안 편집 단축키(F·Q/W/E·H·Delete 등)는 쓰지 않습니다. Ctrl 조합(저장·실행 취소·Ctrl+P)은 그대로입니다. 다른 곳을 누르면 모든 키를 뗍니다.'
+    }
   },
   hierarchy: {
     empty: '씬에 오브젝트가 없습니다',
@@ -258,6 +274,10 @@ const ko = {
     frameParent: '부모 기준',
     frameParentHint:
       '부모 오브젝트 ‘{{name}}’의 위치와 축을 기준으로 한 값입니다. 부모가 움직이면 함께 움직입니다.',
+    // 실행 중인 로봇(과 그 하위)의 변환은 고칠 수 없다
+    running: '실행 중',
+    runningHint:
+      '실행 중에는 이 로봇과 하위 오브젝트의 위치·회전을 고칠 수 없습니다. 씬 뷰는 시뮬레이터 자세로 그리고, 끝나면 편집 위치로 돌아갑니다(값은 바뀌지 않습니다).',
     cadAxes: 'CAD 파일의 축 방향으로 표시합니다 (위 {{up}} · 앞 {{forward}}).',
     robotCenter: '로봇 중심 기준',
     robotCenterHint:
@@ -535,6 +555,10 @@ const ko = {
       seed: '시드',
       seedHint: '오차를 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
       autoStop: 'Autonomous는 START 뒤 {{seconds}}초에 자동으로 STOP (Driver Station과 같음)',
+      battery: '배터리 전압',
+      batteryUnit: 'V',
+      batteryHint:
+        '시뮬레이터의 배터리 전압({{min}}–{{max}} V). 모터 무부하 속도가 전압 ÷ 12에 비례하고, 허브 getVoltage()가 이 값을 돌려줍니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
   },
@@ -643,7 +667,8 @@ const ko = {
       disconnected: '게임패드 {{slot}}: 연결 안 됨',
       connected: '게임패드 {{slot}}: {{id}}',
       nonStandard: '게임패드 {{slot}}: {{id}} (표준 배치가 아니라 입력을 보내지 않음)',
-      hint: '실행 중에만 읽습니다. 연결한 뒤 버튼을 한 번 눌러야 보입니다. 처음·둘째로 연결한 패드가 gamepad1·gamepad2입니다.'
+      keyboard: '게임패드 {{slot}}: 키보드 (실행 중 씬 뷰를 누르면 입력)',
+      hint: '실행 중에만 읽습니다. 연결한 뒤 버튼을 한 번 눌러야 보입니다. 처음·둘째로 연결한 패드가 gamepad1·gamepad2이고, 실행을 시작할 때 패드가 없는 첫 자리는 키보드가 맡습니다(실행하는 동안 자리는 바뀌지 않으므로 패드 버튼은 INIT 전에 누르세요).'
     }
   },
   // Console(Unity Console). 팀 코드·javac의 영어 문장은 그대로 보인다.
@@ -682,6 +707,30 @@ const ko = {
     code: '진단 코드',
     // 실행 흐름이 남기는 안내
     notices: {
+      // 운동학 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
+      worldNoWheels:
+        '바퀴 컴포넌트가 없어 로봇이 움직이지 않습니다. 바퀴 파트(또는 그룹)에 [컴포넌트 추가 → 바퀴]를 붙이세요.',
+      worldWheelNoMotor: '바퀴 {{name}}에 구동 모터가 없어 굴리지 않습니다(따라 구르기만 합니다).',
+      worldWheelMotorMissing:
+        '바퀴 {{name}}의 구동 모터를 이 로봇에서 찾을 수 없어(지웠거나 다른 로봇의 모터) 굴리지 않습니다.',
+      worldRollersAmbiguous:
+        '메카넘 바퀴 {{name}}의 롤러 형을 위치로 정할 수 없어 앞왼·뒤오른형으로 둡니다. 바퀴 카드에서 롤러를 고르세요.',
+      worldSharedEncoder:
+        '데드휠 {{deadWheel}}이(가) 모터 {{motor}}와 엔코더 포트를 함께 쓰는데 그 모터의 런 모드가 엔코더 사용입니다. 실제로는 포드 엔코더로 제어되지만 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
+      worldDuplicateMotor:
+        '모터 장치 이름 {{name}}이(가) 겹치거나 비어 있어 시뮬레이터가 그 모터를 쓰지 않습니다.',
+      // 한도를 넘은 목록마다 한 문장(worldSpec.ts capped)
+      worldTooManyMotors: '모터 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyWheels: '바퀴 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyDeadWheels:
+        '데드휠 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyPinpoints:
+        'Pinpoint 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyOtos: 'OTOS 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyImus: 'IMU 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldGenerationStale:
+        '장치 이름이 생성 구성과 다를 수 있어 바퀴가 움직이지 않을 수 있습니다.',
+      worldInvalid: '시뮬레이터 세계를 만들지 못해 로봇이 움직이지 않습니다 ({{detail}}).',
       generationBlocked:
         '마지막 저장에서 하드웨어 설정 오류 {{count}}개 때문에 생성 코드를 만들지 않았습니다. TeamCode에 남아 있는 이전 하드웨어 클래스·구성으로 실행합니다.',
       generationFailed:
@@ -689,7 +738,13 @@ const ko = {
       configNotGenerated:
         '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
       configMissing:
-        '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.'
+        '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.',
+      // 시뮬레이터 안내(simNotice, SimNoticeCode)
+      sim: {
+        sharedEncoderMode:
+          '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
+        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).'
+      }
     }
   },
   // 텔레메트리 탭(Driver Station 화면처럼)
@@ -707,6 +762,9 @@ const ko = {
     name: '이름',
     type: '종류',
     values: '출력',
+    inputs: '센서 값',
+    inputsHint:
+      '시뮬레이터가 보낸 허브 원시 값(엔코더 틱, IMU 각 등)입니다. 팀 코드가 읽는 값은 SDK가 방향·단위를 적용한 값입니다.',
     selectHint: '누르면 {{name}}을(를) 고릅니다.'
   },
   hardware: {
@@ -747,6 +805,60 @@ const ko = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB 포트',
     objectNone: '(없음)',
+    // 시뮬레이터 전용 속성(생성 코드와 관계없음)
+    simulationOnly: '시뮬레이터 전용 설정입니다(생성 코드·구성 XML에는 쓰지 않습니다).',
+    gearboxModelDefault: '모델 기본',
+    gearboxReset: '모델 기본으로',
+    gearboxResetHint: '모터 종류의 SDK 감속비로 되돌립니다.',
+    // 바퀴(시뮬레이터 설정, Unity WheelCollider처럼 바퀴 파트에 붙인다)
+    wheel: {
+      addGroup: '시뮬레이션',
+      addOption: '바퀴',
+      title: '바퀴',
+      kind: '종류',
+      kinds: {
+        mecanum: '메카넘',
+        omni: '옴니',
+        traction: '일반 (그립)'
+      },
+      diameter: '지름',
+      fitSize: '파트 크기로',
+      fitSizeHint:
+        '이 오브젝트(그룹이면 하위 파트) 경계 상자의 높이(로봇 위아래 크기)를 지름으로 씁니다. 바퀴 축은 수평이라 바퀴가 어느 쪽을 향해도(X 드라이브의 45° 옴니 등) 높이가 지름입니다.',
+      fitSizeNone: '형상이 없어 크기를 잴 수 없습니다.',
+      motor: '구동 모터',
+      motorNone: '(없음: 따라 구르기만)',
+      motorMissing: '(찾을 수 없는 모터)',
+      gearRatio: '외부 감속비',
+      gearRatioHint: '모터 출력축에서 바퀴까지의 감속비입니다(직결이면 1).',
+      angle: '굴림 방향 (°)',
+      angleHint:
+        '바퀴가 앞으로 구를 때 미는 방향입니다. 로봇 앞(+X)이 0°, 반시계가 +입니다. CAD 파트의 회전과 관계없습니다.',
+      rollers: '롤러',
+      rollerOptions: {
+        auto: '자동',
+        flbr: '앞왼·뒤오른형',
+        frbl: '앞오른·뒤왼형'
+      },
+      rollersAuto: '자동 ({{type}})',
+      rollersHint:
+        '위에서 볼 때 롤러가 X를 이루는 표준 배치에서 앞왼쪽·뒤오른쪽 자리의 바퀴가 앞왼·뒤오른형입니다. 자동은 메카넘 바퀴들의 중심에 대한 사분면으로 정합니다.',
+      topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
+      topSpeedNoMotor: '구동 모터를 고르면 최고 속도를 보입니다.',
+      motorMissingWarning:
+        '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 이 바퀴는 굴리지 않습니다.',
+      rollersAmbiguousWarning:
+        '위치로 롤러 형을 정할 수 없어(메카넘 바퀴들의 중심선 위이거나 굴림 방향이 앞뒤가 아님) 앞왼·뒤오른형으로 둡니다. 롤러를 직접 고르세요.',
+      orphan: '로봇에 속하지 않은 오브젝트라 시뮬레이터가 쓰지 않습니다.',
+      hint: '바퀴는 시뮬레이터 설정입니다. 생성 코드·구성 XML과 관계없고, 위치는 이 오브젝트(그룹이면 하위 파트들의 중심)에서 정합니다. 구동 모터의 방향(인스펙터)은 +power면 이 바퀴가 앞으로 구르는 방향으로 봅니다.'
+    },
+    // 로봇 카드의 구동계 요약
+    drivetrain: {
+      title: '구동계 (시뮬레이터)',
+      summary: '바퀴 {{count}}개 · {{kinds}}',
+      kindCount: '{{kind}} {{count}}',
+      none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'
+    },
     categories: {
       actuator: '구동 장치',
       sensor: '센서',
@@ -799,7 +911,10 @@ const ko = {
       linearScalar: '거리 보정',
       angularScalar: '각도 보정',
       measures: '측정 방향',
-      reversed: '엔코더 반전'
+      reversed: '엔코더 반전',
+      gearbox: '기어박스 감속비',
+      podDiameter: '포드 바퀴 지름',
+      podCpr: '엔코더 CPR'
     },
     options: {
       motorModel: {
@@ -852,7 +967,9 @@ const ko = {
       },
       podType: {
         fourBar: '4-Bar 포드',
-        swingarm: '스윙암 포드'
+        swingarm: '스윙암 포드',
+        revThroughBore: 'REV Through Bore (8192 CPR)',
+        custom: '직접 입력'
       },
       encoderDirection: {
         forward: '정방향',
@@ -882,7 +999,9 @@ const ko = {
     derived: {
       pinpoint: '오프셋: X {{x}} mm, Y {{y}} mm',
       otos: '오프셋: X {{x}} in, Y {{y}} in, H {{h}}°',
-      deadWheel: '위치: X {{x}} mm, Y {{y}} mm'
+      deadWheel: '위치: X {{x}} mm, Y {{y}} mm',
+      motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
+      deadWheelPod: '포드 해상도: {{ticks}} 틱/mm'
     },
     robot: {
       title: '로봇 하드웨어',

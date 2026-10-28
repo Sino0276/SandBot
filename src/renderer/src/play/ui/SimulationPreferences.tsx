@@ -1,7 +1,11 @@
 import { useTranslation } from 'react-i18next'
-import { AUTONOMOUS_SECONDS } from '../../../../shared/play'
+import {
+  AUTONOMOUS_SECONDS,
+  MAX_BATTERY_VOLTAGE,
+  MIN_BATTERY_VOLTAGE
+} from '../../../../shared/play'
 import NumberField from '../../editor/NumberField'
-import { clampJitter, clampSeed, JITTER_CHOICES } from '../playSettings'
+import { clampBatteryVoltage, clampJitter, clampSeed, JITTER_CHOICES } from '../playSettings'
 import { usePlayStore } from '../playStore'
 
 const percent = (jitter: number): number => Math.round(jitter * 1000) / 10
@@ -12,7 +16,16 @@ function parseSeed(text: string): number | null {
   return clampSeed(Number(trimmed))
 }
 
-// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, Autonomous 30초 자동 정지. 개인 설정(localStorage)이고 다음 INIT부터 쓴다.
+// 배터리 전압 입력: 수(뒤에 V를 붙여도 됨)를 받아 설정 범위로 자른다
+function parseVoltage(text: string): number | null {
+  const trimmed = text.trim().replace(/\s*[vV]$/, '')
+  if (trimmed === '') return null
+  const value = Number(trimmed)
+  return Number.isFinite(value) ? clampBatteryVoltage(value) : null
+}
+
+// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지. 개인 설정(localStorage)이고
+// 다음 INIT부터 쓴다.
 function SimulationPreferences(): React.JSX.Element {
   const { t } = useTranslation()
   const settings = usePlayStore((state) => state.settings)
@@ -55,6 +68,27 @@ function SimulationPreferences(): React.JSX.Element {
           onCommit={(seed) => updateSettings({ seed: clampSeed(seed) })}
         />
       </div>
+      <div className="preferences-row has-unit">
+        <span className="preferences-row-label">{t('preferences.simulation.battery')}</span>
+        <NumberField
+          ariaLabel={t('preferences.simulation.battery')}
+          value={settings.batteryVoltage}
+          digits={2}
+          parse={parseVoltage}
+          title={t('preferences.simulation.batteryHint', {
+            min: MIN_BATTERY_VOLTAGE,
+            max: MAX_BATTERY_VOLTAGE
+          })}
+          onCommit={(volts) => updateSettings({ batteryVoltage: clampBatteryVoltage(volts) })}
+        />
+        <span className="preferences-row-unit">{t('preferences.simulation.batteryUnit')}</span>
+      </div>
+      <p className="inspector-note">
+        {t('preferences.simulation.batteryHint', {
+          min: MIN_BATTERY_VOLTAGE,
+          max: MAX_BATTERY_VOLTAGE
+        })}
+      </p>
       <label className="preferences-check">
         <input
           type="checkbox"

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { PlayEvent } from '../../shared/play'
-import type { RunRequest, TickMessage } from '../../shared/sidecarProtocol'
+import type { PlayEvent, SimNoticeCode } from '../../shared/play'
+import type { DeviceValues, RunRequest, TickMessage } from '../../shared/sidecarProtocol'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
 import { MAX_LAG_MS, SidecarSession, type SessionOptions } from './session'
 import { FakeClock, FakeProcess, settle } from './testkit'
+import type { SimWorld } from './world'
 
 const ROOT = '/proj'
 const SOURCE = `${ROOT}/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Drive.java`
@@ -667,7 +668,9 @@ describe('SidecarSession 이벤트 묶기', () => {
         step: (tNanos) => {
           seen.push(tNanos)
           return { imu: { yaw: tNanos / 1e9 } }
-        }
+        },
+        pose: () => null,
+        drainNotices: () => []
       }
     })
     boot(proc)
@@ -705,5 +708,190 @@ describe('SidecarSession 이벤트 묶기', () => {
       inputs: { imu: { yaw: 0.01 } }
     })
     expect(seen).toEqual([10 * MS])
+  })
+})
+
+describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
+  type Notice = { code: SimNoticeCode; params: Record<string, string> }
+
+  // 틱 시각마다 정해 둔 입력·자세·안내를 돌려주는 세계
+  function scriptedWorld(
+    inputs: (tNanos: number) => Record<string, DeviceValues> = () => ({}),
+    notices: (tNanos: number) => Notice[] = () => []
+  ): { world: SimWorld; steps: number[] } {
+    const steps: number[] = []
+    let last = 0
+    return {
+      steps,
+      world: {
+        step: (tNanos) => {
+          steps.push(tNanos)
+          last = tNanos
+          return inputs(tNanos)
+        },
+        pose: () => ({ x: last / 1e9, y: 0, yaw: 0, blocked: last >= 30 * MS }),
+        drainNotices: () => notices(last)
+      }
+    }
+  }
+
+  it('틱이 도착할 때(일시 정지 중에도) 한 번씩 돌리고, 입력은 그 틱의 답에 싣는다', () => {
+    const { world, steps } = scriptedWorld((t) => ({ m: { position: t / MS } }))
+    const { clock, proc, session } = setup({ world })
+    boot(proc)
+    proc.line(tick(0))
+    expect(steps).toEqual([0])
+    expect(proc.replies()[0].inputs).toEqual({ m: { position: 0 } })
+    session.command({ type: 'pause', paused: true })
+    proc.line(tick(1))
+    // 답하지 않았지만 이미 적분했다(일시 정지 중 자세 = 둔 틱)
+    expect(steps).toEqual([0, 5 * MS])
+    expect(proc.replies()).toHaveLength(1)
+    session.command({ type: 'pause', paused: false })
+    clock.advance(5)
+    expect(proc.replies()[1]).toMatchObject({ tick: 1, inputs: { m: { position: 5 } } })
+    // 다시 부르지 않는다
+    expect(steps).toEqual([0, 5 * MS])
+  })
+
+  it('답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다', () => {
+    const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
+      t === 5 * MS ? { a: { x: 1, y: 1 } } : t === 10 * MS ? { a: { y: 2 }, b: { z: 3 } } : {}
+    )
+    const { clock, proc } = setup({ world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    // 사이드카가 답을 기다리지 않고 틱 2를 보냈다(틱 1은 답 없이 넘긴다)
+    proc.line(tick(2))
+    clock.advance(20)
+    expect(replyTicks(proc)).toEqual([0, 2])
+    expect(proc.replies()[1].inputs).toEqual({ a: { x: 1, y: 2 }, b: { z: 3 } })
+  })
+
+  it('세계의 예외는 실행을 멈추지 않는다: worldError 한 번, 사이드카는 이전 입력을 계속 쓴다', () => {
+    let calls = 0
+    const world: SimWorld = {
+      step: (tNanos) => {
+        calls++
+        if (tNanos > 0) throw new Error(`bad ${tNanos}`)
+        return { m: { position: 1 } }
+      },
+      pose: () => null,
+      drainNotices: () => []
+    }
+    const { proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 4; k++) proc.line(tick(k))
+    expect(calls).toBe(4)
+    expect(proc.replies().map((r) => r.inputs)).toEqual([{ m: { position: 1 } }, {}, {}, {}])
+    expect(of('simNotice')).toEqual([
+      {
+        type: 'simNotice',
+        runId: 'run-1',
+        tNanos: 5 * MS,
+        code: 'worldError',
+        params: { detail: 'Error: bad 5000000' }
+      }
+    ])
+    expect(of('pose')).toEqual([])
+  })
+
+  it('devices 이벤트에 세계가 보낸 입력의 누적을 싣는다', () => {
+    const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
+      t === 0 ? { m: { position: 0, velocity: 0 }, imu: { yaw: 0 } } : { m: { position: t / MS } }
+    )
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0, { outputs: { m: { power: 0 } } }))
+    expect(of('devices')[0].inputs).toEqual({ m: { position: 0, velocity: 0 }, imu: { yaw: 0 } })
+    proc.line(tick(1, { outputs: { m: { power: 0 } } }))
+    proc.line(tick(2, { outputs: { m: { power: 0 } } }))
+    clock.advance(50)
+    // 출력은 그대로지만 입력이 바뀌었으므로 보낸다
+    expect(of('devices')).toHaveLength(2)
+    expect(of('devices')[1]).toMatchObject({
+      tNanos: 10 * MS,
+      inputs: { m: { position: 10, velocity: 0 }, imu: { yaw: 0 } }
+    })
+  })
+
+  it('pose: 16 ms에 한 번 마지막 값, 같은 자세는 다시 보내지 않는다', () => {
+    const { world } = scriptedWorld()
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 5; k++) proc.line(tick(k))
+    expect(of('pose')).toEqual([
+      { type: 'pose', runId: 'run-1', tNanos: 0, x: 0, y: 0, yaw: 0, blocked: false }
+    ])
+    clock.advance(16)
+    expect(of('pose').map((p) => p.tNanos)).toEqual([0, 20 * MS])
+    expect(of('pose')[1].x).toBeCloseTo(0.02, 12)
+    // 자세가 같으면 보내지 않는다
+    const still: SimWorld = { ...world, pose: () => ({ x: 1, y: 2, yaw: 3, blocked: false }) }
+    const s = setup({ speed: 'max', world: still })
+    boot(s.proc)
+    for (let k = 0; k < 3; k++) {
+      s.proc.line(tick(k))
+      s.clock.advance(20)
+    }
+    expect(s.of('pose')).toHaveLength(1)
+  })
+
+  it('pose: 일시 정지·Step이 멈출 때·끝날 때(phase·finished 전) 바로 보낸다', () => {
+    const { world } = scriptedWorld()
+    const { clock, proc, session, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    expect(of('pose').map((p) => p.tNanos)).toEqual([0])
+    session.command({ type: 'pause', paused: true })
+    expect(of('pose').map((p) => p.tNanos)).toEqual([0, 5 * MS])
+    // Step: 루프가 는 틱에서 멈추면 그 자세를 바로
+    clock.advance(100)
+    proc.line(tick(2, { loops: 2 }))
+    session.command({ type: 'step' })
+    proc.line(tick(3, { loops: 2 }))
+    proc.line(tick(4, { loops: 5 }))
+    expect(of('pose').at(-1)?.tNanos).toBe(20 * MS)
+    session.command({ type: 'pause', paused: false })
+    clock.advance(100)
+    proc.line(tick(5))
+    proc.line(tick(6))
+    proc.line({ type: 'finished', tNanos: 30 * MS, reason: 'returned' })
+    const order = events
+      .filter((e) => ['pose', 'phase', 'finished'].includes(e.type))
+      .slice(-3)
+      .map((e) => (e.type === 'pose' ? `pose ${e.tNanos / MS}` : e.type))
+    expect(order).toEqual(['pose 30', 'phase', 'finished'])
+    expect(of('pose').at(-1)?.blocked).toBe(true)
+  })
+
+  it('simNotice: drainNotices를 그대로 보내되 같은 code·params는 한 번, 모아 둔 로그를 먼저', () => {
+    const { world } = scriptedWorld(
+      () => ({}),
+      (t): Notice[] =>
+        t === 0
+          ? []
+          : [
+              { code: 'sharedEncoderMode', params: { device: 'fr' } },
+              { code: 'sharedEncoderMode', params: { device: t > 5 * MS ? 'br' : 'fr' } }
+            ]
+    )
+    const { proc, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line({ type: 'log', tNanos: 0, stream: 'out', text: 'hello' })
+    proc.line(tick(1))
+    proc.line(tick(2))
+    proc.line(tick(3))
+    expect(of('simNotice').map((n) => [n.tNanos, n.params.device])).toEqual([
+      [5 * MS, 'fr'],
+      [10 * MS, 'br']
+    ])
+    const kinds = events
+      .filter((e) => e.type === 'log' || e.type === 'simNotice')
+      .map((e) => e.type)
+    expect(kinds.slice(0, 2)).toEqual(['log', 'simNotice'])
   })
 })
