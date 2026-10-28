@@ -576,6 +576,23 @@ describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
     expect(usePlayStore.getState().ghostPose).toBeNull()
   })
 
+  it('실행 중 같은 프로젝트를 다시 열면 그 실행을 새 씬과 떼어 놓는다(자세·잠금·잔상 없음)', async () => {
+    await initPlay()
+    handlePlayEvent(event({ type: 'pose', tNanos: 1, x: 0.4, y: 0, yaw: 0, blocked: false }))
+    expect(usePlayStore.getState().simPose).not.toBeNull()
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(commands).toContainEqual({ type: 'stop' })
+    expect(usePlayStore.getState().run!.robotId).toBeNull()
+    expect(usePlayStore.getState().simPose).toBeNull()
+    // STOP 뒤 끝날 때까지 온 자세와 끝은 잔상을 남기지 않는다
+    handlePlayEvent(event({ type: 'pose', tNanos: 2, x: 0.5, y: 0, yaw: 0, blocked: false }))
+    expect(usePlayStore.getState().simPose).toBeNull()
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 3, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
   it('START하면 씬 뷰에 포커스를 준다(Unity Play Focused)', async () => {
     const focus = vi.fn()
     await initPlay()

@@ -415,7 +415,14 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
   // 잔상은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다)
   usePlayStore.setState({ ghostPose: null })
-  if (isRunActive(run)) stopPlay()
+  if (isRunActive(run)) {
+    // 아직 도는 실행은 새로 연 씬과 떼어 놓는다: 그 로봇을 시뮬레이터 자세로 그리거나 잠그지 않고, 끝나도 잔상을 남기지
+    // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다)
+    usePlayStore.setState((state) =>
+      state.run?.runId === run.runId ? { run: { ...state.run, robotId: null }, simPose: null } : {}
+    )
+    stopPlay()
+  }
   if (rootChanged)
     usePlayStore.setState({
       selectedClass: root ? loadLastOpMode(root) : null,
@@ -466,9 +473,4 @@ export function resetPlayActionsState(): void {
   lastPlayNotice = 0
   poller.stop()
   keyboardPad.releaseAll()
-}
-
-// 테스트용: 키보드 게임패드(키 상태)
-export function keyboardPadForTest(): typeof keyboardPad {
-  return keyboardPad
 }
