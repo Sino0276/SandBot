@@ -83,7 +83,7 @@ type Otos = {
   spec: SimOtosSpec
   // 물리 센서 틀(로봇 좌표): 위치 + (장착 각 − 90°). SDK 샘플 축(X 오른쪽·Y 앞)이 로봇 X 앞·Y 왼쪽에서 −90°다.
   mount: Pose2
-  // 전원을 켤 때(첫 step)의 센서 자세(필드)
+  // 전원을 켤 때(실행 시작, 로봇 시작 자세)의 센서 자세(필드)
   sensorAtStart: Pose2
   // 앞 틱의 센서 자세(필드)와 원시 속도(가속도)
   sensorAtTick: Pose2
@@ -100,6 +100,8 @@ function own(outputs: Record<string, DeviceValues>, device: string): DeviceValue
   return Object.prototype.hasOwnProperty.call(outputs, device) ? outputs[device] : undefined
 }
 
+// src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
+// kinematicWorld가 한다).
 export class KinematicWorld {
   private readonly spec: WorldSpec
   private readonly drivetrain: Drivetrain
@@ -264,6 +266,7 @@ export class KinematicWorld {
   // Pinpoint 펌웨어: 포드 틱(정수, 팀이 정한 방향 적용)과 팀이 쓴 해상도·오프셋, 내장 IMU 요(진짜 요)로 추적점의 이동을
   // 전원 켠 뒤 틀(X 앞·Y 왼쪽, mm)에 적분한다. X 포드(옆 위치 xOffset, 왼쪽 +)는 앞 이동 − Δh·xOffset을,
   // Y 포드(앞 위치 yOffset)는 옆 이동 + Δh·yOffset을 재므로 그만큼 되돌린다. heading은 감지 않는다.
+  // 팀이 해상도(ticksPerMm)를 아직 정하지 않았으면 x·y는 그대로 둔다(heading은 내장 IMU라 inputs가 따로 보낸다).
   private pinpointStep(p: Pinpoint, actual: Twist, yawFrom: number, yawTo: number): void {
     const scale = p.spec.podTicksPerMm * 1000
     const oldX = Math.floor(p.encX)
