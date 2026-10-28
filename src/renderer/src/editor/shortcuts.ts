@@ -105,7 +105,8 @@ export type ShortcutState = {
   pendingTextEdit: boolean
   // 핸들을 드래그하는 중(history.isChangeOpen)
   dragging: boolean
-  // 실행 중 씬 뷰에 포커스가 있어 키보드가 게임패드다(play/keyboardGamepad.ts의 keyboardPadActive). 수정키 없는
+  // 실행 중 씬 뷰에 포커스가 있어 키보드가 게임패드다(play/keyboardGamepad.ts의 keyboardPadActive), 또는 게임패드로
+  // 누른 키의 반복 입력이다(play/playActions.ts의 isKeyboardPadInput, 그 키를 뗄 때까지). 수정키 없는
   // 편집 단축키(F2·F·Q/W/E·X·H·Shift+H·Delete/Backspace)는 쓰지 않고 기본 동작만 막는다. Ctrl·Alt 조합은 그대로다.
   keyboardGamepad: boolean
 }

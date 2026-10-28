@@ -1,7 +1,7 @@
 import { Canvas } from '@react-three/fiber'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useKeyboardPadStore } from '../../play/keyboardGamepad'
+import { keepSceneViewFocus, useKeyboardPadStore } from '../../play/keyboardGamepad'
 import { isRunActive, usePlayStore } from '../../play/playStore'
 import { isRecentHandleInteraction, useEditorStore, type HandleSpace } from '../editorStore'
 import { useFlyStore } from '../flyStore'
@@ -34,7 +34,8 @@ const PAD_LAYOUT = [
 ] as const
 
 // 실행 중 키보드 게임패드 표시: 씬 뷰에 포커스가 있으면 "키보드 → 게임패드 N"과 테두리, 없으면 누르라는 안내.
-// [?]는 배치 도움말을 연다(마우스를 올려도 보인다). 누를 때 씬 뷰의 포커스를 뺏지 않는다(뺏으면 키를 모두 뗀다).
+// [?]는 배치 도움말을 연다(마우스를 올려도 보인다). 누를 때 씬 뷰의 포커스를 뺏지 않고(뺏으면 키를 모두 뗀다), 포커스가
+// 없으면 준다(표시가 캔버스 밖 형제라 캔버스의 pointerdown이 받지 못한다).
 function KeyboardPadBadge(): React.JSX.Element | null {
   const { t } = useTranslation()
   const slot = useKeyboardPadStore((state) => state.slot)
@@ -50,7 +51,7 @@ function KeyboardPadBadge(): React.JSX.Element | null {
       {focused && <div className="keyboard-pad-frame" aria-hidden />}
       <div
         className={focused ? 'keyboard-pad is-active' : 'keyboard-pad'}
-        onMouseDown={(event) => event.preventDefault()}
+        onMouseDown={keepSceneViewFocus}
       >
         <span className="keyboard-pad-label" role="status">
           {label}

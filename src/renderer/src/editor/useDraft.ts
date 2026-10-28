@@ -25,3 +25,17 @@ export function useDraft(): [string | null, (draft: string | null) => void] {
   )
   return [draft, setDraft]
 }
+
+// 입력 중인 칸을 확정한다(blur하면 입력칸이 초안을 확정한다). 저장·열기·INIT 전에 부른다.
+// 입력칸이 아니면 포커스를 그대로 둔다: 씬 뷰를 blur하면 키보드 게임패드가 모든 키를 떼고 꺼지고(W를 누른 채
+// Ctrl+S), 다른 곳(Console 목록 등)도 포커스가 <body>로 떨어져 다음 Delete·F가 씬에 간다.
+export function commitFocusedInput(
+  active: Element | null = typeof document === 'undefined' ? null : document.activeElement
+): void {
+  const element = active as HTMLElement | null
+  if (
+    element &&
+    (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable)
+  )
+    element.blur()
+}

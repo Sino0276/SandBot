@@ -21,6 +21,7 @@ import {
   initBlock,
   initPlay,
   initPlaySession,
+  isKeyboardPadInput,
   playButton,
   refreshOpModes,
   resetPlayActionsState,
@@ -31,8 +32,9 @@ import {
   stopPlay,
   togglePause
 } from './playActions'
+import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
-import { useKeyboardPadStore } from './keyboardGamepad'
+import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
 import { EMPTY_OPMODE_LIST, initialPlayData, usePlayStore } from './playStore'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
@@ -694,5 +696,54 @@ describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
     expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
     expect(useKeyboardPadStore.getState().slot).toBeNull()
     expect(usePlayStore.getState().gamepads).toEqual([null, null])
+  })
+
+  it('씬 뷰에서 포커스가 나가거나 창이 포커스를 잃으면 다음 읽기를 기다리지 않고 뗀 상태를 보낸다', async () => {
+    vi.useFakeTimers()
+    await initPlay()
+    const sceneView = { hasAttribute: (name: string) => name === SCENE_VIEW_ATTRIBUTE }
+    const pressW = (): void => {
+      fire('focusin', { target: sceneView })
+      fire('keydown', keyEvent('KeyW'))
+      vi.advanceTimersByTime(20)
+      expect(gamepads.at(-1)).toEqual([{ ...emptyGamepadState(), left_stick_y: -1 }, null])
+    }
+    // 창을 내리면 interval이 1초에 한 번으로 늦어진다: 타이머를 진행하지 않아도 보내야 한다
+    pressW()
+    fire('focusout', { target: sceneView })
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    pressW()
+    fire('blur', {})
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    const sent = gamepads.length
+    // 뗄 키가 없으면 보내지 않는다
+    fire('blur', {})
+    expect(gamepads).toHaveLength(sent)
+  })
+
+  it('게임패드 back(Backspace)을 누른 채 실행이 끝나도 반복 입력이 편집기의 Delete가 되지 않는다', async () => {
+    await initPlay()
+    useKeyboardPadStore.setState({ focused: true })
+    const backspace = keyEvent('Backspace') as Parameters<typeof shortcutCommand>[0]
+    const repeat = { ...backspace, repeat: true }
+    fire('keydown', backspace)
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    // EditorLayout의 단축키 리스너와 같은 판단
+    const shortcut = (): ReturnType<typeof shortcutCommand> =>
+      shortcutCommand(repeat, {
+        blocked: false,
+        handlesOwnKeys: false,
+        pendingTextEdit: false,
+        dragging: false,
+        keyboardGamepad: isKeyboardPadInput(repeat)
+      })
+    expect(isKeyboardPadInput(repeat)).toBe(true)
+    expect(shortcut().command).toBeNull()
+    // 떼면 다시 편집기의 키다(Delete를 누르고 있으면 반복해 지운다)
+    fire('keyup', backspace)
+    expect(isKeyboardPadInput(repeat)).toBe(false)
+    expect(shortcut().command).toBe('delete')
   })
 })
