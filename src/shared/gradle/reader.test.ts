@@ -571,6 +571,30 @@ describe('의존성 표기', () => {
     expect(codes(project)).toEqual(Array(5).fill('localDependency'))
   })
 
+  it('플러그인 DSL 안의 선언(Dairy의 ftc { dairy { … } })은 알리고, 선언 없는 블록은 조용히 넘긴다', async () => {
+    const project = await read({
+      'TeamCode/build.gradle.kts': [
+        'plugins {',
+        '    id("dev.frozenmilk.teamcode") version "12.0.0-1.2.2"',
+        '}',
+        'ftc {',
+        '    dairy {',
+        '        implementation(Sloth)',
+        '    }',
+        '}',
+        'kotlin { jvmToolchain(17) }'
+      ].join('\n')
+    })
+    expect(project.dependencies).toEqual([])
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'unsupportedSyntax',
+        at: { file: 'TeamCode/build.gradle.kts', line: 4 },
+        detail: "dependencies declared inside 'ftc { }' are not read"
+      }
+    ])
+  })
+
   it('무시하는 구성, 알리는 구성', async () => {
     const project = await readDeps(
       [

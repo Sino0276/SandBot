@@ -114,6 +114,13 @@ const REPOSITORY_KINDS: ReadonlySet<string> = new Set<GradleRepositoryKind>([
   'jcenter',
   'gradlePluginPortal'
 ])
+// 모르는 블록 안에 이 이름의 호출이 있으면 의존성 선언이다(진단)
+const DECLARATION_NAMES: ReadonlySet<string> = new Set([
+  'implementation',
+  'api',
+  'compileOnly',
+  'runtimeOnly'
+])
 // 조건문·읽지 못한 문장 안에 이 이름이 있으면 선언이 숨어 있을 수 있다(진단)
 const RELEVANT_NAMES = new Set([
   'dependencies',
@@ -798,6 +805,13 @@ class GradleReader {
           'unsupportedSyntax',
           this.at(ctx, stmt),
           `${name} is not read: ${this.snippet(ctx, stmt)}`
+        )
+      else if (closure && mentions(closure, DECLARATION_NAMES))
+        // 플러그인 DSL 안의 선언(Dairy의 ftc { dairy { implementation(Sloth) } } 등)
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `dependencies declared inside '${name} { }' are not read`
         )
     }
   }
