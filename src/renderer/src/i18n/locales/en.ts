@@ -211,7 +211,23 @@ const en: Messages = {
     global: 'Global',
     local: 'Local',
     isolation: 'Isolation view: only the selected objects are shown',
-    exitIsolation: 'Exit ({{shortcut}})'
+    exitIsolation: 'Exit ({{shortcut}})',
+    // Keyboard gamepad while running (only while the scene view has focus)
+    keyboardPad: {
+      active: 'Keyboard → gamepad {{slot}}',
+      inactive: 'Click the scene view: keyboard → gamepad {{slot}}',
+      helpTitle: 'Keyboard gamepad layout',
+      layout: {
+        leftStick: { keys: 'W A S D', field: 'Left stick' },
+        rightStick: { keys: '↑ ← ↓ →', field: 'Right stick' },
+        buttons: { keys: 'I J K L', field: 'Y X A B (pad shape)' },
+        bumpers: { keys: 'U O', field: 'Left · right bumper' },
+        triggers: { keys: 'Q E', field: 'Left · right trigger' },
+        dpad: { keys: 'T F G H', field: 'D-pad up · left · down · right' },
+        startBack: { keys: 'Enter · Backspace', field: 'start · back' }
+      },
+      hint: 'While the scene view has focus, editing shortcuts (F, Q/W/E, H, Delete and so on) are off. Ctrl combinations (save, undo, Ctrl+P) still work. Clicking elsewhere releases every key.'
+    }
   },
   hierarchy: {
     empty: 'No objects in the scene',
@@ -252,6 +268,9 @@ const en: Messages = {
     frameParent: 'Parent frame',
     frameParentHint:
       "Relative to the position and axes of the parent '{{name}}'. Moves along with the parent.",
+    running: 'Running',
+    runningHint:
+      'While running, the position and rotation of this robot and its children cannot be edited. The scene view draws the simulator pose and returns to the edit position when the run ends (the values do not change).',
     cadAxes: 'Shown in the CAD file axes (up {{up}} · forward {{forward}}).',
     robotCenter: 'From robot center',
     robotCenterHint:
@@ -524,6 +543,10 @@ const en: Messages = {
       seedHint:
         'The order the jitter is drawn in (an integer). Same code, inputs and seed give the same result.',
       autoStop: 'Stop Autonomous automatically {{seconds}} s after START (like the Driver Station)',
+      battery: 'Battery voltage',
+      batteryUnit: 'V',
+      batteryHint:
+        'Battery voltage of the simulator ({{min}}–{{max}} V). Motor free speed scales with voltage ÷ 12, and the hub getVoltage() returns this value.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -632,7 +655,8 @@ const en: Messages = {
       disconnected: 'Gamepad {{slot}}: not connected',
       connected: 'Gamepad {{slot}}: {{id}}',
       nonStandard: 'Gamepad {{slot}}: {{id}} (not a standard layout; no input is sent)',
-      hint: 'Read only while running. Press a button once after connecting to make it visible. The first and second connected pads are gamepad1 and gamepad2.'
+      keyboard: 'Gamepad {{slot}}: keyboard (click the scene view while running to use it)',
+      hint: 'Read only while running. Press a button once after connecting to make it visible. The first and second connected pads are gamepad1 and gamepad2, and the keyboard takes the first slot without a pad when the run starts (slots do not change during a run, so press a pad button before INIT).'
     }
   },
   // Console (Unity Console). English sentences from team code and javac are shown as they are.
@@ -695,7 +719,14 @@ const en: Messages = {
       configNotGenerated:
         '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
       configMissing:
-        'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.'
+        'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.',
+      // Simulator notices (simNotice, SimNoticeCode)
+      sim: {
+        sharedEncoderMode:
+          'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
+        worldError:
+          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).'
+      }
     }
   },
   // Telemetry tab (like the Driver Station screen)
@@ -713,6 +744,9 @@ const en: Messages = {
     name: 'Name',
     type: 'Type',
     values: 'Outputs',
+    inputs: 'Sensor values',
+    inputsHint:
+      'Raw hub values sent by the simulator (encoder ticks, IMU angles and so on). Team code reads them after the SDK applies direction and units.',
     selectHint: 'Click to select {{name}}.'
   },
   hardware: {

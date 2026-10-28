@@ -11,6 +11,7 @@ import {
   toolbarClock
 } from './playFormat'
 import {
+  clampBatteryVoltage,
   CONSOLE_PREFS_KEY,
   DEFAULT_CONSOLE_PREFS,
   DEFAULT_PLAY_SETTINGS,
@@ -82,6 +83,16 @@ describe('실행 설정(localStorage)', () => {
       seed: 2 ** 31 - 1
     })
     expect(parsePlaySettings(null)).toEqual(DEFAULT_PLAY_SETTINGS)
+  })
+
+  it('배터리 전압은 설정 범위 안으로(기본 12.5 V)', () => {
+    expect(DEFAULT_PLAY_SETTINGS.batteryVoltage).toBe(12.5)
+    expect(clampBatteryVoltage(13.2)).toBe(13.2)
+    expect(clampBatteryVoltage(20)).toBe(14.5)
+    expect(clampBatteryVoltage(3)).toBe(9)
+    expect(clampBatteryVoltage(NaN)).toBe(12.5)
+    expect(parsePlaySettings({ batteryVoltage: 15 }).batteryVoltage).toBe(12.5)
+    expect(parsePlaySettings({ batteryVoltage: 11 }).batteryVoltage).toBe(11)
   })
 
   it('저장소가 없거나 막혀 있어도 던지지 않는다', () => {

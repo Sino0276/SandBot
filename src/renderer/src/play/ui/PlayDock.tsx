@@ -11,16 +11,19 @@ import DevicesView from './DevicesView'
 import { LevelIcon, PlayIcon } from './PlayIcons'
 import TelemetryView from './TelemetryView'
 
-// 게임패드 1·2 연결 상태. Chromium은 버튼을 한 번 누르기 전에는 패드를 보이지 않는다.
+// 게임패드 1·2 연결 상태. Chromium은 버튼을 한 번 누르기 전에는 패드를 보이지 않는다. 실행 중에는 키보드 게임패드의
+// 자리도 보인다(실행을 시작할 때 물리 패드가 없는 첫 자리).
 function GamepadStatus(): React.JSX.Element {
   const { t } = useTranslation()
   const pads = usePlayStore((state) => state.gamepads)
   const describe = (pad: PadInfo | null, slot: number): string =>
     !pad
       ? t('play.gamepad.disconnected', { slot })
-      : pad.standard
-        ? t('play.gamepad.connected', { slot, id: pad.id })
-        : t('play.gamepad.nonStandard', { slot, id: pad.id })
+      : pad.keyboard
+        ? t('play.gamepad.keyboard', { slot })
+        : pad.standard
+          ? t('play.gamepad.connected', { slot, id: pad.id })
+          : t('play.gamepad.nonStandard', { slot, id: pad.id })
   const title = [describe(pads[0], 1), describe(pads[1], 2), t('play.gamepad.hint')].join('\n')
   return (
     <span className="gamepad-status" title={title} aria-label={title} role="img">
@@ -29,7 +32,13 @@ function GamepadStatus(): React.JSX.Element {
         <span
           key={index}
           className={
-            !pad ? 'gamepad-slot' : pad.standard ? 'gamepad-slot is-on' : 'gamepad-slot is-odd'
+            !pad
+              ? 'gamepad-slot'
+              : pad.keyboard
+                ? 'gamepad-slot is-keyboard'
+                : pad.standard
+                  ? 'gamepad-slot is-on'
+                  : 'gamepad-slot is-odd'
           }
         >
           {index + 1}

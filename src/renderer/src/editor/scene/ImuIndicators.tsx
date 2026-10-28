@@ -1,7 +1,14 @@
 import { useMemo } from 'react'
 import { ArrowHelper, Matrix4, Quaternion, Vector3 } from 'three'
 import { HUB_DIRECTION_VECTORS, type HubDirection } from '../../hardware/mounting'
-import { ancestorIds, findRobotId, worldMatrix, type SceneObjects } from '../../scene/model'
+import { poseTransform, simPoseOf, usePlayStore } from '../../play/playStore'
+import {
+  ancestorIds,
+  findRobotId,
+  worldMatrix,
+  type RootOverride,
+  type SceneObjects
+} from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 
@@ -14,20 +21,26 @@ const ARROW_LENGTH = 0.2
 const PLATE_SIZE = 0.1
 const PLATE_THICKNESS = 0.012
 
-type Indicator = {
+// IMU 하나(자리를 빼고). 씬 문서·선택마다 한 번 찾는다.
+type ImuTarget = {
   key: string
-  position: Vector3
-  // 로봇 좌표계 방향(IMU 방향은 로봇 기준으로 정한다)
-  robotRotation: Quaternion
+  objectId: string
+  robotId: string
   logo: Vector3
   usb: Vector3
 }
 
+type Indicator = ImuTarget & {
+  position: Vector3
+  // 로봇 좌표계 방향(IMU 방향은 로봇 기준으로 정한다)
+  robotRotation: Quaternion
+}
+
 // 선택한 오브젝트들과 그 하위에 붙은 IMU. 로봇을 고르면 로봇의 IMU가 모두 보인다.
-function indicatorsFor(objects: SceneObjects, selectedIds: readonly string[]): Indicator[] {
+function imuTargets(objects: SceneObjects, selectedIds: readonly string[]): ImuTarget[] {
   const selected = new Set(selectedIds.filter((id) => objects[id]))
   if (selected.size === 0) return []
-  const indicators: Indicator[] = []
+  const targets: ImuTarget[] = []
   for (const object of Object.values(objects)) {
     const imus = (object.components ?? []).filter((component) => component.type === 'imu')
     if (imus.length === 0) continue
@@ -35,22 +48,37 @@ function indicatorsFor(objects: SceneObjects, selectedIds: readonly string[]): I
       continue
     const robotId = findRobotId(objects, object.id)
     if (!robotId) continue
-    const robotRotation = new Quaternion().setFromRotationMatrix(worldMatrix(objects, robotId))
-    const position = new Vector3().setFromMatrixPosition(worldMatrix(objects, object.id))
     for (const imu of imus) {
       const logo = HUB_DIRECTION_VECTORS[imu.props.logoFacing as HubDirection]
       const usb = HUB_DIRECTION_VECTORS[imu.props.usbFacing as HubDirection]
       if (!logo || !usb) continue
-      indicators.push({
+      targets.push({
         key: imu.id,
-        position,
-        robotRotation,
+        objectId: object.id,
+        robotId,
         logo: new Vector3(...logo),
         usb: new Vector3(...usb)
       })
     }
   }
-  return indicators
+  return targets
+}
+
+// 표시할 자리. 실행 중인 로봇은 씬 뷰가 그리는 시뮬레이터 자세(rootOverride)로 놓는다(약 60 Hz, IMU 수만큼만 계산).
+function placeIndicators(
+  objects: SceneObjects,
+  targets: readonly ImuTarget[],
+  rootOverride: RootOverride | null
+): Indicator[] {
+  return targets.map((target) => ({
+    ...target,
+    position: new Vector3().setFromMatrixPosition(
+      worldMatrix(objects, target.objectId, rootOverride)
+    ),
+    robotRotation: new Quaternion().setFromRotationMatrix(
+      worldMatrix(objects, target.robotId, rootOverride)
+    )
+  }))
 }
 
 function Arrow({ direction, color }: { direction: Vector3; color: string }): React.JSX.Element {
@@ -93,7 +121,21 @@ function HubPlate({ logo, usb }: { logo: Vector3; usb: Vector3 }): React.JSX.Ele
 function ImuIndicators(): React.JSX.Element {
   const objects = useSceneStore((state) => state.objects)
   const selectedIds = useEditorStore((state) => state.selectedIds)
-  const indicators = useMemo(() => indicatorsFor(objects, selectedIds), [objects, selectedIds])
+  const targets = useMemo(() => imuTargets(objects, selectedIds), [objects, selectedIds])
+  // 실행 중 로봇의 IMU를 보일 때만 자세를 구독한다(그 밖에는 자세가 와도 다시 그리지 않는다)
+  const pose = usePlayStore((state) => {
+    const current = simPoseOf(state)
+    return current && targets.some((target) => target.robotId === current.robotId) ? current : null
+  })
+  const indicators = useMemo(
+    () =>
+      placeIndicators(
+        objects,
+        targets,
+        pose ? { id: pose.robotId, transform: poseTransform(pose) } : null
+      ),
+    [objects, targets, pose]
+  )
   return (
     <>
       {indicators.map((indicator) => (
