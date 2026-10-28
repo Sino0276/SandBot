@@ -179,11 +179,20 @@ describe('모터 모델', () => {
       enabled: false,
       zeroPower: 'BRAKE',
       targetPosition: null,
-      encoderOffset: 0
+      encoderOffset: 0,
+      encoderResets: 0
     })
-    const weird = readMotorOutputs({ mode: 'X', power: 'fast', enabled: 'yes', velocity: 'n' })
+    const weird = readMotorOutputs({
+      mode: 'X',
+      power: 'fast',
+      enabled: 'yes',
+      velocity: 'n',
+      encoderResets: 'many'
+    })
     expect(weird.enabled).toBe(false)
     expect(weird.power).toBe(0)
     expect(weird.velocity).toBeNull()
+    expect(weird.encoderResets).toBe(0)
+    expect(readMotorOutputs({ encoderResets: 3 }).encoderResets).toBe(3)
   })
 })
