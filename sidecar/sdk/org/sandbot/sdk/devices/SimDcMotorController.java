@@ -78,6 +78,10 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         /** 펌웨어 규칙: RUN_TO_POSITION에서 켜려면 목표 위치를 먼저 받아야 한다(fail safe로 초기화) */
         boolean targetPositionSet = false;
         boolean targetPositionEverSet = false;
+        /**
+         * 마지막 STOP_AND_RESET_ENCODER 때의 원시 엔코더 틱(허브가 엔코더를 0으로 되돌린 것을 원시 값에서 빼서 흉내 낸다).
+         * 처음 0이고 OpMode 사이(resetDeviceConfigurationForOpMode)에도 그대로다(실제 허브도 리셋하지 않으면 계속 센다).
+         */
         long encoderOffset = 0;
         final int[][] pidf = new int[2][4];
         final MotorControlAlgorithm[] algorithm = new MotorControlAlgorithm[2];
@@ -172,6 +176,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             device.output("zeroPower", zeroPowerBehavior.name());
             device.output("targetPosition", targetPositionEverSet ? (Object) targetPosition : null);
             device.output("targetTolerance", targetTolerance);
+            // 시뮬레이터가 RUN_TO_POSITION의 원시 목표(targetPosition + encoderOffset)를 만들 수 있게 늘 보낸다
+            device.output("encoderOffset", encoderOffset);
         }
     }
 

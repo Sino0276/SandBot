@@ -7,7 +7,8 @@ import {
   type PlayEvent,
   type PlayPhase,
   type PlaySpeed,
-  type PlayStackFrame
+  type PlayStackFrame,
+  type SimNoticeCode
 } from '../../shared/play'
 import {
   SIDECAR_PROTOCOL_VERSION,
@@ -20,6 +21,7 @@ import {
   type TelemetryMessage,
   type TickMessage
 } from '../../shared/sidecarProtocol'
+import type { SimPose } from '../../shared/sim/worldSpec'
 import type { ProcessExit, SidecarProcess } from './process'
 import { LineSplitter, parseSidecarLine, ProtocolError } from './protocol'
 import { EMPTY_WORLD, type SimWorld } from './world'
@@ -42,8 +44,13 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   Autonomous는 START 뒤 가상 30초가 된 틱의 답에 STOP을 싣는다(설정). STOP 뒤 kill 시간(실제, 일시 정지로 둔 동안은
 //   세지 않는다) 안에 끝나지 않거나, stall(무한 루프)을 받은 뒤 STOP이면 JVM을 끝낸다(killed). 틱을 주고받기 전
 //   (preparing·compiling)의 STOP은 shutdown을 보낸다.
+// 세계(운동학 시뮬레이터, SimWorld): 틱이 **도착할 때** world.step(그 틱의 시각·출력)을 부르고, 돌려받은 입력을 모아 두었다가
+//   그 틱의 답(tickReply)에 싣는다. 그래서 답을 늦추거나(속도·일시 정지) 답하지 못한 틱(끝)도 적분은 틱 순서대로 한 번씩
+//   결정적으로 하고, 일시 정지 중의 자세는 둔 틱의 것이다. 답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다(세계는 바뀐 키만
+//   주므로). 세계의 예외는 실행을 멈추지 않는다: simNotice worldError를 한 번 보내고 사이드카는 이전 입력을 계속 쓴다.
 // 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz,
-//   바뀔 때)·finished. 순서가 중요한 이벤트(phase·compiled·error·finished) 전에는 모아 둔 로그를 먼저 보낸다.
+//   바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시 정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는
+//   한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
   // 단조 증가하는 밀리초
@@ -100,6 +107,9 @@ export type SessionOptions = {
 const STATUS_INTERVAL_MS = 100
 const TELEMETRY_INTERVAL_MS = 34
 const DEVICES_INTERVAL_MS = 50
+const POSE_INTERVAL_MS = 16
+// 실행 하나에서 보내는 simNotice의 최대 수(세계가 안내를 끝없이 만들지 않게)
+const MAX_SIM_NOTICES = 64
 const LOG_FLUSH_MS = 50
 const LOG_BATCH_MAX = 500
 const MAX_LOG_TEXT = 64 * 1024
@@ -116,6 +126,41 @@ const JVM_NOTICE = /^(?:NOTE: )?Picked up (?:JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK
 
 export function isValidSpeed(speed: unknown): speed is PlaySpeed {
   return speed === 'max' || (typeof speed === 'number' && Number.isFinite(speed) && speed > 0)
+}
+
+// 장치 → 키 → 값. 장치 이름은 팀 구성에서 오므로('__proto__' 등) Map에 두고 보낼 때 Object.fromEntries로 만든다.
+type InputState = Map<string, Map<string, DeviceValues[string]>>
+
+function mergeInputs(into: InputState, inputs: unknown): void {
+  if (typeof inputs !== 'object' || inputs === null) return
+  for (const [device, values] of Object.entries(inputs)) {
+    if (typeof values !== 'object' || values === null) continue
+    let known = into.get(device)
+    for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+      const ok =
+        value === null ||
+        typeof value === 'boolean' ||
+        typeof value === 'string' ||
+        (typeof value === 'number' && Number.isFinite(value))
+      if (!ok) continue
+      if (!known) {
+        known = new Map()
+        into.set(device, known)
+      }
+      known.set(key, value as DeviceValues[string])
+    }
+  }
+}
+
+function inputsRecord(state: InputState): Record<string, DeviceValues> {
+  return Object.fromEntries(
+    [...state].map(([device, values]) => [device, Object.fromEntries(values)])
+  )
+}
+
+function errorMessage(error: unknown): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  return text.length > DETAIL_LIMIT ? `${text.slice(0, DETAIL_LIMIT)}…` : text
 }
 
 // 일정 간격보다 자주 보내지 않는다. 사이에 온 요청은 간격이 지난 때 한 번(최신 값으로) 보낸다.
@@ -212,6 +257,14 @@ export class SidecarSession {
   private outputs: { tNanos: number; outputs: Record<string, DeviceValues> } | null = null
   private lastDevicesKey = ''
   private readonly devicesThrottle: Throttle
+  // 세계가 보낸 입력: 다음 답에 실을 것(답 없이 넘긴 틱의 것도 합친다)과 지금까지의 누적(devices 이벤트)
+  private pendingInputs: InputState = new Map()
+  private readonly inputState: InputState = new Map()
+  private latestPose: ({ tNanos: number } & SimPose) | null = null
+  private lastPoseKey = ''
+  private readonly poseThrottle: Throttle
+  private readonly noticeKeys = new Set<string>()
+  private worldFailed = false
 
   constructor(
     private readonly process: SidecarProcess,
@@ -227,6 +280,7 @@ export class SidecarSession {
       this.sendTelemetry()
     )
     this.devicesThrottle = new Throttle(this.clock, DEVICES_INTERVAL_MS, () => this.sendDevices())
+    this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => this.sendPose())
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve
     })
@@ -333,6 +387,8 @@ export class SidecarSession {
     if (paused) {
       this.cancelReply()
       this.samples = []
+      // 멈춘 자리(둔 틱의 자세)를 바로 보인다
+      this.poseThrottle.flush()
     } else {
       this.reanchor()
       this.schedule()
@@ -409,12 +465,9 @@ export class SidecarSession {
     const events = this.queued
     this.queued = []
     if (events.includes('start')) this.startNanos = tick.tNanos
-    let inputs: Record<string, DeviceValues> = {}
-    try {
-      inputs = this.world.step(tick.tNanos, tick.outputs)
-    } catch {
-      // 세계(시뮬레이터)의 오류로 실행을 멈추지 않는다
-    }
+    // 세계는 이 틱이 도착할 때 이미 돌렸다(onTick → stepWorld)
+    const inputs = inputsRecord(this.pendingInputs)
+    this.pendingInputs = new Map()
     this.process.send({
       type: 'tickReply',
       tick: tick.tick,
@@ -434,6 +487,7 @@ export class SidecarSession {
     this.stalled = false
     this.lastLoops = tick.loops
     this.outputs = { tNanos: tick.tNanos, outputs: tick.outputs }
+    this.stepWorld(tick)
     this.devicesThrottle.request()
     // 답하지 않은 틱이 있는데 새 틱이 오면(사이드카가 답을 기다리지 않은 틱) 앞의 것은 답 없이 넘긴다
     this.cancelReply()
@@ -449,6 +503,7 @@ export class SidecarSession {
     if (this.step) {
       if (tick.loops > this.step.baseLoops || tick.tNanos >= this.step.deadline) {
         this.step = null
+        this.poseThrottle.flush()
         this.updateKillTimer()
         this.emitStatus(true)
       } else {
@@ -461,6 +516,45 @@ export class SidecarSession {
       return
     }
     this.schedule()
+  }
+
+  // 세계를 이 틱까지 돌리고(틱 순서대로 한 번씩) 입력·자세·안내를 받아 둔다. 세계의 예외로 실행을 멈추지 않는다.
+  private stepWorld(tick: TickMessage): void {
+    let inputs: Record<string, DeviceValues>
+    let pose: SimPose | null
+    let notices: { code: SimNoticeCode; params: Record<string, string> }[]
+    try {
+      inputs = this.world.step(tick.tNanos, tick.outputs)
+      pose = this.world.pose()
+      notices = this.world.drainNotices()
+    } catch (error) {
+      if (!this.worldFailed) {
+        this.worldFailed = true
+        this.simNotice(tick.tNanos, 'worldError', { detail: errorMessage(error) })
+      }
+      return
+    }
+    mergeInputs(this.pendingInputs, inputs)
+    mergeInputs(this.inputState, inputs)
+    if (pose && Number.isFinite(pose.x) && Number.isFinite(pose.y) && Number.isFinite(pose.yaw)) {
+      this.latestPose = {
+        tNanos: tick.tNanos,
+        x: pose.x,
+        y: pose.y,
+        yaw: pose.yaw,
+        blocked: pose.blocked === true
+      }
+      this.poseThrottle.request()
+    }
+    for (const notice of notices) this.simNotice(tick.tNanos, notice.code, notice.params)
+  }
+
+  private simNotice(tNanos: number, code: SimNoticeCode, params: Record<string, string>): void {
+    const key = JSON.stringify([code, params])
+    if (this.noticeKeys.has(key) || this.noticeKeys.size >= MAX_SIM_NOTICES) return
+    this.noticeKeys.add(key)
+    this.flushLogs()
+    this.emit({ type: 'simNotice', runId: this.runId, tNanos, code, params: { ...params } })
   }
 
   // ---- STOP 시간 초과 ----
@@ -688,6 +782,7 @@ export class SidecarSession {
     this.flushLogs()
     this.telemetryThrottle.flush()
     this.devicesThrottle.flush()
+    this.poseThrottle.flush()
     this.emitStatus(true)
     this.finishedEmitted = true
     if (this.statusTimer !== null) {
@@ -759,7 +854,8 @@ export class SidecarSession {
   private sendDevices(): void {
     const latest = this.outputs
     if (!latest) return
-    const key = JSON.stringify(latest.outputs)
+    const inputs = inputsRecord(this.inputState)
+    const key = JSON.stringify([latest.outputs, inputs])
     if (key === this.lastDevicesKey) return
     this.lastDevicesKey = key
     this.emit({
@@ -767,9 +863,18 @@ export class SidecarSession {
       runId: this.runId,
       tNanos: latest.tNanos,
       outputs: latest.outputs,
-      // 2단계(A): 세계가 보낸 센서 값의 누적 상태
-      inputs: {}
+      // 세계가 보낸 센서 값의 누적 상태(허브 원시 값)
+      inputs
     })
+  }
+
+  private sendPose(): void {
+    const pose = this.latestPose
+    if (!pose) return
+    const key = JSON.stringify([pose.x, pose.y, pose.yaw, pose.blocked])
+    if (key === this.lastPoseKey) return
+    this.lastPoseKey = key
+    this.emit({ type: 'pose', runId: this.runId, ...pose })
   }
 
   private addSample(virt: number): void {

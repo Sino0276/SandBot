@@ -4,11 +4,13 @@ import { dirname, join } from 'path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { JdkInfo, PlayEvent, PlayInitRequest } from '../../shared/play'
 import type { HostMessage } from '../../shared/sidecarProtocol'
+import { WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } from './controller'
 import { javaArgs, type SidecarFiles } from './launch'
 import { spawnSidecar, type SidecarProcess, type SpawnSidecar } from './process'
 import { FAKE_SIDECAR_SCRIPT, FakeClock } from './testkit'
+import { kinematicWorld } from './world'
 
 // 진짜 프로세스(node로 돌리는 가짜 사이드카)와 파이프로 호스트 전체(확인 → spawn → 세션 → 이벤트)를 시험한다.
 
@@ -461,6 +463,70 @@ describe('PlayController + 가짜 사이드카', () => {
       await new Promise((resolve) => setTimeout(resolve, 2))
     }
     expect(finished(request.runId)).toMatchObject({ reason: 'stopped' })
+  })
+
+  it('요청의 세계 설명으로 실행마다 운동학 시뮬레이터를 만든다(없으면 빈 세계)', async () => {
+    controller = make({ world: kinematicWorld })
+    const world: WorldSpec = {
+      version: WORLD_SPEC_VERSION,
+      robot: {
+        start: { x: 0.25, y: -0.5, yaw: 0.5 },
+        footprint: [
+          { x: 0.2, y: 0.2 },
+          { x: -0.2, y: 0.2 },
+          { x: -0.2, y: -0.2 }
+        ]
+      },
+      batteryVoltage: 11.5,
+      hubs: ['Control Hub'],
+      motors: [{ device: 'motor', modelTag: 'TetrixMotor', gearbox: 52, directionSign: 1 }],
+      wheels: [],
+      deadWheels: [],
+      pinpoints: [],
+      otos: [],
+      imus: []
+    }
+    const request = opModeRequest('Normal', { world })
+    expect(await controller.init(request, owner)).toEqual({ ok: true })
+    await waitFor(() => of('pose', request.runId).length > 0)
+    expect(of('pose', request.runId)[0]).toMatchObject({
+      x: 0.25,
+      y: -0.5,
+      yaw: 0.5,
+      blocked: false
+    })
+    await waitFor(() => of('devices', request.runId).length > 0)
+    expect(of('devices', request.runId)[0].inputs).toEqual({
+      'Control Hub': { voltage: 11.5 },
+      motor: { position: 0, velocity: 0 }
+    })
+    const firstReply = recorded[0].sent.find((message) => message.type === 'tickReply')
+    expect(firstReply).toMatchObject({
+      inputs: { 'Control Hub': { voltage: 11.5 }, motor: { position: 0, velocity: 0 } }
+    })
+    controller.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(request.runId) !== undefined)
+
+    // 세계 설명이 없으면 자세·입력이 없다
+    const empty = opModeRequest('Normal')
+    expect(await controller.init(empty, owner)).toEqual({ ok: true })
+    await waitFor(() => of('devices', empty.runId).length > 0)
+    expect(of('devices', empty.runId)[0].inputs).toEqual({})
+    controller.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(empty.runId) !== undefined)
+    expect(of('pose', empty.runId)).toEqual([])
+  })
+
+  it('틀린 세계 설명은 실행 전에 거부한다', async () => {
+    const request = opModeRequest('Normal', {
+      world: { version: WORLD_SPEC_VERSION } as unknown as WorldSpec
+    })
+    expect(await controller.init(request, owner)).toMatchObject({
+      ok: false,
+      code: 'notAllowed',
+      detail: 'invalid request: world: robot'
+    })
+    expect(spawned).toEqual([])
   })
 })
 
