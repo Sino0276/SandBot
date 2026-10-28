@@ -15,6 +15,7 @@ import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
+import { defaultWheel } from '../scene/wheel'
 import {
   handlePlayEvent,
   initBlock,
@@ -233,19 +234,25 @@ describe('INIT → START → STOP', () => {
 
   it('실행할 때 지우기를 켜 두면 Console을 지우고 실행 줄을 남긴다', async () => {
     usePlayStore.getState().addConsole({ type: 'log', stream: 'out', text: 'old' })
+    // 실행 안내(바퀴 없음 경고 등)는 빼고 본다
+    const types = (): string[] =>
+      usePlayStore
+        .getState()
+        .entries.filter((entry) => entry.type !== 'notice')
+        .map((entry) => entry.type)
     await initPlay()
-    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run'])
+    expect(types()).toEqual(['run'])
     usePlayStore.getState().setClearOnPlay(false)
     usePlayStore.setState({ run: null })
     await initPlay()
-    expect(usePlayStore.getState().entries.map((entry) => entry.type)).toEqual(['run', 'run'])
+    expect(types()).toEqual(['run', 'run'])
   })
 
   it('마지막 저장의 생성이 막혔으면 Console에 경고 한 줄', async () => {
     useProjectStore.setState({ generation: { status: 'blocked', errors: 3 } })
     await initPlay()
     const entries = usePlayStore.getState().entries
-    expect(entries.at(-1)).toMatchObject({
+    expect(entries[1]).toMatchObject({
       type: 'notice',
       key: 'generationBlocked',
       level: 'warning'
@@ -264,6 +271,69 @@ describe('INIT → START → STOP', () => {
       params: { file: configPath },
       level: 'warning'
     })
+  })
+})
+
+describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
+  // SCENE의 로봇에 구동 바퀴 하나(arm 모터)
+  const withWheel = (): SceneObjects => ({
+    ...SCENE,
+    wheel: {
+      id: 'wheel',
+      name: 'Wheel',
+      kind: 'part',
+      parentId: 'bot',
+      transform: { position: [0.1, 0.2, 0.05], rotation: [0, 0, 0] },
+      visual: { type: 'mesh', geometryId: 'g:0', color: [1, 1, 1] },
+      wheel: { ...defaultWheel('traction'), motor: 'm' }
+    }
+  })
+  const notices = (): unknown[] =>
+    usePlayStore
+      .getState()
+      .entries.filter((entry) => entry.type === 'notice')
+      .map((entry) => (entry.type === 'notice' ? entry.key : null))
+
+  it('구성과 같은 로봇의 세계 설명을 보낸다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world).toMatchObject({
+      version: 1,
+      robot: { start: { x: 0, y: 0, yaw: 0 } },
+      batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
+      hubs: ['Control Hub'],
+      motors: [{ device: 'arm', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5 }],
+      wheels: [{ kind: 'traction', motor: 'arm', radius: 0.048, rollers: null }]
+    })
+    expect(world!.wheels[0].position.x).toBeCloseTo(0.1, 12)
+    expect(notices()).toEqual([])
+  })
+
+  it('바퀴가 없으면 세계는 보내되 Console에 경고한다', async () => {
+    await initPlay()
+    expect(lastRequest().world?.wheels).toEqual([])
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'notice',
+      key: 'worldNoWheels',
+      level: 'warning'
+    })
+  })
+
+  it('생성이 막혔으면 장치 이름이 다를 수 있다고 한 줄 더 알린다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    useProjectStore.setState({ generation: { status: 'blocked', errors: 1 } })
+    await initPlay()
+    expect(notices()).toEqual(['generationBlocked', 'worldGenerationStale'])
+  })
+
+  it('하드웨어가 있는 로봇이 없으면 세계도 없다', async () => {
+    useSceneStore.setState({
+      objects: { bot: { ...SCENE.bot }, wheel: { ...withWheel().wheel } }
+    })
+    await initPlay()
+    expect(lastRequest()).toMatchObject({ configPath: null, world: null })
+    expect(notices()).toEqual([])
   })
 })
 

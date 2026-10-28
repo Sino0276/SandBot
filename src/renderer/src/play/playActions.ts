@@ -18,6 +18,7 @@ import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
 import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
+import { buildWorldSpec } from './worldSpec'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -193,6 +194,11 @@ async function runInit(): Promise<void> {
   )
   const configPath = config?.configPath ?? null
   const warning = generationWarning(generation, configPath)
+  // 운동학 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
+  // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
+  const world = config
+    ? buildWorldSpec(useSceneStore.getState().objects, config.robotId, play.settings)
+    : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
   usePlayStore.setState({
@@ -209,6 +215,10 @@ async function runInit(): Promise<void> {
   const { addConsole } = usePlayStore.getState()
   addConsole({ type: 'run', name: opMode.name, config: configPath })
   if (warning) addConsole({ type: 'notice', ...warning }, null, 'warning')
+  if (warning && world?.spec && world.spec.wheels.length > 0)
+    addConsole({ type: 'notice', key: 'worldGenerationStale', params: {} }, null, 'warning')
+  for (const notice of world?.warnings ?? [])
+    addConsole({ type: 'notice', ...notice }, null, 'warning')
   dismissNotice(lastPlayNotice)
   lastPlayNotice = 0
 
@@ -220,8 +230,7 @@ async function runInit(): Promise<void> {
       opMode: { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
       settings: play.settings,
-      // 2단계(B): 고른 로봇의 세계 설명(play/worldSpec.ts)
-      world: null
+      world: world?.spec ?? null
     })
   } catch (error) {
     failRun(runId, 'error', 'playInitFailed', ipcErrorDetail(error))
