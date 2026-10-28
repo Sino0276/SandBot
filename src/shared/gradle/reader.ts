@@ -1107,7 +1107,8 @@ class GradleReader {
         version: notation.version,
         classifier: notation.classifier,
         extension: notation.extension,
-        excludes: modifiers.excludes,
+        // 한 문장의 여러 표기가 같은 배열을 나눠 갖지 않게
+        excludes: modifiers.excludes.map((exclude) => ({ ...exclude })),
         transitive: modifiers.transitive,
         at: { file: ctx.file, line }
       })

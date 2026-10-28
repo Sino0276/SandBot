@@ -11,6 +11,8 @@ function corpus(): MemoryFiles[] {
   const projects: MemoryFiles[] = []
   for (const name of readdirSync(FIXTURES)) {
     const root = join(FIXTURES, name)
+    // SOURCES.txt 같은 설명 파일은 프로젝트가 아니다
+    if (!statSync(root).isDirectory()) continue
     const files: MemoryFiles = {}
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir)) {
@@ -127,5 +129,46 @@ describe('망가진 입력', () => {
     expect(performance.now() - started).toBeLessThan(3000)
     // 같은 좌표지만 줄이 다르므로 한도(1000개)까지 남는다
     expect(project.dependencies).toHaveLength(1000)
+  })
+
+  it('끝없이 이은 식(+·.·!·@·명령식 사슬)은 그 문장만 버리고 스택을 넘기지 않는다', async () => {
+    // 합쳐 256 KB 안(한 줄에 수천 번 이은 식)
+    const n = 5000
+    const long = [
+      `def a = ${Array(n).fill("'x'").join(' + ')}`,
+      `def b = libs${'.x'.repeat(n)}`,
+      `def c = ${'!'.repeat(n)}true`,
+      `${'@A '.repeat(n)}\ndef d = '1'`,
+      `id 'a'${" b 'c'".repeat(n)}`,
+      `def e = f${'()'.repeat(n)}`,
+      `def g = h${'[0]'.repeat(n)}`
+    ].join('\n')
+    const project = await readGradleProject(
+      memorySource({
+        'TeamCode/build.gradle': `${long}\ndependencies { implementation "g:after:$d" }`
+      })
+    )
+    expect(
+      project.dependencies.map((dep) => `${dep.group}:${dep.artifact}:${dep.version}`)
+    ).toEqual(['g:after:1'])
+  })
+
+  it('긴 목록·맵과 많은 인자는 그대로 읽는다', async () => {
+    const items = Array.from({ length: 900 }, (_, i) => `'g:a${i}:1'`)
+    const project = await readGradleProject(
+      memorySource({
+        'TeamCode/build.gradle': [
+          `ext.list = [${items.join(', ')}]`,
+          `ext.map = [${items.map((item, i) => `k${i}: ${item}`).join(', ')}]`,
+          'dependencies {',
+          `  implementation ${items.join(', ')}`,
+          '  implementation list[899]',
+          '  implementation map.k5',
+          '}'
+        ].join('\n')
+      })
+    )
+    expect(project.diagnostics).toEqual([])
+    expect(project.dependencies).toHaveLength(902)
   })
 })

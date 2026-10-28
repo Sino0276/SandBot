@@ -50,6 +50,8 @@ export type ParsedScript = {
 
 // 블록·괄호 중첩 한도
 export const MAX_NESTING = 64
+// 한 식에서 이어 붙이는 연산자·멤버·명령 사슬 한도(넘으면 그 문장만 버린다)
+export const MAX_CHAIN = 256
 
 const GROOVY_MODIFIERS = new Set([
   'def',
@@ -113,6 +115,7 @@ class TooDeep extends Error {}
 class Parser {
   pos = 0
   depth = 0
+  links = 0
 
   constructor(
     readonly tokens: GradleToken[],
@@ -199,6 +202,7 @@ class Parser {
     const startPos = this.pos
     const start = this.peek()
     const depth = this.depth
+    const links = this.links
     try {
       const stmt = this.statementInner()
       if (!this.atStatementEnd()) throw new Bail()
@@ -206,10 +210,17 @@ class Parser {
     } catch (error) {
       if (!(error instanceof Bail)) throw error
       this.depth = depth
+      this.links = links
       this.pos = startPos
       const idents = this.skipStatement()
       return { kind: 'unknown', keyword: start.text, idents, ...this.span(start) }
     }
+  }
+
+  // 식 트리를 한 단계 깊게 하는 사슬 하나(a + b, a.b, a(…), !a, 명령식 사슬). 식 하나(expression)에서 한도를 넘으면
+  // 그 문장만 버린다(a + b + …처럼 끝없이 이은 식은 트리가 깊어 해석이 재귀로 스택을 넘길 수 있다).
+  private link(): void {
+    if (++this.links > MAX_CHAIN) throw new Bail()
   }
 
   private statementInner(): Stmt {
@@ -226,11 +237,13 @@ class Parser {
       }
     }
     if (this.isPunct('@') && this.peek(1).kind === 'ident') {
-      // 주석(annotation)을 넘기고 그 뒤 문장을 읽는다
-      this.next()
-      this.qualifiedName()
-      if (this.isPunct('(')) this.skipBalanced()
-      this.skipNewlinesOnly()
+      // 주석(annotation)들을 넘기고 그 뒤 문장을 읽는다
+      while (this.isPunct('@') && this.peek(1).kind === 'ident') {
+        this.next()
+        this.qualifiedName()
+        if (this.isPunct('(')) this.skipBalanced()
+        this.skipNewlinesOnly()
+      }
       return this.statementInner()
     }
     const decl = this.dialect === 'kotlin' ? this.kotlinDecl() : this.groovyDecl()
@@ -515,11 +528,15 @@ class Parser {
 
   // ---- 식 ----
 
+  // 식 하나. 사슬 한도(link)는 식마다 따로 센다(괄호·인자 안의 식은 중첩 한도로 묶인다).
   expression(command: boolean): Expr {
     this.enter()
+    const links = this.links
+    this.links = 0
     try {
       return this.binary(0, command)
     } finally {
+      this.links = links
       this.leave()
     }
   }
@@ -536,6 +553,7 @@ class Parser {
     for (;;) {
       // as 형식(캐스트)
       if (this.is('as') && this.peek().kind === 'ident') {
+        this.link()
         const start = this.next()
         const type = this.peek()
         if (type.kind !== 'ident') throw new Bail()
@@ -554,6 +572,7 @@ class Parser {
       }
       // 삼항 a ? b : c(값으로 읽지 않는다)
       if (min === 0 && this.isPunct('?')) {
+        this.link()
         this.next()
         this.skipNewlinesOnly()
         this.expression(false)
@@ -568,6 +587,7 @@ class Parser {
       if (op === null) return left
       const precedence = BINARY_PRECEDENCE[op]
       if (precedence <= min) return left
+      this.link()
       this.next()
       this.skipNewlinesOnly()
       const right = this.binary(precedence, false)
@@ -576,13 +596,18 @@ class Parser {
   }
 
   private unary(command: boolean): Expr {
-    const token = this.peek()
-    if (token.kind === 'punct' && ['!', '-', '+', '~', '++', '--', '*'].includes(token.text)) {
-      this.next()
-      const operand = this.unary(false)
-      return { kind: 'unary', op: token.text, operand, ...this.span(token) }
+    const ops: GradleToken[] = []
+    for (;;) {
+      const token = this.peek()
+      if (token.kind !== 'punct' || !['!', '-', '+', '~', '++', '--', '*'].includes(token.text))
+        break
+      this.link()
+      ops.push(this.next())
     }
-    return this.postfix(this.primary(), command)
+    let expr = this.postfix(this.primary(), command && ops.length === 0)
+    for (let i = ops.length - 1; i >= 0; i--)
+      expr = { kind: 'unary', op: ops[i].text, operand: expr, ...this.span(ops[i]) }
+    return expr
   }
 
   // 명령식 인자의 시작이 될 수 있는 토큰(같은 줄)
@@ -597,6 +622,8 @@ class Parser {
     for (;;) {
       const token = this.peek()
       if (token.kind === 'punct') {
+        if (['(', '[', '{', '++', '--', '.', '?.', '*.', '.&', '::'].includes(token.text))
+          this.link()
         if (['.', '?.', '*.', '.&', '::'].includes(token.text)) {
           this.next()
           this.skipNewlinesOnly()
@@ -653,6 +680,7 @@ class Parser {
         (expr.kind === 'name' || expr.kind === 'member') &&
         this.startsCommandArg()
       ) {
+        this.link()
         expr = this.commandCall(expr)
         continue
       }
@@ -679,6 +707,7 @@ class Parser {
     if (this.isPunct('{')) closure = this.closure()
     let expr: Expr = { kind: 'call', callee, args, closure, ...this.spanFrom(callee) }
     while (this.peek().kind === 'ident' && !OPERATOR_WORDS.has(this.peek().text)) {
+      this.link()
       const nameToken = this.next()
       const member: Expr = {
         kind: 'member',
