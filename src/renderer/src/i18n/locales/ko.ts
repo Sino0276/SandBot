@@ -214,7 +214,23 @@ const ko = {
     local: '로컬',
     // 고립 보기(Shift+H)
     isolation: '고립 보기: 선택한 오브젝트만 보입니다',
-    exitIsolation: '나가기 ({{shortcut}})'
+    exitIsolation: '나가기 ({{shortcut}})',
+    // 실행 중 키보드 게임패드(씬 뷰에 포커스가 있을 때만)
+    keyboardPad: {
+      active: '키보드 → 게임패드 {{slot}}',
+      inactive: '씬 뷰를 누르면 키보드 → 게임패드 {{slot}}',
+      helpTitle: '키보드 게임패드 배치',
+      layout: {
+        leftStick: { keys: 'W A S D', field: '왼쪽 스틱' },
+        rightStick: { keys: '↑ ← ↓ →', field: '오른쪽 스틱' },
+        buttons: { keys: 'I J K L', field: 'Y X A B (패드 모양)' },
+        bumpers: { keys: 'U O', field: '왼쪽·오른쪽 범퍼' },
+        triggers: { keys: 'Q E', field: '왼쪽·오른쪽 트리거' },
+        dpad: { keys: 'T F G H', field: '방향 패드 위·왼쪽·아래·오른쪽' },
+        startBack: { keys: 'Enter · Backspace', field: 'start · back' }
+      },
+      hint: '씬 뷰에 포커스가 있는 동안 편집 단축키(F·Q/W/E·H·Delete 등)는 쓰지 않습니다. Ctrl 조합(저장·실행 취소·Ctrl+P)은 그대로입니다. 다른 곳을 누르면 모든 키를 뗍니다.'
+    }
   },
   hierarchy: {
     empty: '씬에 오브젝트가 없습니다',
@@ -258,6 +274,10 @@ const ko = {
     frameParent: '부모 기준',
     frameParentHint:
       '부모 오브젝트 ‘{{name}}’의 위치와 축을 기준으로 한 값입니다. 부모가 움직이면 함께 움직입니다.',
+    // 실행 중인 로봇(과 그 하위)의 변환은 고칠 수 없다
+    running: '실행 중',
+    runningHint:
+      '실행 중에는 이 로봇과 하위 오브젝트의 위치·회전을 고칠 수 없습니다. 씬 뷰는 시뮬레이터 자세로 그리고, 끝나면 편집 위치로 돌아갑니다(값은 바뀌지 않습니다).',
     cadAxes: 'CAD 파일의 축 방향으로 표시합니다 (위 {{up}} · 앞 {{forward}}).',
     robotCenter: '로봇 중심 기준',
     robotCenterHint:
@@ -535,6 +555,9 @@ const ko = {
       seed: '시드',
       seedHint: '오차를 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
       autoStop: 'Autonomous는 START 뒤 {{seconds}}초에 자동으로 STOP (Driver Station과 같음)',
+      battery: '배터리 전압',
+      batteryHint:
+        '시뮬레이터의 배터리 전압({{min}}–{{max}} V). 모터 무부하 속도가 전압 ÷ 12에 비례하고, 허브 getVoltage()가 이 값을 돌려줍니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
   },
@@ -643,7 +666,8 @@ const ko = {
       disconnected: '게임패드 {{slot}}: 연결 안 됨',
       connected: '게임패드 {{slot}}: {{id}}',
       nonStandard: '게임패드 {{slot}}: {{id}} (표준 배치가 아니라 입력을 보내지 않음)',
-      hint: '실행 중에만 읽습니다. 연결한 뒤 버튼을 한 번 눌러야 보입니다. 처음·둘째로 연결한 패드가 gamepad1·gamepad2입니다.'
+      keyboard: '게임패드 {{slot}}: 키보드 (실행 중 씬 뷰를 누르면 입력)',
+      hint: '실행 중에만 읽습니다. 연결한 뒤 버튼을 한 번 눌러야 보입니다. 처음·둘째로 연결한 패드가 gamepad1·gamepad2이고, 실행을 시작할 때 패드가 없는 첫 자리는 키보드가 맡습니다(실행하는 동안 자리는 바뀌지 않으므로 패드 버튼은 INIT 전에 누르세요).'
     }
   },
   // Console(Unity Console). 팀 코드·javac의 영어 문장은 그대로 보인다.
@@ -689,7 +713,13 @@ const ko = {
       configNotGenerated:
         '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
       configMissing:
-        '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.'
+        '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.',
+      // 시뮬레이터 안내(simNotice, SimNoticeCode)
+      sim: {
+        sharedEncoderMode:
+          '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
+        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).'
+      }
     }
   },
   // 텔레메트리 탭(Driver Station 화면처럼)
@@ -707,6 +737,9 @@ const ko = {
     name: '이름',
     type: '종류',
     values: '출력',
+    inputs: '센서 값',
+    inputsHint:
+      '시뮬레이터가 보낸 허브 원시 값(엔코더 틱, IMU 각 등)입니다. 팀 코드가 읽는 값은 SDK가 방향·단위를 적용한 값입니다.',
     selectHint: '누르면 {{name}}을(를) 고릅니다.'
   },
   hardware: {

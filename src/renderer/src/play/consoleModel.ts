@@ -15,8 +15,10 @@ export const CONSOLE_LIMIT = 2000
 
 export type ConsoleFinishReason = FinishReason | 'killed' | 'crashed'
 
-// 실행 흐름이 남기는 안내(console.notices.*)
-export type ConsoleNoticeKey = keyof Messages['console']['notices']
+// 실행 흐름이 남기는 안내(console.notices.*). 시뮬레이터 안내(simNotice)는 console.notices.sim.<code>다.
+type NoticeMessages = Messages['console']['notices']
+export type ConsoleNoticeKey =
+  Exclude<keyof NoticeMessages, 'sim'> | `sim.${keyof NoticeMessages['sim'] & string}`
 
 export type ConsoleBody =
   | { type: 'log'; stream: 'out' | 'err' | 'robotLog'; text: string }

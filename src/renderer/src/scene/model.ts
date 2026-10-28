@@ -180,10 +180,24 @@ export function childrenInDocument(
   return index.get(parentId) ?? NO_CHILDREN
 }
 
-export function worldMatrix(objects: SceneObjects, id: string): Matrix4 {
+// 최상위 오브젝트 하나의 transform 덮어쓰기(씬 문서를 복사하지 않고). 실행 중 씬 뷰가 로봇을 시뮬레이터 자세로
+// 그릴 때 F 포커스·IMU 표시가 그 자세로 계산하려고 쓴다. 하이어라키·인스펙터·코드 생성은 쓰지 않는다(문서 자세 그대로).
+export type RootOverride = { id: string; transform: Transform }
+
+export function worldMatrix(
+  objects: SceneObjects,
+  id: string,
+  rootOverride: RootOverride | null = null
+): Matrix4 {
   const object = objects[id]
-  const local = transformToMatrix(object.transform)
-  return object.parentId ? worldMatrix(objects, object.parentId).multiply(local) : local
+  const transform =
+    rootOverride !== null && rootOverride.id === id && object.parentId === null
+      ? rootOverride.transform
+      : object.transform
+  const local = transformToMatrix(transform)
+  return object.parentId
+    ? worldMatrix(objects, object.parentId, rootOverride).multiply(local)
+    : local
 }
 
 // 오브젝트가 속한 로봇(자기 자신 포함)의 id. 로봇에 속하지 않으면 null.

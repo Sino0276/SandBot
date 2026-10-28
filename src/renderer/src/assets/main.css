@@ -240,6 +240,17 @@ body {
   font-weight: 500;
 }
 
+/* 실행 중인 로봇의 변환(읽기 전용) */
+.inspector-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.frame-badge.is-running {
+  background: #15803d;
+}
+
 .inspector-note {
   margin: 0 0 8px;
   color: var(--color-text-muted);

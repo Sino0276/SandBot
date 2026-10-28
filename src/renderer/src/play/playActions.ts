@@ -195,7 +195,10 @@ async function runInit(): Promise<void> {
   const warning = generationWarning(generation, configPath)
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
+  // 이전 실행의 잔상은 다음 INIT에 지운다(Unity처럼 로봇은 편집 위치에서 다시 시작한다)
   usePlayStore.setState({
+    simPose: null,
+    ghostPose: null,
     run: newRun({
       runId,
       root,
@@ -260,7 +263,7 @@ async function runInit(): Promise<void> {
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
-  usePlayStore.setState({ run: null })
+  usePlayStore.setState({ run: null, simPose: null })
   usePlayStore.getState().addConsole({ type: 'initFailed', notice: key, detail }, null, level)
   replacePlayNotice(
     level,
@@ -382,7 +385,7 @@ export function handlePlayEvent(event: PlayEvent): void {
   }
   // 다른 프로젝트를 연 뒤 끝난 실행은 지운다(그 프로젝트의 텔레메트리·장치·시간이 남지 않게, Console은 그대로)
   if (!isRunActive(after) && before.root !== useProjectStore.getState().root)
-    usePlayStore.setState({ run: null })
+    usePlayStore.setState({ run: null, simPose: null, ghostPose: null })
 }
 
 // 프로젝트를 바꾸면(다른 프로젝트를 열거나 같은 것을 다시 염) 지금 실행을 멈추고 그 프로젝트의 목록·선택을 읽는다
@@ -390,6 +393,8 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   const { run } = usePlayStore.getState()
   // 끝난 실행은 바로 지운다(아직 도는 실행은 끝날 때 handlePlayEvent가 지운다)
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
+  // 잔상은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다)
+  usePlayStore.setState({ ghostPose: null })
   if (isRunActive(run)) stopPlay()
   if (rootChanged)
     usePlayStore.setState({

@@ -1,11 +1,13 @@
 import { Fragment, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { runningRobotId, usePlayStore } from '../../play/playStore'
 import { DEG } from '../../scene/coordinates'
 import {
   childrenInDocument,
   findRobotId,
   getTransformInFrame,
   isCodeGroup,
+  isInSubtree,
   subtreeIds,
   type SceneObjects,
   type Transform,
@@ -148,6 +150,7 @@ function InspectorPanel(): React.JSX.Element {
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
   const renameObject = useSceneStore((state) => state.renameObject)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  const running = usePlayStore(runningRobotId)
   const multiple = useMemo(
     () => (selectedIds.length > 1 ? inHierarchyOrder(objects, selectedIds) : []),
     [objects, selectedIds]
@@ -176,6 +179,9 @@ function InspectorPanel(): React.JSX.Element {
   const parent = object.parentId ? objects[object.parentId] : undefined
   const isRobotRoot = object.kind === 'robot' && object.parentId === null
   const unitSymbol = t(`units.symbols.${lengthUnit}`)
+  // 실행 중(INIT부터 끝까지)인 로봇과 그 하위는 변환을 고칠 수 없다(씬 뷰는 시뮬레이터 자세로 그리고, 문서 값은
+  // 그대로 보인다. 실행 취소·dirty와 관계없다).
+  const locked = running !== null && isInSubtree(objects, object.id, running)
 
   // CAD 루트 아래 파트의 부모 축은 CAD 파일의 축이다(위가 +Y일 수도 있다). CAD 밖으로 옮긴 어셈블리의 하위도
   // cadOrigin을 따라 알린다. 부모의 방향이 CAD 루트와 다르면(중간 노드를 돌림) 알리지 않는다.
@@ -219,7 +225,14 @@ function InspectorPanel(): React.JSX.Element {
         </div>
         <section className="inspector-section">
           <header className="inspector-section-header">
-            <span>{t('inspector.transform')}</span>
+            <span className="inspector-section-title">
+              {t('inspector.transform')}
+              {locked && (
+                <span className="frame-badge is-running" title={t('inspector.runningHint')}>
+                  {t('inspector.running')}
+                </span>
+              )}
+            </span>
             <span
               className="frame-badge"
               title={
@@ -242,7 +255,7 @@ function InspectorPanel(): React.JSX.Element {
             unit={unitSymbol}
             digits={LENGTH_DIGITS[lengthUnit]}
             // 최상위 로봇은 바닥 위에만 있다(높이·롤·피치 0)
-            disabled={[false, false, isRobotRoot]}
+            disabled={[locked, locked, locked || isRobotRoot]}
             parse={(text) => {
               const meters = parseLength(text, lengthUnit)
               return meters === null ? null : toDisplayLength(meters, lengthUnit)
@@ -257,7 +270,7 @@ function InspectorPanel(): React.JSX.Element {
             values={value.rotation.map((radians) => radians / DEG) as Vec3}
             unit="°"
             digits={ANGLE_DIGITS}
-            disabled={[isRobotRoot, isRobotRoot, false]}
+            disabled={[locked || isRobotRoot, locked || isRobotRoot, locked]}
             parse={(text) => {
               const radians = parseAngle(text)
               return radians === null ? null : radians / DEG

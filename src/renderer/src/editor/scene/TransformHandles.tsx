@@ -2,7 +2,8 @@ import { TransformControls } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from 'react'
 import { Matrix4, Object3D, Quaternion, Vector3 } from 'three'
-import { localTransformFromWorld, worldMatrix } from '../../scene/model'
+import { runningRobotId, usePlayStore } from '../../play/playStore'
+import { isInSubtree, localTransformFromWorld, worldMatrix } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import {
   markHandleInteraction,
@@ -90,6 +91,14 @@ function TransformHandles(): React.JSX.Element | null {
   const objects = useSceneStore((state) => state.objects)
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
   const get = useThree((state) => state.get)
+  // 실행 중(INIT부터 끝까지)에는 그 로봇과 하위 전체의 핸들을 숨긴다. 씬 뷰는 로봇을 시뮬레이터 자세로 그리므로
+  // 핸들이 문서 자세에 떠 있게 되고, 실행 중 편집은 받지 않는다(인스펙터 변환 칸도 읽기 전용).
+  const running = usePlayStore(runningRobotId)
+  const locked =
+    running !== null &&
+    selectedId !== null &&
+    objects[selectedId] !== undefined &&
+    isInSubtree(objects, selectedId, running)
 
   const proxy = useMemo(() => new Object3D(), [])
   const dragging = useRef(false)
@@ -118,12 +127,12 @@ function TransformHandles(): React.JSX.Element | null {
       if (controls) controls.enabled = true
       setSyncCount((count) => count + 1)
     },
-    [selectedId, multiple, tool, get]
+    [selectedId, multiple, tool, locked, get]
   )
 
   const object = selectedId ? objects[selectedId] : undefined
-  // 손 도구(Q)와 다중 선택에서는 핸들을 숨긴다
-  if (!selectedId || !object || tool === 'view' || multiple) return null
+  // 손 도구(Q)와 다중 선택, 실행 중인 로봇에서는 핸들을 숨긴다
+  if (!selectedId || !object || tool === 'view' || multiple || locked) return null
 
   return (
     <>
