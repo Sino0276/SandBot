@@ -1,0 +1,14 @@
+Gradle reader test corpus (src/shared/gradle/corpus.test.ts, fuzz.test.ts)
+
+Real files, unchanged:
+- ftc12/                FIRST-Tech-Challenge/FtcRobotController v12.0
+                        (commit e14c2aeb33e84d4ea21697beeea9ac49557be870, BSD-3-Clause-Clear, (c) FIRST)
+- rr-quickstart/        acmerobotics/road-runner-quickstart master (fork of FtcRobotController, SDK 11.0.0)
+- pedro3-quickstart/    Pedro-Pathing/Quickstart master (commit 9dc89787898fab6b5cd9095df38489a14bf51a95)
+
+Derived for tests:
+- ftclib/               ftc12 with the two lines from the FTCLib readme / FTCLib-Docs installation.md
+- team-groovy/          team variants: double quotes, ext and gradle.properties values, map notation,
+                        exclude closures, dynamic versions, local modules, remote and outside scripts
+- team-catalog/         gradle/libs.versions.toml (libraries, bundles, version.ref, rich versions)
+- team-kts/             Kotlin DSL (settings.gradle.kts, val/extra, exclude(group = ...), kotlin(...))

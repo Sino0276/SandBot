@@ -1,0 +1,55 @@
+//
+// build.gradle in TeamCode (team variant: double quotes, ext and gradle.properties values, map
+// notation, exclude closures, dynamic versions, local modules, remote and outside scripts)
+//
+apply plugin: 'com.android.application'
+
+apply from: '../build.common.gradle'
+apply from: '../build.dependencies.gradle'
+apply from: 'https://raw.githubusercontent.com/example/ftc/main/shared.gradle'
+apply from: '../../shared/outside.gradle'
+apply from: 'missing.gradle'
+
+def localVersion = "1.2.0"
+
+android {
+    namespace = 'org.firstinspires.ftc.teamcode'
+}
+
+repositories {
+    maven { url= "https://maven.pedropathing.com/" }
+    maven {
+        url = "https://mymaven.bylazar.com/releases"
+    }
+    flatDir { dirs rootProject.file('libs') }
+    jcenter()
+}
+
+dependencies {
+    implementation project(':FtcRobotController')
+    annotationProcessor files('lib/OpModeAnnotationProcessor.jar')
+
+    implementation "com.pedropathing:core:$pedroVersion"
+    implementation "com.acmerobotics.roadrunner:core:${rrVersion}"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    implementation "com.acmerobotics.dashboard:dashboard:$versions.dash"
+    implementation group: 'org.ejml', name: 'ejml-simple', version: versions.ejml
+    implementation('org.ftclib.ftclib:core:' + ftclibVersion) {
+        exclude group: 'org.firstinspires.ftc'
+        exclude module: 'core-ktx'
+        transitive = false
+    }
+    implementation "com.example:local:$localVersion"
+    compileOnly 'com.example:annotations:1.0@jar'
+    runtimeOnly 'com.example:native:2.0:linux-x86_64@zip'
+    implementation 'com.acmerobotics.roadrunner:actions:+'
+    implementation "com.example:mystery:$unknownVersion"
+    implementation project(':koawalib')
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation(name: 'navx_ftc-release', ext: 'aar')
+    testImplementation 'junit:junit:4.13.2'
+    debugImplementation 'com.example:debug-only:1.0'
+    if (project.hasProperty('useVision')) {
+        implementation 'org.ftclib.ftclib:vision:2.1.0'
+    }
+}

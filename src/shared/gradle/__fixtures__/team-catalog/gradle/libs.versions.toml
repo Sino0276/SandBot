@@ -1,0 +1,22 @@
+# Team version catalog
+[versions]
+pedro = "3.0.2"
+ivy = "1.1.1"
+compileSdk = "34"
+
+[libraries]
+pedro-core = { module = "com.pedropathing:core", version.ref = "pedro" }
+pedro_revhub = { group = "com.pedropathing", name = "revhub", version.ref = "pedro" }
+ftclib-core = "org.ftclib.ftclib:core:2.1.1"
+ivy = { module = "com.pedropathing.ivy:core", version = { ref = "ivy" } }
+broken = { module = "com.example:broken", version.ref = "nope" }
+strict = { module = "com.example:strict", version = { strictly = "1.0" } }
+
+[bundles]
+pedro = [
+    "pedro-core",
+    "pedro-revhub", # Gradle treats - and _ the same
+]
+
+[plugins]
+android-application = { id = "com.android.application", version = "8.13.2" }

@@ -4,6 +4,7 @@ import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { PlayEvent } from '../../shared/play'
 import { resolveAndroidPlatform } from '../androidSdk'
+import { readProjectGradle } from '../gradleSource'
 import { resolveActiveJdk } from '../jdk'
 import { PlayController, type PlayOwner } from './controller'
 import { readSidecarFiles } from './launch'
@@ -55,6 +56,7 @@ export function registerPlayIpc(): void {
     platform: process.platform,
     env: process.env,
     world: kinematicWorld,
+    readGradle: (projectRoot) => readProjectGradle(projectRoot),
     resolvePlatform: (projectRoot, compileSdk) => resolveAndroidPlatform(projectRoot, compileSdk)
   })
 

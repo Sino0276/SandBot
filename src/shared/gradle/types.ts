@@ -72,7 +72,13 @@ export type GradleProject = {
   files: string[]
 }
 
-// 프로젝트 파일 읽기(메인이 열거나 저장한 프로젝트 루트 안의 보통 파일만 준다). 없거나 읽을 수 없으면 null.
+// 읽었지만 내용을 주지 않은 파일: 256 KB 초과, 링크가 프로젝트 밖을 가리킴, 읽기 오류(권한 등. detail은 영어)
+export type GradleFileProblem = {
+  problem: 'tooLarge' | 'outsideProject' | 'unreadable'
+  detail?: string
+}
+
+// 프로젝트 파일 읽기(메인이 열거나 저장한 프로젝트 루트 안의 보통 파일만 준다). 없으면 null.
 export type GradleFileSource = {
-  read: (relPath: string) => Promise<string | null>
+  read: (relPath: string) => Promise<string | null | GradleFileProblem>
 }
