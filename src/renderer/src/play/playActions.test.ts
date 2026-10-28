@@ -24,11 +24,14 @@ import {
   refreshOpModes,
   resetPlayActionsState,
   selectOpMode,
+  startPlay,
   setPlaySpeed,
   stepPlay,
   stopPlay,
   togglePause
 } from './playActions'
+import { emptyGamepadState } from './gamepad'
+import { useKeyboardPadStore } from './keyboardGamepad'
 import { EMPTY_OPMODE_LIST, initialPlayData, usePlayStore } from './playStore'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
@@ -176,8 +179,8 @@ describe('INIT → START → STOP', () => {
     })
     expect(request.runId).toBe(runId())
     expect(usePlayStore.getState().run!.accepted).toBe(true)
-    // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다
-    expect(gamepads).toEqual([[null, null]])
+    // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다(패드가 없으면 키보드가 gamepad1, 모두 뗀 상태)
+    expect(gamepads).toEqual([[emptyGamepadState(), null]])
 
     handlePlayEvent(event({ type: 'phase', phase: 'init' }))
     playButton()
@@ -520,5 +523,89 @@ describe('OpMode 목록 읽기', () => {
     await initPlay()
     selectOpMode(AUTO.className)
     expect(usePlayStore.getState().selectedClass).toBe(DRIVE.className)
+  })
+})
+
+describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
+  const fire = (type: string, payload: object): void => {
+    for (const listener of listeners.get(type) ?? [])
+      (listener as (event: unknown) => void)({ ...payload, preventDefault: () => {} })
+  }
+  const keyEvent = (code: string): object => ({
+    code,
+    key: code,
+    repeat: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.stubGlobal('window', {
+      api,
+      addEventListener: (type: string, listener: () => void) =>
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+    })
+    useKeyboardPadStore.setState({ focused: false })
+  })
+
+  it('자세를 받고, 끝나면 잔상으로 남고, 다음 INIT에 지운다', async () => {
+    await initPlay()
+    expect(usePlayStore.getState().run!.robotId).toBe('bot')
+    handlePlayEvent(
+      event({ type: 'pose', tNanos: 5_000_000, x: 0.4, y: -0.1, yaw: 0.2, blocked: false })
+    )
+    expect(usePlayStore.getState().simPose).toMatchObject({ robotId: 'bot', x: 0.4 })
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 6, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(usePlayStore.getState().simPose).toBeNull()
+    expect(usePlayStore.getState().ghostPose).toEqual({ robotId: 'bot', x: 0.4, y: -0.1, yaw: 0.2 })
+    // 씬 문서는 바뀌지 않는다
+    expect(useSceneStore.getState().objects).toBe(SCENE)
+    await initPlay()
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  it('프로젝트를 열면 잔상을 지운다', async () => {
+    usePlayStore.setState({ ghostPose: { robotId: 'bot', x: 1, y: 1, yaw: 0 } })
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  it('START하면 씬 뷰에 포커스를 준다(Unity Play Focused)', async () => {
+    const focus = vi.fn()
+    await initPlay()
+    handlePlayEvent(event({ type: 'phase', phase: 'init' }))
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) => (selector === '[data-scene-view]' ? { focus } : null)
+    })
+    startPlay()
+    expect(commands).toContainEqual({ type: 'start' })
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+  })
+
+  it('씬 뷰에 포커스가 있으면 키보드가 gamepad1이 되고, 실행이 끝나면 뗀 상태를 보낸다', async () => {
+    vi.useFakeTimers()
+    await initPlay()
+    expect(useKeyboardPadStore.getState().slot).toBe(0)
+    expect(usePlayStore.getState().gamepads[0]).toMatchObject({ keyboard: true })
+    // 포커스가 없으면 받지 않는다
+    fire('keydown', keyEvent('KeyW'))
+    vi.advanceTimersByTime(20)
+    expect(gamepads).toHaveLength(1)
+    useKeyboardPadStore.setState({ focused: true })
+    fire('keydown', keyEvent('KeyW'))
+    vi.advanceTimersByTime(20)
+    expect(gamepads.at(-1)).toEqual([{ ...emptyGamepadState(), left_stick_y: -1 }, null])
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    expect(gamepads.at(-1)).toEqual([emptyGamepadState(), null])
+    expect(useKeyboardPadStore.getState().slot).toBeNull()
+    expect(usePlayStore.getState().gamepads).toEqual([null, null])
   })
 })

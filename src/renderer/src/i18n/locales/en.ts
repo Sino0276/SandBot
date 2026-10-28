@@ -544,6 +544,7 @@ const en: Messages = {
         'The order the jitter is drawn in (an integer). Same code, inputs and seed give the same result.',
       autoStop: 'Stop Autonomous automatically {{seconds}} s after START (like the Driver Station)',
       battery: 'Battery voltage',
+      batteryUnit: 'V',
       batteryHint:
         'Battery voltage of the simulator ({{min}}–{{max}} V). Motor free speed scales with voltage ÷ 12, and the hub getVoltage() returns this value.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'

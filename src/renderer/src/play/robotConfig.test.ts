@@ -131,4 +131,30 @@ describe('장치 표', () => {
     expect(deviceRows(SCENE, null, { b: {}, a: {} }).map((row) => row.name)).toEqual(['a', 'b'])
     expect(deviceRows(SCENE, 'deleted', { lift: {} })[0].objectId).toBeNull()
   })
+
+  it('센서 값(허브 원시 값) 열: 키 이름 순, 출력이 없는 장치도 행이 된다', () => {
+    const rows = deviceRows(
+      SCENE,
+      'beta',
+      { arm: { power: 0.5 } },
+      {
+        arm: { velocity: 2400, position: 120 },
+        imu: { yaw: 0.1 },
+        'Control Hub': { voltage: 12.5 }
+      }
+    )
+    expect(rows.map((row) => [row.name, row.values, row.inputs])).toEqual([
+      [
+        'arm',
+        [['power', 0.5]],
+        [
+          ['position', 120],
+          ['velocity', 2400]
+        ]
+      ],
+      ['Control Hub', [], [['voltage', 12.5]]],
+      ['imu', [], [['yaw', 0.1]]]
+    ])
+    expect(deviceRows(SCENE, 'beta', { arm: { power: 0 } })[0].inputs).toEqual([])
+  })
 })

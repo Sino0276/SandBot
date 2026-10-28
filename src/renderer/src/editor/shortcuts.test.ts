@@ -24,7 +24,8 @@ const IDLE: ShortcutState = {
   blocked: false,
   handlesOwnKeys: false,
   pendingTextEdit: false,
-  dragging: false
+  dragging: false,
+  keyboardGamepad: false
 }
 
 const command = (event: ShortcutKeyEvent, state: Partial<ShortcutState> = {}): string | null =>
@@ -218,5 +219,57 @@ describe('단축키 표시', () => {
     expect(ariaKeyShortcut('createEmpty', true)).toBe('Meta+Shift+N')
     expect(ariaKeyShortcut('createEmptyChild', false)).toBe('Alt+Shift+N')
     expect(ariaKeyShortcut('rename', false)).toBe('F2')
+  })
+})
+
+describe('키보드 게임패드 중(실행 중 씬 뷰 포커스)', () => {
+  const pad = { keyboardGamepad: true }
+  const SWALLOWED = { command: null, preventDefault: true }
+
+  it('수정키 없는 편집 단축키는 쓰지 않고 기본 동작만 막는다(Shift+H도)', () => {
+    for (const event of [
+      key('F2', { key: 'F2' }),
+      key('KeyF'),
+      key('KeyQ'),
+      key('KeyW'),
+      key('KeyE'),
+      key('KeyX'),
+      key('KeyH'),
+      key('KeyH', { shiftKey: true }),
+      key('Delete', { key: 'Delete' }),
+      key('Backspace', { key: 'Backspace' }),
+      key('Delete', { key: 'Delete', repeat: true })
+    ])
+      expect(shortcutCommand(event, { ...IDLE, ...pad })).toEqual(SWALLOWED)
+  })
+
+  it('단축키가 아닌 키(Tab·방향키 등)는 그대로 둔다(패드 리스너가 따로 막는다)', () => {
+    for (const code of ['Tab', 'ArrowUp', 'Enter', 'KeyK', 'Escape'])
+      expect(shortcutCommand(key(code, { key: code }), { ...IDLE, ...pad })).toEqual({
+        command: null,
+        preventDefault: false
+      })
+  })
+
+  it('Ctrl·Alt 조합(저장·실행 취소·실행·만들기·잘라내기)은 그대로 받는다', () => {
+    expect(command(key('KeyS', { ctrlKey: true }), pad)).toBe('save')
+    expect(command(key('KeyZ', { ctrlKey: true }), pad)).toBe('undo')
+    expect(command(key('KeyP', { ctrlKey: true }), pad)).toBe('play')
+    expect(command(key('KeyP', { ctrlKey: true, shiftKey: true }), pad)).toBe('pause')
+    expect(command(key('KeyP', { ctrlKey: true, altKey: true }), pad)).toBe('step')
+    expect(command(key('KeyN', { altKey: true, shiftKey: true }), pad)).toBe('createEmptyChild')
+    expect(command(key('KeyX', { ctrlKey: true }), pad)).toBe('cut')
+    // Ctrl+W 같은 조합은 단순 키가 아니라 막지 않는다
+    expect(shortcutCommand(key('KeyW', { ctrlKey: true }), { ...IDLE, ...pad })).toEqual({
+      command: null,
+      preventDefault: false
+    })
+  })
+
+  it('대화상자·비행 중에는 여전히 아무것도 하지 않는다', () => {
+    expect(shortcutCommand(key('KeyF'), { ...IDLE, ...pad, blocked: true })).toEqual({
+      command: null,
+      preventDefault: false
+    })
   })
 })

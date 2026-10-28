@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  arrangePads,
   createGamepadPoller,
   emptyGamepadState,
+  KEYBOARD_PAD_INFO,
+  keyboardSlotFor,
   gamepadState,
   padInfo,
   padSlots,
   readGamepads,
+  samePadSlots,
   samePair,
   type GamepadLike,
   type GamepadPair,
@@ -170,5 +174,116 @@ describe('게임패드 읽기(실행 중에만)', () => {
     })
     poller.start()
     expect(poller.running()).toBe(true)
+  })
+})
+
+describe('키보드 게임패드 자리(실행 동안 고정)', () => {
+  function setup(): {
+    poller: ReturnType<typeof createGamepadPoller>
+    pads: (GamepadLike | null)[]
+    sent: GamepadPair[]
+    slots: PadSlots[]
+    keyboardSlot: () => 0 | 1 | null
+    press: (patch: Partial<ReturnType<typeof emptyGamepadState>>) => void
+    tick: () => void
+  } {
+    const pads: (GamepadLike | null)[] = []
+    const sent: GamepadPair[] = []
+    const slots: PadSlots[] = []
+    let callback: (() => void) | null = null
+    let slot: 0 | 1 | null = null
+    let state = emptyGamepadState()
+    const poller = createGamepadPoller({
+      getGamepads: () => pads,
+      send: (pair) => sent.push(pair),
+      onSlots: (next) => slots.push(next),
+      setInterval: (fn) => {
+        callback = fn
+        return 1
+      },
+      clearInterval: () => {
+        callback = null
+      },
+      keyboard: {
+        state: () => state,
+        releaseAll: () => (state = emptyGamepadState()),
+        setSlot: (next) => (slot = next)
+      }
+    })
+    return {
+      poller,
+      pads,
+      sent,
+      slots,
+      keyboardSlot: () => slot,
+      press: (patch) => (state = { ...emptyGamepadState(), ...patch }),
+      tick: () => callback?.()
+    }
+  }
+
+  it('물리 패드가 없는 첫 자리', () => {
+    expect(keyboardSlotFor([])).toBe(0)
+    expect(keyboardSlotFor([pad(0)])).toBe(1)
+    expect(keyboardSlotFor([pad(0), pad(1)])).toBeNull()
+    // 끊긴 패드는 자리를 차지하지 않는다
+    expect(keyboardSlotFor([pad(0, { connected: false })])).toBe(0)
+    expect(arrangePads([pad(3)], 0).map((p) => (p === 'keyboard' ? p : p?.index))).toEqual([
+      'keyboard',
+      3
+    ])
+    expect(arrangePads([pad(3), pad(4)], 1).map((p) => (p === 'keyboard' ? p : p?.index))).toEqual([
+      3,
+      'keyboard'
+    ])
+  })
+
+  it('패드가 없으면 키보드가 gamepad1이고, 실행 도중 나타난 패드는 남은 자리로 간다(키보드 자리는 그대로)', () => {
+    const { poller, pads, sent, slots, keyboardSlot, tick } = setup()
+    poller.start()
+    expect(keyboardSlot()).toBe(0)
+    // 포커스가 없어도 null이 아니라 모두 뗀 상태
+    expect(sent).toEqual([[emptyGamepadState(), null]])
+    expect(slots.at(-1)).toEqual([KEYBOARD_PAD_INFO, null])
+    // Chromium은 버튼을 눌러야 패드를 보인다: 실행 도중 나타나도 키보드 자리를 뺏지 않는다
+    pads.push(pad(0, { pressed: [0] }))
+    tick()
+    expect(keyboardSlot()).toBe(0)
+    expect(slots.at(-1)).toEqual([KEYBOARD_PAD_INFO, { id: 'Pad 0', standard: true }])
+    expect(sent.at(-1)![0]).toEqual(emptyGamepadState())
+    expect(sent.at(-1)![1]!.a).toBe(true)
+  })
+
+  it('패드가 하나 있으면 키보드는 gamepad2, 둘이면 자리가 없다', () => {
+    const one = setup()
+    one.pads.push(pad(0))
+    one.poller.start()
+    expect(one.keyboardSlot()).toBe(1)
+    expect(one.slots.at(-1)).toEqual([{ id: 'Pad 0', standard: true }, KEYBOARD_PAD_INFO])
+    expect(one.sent.at(-1)![1]).toEqual(emptyGamepadState())
+
+    const two = setup()
+    two.pads.push(pad(0), pad(1))
+    two.poller.start()
+    expect(two.keyboardSlot()).toBeNull()
+    expect(two.sent.at(-1)).toEqual([emptyGamepadState(), emptyGamepadState()])
+  })
+
+  it('키를 누르면 바뀔 때만 보내고, 멈추면 뗀 상태를 한 번 보내고 자리를 비운다', () => {
+    const { poller, sent, slots, keyboardSlot, press, tick } = setup()
+    poller.start()
+    press({ left_stick_y: -1 })
+    tick()
+    tick()
+    expect(sent).toHaveLength(2)
+    expect(sent.at(-1)![0]!.left_stick_y).toBe(-1)
+    poller.stop()
+    expect(sent).toHaveLength(3)
+    expect(sent.at(-1)).toEqual([emptyGamepadState(), null])
+    expect(keyboardSlot()).toBeNull()
+    expect(samePadSlots(slots.at(-1)!, [null, null])).toBe(true)
+    // 뗀 상태였으면 다시 보내지 않는다
+    poller.start()
+    poller.stop()
+    expect(sent).toHaveLength(4)
   })
 })

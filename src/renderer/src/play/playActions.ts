@@ -14,6 +14,13 @@ import {
   samePadSlots,
   type GamepadPair
 } from './gamepad'
+import {
+  createKeyboardPad,
+  focusSceneView,
+  installKeyboardGamepad,
+  keyboardPadActive,
+  useKeyboardPadStore
+} from './keyboardGamepad'
 import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
 import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
@@ -281,6 +288,9 @@ export function startPlay(): void {
     return
   updateRun(run.runId, () => ({ startRequested: true }))
   command({ type: 'start' })
+  // Unity의 Play Focused: 씬 뷰에 포커스를 줘 키보드 게임패드가 바로 받고, 툴바 버튼에 남은 포커스로 Enter(start)가
+  // STOP을 누르지 않게 한다
+  focusSceneView()
 }
 
 // STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다.
@@ -339,12 +349,20 @@ export function setPlaySpeed(speed: PlaySpeed): void {
 
 // ---- 게임패드 ----
 
+// 키보드 게임패드(실행 중 씬 뷰에 포커스가 있을 때만, keyboardGamepad.ts)
+const keyboardPad = createKeyboardPad(keyboardPadActive)
+
 const poller = createGamepadPoller({
   getGamepads: browserGamepads,
   send: (pair: GamepadPair) => window.api.playGamepads(pair),
   onSlots: (gamepads) => usePlayStore.setState({ gamepads }),
   setInterval: (callback, ms) => setInterval(callback, ms),
-  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>)
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+  keyboard: {
+    state: () => keyboardPad.state(),
+    releaseAll: () => keyboardPad.releaseAll(),
+    setSlot: (slot) => useKeyboardPadStore.setState({ slot })
+  }
 })
 
 function startGamepads(): void {
@@ -355,7 +373,9 @@ function stopGamepads(): void {
   poller.stop()
 }
 
+// 실행 중에는 폴러가 자리(키보드 포함)를 보인다
 function updateGamepadSlots(): void {
+  if (poller.running()) return
   const slots = padInfo(browserGamepads())
   if (!samePadSlots(slots, usePlayStore.getState().gamepads))
     usePlayStore.setState({ gamepads: slots })
@@ -434,6 +454,7 @@ export function initPlaySession(): void {
   })
   window.addEventListener('gamepadconnected', updateGamepadSlots)
   window.addEventListener('gamepaddisconnected', updateGamepadSlots)
+  installKeyboardGamepad(keyboardPad, window)
   const { root } = useProjectStore.getState()
   if (root) onProjectChanged(root, true)
 }
@@ -444,4 +465,10 @@ export function resetPlayActionsState(): void {
   opModeRequest = 0
   lastPlayNotice = 0
   poller.stop()
+  keyboardPad.releaseAll()
+}
+
+// 테스트용: 키보드 게임패드(키 상태)
+export function keyboardPadForTest(): typeof keyboardPad {
+  return keyboardPad
 }

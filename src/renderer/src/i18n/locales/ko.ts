@@ -556,6 +556,7 @@ const ko = {
       seedHint: '오차를 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
       autoStop: 'Autonomous는 START 뒤 {{seconds}}초에 자동으로 STOP (Driver Station과 같음)',
       battery: '배터리 전압',
+      batteryUnit: 'V',
       batteryHint:
         '시뮬레이터의 배터리 전압({{min}}–{{max}} V). 모터 무부하 속도가 전압 ÷ 12에 비례하고, 허브 getVoltage()가 이 값을 돌려줍니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'

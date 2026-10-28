@@ -4,6 +4,7 @@ import { importStepFiles, isStepFileName } from '../cad/importStep'
 import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
+import { keyboardPadActive } from '../play/keyboardGamepad'
 import { initPlaySession, playButton, stepPlay, togglePause } from '../play/playActions'
 import PlayDock from '../play/ui/PlayDock'
 import ContextMenu from './ContextMenu'
@@ -150,7 +151,9 @@ function useEditorShortcuts(): void {
         handlesOwnKeys: handlesOwnKeys(event.target),
         pendingTextEdit: isTextInput(event.target) && useProjectStore.getState().pendingEdit,
         // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환·만들기를 하지 않는다(드래그가 어긋난다)
-        dragging: isChangeOpen()
+        dragging: isChangeOpen(),
+        // 실행 중 씬 뷰에 포커스가 있으면 키보드가 게임패드다(키보드 패드 리스너도 같은 판단을 쓴다)
+        keyboardGamepad: keyboardPadActive()
       })
       if (result.preventDefault) event.preventDefault()
       if (result.command) runShortcut(result.command)

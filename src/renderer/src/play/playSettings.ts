@@ -72,6 +72,12 @@ export function clampJitter(value: number): number {
   return Number.isFinite(value) ? Math.min(MAX_JITTER, Math.max(0, value)) : 0
 }
 
+// 배터리 전압(V)을 설정 범위로. 수가 아니면 기본값.
+export function clampBatteryVoltage(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BATTERY_VOLTAGE
+  return Math.min(MAX_BATTERY_VOLTAGE, Math.max(MIN_BATTERY_VOLTAGE, value))
+}
+
 export function clampSeed(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_PLAY_SETTINGS.seed
   return Math.min(MAX_SEED, Math.max(-MAX_SEED, Math.trunc(value)))
