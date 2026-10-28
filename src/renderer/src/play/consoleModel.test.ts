@@ -220,3 +220,24 @@ describe('메인 이벤트의 모양(M)', () => {
     expect(entry.level).toBe('warning')
   })
 })
+
+describe('시뮬레이터 안내(console.notices.sim.*)', () => {
+  it('code마다 번역한 경고 한 줄과 params', () => {
+    const shared = consoleEntry(
+      { type: 'notice', key: 'sim.sharedEncoderMode', params: { device: 'leftFront' } },
+      5,
+      'warning'
+    )
+    expect(entrySummary(shared, t)).toContain('leftFront')
+    expect(entrySummary(shared, t)).not.toContain('console.notices')
+    const failed = consoleEntry(
+      { type: 'notice', key: 'sim.worldError', params: { detail: 'NaN pose' } },
+      5,
+      'warning'
+    )
+    expect(entryDetailLines(failed, t)).toEqual([
+      t('console.notices.sim.worldError', { detail: 'NaN pose' })
+    ])
+    expect(entryDetailLines(failed, t)[0]).toContain('NaN pose')
+  })
+})

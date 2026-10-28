@@ -1,6 +1,6 @@
 import { Edges } from '@react-three/drei'
 import { useThree, type ThreeEvent } from '@react-three/fiber'
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import {
   BoxGeometry,
   Color,
@@ -236,6 +236,8 @@ const GHOST_LINE_MATERIAL = new LineBasicMaterial({
 // 임시 모양(SceneObjectsView의 상자와 같은 크기)
 const GHOST_ROBOT_BOX = new BoxGeometry(ROBOT_SIZE, ROBOT_SIZE, ROBOT_SIZE)
 const GHOST_WEBCAM_BOX = new BoxGeometry(0.03, 0.09, 0.03)
+// 큰 CAD 잔상의 외곽선(한 변 1 m, 크기는 scale로)
+const UNIT_BOX_EDGES = new EdgesGeometry(new BoxGeometry(1, 1, 1))
 
 // 잔상은 클릭되지 않는다(BVH도 만들지 않는다)
 const noRaycast = (): void => {}
@@ -245,7 +247,9 @@ function GhostMesh({ geometryId }: { geometryId: string }): React.JSX.Element | 
   const invalidate = useThree((state) => state.invalidate)
   const geometry = getGeometry(geometryId)
   // 형상이 늦게 등록되면 메시가 새로 붙는다(붙기만 해서는 다시 그려지지 않는다)
-  useEffect(() => invalidate(), [geometry, invalidate])
+  useEffect(() => {
+    invalidate()
+  }, [geometry, invalidate])
   if (!geometry) return null
   return <mesh geometry={geometry} material={GHOST_MATERIAL} raycast={noRaycast} />
 }
@@ -291,31 +295,28 @@ function GhostNode({ id, root }: { id: string; root: boolean }): React.JSX.Eleme
 // 큰 CAD의 잔상: 보이는 오브젝트들의 로봇 기준 경계 상자 외곽선만
 function GhostBox({ robotId }: { robotId: string }): React.JSX.Element | null {
   const objects = useSceneStore((state) => state.objects)
+  // 형상이 늦게 등록되면 경계가 바뀐다. 이 구독들이 바뀔 때만 다시 그리므로 그때마다 계산한다.
   useSceneStore((state) => state.geometryRevision)
   const visibility = useSceneVisibilityStore((state) => state)
   const box = objectWorldBounds(
     objects,
     robotId,
+    // 로봇 자신을 항등으로 두면 로봇 기준 경계다
     { id: robotId, transform: IDENTITY_TRANSFORM },
     (id) => !isHiddenInScene(visibility, objects, id)
   )
-  const size = box ? box.getSize(new Vector3()).toArray().join(',') : null
-  const center = box ? box.getCenter(new Vector3()).toArray() : null
-  const edges = useMemo(() => {
-    if (!size) return null
-    const [x, y, z] = size.split(',').map(Number)
-    const cube = new BoxGeometry(x, y, z)
-    const geometry = new EdgesGeometry(cube)
-    cube.dispose()
-    return geometry
-  }, [size])
-  useEffect(() => () => edges?.dispose(), [edges])
-  if (!edges || !center) return null
+  if (!box) return null
+  // 한 변 1 m 상자의 외곽선을 크기만큼 늘린다(형상을 새로 만들지 않아 해제할 것이 없다. 크기 0인 축은 아주 얇게)
+  const size = box
+    .getSize(new Vector3())
+    .toArray()
+    .map((v) => Math.max(v, 1e-6)) as Vec3
   return (
     <lineSegments
-      geometry={edges}
+      geometry={UNIT_BOX_EDGES}
       material={GHOST_LINE_MATERIAL}
-      position={center as Vec3}
+      position={box.getCenter(new Vector3()).toArray() as Vec3}
+      scale={size}
       raycast={noRaycast}
     />
   )
