@@ -88,7 +88,9 @@ const libraries = build ? await fetchLibraries() : null
 
 function jars(...sets: (keyof typeof SETS)[]): string[] {
   const out: string[] = []
-  for (const set of sets) for (const id of SETS[set]) if (!out.includes(libraries!.jars[id])) out.push(libraries!.jars[id])
+  for (const set of sets)
+    for (const id of SETS[set])
+      if (!out.includes(libraries!.jars[id])) out.push(libraries!.jars[id])
   return out
 }
 
@@ -299,7 +301,8 @@ function resultAt(run: Run): number {
   const line = run.messages.find(
     (m) => m.type === 'log' && m.stream === 'out' && m.text.startsWith('RESULT ')
   )
-  if (!line || line.type !== 'log') throw new Error(`no RESULT line\n${run.raw.slice(-5).join('\n')}`)
+  if (!line || line.type !== 'log')
+    throw new Error(`no RESULT line\n${run.raw.slice(-5).join('\n')}`)
   return line.tNanos
 }
 
@@ -386,7 +389,9 @@ describe.skipIf(build === null)('결정성 패치·라이브러리 로더(Java �
       ])
       expect(result.failed).toEqual([])
       for (const name of ['OrderedCollectionsTest', 'ClassPatcherTest', 'LibraryLoaderTest'])
-        expect(result.passed.filter((id) => id.includes(`.${name}#`)).length, name).toBeGreaterThan(4)
+        expect(result.passed.filter((id) => id.includes(`.${name}#`)).length, name).toBeGreaterThan(
+          4
+        )
     },
     SIDECAR_TEST_TIMEOUT
   )
@@ -640,7 +645,10 @@ describe.skipIf(build === null || libraries === null)('실제 라이브러리', 
         request: { ...withLibraries(b, 'ftclib'), configXml: LIB_BOT }
       })
       const [error] = errors(bhi)
-      expect(error).toMatchObject({ kind: 'exception', exception: 'java.lang.IllegalArgumentException' })
+      expect(error).toMatchObject({
+        kind: 'exception',
+        exception: 'java.lang.IllegalArgumentException'
+      })
       expect(error.message).toContain('BNO055IMU')
       expect(finishedReason(bhi)).toBe('exception')
     },

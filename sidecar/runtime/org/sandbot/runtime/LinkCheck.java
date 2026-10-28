@@ -14,8 +14,10 @@ import java.util.Set;
 
 /**
  * 라이브러리 jar의 링크 검사(RunRequest.libraryClasspath가 있을 때 컴파일 전에 한 번, 프로토콜 linkReport). 각 jar 클래스의 상수 풀에서
- * 클래스·필드·메서드 참조(클래스 상수는 코드·상위 형식·catch가 쓰는 것만 — InnerClasses 속성만 가리키는 것은 실행 때 풀리지 않는다)를 모아, 실행 때 보이는 세계(앱 로더: JDK·sandbot-sdk.jar·런타임, 그다음 라이브러리 jar들 — 실제 로더와 같은
- * 부모 우선 순서)에 대어 본다. 클래스는 정의하지 않고 바이트로만 읽는다.
+ * 클래스·필드·메서드 참조를 모아, 실행 때 보이는 세계(앱 로더: JDK·sandbot-sdk.jar·런타임, 그다음 라이브러리 jar들 — 실제 로더와
+ * 같은 부모 우선 순서)에 대어 본다. 클래스 상수는 실행 때 풀리는 것(코드의 new·checkcast·instanceof·anewarray·multianewarray·ldc,
+ * 상위 형식, catch 형식)만 본다: InnerClasses 속성만 가리키는 것(인라인된 상수의 Build$VERSION_CODES 등)은 풀리지 않는다.
+ * 클래스는 정의하지 않고 바이트로만 읽는다.
  *
  * <ul>
  *   <li>missingClass: 참조한 클래스가 없다(멤버 참조의 소유 클래스가 없을 때도). 배열은 원소 형식을 본다.
