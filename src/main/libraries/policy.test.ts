@@ -1,0 +1,83 @@
+import { describe, expect, it } from 'vitest'
+import { classifyModule, DASHBOARD_DETAIL, knownPackageOf } from './policy'
+
+const kind = (coordinate: string): string => {
+  const [g, a, v] = coordinate.split(':')
+  const decision = classifyModule(g, a, v)
+  return decision.kind === 'unsupported' ? `unsupported:${decision.reason}` : decision.kind
+}
+
+describe('라이브러리 정책', () => {
+  it('지원 계열', () => {
+    expect(kind('com.acmerobotics.roadrunner:core:1.0.1')).toBe('supported')
+    expect(kind('com.acmerobotics.roadrunner:actions:1.0.1')).toBe('supported')
+    expect(kind('com.acmerobotics.roadrunner:ftc:0.1.25')).toBe('supported')
+    expect(kind('com.pedropathing:revhub:3.0.2')).toBe('supported')
+    expect(kind('com.pedropathing:core:3.0.0')).toBe('supported')
+    expect(kind('com.pedropathing:core:4.0.0')).toBe('supported')
+    expect(kind('com.pedropathing.ivy:pedro:1.1.1')).toBe('supported')
+    expect(kind('com.pedropathing.ivy:core:1.1.1')).toBe('supported')
+    expect(kind('org.ftclib.ftclib:core:2.1.1')).toBe('supported')
+  })
+
+  it('안내 후 제외', () => {
+    expect(kind('com.pedropathing:tuning:1.0.1')).toBe('unsupported:pedroTuning')
+    expect(kind('com.pedropathing:ftc:2.1.1')).toBe('unsupported:pedro2')
+    expect(kind('com.pedropathing:core:2.1.2')).toBe('unsupported:pedro2')
+    expect(kind('com.pedropathing:ivy:1.0.0')).toBe('unsupported:pedro2')
+    expect(kind('com.pedropathing:telemetry:1.0.0')).toBe('unsupported:pedro2')
+    expect(kind('com.bylazar:fullpanels:1.0.12')).toBe('unsupported:panels')
+    expect(kind('dev.frozenmilk.sinister:Sloth:0.3.2')).toBe('unsupported:dairy')
+    expect(kind('dev.frozenmilk:Sinister:2.3.0')).toBe('unsupported:dairy')
+    expect(kind('dev.frozenmilk.dairy:Util:1.2.2')).toBe('unsupported:dairy')
+    expect(kind('org.ftclib.ftclib:vision:2.1.0')).toBe('unsupported:ftcLibVision')
+    expect(kind('com.acmerobotics.roadrunner:core:0.5.6')).toBe('unsupported:notSupported')
+  })
+
+  it('FTC Dashboard는 L1에서 지원하지 않는다(대체 안내)', () => {
+    const decision = classifyModule('com.acmerobotics.dashboard', 'dashboard', '0.6.0')
+    expect(decision).toEqual({
+      kind: 'unsupported',
+      reason: 'notSupported',
+      detail: DASHBOARD_DETAIL
+    })
+    expect(kind('com.acmerobotics.dashboard:core:0.4.7')).toBe('unsupported:notSupported')
+  })
+
+  it('제공(받지 않음)', () => {
+    for (const c of [
+      'org.firstinspires.ftc:RobotCore:12.0.0',
+      'androidx.appcompat:appcompat:1.2.0',
+      'androidx.core:core-ktx:1.6.0',
+      'com.android.tools:r8:8.0.0',
+      'com.google.android.material:material:1.12.0',
+      'com.google.code.gson:gson:2.8.0',
+      'org.nanohttpd:nanohttpd:2.3.1',
+      'org.nanohttpd:nanohttpd-websocket:2.3.1',
+      'com.jakewharton.threetenabp:threetenabp:1.3.1',
+      'org.openftc:easyopencv:1.7.3',
+      'org.slf4j:slf4j-api:1.7.26'
+    ])
+      expect(kind(c), c).toBe('provided')
+    expect(kind('androidx.annotation:annotation:1.1.0')).toBe('compileOnly')
+  })
+
+  it('그 밖(전이 의존성이면 쓰고 직접 선언만이면 notSupported)', () => {
+    expect(kind('org.jetbrains.kotlin:kotlin-stdlib:2.3.21')).toBe('other')
+    expect(kind('org.ejml:ejml-simple:0.39')).toBe('other')
+    expect(kind('com.github.x:y:1.0')).toBe('other')
+  })
+
+  it('패키지 → 라이브러리(가장 긴 접두)', () => {
+    expect(knownPackageOf('com.pedropathing.tuning.autotune')?.prefix).toBe(
+      'com.pedropathing.tuning'
+    )
+    expect(knownPackageOf('com.pedropathing.follower')?.prefix).toBe('com.pedropathing')
+    expect(knownPackageOf('com.arcrobotics.ftclib.vision')?.prefix).toBe(
+      'com.arcrobotics.ftclib.vision'
+    )
+    expect(knownPackageOf('com.arcrobotics.ftclib.command')?.prefix).toBe('com.arcrobotics.ftclib')
+    expect(knownPackageOf('com.pedropathingx')).toBeNull()
+    expect(knownPackageOf('org.firstinspires.ftc.teamcode')).toBeNull()
+  })
+})

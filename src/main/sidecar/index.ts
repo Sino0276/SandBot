@@ -4,6 +4,9 @@ import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { PlayEvent } from '../../shared/play'
 import { resolveActiveJdk } from '../jdk'
+import { electronHttpGet } from '../libraries/electronHttp'
+import { gradleUserHome } from '../libraries/gradleCache'
+import { createLibraryResolver } from '../libraries'
 import { PlayController, type PlayOwner } from './controller'
 import { readSidecarFiles } from './launch'
 import { spawnSidecar } from './process'
@@ -53,7 +56,13 @@ export function registerPlayIpc(): void {
     removeRunDir: (dir) => rm(dir, { recursive: true, force: true }),
     platform: process.platform,
     env: process.env,
-    world: kinematicWorld
+    world: kinematicWorld,
+    // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries)
+    resolveLibraries: createLibraryResolver({
+      cacheDir: join(app.getPath('userData'), 'library-cache'),
+      gradleHome: gradleUserHome(process.env),
+      http: electronHttpGet
+    })
   })
 
   // 창마다 같은 owner 객체(명령이 실행을 시작한 창의 것인지 본다)
