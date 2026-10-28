@@ -3,6 +3,7 @@ import type { ListOpModesResult, PlayEvent, PlayInitResult, PlaySpeed } from '..
 import { openPreferences, showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
+import { commitFocusedInput } from '../editor/useDraft'
 import { ipcErrorDetail } from '../java/ipcError'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
@@ -19,7 +20,8 @@ import {
   focusSceneView,
   installKeyboardGamepad,
   keyboardPadActive,
-  useKeyboardPadStore
+  useKeyboardPadStore,
+  type PadKeyEvent
 } from './keyboardGamepad'
 import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
@@ -166,15 +168,7 @@ export async function initPlay(): Promise<void> {
 async function runInit(): Promise<void> {
   // 입력 중인 칸을 먼저 확정해 변경으로 반영한다(Ctrl+S와 같음). 입력칸이 아니면 포커스를 그대로 둔다
   // (Console 목록 등에서 Ctrl+P를 눌러도 포커스가 <body>로 떨어져 다음 Delete·F가 씬에 가지 않게).
-  if (typeof document !== 'undefined') {
-    const active = document.activeElement
-    if (
-      active instanceof HTMLInputElement ||
-      active instanceof HTMLTextAreaElement ||
-      (active instanceof HTMLElement && active.isContentEditable)
-    )
-      active.blur()
-  }
+  commitFocusedInput()
   if (currentInitBlock()) return
   if (useProjectStore.getState().dirty) {
     const answer = await showDialog({
@@ -368,8 +362,15 @@ export function setPlaySpeed(speed: PlaySpeed): void {
 
 // ---- 게임패드 ----
 
-// 키보드 게임패드(실행 중 씬 뷰에 포커스가 있을 때만, keyboardGamepad.ts)
-const keyboardPad = createKeyboardPad(keyboardPadActive)
+// 키보드 게임패드(실행 중 씬 뷰에 포커스가 있을 때만, keyboardGamepad.ts). 포커스를 잃는 등으로 모두 떼면 다음 읽기를
+// 기다리지 않고 바로 보낸다(창을 내리면 interval이 1초에 한 번으로 늦어져 그동안 눌린 값으로 달린다).
+const keyboardPad = createKeyboardPad(keyboardPadActive, () => poller.pollNow())
+
+// 단축키 리스너(EditorLayout)의 keyboardGamepad: 키보드가 지금 게임패드이거나, 게임패드로 누른 키의 반복 입력이다
+// (그 키를 뗄 때까지. Backspace(back)를 누른 채 실행이 끝나도 반복 입력이 편집기의 Delete가 되지 않게)
+export function isKeyboardPadInput(event: PadKeyEvent): boolean {
+  return keyboardPadActive() || keyboardPad.isPadRepeat(event)
+}
 
 const poller = createGamepadPoller({
   getGamepads: browserGamepads,

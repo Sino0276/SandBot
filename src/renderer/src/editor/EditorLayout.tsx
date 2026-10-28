@@ -4,8 +4,13 @@ import { importStepFiles, isStepFileName } from '../cad/importStep'
 import { isImporting } from '../cad/importStore'
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
-import { keyboardPadActive } from '../play/keyboardGamepad'
-import { initPlaySession, playButton, stepPlay, togglePause } from '../play/playActions'
+import {
+  initPlaySession,
+  isKeyboardPadInput,
+  playButton,
+  stepPlay,
+  togglePause
+} from '../play/playActions'
 import PlayDock from '../play/ui/PlayDock'
 import ContextMenu from './ContextMenu'
 import { isModalOpen } from './dialogStore'
@@ -32,6 +37,7 @@ import {
 } from './sceneCommands'
 import { shortcutCommand, type ShortcutCommand } from './shortcuts'
 import Toolbar from './Toolbar'
+import { commitFocusedInput } from './useDraft'
 
 const LAYOUT_ID = 'editor-main'
 // 씬 뷰와 그 아래 패널(Console·텔레메트리·장치)
@@ -73,8 +79,8 @@ function runShortcut(command: ShortcutCommand): void {
   switch (command) {
     case 'save':
     case 'open':
-      // 입력 중인 칸이 있으면 먼저 확정(blur)시킨다
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      // 입력 중인 칸이 있으면 먼저 확정(blur)시킨다(씬 뷰의 포커스는 그대로: 키보드 게임패드가 꺼지지 않게)
+      commitFocusedInput()
       void (command === 'save' ? saveProject() : openProjectFolder())
       return
     case 'undo':
@@ -152,8 +158,9 @@ function useEditorShortcuts(): void {
         pendingTextEdit: isTextInput(event.target) && useProjectStore.getState().pendingEdit,
         // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환·만들기를 하지 않는다(드래그가 어긋난다)
         dragging: isChangeOpen(),
-        // 실행 중 씬 뷰에 포커스가 있으면 키보드가 게임패드다(키보드 패드 리스너도 같은 판단을 쓴다)
-        keyboardGamepad: keyboardPadActive()
+        // 실행 중 씬 뷰에 포커스가 있으면 키보드가 게임패드다(키보드 패드 리스너도 같은 판단을 쓴다). 게임패드로 누른
+        // 키의 반복 입력도 뗄 때까지 게임패드의 것이다
+        keyboardGamepad: isKeyboardPadInput(event)
       })
       if (result.preventDefault) event.preventDefault()
       if (result.command) runShortcut(result.command)

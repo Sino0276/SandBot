@@ -185,6 +185,8 @@ export type GamepadPollerDeps = {
 export function createGamepadPoller(deps: GamepadPollerDeps): {
   start: () => void
   stop: () => void
+  // 다음 읽기를 기다리지 않고 지금 읽어 바뀌었으면 보낸다(실행 중일 때만. 키보드를 모두 뗐을 때)
+  pollNow: () => void
   running: () => boolean
 } {
   let handle: unknown = null
@@ -251,6 +253,9 @@ export function createGamepadPoller(deps: GamepadPollerDeps): {
         lastSent = released
       }
       showSlots(padInfo(readPads()))
+    },
+    pollNow: () => {
+      if (handle !== null) poll()
     },
     running: () => handle !== null
   }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpModeInfo } from '../../../shared/play'
 import type { GamepadState } from '../../../shared/sidecarProtocol'
 import { useContextMenuStore, useDialogStore } from '../editor/dialogStore'
@@ -7,6 +7,7 @@ import { emptyGamepadState } from './gamepad'
 import {
   createKeyboardPad,
   installKeyboardGamepad,
+  keepSceneViewFocus,
   KEYBOARD_PAD_BINDINGS,
   keyboardPadActive,
   keyboardPadState,
@@ -122,6 +123,51 @@ describe('키 상태(createKeyboardPad)', () => {
     pad.keyDown(key('KeyK'))
     pad.keyUp(key('MetaLeft', { key: 'Meta' }))
     expect(pad.held().size).toBe(0)
+  })
+
+  it('패드로 누른 키의 반복은 패드가 꺼져도 뗄 때까지 패드의 것이다(Backspace를 누른 채 실행이 끝나도 Delete가 아니다)', () => {
+    const backspace = key('Backspace', { key: 'Backspace' })
+    const repeat = { ...backspace, repeat: true }
+    pad.keyDown(backspace)
+    // 실행 끝: 폴러가 모두 떼고 패드가 꺼진다. 키는 아직 눌려 있어 반복 입력이 온다.
+    pad.releaseAll()
+    active = false
+    expect(pad.isPadRepeat(repeat)).toBe(true)
+    expect(pad.keyDown(repeat)).toBe(true)
+    expect(pad.state()).toEqual(emptyGamepadState())
+    pad.keyUp(backspace)
+    expect(pad.isPadRepeat(repeat)).toBe(false)
+    expect(pad.keyDown(repeat)).toBe(false)
+    // 패드가 꺼진 뒤 새로 누른 키는 패드의 것이 아니다
+    active = true
+    pad.keyDown(key('KeyF'))
+    active = false
+    pad.keyDown(key('KeyF'))
+    expect(pad.isPadRepeat(key('KeyF', { repeat: true }))).toBe(false)
+    // Meta를 떼면 모두 뗀 것으로 본다
+    active = true
+    pad.keyDown(key('KeyH'))
+    pad.keyUp(key('MetaLeft', { key: 'Meta' }))
+    expect(pad.isPadRepeat(key('KeyH', { repeat: true }))).toBe(false)
+    // 새로 누르지 않은 반복이나 단축키 조합은 패드의 것이 아니다
+    expect(pad.isPadRepeat(key('KeyG', { repeat: true }))).toBe(false)
+    expect(pad.isPadRepeat(key('KeyG'))).toBe(false)
+  })
+
+  it('releaseAll은 눌린 키가 있었을 때만 알린다(폴러가 바로 보낸다)', () => {
+    let released = 0
+    const notifying = createKeyboardPad(
+      () => active,
+      () => released++
+    )
+    notifying.releaseAll()
+    expect(released).toBe(0)
+    notifying.keyDown(key('KeyW'))
+    notifying.releaseAll()
+    expect(released).toBe(1)
+    expect(notifying.held().size).toBe(0)
+    notifying.releaseAll()
+    expect(released).toBe(1)
   })
 
   it('활성이 아니면 받지 않고, 상태를 읽을 때 남은 키를 모두 뗀다', () => {
@@ -259,5 +305,28 @@ describe('키보드 게임패드 활성 판단과 창 리스너', () => {
     win.fire('keydown', key('KeyD'))
     useDialogStore.setState({ request: { message: 'm', buttons: [], cancelId: 'c' } as never })
     expect(pad.held().size).toBe(0)
+  })
+
+  it('씬 뷰 위 표시("씬 뷰를 누르면…")를 누르면 포커스를 옮기는 기본 동작을 막고 씬 뷰에 포커스를 준다', () => {
+    const pad = createKeyboardPad(keyboardPadActive)
+    const win = fakeWindow()
+    installKeyboardGamepad(pad, win.target)
+    useKeyboardPadStore.setState({ focused: false })
+    // 브라우저처럼 focus()가 focusin을 창까지 올린다
+    const focus = vi.fn(() => win.fire('focusin', { target: sceneView }))
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) =>
+        selector === `[${SCENE_VIEW_ATTRIBUTE}]` ? { focus } : null
+    })
+    try {
+      const preventDefault = vi.fn()
+      keepSceneViewFocus({ preventDefault })
+      expect(preventDefault).toHaveBeenCalledTimes(1)
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      expect(keyboardPadActive()).toBe(true)
+      expect(win.fire('keydown', key('KeyW')).prevented).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
