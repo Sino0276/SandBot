@@ -60,7 +60,7 @@ final class Protocol {
     // ---- 메시지 ----
 
     void hello(String runtimeHash, String javaVersion) {
-        send(Json.obj("type", "hello", "protocol", 1, "runtime", runtimeHash, "java", javaVersion));
+        send(Json.obj("type", "hello", "protocol", RunRequest.PROTOCOL, "runtime", runtimeHash, "java", javaVersion));
     }
 
     void compiled(boolean ok, List<Map<String, Object>> diagnostics, long millis) {

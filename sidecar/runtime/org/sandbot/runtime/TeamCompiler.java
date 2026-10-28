@@ -32,8 +32,10 @@ import javax.tools.ToolProvider;
  * 팀 코드를 사이드카 안에서 컴파일한다(javax.tools, 결과는 메모리에만). 시작 파일은 OpMode 소스 하나이고, 필요한 다른 파일은
  * -sourcepath(sourceRoots)로 javac가 찾는다(-implicit:class라 그것들도 클래스가 된다).
  *
- * <p>옵션: --release 8 -g -proc:none -encoding UTF-8 -Xlint:-options -implicit:class -Xmaxerrs 100 -Xmaxwarns 100,
- * -classpath = sdkClasspath(가짜 FTC SDK). 진단은 Locale.ENGLISH.
+ * <p>옵션: -source 8 -target 8 -bootclasspath bootClasspath(팀 프로젝트 compileSdk의 Android 플랫폼 API — Android Studio와
+ * 같은 문법·API) -g -proc:none -encoding UTF-8 -Xlint:-options -implicit:class -Xmaxerrs 100 -Xmaxwarns 100,
+ * -classpath = compileClasspath(가짜 FTC SDK + 라이브러리). bootClasspath가 비면 -source·-target·-bootclasspath 대신
+ * --release 8(호스트 JDK의 Java 8 API, 사이드카 시험만). 진단은 Locale.ENGLISH.
  */
 final class TeamCompiler {
     static final int MAX_ERRORS = 100;
@@ -62,8 +64,8 @@ final class TeamCompiler {
         }
     }
 
-    static Result compile(List<String> sourceRoots, String opModeSource, List<String> sdkClasspath)
-            throws NoCompilerException, IOException {
+    static Result compile(List<String> sourceRoots, String opModeSource, List<String> bootClasspath,
+            List<String> compileClasspath) throws NoCompilerException, IOException {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new NoCompilerException();
 
@@ -82,13 +84,19 @@ final class TeamCompiler {
         Map<String, String> sources = new LinkedHashMap<>();
         StandardJavaFileManager standard = compiler.getStandardFileManager(listener, Locale.ENGLISH, StandardCharsets.UTF_8);
         try (MemoryFileManager files = new MemoryFileManager(standard, classes, sources)) {
-            List<String> options = new ArrayList<>(Arrays.asList("--release", "8", "-g", "-proc:none", "-encoding",
-                    "UTF-8", "-Xlint:-options", "-implicit:class", "-Xmaxerrs", String.valueOf(MAX_ERRORS),
-                    "-Xmaxwarns", "100"));
+            List<String> options = new ArrayList<>();
+            if (bootClasspath.isEmpty()) {
+                options.addAll(Arrays.asList("--release", "8"));
+            } else {
+                options.addAll(Arrays.asList("-source", "8", "-target", "8", "-bootclasspath",
+                        String.join(File.pathSeparator, bootClasspath)));
+            }
+            options.addAll(Arrays.asList("-g", "-proc:none", "-encoding", "UTF-8", "-Xlint:-options",
+                    "-implicit:class", "-Xmaxerrs", String.valueOf(MAX_ERRORS), "-Xmaxwarns", "100"));
             options.add("-sourcepath");
             options.add(String.join(File.pathSeparator, sourceRoots));
             options.add("-classpath");
-            options.add(String.join(File.pathSeparator, sdkClasspath));
+            options.add(String.join(File.pathSeparator, compileClasspath));
             Iterable<? extends JavaFileObject> units = standard.getJavaFileObjects(new File(opModeSource));
             StringWriter javacOut = new StringWriter();
             JavaCompiler.CompilationTask task = compiler.getTask(javacOut, files, listener, options, null, units);

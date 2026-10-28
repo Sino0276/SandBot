@@ -128,7 +128,10 @@ const INIT_FAILED_NOTICES: Record<
   noJdk: { level: 'error', key: 'playNoJdk' },
   noSidecar: { level: 'error', key: 'playNoSidecar' },
   busy: { level: 'warning', key: 'playBusy' },
-  failed: { level: 'error', key: 'playFailed' }
+  failed: { level: 'error', key: 'playFailed' },
+  noAndroidSdk: { level: 'error', key: 'playNoAndroidSdk' },
+  noAndroidPlatform: { level: 'error', key: 'playNoAndroidPlatform' },
+  cancelled: { level: 'warning', key: 'playCancelled' }
 }
 
 // ---- 실행 ----

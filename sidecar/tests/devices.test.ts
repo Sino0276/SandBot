@@ -454,7 +454,9 @@ function runSidecar(
         'DevicesDrive.java'
       ),
       opModeClass: 'org.firstinspires.ftc.teamcode.DevicesDrive',
-      sdkClasspath: [b.sdkJar],
+      bootClasspath: [],
+      compileClasspath: [b.sdkJar],
+      libraryClasspath: [],
       configXml: null,
       timing: {},
       jitter: 0,

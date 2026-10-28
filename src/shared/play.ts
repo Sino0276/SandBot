@@ -8,6 +8,7 @@ import type {
   SimErrorKind,
   TelemetryFrame
 } from './sidecarProtocol'
+import type { LibraryProgress, LibraryReason, LibraryReport } from './libraries'
 import type { SimPose, WorldSpec } from './sim/worldSpec'
 
 // ---- OpMode 목록 ----
@@ -68,6 +69,34 @@ export type JdkChoice =
   // 메인이 폴더 대화상자를 띄운다(제목은 렌더러가 번역). 취소하면 바뀌지 않는다.
   | { kind: 'browse'; title: string }
 
+// ---- Android SDK ----
+
+// 팀 코드는 Android Studio처럼 팀 프로젝트 compileSdk의 Android API로 컴파일한다(android.jar의 java.*·javax.* 등). 그래서
+// 이 PC의 Android SDK(Android Studio가 설치함)가 필요하다. JDK처럼 환경 설정에서 고르고, 설정은 메인의 userData/android-sdk.json.
+// source: setting(환경 설정에서 고름), localProperties(프로젝트 local.properties의 sdk.dir), env(ANDROID_HOME·ANDROID_SDK_ROOT),
+// default(OS 기본 위치)
+export type AndroidSdkInfo = {
+  home: string
+  // platforms/android-N/android.jar가 있는 API 수준(오름차순)
+  platforms: number[]
+  source: 'setting' | 'localProperties' | 'env' | 'default'
+}
+
+export type AndroidSdkState = {
+  choice: { kind: 'auto' } | { kind: 'custom'; home: string }
+  // 실행에 쓸 SDK(없으면 null)
+  active: AndroidSdkInfo | null
+  detected: AndroidSdkInfo[]
+  // setAndroidSdk가 이번 선택을 받지 않은 이유(platforms 폴더가 없음)
+  error?: 'notSdk'
+}
+
+export type AndroidSdkChoice =
+  | { kind: 'auto' }
+  | { kind: 'detected'; home: string }
+  // 메인이 폴더 대화상자를 띄운다(제목은 렌더러가 번역). 취소하면 바뀌지 않는다.
+  | { kind: 'browse'; title: string }
+
 // ---- 실행 ----
 
 // 실행 속도(가상 시간 ÷ 실제 시간). max는 기다리지 않고 최대한 빨리.
@@ -110,12 +139,24 @@ export type PlayInitRequest = {
 // - noSidecar: 사이드카가 빌드되지 않았다(개발 중: pnpm build:sidecar)
 // - busy: 다른 실행이 아직 끝나지 않았다
 // - failed: JVM을 띄우지 못했다(detail에 이유)
+// - noAndroidSdk: Android SDK를 찾지 못했다(환경 설정에서 고르게 안내)
+// - noAndroidPlatform: SDK에 프로젝트 compileSdk의 플랫폼이 없다(detail: 'android-30' 등, Android Studio에서 설치)
+// - cancelled: 라이브러리를 받는 중 사용자가 STOP으로 취소했다
 // ok의 configMissing: 요청한 구성 XML이 디스크에 없어 장치 없는 hardwareMap으로 실행한다(렌더러가 Console에 경고)
 export type PlayInitResult =
   | { ok: true; configMissing?: true }
   | {
       ok: false
-      code: 'notAllowed' | 'missing' | 'noJdk' | 'noSidecar' | 'busy' | 'failed'
+      code:
+        | 'notAllowed'
+        | 'missing'
+        | 'noJdk'
+        | 'noSidecar'
+        | 'busy'
+        | 'failed'
+        | 'noAndroidSdk'
+        | 'noAndroidPlatform'
+        | 'cancelled'
       detail: string
     }
 
@@ -140,6 +181,23 @@ export type PlayDiagnostic = {
   column: number
   message: string
   code: string
+  // 라이브러리 패키지를 찾지 못한 오류(compiler.err.doesnt.exist 등)에 붙이는 안내. 없으면 null.
+  hint: DiagnosticHint | null
+}
+
+// - libraryNotLoaded: 팀 Gradle에 선언했지만 불러오지 않은 라이브러리의 패키지(coordinate·reason은 의존성 보고와 같다)
+// - undeclared: 어느 선언에도 속하지 않는 패키지(Android Studio에서도 컴파일되지 않는다)
+export type DiagnosticHint =
+  | { kind: 'libraryNotLoaded'; coordinate: string; reason: LibraryReason }
+  | { kind: 'undeclared'; packageName: string }
+
+// 라이브러리 링크 검사 경고 하나(sidecarProtocol.LinkWarning을 좌표로 바꾼 것)
+export type PlayLinkWarning = {
+  // 'g:a:v'(jar를 좌표로 바꿀 수 없으면 파일 이름)
+  library: string
+  kind: 'missingClass' | 'missingMember' | 'unsupported'
+  from: string
+  target: string
 }
 
 // 스택 한 줄. path는 TeamCode 기준 소스 경로(팀 코드일 때만, 외부 편집기로 그 줄을 연다).
@@ -190,6 +248,12 @@ export type PlayEvent =
       outputs: Record<string, DeviceValues>
       inputs: Record<string, DeviceValues>
     }
+  // INIT 중 라이브러리 받기 진행(약 10 Hz). 받을 것이 없으면 오지 않는다.
+  | ({ type: 'libraryProgress'; runId: string } & LibraryProgress)
+  // 라이브러리 의존성 보고(INIT마다 JVM을 띄우기 전에 한 번, Gradle 파일이 없어도 빈 보고)
+  | { type: 'libraryReport'; runId: string; report: LibraryReport }
+  // 라이브러리 링크 검사(라이브러리가 있을 때 컴파일 전에 한 번)
+  | { type: 'linkWarnings'; runId: string; warnings: PlayLinkWarning[] }
   // 시뮬레이터의 로봇 자세(필드 좌표, 약 60 Hz와 일시 정지·Step·끝에 바로). 렌더러는 씬 문서를 바꾸지 않고 그린다.
   | ({ type: 'pose'; runId: string; tNanos: number } & SimPose)
   // 시뮬레이터 안내(Console 경고 한 줄, 같은 code·params는 실행마다 한 번). code는 렌더러가 번역한다.

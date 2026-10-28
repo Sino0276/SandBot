@@ -150,11 +150,17 @@ const ko = {
       '실행기(사이드카)가 빌드되지 않았습니다. 개발 중이면 pnpm build:sidecar를 실행한 뒤 다시 INIT하세요.',
     playBusy: '이전 실행이 아직 끝나지 않았습니다. 잠시 뒤 다시 INIT하세요.',
     playFailed: 'JVM을 시작하지 못했습니다 ({{detail}}).',
-    playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).'
+    playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
+    playNoAndroidSdk:
+      'Android SDK를 찾지 못했습니다. 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android API로 컴파일하므로 Android SDK가 필요합니다. 환경 설정에서 SDK 폴더를 고르세요(Android Studio를 설치했다면 자동으로 찾습니다).',
+    playNoAndroidPlatform:
+      'Android SDK에 이 프로젝트의 플랫폼({{detail}})이 없습니다. Android Studio의 SDK Manager에서 설치한 뒤 다시 INIT하세요.',
+    playCancelled: '라이브러리 받기를 취소해 실행하지 않았습니다.'
   },
   // 알림의 행동 버튼
   noticeAction: {
-    openJdkPreferences: 'JDK 설정 열기'
+    openJdkPreferences: 'JDK 설정 열기',
+    openAndroidSdkPreferences: 'Android SDK 설정 열기'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {

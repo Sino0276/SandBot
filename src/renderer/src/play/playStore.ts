@@ -306,6 +306,11 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         }
       }
     }
+    // 라이브러리 진행·보고·링크 검사(계약: 표시는 라이브러리 갈래가 채운다)
+    case 'libraryProgress':
+    case 'libraryReport':
+    case 'linkWarnings':
+      return {}
     case 'simNotice': {
       // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다)
       const key: ConsoleNoticeKey = `sim.${event.code}`

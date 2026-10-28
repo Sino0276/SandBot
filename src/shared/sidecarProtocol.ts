@@ -8,7 +8,7 @@
 // - 실시간 실행(진짜 시계 + 하드웨어 호출에서 실제로 기다림)은 구현하지 않고 길만 열어 둔다: RunRequest.clock에
 //   다른 값을 더하고 사이드카에 SimClock 구현을 하나 더 두면 된다. 지금 사이드카는 'virtual'이 아니면 거부한다.
 
-export const SIDECAR_PROTOCOL_VERSION = 1
+export const SIDECAR_PROTOCOL_VERSION = 2
 
 // 틱 길이(가상 나노초). 틱 경계마다 장치 출력을 내보내고 입력(게임패드·센서)과 DS 사건(START·STOP)을 받는다.
 // 실제 Robot Controller의 이벤트 루프 한 바퀴에 해당한다(LinearOpMode.waitForStart가 깨어나는 때, 게임패드가 바뀌는 때).
@@ -55,8 +55,17 @@ export type RunRequest = {
   opModeSource: string
   // 바이너리 이름(중첩 클래스는 Outer$Inner)
   opModeClass: string
-  // javac -classpath(sandbot-sdk.jar). 팀 코드가 컴파일·실행 때 보는 가짜 FTC SDK.
-  sdkClasspath: string[]
+  // javac -bootclasspath: 팀 프로젝트 compileSdk의 Android 플랫폼 API(android.jar에서 java.*·javax.*·org.w3c.*·
+  // org.xml.*·android.annotation.*만 고른 jar, 메인의 androidSdk.ts). 팀 코드는 Android Studio처럼 Java 8 문법(-source 8
+  // -target 8)과 Android API로 컴파일한다. 비어 있으면 javac --release 8(호스트 JDK의 Java 8 API)이고, 이것은 사이드카
+  // 시험만 쓴다(메인은 늘 플랫폼 jar를 보낸다).
+  bootClasspath: string[]
+  // javac -classpath: sandbot-sdk.jar(가짜 FTC SDK) 다음에 컴파일용 라이브러리 jar(팀 Gradle의 컴파일 클래스패스,
+  // androidx.annotation, SandBot이 대체하는 라이브러리는 실제 jar). 순서대로 찾는다.
+  compileClasspath: string[]
+  // 실행 때 LibraryClassLoader가 읽는 라이브러리 jar(팀 Gradle의 실행 클래스패스, 시간 API를 패치해 정의한다).
+  // 가짜 SDK(sandbot-sdk.jar)는 JVM -cp에 있어 먼저 찾는다. 메인의 라이브러리 캐시 안 경로만.
+  libraryClasspath: string[]
   // 로봇 구성: 생성한 구성 XML(TeamCode/src/main/res/xml/sandbot_*.xml). DS에서 활성화하는 구성과 같다.
   // null이면 장치 없는 hardwareMap이다.
   configXml: string | null
@@ -240,6 +249,23 @@ export type ErrorMessage = {
 
 export type FinishedMessage = { type: 'finished'; tNanos: number; reason: FinishReason }
 
+// 라이브러리 jar의 링크 검사(libraryClasspath가 있으면 hello 뒤·compiled 전에 한 번). 라이브러리 바이트코드가 참조하는
+// 클래스·멤버를 가짜 SDK와 JDK에 대어 본 결과다. 실행을 막지 않는다(그 코드에 닿으면 실행 중 오류가 난다).
+// - missingClass: 참조한 클래스가 없다(NoClassDefFoundError가 난다)
+// - missingMember: 클래스는 있지만 그 필드·메서드가 없다(NoSuchFieldError·NoSuchMethodError)
+// - unsupported: 있지만 가짜 SDK가 아직 지원하지 않는다(부르면 SimUnsupportedException, error kind unsupported)
+export type LinkWarningKind = 'missingClass' | 'missingMember' | 'unsupported'
+export type LinkWarning = {
+  // libraryClasspath의 jar 절대 경로
+  jar: string
+  kind: LinkWarningKind
+  // 참조한 쪽(라이브러리 클래스, 바이너리 이름)
+  from: string
+  // 참조한 대상(클래스는 바이너리 이름, 멤버는 '클래스#이름(서술자)')
+  target: string
+}
+export type LinkReportMessage = { type: 'linkReport'; warnings: LinkWarning[] }
+
 export type SidecarMessage =
   | HelloMessage
   | CompiledMessage
@@ -249,3 +275,4 @@ export type SidecarMessage =
   | LogMessage
   | ErrorMessage
   | FinishedMessage
+  | LinkReportMessage

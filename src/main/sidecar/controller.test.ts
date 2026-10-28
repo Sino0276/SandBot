@@ -178,12 +178,14 @@ describe('PlayController + 가짜 사이드카', () => {
     const run = JSON.parse(robotLog.find((text) => text.startsWith('request '))!.slice(8))
     expect(run).toMatchObject({
       type: 'run',
-      protocol: 1,
+      protocol: 2,
       clock: 'virtual',
       opModeClass: 'org.firstinspires.ftc.teamcode.Normal',
       opModeSource: join(root, 'TeamCode', PKG, 'Normal.java'),
       sourceRoots: [join(root, 'TeamCode', 'src', 'main', 'java')],
-      sdkClasspath: [FILES.sdkJar],
+      bootClasspath: [],
+      compileClasspath: [FILES.sdkJar],
+      libraryClasspath: [],
       configXml: join(root, 'TeamCode', 'src', 'main', 'res', 'xml', 'sandbot_robot.xml'),
       seed: 7,
       startEpochMillis: 1000
@@ -417,10 +419,84 @@ describe('PlayController + 가짜 사이드카', () => {
         ok: false,
         code: 'failed'
       })
-      expect(events).toEqual([])
+      // JVM을 띄우기 전의 라이브러리 보고(빈 보고)만 왔다
+      expect(events.map((event) => event.type)).toEqual(['libraryReport'])
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
+  })
+
+  it('컴파일 기준·라이브러리를 RunRequest에 싣고, 받는 중 STOP이면 cancelled', async () => {
+    const report = { entries: [], gradle: [], compileSdk: 30, platform: null }
+    const seen: string[] = []
+    const ok = make({
+      readGradle: async (projectRoot) => {
+        seen.push(projectRoot)
+        return { dependencies: [], repositories: [], compileSdk: 30, diagnostics: [], files: [] }
+      },
+      resolvePlatform: async (_projectRoot, compileSdk) => ({
+        ok: true,
+        bootClasspath: [`/platform/android-${compileSdk}.jar`],
+        api: compileSdk,
+        guessed: false
+      }),
+      resolveLibraries: async (request) => {
+        request.progress({ phase: 'downloading', done: 1, total: 2, bytes: 10 })
+        return {
+          ok: true,
+          report,
+          compileClasspath: ['/cache/lib.jar'],
+          libraryClasspath: ['/cache/lib.jar'],
+          jarCoordinates: { '/cache/lib.jar': 'g:a:1' },
+          diagnosticHint: () => null
+        }
+      }
+    })
+    const request = opModeRequest('Normal')
+    expect(await ok.init(request, owner)).toEqual({ ok: true })
+    expect(seen).toEqual([root])
+    expect(of('libraryProgress', request.runId)).toMatchObject([
+      { phase: 'downloading', done: 1, total: 2, bytes: 10 }
+    ])
+    expect(of('libraryReport', request.runId)).toMatchObject([
+      { report: { ...report, platform: { api: 30, guessed: false } } }
+    ])
+    await waitFor(() => recorded.at(-1)!.sent.length > 0)
+    expect(recorded.at(-1)!.sent[0]).toMatchObject({
+      type: 'run',
+      bootClasspath: ['/platform/android-30.jar'],
+      compileClasspath: [FILES.sdkJar, '/cache/lib.jar'],
+      libraryClasspath: ['/cache/lib.jar']
+    })
+    ok.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(request.runId) !== undefined)
+
+    const noPlatform = make({
+      resolvePlatform: async () => ({ ok: false, code: 'noAndroidSdk', detail: '' })
+    })
+    expect(await noPlatform.init(opModeRequest('Normal'), owner)).toEqual({
+      ok: false,
+      code: 'noAndroidSdk',
+      detail: ''
+    })
+
+    let started!: () => void
+    const waiting = new Promise<void>((resolve) => (started = resolve))
+    const cancellable = make({
+      resolveLibraries: (request) =>
+        new Promise((resolve) => {
+          started()
+          request.signal.addEventListener('abort', () =>
+            resolve({ ok: false, code: 'cancelled', detail: '' })
+          )
+        })
+    })
+    const pending = cancellable.init(opModeRequest('Normal'), owner)
+    await waiting
+    // 다른 창의 STOP은 무시한다
+    cancellable.command({ type: 'stop' }, { send: () => undefined })
+    cancellable.command({ type: 'stop' }, owner)
+    expect(await pending).toEqual({ ok: false, code: 'cancelled', detail: '' })
   })
 
   it('진짜 파이프에서도 가짜 시계로 페이스·일시 정지·Step이 맞다', async () => {

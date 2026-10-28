@@ -142,7 +142,8 @@ public final class Main {
         long started = System.nanoTime();
         TeamCompiler.Result compiled;
         try {
-            compiled = TeamCompiler.compile(request.sourceRoots, request.opModeSource, request.sdkClasspath);
+            compiled = TeamCompiler.compile(request.sourceRoots, request.opModeSource, request.bootClasspath,
+                    request.compileClasspath);
         } catch (TeamCompiler.NoCompilerException e) {
             failBeforeRun(session, e.getMessage(), "compileFailed");
             return;

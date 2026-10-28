@@ -12,13 +12,15 @@ const SOURCE = `${ROOT}/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Dr
 
 const REQUEST: RunRequest = {
   type: 'run',
-  protocol: 1,
+  protocol: 2,
   clock: 'virtual',
   tickNanos: 5_000_000,
   sourceRoots: [`${ROOT}/TeamCode/src/main/java`],
   opModeSource: SOURCE,
   opModeClass: 'org.firstinspires.ftc.teamcode.Drive',
-  sdkClasspath: ['/sidecar/sandbot-sdk.jar'],
+  bootClasspath: [],
+  compileClasspath: ['/sidecar/sandbot-sdk.jar'],
+  libraryClasspath: [],
   configXml: null,
   timing: {},
   jitter: 0,
@@ -59,7 +61,7 @@ function setup(
 }
 
 function boot(proc: FakeProcess): void {
-  proc.line({ type: 'hello', protocol: 1, runtime: 'test', java: '21' })
+  proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
   proc.line({ type: 'compiled', ok: true, diagnostics: [], millis: 4 })
   proc.line({ type: 'state', tNanos: 0, phase: 'init' })
 }
@@ -92,9 +94,61 @@ describe('SidecarSession 시작과 이벤트', () => {
     expect(events.every((event) => event.runId === 'run-1')).toBe(true)
   })
 
+  it('링크 검사 경고는 jar를 좌표로 바꾸고, 진단에는 라이브러리 안내를 붙인다', () => {
+    const { proc, of } = setup({
+      jarCoordinates: { '/cache/pedro.jar': 'com.pedropathing:core:3.0.2' },
+      diagnosticHint: (d) =>
+        d.code === 'compiler.err.doesnt.exist'
+          ? { kind: 'undeclared', packageName: 'com.example' }
+          : null
+    })
+    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
+    proc.line({
+      type: 'linkReport',
+      warnings: [
+        { jar: '/cache/pedro.jar', kind: 'unsupported', from: 'a.B', target: 'c.D#e()V' },
+        { jar: '/cache/other.jar', kind: 'missingClass', from: 'x.Y', target: 'z.W' }
+      ]
+    })
+    proc.line({
+      type: 'compiled',
+      ok: false,
+      millis: 1,
+      diagnostics: [
+        {
+          kind: 'error',
+          file: null,
+          line: 0,
+          column: 0,
+          message: 'package com.example does not exist',
+          code: 'compiler.err.doesnt.exist'
+        }
+      ]
+    })
+    expect(of('linkWarnings')).toEqual([
+      {
+        type: 'linkWarnings',
+        runId: 'run-1',
+        warnings: [
+          {
+            library: 'com.pedropathing:core:3.0.2',
+            kind: 'unsupported',
+            from: 'a.B',
+            target: 'c.D#e()V'
+          },
+          { library: 'other.jar', kind: 'missingClass', from: 'x.Y', target: 'z.W' }
+        ]
+      }
+    ])
+    expect(of('compiled')[0].diagnostics[0].hint).toEqual({
+      kind: 'undeclared',
+      packageName: 'com.example'
+    })
+  })
+
   it('진단과 스택 프레임의 경로를 TeamCode 기준으로 바꾼다', () => {
     const { proc, of } = setup()
-    proc.line({ type: 'hello', protocol: 1, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
     proc.line({
       type: 'compiled',
       ok: false,
@@ -320,7 +374,7 @@ describe('SidecarSession 일시 정지와 Step', () => {
 
   it('START는 init 단계에서 한 번만, STOP 뒤에는 받지 않는다', () => {
     const { clock, proc, session } = setup()
-    proc.line({ type: 'hello', protocol: 1, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
     session.command({ type: 'start' })
     proc.line({ type: 'state', tNanos: 0, phase: 'init' })
     proc.line(tick(0))
@@ -510,8 +564,8 @@ describe('SidecarSession 끝내기', () => {
       ],
       [
         'protocol',
-        (proc) => proc.line({ type: 'hello', protocol: 2, runtime: 'x', java: '21' }),
-        'protocol error: protocol 2'
+        (proc) => proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' }),
+        'protocol error: protocol 3'
       ]
     ]
     for (const [, act, detail] of cases) {
@@ -534,7 +588,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('조각난 줄과 CRLF를 이어 읽는다', () => {
     const { proc, of } = setup()
-    const text = JSON.stringify({ type: 'hello', protocol: 1, runtime: 'x', java: '21' })
+    const text = JSON.stringify({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
     proc.raw(text.slice(0, 5))
     proc.raw(`${text.slice(5)}\r\n`)
     expect(of('phase').at(-1)?.phase).toBe('compiling')
@@ -550,7 +604,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('compiling 중 STOP은 shutdown을 보낸다', () => {
     const { proc, session, of } = setup()
-    proc.line({ type: 'hello', protocol: 1, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
     session.command({ type: 'stop' })
     expect(proc.sent.at(-1)).toEqual({ type: 'shutdown' })
     proc.line({ type: 'finished', tNanos: 0, reason: 'shutdown' })
@@ -601,7 +655,7 @@ describe('SidecarSession 이벤트 묶기', () => {
 
   it('로그는 50 ms 묶음이고, 오류·단계·끝 전에 먼저 보낸다', () => {
     const { clock, proc, events } = setup()
-    proc.line({ type: 'hello', protocol: 1, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
     const log = (text: string): void => proc.line({ type: 'log', tNanos: 0, stream: 'out', text })
     log('a')
     log('b')

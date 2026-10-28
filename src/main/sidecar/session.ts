@@ -1,5 +1,7 @@
+import path from 'path'
 import {
   AUTONOMOUS_SECONDS,
+  type DiagnosticHint,
   type GamepadState,
   type OpModeFlavor,
   type PlayCommand,
@@ -12,6 +14,7 @@ import {
 } from '../../shared/play'
 import {
   SIDECAR_PROTOCOL_VERSION,
+  type CompileDiagnostic,
   type DeviceValues,
   type DsEvent,
   type FinishReason,
@@ -98,6 +101,10 @@ export type SessionOptions = {
   // 이 OpMode의 @Autonomous(preselectTeleOp). TeleOp이면 ''.
   preselectTeleOp: string
   mapSource: SourceMapper
+  // 라이브러리 jar 절대 경로 → 'g:a:v'(링크 검사 경고). 없으면 파일 이름으로 보인다.
+  jarCoordinates?: Record<string, string>
+  // 컴파일 진단에 붙일 라이브러리 안내(launch.LibraryResolution.diagnosticHint)
+  diagnosticHint?: (diagnostic: CompileDiagnostic) => DiagnosticHint | null
   emit: (event: PlayEvent) => void
   clock?: HostClock
   world?: SimWorld
@@ -673,9 +680,22 @@ export class SidecarSession {
               line: d.line,
               column: d.column,
               message: d.message,
-              code: d.code
+              code: d.code,
+              hint: this.options.diagnosticHint?.(d) ?? null
             }
           })
+        })
+        break
+      case 'linkReport':
+        this.emit({
+          type: 'linkWarnings',
+          runId: this.runId,
+          warnings: message.warnings.map((warning) => ({
+            library: this.options.jarCoordinates?.[warning.jar] ?? path.basename(warning.jar),
+            kind: warning.kind,
+            from: warning.from,
+            target: warning.target
+          }))
         })
         break
       case 'state':

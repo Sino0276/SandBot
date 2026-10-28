@@ -150,11 +150,17 @@ const en: Messages = {
       'The runner (sidecar) has not been built. During development, run pnpm build:sidecar and INIT again.',
     playBusy: 'The previous run has not finished yet. INIT again in a moment.',
     playFailed: 'Could not start the JVM ({{detail}}).',
-    playInitFailed: 'Could not start the run ({{detail}}).'
+    playInitFailed: 'Could not start the run ({{detail}}).',
+    playNoAndroidSdk:
+      'Android SDK not found. Team code is compiled against the project compileSdk Android API, as in Android Studio, so an Android SDK is required. Choose the SDK folder in Preferences (it is found automatically if Android Studio is installed).',
+    playNoAndroidPlatform:
+      'The Android SDK does not have this project platform ({{detail}}). Install it with the SDK Manager in Android Studio, then INIT again.',
+    playCancelled: 'The library download was cancelled, so the run did not start.'
   },
   // Notice action buttons
   noticeAction: {
-    openJdkPreferences: 'Open JDK settings'
+    openJdkPreferences: 'Open JDK settings',
+    openAndroidSdkPreferences: 'Open Android SDK settings'
   },
   importPhase: {
     checking: 'checking the file',

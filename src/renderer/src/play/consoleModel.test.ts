@@ -87,7 +87,8 @@ function sample(): ConsoleEntry[] {
           line: 12,
           column: 9,
           message: 'cannot find symbol',
-          code: 'compiler.err.cant.resolve.location'
+          code: 'compiler.err.cant.resolve.location',
+          hint: null
         }
       },
       null
@@ -139,7 +140,8 @@ describe('Console 항목 글자', () => {
         line: 0,
         column: 0,
         message: '',
-        code: ''
+        code: '',
+        hint: null
       })
     ).toBe('X.java')
   })
@@ -191,7 +193,8 @@ describe('외부 편집기로 열 곳', () => {
           line: 1,
           column: 1,
           message: 'x',
-          code: ''
+          code: '',
+          hint: null
         }
       },
       null
@@ -212,7 +215,8 @@ describe('메인 이벤트의 모양(M)', () => {
           line: 0,
           column: 0,
           message: '[options] bootstrap class path not set',
-          code: 'compiler.warn.source.no.bootclasspath'
+          code: 'compiler.warn.source.no.bootclasspath',
+          hint: null
         }
       },
       null

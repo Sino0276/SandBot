@@ -248,13 +248,13 @@ describe('사이드카 빌드 결과와 명령', () => {
 
   it('sidecar.json이 없거나 protocol이 다르거나 jar가 없으면 noSidecar', async () => {
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 2 }))
+    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 1 }))
     expect(await readSidecarFiles(dir)).toMatchObject({
       ok: false,
       code: 'noSidecar',
-      detail: 'sidecar protocol 2, expected 1'
+      detail: 'sidecar protocol 1, expected 2'
     })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 1, sourceHash: 'x' }))
+    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 2, sourceHash: 'x' }))
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
@@ -302,18 +302,24 @@ describe('사이드카 빌드 결과와 명령', () => {
           }
         })
       ),
-      files,
+      {
+        bootClasspath: ['/p/android-platform.jar'],
+        compileClasspath: [files.sdkJar],
+        libraryClasspath: []
+      },
       1234
     )
     expect(run).toEqual({
       type: 'run',
-      protocol: 1,
+      protocol: 2,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
       opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
       opModeClass: 'org.firstinspires.ftc.teamcode.Drive',
-      sdkClasspath: ['/s/sandbot-sdk.jar'],
+      bootClasspath: ['/p/android-platform.jar'],
+      compileClasspath: ['/s/sandbot-sdk.jar'],
+      libraryClasspath: [],
       configXml: null,
       timing: {},
       jitter: 0.1,

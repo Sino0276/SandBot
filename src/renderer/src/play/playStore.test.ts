@@ -67,7 +67,8 @@ const diagnostic = (kind: PlayDiagnostic['kind'], line: number): PlayDiagnostic 
   line,
   column: 5,
   message: "';' expected",
-  code: 'compiler.err.expected'
+  code: 'compiler.err.expected',
+  hint: null
 })
 
 describe('applyPlayEvent', () => {

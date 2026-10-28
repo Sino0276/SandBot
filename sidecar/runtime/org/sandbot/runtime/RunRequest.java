@@ -8,7 +8,7 @@ import java.util.Map;
 
 /** 호스트의 run 메시지(src/shared/sidecarProtocol.ts의 RunRequest)를 검사해 읽은 것 */
 final class RunRequest {
-    static final int PROTOCOL = 1;
+    static final int PROTOCOL = 2;
 
     /** 받을 수 없는 요청(메시지는 영어, error kind internal) */
     static final class Invalid extends Exception {
@@ -21,7 +21,12 @@ final class RunRequest {
     final List<String> sourceRoots;
     final String opModeSource;
     final String opModeClass;
-    final List<String> sdkClasspath;
+    /** javac -bootclasspath(Android 플랫폼 API). 비면 --release 8(시험만). */
+    final List<String> bootClasspath;
+    /** javac -classpath(sandbot-sdk.jar + 컴파일용 라이브러리 jar) */
+    final List<String> compileClasspath;
+    /** 실행 때 LibraryClassLoader가 시간 API를 패치해 읽는 라이브러리 jar */
+    final List<String> libraryClasspath;
     final String configXml;
     final Map<String, Double> timing;
     final double jitter;
@@ -40,7 +45,9 @@ final class RunRequest {
         sourceRoots = stringList(m, "sourceRoots");
         opModeSource = string(m, "opModeSource");
         opModeClass = string(m, "opModeClass");
-        sdkClasspath = stringList(m, "sdkClasspath");
+        bootClasspath = stringList(m, "bootClasspath");
+        compileClasspath = stringList(m, "compileClasspath");
+        libraryClasspath = stringList(m, "libraryClasspath");
         Object config = m.get("configXml");
         if (config != null && !(config instanceof String)) throw new Invalid("configXml must be a string or null");
         configXml = (String) config;
