@@ -707,8 +707,19 @@ const en: Messages = {
         'Dead wheel {{deadWheel}} shares its encoder port with motor {{motor}}, whose run mode uses the encoder. On the robot the pod encoder controls it, but the simulator assumes the motor shaft encoder does.',
       worldDuplicateMotor:
         'The motor device name {{name}} is empty or used twice, so the simulator does not use that motor.',
-      worldTooMany:
-        'There are more {{what}} than the simulator limit ({{max}}); only the first {{max}} are used.',
+      // One sentence per list over its limit (worldSpec.ts capped)
+      worldTooManyMotors:
+        'There are more motors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyWheels:
+        'There are more wheels than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyDeadWheels:
+        'There are more dead wheels than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyPinpoints:
+        'There are more Pinpoints than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyOtos:
+        'There are more OTOS sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyImus:
+        'There are more IMUs than the simulator limit ({{max}}); only the first {{max}} are used.',
       worldGenerationStale:
         'Device names may differ from the generated configuration, so the wheels may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
@@ -807,7 +818,7 @@ const en: Messages = {
       diameter: 'Diameter',
       fitSize: 'From part size',
       fitSizeHint:
-        'Uses the second-longest side of the bounding box of this object (its child parts for a group) as the diameter (a wheel box is diameter × diameter × width).',
+        "Uses the height (size along the robot's up axis) of the bounding box of this object (its child parts for a group) as the diameter. A wheel's axle is horizontal, so its height is the diameter whichever way it faces (such as a 45° omni wheel in an X-drive).",
       fitSizeNone: 'There is no shape to measure.',
       motor: 'Drive motor',
       motorNone: '(none: rolls along)',

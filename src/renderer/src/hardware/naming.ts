@@ -121,6 +121,16 @@ export function xmlAttribute(value: string): string {
     .replace(/'/g, '&apos;')
 }
 
+// 사이드카가 구성 XML의 name을 장치 이름으로 쓰는 규칙(SandbotHardware.name의 Java String.trim): 앞뒤의 U+0020 이하
+// 글자만 뺀다. JS trim()은 NBSP·U+3000·BOM도 빼지만 Java는 남기므로(구성 XML·생성 코드에도 그대로 있다) 쓰지 않는다.
+export function sidecarDeviceName(name: string): string {
+  let start = 0
+  let end = name.length
+  while (start < end && name.charCodeAt(start) <= 0x20) start++
+  while (end > start && name.charCodeAt(end - 1) <= 0x20) end--
+  return name.slice(start, end)
+}
+
 // 생성 파일 위치(TeamCode 폴더 기준). 메인 프로세스도 같은 규칙으로 경로를 검사한다(src/shared/generatedFiles.ts).
 export const GENERATED_JAVA_PACKAGE = 'org.firstinspires.ftc.teamcode.sandbot'
 

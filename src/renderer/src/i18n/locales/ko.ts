@@ -719,7 +719,15 @@ const ko = {
         '데드휠 {{deadWheel}}이(가) 모터 {{motor}}와 엔코더 포트를 함께 쓰는데 그 모터의 런 모드가 엔코더 사용입니다. 실제로는 포드 엔코더로 제어되지만 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
       worldDuplicateMotor:
         '모터 장치 이름 {{name}}이(가) 겹치거나 비어 있어 시뮬레이터가 그 모터를 쓰지 않습니다.',
-      worldTooMany: '{{what}} 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      // 한도를 넘은 목록마다 한 문장(worldSpec.ts capped)
+      worldTooManyMotors: '모터 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyWheels: '바퀴 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyDeadWheels:
+        '데드휠 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyPinpoints:
+        'Pinpoint 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyOtos: 'OTOS 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyImus: 'IMU 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldGenerationStale:
         '장치 이름이 생성 구성과 다를 수 있어 바퀴가 움직이지 않을 수 있습니다.',
       worldInvalid: '시뮬레이터 세계를 만들지 못해 로봇이 움직이지 않습니다 ({{detail}}).',
@@ -816,7 +824,7 @@ const ko = {
       diameter: '지름',
       fitSize: '파트 크기로',
       fitSizeHint:
-        '이 오브젝트(그룹이면 하위 파트) 경계 상자에서 둘째로 긴 변을 지름으로 씁니다(바퀴의 상자는 지름 × 지름 × 폭).',
+        '이 오브젝트(그룹이면 하위 파트) 경계 상자의 높이(로봇 위아래 크기)를 지름으로 씁니다. 바퀴 축은 수평이라 바퀴가 어느 쪽을 향해도(X 드라이브의 45° 옴니 등) 높이가 지름입니다.',
       fitSizeNone: '형상이 없어 크기를 잴 수 없습니다.',
       motor: '구동 모터',
       motorNone: '(없음: 따라 구르기만)',

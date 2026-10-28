@@ -157,4 +157,19 @@ describe('장치 표', () => {
     ])
     expect(deviceRows(SCENE, 'beta', { arm: { power: 0 } })[0].inputs).toEqual([])
   })
+
+  it('이름은 사이드카처럼 Java trim으로 맞춘다(NBSP·전각 공백은 사이드카 장치 이름에 남는다)', () => {
+    const scene: SceneObjects = {
+      ...SCENE,
+      betaArm: part('betaArm', 'beta', [
+        ['m2', ' arm\u00a0', 1],
+        ['m5', '\u3000elbow\t', 2]
+      ])
+    }
+    const rows = deviceRows(scene, 'beta', { 'arm\u00a0': { power: 0.5 } }, { '\u3000elbow': {} })
+    expect(rows.map((row) => [row.name, row.objectId])).toEqual([
+      ['arm\u00a0', 'betaArm'],
+      ['\u3000elbow', 'betaArm']
+    ])
+  })
 })

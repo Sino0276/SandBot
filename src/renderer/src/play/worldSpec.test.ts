@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseWorldSpec } from '../../../shared/sim/worldSpec'
 import { cadRootTransform } from '../cad/alignment'
 import { createComponent } from '../hardware/components'
+import { generateConfigXml } from '../hardware/configXml'
 import type { HardwareComponent, SceneObject, SceneObjects, WheelSettings } from '../scene/model'
 import { defaultWheel } from '../scene/wheel'
 import {
@@ -171,13 +172,15 @@ describe('buildWorldSpec', () => {
     objects.FR.wheel = wheel({ motor: 'motor-rightFront', angle: 180 * DEG })
     objects.BL.wheel = wheel({ motor: 'motor-leftBack', angle: 90 * DEG })
     const resolved = robotWheels(objects, 'R')
-    expect(resolved.map((w) => [w.name, w.rollers, w.rollersAuto, w.rollersAmbiguous])).toEqual([
-      // 직접 고른 형은 그대로
-      ['FL', 'frbl', false, false],
+    expect(
+      resolved.map((w) => [w.name, w.rollers, w.autoRollers, w.rollersAuto, w.rollersAmbiguous])
+    ).toEqual([
+      // 직접 고른 형은 그대로 쓰고, 자동이라면 고를 형(앞왼 자리 → flbr)은 따로 둔다
+      ['FL', 'frbl', 'flbr', false, false],
       // 뒤로 굴리게(180°) 단 바퀴도 롤러 축이 같아 위치로 정한다
-      ['FR', 'frbl', true, false],
-      ['BL', 'flbr', true, true],
-      ['BR', 'flbr', true, false]
+      ['FR', 'frbl', 'frbl', true, false],
+      ['BL', 'flbr', 'flbr', true, true],
+      ['BR', 'flbr', 'flbr', true, false]
     ])
     const { warnings } = buildWorldSpec(objects, 'R', SETTINGS)
     expect(warnings).toEqual([{ key: 'worldRollersAmbiguous', params: { name: 'BL' } }])
@@ -190,13 +193,18 @@ describe('buildWorldSpec', () => {
     const mixed = mecanumRobot()
     mixed.FL.wheel = wheel({ kind: 'omni', motor: 'motor-leftFront' })
     mixed.BR.wheel = wheel({ kind: 'traction', motor: 'motor- rightBack ' })
-    const kinds = robotWheels(mixed, 'R').map((w) => [w.name, w.rollers, w.rollersAmbiguous])
+    const kinds = robotWheels(mixed, 'R').map((w) => [
+      w.name,
+      w.rollers,
+      w.autoRollers,
+      w.rollersAmbiguous
+    ])
     // 메카넘 FR·BL의 중심은 (0.15, 0): FR 앞오른 → frbl, BL 뒤왼 → frbl
     expect(kinds).toEqual([
-      ['FL', null, false],
-      ['FR', 'frbl', false],
-      ['BL', 'frbl', false],
-      ['BR', null, false]
+      ['FL', null, null, false],
+      ['FR', 'frbl', 'frbl', false],
+      ['BL', 'frbl', 'frbl', false],
+      ['BR', null, null, false]
     ])
   })
 
@@ -248,6 +256,76 @@ describe('buildWorldSpec', () => {
     expect(warnings).toEqual([
       { key: 'worldDuplicateMotor', params: { name: 'leftFront' } },
       { key: 'worldDuplicateMotor', params: { name: '   ' } }
+    ])
+  })
+
+  it('장치 이름은 사이드카처럼 Java trim(U+0020 이하만 뺀다): NBSP·U+3000이 남은 이름도 구성 XML과 같다', () => {
+    const objects = mecanumRobot()
+    const motors = objects.drive.components!
+    // 웹 문서에서 붙여 넣은 NBSP, IME의 전각 공백. 탭·공백은 Java trim도 뺀다.
+    motors[0] = { ...motors[0], name: 'leftFront\u00a0' }
+    motors[1] = { ...motors[1], name: '\t\u3000rightFront ' }
+    const imu = createComponent('imu', [], () => 'imu')
+    objects.sensors = part('sensors', 'R', [0, 0, 0.1], {
+      components: [{ ...imu, name: ' imu\u00a0' }]
+    })
+    const { spec, warnings } = buildWorldSpec(objects, 'R', SETTINGS)
+    expect(warnings).toEqual([])
+    expect(spec!.motors.map((m) => m.device).slice(0, 2)).toEqual([
+      'leftFront\u00a0',
+      '\u3000rightFront'
+    ])
+    expect(spec!.wheels.map((w) => w.motor).slice(0, 2)).toEqual([
+      'leftFront\u00a0',
+      '\u3000rightFront'
+    ])
+    expect(spec!.imus).toEqual([{ device: 'imu\u00a0' }])
+    // 구성 XML은 이름을 그대로 쓰고 사이드카가 Java trim한다(SandbotHardware.name)
+    const xml = generateConfigXml(objects, 'R')
+    expect(xml).toContain('name="leftFront\u00a0"')
+    expect(xml).toContain('name="\t\u3000rightFront "')
+  })
+
+  it('한도를 넘는 목록은 앞의 것만 쓰고 목록마다 다른 경고(번역할 이름을 params에 넣지 않는다)', () => {
+    const objects = mecanumRobot()
+    const many = (type: 'imu' | 'otos' | 'pinpoint' | 'deadWheel'): HardwareComponent[] =>
+      Array.from({ length: 33 }, (_, i) => ({
+        ...createComponent(type, [], () => `${type}-${i}`),
+        name: `${type}${i}`
+      }))
+    objects.sensors = part('sensors', 'R', [0, 0, 0.1], {
+      components: [
+        ...many('imu'),
+        ...many('otos'),
+        ...many('pinpoint'),
+        // 모터가 없는 포트라 데드휠마다 자기 이름
+        ...many('deadWheel').map((pod) => ({ ...pod, hub: 'expansionHub' as const, port: 3 }))
+      ]
+    })
+    objects.motors = part('motors', 'R', [0, 0, 0.2], {
+      components: Array.from({ length: 61 }, (_, i) => ({
+        ...motor(`m${i}`, 0),
+        id: `extra-${i}`
+      }))
+    })
+    for (let i = 0; i < 29; i++)
+      objects[`w${i}`] = part(`w${i}`, 'R', [-0.2, 0.01 * i - 0.15, 0], {
+        wheel: wheel({ kind: 'omni' })
+      })
+    const { spec, warnings } = buildWorldSpec(objects, 'R', SETTINGS)
+    expect(spec!.motors).toHaveLength(64)
+    expect(spec!.wheels).toHaveLength(32)
+    expect(spec!.imus).toHaveLength(32)
+    expect(spec!.otos).toHaveLength(32)
+    expect(spec!.pinpoints).toHaveLength(32)
+    expect(spec!.deadWheels.map((pod) => pod.device).at(-1)).toBe('deadWheel31')
+    expect(warnings.filter((w) => w.key.startsWith('worldTooMany'))).toEqual([
+      { key: 'worldTooManyMotors', params: { max: 64 } },
+      { key: 'worldTooManyWheels', params: { max: 32 } },
+      { key: 'worldTooManyDeadWheels', params: { max: 32 } },
+      { key: 'worldTooManyPinpoints', params: { max: 32 } },
+      { key: 'worldTooManyOtos', params: { max: 32 } },
+      { key: 'worldTooManyImus', params: { max: 32 } }
     ])
   })
 

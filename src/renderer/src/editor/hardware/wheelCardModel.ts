@@ -1,10 +1,11 @@
-import { Box3, Vector3 } from 'three'
+import { Box3 } from 'three'
 import { robotComponents } from '../../hardware/components'
 import type { PlaySettings } from '../../../../shared/play'
 import { buildWorldSpec, robotWheels, type WorldWarning } from '../../play/worldSpec'
 import { getGeometry } from '../../scene/geometryRegistry'
 import {
   findRobotId,
+  frameMatrix,
   subtreeIds,
   worldMatrix,
   type HardwareComponent,
@@ -64,6 +65,8 @@ export type WheelCardView = {
   inRobot: boolean
   // 메카넘 롤러(auto를 푼 값), 메카넘이 아니면 null
   rollers: 'flbr' | 'frbl' | null
+  // auto라면 고를 형(롤러를 직접 골랐어도, 롤러 칸의 [자동 (…)]), 메카넘이 아니면 null
+  autoRollers: 'flbr' | 'frbl' | null
   rollersAmbiguous: boolean
   motorState: 'none' | 'ok' | 'missing'
   motor: HardwareComponent | null
@@ -78,6 +81,7 @@ export function wheelCardView(objects: SceneObjects, objectId: string): WheelCar
     return {
       inRobot: false,
       rollers: null,
+      autoRollers: null,
       rollersAmbiguous: false,
       motorState: objects[objectId]?.wheel?.motor ? 'missing' : 'none',
       motor: null
@@ -85,18 +89,20 @@ export function wheelCardView(objects: SceneObjects, objectId: string): WheelCar
   return {
     inRobot: true,
     rollers: resolved.rollers,
+    autoRollers: resolved.autoRollers,
     rollersAmbiguous: resolved.rollersAmbiguous,
     motorState: resolved.motorState,
     motor: resolved.motor
   }
 }
 
-// [파트 크기로]: 이 오브젝트(그룹이면 하위) CAD 메시 경계 상자를 이 오브젝트의 축으로 잰 크기에서 둘째로 긴 변.
-// 바퀴의 상자는 지름 × 지름 × 폭이라 둘째로 긴 변이 지름이다(허브·롤러가 조금 튀어나와도 가장 긴 변보다 덜 흔들린다).
+// [파트 크기로]: 이 오브젝트(그룹이면 하위) CAD 메시 경계 상자를 로봇 축으로 잰 높이(Z). 바퀴 축은 수평이라 바퀴가
+// 어느 쪽을 향해도 높이가 지름이고, 축 방향으로 튀어나온 허브·샤프트에도 흔들리지 않는다(CAD 파일 축으로 잰 상자의
+// 변은 X 드라이브처럼 45°로 둔 바퀴에서 지름보다 짧아진다). 로봇 밖이면 필드 축(역시 Z 위).
 // 형상이 아직 없으면(불러오는 중) null. 지름 범위로 자른다.
 export function suggestWheelDiameter(objects: SceneObjects, objectId: string): number | null {
   if (!objects[objectId]) return null
-  const toObject = worldMatrix(objects, objectId).invert()
+  const toRobot = frameMatrix(objects, objectId, 'robot').invert()
   const bounds = new Box3()
   for (const id of subtreeIds(objects, objectId)) {
     const visual = objects[id].visual
@@ -106,14 +112,13 @@ export function suggestWheelDiameter(objects: SceneObjects, objectId: string): n
     if (!geometry.boundingBox) geometry.computeBoundingBox()
     if (!geometry.boundingBox || geometry.boundingBox.isEmpty()) continue
     bounds.union(
-      geometry.boundingBox.clone().applyMatrix4(toObject.clone().multiply(worldMatrix(objects, id)))
+      geometry.boundingBox.clone().applyMatrix4(toRobot.clone().multiply(worldMatrix(objects, id)))
     )
   }
   if (bounds.isEmpty()) return null
-  const size = bounds.getSize(new Vector3())
-  const sides = [size.x, size.y, size.z].sort((a, b) => b - a)
-  if (!(sides[1] > 0)) return null
-  return Math.min(MAX_WHEEL_DIAMETER, Math.max(MIN_WHEEL_DIAMETER, sides[1]))
+  const height = bounds.max.z - bounds.min.z
+  if (!(height > 0)) return null
+  return Math.min(MAX_WHEEL_DIAMETER, Math.max(MIN_WHEEL_DIAMETER, height))
 }
 
 export type DrivetrainSummary = {
