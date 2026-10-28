@@ -283,19 +283,23 @@ function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecRes
   }
 }
 
+// 실패 알림의 행동 버튼: 고칠 곳(환경 설정의 JDK·Android SDK 칸)을 연다
+function failedNoticeAction(key: NoticeKey): Parameters<typeof showNotice>[3] {
+  if (key === 'playNoJdk')
+    return { action: { label: 'openJdkPreferences', run: () => openPreferences('jdk') } }
+  if (key === 'playNoAndroidSdk' || key === 'playNoAndroidPlatform')
+    return {
+      action: { label: 'openAndroidSdkPreferences', run: () => openPreferences('androidSdk') }
+    }
+  return {}
+}
+
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
   usePlayStore.setState({ run: null, simPose: null })
   usePlayStore.getState().addConsole({ type: 'initFailed', notice: key, detail }, null, level)
-  replacePlayNotice(
-    level,
-    key,
-    { detail },
-    key === 'playNoJdk'
-      ? { action: { label: 'openJdkPreferences', run: () => openPreferences('jdk') } }
-      : {}
-  )
+  replacePlayNotice(level, key, { detail }, failedNoticeAction(key))
 }
 
 export function startPlay(): void {

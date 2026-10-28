@@ -414,6 +414,33 @@ describe('playInit 실패', () => {
     expect(useNoticeStore.getState().notices).toEqual([])
   })
 
+  it('Android SDK·플랫폼이 없으면 환경 설정의 Android SDK 칸을 여는 버튼이 있는 알림을 띄운다', async () => {
+    for (const [code, key, detail] of [
+      ['noAndroidSdk', 'playNoAndroidSdk', ''],
+      ['noAndroidPlatform', 'playNoAndroidPlatform', 'android-30']
+    ] as const) {
+      usePreferencesStore.setState({ open: false, target: null })
+      initResult = async () => ({ ok: false, code, detail })
+      await initPlay()
+      expect(usePlayStore.getState().run).toBeNull()
+      const notice = useNoticeStore.getState().notices.at(-1)!
+      expect(notice).toMatchObject({
+        level: 'error',
+        key,
+        params: { detail },
+        action: 'openAndroidSdkPreferences'
+      })
+      runNoticeAction(notice.id)
+      expect(usePreferencesStore.getState()).toEqual({ open: true, target: 'androidSdk' })
+    }
+    // 라이브러리 받기를 취소한 것은 행동 버튼이 없는 경고다
+    initResult = async () => ({ ok: false, code: 'cancelled', detail: '' })
+    await initPlay()
+    const cancelled = useNoticeStore.getState().notices.at(-1)!
+    expect(cancelled).toMatchObject({ level: 'warning', key: 'playCancelled' })
+    expect(cancelled.action).toBeUndefined()
+  })
+
   it('다시 실패하면 이전 알림을 바꾸고, missing이면 목록을 다시 읽는다', async () => {
     initResult = async () => ({ ok: false, code: 'noSidecar', detail: 'no sidecar.json' })
     await initPlay()

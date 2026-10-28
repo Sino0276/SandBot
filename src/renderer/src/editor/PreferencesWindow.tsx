@@ -6,6 +6,7 @@ import type {
   ExternalEditorState
 } from '../../../shared/ipc'
 import { ipcErrorDetail, resetLineSupport } from '../java/openScript'
+import AndroidSdkSection from '../play/ui/AndroidSdkSection'
 import JdkSection from '../play/ui/JdkSection'
 import SimulationPreferences from '../play/ui/SimulationPreferences'
 import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
@@ -196,6 +197,8 @@ function ExternalToolsPage(): React.JSX.Element {
       )}
       {/* Unity External Tools의 JDK 칸처럼 실행(사이드카)에 쓸 JDK */}
       <JdkSection />
+      {/* 팀 코드를 컴파일할 Android SDK(프로젝트 compileSdk의 플랫폼 API) */}
+      <AndroidSdkSection />
     </section>
   )
 }
@@ -220,10 +223,11 @@ function PreferencesDialog(): React.JSX.Element {
       previousFocus.current = active
     const focusable = (): HTMLElement[] =>
       Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
-    // 처음에는 고른 분류에 둔다. JDK 칸을 열라고 했으면 그 칸으로 옮긴다.
+    // 처음에는 고른 분류에 둔다. JDK·Android SDK 칸을 열라고 했으면 그 칸으로 옮긴다.
+    const target = usePreferencesStore.getState().target
     const section =
-      usePreferencesStore.getState().target === 'jdk'
-        ? dialogRef.current?.querySelector<HTMLElement>('[data-preferences-section="jdk"]')
+      target === 'jdk' || target === 'androidSdk'
+        ? dialogRef.current?.querySelector<HTMLElement>(`[data-preferences-section="${target}"]`)
         : null
     if (section) {
       section.scrollIntoView({ block: 'nearest' })
