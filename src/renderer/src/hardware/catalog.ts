@@ -1,6 +1,8 @@
 // 하드웨어 컴포넌트 카탈로그. XML 태그·Java 클래스·I2C 주소는 FTC SDK 12.0 소스(10.3·11.1과 동일)에서 확인한 값만 쓴다.
 // 구성 XML 태그는 대소문자를 구분하고, 틀리면 SDK가 오류 없이 장치를 버리므로 추측한 값을 넣지 않는다.
 
+import { motorType } from '../../../shared/sim/motorTypes'
+
 // 장치가 차지하는 자리
 // - motor/servo/digital/analog: 허브의 해당 포트(번호 범위는 PORT_RANGES)
 // - i2c: 허브의 I2C 버스(0–3). 같은 버스에 주소가 다른 장치 여럿을 달 수 있다.
@@ -91,27 +93,15 @@ export const MOTOR_MODEL_TAGS = {
 
 export type MotorModel = keyof typeof MOTOR_MODEL_TAGS
 
-// 모터 종류의 SDK 형식 값(@MotorType의 ticksPerRev·gearing·maxRPM). FTC SDK 12.0의 com.qualcomm.hardware.motors.*와
-// UnspecifiedMotor에서 확인한 값이고, 사이드카 MotorConfigurationType 표와 같다(catalog.test.ts가 그 Java 파일과 대조한다).
+// 모터 종류의 SDK 형식 값(@MotorType의 ticksPerRev·gearing·maxRPM). 시뮬레이터와 같은 표(src/shared/sim/motorTypes.ts,
+// 사이드카 MotorConfigurationType과 대조함)에서 구성 태그로 꺼낸다.
 // SDK 형식은 계열당 감속비 하나만 안다(goBILDA 5202 계열은 99.5:1, ticksPerRev는 그 감속비의 출력축 틱).
-export const MOTOR_MODEL_SDK: Record<
-  MotorModel,
-  { ticksPerRev: number; gearing: number; maxRPM: number }
-> = {
-  goBilda5202: { ticksPerRev: 2786, gearing: 99.5, maxRPM: 60 },
-  goBilda5201: { ticksPerRev: 1500, gearing: 54, maxRPM: 104 },
-  revHdHex20: { ticksPerRev: 560, gearing: 20, maxRPM: 300 },
-  revHdHex40: { ticksPerRev: 1120, gearing: 40, maxRPM: 150 },
-  revUltraPlanetary: { ticksPerRev: 560, gearing: 20, maxRPM: 300 },
-  revCoreHex: { ticksPerRev: 288, gearing: 36.25, maxRPM: 137 },
-  neverest20: { ticksPerRev: 560, gearing: 20, maxRPM: 315 },
-  neverest40: { ticksPerRev: 1120, gearing: 40, maxRPM: 160 },
-  neverest60: { ticksPerRev: 1680, gearing: 60, maxRPM: 105 },
-  tetrix: { ticksPerRev: 1440, gearing: 52, maxRPM: 165 },
-  matrix12v: { ticksPerRev: 1478.4, gearing: 52.8, maxRPM: 190 },
-  studicaMaverick: { ticksPerRev: 1464, gearing: 61, maxRPM: 100 },
-  unspecified: { ticksPerRev: 1440, gearing: 52, maxRPM: 165 }
-}
+export const MOTOR_MODEL_SDK = Object.fromEntries(
+  (Object.keys(MOTOR_MODEL_TAGS) as MotorModel[]).map((model) => {
+    const { ticksPerRev, gearing, maxRPM } = motorType(MOTOR_MODEL_TAGS[model])
+    return [model, { ticksPerRev, gearing, maxRPM }]
+  })
+) as Record<MotorModel, { ticksPerRev: number; gearing: number; maxRPM: number }>
 
 export function isMotorModel(value: unknown): value is MotorModel {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(MOTOR_MODEL_TAGS, value)

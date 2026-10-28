@@ -168,6 +168,17 @@ export function simPoseOf(data: Pick<PlayData, 'run' | 'simPose'>): SimPoseState
   return simPose
 }
 
+// 실행이 끝날 때: Unity처럼 로봇은 편집 위치로 돌아가고, 그 실행 로봇의 마지막 자세는 다음 INIT까지 잔상으로 남는다.
+// 끝을 알리는 이벤트가 둘(phase finished, finished)이라 두 번째는 첫 번째가 남긴 잔상을 그대로 둔다(INIT이 잔상을 지운다).
+function endPose(data: PlayData, run: PlayRun): Pick<PlayData, 'simPose' | 'ghostPose'> {
+  const pose = data.simPose
+  if (!pose || pose.robotId !== run.robotId) return { simPose: null, ghostPose: data.ghostPose }
+  return {
+    simPose: null,
+    ghostPose: { robotId: pose.robotId, x: pose.x, y: pose.y, yaw: pose.yaw }
+  }
+}
+
 // 필드 자세 → 최상위 로봇의 transform(바닥 위, 요만)
 export function poseTransform(pose: { x: number; y: number; yaw: number }): Transform {
   return { position: [pose.x, pose.y, 0], rotation: [0, 0, pose.yaw] }
@@ -231,6 +242,8 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
     case 'phase': {
       if (PHASE_ORDER.indexOf(event.phase) <= PHASE_ORDER.indexOf(run.phase)) return {}
       return {
+        // 호스트는 phase finished를 finished 이벤트보다 먼저 보낸다(session.finish). 먼저 오는 쪽이 잔상을 남긴다.
+        ...(event.phase === 'finished' ? endPose(data, run) : {}),
         run: {
           ...run,
           phase: event.phase,
@@ -326,11 +339,8 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
     case 'finished': {
       if (run.finished) return {}
       const finished = { tNanos: event.tNanos, reason: event.reason, detail: event.detail }
-      // Unity처럼 로봇은 편집 위치로 돌아가고, 끝난 자리는 다음 INIT까지 잔상으로 남는다
-      const pose = simPoseOf(data)
       return {
-        simPose: null,
-        ghostPose: pose ? { robotId: pose.robotId, x: pose.x, y: pose.y, yaw: pose.yaw } : null,
+        ...endPose(data, run),
         run: {
           ...run,
           phase: 'finished',

@@ -356,6 +356,24 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
     expect(early.ghostPose).toBeNull()
   })
 
+  it('호스트 순서(phase finished → finished)에서도 잔상이 남는다', () => {
+    const finished = {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 9,
+      reason: 'stopped',
+      detail: '',
+      preselectTeleOp: ''
+    } as PlayEvent
+    const phase = { type: 'phase', runId: 'r1', phase: 'finished' } as PlayEvent
+    const afterPhase = apply(withRobot(), pose(5, 1), pose(9, 1.5), phase)
+    expect(afterPhase.simPose).toBeNull()
+    expect(afterPhase.ghostPose).toEqual({ robotId: 'bot', x: 1.5, y: 0.5, yaw: 0.25 })
+    const next = apply(afterPhase, finished)
+    expect(next.ghostPose).toEqual({ robotId: 'bot', x: 1.5, y: 0.5, yaw: 0.25 })
+    expect(next.run!.finished).not.toBeNull()
+  })
+
   it('표시 자세는 실행이 활성이고 그 로봇의 자세일 때만 쓴다', () => {
     const state = apply(withRobot(), pose(5, 1))
     expect(simPoseOf(state)).toBe(state.simPose)
