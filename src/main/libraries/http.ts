@@ -97,6 +97,18 @@ async function readBody(
   return Buffer.concat(chunks, total)
 }
 
+// 읽지 않을 본문은 닫는다(연결을 붙잡지 않게). Node Readable·async generator 모두 return()으로 끝난다.
+function discard(body: AsyncIterable<Uint8Array> | null): void {
+  if (!body) return
+  try {
+    void body[Symbol.asyncIterator]()
+      .return?.()
+      ?.catch(() => undefined)
+  } catch {
+    // 이미 닫힘
+  }
+}
+
 export type DownloadOptions = {
   http: HttpGet
   signal: AbortSignal
@@ -137,6 +149,7 @@ async function attempt(
     }
     if (options.signal.aborted) throw new CancelledError()
     const status = response.status
+    if (status !== 200) discard(response.body)
     if (status >= 300 && status < 400 && status !== 304) {
       const location = response.header('location')
       if (!location)
@@ -183,7 +196,8 @@ async function attempt(
         retryAfterMs: retryAfter(response.header('retry-after')),
         network: false
       }
-    if (status >= 500)
+    // 서버 오류, 프록시 인증(407)·시간 초과(408)는 다시 해 본다
+    if (status >= 500 || status === 407 || status === 408)
       return {
         kind: 'retry',
         code: 'offline',
@@ -213,8 +227,11 @@ export async function downloadFile(
       const url = `${base}${path}`
       const result = await attempt(url, hosts, options)
       if (result.kind === 'ok') return { bytes: result.bytes, url }
-      // 처음 저장소가 없다고 하면 거울에도 없다
-      if (result.kind === 'notFound') throw new FetchFailure('notFound', result.detail)
+      if (result.kind === 'notFound') {
+        // 처음 저장소가 없다고 하면 거울에도 없다. 거울이 없다고 하면(아직 따라오지 않음) 처음 저장소의 실패를 따른다.
+        if (base === repository.base) throw new FetchFailure('notFound', result.detail)
+        continue
+      }
       last = result
       waitMs = Math.max(waitMs, result.retryAfterMs)
       unreachable &&= result.network

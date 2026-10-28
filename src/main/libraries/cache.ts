@@ -13,6 +13,8 @@ import type { LibraryIntegrity } from '../../shared/libraries'
 
 export const MAX_LIBRARY_CACHE_BYTES = 1024 * 1024 * 1024
 const STALE_TEMP_MS = 10 * 60 * 1000
+// 이만큼 쓰지 않은 해석 잠금은 지운다(Gradle 파일을 고칠 때마다 새 잠금이 생긴다)
+const STALE_LOCK_MS = 60 * 24 * 60 * 60 * 1000
 const SHA256 = /^[0-9a-f]{64}$/
 const EXTENSIONS = new Set(['jar', 'aar', 'pom', 'module', 'txt'])
 
@@ -158,7 +160,10 @@ export class LibraryCache {
 
   async readLock(key: string): Promise<unknown> {
     if (!SHA256.test(key)) return null
-    return readJson(join(this.dir, 'resolutions', `${key}.json`))
+    const path = join(this.dir, 'resolutions', `${key}.json`)
+    const lock = await readJson(path)
+    if (lock !== null) await this.touch([path])
+    return lock
   }
 
   async writeLock(key: string, lock: unknown): Promise<void> {
@@ -210,6 +215,12 @@ export class LibraryCache {
         if (info && now - info.mtimeMs > STALE_TEMP_MS)
           await unlink(join(dir, name)).catch(() => undefined)
       }
+    }
+    const locks = join(this.dir, 'resolutions')
+    for (const name of await readdir(locks).catch(() => [] as string[])) {
+      const info = await stat(join(locks, name)).catch(() => null)
+      if (info && now - info.mtimeMs > STALE_LOCK_MS)
+        await unlink(join(locks, name)).catch(() => undefined)
     }
     const dir = join(this.dir, 'blobs')
     const names = (await readdir(dir).catch(() => [] as string[])).filter(

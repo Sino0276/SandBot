@@ -245,12 +245,37 @@ function lockKey(request: LibraryRequest, implicit: boolean): string {
   )
 }
 
+const STATUSES: ReadonlySet<string> = new Set([
+  'used',
+  'replaced',
+  'provided',
+  'unsupported',
+  'failed'
+])
+
+function isEntry(value: unknown): value is LibraryEntry {
+  if (typeof value !== 'object' || value === null) return false
+  const entry = value as Record<string, unknown>
+  return (
+    typeof entry.group === 'string' &&
+    typeof entry.artifact === 'string' &&
+    typeof entry.version === 'string' &&
+    typeof entry.status === 'string' &&
+    STATUSES.has(entry.status) &&
+    typeof entry.reason === 'string' &&
+    typeof entry.detail === 'string' &&
+    Array.isArray(entry.requested) &&
+    Array.isArray(entry.requestedBy)
+  )
+}
+
 function isLock(value: unknown): value is LockFile {
   if (typeof value !== 'object' || value === null) return false
   const lock = value as Partial<LockFile>
   return (
     lock.format === LOCK_FORMAT &&
     Array.isArray(lock.entries) &&
+    lock.entries.every(isEntry) &&
     Array.isArray(lock.jars) &&
     lock.jars.every(
       (jar) =>
@@ -311,8 +336,8 @@ async function fromLock(
 ): Promise<LibraryResolution | null> {
   const lock = await cache.readLock(key)
   if (!isLock(lock)) return null
-  for (const jar of lock.jars) if (!(await cache.hasBlob(jar.sha256, 'jar'))) return null
-  await cache.touch(lock.jars.map((jar) => cache.blobPath(jar.sha256, 'jar')))
+  // 내용 해시까지 확인한다(깨진 jar는 지우고 새로 해석한다). 몇 MB라 INIT마다 해도 빠르다.
+  for (const jar of lock.jars) if (!(await cache.readBlob(jar.sha256, 'jar'))) return null
   const entries = lock.entries.map((entry) =>
     entry.source === null ? entry : { ...entry, source: 'libraryCache' as LibrarySource }
   )

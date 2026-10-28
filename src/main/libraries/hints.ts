@@ -11,6 +11,8 @@ import { knownPackageOf } from './policy'
 
 const DOESNT_EXIST = /package ([\p{L}\p{N}_$.]+) does not exist/u
 const LOCATION_PACKAGE = /location:\s+package ([\p{L}\p{N}_$.]+)/u
+// 불러온 라이브러리의 클래스가 불러오지 않은 라이브러리를 참조할 때(Road Runner → FTC Dashboard 등)
+const CLASS_FILE_NOT_FOUND = /class file for ([\p{L}\p{N}_$.]+) not found/u
 
 export function missingPackage(diagnostic: CompileDiagnostic): string | null {
   if (diagnostic.kind !== 'error') return null
@@ -18,6 +20,11 @@ export function missingPackage(diagnostic: CompileDiagnostic): string | null {
     return DOESNT_EXIST.exec(diagnostic.message)?.[1] ?? null
   if (diagnostic.code.startsWith('compiler.err.cant.resolve'))
     return LOCATION_PACKAGE.exec(diagnostic.message)?.[1] ?? null
+  if (diagnostic.code === 'compiler.err.cant.access') {
+    const className = CLASS_FILE_NOT_FOUND.exec(diagnostic.message)?.[1]
+    const dot = className?.lastIndexOf('.') ?? -1
+    return className && dot > 0 ? className.slice(0, dot) : null
+  }
   return null
 }
 

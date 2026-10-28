@@ -476,6 +476,109 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     expect(result.report.entries[0].reason).toBe('checksumMismatch')
   })
 
+  it('Road Runner quickstart(실제 POM): 대시보드는 지원 안 함, RobotCore는 제공, jackson은 실행 범위, POM은 고정 해시로 확인', async () => {
+    const fixture = async (name: string): Promise<Buffer> =>
+      // git이 줄 끝을 바꿨어도 원래(LF) 글자로
+      Buffer.from(
+        (await readFile(join(__dirname, '__fixtures__', name), 'utf8')).replace(/\r\n/g, '\n')
+      )
+    const routes = new Map<string, Route>()
+    publish(
+      routes,
+      BROTT,
+      'com.acmerobotics.roadrunner:ftc:0.1.25',
+      'ftc-0.1.25.pom',
+      await fixture('ftc-0.1.25.pom')
+    )
+    publish(
+      routes,
+      BROTT,
+      'com.acmerobotics.roadrunner:core:1.0.1',
+      'core-1.0.1.pom',
+      await fixture('core-1.0.1.pom')
+    )
+    publish(
+      routes,
+      BROTT,
+      'com.acmerobotics.roadrunner:actions:1.0.1',
+      'actions-1.0.1.pom',
+      await fixture('actions-1.0.1.pom')
+    )
+    // 실제 jar가 아니라 고정 해시와 다르다
+    publish(
+      routes,
+      BROTT,
+      'com.acmerobotics.roadrunner:core:1.0.1',
+      'core-1.0.1.jar',
+      makeJar(['x/Fake'])
+    )
+    for (const [coordinate, deps] of [
+      [
+        'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0',
+        ['org.jetbrains.kotlin:kotlin-stdlib:1.9.0']
+      ],
+      ['org.jetbrains.kotlin:kotlin-stdlib:1.9.0', []],
+      [
+        'com.fasterxml.jackson.core:jackson-databind:2.12.7',
+        ['com.fasterxml.jackson.core:jackson-core:2.12.7']
+      ],
+      ['com.fasterxml.jackson.core:jackson-core:2.12.7', []]
+    ] as const) {
+      const [, artifact, version] = coordinate.split(':')
+      publish(
+        routes,
+        CENTRAL,
+        coordinate,
+        `${artifact}-${version}.pom`,
+        pom({ coordinate, dependencies: deps.map((d) => ({ coordinate: d })) })
+      )
+      publish(routes, CENTRAL, coordinate, `${artifact}-${version}.jar`, makeJar([`${artifact}/X`]))
+    }
+    const gradle = project(
+      [
+        dep('com.acmerobotics.roadrunner:ftc:0.1.25'),
+        dep('com.acmerobotics.roadrunner:core:1.0.1'),
+        dep('com.acmerobotics.roadrunner:actions:1.0.1'),
+        dep('com.acmerobotics.dashboard:dashboard:0.5.1')
+      ],
+      [repo('mavenCentral'), repo('google'), repo('maven', 'https://maven.brott.dev/')]
+    )
+    const { result } = await run(gradle, routes)
+    expect(statuses(result.report.entries)).toEqual([
+      'com.acmerobotics.roadrunner:ftc:0.1.25 failed:notFound',
+      'com.acmerobotics.roadrunner:core:1.0.1 failed:checksumMismatch',
+      'com.acmerobotics.roadrunner:actions:1.0.1 failed:notFound',
+      'com.acmerobotics.dashboard:dashboard:0.5.1 unsupported:notSupported',
+      'com.acmerobotics.dashboard:core:0.4.7 unsupported:notSupported',
+      'com.fasterxml.jackson.core:jackson-core:2.12.7 used',
+      'com.fasterxml.jackson.core:jackson-databind:2.12.7 used',
+      'org.firstinspires.ftc:RobotCore:10.0.0 provided',
+      'org.jetbrains.kotlin:kotlin-stdlib:1.9.0 used',
+      'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0 used'
+    ])
+    const byArtifact = Object.fromEntries(result.report.entries.map((e) => [e.artifact, e]))
+    expect(byArtifact.dashboard.requested).toEqual(['0.5.1', '0.4.10'])
+    expect(byArtifact.dashboard.detail).toBe(DASHBOARD_DETAIL)
+    // 고정 해시와 다른 jar(가짜): ftc·actions의 jar는 저장소에 없어 404이고, core의 jar는 해시가 다르다
+    const rrCore = result.report.entries.find(
+      (e) => e.group === 'com.acmerobotics.roadrunner' && e.artifact === 'core'
+    )
+    expect(rrCore?.detail).toContain('is not the known')
+    // jackson은 실행 클래스패스에만
+    expect(coordinatesOf(result, result.libraryClasspath)).toContain(
+      'com.fasterxml.jackson.core:jackson-databind:2.12.7'
+    )
+    expect(coordinatesOf(result, result.compileClasspath)).not.toContain(
+      'com.fasterxml.jackson.core:jackson-databind:2.12.7'
+    )
+    expect(coordinatesOf(result, result.compileClasspath)).toContain(
+      'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
+    )
+    // POM은 고정 해시로 확인했으니 처음 받은 해시로 기록하지 않는다
+    const firstUse = await readFile(join(cacheDir, 'first-use.json'), 'utf8').catch(() => '{}')
+    expect(Object.keys(JSON.parse(firstUse)).filter((k) => k.endsWith('.pom'))).toEqual([])
+  })
+
   it('그룹의 저장소를 선언하지 않았으면: 허용하지 않은 저장소만 있으면 repositoryNotAllowed, 없으면 notFound', async () => {
     const notAllowed = await run(
       project(
@@ -646,6 +749,39 @@ describe('라이브러리 해석(가짜 저장소)', () => {
         diagnostic('package org.firstinspires.ftc.teamcode.subsytems does not exist')
       )
     ).toBeNull()
+    // 불러온 라이브러리 클래스가 불러오지 않은 라이브러리를 참조(cannot access … class file not found)
+    expect(
+      result.diagnosticHint(
+        diagnostic(
+          'cannot access com.pedropathing.tuning.Procedure\n  class file for com.pedropathing.tuning.Procedure not found',
+          'compiler.err.cant.access'
+        )
+      )
+    ).toMatchObject({ kind: 'libraryNotLoaded', reason: 'pedroTuning' })
+    // 경고·참고에는 붙이지 않는다
+    expect(
+      result.diagnosticHint({
+        ...diagnostic('package com.bylazar.telemetry does not exist'),
+        kind: 'warning'
+      })
+    ).toBeNull()
+  })
+
+  it('잠금의 jar가 깨졌으면 새로 해석해 캐시의 원본에서 다시 만든다(네트워크 없이)', async () => {
+    const routes = new Map<string, Route>()
+    publishPedro(routes)
+    const gradle = project([...FTC_TEMPLATE(), dep('com.pedropathing:revhub:3.0.2')])
+    const first = await run(gradle, routes)
+    const classes = first.result.compileClasspath[0]
+    await writeFile(classes, 'broken')
+    const second = await run(gradle, {}, { http: noNetwork() })
+    expect(second.result.compileClasspath).toEqual(first.result.compileClasspath)
+    expect(await readFile(classes)).toEqual(
+      makeJar([
+        'com/pedropathing/ftc/drivetrains/Mecanum',
+        'com/pedropathing/ftc/localization/PinpointLocalizer'
+      ])
+    )
   })
 
   it('캐시가 용량을 넘으면 이번 jar는 남기고 오래된 것부터 지운다', async () => {

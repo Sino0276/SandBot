@@ -95,6 +95,46 @@ describe('저장소에서 받기', () => {
     expect(http.requests).toEqual([`${CENTRAL}a`])
   })
 
+  it('처음 저장소가 막혔을 때 거울의 404는 처음 저장소의 실패를 따른다, 프록시 407은 다시 해 본다', async () => {
+    const lagging = options({
+      [`${CENTRAL}a`]: { status: 429 },
+      [`${MIRROR}a`]: { status: 404 }
+    })
+    await expect(downloadFile(REPOSITORIES.central, 'a', lagging.opts)).rejects.toMatchObject({
+      code: 'rateLimited'
+    })
+    let calls = 0
+    const proxy = options({
+      [`${BROTT}a`]: () => (++calls === 1 ? { status: 407 } : 'ok')
+    })
+    expect((await downloadFile(REPOSITORIES.brott, 'a', proxy.opts)).bytes.toString()).toBe('ok')
+  })
+
+  it('읽지 않는 응답 본문은 닫는다', async () => {
+    let closed = false
+    const http: DownloadOptions['http'] = async () => ({
+      status: 404,
+      header: () => null,
+      body: {
+        [Symbol.asyncIterator]: () => ({
+          next: async () => ({ done: true, value: undefined }),
+          return: async () => {
+            closed = true
+            return { done: true, value: undefined }
+          }
+        })
+      }
+    })
+    await expect(
+      downloadFile(REPOSITORIES.central, 'a', {
+        http,
+        signal: new AbortController().signal,
+        limit: 10
+      })
+    ).rejects.toMatchObject({ code: 'notFound' })
+    expect(closed).toBe(true)
+  })
+
   it('429면 Google 거울로 바꾼다', async () => {
     const { http, opts } = options({
       [`${CENTRAL}a`]: { status: 429, headers: { 'retry-after': '5' } },
