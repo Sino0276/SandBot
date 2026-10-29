@@ -8,8 +8,10 @@ import type { LibraryIntegrity } from '../../shared/libraries'
 // - index/<키 해시>.json: 'g:a:v/파일' → blob(sha256)과 무결성. 릴리스 파일은 바뀌지 않으므로 다시 받지 않는다.
 // - jars/<원본 sha256>.json: 받은 jar·AAR에서 만든 클래스패스 jar 목록과 패키지(다시 풀지 않게)
 // - resolutions/<선언·정책 해시>.json: 해석 잠금(이것과 blob이 모두 있으면 네트워크·메타데이터 없이 끝난다)
-// - first-use.json: 체크섬이 없는 저장소(maven.brott.dev)에서 처음 받은 파일의 sha256(다음부터 다르면 checksumMismatch)
+// - first-use.json: 체크섬이 없는 저장소(maven.brott.dev)에서 처음 받은 파일의 sha256(다음부터 다르면 checksumMismatch).
+//   읽고-고치고-쓰기는 캐시 폴더마다 한 줄로 한다(동시에 받은 파일이 서로의 기록을 덮지 않게).
 // 용량을 넘으면 오래 쓰지 않은 blob부터 지운다(이번 해석이 쓰는 것은 남긴다). 색인이 가리키는 blob이 없으면 없는 것으로 본다.
+// Windows에서 백신·색인기가 막 쓴 파일을 잡고 있으면 rename이 실패하므로 잠시 뒤 다시 한다(platformJar.ts와 같은 방식).
 
 export const MAX_LIBRARY_CACHE_BYTES = 1024 * 1024 * 1024
 const STALE_TEMP_MS = 10 * 60 * 1000
@@ -22,15 +24,54 @@ export function sha256Hex(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-export async function writeAtomic(target: string, bytes: Uint8Array | string): Promise<void> {
+const RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+// 임시 파일에 쓰고 바꿔치기한다. sameContent(내용의 sha256)를 주면 내용 주소 파일이라, 바꿔치기가 안 되어도 같은 내용의
+// 파일이 이미 있으면(다른 창이 먼저 썼고 열려 있음) 그것을 쓴다.
+export async function writeAtomic(
+  target: string,
+  bytes: Uint8Array | string,
+  sameContent?: string
+): Promise<void> {
   const temp = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   try {
     await writeFile(temp, bytes)
-    await rename(temp, target)
   } catch (error) {
     await unlink(temp).catch(() => undefined)
     throw error
   }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(temp, target)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? ''
+      const present =
+        sameContent !== undefined &&
+        (await readFile(target)
+          .then((existing) => sha256Hex(existing) === sameContent)
+          .catch(() => false))
+      if (present || attempt >= 5 || !RETRY_CODES.has(code)) {
+        await unlink(temp).catch(() => undefined)
+        if (present) return
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt))
+    }
+  }
+}
+
+// first-use.json 고치기를 캐시 폴더마다 한 줄로(이 프로세스의 모든 창)
+const firstUseQueues = new Map<string, Promise<unknown>>()
+
+function serialized<T>(dir: string, task: () => Promise<T>): Promise<T> {
+  const run = (firstUseQueues.get(dir) ?? Promise.resolve()).then(task)
+  const tail = run.catch(() => undefined)
+  firstUseQueues.set(dir, tail)
+  void tail.then(() => {
+    if (firstUseQueues.get(dir) === tail) firstUseQueues.delete(dir)
+  })
+  return run
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -79,7 +120,7 @@ export class LibraryCache {
       return { sha256, path }
     }
     await mkdir(join(this.dir, 'blobs'), { recursive: true })
-    await writeAtomic(path, bytes)
+    await writeAtomic(path, bytes, sha256)
     return { sha256, path }
   }
 
@@ -177,22 +218,44 @@ export class LibraryCache {
     return join(this.dir, 'first-use.json')
   }
 
-  async firstUse(key: string): Promise<string | null> {
-    const value = await readJson(this.firstUsePath())
-    const hash = isObject(value) ? value[key] : undefined
-    return typeof hash === 'string' && SHA256.test(hash) ? hash : null
-  }
-
-  async recordFirstUse(key: string, sha256: string): Promise<void> {
-    const value = await readJson(this.firstUsePath())
-    const records: Record<string, string> = {}
+  // 없으면 빈 기록, 깨졌으면(읽을 수 없는 JSON) 처음부터. 읽지 못하면(잠김 등) 던진다: 기록이 있는지 모르므로 처음 받은
+  // 것으로 보지 않는다.
+  private async readFirstUse(): Promise<Map<string, string>> {
+    let text: string
+    try {
+      text = await readFile(this.firstUsePath(), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map()
+      throw error
+    }
+    let value: unknown
+    try {
+      value = JSON.parse(text)
+    } catch {
+      return new Map()
+    }
+    const records = new Map<string, string>()
     if (isObject(value))
       for (const [name, hash] of Object.entries(value))
-        if (typeof hash === 'string' && SHA256.test(hash)) records[name] = hash
-    if (records[key] === sha256) return
-    records[key] = sha256
-    await mkdir(this.dir, { recursive: true })
-    await writeAtomic(this.firstUsePath(), JSON.stringify(records, null, 1))
+        if (typeof hash === 'string' && SHA256.test(hash)) records.set(name, hash)
+    return records
+  }
+
+  async firstUse(key: string): Promise<string | null> {
+    return serialized(this.dir, async () => (await this.readFirstUse()).get(key) ?? null)
+  }
+
+  // 기록이 없으면 이 해시를 기록하고 null. 이미 있으면 덮지 않고, 다른 해시면 그 해시를 돌려준다(같으면 null).
+  async recordFirstUse(key: string, sha256: string): Promise<string | null> {
+    return serialized(this.dir, async () => {
+      const records = await this.readFirstUse()
+      const recorded = records.get(key)
+      if (recorded !== undefined) return recorded === sha256 ? null : recorded
+      records.set(key, sha256)
+      await mkdir(this.dir, { recursive: true })
+      await writeAtomic(this.firstUsePath(), JSON.stringify(Object.fromEntries(records), null, 1))
+      return null
+    })
   }
 
   async touch(paths: Iterable<string>): Promise<void> {

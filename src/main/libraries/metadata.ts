@@ -5,7 +5,8 @@ import {
   availableAtInRepository,
   ModuleError,
   parseGradleModule,
-  type ModuleFile
+  type ModuleFile,
+  type ParsedModule
 } from './gradleModule'
 import { CancelledError, FetchFailure } from './http'
 import { effectivePom, parseRawPom, PomError, type Exclusion, type RawPom } from './pom'
@@ -13,8 +14,9 @@ import { repositoryFor } from './repositories'
 import { isValidArtifact, isValidGroup, isValidVersion } from './version'
 import { XmlError } from './xml'
 
-// 모듈 하나의 메타데이터: POM을 먼저 읽고, Gradle 메타데이터 표시가 있으면 .module을 쓴다(없으면 — maven.brott.dev처럼
-// 표시만 있고 파일이 없으면 — POM으로). 결과는 해석기(resolver.ts)가 쓰는 의존성·제약·파일 하나.
+// 모듈 하나의 메타데이터: POM을 먼저 읽고, Gradle 메타데이터 표시가 있으면 .module을 쓴다(저장소에 없으면 POM으로).
+// maven.brott.dev는 표시만 있고 .module이 없어 묻지 않는다(repositories.ts의 moduleMetadata). 결과는 해석기(resolver.ts)가
+// 쓰는 의존성·제약·파일 하나. 받은 POM·.module은 읽을 수 있는지 확인한 뒤에만 캐시에 들어간다(fetcher.ts의 check).
 
 export type Edge = {
   group: string
@@ -100,6 +102,16 @@ export function metadataSource(
       pending = (async () => {
         checkCoordinate(group, artifact, version)
         onFile?.()
+        const read = (bytes: Buffer): RawPom => {
+          const raw = parseRawPom(bytes.toString('utf8'))
+          if (raw.artifact !== artifact || (raw.group ?? raw.parent?.group) !== group)
+            throw new PomError(
+              `the POM describes ${raw.group ?? raw.parent?.group}:${raw.artifact}`
+            )
+          return raw
+        }
+        // 새로 얻은 POM은 캐시에 넣기 전에 읽어 보고, 그 결과를 쓴다
+        const checked: { raw?: RawPom } = {}
         try {
           const pom = await fetcher.fetch({
             group,
@@ -107,14 +119,12 @@ export function metadataSource(
             version,
             file: `${artifact}-${version}.pom`,
             kind: 'metadata',
-            ext: 'pom'
+            ext: 'pom',
+            check: (bytes) => {
+              checked.raw = read(bytes)
+            }
           })
-          const raw = parseRawPom(pom.bytes.toString('utf8'))
-          if (raw.artifact !== artifact || (raw.group ?? raw.parent?.group) !== group)
-            throw new PomError(
-              `the POM describes ${raw.group ?? raw.parent?.group}:${raw.artifact}`
-            )
-          return raw
+          return checked.raw ?? read(pom.bytes)
         } finally {
           onDone?.()
         }
@@ -128,8 +138,9 @@ export function metadataSource(
     group: string,
     artifact: string,
     version: string
-  ): Promise<string | null> => {
+  ): Promise<ParsedModule | null> => {
     onFile?.()
+    const checked: { parsed?: ParsedModule } = {}
     try {
       const module = await fetcher.fetch({
         group,
@@ -137,11 +148,14 @@ export function metadataSource(
         version,
         file: `${artifact}-${version}.module`,
         kind: 'metadata',
-        ext: 'module'
+        ext: 'module',
+        check: (bytes) => {
+          checked.parsed = parseGradleModule(bytes.toString('utf8'))
+        }
       })
-      return module.bytes.toString('utf8')
+      return checked.parsed ?? parseGradleModule(module.bytes.toString('utf8'))
     } catch (error) {
-      // maven.brott.dev: POM에 표시는 있지만 .module이 없다
+      // POM에 표시는 있지만 저장소에 .module이 없다
       if (error instanceof FetchFailure && error.code === 'notFound') return null
       throw error
     } finally {
@@ -151,10 +165,9 @@ export function metadataSource(
 
   return async (group, artifact, version) => {
     const raw = await loadRaw(group, artifact, version)
-    if (raw.gradleMetadata) {
-      const text = await loadModule(group, artifact, version)
-      if (text !== null) {
-        const parsed = parseGradleModule(text)
+    if (raw.gradleMetadata && repositoryFor(group).moduleMetadata) {
+      const parsed = await loadModule(group, artifact, version)
+      if (parsed !== null) {
         if (parsed.kind === 'availableAt') {
           const { target } = parsed
           checkCoordinate(target.group, target.artifact, target.version)

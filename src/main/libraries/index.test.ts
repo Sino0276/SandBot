@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, writeFile } from 'fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { GradleDependency, GradleProject, GradleRepository } from '../../shared/gradle'
@@ -16,6 +16,7 @@ import {
   hex,
   makeAar,
   makeJar,
+  MIRROR,
   moduleJson,
   pom,
   publish,
@@ -240,6 +241,12 @@ const statuses = (entries: readonly LibraryEntry[]): string[] =>
 const coordinatesOf = (result: LibraryResolution, paths: string[]): string[] =>
   paths.map((p) => result.jarCoordinates[p])
 
+// 실제 POM(__fixtures__). git이 줄 끝을 바꿨어도 원래(LF) 글자로.
+const fixture = async (name: string): Promise<Buffer> =>
+  Buffer.from(
+    (await readFile(join(__dirname, '__fixtures__', name), 'utf8')).replace(/\r\n/g, '\n')
+  )
+
 describe('라이브러리 해석(가짜 저장소)', () => {
   it('Pedro 3.x: 받기, 보고 순서, 클래스패스, androidx.annotation(컴파일만), 무결성', async () => {
     const routes = new Map<string, Route>()
@@ -438,8 +445,8 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     const core = result.report.entries[0]
     expect(core.status).toBe('used')
     expect(core.integrity).toBe('firstUse')
-    // .module·체크섬 파일은 없다(404도 받아 넘긴다), 체크섬은 묻지 않는다
-    expect(requests.some((url) => url.endsWith('.sha1'))).toBe(false)
+    // .module·체크섬 파일은 없다: POM에 Gradle 메타데이터 표시가 있어도 .module은 묻지 않고, 체크섬도 묻지 않는다
+    expect(requests.some((url) => url.endsWith('.sha1') || url.endsWith('.module'))).toBe(false)
     const firstUse = JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8'))
     expect(firstUse['com.acmerobotics.roadrunner:core:1.0.0/core-1.0.0.jar']).toBe(
       hex('sha256', coreJar)
@@ -477,11 +484,6 @@ describe('라이브러리 해석(가짜 저장소)', () => {
   })
 
   it('Road Runner quickstart(실제 POM): 대시보드는 지원 안 함, RobotCore는 제공, jackson은 실행 범위, POM은 고정 해시로 확인', async () => {
-    const fixture = async (name: string): Promise<Buffer> =>
-      // git이 줄 끝을 바꿨어도 원래(LF) 글자로
-      Buffer.from(
-        (await readFile(join(__dirname, '__fixtures__', name), 'utf8')).replace(/\r\n/g, '\n')
-      )
     const routes = new Map<string, Route>()
     publish(
       routes,
@@ -869,5 +871,264 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     for (const path of result.compileClasspath)
       expect((await readFile(path)).length).toBeGreaterThan(0)
     expect(await readFile(stale).catch(() => null)).toBeNull()
+  })
+})
+
+// ---- 오프라인·막힌 저장소·잘못된 응답·기록 실패 ----
+
+// 실제 네트워크처럼 응답이 조금씩 늦게 온다(동시에 받는 파일이 겹치게)
+const delayed =
+  (http: LibraryDeps['http'], ms = 5): LibraryDeps['http'] =>
+  async (url, options) => {
+    await new Promise((resolve) => setTimeout(resolve, ms))
+    return http(url, options)
+  }
+
+// 응답 머리글 뒤 본문이 오지 않는다
+const stalledBody = (): AsyncIterable<Uint8Array> => ({
+  [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => undefined) })
+})
+
+const BROTT_REPOSITORY = repo('maven', 'https://maven.brott.dev/')
+
+describe('라이브러리 가져오기: 오프라인·막힌 저장소·잘못된 응답·기록 실패', () => {
+  it('maven.brott.dev는 .module을 묻지 않는다: Gradle 캐시만으로, 선언 줄이 바뀌어도 라이브러리 캐시로 네트워크 없이', async () => {
+    const c = 'com.acmerobotics.roadrunner:core:1.0.0'
+    const gradle = (at: number): GradleProject =>
+      project([dep(c, { at: { file: 'TeamCode/build.gradle', line: at } })], [BROTT_REPOSITORY])
+    // Android Studio로 빌드한 PC에서 처음 쓰는 SandBot, 네트워크 없음(Gradle도 .module이 없어 POM을 썼다)
+    await putGradleCache(gradleHome, c, 'core-1.0.0.pom', pom({ coordinate: c, marker: true }))
+    await putGradleCache(
+      gradleHome,
+      c,
+      'core-1.0.0.jar',
+      makeJar(['com/acmerobotics/roadrunner/Pose2d'])
+    )
+    const first = await run(gradle(3), {}, { http: noNetwork() })
+    expect(statuses(first.result.report.entries)).toEqual([`${c} used`])
+    expect(first.result.report.entries[0].source).toBe('gradleCache')
+    // 선언 위에 한 줄을 넣었다(잠금 키가 바뀌어 새로 해석한다): 라이브러리 캐시의 POM·jar로
+    await rm(gradleHome, { recursive: true, force: true })
+    const moved = await run(gradle(4), {}, { http: noNetwork() })
+    expect(statuses(moved.result.report.entries)).toEqual([`${c} used`])
+    expect(moved.result.report.entries[0].source).toBe('libraryCache')
+    expect(moved.result.compileClasspath).toEqual(first.result.compileClasspath)
+  })
+
+  it('maven.brott.dev에 나중에 .module이 생겨도 고정 해시·처음 받은 기록의 POM이 정한 파일과 의존성만 쓴다', async () => {
+    const evilJar = makeJar(['com/acmerobotics/roadrunner/Pose2d', 'evil/Payload'])
+    const evil = 'io.github.evil:helper:9.9.9'
+    const routes = new Map<string, Route>()
+    publish(routes, CENTRAL, evil, 'helper-9.9.9.pom', pom({ coordinate: evil }))
+    publish(routes, CENTRAL, evil, 'helper-9.9.9.jar', makeJar(['evil/More']))
+    const plant = (coordinate: string): void => {
+      const [, artifact, version] = coordinate.split(':')
+      const file = `${artifact}-${version}-x.jar`
+      publish(
+        routes,
+        BROTT,
+        coordinate,
+        `${artifact}-${version}.module`,
+        moduleJson({
+          coordinate,
+          file: { name: file, bytes: evilJar },
+          runtime: [{ coordinate: evil }]
+        })
+      )
+      publish(routes, BROTT, coordinate, file, evilJar)
+    }
+    const kotlin = 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0'
+    publish(routes, CENTRAL, kotlin, 'kotlin-stdlib-jdk8-1.9.0.pom', pom({ coordinate: kotlin }))
+    publish(routes, CENTRAL, kotlin, 'kotlin-stdlib-jdk8-1.9.0.jar', makeJar(['kotlin/jdk7/X']))
+
+    // 고정 해시가 있는 버전(실제 POM, Gradle 메타데이터 표시가 있다): jar도 고정 해시로만(여기 jar는 가짜라 거부)
+    const pinned = 'com.acmerobotics.roadrunner:core:1.0.1'
+    publish(routes, BROTT, pinned, 'core-1.0.1.pom', await fixture('core-1.0.1.pom'))
+    publish(routes, BROTT, pinned, 'core-1.0.1.jar', evilJar)
+    plant(pinned)
+    const repositories = [repo('mavenCentral'), BROTT_REPOSITORY]
+    const first = await run(project([dep(pinned)], repositories), routes)
+    expect(statuses(first.result.report.entries)).toEqual([
+      `${pinned} failed:checksumMismatch`,
+      `${kotlin} used`
+    ])
+    expect(first.result.report.entries[0].detail).toContain('core-1.0.1.jar')
+    expect(first.requests.some((url) => url.endsWith('.module') || url.includes('evil'))).toBe(
+      false
+    )
+
+    // 고정 해시가 없는 버전: 처음 받을 때 .module이 없었고, 캐시를 지운 뒤 .module이 생겼다
+    const unpinned = 'com.acmerobotics.roadrunner:core:1.0.0'
+    const goodJar = makeJar(['com/acmerobotics/roadrunner/Pose2d'])
+    publish(routes, BROTT, unpinned, 'core-1.0.0.pom', pom({ coordinate: unpinned, marker: true }))
+    publish(routes, BROTT, unpinned, 'core-1.0.0.jar', goodJar)
+    const gradle = project([dep(unpinned)], repositories)
+    const before = await run(gradle, routes)
+    expect(statuses(before.result.report.entries)).toEqual([`${unpinned} used`])
+    await rm(join(cacheDir, 'index'), { recursive: true })
+    await rm(join(cacheDir, 'resolutions'), { recursive: true })
+    plant(unpinned)
+    const after = await run(gradle, routes)
+    expect(statuses(after.result.report.entries)).toEqual([`${unpinned} used`])
+    expect(after.result.report.entries[0].integrity).toBe('firstUse')
+    expect(after.requests.some((url) => url.endsWith('.module') || url.includes('evil'))).toBe(
+      false
+    )
+    expect(await Promise.all(after.result.libraryClasspath.map((p) => readFile(p)))).toEqual([
+      goodJar
+    ])
+  })
+
+  it('한 저장소에 닿지 못하거나(연결 끊김) 서버 오류여도 다른 저장소의 파일은 받는다', async () => {
+    const ftclib = 'org.ftclib.ftclib:core:2.1.1'
+    const rr = 'com.acmerobotics.roadrunner:core:1.0.1'
+    for (const failure of [new Error('net::ERR_CONNECTION_RESET'), { status: 503 }] as Route[]) {
+      await rm(cacheDir, { recursive: true, force: true })
+      const routes = new Map<string, Route>()
+      publish(routes, CENTRAL, ftclib, 'core-2.1.1.pom', pom({ coordinate: ftclib }))
+      publish(routes, CENTRAL, ftclib, 'core-2.1.1.jar', makeJar(['com/arcrobotics/ftclib/X']))
+      routes.set(artifactUrl(BROTT, rr, 'core-1.0.1.pom'), failure)
+      const { result } = await run(
+        project([dep(rr), dep(ftclib)], [repo('mavenCentral'), BROTT_REPOSITORY]),
+        routes
+      )
+      expect(statuses(result.report.entries)).toEqual([`${rr} failed:offline`, `${ftclib} used`])
+      // 실패의 자세히는 그 저장소의 주소
+      expect(result.report.entries[0].detail).toContain(BROTT)
+    }
+  })
+
+  it('동시에 받은 maven.brott.dev 파일의 처음 받은 해시를 모두 기록한다', async () => {
+    const routes = new Map<string, Route>()
+    const coordinates = [
+      'com.acmerobotics.roadrunner:core:1.0.0',
+      'com.acmerobotics.roadrunner:actions:1.0.0',
+      'com.acmerobotics.roadrunner:ftc:0.1.21'
+    ]
+    const expected: Record<string, string> = {}
+    for (const coordinate of coordinates) {
+      const [, artifact, version] = coordinate.split(':')
+      for (const [file, bytes] of [
+        [`${artifact}-${version}.pom`, Buffer.from(pom({ coordinate }))],
+        [`${artifact}-${version}.jar`, makeJar([`com/acmerobotics/roadrunner/${artifact}/X`])]
+      ] as const) {
+        publish(routes, BROTT, coordinate, file, bytes)
+        expected[`${coordinate}/${file}`] = hex('sha256', bytes)
+      }
+    }
+    const { result } = await run(
+      project(
+        coordinates.map((c) => dep(c)),
+        [BROTT_REPOSITORY]
+      ),
+      {},
+      { http: delayed(fakeHttp(routes)) }
+    )
+    expect(result.report.entries.map((e) => `${e.status} ${e.integrity}`)).toEqual(
+      coordinates.map(() => 'used firstUse')
+    )
+    expect(JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8'))).toEqual(expected)
+  })
+
+  it('캐시 기록(색인·jar 목록·잠금)을 쓰지 못해도 받은 파일로 해석을 끝낸다', async () => {
+    const routes = new Map<string, Route>()
+    publishPedro(routes)
+    const gradle = project([...FTC_TEMPLATE(), dep('com.pedropathing:revhub:3.0.2')])
+    const first = await run(gradle, routes)
+    // 잠금 자리에 바꿀 수 없는 폴더가 생겼다: 새로 해석하고(캐시로) 잠금은 쓰지 못한다
+    const [lock] = await readdir(join(cacheDir, 'resolutions'))
+    await rm(join(cacheDir, 'resolutions', lock))
+    await mkdir(join(cacheDir, 'resolutions', lock, 'busy'), { recursive: true })
+    const second = await run(gradle, {}, { http: noNetwork() })
+    expect(statuses(second.result.report.entries)).toEqual(statuses(first.result.report.entries))
+    expect(second.result.compileClasspath).toEqual(first.result.compileClasspath)
+    // 색인·jar 목록 폴더 자리에 파일이 있다(쓸 수 없다)
+    await rm(cacheDir, { recursive: true, force: true })
+    await mkdir(cacheDir, { recursive: true })
+    await writeFile(join(cacheDir, 'index'), '')
+    await writeFile(join(cacheDir, 'jars'), '')
+    const third = await run(gradle, routes)
+    expect(statuses(third.result.report.entries)).toEqual(statuses(first.result.report.entries))
+    expect(third.result.compileClasspath).toEqual(first.result.compileClasspath)
+    for (const path of third.result.compileClasspath)
+      expect((await readFile(path)).length).toBeGreaterThan(0)
+  })
+
+  it('200으로 온 잘못된 내용(차단 페이지)은 캐시에도 처음 받은 기록에도 넣지 않는다(고치면 다시 받는다)', async () => {
+    const block = '<html>Blocked by the school web filter</html>'
+    // maven.brott.dev(체크섬 없음)의 jar가 차단 페이지
+    const rr = 'com.acmerobotics.roadrunner:core:1.0.0'
+    const routes = new Map<string, Route>()
+    publish(routes, BROTT, rr, 'core-1.0.0.pom', pom({ coordinate: rr }))
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', block)
+    const brott = project([dep(rr)], [BROTT_REPOSITORY])
+    expect(statuses((await run(brott, routes)).result.report.entries)).toEqual([
+      `${rr} failed:badArchive`
+    ])
+    const recorded = async (): Promise<string[]> =>
+      Object.keys(JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8')))
+    expect(await recorded()).toEqual([`${rr}/core-1.0.0.pom`])
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', makeJar(['com/acmerobotics/roadrunner/Pose2d']))
+    const fixed = await run(brott, routes)
+    expect(statuses(fixed.result.report.entries)).toEqual([`${rr} used`])
+    expect(fixed.requests).toContain(artifactUrl(BROTT, rr, 'core-1.0.0.jar'))
+
+    // Maven Central: POM과 그 .sha1이 모두 차단 페이지(확인하지 못한 파일은 처음 받은 것으로 보지 않는다)
+    const ftclib = 'org.ftclib.ftclib:core:2.1.1'
+    const central = new Map<string, Route>()
+    central.set(artifactUrl(CENTRAL, ftclib, 'core-2.1.1.pom'), block)
+    central.set(`${artifactUrl(CENTRAL, ftclib, 'core-2.1.1.pom')}.sha1`, block)
+    const gradle = project([dep(ftclib)])
+    expect(statuses((await run(gradle, central)).result.report.entries)).toEqual([
+      `${ftclib} failed:checksumMismatch`
+    ])
+    publish(central, CENTRAL, ftclib, 'core-2.1.1.pom', pom({ coordinate: ftclib }))
+    publish(central, CENTRAL, ftclib, 'core-2.1.1.jar', makeJar(['com/arcrobotics/ftclib/X']))
+    expect(statuses((await run(gradle, central)).result.report.entries)).toEqual([`${ftclib} used`])
+    expect(await recorded()).not.toContain(`${ftclib}/core-2.1.1.pom`)
+  })
+
+  it('체크섬 파일은 파일 이름이 붙은 꼴과 오래된 OpenSSL 꼴도 읽는다', async () => {
+    const ftclib = 'org.ftclib.ftclib:core:2.1.1'
+    const pomText = pom({ coordinate: ftclib })
+    const jar = makeJar(['com/arcrobotics/ftclib/X'])
+    const routes = new Map<string, Route>()
+    const pomUrl = artifactUrl(CENTRAL, ftclib, 'core-2.1.1.pom')
+    const jarUrl = artifactUrl(CENTRAL, ftclib, 'core-2.1.1.jar')
+    routes.set(pomUrl, pomText)
+    routes.set(`${pomUrl}.sha1`, `SHA1(core-2.1.1.pom)= ${hex('sha1', pomText)}\n`)
+    routes.set(jarUrl, jar)
+    routes.set(`${jarUrl}.sha1`, `${hex('sha1', jar).toUpperCase()}  core-2.1.1.jar\n`)
+    const { result } = await run(project([dep(ftclib)]), routes)
+    expect(statuses(result.report.entries)).toEqual([`${ftclib} used`])
+    expect(result.report.entries[0].integrity).toBe('checksum')
+  })
+
+  it('응답이 멈추면 시간 제한 뒤 거울로, 거울이 없으면 그 좌표만 offline이고 INIT을 붙잡지 않는다', async () => {
+    const routes = new Map<string, Route>()
+    publishPedro(routes)
+    const repository = fakeHttp(routes)
+    const http: LibraryDeps['http'] = async (url, options) => {
+      // Google(androidx.annotation)은 응답 머리글을 보내지 않는다
+      if (url.startsWith(GOOGLE)) return new Promise<never>(() => undefined)
+      // Maven Central 본 주소는 머리글 뒤 본문이 멈추고, 거울은 같은 내용을 준다
+      if (url.startsWith(CENTRAL)) return { status: 200, header: () => null, body: stalledBody() }
+      return repository(url.replace(MIRROR, CENTRAL), options)
+    }
+    const { result } = await run(
+      project([...FTC_TEMPLATE(), dep('com.pedropathing:revhub:3.0.2')]),
+      {},
+      { http, timeouts: { requestMs: 20, idleMs: 20 } }
+    )
+    expect(statuses(result.report.entries)).toEqual([
+      'org.firstinspires.ftc:RobotCore:12.0.0 provided',
+      'androidx.appcompat:appcompat:1.2.0 provided',
+      'com.pedropathing:revhub:3.0.2 used',
+      'androidx.annotation:annotation:1.1.0 failed:offline',
+      'com.pedropathing:core:3.0.2 used',
+      'org.jetbrains.kotlin:kotlin-stdlib:2.3.21 used',
+      'org.jetbrains:annotations:13.0 used'
+    ])
+    expect(result.report.entries[3].detail).toContain(GOOGLE)
   })
 })
