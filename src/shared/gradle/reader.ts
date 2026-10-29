@@ -52,11 +52,12 @@ export const MAX_GRADLE_FILES = 32
 // 처음 읽을 때만 세므로, 작은 파일 몇 개를 겹겹이 되풀이해 적용하면 실행이 지수로 늘어난다)
 export const MAX_APPLIED_SCRIPTS = 64
 // 한 번 읽기 전체의 일 한도(단위: 나눈 글자·토큰 하나, 실행한 스크립트 글자 하나, 값 계산 한 단계 — 식 하나, 이은 글자
-// 하나, 펼친 목록 항목 하나, 의존성에 붙인 exclude 글자 하나 등. 단위 하나에 드는 시간이 비슷하도록, 그보다 무거운 것은
+// 하나, 펼친 목록 항목 하나, 복사한 맵 항목 하나, 카탈로그에서 찾은 이름 글자 하나, 의존성에 붙인 exclude 글자 하나 등.
+// 이름 하나로 쓰는 변수·별칭도 그 값을 훑는 만큼 센다. 단위 하나에 드는 시간이 비슷하도록, 그보다 무거운 것은
 // 여러 단위로 센다: 읽지 못한 문장·보간 하나는 RECOVERY_STEPS(parser.ts), 카탈로그 줄 하나는 CATALOG_RECOVERY_WORK
-// (toml.ts), 진단 하나는 DIAGNOSTIC_WORK). 넘으면
-// tooMuchWork 진단 하나를 남기고 거기까지 읽은 것만 돌려준다. 시간이 아니라 단위로 세므로 같은 입력이면 늘 같은 자리에서
-// 멈춘다. 실제 FTC 프로젝트는 이 한도의 2% 안을 쓰고, 256 KB짜리 보통 의존성 파일 하나는 80%쯤이다.
+// (toml.ts), 진단 하나는 DIAGNOSTIC_WORK). 넘으면 tooMuchWork 진단 하나를 남기고 거기까지 읽은 것만 돌려준다. 시간이
+// 아니라 단위로 세므로 같은 입력이면 늘 같은 자리에서 멈춘다. 실제 FTC 프로젝트는 이 한도의 2% 안을 쓰고, 256 KB짜리
+// 보통 의존성 파일 하나는 80%쯤이다.
 export const MAX_GRADLE_WORK = 1_000_000
 // 진단 하나를 만들거나 같은 진단을 다시 거르는 일(글자 조각·키 만들기)
 const DIAGNOSTIC_WORK = 16
@@ -1491,6 +1492,8 @@ class GradleReader {
 
   private catalogLibrary(accessor: string, expr: Expr, ctx: Ctx): Notation[] {
     const catalog = this.catalog as VersionCatalog
+    // 찾는 일은 이름 글자 수만큼이다(묶음의 별칭은 카탈로그에서 온 글자라 쓰는 쪽보다 훨씬 길 수 있다)
+    this.spend(accessor.length, ctx.file, expr.line)
     const library = catalog.libraries.get(accessor)
     if (!library) {
       this.diag(
@@ -1510,6 +1513,8 @@ class GradleReader {
     }
     let version = library.version
     if (library.versionRef !== null) {
+      // 쓸 때마다 ref를 접근자로 바꿔 찾는다(글자 수만큼)
+      this.spend(library.versionRef.length, ctx.file, expr.line)
       const ref = catalog.versions.get(library.versionRef.replace(/[-_.]/g, '.'))
       if (!ref || ref.problem || ref.version === null) {
         this.diag(
@@ -1596,8 +1601,11 @@ class GradleReader {
       if (arg.name !== null) entries.set(arg.name, this.evaluate(arg.value, ctx))
       else {
         const value = this.evaluate(arg.value, ctx)
-        if (value.kind === 'map') for (const [key, item] of value.entries) entries.set(key, item)
-        else entries.set('', value)
+        if (value.kind === 'map') {
+          // 맵 변수는 이름 하나로 쓰지만 복사는 항목 수만큼이다(exclude m, m, …나 줄마다 exclude m)
+          this.spend(value.entries.size, ctx.file, call.line)
+          for (const [key, item] of value.entries) entries.set(key, item)
+        } else entries.set('', value)
       }
     }
     const exclude: GradleExclude = { group: null, module: null }

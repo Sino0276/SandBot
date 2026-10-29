@@ -301,6 +301,43 @@ describe('일을 부풀리는 입력', () => {
     expect(project.diagnostics.map((d) => d.code)).toEqual(['unresolvedValue', 'tooMuchWork'])
   })
 
+  it('exclude에 큰 맵 변수를 되풀이해 넣는다(예전에는 맵을 복사하는 일을 세지 않아 1.5초)', async () => {
+    const map = `def m = [${Array.from({ length: 1000 }, (_, i) => `k${i}: 'v'`).join(', ')}]\n`
+    const head = `${map}dependencies {\n implementation('a:b:1') {\n`
+    const size = MAX_GRADLE_FILE_BYTES - 64 - head.length
+    // 한 문장의 인자마다, 줄마다, 여러 파일에서
+    const wide = `${head}  exclude ${fill('m, ', size)}m\n }\n}\n`
+    const tall = `${head}${fill('  exclude m\n', size)} }\n}\n`
+    for (const files of [
+      { 'TeamCode/build.gradle': wide },
+      { 'TeamCode/build.gradle': tall },
+      applied(wide)
+    ]) {
+      const project = await timed(files, 500)
+      expect(project.diagnostics.at(-1)?.code).toBe('tooMuchWork')
+    }
+  })
+
+  it('카탈로그의 긴 이름을 되풀이해 쓴다(예전에는 쓸 때마다 이름을 찾는 일을 세지 않아 1–2초)', async () => {
+    const long = 'b'.repeat(120 * 1024)
+    const library = `[libraries]\nx = { module = "a:b", version.ref = "${long}" }\n`
+    const uses = (accessor: string): string =>
+      `dependencies {\n${fill(` implementation libs.${accessor}\n`)}}\n`
+    for (const [toml, accessor] of [
+      // [versions]에 없는 version.ref(진단)와 있는 version.ref
+      [library, 'x'],
+      [`[versions]\n"${long}" = "1"\n${library}`, 'x'],
+      // 묶음의 긴 별칭(쓰는 쪽은 짧다)
+      [`[libraries]\n"${long}" = "a:b:1"\n[bundles]\nx = ["${long}"]\n`, 'bundles.x']
+    ]) {
+      const project = await timed(
+        { 'gradle/libs.versions.toml': toml, 'TeamCode/build.gradle': uses(accessor) },
+        500
+      )
+      expect(project.diagnostics.at(-1)?.code).toBe('tooMuchWork')
+    }
+  })
+
   it('settings의 include에 같은 목록을 여러 번 넣는다(예전에는 몇 초 뒤 Invalid array length)', async () => {
     const list = `def l = [${Array.from({ length: 1000 }, (_, i) => `':m${i}'`).join(', ')}]\n`
     // 64 KB면 예전에는 2천만 개를 넣었다
