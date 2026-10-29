@@ -235,7 +235,12 @@ describe('apply from', () => {
     const project = await read(files)
     // 기본 파일 8번의 읽기(없는 것 포함: TeamCode/build.gradle이 있어 .kts는 찾지 않음) 뒤 남은 한도만큼
     expect(project.dependencies).toHaveLength(MAX_GRADLE_FILES - 8)
-    expect(project.diagnostics.every((d) => d.code === 'tooDeep')).toBe(true)
+    expect(project.diagnostics[0]).toEqual({
+      code: 'tooMany',
+      at: { file: TEAMCODE, line: MAX_GRADLE_FILES - 7 },
+      detail: `more than ${MAX_GRADLE_FILES} Gradle files`
+    })
+    expect(project.diagnostics.every((d) => d.code === 'tooMany')).toBe(true)
   })
 
   it('apply plugin은 넘기고 apply from … to:는 알린다', async () => {
@@ -902,6 +907,31 @@ describe('settings', () => {
       codes(await read({ 'settings.gradle': "include ':FtcRobotController', modules" }))
     ).toEqual([])
   })
+
+  it('include 한 문장에서 펼치는 이름에 한도가 있다(같은 목록을 여러 번 넣으면 펼친 만큼)', async () => {
+    const names = Array.from({ length: 1000 }, (_, i) => `':m${i}'`).join(', ')
+    const project = await read({
+      'settings.gradle': [`def l = [${names}]`, 'include l', 'include l, l, l'].join('\n')
+    })
+    // 한도를 넘은 문장은 버리므로 TeamCode가 없다고 알리지 않는다
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'tooMany',
+        at: { file: 'settings.gradle', line: 3 },
+        detail: 'include lists more than 1000 projects: include l, l, l'
+      }
+    ])
+    // 한도 안이면 그대로 읽는다
+    expect(
+      codes(await read({ 'settings.gradle': `def l = [${names}]\ninclude l\ninclude l` }))
+    ).toEqual(['unsupportedSyntax'])
+    // TeamCode가 버린 문장에 있었을 수 있다
+    expect(
+      codes(
+        await read({ 'settings.gradle': `def l = [${names}]\ninclude l, ':TeamCode'\ninclude l` })
+      )
+    ).toEqual(['tooMany'])
+  })
 })
 
 describe('compileSdk', () => {
@@ -984,7 +1014,7 @@ describe('한도', () => {
     expect(project.dependencies).toHaveLength(1000)
     expect(project.diagnostics).toEqual([
       {
-        code: 'tooLarge',
+        code: 'tooMany',
         at: { file: TEAMCODE, line: 1002 },
         detail: 'more than 1000 dependencies'
       }
@@ -1014,7 +1044,7 @@ describe('한도', () => {
     expect(coords(project)).toEqual([`implementation g:count:${MAX_APPLIED_SCRIPTS}`])
     expect(project.diagnostics).toEqual([
       {
-        code: 'tooDeep',
+        code: 'tooMany',
         at: { file: TEAMCODE, line: MAX_APPLIED_SCRIPTS + 1 },
         detail: `apply from runs more than ${MAX_APPLIED_SCRIPTS} scripts`
       }
@@ -1031,7 +1061,7 @@ describe('한도', () => {
     expect(project.dependencies[0].at.line).toBe(44)
     expect(project.diagnostics).toEqual([
       {
-        code: 'tooLarge',
+        code: 'tooMany',
         at: { file: TEAMCODE, line: 43 },
         detail: 'dependency list has more than 1000 entries: implementation l40'
       }
@@ -1053,7 +1083,7 @@ describe('한도', () => {
     expect(coords(project)).toEqual(['implementation g:first:1'])
     expect(project.diagnostics).toEqual([
       {
-        code: 'tooLarge',
+        code: 'tooMuchWork',
         at: { file: 'TeamCode/heavy.gradle', line: expect.any(Number) },
         detail: `reading the Gradle files takes more than ${MAX_GRADLE_WORK} steps`
       }
@@ -1071,9 +1101,35 @@ describe('한도', () => {
     })
     expect(project.diagnostics).toHaveLength(200)
     expect(project.diagnostics[199]).toMatchObject({
-      code: 'tooLarge',
+      code: 'tooMuchWork',
       at: { file: 'TeamCode/heavy.gradle' }
     })
+  })
+
+  it('다 읽은 뒤 남기는 진단(TeamCode include)이 일 한도를 넘어도 예외 없이 멈춘다', async () => {
+    // 주석 글자 수로 일을 맞춰, 다 읽고 나서 남기는 진단 하나가 한도를 넘는 자리를 찾는다(일은 글자 수에 따라 늘기만 한다)
+    const filler = `# ${'x'.repeat(MAX_GRADLE_FILE_BYTES - 16)}`
+    const files = (n: number): MemoryFiles => ({
+      'gradle.properties': filler,
+      'TeamCode/gradle.properties': filler,
+      'settings.gradle': "include ':Other'",
+      [TEAMCODE]: `// ${'x'.repeat(n)}`
+    })
+    const stopped = async (n: number): Promise<boolean> =>
+      codes(await read(files(n))).includes('tooMuchWork')
+    let low = 0
+    let high = MAX_GRADLE_FILE_BYTES - 16
+    expect(await stopped(low)).toBe(false)
+    expect(await stopped(high)).toBe(true)
+    while (high - low > 1) {
+      const mid = Math.floor((low + high) / 2)
+      if (await stopped(mid)) high = mid
+      else low = mid
+    }
+    for (let n = high - 16; n <= high; n++) {
+      const project = await read(files(n))
+      expect(codes(project)).toEqual([n < high ? 'unsupportedSyntax' : 'tooMuchWork'])
+    }
   })
 
   it('gradle.properties의 값이 너무 길면 쓰지 않는다', async () => {

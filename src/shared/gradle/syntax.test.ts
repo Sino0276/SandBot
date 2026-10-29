@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { lexGradle, MAX_STEPS_PER_CHAR, type GradleToken } from './lexer'
-import { parseGradleScript, type Expr, type Stmt } from './parser'
+import { parseGradleScript, RECOVERY_STEPS, type Expr, type Stmt } from './parser'
 
 function kinds(tokens: GradleToken[]): string[] {
   return tokens.map((t) => (t.kind === 'punct' || t.kind === 'ident' ? t.text : t.kind))
@@ -260,6 +260,27 @@ describe('parseGradleScript', () => {
       'groovy'
     )
     expect(parsed.statements.map((s) => s.kind)).toEqual(['skip', 'decl'])
+  })
+
+  it('읽지 못한 문장·보간 하나를 버리는 일을 RECOVERY_STEPS로 세고, 그것만 이어도 글자당 한도 안이다', () => {
+    // [한 단위, 방언, 한 단위 안의 읽지 못한 문장·보간 수]
+    const cases: Array<[string, 'groovy' | 'kotlin', number]> = [
+      [')\n', 'groovy', 1],
+      [';)', 'groovy', 1],
+      ['=\n', 'groovy', 1],
+      ['"${)}"\n', 'groovy', 1],
+      ['"${}${}"\n', 'groovy', 2],
+      ['a {)}\n', 'groovy', 1],
+      ['`a\n', 'kotlin', 1],
+      ['`\n', 'kotlin', 1]
+    ]
+    for (const [unit, dialect, bails] of cases) {
+      const text = unit.repeat(1000)
+      const parsed = parseGradleScript(text, dialect)
+      expect(parsed.tooDeep).toBe(false)
+      expect(parsed.steps).toBeGreaterThanOrEqual(1000 * bails * RECOVERY_STEPS)
+      expect(parsed.steps).toBeLessThan(MAX_STEPS_PER_CHAR * text.length)
+    }
   })
 
   it('중첩이 한도를 넘으면 tooDeep', () => {

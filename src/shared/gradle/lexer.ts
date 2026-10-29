@@ -102,6 +102,16 @@ const KOTLIN_PUNCTS = [
 ]
 const SINGLE_PUNCTS = new Set('(){}[],.:;=+-*/%<>!?&|^~@'.split(''))
 
+// 첫 글자마다 그 글자로 시작하는 여러 글자 기호(긴 것부터). 기호마다 목록 전체를 맞춰 보지 않는다(기호만 이어 쓴 입력에서
+// 토큰 하나의 일이 다른 토큰의 몇 배가 된다).
+function byFirstChar(list: string[]): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  for (const punct of list) map.set(punct[0], [...(map.get(punct[0]) ?? []), punct])
+  return map
+}
+const GROOVY_PUNCTS_BY_FIRST = byFirstChar(GROOVY_PUNCTS)
+const KOTLIN_PUNCTS_BY_FIRST = byFirstChar(KOTLIN_PUNCTS)
+
 // 이 뒤의 '/'는 나눗셈이 아니라 Groovy 슬래시 문자열의 시작이다(식이 올 자리)
 const SLASHY_AFTER = new Set([
   '(',
@@ -125,19 +135,33 @@ const SLASHY_AFTER = new Set([
   '?:'
 ])
 
+// 아래 이름 글자 판정은 ASCII를 유니코드 정규식 없이 먼저 본다(ASCII에서 \p{L}은 영문자, \p{Nd}는 숫자, \p{Pc}는 '_'이고
+// \p{Nl}·\p{Mn}·\p{Mc}는 없다)
+function isAsciiLetter(ch: string): boolean {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+function isDigit(ch: string): boolean {
+  return ch >= '0' && ch <= '9'
+}
+
 function isIdentStart(ch: string): boolean {
+  if (ch < '\x80') return isAsciiLetter(ch) || ch === '_' || ch === '$'
   return /[\p{L}\p{Nl}_$]/u.test(ch)
 }
 
 function isIdentPart(ch: string): boolean {
+  if (ch < '\x80') return isAsciiLetter(ch) || isDigit(ch) || ch === '_' || ch === '$'
   return /[\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]/u.test(ch)
 }
 
 function isKotlinIdentStart(ch: string): boolean {
+  if (ch < '\x80') return isAsciiLetter(ch) || ch === '_'
   return /[\p{L}\p{Nl}_]/u.test(ch)
 }
 
 function isKotlinIdentPart(ch: string): boolean {
+  if (ch < '\x80') return isAsciiLetter(ch) || isDigit(ch) || ch === '_'
   return /[\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}]/u.test(ch)
 }
 
@@ -175,6 +199,12 @@ class Lexer {
 
   private peek(offset = 0): string {
     return this.text[this.pos + offset] ?? ''
+  }
+
+  // 지금 위치의 글자 하나(서로게이트 쌍은 함께). 글자 안이어야 한다.
+  private codePoint(): string {
+    const ch = this.text[this.pos]
+    return ch < '\x80' ? ch : String.fromCodePoint(this.text.codePointAt(this.pos) ?? 0)
   }
 
   // 줄바꿈 하나(CRLF는 하나)를 넘기고 줄 수를 센다. 줄바꿈이 아니면 false.
@@ -273,17 +303,17 @@ class Lexer {
           continue
         }
       }
-      if (/[0-9]/.test(ch)) {
+      if (isDigit(ch)) {
         push(this.number())
         continue
       }
       const identStart = this.dialect === 'kotlin' ? isKotlinIdentStart : isIdentStart
       const identPart = this.dialect === 'kotlin' ? isKotlinIdentPart : isIdentPart
-      const cp = String.fromCodePoint(this.text.codePointAt(this.pos) ?? 0)
+      const cp = this.codePoint()
       if (identStart(cp)) {
         this.pos += cp.length
         while (this.pos < this.text.length) {
-          const next = String.fromCodePoint(this.text.codePointAt(this.pos) ?? 0)
+          const next = this.codePoint()
           if (!identPart(next)) break
           this.step()
           this.pos += next.length
@@ -334,14 +364,16 @@ class Lexer {
   }
 
   private punct(): string | null {
-    const list = this.dialect === 'kotlin' ? KOTLIN_PUNCTS : GROOVY_PUNCTS
-    for (const candidate of list) {
+    const ch = this.peek()
+    const list = (this.dialect === 'kotlin' ? KOTLIN_PUNCTS_BY_FIRST : GROOVY_PUNCTS_BY_FIRST).get(
+      ch
+    )
+    for (const candidate of list ?? []) {
       if (this.text.startsWith(candidate, this.pos)) {
         this.pos += candidate.length
         return candidate
       }
     }
-    const ch = this.peek()
     if (SINGLE_PUNCTS.has(ch)) {
       this.pos++
       return ch

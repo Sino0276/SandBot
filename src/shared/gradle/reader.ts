@@ -16,8 +16,8 @@
 // gradle.properties(TeamCode, 루트) → 물려받는 루트 ext 순서이고, ext.x·ext.get·by extra도 gradle.properties를 본다.
 //
 // 읽기는 메인 프로세스에서 하므로 일의 양에 한도가 있다: apply from 실행 횟수(같은 파일을 되풀이해도 센다), 한 문장에서
-// 펼치는 의존성 목록 항목 수, 한 번 읽기 전체의 일(글자·구문 나누기, 실행한 스크립트 글자 수, 값 계산 단계). 넘으면 진단을
-// 남긴다.
+// 펼치는 의존성·include 목록 항목 수(tooMany), 한 번 읽기 전체의 일(글자·구문 나누기, 실행한 스크립트 글자 수, 값 계산
+// 단계, 읽지 못한 것 버리기와 진단, tooMuchWork). 넘으면 진단을 남긴다.
 import { type GradleDialect } from './lexer'
 import { parseNotation, isNotationName, isNotationVersion, type Notation } from './notation'
 import {
@@ -52,9 +52,14 @@ export const MAX_GRADLE_FILES = 32
 // 처음 읽을 때만 세므로, 작은 파일 몇 개를 겹겹이 되풀이해 적용하면 실행이 지수로 늘어난다)
 export const MAX_APPLIED_SCRIPTS = 64
 // 한 번 읽기 전체의 일 한도(단위: 나눈 글자·토큰 하나, 실행한 스크립트 글자 하나, 값 계산 한 단계 — 식 하나, 이은 글자
-// 하나, 펼친 목록 항목 하나, 의존성에 붙인 exclude 글자 하나 등). 넘으면 tooLarge 진단 하나를 남기고 거기까지 읽은 것만
-// 돌려준다. 실제 FTC 프로젝트(수십 KB)는 이 한도의 몇 %만 쓴다.
-export const MAX_GRADLE_WORK = 2_000_000
+// 하나, 펼친 목록 항목 하나, 의존성에 붙인 exclude 글자 하나 등. 단위 하나에 드는 시간이 비슷하도록, 그보다 무거운 것은
+// 여러 단위로 센다: 읽지 못한 문장·보간 하나는 RECOVERY_STEPS(parser.ts), 카탈로그 줄 하나는 CATALOG_RECOVERY_WORK
+// (toml.ts), 진단 하나는 DIAGNOSTIC_WORK). 넘으면
+// tooMuchWork 진단 하나를 남기고 거기까지 읽은 것만 돌려준다. 시간이 아니라 단위로 세므로 같은 입력이면 늘 같은 자리에서
+// 멈춘다. 실제 FTC 프로젝트는 이 한도의 2% 안을 쓰고, 256 KB짜리 보통 의존성 파일 하나는 80%쯤이다.
+export const MAX_GRADLE_WORK = 1_000_000
+// 진단 하나를 만들거나 같은 진단을 다시 거르는 일(글자 조각·키 만들기)
+const DIAGNOSTIC_WORK = 16
 const MAX_DIAGNOSTICS = 200
 const MAX_DEPENDENCIES = 1000
 const MAX_REPOSITORIES = 200
@@ -322,32 +327,18 @@ class GradleReader {
     root: newProject(),
     module: newProject()
   }
-  // settings의 include(풀지 못한 인자가 있으면 complete false)
-  private includes: { names: string[]; complete: boolean; file: string } | null = null
+  // settings의 include: 이름 수와 TeamCode가 있는지(풀지 못한 인자가 있거나 한도를 넘은 문장이 있으면 complete false)
+  private includes: { count: number; teamCode: boolean; complete: boolean; file: string } | null =
+    null
 
   constructor(private readonly source: GradleFileSource) {}
 
   async run(): Promise<GradleProject> {
-    let finished = true
     try {
       await this.runAll()
     } catch (error) {
       if (!(error instanceof OverBudget)) throw error
-      finished = false
     }
-    const includes = this.includes
-    if (
-      finished &&
-      includes &&
-      includes.complete &&
-      includes.names.length > 0 &&
-      !includes.names.some((name) => name.replace(/^:/, '') === TEAMCODE_MODULE_DIR)
-    )
-      this.diag(
-        'unsupportedSyntax',
-        { file: includes.file, line: 1 },
-        `settings does not include ':TeamCode'`
-      )
     return {
       dependencies: this.dependencies,
       repositories: this.repositories,
@@ -371,6 +362,14 @@ class GradleReader {
       [`${TEAMCODE_MODULE_DIR}/build.gradle`, `${TEAMCODE_MODULE_DIR}/build.gradle.kts`],
       'module'
     )
+    // 다 읽었을 때만 본다(멈춘 읽기는 settings의 include를 다 보았는지 모른다). 이 진단도 일로 세므로 여기(run의 try 안)다.
+    const includes = this.includes
+    if (includes && includes.complete && includes.count > 0 && !includes.teamCode)
+      this.diag(
+        'unsupportedSyntax',
+        { file: includes.file, line: 1 },
+        `settings does not include ':TeamCode'`
+      )
   }
 
   // 일을 센다. 한 번 읽기 전체가 한도를 넘으면 그 자리에 진단을 남기고 읽기를 멈춘다. 읽다 멈춘 까닭은 진단이 한도까지
@@ -379,7 +378,7 @@ class GradleReader {
     this.work += units
     if (this.work <= MAX_GRADLE_WORK) return
     const stopped: GradleDiagnostic = {
-      code: 'tooLarge',
+      code: 'tooMuchWork',
       at: { file, line },
       detail: `reading the Gradle files takes more than ${MAX_GRADLE_WORK} steps`
     }
@@ -397,7 +396,7 @@ class GradleReader {
     if (this.reads >= MAX_GRADLE_FILES) {
       result = {
         kind: 'problem',
-        code: 'tooDeep',
+        code: 'tooMany',
         detail: `more than ${MAX_GRADLE_FILES} Gradle files`
       }
     } else {
@@ -442,7 +441,9 @@ class GradleReader {
     const read = await this.read(path)
     if (read.kind === 'problem') this.diag(read.code, { file: path, line: 1 }, read.detail)
     if (read.kind !== 'text') return props
-    for (const [key, entry] of parseGradleProperties(read.text))
+    const entries = parseGradleProperties(read.text)
+    this.spend(read.text.length, path, 1)
+    for (const [key, entry] of entries)
       props.set(
         key,
         entry.value.length > MAX_VALUE_LENGTH
@@ -457,13 +458,17 @@ class GradleReader {
     if (read.kind === 'problem')
       this.diag(read.code, { file: VERSION_CATALOG_PATH, line: 1 }, read.detail)
     if (read.kind !== 'text') return
-    this.catalog = parseVersionCatalog(read.text)
-    for (const problem of this.catalog.problems)
+    // 카탈로그 읽기도 한 번 읽기의 일에 센다(남은 일보다 많이 돌면 거기서 멈추고, 읽은 줄의 진단을 남긴 뒤 spend가 읽기를
+    // 끝낸다)
+    const catalog = parseVersionCatalog(read.text, MAX_GRADLE_WORK - this.work)
+    this.catalog = catalog
+    for (const problem of catalog.problems)
       this.diag(
         'unsupportedSyntax',
         { file: VERSION_CATALOG_PATH, line: problem.line },
         problem.detail
       )
+    this.spend(catalog.work, VERSION_CATALOG_PATH, catalog.line)
   }
 
   // 같은 스크립트의 Groovy·Kotlin 이름 중 먼저 있는 것을 읽는다(Gradle도 .gradle을 먼저 찾는다)
@@ -531,6 +536,7 @@ class GradleReader {
 
   private diag(code: GradleDiagnosticCode, at: GradleLocation, detail: string): void {
     if (this.diagnostics.length >= MAX_DIAGNOSTICS) return
+    this.spend(DIAGNOSTIC_WORK, at.file, at.line)
     const clipped = clip(detail)
     const key = `${code}\u0000${at.file}\u0000${at.line}\u0000${clipped}`
     if (this.diagnosticKeys.has(key)) return
@@ -539,15 +545,10 @@ class GradleReader {
   }
 
   // 개수 한도는 처음 넘은 자리에서 한 번만 알린다
-  private limitOnce(
-    what: string,
-    at: GradleLocation,
-    detail: string,
-    code: GradleDiagnosticCode = 'tooLarge'
-  ): void {
+  private limitOnce(what: string, at: GradleLocation, detail: string): void {
     if (this.limits.has(what)) return
     this.limits.add(what)
-    this.diag(code, at, detail)
+    this.diag('tooMany', at, detail)
   }
 
   private at(ctx: Ctx, node: { line: number }): GradleLocation {
@@ -783,18 +784,35 @@ class GradleReader {
     )
   }
 
+  // include ':a', ':b' / include([…]). 한 문장에서 펼치는 이름 수에 의존성 목록과 같은 한도가 있다(같은 목록을 여러 번
+  // 넣은 include l, l, …는 값으로는 작아도 펼친 만큼). 넘으면 그 문장의 나머지를 버리고 TeamCode가 없다고 알리지 않는다.
   private include(call: Extract<Expr, { kind: 'call' }>, ctx: Ctx): void {
-    const includes = this.includes ?? { names: [], complete: true, file: ctx.file }
+    const includes = this.includes ?? { count: 0, teamCode: false, complete: true, file: ctx.file }
     this.includes = includes
+    let items = 0
+    const add = (value: Value): void => {
+      if (value.kind !== 'string') {
+        includes.complete = false
+        return
+      }
+      includes.count++
+      if (value.value.replace(/^:/, '') === TEAMCODE_MODULE_DIR) includes.teamCode = true
+    }
     for (const arg of call.args) {
       const value = this.evaluate(arg.value, ctx)
-      if (value.kind === 'string') includes.names.push(value.value)
-      else if (value.kind === 'list')
-        for (const item of value.items) {
-          if (item.kind === 'string') includes.names.push(item.value)
-          else includes.complete = false
-        }
-      else includes.complete = false
+      const values = value.kind === 'list' ? value.items : [value]
+      items += values.length
+      if (items > MAX_COLLECTION) {
+        this.diag(
+          'tooMany',
+          this.at(ctx, call),
+          `include lists more than ${MAX_COLLECTION} projects: ${this.snippet(ctx, call)}`
+        )
+        includes.complete = false
+        return
+      }
+      this.spend(values.length, ctx.file, call.line)
+      for (const item of values) add(item)
     }
   }
 
@@ -971,8 +989,7 @@ class GradleReader {
       this.limitOnce(
         'applied',
         this.at(ctx, call),
-        `apply from runs more than ${MAX_APPLIED_SCRIPTS} scripts`,
-        'tooDeep'
+        `apply from runs more than ${MAX_APPLIED_SCRIPTS} scripts`
       )
       return
     }
@@ -1224,7 +1241,7 @@ class GradleReader {
         const found = this.notations(arg.value, ctx, flat)
         if (found === null) {
           this.diag(
-            'tooLarge',
+            'tooMany',
             this.at(ctx, call),
             `dependency list has more than ${MAX_COLLECTION} entries: ${this.snippet(ctx, call)}`
           )

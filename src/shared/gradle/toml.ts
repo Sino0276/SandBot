@@ -1,6 +1,7 @@
 // gradle/libs.versions.toml(Gradle 버전 카탈로그)의 [versions]·[libraries]·[bundles]. 작은 TOML 읽기: 표 머리
 // [이름], key = value(점 키 포함), 문자열("…"·'…'·"""…"""·'''…'''), 정수·실수·불리언, 배열(여러 줄), 인라인 표 { … }.
-// 다른 표([plugins] 등)도 문법은 맞춰 읽되 쓰지 않는다. 읽지 못한 줄은 problems에 남기고 다음 줄부터 계속한다.
+// 다른 표([plugins] 등)도 문법은 맞춰 읽되 쓰지 않는다. 읽지 못한 줄은 problems에 남기고 다음 줄부터 계속한다. 읽은 일을
+// 세어(work) 부른 쪽이 준 한도를 넘으면 거기서 멈춘다(src/shared/gradle/reader.ts의 한 번 읽기 일 한도).
 
 export type TomlValue =
   | { kind: 'string'; value: string }
@@ -29,6 +30,10 @@ export type VersionCatalog = {
   libraries: Map<string, CatalogLibrary>
   bundles: Map<string, { aliases: string[]; line: number }>
   problems: Array<{ line: number; detail: string }>
+  // 읽은 일(읽은 글자 수, 읽지 못한 줄마다 CATALOG_RECOVERY_WORK). 한도를 넘어 멈췄으면 한도보다 크다.
+  work: number
+  // 읽기를 끝낸 줄(멈췄으면 멈춘 줄)
+  line: number
 }
 
 // Gradle은 별칭의 '-'·'_'·'.'를 모두 접근자의 '.'로 바꾼다(libs.pedro.core)
@@ -36,10 +41,17 @@ export function catalogAccessor(alias: string): string {
   return alias.replace(/[-_.]/g, '.')
 }
 
-class TomlError extends Error {}
+// 읽지 못한 줄(parseVersionCatalog가 받아 그 줄만 버린다). Error가 아니다: Error는 만들 때마다 호출 스택을 잡아, 줄마다
+// 틀린 파일에서는 그 일이 나머지 읽기보다 훨씬 크다.
+class TomlError {
+  constructor(readonly message: string) {}
+}
 
 const MAX_TOML_NESTING = 16
 const MAX_ARRAY_ITEMS = 1000
+// 읽지 못한 줄 하나를 버리는 일(던져 받기). 글자 하나를 읽는 일의 수십 배라 그만큼 센다(줄마다 틀린 파일이 일 한도
+// 안에서 오래 붙잡지 않게).
+export const CATALOG_RECOVERY_WORK = 48
 
 class TomlReader {
   pos = 0
@@ -355,25 +367,34 @@ function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   return { group, artifact, ...version, line }
 }
 
-export function parseVersionCatalog(text: string): VersionCatalog {
+// maxWork: 부른 쪽의 남은 일
+export function parseVersionCatalog(text: string, maxWork = Infinity): VersionCatalog {
   const catalog: VersionCatalog = {
     versions: new Map(),
     libraries: new Map(),
     bundles: new Map(),
-    problems: []
+    problems: [],
+    work: 0,
+    line: 1
   }
   const reader = new TomlReader(text)
   let table = ''
   while (!reader.atEnd()) {
     const line = reader.line
-    let statement: ReturnType<TomlReader['statement']>
+    const start = reader.pos
+    let statement: ReturnType<TomlReader['statement']> = null
     try {
       statement = reader.statement()
     } catch (error) {
       if (!(error instanceof TomlError)) throw error
       catalog.problems.push({ line, detail: error.message })
       reader.skipLine()
-      continue
+      catalog.work += CATALOG_RECOVERY_WORK
+    }
+    catalog.work += reader.pos - start
+    if (catalog.work > maxWork) {
+      catalog.line = line
+      return catalog
     }
     if (statement === null) continue
     if (statement.kind === 'table') {
@@ -407,5 +428,6 @@ export function parseVersionCatalog(text: string): VersionCatalog {
       })
     }
   }
+  catalog.line = reader.line
   return catalog
 }
