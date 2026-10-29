@@ -132,6 +132,7 @@ const RELEVANT_NAMES = new Set([
   'apply',
   'compileSdk',
   'compileSdkVersion',
+  'compileSdkMinor',
   'ext',
   'extra',
   'allprojects',
@@ -271,6 +272,7 @@ class GradleReader {
   private readonly limits = new Set<string>()
   private readonly files: string[] = []
   private compileSdk: number | null = null
+  private compileSdkMinor: number | null = null
   private catalog: VersionCatalog | null = null
   private reads = 0
   private readonly cache = new Map<string, FileRead>()
@@ -310,6 +312,7 @@ class GradleReader {
       dependencies: this.dependencies,
       repositories: this.repositories,
       compileSdk: this.compileSdk,
+      compileSdkMinor: this.compileSdkMinor,
       diagnostics: this.diagnostics,
       files: this.files
     }
@@ -764,6 +767,10 @@ class GradleReader {
           this.setCompileSdk(stmt.value, ctx)
           continue
         }
+        if (samePath(path, 'android', 'compileSdkMinor')) {
+          this.setCompileSdkMinor(stmt.value, ctx)
+          continue
+        }
       }
       if (this.common(stmt, ctx)) continue
       const call = callOf(stmt)
@@ -776,6 +783,9 @@ class GradleReader {
       else if (name === 'android.compileSdk' || name === 'android.compileSdkVersion') {
         const arg = positional(call.call.args)[0]
         if (arg) this.setCompileSdk(arg, ctx)
+      } else if (name === 'android.compileSdkMinor') {
+        const arg = positional(call.call.args)[0]
+        if (arg) this.setCompileSdkMinor(arg, ctx)
       } else if (name === 'apply') await this.applyFrom(call.call, ctx)
       else if (name === 'buildscript' && closure) this.buildscriptBlock(closure, ctx)
       else if (call.path[0] === 'configurations') {
@@ -881,7 +891,13 @@ class GradleReader {
 
   private androidBlock(closure: ClosureExpr, ctx: Ctx): void {
     const inner = this.child(ctx)
-    const sdkNames = new Set(['compileSdk', 'compileSdkVersion', 'compileSdkPreview'])
+    const sdkNames = new Set([
+      'compileSdk',
+      'compileSdkVersion',
+      'compileSdkPreview',
+      'compileSdkMinor',
+      'compileSdkExtension'
+    ])
     for (const stmt of closure.body) {
       if (stmt.kind === 'control' || stmt.kind === 'unknown') {
         this.hidden(inner, stmt, sdkNames)
@@ -894,12 +910,19 @@ class GradleReader {
       const path = stmt.kind === 'assign' ? pathOf(stmt.target) : (callOf(stmt)?.path ?? null)
       if (!path || path.length !== 1) continue
       const name = path[0]
-      if (name === 'compileSdkPreview') {
+      // 미리보기와 SDK 확장(android-33-ext4 같은 다른 플랫폼)은 고르지 못한다
+      if (name === 'compileSdkPreview' || name === 'compileSdkExtension') {
         this.diag(
           'unsupportedSyntax',
           this.at(ctx, stmt),
-          `compileSdkPreview is not supported: ${this.snippet(ctx, stmt)}`
+          `${name} is not supported: ${this.snippet(ctx, stmt)}`
         )
+        continue
+      }
+      if (name === 'compileSdkMinor' || name === 'setCompileSdkMinor') {
+        const value =
+          stmt.kind === 'assign' ? stmt.value : positional(callOf(stmt)?.call.args ?? [])[0]
+        if (value) this.setCompileSdkMinor(value, inner)
         continue
       }
       if (name !== 'compileSdk' && name !== 'compileSdkVersion' && name !== 'setCompileSdkVersion')
@@ -916,14 +939,16 @@ class GradleReader {
     }
   }
 
-  // compileSdk { version = release(36) }(AGP 8.12 이후의 새 표기)
+  // compileSdk { version = release(36) }, release(36) { minorApiLevel = 1 }(AGP 8.13 이후의 새 표기)
   private compileSdkBlock(closure: ClosureExpr, ctx: Ctx): void {
     for (const stmt of closure.body) {
       if (stmt.kind !== 'assign' || !samePath(pathOf(stmt.target), 'version')) continue
       const value = stmt.value
       if (value.kind === 'call' && samePath(pathOf(value.callee), 'release')) {
-        const arg = positional(value.args)[0]
-        if (arg) this.setCompileSdk(arg, ctx)
+        const [arg, ...rest] = positional(value.args)
+        // Groovy는 블록을 괄호 안에 넣어도 된다(release(36, { … }))
+        const spec = value.closure ?? (rest[0]?.kind === 'closure' ? rest[0] : null)
+        if (arg && this.setCompileSdk(arg, ctx) && spec) this.releaseSpec(spec, ctx)
       } else
         this.diag(
           'unsupportedSyntax',
@@ -933,24 +958,71 @@ class GradleReader {
     }
   }
 
-  private setCompileSdk(expr: Expr, ctx: Ctx): void {
+  // release(N) { minorApiLevel = M }의 블록. 부 버전만 읽는다. 그 밖(sdkExtension 등)은 고르는 플랫폼이 달라질 수 있어 진단이다.
+  private releaseSpec(closure: ClosureExpr, ctx: Ctx): void {
+    for (const stmt of closure.body) {
+      if (stmt.kind === 'skip') continue
+      const call = callOf(stmt)
+      const target = stmt.kind === 'assign' ? pathOf(stmt.target) : (call?.path ?? null)
+      const args = call ? positional(call.call.args) : []
+      const value =
+        stmt.kind === 'assign'
+          ? stmt.value
+          : call && args.length === 1 && !call.call.closure
+            ? args[0]
+            : null
+      if (samePath(target, 'minorApiLevel') && value) this.setCompileSdkMinor(value, ctx)
+      else
+        this.diag(
+          'unsupportedSyntax',
+          this.at(ctx, stmt),
+          `compileSdk release ${this.snippet(ctx, stmt)} is not supported`
+        )
+    }
+  }
+
+  // compileSdk N, 'android-N', 'android-N.M'(Android Gradle 플러그인의 플랫폼 해시). AGP처럼 compileSdk를 다시 정하면 부 버전도
+  // 그 값의 것이다(N이면 없음). 읽었으면 true.
+  private setCompileSdk(expr: Expr, ctx: Ctx): boolean {
     const value = this.evaluate(expr, ctx)
     if (value.kind === 'unresolved') {
       this.unresolvedDiag(ctx, expr, value)
-      return
+      return false
     }
     const text = isScalar(value) ? scalarText(value) : ''
-    const match = /^(?:android-)?(\d{1,4})$/.exec(text)
-    const api = match ? Number(match[1]) : NaN
+    const match = /^(?:android-)?(\d{1,4})$|^android-(\d{1,4})\.(0|[1-9]\d{0,2})$/.exec(text)
+    const api = match ? Number(match[1] ?? match[2]) : NaN
     if (!(api >= 1 && api <= 1000)) {
       this.diag(
         'unsupportedSyntax',
         this.at(ctx, expr),
         `compileSdk '${this.snippet(ctx, expr)}' is not an API level`
       )
-      return
+      return false
     }
     this.compileSdk = api
+    this.compileSdkMinor = match?.[3] === undefined ? null : Number(match[3])
+    return true
+  }
+
+  // 부 버전(release 블록의 minorApiLevel, android { compileSdkMinor }). AGP처럼 그때의 compileSdk에 붙인다(compileSdk가
+  // 아직 없으면 버린다).
+  private setCompileSdkMinor(expr: Expr, ctx: Ctx): void {
+    const value = this.evaluate(expr, ctx)
+    if (value.kind === 'unresolved') {
+      this.unresolvedDiag(ctx, expr, value)
+      return
+    }
+    const text = isScalar(value) && value.kind !== 'boolean' ? scalarText(value) : ''
+    if (!/^(?:0|[1-9]\d{0,2})$/.test(text)) {
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, expr),
+        `compileSdk minor '${this.snippet(ctx, expr)}' is not a minor API level`
+      )
+      return
+    }
+    if (this.compileSdk !== null) this.compileSdkMinor = Number(text)
   }
 
   // ---- repositories { } ----

@@ -48,10 +48,11 @@ export type ControllerDeps = {
   epochMillis?: () => number
   // 팀 Gradle 파일 읽기(프로젝트 루트 안만). 없으면 빈 프로젝트.
   readGradle?: (projectRoot: string) => Promise<GradleProject>
-  // compileSdk의 플랫폼 API jar(javac 부트 클래스패스). 없으면 [](--release 8, 시험만).
+  // compileSdk(부 버전 compileSdkMinor)의 플랫폼 API jar(javac 부트 클래스패스). 없으면 [](--release 8, 시험만).
   resolvePlatform?: (
     projectRoot: string,
-    compileSdk: number | null
+    compileSdk: number | null,
+    compileSdkMinor: number | null
   ) => Promise<PlatformResolution | Failure>
   // 라이브러리 받기·캐시. 없으면 라이브러리 없음.
   resolveLibraries?: (request: LibraryRequest) => Promise<LibraryResolution | Failure>
@@ -61,6 +62,7 @@ const EMPTY_GRADLE: GradleProject = {
   dependencies: [],
   repositories: [],
   compileSdk: null,
+  compileSdkMinor: null,
   diagnostics: [],
   files: []
 }
@@ -72,6 +74,7 @@ function noLibraries(request: LibraryRequest): Promise<LibraryResolution> {
       entries: [],
       gradle: request.gradle.diagnostics,
       compileSdk: request.gradle.compileSdk,
+      compileSdkMinor: request.gradle.compileSdkMinor,
       platform: null
     },
     compileClasspath: [],
@@ -183,12 +186,14 @@ export class PlayController {
         Promise.resolve(EMPTY_GRADLE))
       const platform = await (this.deps.resolvePlatform?.(
         prepared.projectRoot,
-        gradle.compileSdk
+        gradle.compileSdk,
+        gradle.compileSdkMinor
       ) ??
         Promise.resolve<PlatformResolution>({
           ok: true,
           bootClasspath: [],
           api: null,
+          minor: null,
           guessed: false
         }))
       if (isFailure(platform)) return platform
@@ -213,7 +218,10 @@ export class PlayController {
         runId: request.runId,
         report: {
           ...libraries.report,
-          platform: platform.api === null ? null : { api: platform.api, guessed: platform.guessed }
+          platform:
+            platform.api === null
+              ? null
+              : { api: platform.api, minor: platform.minor, guessed: platform.guessed }
         }
       })
       if (ownerGone()) return { ok: false, code: 'failed', detail: 'the window was closed' }

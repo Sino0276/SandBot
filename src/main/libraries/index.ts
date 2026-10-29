@@ -317,6 +317,7 @@ function resolution(
     entries,
     gradle: request.gradle.diagnostics,
     compileSdk: request.gradle.compileSdk,
+    compileSdkMinor: request.gradle.compileSdkMinor,
     platform: null
   }
   return {

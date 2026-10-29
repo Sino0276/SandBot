@@ -208,13 +208,26 @@ export async function installedPlatforms(
   return found.sort((a, b) => a.api - b.api || a.minor - b.minor).map((entry) => entry.name)
 }
 
-// compileSdk N의 플랫폼 폴더: android-N, 없으면 android-N.0(Android Gradle 플러그인은 API 37부터 compileSdk N을
-// android-N.0으로 찾는다). android-36.1 같은 부 버전은 compileSdk의 minorApiLevel로만 고르므로 compileSdk 36이 아니다.
-function compileSdkPlatform(platforms: string[], compileSdk: number): string | null {
-  return (
-    [`android-${compileSdk}`, `android-${compileSdk}.0`].find((name) => platforms.includes(name)) ??
-    null
-  )
+// compileSdk N(부 버전 minor)의 플랫폼 폴더 이름(앞의 것 먼저). 첫 이름은 Android Gradle 플러그인이 찾는 플랫폼 해시
+// (CompileSdkVersionImpl.toHash)이자 SDK Manager의 패키지 이름이다. 부 버전이 없거나 0이면 36까지는 android-N, 37부터는
+// android-N.0(Google도 platforms;android-37.0으로만 낸다)이고 다른 쪽 이름도 받는다. 부 버전 M(> 0)은 android-N.M뿐이다
+// (android-36.1은 compileSdk 36이 아니고, compileSdk 36의 부 버전 1이다).
+function compileSdkPlatformNames(compileSdk: number, minor: number | null): string[] {
+  if (minor !== null && minor > 0) return [`android-${compileSdk}.${minor}`]
+  const plain = `android-${compileSdk}`
+  const dotted = `android-${compileSdk}.0`
+  return compileSdk >= 37 ? [dotted, plain] : [plain, dotted]
+}
+
+// 실행에 쓸 플랫폼 폴더 이름(platforms는 installedPlatforms의 순서). compileSdk를 모르면 가장 높은 것(부 버전 포함).
+// 맞는 것이 없으면 null.
+export function choosePlatform(
+  platforms: readonly string[],
+  compileSdk: number | null,
+  minor: number | null
+): string | null {
+  if (compileSdk === null) return platforms[platforms.length - 1] ?? null
+  return compileSdkPlatformNames(compileSdk, minor).find((name) => platforms.includes(name)) ?? null
 }
 
 export function platformJarPath(home: string, name: string, platform: NodeJS.Platform): string {
@@ -481,36 +494,43 @@ export async function platformOverride(
     env.SANDBOT_ANDROID_PLATFORM_API && Number.isSafeInteger(level) && level >= 0
       ? level
       : (compileSdk ?? 0)
-  return { ok: true, bootClasspath: [jar], api, guessed: false }
+  return { ok: true, bootClasspath: [jar], api, minor: null, guessed: false }
 }
 
-// 팀 프로젝트 compileSdk의 컴파일 기준. SDK가 없으면(고른 폴더를 쓸 수 없게 된 것 포함) noAndroidSdk, 그 플랫폼이 없으면
-// noAndroidPlatform(detail 'android-N'). compileSdk를 모르면(Gradle에서 읽지 못함) 설치된 가장 높은 플랫폼(부 버전 포함)을
-// 쓰고 guessed. api는 고른 플랫폼의 주 버전이다. projectRoot는 controller가 확인한 프로젝트 루트다(local.properties를 본다).
+// 팀 프로젝트 compileSdk(부 버전 compileSdkMinor, Gradle의 minorApiLevel)의 컴파일 기준. SDK가 없으면(고른 폴더를 쓸 수 없게
+// 된 것 포함) noAndroidSdk, 그 플랫폼이 없으면 noAndroidPlatform(detail은 설치할 패키지 이름: android-30, compileSdk 37부터
+// android-37.0, 부 버전 1이면 android-36.1). compileSdk를 모르면(Gradle에서 읽지 못함) 설치된 가장 높은 플랫폼(부 버전 포함)을
+// 쓰고 guessed. api·minor는 고른 플랫폼 폴더의 주·부 버전이다(android-N이면 minor null). projectRoot는 controller가 확인한
+// 프로젝트 루트다(local.properties를 본다).
 export async function resolveAndroidPlatform(
   projectRoot: string,
   compileSdk: number | null,
+  compileSdkMinor: number | null,
   deps: AndroidSdkDeps = defaultAndroidSdkDeps()
 ): Promise<PlatformResolution | Failure> {
   const override = await platformOverride(deps.env, compileSdk, deps.fs)
   if (override) return override
   const sdk = await resolveActiveAndroidSdk(isTrustedRoot(projectRoot) ? projectRoot : null, deps)
   if (!sdk) return { ok: false, code: 'noAndroidSdk', detail: '' }
-  const name =
-    compileSdk === null
-      ? (sdk.platforms[sdk.platforms.length - 1] ?? null)
-      : compileSdkPlatform(sdk.platforms, compileSdk)
+  const name = choosePlatform(sdk.platforms, compileSdk, compileSdkMinor)
   const version = name === null ? null : platformVersion(name)
   if (name === null || !version)
     return {
       ok: false,
       code: 'noAndroidPlatform',
-      detail: compileSdk === null ? 'android-*' : `android-${compileSdk}`
+      detail:
+        compileSdk === null ? 'android-*' : compileSdkPlatformNames(compileSdk, compileSdkMinor)[0]
     }
   const androidJar = platformJarPath(sdk.home, name, deps.platform)
   try {
     const jar = await ensurePlatformJar(androidJar, deps.cacheDir)
-    return { ok: true, bootClasspath: [jar], api: version.api, guessed: compileSdk === null }
+    return {
+      ok: true,
+      bootClasspath: [jar],
+      api: version.api,
+      minor: version.minor,
+      guessed: compileSdk === null
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {

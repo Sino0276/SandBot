@@ -230,11 +230,13 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
 // ---- 컴파일 기준과 라이브러리(controller가 JVM을 띄우기 전에 정한다) ----
 
 // 팀 프로젝트 compileSdk의 플랫폼 API jar(src/main/androidSdk.ts). bootClasspath가 비면 javac --release 8(시험만)이고
-// api는 null. guessed: compileSdk를 몰라 설치된 플랫폼 중 가장 높은 것을 골랐다(의존성 보고에 경고로 보인다).
+// api는 null. api·minor는 그 플랫폼의 주·부 버전(android-36.1이면 36·1, android-37.0이면 37·0, android-N이면 minor null).
+// guessed: compileSdk를 몰라 설치된 플랫폼 중 가장 높은 것을 골랐다(의존성 보고에 경고로 보인다).
 export type PlatformResolution = {
   ok: true
   bootClasspath: string[]
   api: number | null
+  minor: number | null
   guessed: boolean
 }
 

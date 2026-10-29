@@ -67,6 +67,10 @@ export type GradleProject = {
   repositories: GradleRepository[]
   // android { compileSdkVersion N } / compileSdk N (build.common.gradle 등). 못 찾으면 null.
   compileSdk: number | null
+  // compileSdk의 부 버전(compileSdk { version = release(36) { minorApiLevel = 1 } }, compileSdkMinor = 1,
+  // compileSdkVersion 'android-36.1'). 적지 않았으면 null이다(Android Gradle 플러그인처럼 compileSdk N의 플랫폼). compileSdk가
+  // null이면 늘 null.
+  compileSdkMinor: number | null
   diagnostics: GradleDiagnostic[]
   // 읽은 파일(프로젝트 기준 경로, 읽은 순서)
   files: string[]

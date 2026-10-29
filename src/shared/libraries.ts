@@ -85,11 +85,12 @@ export type LibraryReport = {
   entries: LibraryEntry[]
   // Gradle 파일을 읽으며 풀지 못한 것
   gradle: GradleDiagnostic[]
-  // Gradle 파일의 compileSdk(못 찾으면 null)
+  // Gradle 파일의 compileSdk(못 찾으면 null)와 그 부 버전(적지 않았으면 null, GradleProject.compileSdkMinor)
   compileSdk: number | null
-  // 팀 코드를 컴파일한 Android 플랫폼 API. guessed: compileSdk를 못 찾아 설치된 것 중 가장 높은 것을 씀(경고).
-  // 플랫폼 jar 없이 컴파일했으면 null(사이드카 시험만).
-  platform: { api: number; guessed: boolean } | null
+  compileSdkMinor: number | null
+  // 팀 코드를 컴파일한 Android 플랫폼 API. api·minor는 플랫폼의 주·부 버전(android-36.1이면 36·1, android-N이면 minor
+  // null). guessed: compileSdk를 못 찾아 설치된 것 중 가장 높은 것을 씀(경고). 플랫폼 jar 없이 컴파일했으면 null(사이드카 시험만).
+  platform: { api: number; minor: number | null; guessed: boolean } | null
 }
 
 // 받기 진행(INIT 중). bytes는 지금까지 받은 바이트.

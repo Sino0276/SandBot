@@ -35,6 +35,7 @@ describe('파일 찾기', () => {
       dependencies: [],
       repositories: [],
       compileSdk: null,
+      compileSdkMinor: null,
       diagnostics: [],
       files: []
     })
@@ -845,6 +846,119 @@ describe('compileSdk', () => {
       expect(project.compileSdk, line).toBeNull()
       expect(codes(project), line).toEqual([code])
     }
+  })
+
+  it('부 버전(minorApiLevel·compileSdkMinor·android-N.M)을 읽고, compileSdk를 다시 정하면 그 값의 부 버전이 된다', async () => {
+    const minor = async (files: MemoryFiles): Promise<[number | null, number | null, string[]]> => {
+      const project = await read(files)
+      return [project.compileSdk, project.compileSdkMinor, codes(project)]
+    }
+    const android = (
+      text: string,
+      extra: MemoryFiles = {}
+    ): Promise<[number | null, number | null, string[]]> =>
+      minor({ [TEAMCODE]: `android {\n${text}\n}`, ...extra })
+    expect(await android('compileSdk { version = release(36) { minorApiLevel = 1 } }')).toEqual([
+      36,
+      1,
+      []
+    ])
+    // Groovy 명령식, 괄호 안의 블록, 0, 변수
+    expect(
+      await android('compileSdk {\n  version = release(36) {\n    minorApiLevel 1\n  }\n}')
+    ).toEqual([36, 1, []])
+    expect(await android('compileSdk { version = release(36, { minorApiLevel = 2 }) }')).toEqual([
+      36,
+      2,
+      []
+    ])
+    expect(await android('compileSdk { version = release(37) { minorApiLevel = 0 } }')).toEqual([
+      37,
+      0,
+      []
+    ])
+    expect(
+      await android('compileSdk { version = release(36) { minorApiLevel = rootProject.ext.m } }', {
+        'build.gradle': 'ext.m = 1'
+      })
+    ).toEqual([36, 1, []])
+    // 플랫폼 해시와 compileSdkMinor(AGP 8.13)
+    expect(await android("compileSdkVersion 'android-36.1'")).toEqual([36, 1, []])
+    expect(await android("compileSdkVersion 'android-37.0'")).toEqual([37, 0, []])
+    expect(await android('compileSdk 36\ncompileSdkMinor 1')).toEqual([36, 1, []])
+    expect(await android('compileSdk = 36\ncompileSdkMinor = 1')).toEqual([36, 1, []])
+    expect(await android('compileSdkVersion(36)\nsetCompileSdkMinor(1)')).toEqual([36, 1, []])
+    expect(
+      await minor({ [TEAMCODE]: 'android.compileSdk = 36\nandroid.compileSdkMinor = 1' })
+    ).toEqual([36, 1, []])
+    expect(
+      await minor({
+        'TeamCode/build.gradle.kts': [
+          'android {',
+          '    compileSdk {',
+          '        version = release(36) {',
+          '            minorApiLevel = 1',
+          '        }',
+          '    }',
+          '}'
+        ].join('\n')
+      })
+    ).toEqual([36, 1, []])
+    expect(await android('compileSdk 36')).toEqual([36, null, []])
+    // AGP처럼 compileSdk N은 release(N)이라 앞의 부 버전을 지운다(apply from 파일의 것을 TeamCode가 덮는 것도 같다)
+    expect(
+      await android('compileSdk { version = release(36) { minorApiLevel = 1 } }\ncompileSdk 36')
+    ).toEqual([36, null, []])
+    expect(await android("compileSdkVersion 'android-36.1'\ncompileSdkVersion 34")).toEqual([
+      34,
+      null,
+      []
+    ])
+    expect(
+      await minor({
+        [TEAMCODE]: "apply from: '../common.gradle'\nandroid { compileSdk 34 }",
+        'common.gradle': 'android { compileSdk { version = release(36) { minorApiLevel = 1 } } }'
+      })
+    ).toEqual([34, null, []])
+    // compileSdk 없이 부 버전만 정하면 AGP처럼 버린다
+    expect(await android('compileSdkMinor 1')).toEqual([null, null, []])
+  })
+
+  it('부 버전을 읽지 못하는 표기는 진단이다(다른 플랫폼을 조용히 고르지 않는다)', async () => {
+    const cases: Array<[string, string, number | null]> = [
+      [
+        "compileSdk { version = release(36) { minorApiLevel = System.getenv('M') } }",
+        'unresolvedValue',
+        36
+      ],
+      ['compileSdk { version = release(36) { minorApiLevel = "one" } }', 'unsupportedSyntax', 36],
+      // SDK 확장은 다른 플랫폼(android-36-ext18)이다
+      ['compileSdk { version = release(36) { sdkExtension = 18 } }', 'unsupportedSyntax', 36],
+      ['compileSdk 36\ncompileSdkExtension 18', 'unsupportedSyntax', 36],
+      [
+        'compileSdk { version = release(36) { if (x) { minorApiLevel = 1 } } }',
+        'unsupportedSyntax',
+        36
+      ],
+      ['compileSdk 36\nif (x) { compileSdkMinor 1 }', 'unsupportedSyntax', 36],
+      ['compileSdk 36\ncompileSdkMinor = true', 'unsupportedSyntax', 36],
+      ["compileSdkVersion 'android-36.01'", 'unsupportedSyntax', null],
+      ["compileSdkVersion 'android-36-ext18'", 'unsupportedSyntax', null],
+      ["compileSdkVersion '36.1'", 'unsupportedSyntax', null]
+    ]
+    for (const [line, code, api] of cases) {
+      const project = await sdk(line)
+      expect([project.compileSdk, project.compileSdkMinor], line).toEqual([api, null])
+      expect(codes(project), line).toEqual([code])
+    }
+    const hidden = await read({
+      [TEAMCODE]: 'android.compileSdk = 36\nif (x) { android.compileSdkMinor = 1 }'
+    })
+    expect([hidden.compileSdk, hidden.compileSdkMinor, codes(hidden)]).toEqual([
+      36,
+      null,
+      ['unsupportedSyntax']
+    ])
   })
 
   it('android 블록의 다른 내용(서명 설정의 if, 환경 변수)은 보지 않는다', async () => {
