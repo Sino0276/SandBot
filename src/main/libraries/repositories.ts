@@ -17,6 +17,9 @@ export type Repository = {
   redirectHosts: readonly string[]
   // .sha1·.sha256 같은 체크섬 파일을 주는지(maven.brott.dev는 주지 않는다)
   checksums: boolean
+  // Gradle 모듈 메타데이터(.module)를 묻는지. maven.brott.dev는 POM에 표시만 있고 .module이 없다(404): 묻지 않고 POM만
+  // 쓴다(네트워크 없이 캐시로 되고, 나중에 생긴 .module이 고정 해시·처음 받은 기록의 POM이 정한 파일·의존성을 바꾸지 못한다)
+  moduleMetadata: boolean
   // 팀 Gradle에서 이 저장소를 가리키는 주소(정규화한 것)와 종류
   aliases: readonly string[]
   kinds: readonly GradleRepository['kind'][]
@@ -29,6 +32,7 @@ export const REPOSITORIES: Readonly<Record<RepositoryId, Repository>> = {
     mirrors: ['https://maven-central.storage-download.googleapis.com/maven2/'],
     redirectHosts: [],
     checksums: true,
+    moduleMetadata: true,
     aliases: ['https://repo1.maven.org/maven2', 'https://repo.maven.apache.org/maven2'],
     kinds: ['mavenCentral']
   },
@@ -39,6 +43,7 @@ export const REPOSITORIES: Readonly<Record<RepositoryId, Repository>> = {
     mirrors: [],
     redirectHosts: [],
     checksums: true,
+    moduleMetadata: true,
     aliases: ['https://dl.google.com/dl/android/maven2', 'https://maven.google.com'],
     kinds: ['google']
   },
@@ -48,6 +53,7 @@ export const REPOSITORIES: Readonly<Record<RepositoryId, Repository>> = {
     mirrors: [],
     redirectHosts: ['acmerobotics.z13.web.core.windows.net'],
     checksums: false,
+    moduleMetadata: false,
     aliases: ['https://maven.brott.dev'],
     kinds: []
   }

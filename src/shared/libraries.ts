@@ -59,7 +59,10 @@ export type LibraryReason =
 export type LibrarySource = 'gradleCache' | 'libraryCache' | 'download'
 // - checksum: 저장소의 .module·.sha256·.sha1과 맞음, pinned: SandBot이 아는 해시와 맞음,
 //   firstUse: 저장소가 체크섬을 주지 않아 처음 받은 해시를 기록함(maven.brott.dev), gradleCache: Gradle 캐시의 sha1
-export type LibraryIntegrity = 'checksum' | 'pinned' | 'firstUse' | 'gradleCache'
+// - firstUseUnrecorded: 처음 받은 해시를 기록하지 못함(first-use.json에 쓸 수 없음). 이번에는 쓰지만 라이브러리 캐시·잠금에
+//   넣지 않아 다음 INIT에 다시 확인해 기록한다(보고에만, 캐시 색인에는 없다)
+export type LibraryIntegrity =
+  'checksum' | 'pinned' | 'firstUse' | 'gradleCache' | 'firstUseUnrecorded'
 
 export type LibraryEntry = {
   group: string

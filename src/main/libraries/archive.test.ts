@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aarJars, ArchiveError, classpathJars, inspectJar } from './archive'
+import { aarJars, ArchiveError, checkArchive, classpathJars, inspectJar } from './archive'
 import { makeAar, makeJar, makeZip } from './testkit'
 import { readZip, ZipError } from './zip'
 
@@ -140,5 +140,27 @@ describe('jar·AAR', () => {
   it('확장자로 jar·AAR을 고른다', () => {
     expect(classpathJars('a.jar', makeJar(['p/A'])).map((j) => j.name)).toEqual(['a.jar'])
     expect(classpathJars('a.aar', makeAar(['p/A'])).map((j) => j.name)).toEqual(['classes.jar'])
+  })
+
+  it('처음 받은 파일의 형식 확인은 ZIP인지만 보고 정책(jni·보호 패키지·중복 클래스)은 보지 않는다', () => {
+    expect(() =>
+      checkArchive('x.jar', Buffer.from('<html>Blocked by the web filter</html>'))
+    ).toThrow(ArchiveError)
+    expect(() => checkArchive('x.aar', Buffer.alloc(0))).toThrow(/not a ZIP/)
+    // 읽을 수 있는 진짜 파일: 거부는 classpathJars가 한다
+    const native = makeAar(['com/x/A'], [{ name: 'jni/arm64-v8a/libx.so', data: 'elf' }])
+    const protectedJar = makeJar(['java/lang/Evil'])
+    const duplicate = makeZip([
+      { name: 'p/A.class', data: '1' },
+      { name: 'p/A.class', data: '2' }
+    ])
+    for (const [name, bytes] of [
+      ['x.aar', native],
+      ['x.jar', protectedJar],
+      ['y.jar', duplicate]
+    ] as const) {
+      expect(() => checkArchive(name, bytes)).not.toThrow()
+      expect(() => classpathJars(name, bytes)).toThrow(ArchiveError)
+    }
   })
 })

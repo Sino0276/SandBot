@@ -1,6 +1,8 @@
 // SandBot이 아는 파일 해시(SHA-256). maven.brott.dev는 체크섬 파일(.sha1·.sha256 …)도 .module도 주지 않으므로, 지원하는
 // 버전은 SandBot이 직접 받아 잰 값을 여기에 고정한다(scripts/fetch-ftc-sdk.mjs처럼). 표에 없는 버전은 처음 받은 해시를
 // 기록하고(firstUse) 다음부터 다르면 거부한다. 표에 있는 파일은 어디서 읽었든(Gradle 캐시 포함) 이 값과 같아야 한다.
+// maven.brott.dev는 .module을 묻지 않으므로(repositories.ts의 moduleMetadata) 받을 파일 이름과 의존성은 이 표의 POM이 정한다
+// (나중에 .module이 생겨도 다른 파일·의존성으로 바뀌지 않는다).
 //
 // 2026-10-28에 https://maven.brott.dev/(→ acmerobotics.z13.web.core.windows.net)에서 받아 잰 값. jar·aar 값은 조사 보고
 // (libs-gradle §4.7, libs-dashboard §1)의 값과 같다.

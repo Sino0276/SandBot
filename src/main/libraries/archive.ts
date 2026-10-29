@@ -1,4 +1,4 @@
-import { readZip, ZipError, type ZipLimits } from './zip'
+import { DEFAULT_ZIP_LIMITS, readZip, ZipError, type ZipLimits } from './zip'
 
 // 받은 jar·AAR을 클래스패스 jar로. AAR은 메모리에서 classes.jar와 libs/*.jar만 꺼낸다(res·assets·R.txt는 쓰지 않는다,
 // Pedro tuning의 10 MB assets도 풀지 않음). jni/(네이티브 코드)가 있으면 거부한다(가짜 SDK에서 돌 수 없다).
@@ -112,6 +112,20 @@ export function aarJars(name: string, bytes: Buffer): ClasspathJar[] {
     jars.push(inspectJar(`${name}!/${entry}`, jar))
   }
   return jars.map((jar) => ({ ...jar, name: jar.name.slice(name.length + 2) }))
+}
+
+// 처음 받은(확인할 해시가 없는) jar·AAR이 ZIP인지만 본다(중앙 디렉터리를 읽는다): 200으로 온 차단 페이지 같은 것을 처음
+// 받은 해시로 기록하거나 캐시에 넣지 않게(fetcher.ts의 check). 정책(jni·보호 패키지·중복 클래스·크기 한도)은 보지 않는다:
+// 읽을 수 있는 진짜 파일은 기록·캐시하고 classpathJars가 거부한다(다음 INIT도 네트워크 없이 같은 이유).
+export function checkArchive(fileName: string, bytes: Buffer): void {
+  try {
+    readZip(bytes, DEFAULT_ZIP_LIMITS, () => false)
+  } catch (error) {
+    throw new ArchiveError(
+      'badArchive',
+      `${fileName}: ${error instanceof ZipError ? error.message : String(error)}`
+    )
+  }
 }
 
 // 받은 파일(확장자로 구분) → 클래스패스 jar

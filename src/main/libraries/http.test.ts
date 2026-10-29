@@ -4,6 +4,7 @@ import {
   CancelledError,
   downloadFile,
   FetchFailure,
+  NETWORK_RETRY_MS,
   type DownloadOptions,
   type Sleep
 } from './http'
@@ -11,6 +12,10 @@ import { REPOSITORIES } from './repositories'
 import { BROTT, CENTRAL, fakeHttp, MIRROR, type FakeHttp, type Route } from './testkit'
 
 const noSleep: Sleep = async () => undefined
+
+async function* chunks(parts: readonly string[]): AsyncGenerator<Uint8Array> {
+  for (const part of parts) yield Buffer.from(part)
+}
 
 function options(
   routes: Record<string, Route>,
@@ -161,7 +166,7 @@ describe('저장소에서 받기', () => {
     expect(http.requests.length).toBe(3)
   })
 
-  it('네트워크가 없으면 기다리지 않고 offline', async () => {
+  it('네트워크가 없으면 짧게 한 번만 더 해 보고 offline(닿지 못함)', async () => {
     const waits: number[] = []
     const { http, opts } = options(
       {
@@ -171,10 +176,109 @@ describe('저장소에서 받기', () => {
       { waits }
     )
     await expect(downloadFile(REPOSITORIES.central, 'a', opts)).rejects.toMatchObject({
-      code: 'offline'
+      code: 'offline',
+      unreachable: true
     })
-    expect(waits).toEqual([])
-    expect(http.requests.length).toBe(2)
+    expect(waits).toEqual([NETWORK_RETRY_MS])
+    expect(http.requests.length).toBe(4)
+  })
+
+  it('연결이 한 번 끊겨도 잠깐 뒤 한 번 더 해 본다(거울이 없는 저장소)', async () => {
+    const waits: number[] = []
+    let calls = 0
+    const { opts } = options(
+      {
+        [`${BROTT}a`]: () => (++calls === 1 ? new Error('net::ERR_CONNECTION_RESET') : 'ok')
+      },
+      { waits }
+    )
+    expect((await downloadFile(REPOSITORIES.brott, 'a', opts)).bytes.toString()).toBe('ok')
+    expect(waits).toEqual([NETWORK_RETRY_MS])
+  })
+
+  it('서버 오류(5xx)로 끝나면 offline이지만 닿지 못한 것은 아니다', async () => {
+    const { opts } = options({ [`${BROTT}a`]: { status: 503 } })
+    await expect(downloadFile(REPOSITORIES.brott, 'a', opts)).rejects.toMatchObject({
+      code: 'offline',
+      unreachable: false
+    })
+  })
+
+  it('응답 머리글이 오지 않으면 시간 제한 뒤 거울로', async () => {
+    const requests: string[] = []
+    const http: DownloadOptions['http'] = async (url) => {
+      requests.push(url)
+      if (url.startsWith(CENTRAL)) return new Promise<never>(() => undefined)
+      return { status: 200, header: () => null, body: chunks(['from mirror']) }
+    }
+    const result = await downloadFile(REPOSITORIES.central, 'a', {
+      http,
+      signal: new AbortController().signal,
+      limit: 1024,
+      sleep: noSleep,
+      timeouts: { requestMs: 20, idleMs: 20 }
+    })
+    expect(result.bytes.toString()).toBe('from mirror')
+    expect(requests).toEqual([`${CENTRAL}a`, `${MIRROR}a`])
+  })
+
+  it('본문이 멈추면 시간 제한 뒤 한 번 더 해 보고, 그래도 멈추면 offline(닿지 못함)', async () => {
+    let calls = 0
+    let closed = 0
+    const http: DownloadOptions['http'] = async () => {
+      calls++
+      return {
+        status: 200,
+        header: () => null,
+        body: {
+          [Symbol.asyncIterator]: () => {
+            let sent = false
+            return {
+              // 한 조각을 보내고 멈춘다
+              next: async (): Promise<IteratorResult<Uint8Array>> => {
+                if (sent) return new Promise(() => undefined)
+                sent = true
+                return { done: false, value: Buffer.from('par') }
+              },
+              return: async () => {
+                closed++
+                return { done: true, value: undefined }
+              }
+            }
+          }
+        }
+      }
+    }
+    await expect(
+      downloadFile(REPOSITORIES.brott, 'a', {
+        http,
+        signal: new AbortController().signal,
+        limit: 1024,
+        sleep: noSleep,
+        timeouts: { requestMs: 20, idleMs: 20 }
+      })
+    ).rejects.toMatchObject({ code: 'offline', unreachable: true, message: /no data/ })
+    expect(calls).toBe(2)
+    expect(closed).toBe(2)
+  })
+
+  it('멈춘 응답을 기다리는 중에도 취소하면 바로 멈춘다', async () => {
+    const abort = new AbortController()
+    const http: DownloadOptions['http'] = async () => {
+      setTimeout(() => abort.abort(), 5)
+      return new Promise<never>(() => undefined)
+    }
+    const started = Date.now()
+    await expect(
+      downloadFile(REPOSITORIES.brott, 'a', {
+        http,
+        signal: abort.signal,
+        limit: 1024,
+        sleep: noSleep,
+        timeouts: { requestMs: 60_000, idleMs: 60_000 }
+      })
+    ).rejects.toBeInstanceOf(CancelledError)
+    expect(Date.now() - started).toBeLessThan(5_000)
   })
 
   it('크기 한도(Content-Length와 실제 바이트)', async () => {
