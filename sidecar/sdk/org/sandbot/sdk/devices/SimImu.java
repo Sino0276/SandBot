@@ -25,8 +25,8 @@ import org.sandbot.sim.SimDevice;
  * <p>방향 계산은 실제 드라이버와 같은 QuaternionBasedImuHelper(들여온 실제 클래스)가 한다: resetYaw, 허브 장착 방향
  * (RevHubOrientationOnRobot), 요·피치·롤 순서가 실제와 같다. 시뮬레이터 입력은 로봇의 실제 방향(SDK IMU 좌표: X 오른쪽, Y 앞, Z 위)
  * yaw·pitch·roll(rad, 내재 ZXY)과 yawRate·pitchRate·rollRate(rad/s)이고, 장치는 이를 구성한 장착 방향으로 칩 좌표로 바꿔
- * 보고한다(그래서 resetYaw 전에는 입력 그대로 보인다). 같은 BNO055의 옛 드라이버(SimBNO055IMU)가 칩을 리셋하면 칩 방향의
- * heading이 그때부터 0이고({@link #restartFusion}), 이 IMU 인터페이스도 리셋된 칩 값을 읽는다(실제처럼 요가 뛴다).
+ * 보고한다(그래서 resetYaw 전에는 입력 그대로 보인다). 같은 BNO055의 옛 드라이버(SimBNO055IMU)가 칩을 리셋하면 칩은 그 자리에서
+ * 전원을 켠 것처럼 heading을 0부터 세고({@link #restartFusion}), 이 IMU 인터페이스도 리셋된 칩 값을 읽는다(실제처럼 요가 뛴다).
  *
  * <p>I2C 트랜잭션 수(실제 드라이버 소스로 셈): 초기화(hardwareMap.get의 지연 초기화, initialize(Parameters)) BHI260AP 13번,
  * BNO055 18번 + 모드 전환 대기 40 ms. 방향 읽기 1번(쿼터니언 8바이트), 각속도 읽기 1번. resetYaw는 방향 읽기 1번.
@@ -54,10 +54,10 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
     private final SimDevice device;
     private final QuaternionBasedImuHelper helper;
     /**
-     * 칩을 리셋해 융합을 다시 시작한 자리의 heading을 지우는 회전(칩 기준 틀 Z 둘레, 왼쪽에 곱한다). 리셋한 적이 없으면 null
-     * (칩을 켠 때 = 실행 시작의 heading이 0이다).
+     * 칩을 리셋해 융합을 다시 시작한 자리의 로봇 yaw 입력(rad). 칩 방향은 yaw 입력에서 이 값을 빼고 계산한다(칩이 그 자리에서 전원을
+     * 켠 것처럼). 리셋한 적이 없으면 0(칩을 켠 때 = 실행 시작의 heading이 0이다).
      */
-    private Quaternion headingReset;
+    private double yawAtReset;
 
     SimImu(I2cDeviceSynchSimple deviceClient, Chip chip, SimDevice device) {
         super(deviceClient, true, new IMU.Parameters(new RevHubOrientationOnRobot(
@@ -99,21 +99,16 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
     private Quaternion getRawQuaternion() {
         deviceClient.read(0, 8); // 쿼터니언 읽기 한 번
         long now = SimLastKnown.now();
-        Quaternion raw = sincePowerOn(now);
-        if (headingReset != null) raw = headingReset.multiply(raw, now);
-        return new Quaternion(raw.w, raw.x, raw.y, raw.z, now);
-    }
-
-    /** 칩을 켠 때(실행 시작)의 heading을 기준으로 한 칩 방향(I2C 비용 없음) */
-    private Quaternion sincePowerOn(long now) {
-        double yaw = device.inputDouble("yaw", 0), pitch = device.inputDouble("pitch", 0), roll = device.inputDouble("roll", 0);
+        double yaw = device.inputDouble("yaw", 0) - yawAtReset;
+        double pitch = device.inputDouble("pitch", 0), roll = device.inputDouble("roll", 0);
         Quaternion qz = new Quaternion((float) Math.cos(yaw / 2), 0, 0, (float) Math.sin(yaw / 2), now);
         Quaternion qx = new Quaternion((float) Math.cos(pitch / 2), (float) Math.sin(pitch / 2), 0, 0, now);
         Quaternion qy = new Quaternion((float) Math.cos(roll / 2), 0, (float) Math.sin(roll / 2), 0, now);
         Quaternion robot = qz.multiply(qx, now).multiply(qy, now).normalized();
         Quaternion m = parameters.imuOrientationOnRobot.imuCoordinateSystemOrientationFromPerspectiveOfRobot();
         Quaternion offset = parameters.imuOrientationOnRobot.imuRotationOffset();
-        return m.inverse().multiply(robot.multiply(offset.inverse(), now), now).multiply(m, now).normalized();
+        Quaternion raw = m.inverse().multiply(robot.multiply(offset.inverse(), now), now).multiply(m, now).normalized();
+        return new Quaternion(raw.w, raw.x, raw.y, raw.z, now);
     }
 
     private AngularVelocity getRawAngularVelocity() {
@@ -144,15 +139,14 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
     }
 
     /**
-     * 칩 리셋 뒤 융합을 다시 시작한다(옛 BNO055IMU.initialize의 SYS_TRIGGER 리셋). 실제 BNO055의 IMU 모드는 heading을 지금 방향에서
-     * 0부터 세고 피치·롤은 중력 기준이라 그대로다: 칩을 켠 때 기준 방향의 heading(기준 틀 Z 둘레, 내재 ZYX의 첫째 각)을 지운다.
+     * 칩 리셋 뒤 융합을 다시 시작한다(옛 BNO055IMU.initialize의 SYS_TRIGGER 리셋). 리셋한 칩은 그 자리에서 전원을 켠 것처럼 센다:
+     * heading(중력 둘레 회전 = 로봇 yaw 입력)은 지금 방향에서 0부터이고, 피치·롤은 중력 기준이라 그대로다. 실제
+     * RevImuOrientationOnRobot의 imuCoordinateSystemOrientationFromPerspectiveOfRobot은 장착 회전의 Z 둘레 성분이라, yaw 입력을 빼면
+     * 칩 방향은 어느 장착에서나 칩 기준 틀의 Z(중력) 둘레로만 돈다. 지울 heading을 칩 쿼터니언(내재 ZYX의 첫째 각)에서 뽑지 않는다:
+     * 허브를 세워 칩 X가 수직이면 그 각은 짐벌 잠금이라 반올림 오차가 정하고, 로봇이 기울어 있으면 중력 둘레 회전과 조금 다르다.
      */
     void restartFusion() {
-        long now = SimLastKnown.now();
-        Quaternion q = sincePowerOn(now);
-        double w = q.w, x = q.x, y = q.y, z = q.z;
-        double heading = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
-        headingReset = new Quaternion((float) Math.cos(heading / 2), 0, 0, (float) -Math.sin(heading / 2), now);
+        yawAtReset = device.inputDouble("yaw", 0);
     }
 
     // ---- IMU ----

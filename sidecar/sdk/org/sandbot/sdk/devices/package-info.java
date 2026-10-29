@@ -48,8 +48,9 @@
  * <tr><td>analog(AnalogInput)</td><td>-</td><td>voltage(V, 0..3.3, 1 mV 단위로 읽힘)</td></tr>
  * <tr><td>imu(ControlHubImuBHI260AP, LynxEmbeddedIMU)</td><td>chip(BHI260AP·BNO055)</td>
  *     <td>yaw·pitch·roll(rad, 로봇 방향: SDK IMU 좌표 X 오른쪽·Y 앞·Z 위, 내재 ZXY), yawRate·pitchRate·rollRate(rad/s);
- *         장치가 구성한 허브 장착 방향으로 바꿔 보고한다. 옛 BNO055IMU의 initialize는 칩을 리셋해 그 뒤 칩 heading은 그때부터
- *         센다(같은 칩의 IMU 인터페이스도)</td></tr>
+ *         장치가 구성한 허브 장착 방향으로 바꿔 보고한다. 옛 BNO055IMU의 initialize는 칩을 리셋해 칩이 그 자리에서 전원을 켠
+ *         것처럼 heading을 그때부터 센다(피치·롤은 그대로, 같은 칩의 IMU 인터페이스도). 옛 getAngularOrientation은 칩 축 내재 ZYX
+ *         (둘째 ±90° 안, 칩 X가 수직이면 셋째 0)</td></tr>
  * <tr><td>distance(REV_VL53L0X_RANGE_SENSOR)</td><td>-</td><td>distance(m, 없으면 범위 밖 8190 mm; 33 ms마다 새 측정)</td></tr>
  * <tr><td>color(RevColorSensorV3)</td><td>-</td>
  *     <td>red·green·blue·ir(칩 원래 값 0..65535, 드라이버가 red에 1.07, blue에 1.55를 곱한다), distance(m) 또는 proximity(0..2047)</td></tr>

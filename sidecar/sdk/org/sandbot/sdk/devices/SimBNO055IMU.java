@@ -40,10 +40,11 @@ import java.util.Set;
  * OpModeManagerNotifier.Notifications)라 그 형식으로 hardwareMap.get·형 변환이 된다. 만들 때는 DISABLED 매개변수라
  * {@code initialize(Parameters)} 전에 값을 읽으면 예외("The IMU was not initialized", 실제 형식 ImuNotInitializedException은
  * 껍데기라 IllegalStateException), CONFIG 모드로 초기화하면 IllegalArgumentException, OpMode가 바뀌어도 초기화와 매개변수를
- * 지킨다(resetDeviceConfigurationForOpMode). {@code initialize}는 할 때마다 칩을 리셋(SYS_TRIGGER)해 heading이 그때부터 0이다
- * (같은 칩의 IMU 인터페이스도 리셋된 값을 본다). {@code getAngularOrientation()}은 칩 축의 내재 ZYX(첫째 = 칩 Z 둘레 반시계 +,
- * 둘째 Y, 셋째 X)를 {@code Parameters.angleUnit}으로 정규화해 준다. 허브 장착 방향을 모르는 옛 API라 로봇 축이 아니라 칩
- * 축이다(허브 로고 위·USB 앞이면 로봇 축과 같다). 적분기가 null을 주면 getAcceleration·getVelocity·getPosition은 새 0 값을 준다.
+ * 지킨다(resetDeviceConfigurationForOpMode). {@code initialize}는 할 때마다 칩을 리셋(SYS_TRIGGER)해 칩이 그 자리에서 전원을 켠
+ * 것처럼 heading을 그때부터 센다(피치·롤은 그대로, 같은 칩의 IMU 인터페이스도 리셋된 값을 본다). {@code getAngularOrientation()}은
+ * 칩 축의 내재 ZYX(첫째 = 칩 기준 틀 Z(위) 둘레 반시계 +, 둘째 Y, 셋째 X)를 {@code Parameters.angleUnit}으로 정규화해 준다
+ * ({@link #chipEulerZyx}). 허브 장착 방향을 모르는 옛 API라 로봇 축이 아니라 칩 축이다(허브 로고 위·USB 앞이면 로봇 축과 같다).
+ * 적분기가 null을 주면 getAcceleration·getVelocity·getPosition은 새 0 값을 준다.
  *
  * <p>시뮬레이션 근사: 각속도는 칩 축 물리 값, 중력 가속도는 칩 축으로 돌린 (0, 0, 9.80665) m/s²(선형 가속도는 시뮬레이터 입력이
  * 없어 0), 자기장 0, 온도 25 °C, 보정 상태는 모두 완료(0xFF). 가속도 적분은 실제와 달리 따로 스레드를 돌리지 않고(사이드카는
@@ -59,6 +60,11 @@ public final class SimBNO055IMU extends I2cDeviceSynchDeviceWithParameters<I2cDe
      * 650 ms를 기다려 다시 묻는다)
      */
     private static final long RESET_NANOS = 650_000_000L;
+    /**
+     * cos(내재 ZYX의 둘째 각)이 이보다 작으면 칩 X가 수직(둘째 각 ±90°, 짐벌 잠금)으로 본다. float 쿼터니언의 반올림 오차(1e-7 수준)보다
+     * 충분히 크고, 잠금으로 볼 때 세 각이 나타내는 회전은 이 값(rad)보다 덜 틀어진다.
+     */
+    private static final double GIMBAL_LOCK = 1e-5;
 
     private final SimImu chip;
     private AccelerationIntegrator accelerationAlgorithm = new StillIntegrator();
@@ -142,9 +148,31 @@ public final class SimBNO055IMU extends I2cDeviceSynchDeviceWithParameters<I2cDe
         throwIfNotInitialized();
         Quaternion q = chip.chipQuaternion();
         org.firstinspires.ftc.robotcore.external.navigation.AngleUnit unit = parameters.angleUnit.toAngleUnit();
-        Orientation o = q.toOrientation(AxesReference.INTRINSIC, AxesOrder.ZYX, unit);
-        return new Orientation(AxesReference.INTRINSIC, AxesOrder.ZYX, unit, unit.normalize(o.firstAngle),
-                unit.normalize(o.secondAngle), unit.normalize(o.thirdAngle), q.acquisitionTime);
+        double[] zyx = chipEulerZyx(q);
+        return new Orientation(AxesReference.INTRINSIC, AxesOrder.ZYX, unit, unit.normalize((float) unit.fromRadians(zyx[0])),
+                unit.normalize((float) unit.fromRadians(zyx[1])), unit.normalize((float) unit.fromRadians(zyx[2])), q.acquisitionTime);
+    }
+
+    /**
+     * 칩 방향의 내재 ZYX 각(rad, 첫째·둘째·셋째). 실제 칩이 주는 Euler 레지스터처럼 둘째 각(칩 Y 둘레, 실제 roll)은 ±90° 안이다. SDK의
+     * Quaternion.toOrientation은 둘째 각을 asin으로 구하고 두 각 묶음 중 크기가 작은 쪽을 골라, 허브를 세워 칩 X가 수직이면 반올림
+     * 오차로 NaN이나 아무 값이 되고 로고를 아래로 단 칩은 heading에 따라 첫째 각이 180° 뛴다. 여기서는 둘째 각을 atan2로 구하고, 잠금
+     * ({@link #GIMBAL_LOCK})에서는 셋째를 0으로 두어 중력 둘레 회전을 모두 첫째(heading)에 싣는다. 셋째는 정한 첫째에 맞춰 구하므로 세
+     * 각은 늘 같은 회전을 나타낸다(팀이 toAxesOrder로 다른 축 순서로 바꿔도 맞다).
+     */
+    private static double[] chipEulerZyx(Quaternion q) {
+        double n = Math.sqrt((double) q.w * q.w + (double) q.x * q.x + (double) q.y * q.y + (double) q.z * q.z);
+        double w = q.w / n, x = q.x / n, y = q.y / n, z = q.z / n;
+        // 회전 행렬 R = Rz(첫째)·Ry(둘째)·Rx(셋째)의 성분
+        double r00 = 1 - 2 * (y * y + z * z), r10 = 2 * (x * y + w * z), r20 = 2 * (x * z - w * y);
+        double r01 = 2 * (x * y - w * z), r11 = 1 - 2 * (x * x + z * z);
+        double r02 = 2 * (x * z + w * y), r12 = 2 * (y * z - w * x);
+        double cosSecond = Math.hypot(r00, r10);
+        double second = Math.atan2(-r20, cosSecond);
+        double first = cosSecond < GIMBAL_LOCK ? Math.atan2(-r01, r11) : Math.atan2(r10, r00);
+        double sin = Math.sin(first), cos = Math.cos(first);
+        double third = Math.atan2(sin * r02 - cos * r12, cos * r11 - sin * r01);
+        return new double[] {first, second, third};
     }
 
     @Override public Orientation getAngularOrientation(AxesReference reference, AxesOrder order,
