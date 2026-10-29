@@ -1,6 +1,11 @@
 import type { TFunction } from 'i18next'
 import type { GradleDiagnostic } from '../../../shared/gradle'
-import { coordinateOf, type LibraryEntry } from '../../../shared/libraries'
+import {
+  coordinateOf,
+  DASHBOARD_GROUPS,
+  type LibraryEntry,
+  type LibraryReason
+} from '../../../shared/libraries'
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
 import type {
   DiagnosticHint,
@@ -213,31 +218,43 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
   }
 }
 
-// 의존성 보고 좌표 하나의 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지 지원하지 않는다는
-// 안내를 따로 보인다. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
+// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지
+// 지원하지 않는다는 안내를 따로 보인다.
+function reasonText(coordinate: string, reason: LibraryReason, t: TFunction): string {
+  if (DASHBOARD_GROUPS.has(coordinate.split(':')[0]) && reason === 'notSupported')
+    return t('console.notices.library.dashboardLater', { coordinate })
+  return t(`console.notices.library.${reason}`, { coordinate })
+}
+
+// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
 export function libraryText(library: LibraryEntry, t: TFunction): string {
   const coordinate = coordinateOf(library)
   if (library.status === 'used')
     return library.integrity === 'firstUse' || library.integrity === 'firstUseUnrecorded'
       ? t(`console.notices.library.${library.integrity}`, { coordinate })
       : coordinate
-  if (library.group === 'com.acmerobotics.dashboard' && library.reason === 'notSupported')
-    return t('console.notices.library.dashboardLater', { coordinate })
-  return t(`console.notices.library.${library.reason}`, { coordinate })
+  return reasonText(coordinate, library.reason, t)
 }
 
 // 컴파일 진단에 붙은 라이브러리 안내 문장
 export function hintText(hint: DiagnosticHint, t: TFunction): string {
-  if (hint.kind === 'undeclared')
-    return t('console.library.hintUndeclared', { packageName: hint.packageName })
-  const dashboard =
-    hint.coordinate.startsWith('com.acmerobotics.dashboard:') && hint.reason === 'notSupported'
-  return t('console.library.hintNotLoaded', {
-    coordinate: hint.coordinate,
-    reason: dashboard
-      ? t('console.notices.library.dashboardLater', { coordinate: hint.coordinate })
-      : t(`console.notices.library.${hint.reason}`, { coordinate: hint.coordinate })
-  })
+  switch (hint.kind) {
+    case 'undeclared':
+      return t('console.library.hintUndeclared', { packageName: hint.packageName })
+    case 'maybeUndeclared':
+      return t('console.library.hintMaybeUndeclared', { packageName: hint.packageName })
+    case 'libraryNotLoaded':
+      return t('console.library.hintNotLoaded', {
+        coordinate: hint.coordinate,
+        reason: reasonText(hint.coordinate, hint.reason, t)
+      })
+    case 'dependencyNotLoaded':
+      return t('console.library.hintDependencyNotLoaded', {
+        coordinate: hint.coordinate,
+        requestedBy: hint.requestedBy,
+        reason: reasonText(hint.coordinate, hint.reason, t)
+      })
+  }
 }
 
 // 메인이 JVM을 끝낸 이유(finished killed의 detail, 기계용 키). 그 밖의 detail(crashed의 stderr 끝부분 등)은 그대로 보인다.

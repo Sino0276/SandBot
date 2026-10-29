@@ -853,6 +853,39 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     ).toBeNull()
   })
 
+  it('진단 안내: Gradle 파일을 다 읽지 못했으면 선언하지 않았다고 단정하지 않는다', async () => {
+    const remote: GradleProject['diagnostics'][number] = {
+      code: 'remoteScript',
+      at: { file: 'TeamCode/build.gradle', line: 3 },
+      detail: 'https://raw.githubusercontent.com/our-team/ftc-shared/main/pedro.gradle'
+    }
+    const missing = (packageName: string): CompileDiagnostic => ({
+      kind: 'error',
+      file: '/x/Auto.java',
+      line: 3,
+      column: 1,
+      message: `package ${packageName} does not exist`,
+      code: 'compiler.err.doesnt.exist'
+    })
+    // 받을 것이 없음(선언을 원격 스크립트에 둠)
+    const empty = await run({ ...project([]), diagnostics: [remote] }, {}, { http: noNetwork() })
+    expect(empty.result.diagnosticHint(missing('com.pedropathing.follower'))).toEqual({
+      kind: 'maybeUndeclared',
+      packageName: 'com.pedropathing.follower'
+    })
+    // 해석한 결과와 잠금에서 읽은 결과
+    const routes = new Map<string, Route>()
+    publishPedro(routes)
+    const gradle = { ...project([dep('com.pedropathing:revhub:3.0.2')]), diagnostics: [remote] }
+    const fresh = await run(gradle, routes)
+    const locked = await run(gradle, {}, { http: noNetwork() })
+    for (const { result } of [fresh, locked])
+      expect(result.diagnosticHint(missing('com.bylazar.telemetry'))).toEqual({
+        kind: 'maybeUndeclared',
+        packageName: 'com.bylazar.telemetry'
+      })
+  })
+
   it('잠금의 jar가 깨졌으면 새로 해석해 캐시의 원본에서 다시 만든다(네트워크 없이)', async () => {
     const routes = new Map<string, Route>()
     publishPedro(routes)

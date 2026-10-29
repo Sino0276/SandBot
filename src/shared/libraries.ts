@@ -103,6 +103,13 @@ export type LibraryProgress = {
   bytes: number
 }
 
+// FTC Dashboard와 Sloth용 대체판(com.acmerobotics.slothboard, com.acmerobotics.dashboard 패키지를 그대로 담는다). 메인의
+// 정책(policy.ts: 분류와 패키지 표)과 Console의 Dashboard 안내 문장이 같이 쓴다.
+export const DASHBOARD_GROUPS: ReadonlySet<string> = new Set([
+  'com.acmerobotics.dashboard',
+  'com.acmerobotics.slothboard'
+])
+
 export function coordinateOf(entry: Pick<LibraryEntry, 'group' | 'artifact' | 'version'>): string {
   return `${entry.group}:${entry.artifact}:${entry.version}`
 }

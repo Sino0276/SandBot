@@ -856,11 +856,15 @@ const ko = {
         missingMember: '없는 멤버',
         unsupported: '아직 지원하지 않음'
       },
-      // 컴파일 진단(패키지를 찾지 못함)에 붙는 안내
+      // 컴파일 진단(패키지를 찾지 못함)에 붙는 안내(DiagnosticHint)
       hintNotLoaded:
         '이 패키지는 팀 Gradle에 선언한 {{coordinate}}의 것이지만 SandBot이 불러오지 않았습니다. {{reason}}',
+      hintDependencyNotLoaded:
+        '이 패키지는 팀 Gradle에 선언한 {{requestedBy}}이(가) 끌어오는 {{coordinate}}의 것이지만 SandBot이 불러오지 않았습니다. {{reason}}',
       hintUndeclared:
-        '패키지 {{packageName}}의 라이브러리를 팀 Gradle 파일(TeamCode/build.gradle 등)에 선언하지 않았습니다. Android Studio에서도 컴파일되지 않습니다.'
+        '패키지 {{packageName}}의 라이브러리를 팀 Gradle 파일(TeamCode/build.gradle 등)에 선언하지 않았습니다. Android Studio에서도 컴파일되지 않습니다.',
+      hintMaybeUndeclared:
+        '패키지 {{packageName}}의 라이브러리를 SandBot이 읽은 팀 Gradle 선언에서 찾지 못했습니다. SandBot이 읽지 못한 Gradle 내용이나 불러오지 않은 라이브러리에 있을 수 있습니다(Console의 Gradle·라이브러리 줄).'
     },
     // 팀 Gradle 파일을 읽다 풀지 못한 것(GradleDiagnosticCode)
     gradle: {

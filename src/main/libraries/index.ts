@@ -329,7 +329,7 @@ function resolution(
     compileClasspath,
     libraryClasspath,
     jarCoordinates,
-    diagnosticHint: diagnosticHints(entries, compilePackages)
+    diagnosticHint: diagnosticHints(entries, compilePackages, request.gradle.diagnostics)
   }
 }
 
