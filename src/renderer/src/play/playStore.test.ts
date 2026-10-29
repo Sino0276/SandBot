@@ -457,7 +457,7 @@ describe('라이브러리 진행·보고·링크 검사', () => {
     const reported = apply(next, {
       type: 'libraryReport',
       runId: 'r1',
-      report: { entries: [], gradle: [], compileSdk: null, platform: null }
+      report: { entries: [], gradle: [], compileSdk: null, compileSdkMinor: null, platform: null }
     })
     expect(reported.run!.libraryProgress).toBeNull()
     // 좌표가 없으면 Console에 아무것도 쓰지 않는다
@@ -488,7 +488,8 @@ describe('라이브러리 진행·보고·링크 검사', () => {
         ],
         gradle: [],
         compileSdk: 30,
-        platform: { api: 30, guessed: false }
+        compileSdkMinor: null,
+        platform: { api: 30, minor: null, guessed: false }
       }
     })
     expect(next.entries.map((e) => `${e.level} ${e.type}`)).toEqual([

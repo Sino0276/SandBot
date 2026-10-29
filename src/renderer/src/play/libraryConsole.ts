@@ -8,6 +8,11 @@ import type { ConsoleBody, ConsoleLevel } from './consoleModel'
 
 export type ConsoleLine = { body: ConsoleBody; level: ConsoleLevel }
 
+// 플랫폼 API 수준 글자(SDK Manager와 같게): android-30은 30, android-36.1은 36.1, android-37.0은 37.0
+function platformApiText(platform: NonNullable<LibraryReport['platform']>): string {
+  return platform.minor === null ? String(platform.api) : `${platform.api}.${platform.minor}`
+}
+
 export function libraryReportLines(report: LibraryReport): ConsoleLine[] {
   const lines: ConsoleLine[] = []
   if (report.entries.length > 0) {
@@ -32,7 +37,7 @@ export function libraryReportLines(report: LibraryReport): ConsoleLine[] {
           ? {
               type: 'notice',
               key: 'library.summaryPlatform',
-              params: { ...params, api: report.platform.api }
+              params: { ...params, api: platformApiText(report.platform) }
             }
           : { type: 'notice', key: 'library.summary', params },
       level: counts.failed > 0 || counts.unsupported > 0 ? 'warning' : 'info'
@@ -43,7 +48,7 @@ export function libraryReportLines(report: LibraryReport): ConsoleLine[] {
       body: {
         type: 'notice',
         key: 'library.platformGuessed',
-        params: { api: report.platform.api }
+        params: { api: platformApiText(report.platform) }
       },
       level: 'warning'
     })

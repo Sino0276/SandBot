@@ -77,8 +77,9 @@ export type JdkChoice =
 // default(OS 기본 위치)
 export type AndroidSdkInfo = {
   home: string
-  // platforms/android-N/android.jar가 있는 API 수준(오름차순)
-  platforms: number[]
+  // platforms/<이름>/android.jar가 있는 플랫폼 폴더 이름(android-30, 부 버전이 붙은 android-36.1·android-37.0 …,
+  // 주 버전 → 부 버전 순). 메인(androidSdk.ts)이 이름을 확인하고 순서를 정한다.
+  platforms: string[]
   source: 'setting' | 'localProperties' | 'env' | 'default'
 }
 
@@ -140,7 +141,8 @@ export type PlayInitRequest = {
 // - busy: 다른 실행이 아직 끝나지 않았다
 // - failed: JVM을 띄우지 못했다(detail에 이유)
 // - noAndroidSdk: Android SDK를 찾지 못했다(환경 설정에서 고르게 안내)
-// - noAndroidPlatform: SDK에 프로젝트 compileSdk의 플랫폼이 없다(detail: 'android-30' 등, Android Studio에서 설치)
+// - noAndroidPlatform: SDK에 프로젝트 compileSdk의 플랫폼이 없다(detail: 설치할 패키지 이름 'android-30'·'android-37.0'·
+//   'android-36.1' 등, Android Studio에서 설치)
 // - cancelled: 라이브러리를 받는 중 사용자가 STOP으로 취소했다
 // ok의 configMissing: 요청한 구성 XML이 디스크에 없어 장치 없는 hardwareMap으로 실행한다(렌더러가 Console에 경고)
 export type PlayInitResult =

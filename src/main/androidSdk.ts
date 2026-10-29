@@ -10,8 +10,8 @@ import { isTrustedRoot } from './projectRoots'
 import type { Failure, PlatformResolution } from './sidecar/launch'
 
 // 팀 코드를 컴파일할 Android SDK 찾기(jdk.ts와 같은 구조). 사이드카는 Android Studio처럼 팀 프로젝트 compileSdk의
-// 플랫폼 API(platforms/android-N/android.jar의 Java API, platformJar.ts)로 컴파일한다. SDK는 번들하지 않고 이 PC에 있는
-// 것을 쓴다(Android Studio가 설치한다).
+// 플랫폼 API(platforms/android-N(.M)/android.jar의 Java API, platformJar.ts)로 컴파일한다. SDK는 번들하지 않고 이 PC에
+// 있는 것을 쓴다(Android Studio가 설치한다).
 // 찾는 순서(Android Gradle 플러그인과 같은 차례): 사용자 설정(userData/android-sdk.json) → 프로젝트 local.properties의
 // sdk.dir(열거나 저장한 프로젝트만) → ANDROID_HOME → ANDROID_SDK_ROOT → OS 기본 위치(Windows %LOCALAPPDATA%\Android\Sdk,
 // macOS ~/Library/Android/sdk, Linux ~/Android/Sdk). SDK 폴더는 platforms 폴더가 있는 폴더다.
@@ -178,24 +178,60 @@ function envValue(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platfor
 
 // ───────────────────────── SDK 폴더 확인 ─────────────────────────
 
-// platforms 아래 android-N(숫자만, 미리보기 android-VanillaIceCream 같은 이름은 무시)에 android.jar가 있는 API 수준(오름차순)
+// 플랫폼 폴더 이름: android-N(API 수준) 또는 부 버전이 붙은 android-N.M. Google은 API 36부터 부 버전 플랫폼(android-36.1)을
+// 내고, API 37부터는 부 버전이 없는 플랫폼도 .0을 붙여 낸다(platforms;android-37.0, android-37은 없음). 미리보기
+// (android-VanillaIceCream, android-37.2-beta1)·확장(android-34-ext7)·앞에 0이 붙은 이름은 무시한다.
+const PLATFORM_NAME = /^android-([1-9]\d{0,3})(?:\.(0|[1-9]\d{0,2}))?$/
+
+// 폴더 이름의 버전(api는 주 버전, minor는 부 버전이고 android-N이면 null). 플랫폼 폴더 이름이 아니면 null.
+function platformVersion(name: string): { api: number; minor: number | null } | null {
+  const match = PLATFORM_NAME.exec(name)
+  if (!match) return null
+  return { api: Number(match[1]), minor: match[2] === undefined ? null : Number(match[2]) }
+}
+
+// platforms 아래 android.jar가 있는 플랫폼 폴더 이름(android-30, android-36.1 …). 주 버전 → 부 버전 순이고 android-N은
+// android-N.0 앞이다(이름마다 버전이 하나라 순서가 늘 같다).
 export async function installedPlatforms(
   home: string,
   deps: Pick<AndroidSdkDetectDeps, 'platform' | 'fs'>
-): Promise<number[]> {
+): Promise<string[]> {
   const api = pathApiOf(deps.platform)
   const dir = api.join(home, 'platforms')
-  const levels = new Set<number>()
+  const found: { name: string; api: number; minor: number }[] = []
   for (const name of await deps.fs.readdir(dir)) {
-    const match = /^android-([1-9]\d{0,3})$/.exec(name)
-    if (!match) continue
-    if (await deps.fs.isFile(api.join(dir, name, 'android.jar'))) levels.add(Number(match[1]))
+    const version = platformVersion(name)
+    if (!version) continue
+    if (await deps.fs.isFile(api.join(dir, name, 'android.jar')))
+      found.push({ name, api: version.api, minor: version.minor ?? -1 })
   }
-  return [...levels].sort((a, b) => a - b)
+  return found.sort((a, b) => a.api - b.api || a.minor - b.minor).map((entry) => entry.name)
 }
 
-export function platformJarPath(home: string, level: number, platform: NodeJS.Platform): string {
-  return pathApiOf(platform).join(home, 'platforms', `android-${level}`, 'android.jar')
+// compileSdk N(부 버전 minor)의 플랫폼 폴더 이름(앞의 것 먼저). 첫 이름은 Android Gradle 플러그인이 찾는 플랫폼 해시
+// (CompileSdkVersionImpl.toHash)이자 SDK Manager의 패키지 이름이다. 부 버전이 없거나 0이면 36까지는 android-N, 37부터는
+// android-N.0(Google도 platforms;android-37.0으로만 낸다)이고 다른 쪽 이름도 받는다. 부 버전 M(> 0)은 android-N.M뿐이다
+// (android-36.1은 compileSdk 36이 아니고, compileSdk 36의 부 버전 1이다).
+function compileSdkPlatformNames(compileSdk: number, minor: number | null): string[] {
+  if (minor !== null && minor > 0) return [`android-${compileSdk}.${minor}`]
+  const plain = `android-${compileSdk}`
+  const dotted = `android-${compileSdk}.0`
+  return compileSdk >= 37 ? [dotted, plain] : [plain, dotted]
+}
+
+// 실행에 쓸 플랫폼 폴더 이름(platforms는 installedPlatforms의 순서). compileSdk를 모르면 가장 높은 것(부 버전 포함).
+// 맞는 것이 없으면 null.
+export function choosePlatform(
+  platforms: readonly string[],
+  compileSdk: number | null,
+  minor: number | null
+): string | null {
+  if (compileSdk === null) return platforms[platforms.length - 1] ?? null
+  return compileSdkPlatformNames(compileSdk, minor).find((name) => platforms.includes(name)) ?? null
+}
+
+export function platformJarPath(home: string, name: string, platform: NodeJS.Platform): string {
+  return pathApiOf(platform).join(home, 'platforms', name, 'android.jar')
 }
 
 // home이 Android SDK 폴더(platforms 폴더가 있음)면 그 정보, 아니면 null
@@ -374,7 +410,7 @@ export async function resolveActiveAndroidSdk(
   return activeOf(stored, stored.kind === 'auto' ? await detectAndroidSdks(deps, root) : [], deps)
 }
 
-// 찾아보기로 고른 폴더. platforms 폴더나 platforms/android-N 폴더를 골랐으면 그 위의 SDK 폴더를 본다.
+// 찾아보기로 고른 폴더. platforms 폴더나 platforms/android-N(.M) 폴더를 골랐으면 그 위의 SDK 폴더를 본다.
 async function inspectBrowsed(
   picked: string,
   deps: AndroidSdkDeps
@@ -458,38 +494,49 @@ export async function platformOverride(
     env.SANDBOT_ANDROID_PLATFORM_API && Number.isSafeInteger(level) && level >= 0
       ? level
       : (compileSdk ?? 0)
-  return { ok: true, bootClasspath: [jar], api, guessed: false }
+  return { ok: true, bootClasspath: [jar], api, minor: null, guessed: false }
 }
 
-// 팀 프로젝트 compileSdk의 컴파일 기준. SDK가 없으면 noAndroidSdk, 그 플랫폼이 없으면 noAndroidPlatform(detail
-// 'android-N'). compileSdk를 모르면(Gradle에서 읽지 못함) 설치된 가장 높은 플랫폼을 쓰고 guessed. projectRoot는 controller가
-// 확인한 프로젝트 루트다(local.properties를 본다).
+// 팀 프로젝트 compileSdk(부 버전 compileSdkMinor, Gradle의 minorApiLevel)의 컴파일 기준. SDK가 없으면(고른 폴더를 쓸 수 없게
+// 된 것 포함) noAndroidSdk, 그 플랫폼이 없으면 noAndroidPlatform(detail은 설치할 패키지 이름: android-30, compileSdk 37부터
+// android-37.0, 부 버전 1이면 android-36.1). compileSdk를 모르면(Gradle에서 읽지 못함) 설치된 가장 높은 플랫폼(부 버전 포함)을
+// 쓰고 guessed. api·minor는 고른 플랫폼 폴더의 주·부 버전이다(android-N이면 minor null). projectRoot는 controller가 확인한
+// 프로젝트 루트다(local.properties를 본다).
 export async function resolveAndroidPlatform(
   projectRoot: string,
   compileSdk: number | null,
+  compileSdkMinor: number | null,
   deps: AndroidSdkDeps = defaultAndroidSdkDeps()
 ): Promise<PlatformResolution | Failure> {
   const override = await platformOverride(deps.env, compileSdk, deps.fs)
   if (override) return override
   const sdk = await resolveActiveAndroidSdk(isTrustedRoot(projectRoot) ? projectRoot : null, deps)
   if (!sdk) return { ok: false, code: 'noAndroidSdk', detail: '' }
-  const level = compileSdk ?? sdk.platforms[sdk.platforms.length - 1] ?? null
-  if (level === null || !sdk.platforms.includes(level))
+  const name = choosePlatform(sdk.platforms, compileSdk, compileSdkMinor)
+  const version = name === null ? null : platformVersion(name)
+  if (name === null || !version)
     return {
       ok: false,
       code: 'noAndroidPlatform',
-      detail: level === null ? 'android-*' : `android-${level}`
+      detail:
+        compileSdk === null ? 'android-*' : compileSdkPlatformNames(compileSdk, compileSdkMinor)[0]
     }
-  const androidJar = platformJarPath(sdk.home, level, deps.platform)
+  const androidJar = platformJarPath(sdk.home, name, deps.platform)
   try {
     const jar = await ensurePlatformJar(androidJar, deps.cacheDir)
-    return { ok: true, bootClasspath: [jar], api: level, guessed: compileSdk === null }
+    return {
+      ok: true,
+      bootClasspath: [jar],
+      api: version.api,
+      minor: version.minor,
+      guessed: compileSdk === null
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {
       ok: false,
       code: 'failed',
-      detail: `cannot read the Android platform android-${level} (${androidJar}): ${message}`
+      detail: `cannot read the Android platform ${name} (${androidJar}): ${message}`
     }
   }
 }

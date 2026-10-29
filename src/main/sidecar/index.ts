@@ -60,7 +60,8 @@ export function registerPlayIpc(): void {
     env: process.env,
     world: kinematicWorld,
     readGradle: (projectRoot) => readProjectGradle(projectRoot),
-    resolvePlatform: (projectRoot, compileSdk) => resolveAndroidPlatform(projectRoot, compileSdk),
+    resolvePlatform: (projectRoot, compileSdk, compileSdkMinor) =>
+      resolveAndroidPlatform(projectRoot, compileSdk, compileSdkMinor),
     // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries)
     resolveLibraries: createLibraryResolver({
       cacheDir: join(app.getPath('userData'), 'library-cache'),

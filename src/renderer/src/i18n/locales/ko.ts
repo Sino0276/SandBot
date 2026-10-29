@@ -152,7 +152,7 @@ const ko = {
     playFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
     playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
     playNoAndroidSdk:
-      'Android SDK를 찾지 못했습니다. 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android API로 컴파일하므로 Android SDK가 필요합니다. 환경 설정에서 SDK 폴더를 고르세요(Android Studio를 설치했다면 자동으로 찾습니다).',
+      '쓸 수 있는 Android SDK가 없습니다. 환경 설정에서 고른 SDK 폴더를 쓸 수 없게 되었거나(지웠거나 옮김), 자동으로 찾는 곳(프로젝트 local.properties의 sdk.dir, ANDROID_HOME·ANDROID_SDK_ROOT, 기본 위치)에 SDK가 없습니다. 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android API로 컴파일하므로 Android SDK가 필요합니다. 환경 설정에서 SDK 폴더를 고르세요(고른 폴더를 쓸 수 없게 되었다면 다시 고르거나 자동으로 바꾸세요).',
     playNoAndroidPlatform:
       'Android SDK에 이 프로젝트의 플랫폼({{detail}})이 없습니다. Android Studio의 SDK Manager에서 설치한 뒤 다시 INIT하세요.',
     playCancelled: '라이브러리 받기를 취소해 실행하지 않았습니다.',

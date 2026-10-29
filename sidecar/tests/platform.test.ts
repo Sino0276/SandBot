@@ -1,14 +1,15 @@
 // 사이드카 컴파일 기준 테스트: 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android 플랫폼 API(bootClasspath)로
 // -source 8 -target 8 컴파일된다. CI에는 Android SDK가 없어 시험 플랫폼 jar(호스트 java.base의 java.*·javax.*,
-// sidecar/tests/platform.ts)를 쓴다. 환경 변수 SANDBOT_ANDROID_SDK(SDK 폴더, 고를 API는 SANDBOT_ANDROID_API, 없으면 가장 높은
-// 것)가 있으면 실제 android.jar로도 시험한다(메인의 platformJar.ts가 고른 jar, FtcRobotController 샘플 포함).
+// sidecar/tests/platform.ts)를 쓴다. 환경 변수 SANDBOT_ANDROID_SDK(SDK 폴더, compileSdk는 SANDBOT_ANDROID_API의 N 또는
+// N.M, 없으면 가장 높은 플랫폼)가 있으면 실제 android.jar로도 시험한다(메인의 androidSdk.ts가 고른 플랫폼을 platformJar.ts가
+// 거른 jar, FtcRobotController 샘플 포함).
 // JDK가 없으면 모두 건너뛴다.
 import { spawn } from 'node:child_process'
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
-import { ensurePlatformJar } from '../../src/main/platformJar'
+import { nodeAndroidSdkFs, resolveAndroidPlatform } from '../../src/main/androidSdk'
 import {
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
@@ -275,14 +276,29 @@ describe.skipIf(build === null)('컴파일 기준(Android 플랫폼 API)', () =>
 
 const androidSdk = process.env.SANDBOT_ANDROID_SDK
 
-function realPlatformLevel(sdk: string): number {
-  if (process.env.SANDBOT_ANDROID_API) return Number(process.env.SANDBOT_ANDROID_API)
-  const levels = readdirSync(join(sdk, 'platforms'))
-    .flatMap((name) => /^android-(\d+)$/.exec(name)?.[1] ?? [])
-    .map(Number)
-    .sort((x, y) => x - y)
-  if (levels.length === 0) throw new Error(`no platforms in ${sdk}`)
-  return levels[levels.length - 1]
+// 메인이 INIT 때 고르는 플랫폼(androidSdk.ts의 resolveAndroidPlatform)을 platformJar.ts로 거른 jar. SANDBOT_ANDROID_API가 N이면
+// compileSdk N(android-N 또는 android-N.0, Android Gradle 플러그인이 찾는 이름 먼저), N.M이면 부 버전 M(minorApiLevel,
+// android-N.M), 없으면 부 버전까지 가장 높은 것. api는 그 플랫폼의 주 버전이다.
+async function realPlatform(sdk: string): Promise<{ jar: string; api: number }> {
+  const wanted = process.env.SANDBOT_ANDROID_API ?? ''
+  const match = /^([1-9]\d*)(?:\.(0|[1-9]\d*))?$/.exec(wanted)
+  if (wanted !== '' && !match) throw new Error(`SANDBOT_ANDROID_API is not N or N.M: ${wanted}`)
+  const result = await resolveAndroidPlatform(
+    testTempDir('platform-project'),
+    match ? Number(match[1]) : null,
+    match?.[2] === undefined ? null : Number(match[2]),
+    {
+      platform: process.platform,
+      // 이 SDK만 본다(다른 후보는 빈 시험 폴더의 기본 위치뿐, 설정 파일 없음 = 자동)
+      env: { ANDROID_HOME: sdk },
+      home: testTempDir('platform-home'),
+      fs: nodeAndroidSdkFs,
+      settingsFile: join(testTempDir('platform-settings'), 'android-sdk.json'),
+      cacheDir: testTempDir('platform-cache')
+    }
+  )
+  if (!result.ok) throw new Error(`no platform in ${sdk}: ${result.code} ${result.detail}`)
+  return { jar: result.bootClasspath[0], api: result.api ?? 0 }
 }
 
 // 샘플을 패키지 폴더 구조로 옮기고, 모든 샘플 클래스를 참조하는 OpMode 하나를 만든다(-implicit:class로 한 번에 컴파일)
@@ -340,14 +356,9 @@ describe.skipIf(build === null || !androidSdk)(
     const b = build as SidecarBuild
 
     it(
-      'platformJar.ts가 고른 android.jar로 컴파일·실행되고, FtcRobotController 샘플도 --release 8보다 더 깨지지 않는다',
+      '메인이 고른 플랫폼의 android.jar로 컴파일·실행되고, FtcRobotController 샘플도 --release 8보다 더 깨지지 않는다',
       async (ctx) => {
-        const sdk = androidSdk as string
-        const level = realPlatformLevel(sdk)
-        const platform = await ensurePlatformJar(
-          join(sdk, 'platforms', `android-${level}`, 'android.jar'),
-          testTempDir('platform-cache')
-        )
+        const { jar: platform, api: level } = await realPlatform(androidSdk as string)
         const run = await runOpMode(b, 'PlatformApis', { bootClasspath: [platform] })
         expect(compiled(run).diagnostics.filter((d) => d.kind === 'error')).toEqual([])
         if (level >= 30) expect(resultLine(run)).toBe(EXPECTED_RESULT)

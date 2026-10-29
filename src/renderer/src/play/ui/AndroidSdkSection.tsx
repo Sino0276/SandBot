@@ -80,7 +80,7 @@ function AndroidSdkSection(): React.JSX.Element {
     if (choice) void apply(choice)
   }
 
-  const platformsText = (platforms: number[]): string =>
+  const platformsText = (platforms: string[]): string =>
     platforms.length === 0 ? t('preferences.androidSdk.noPlatforms') : platformList(platforms)
 
   const optionText = (option: AndroidSdkOption): string => {

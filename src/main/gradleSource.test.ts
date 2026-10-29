@@ -114,6 +114,7 @@ describe('readProjectGradle', () => {
       dependencies: [],
       repositories: [],
       compileSdk: null,
+      compileSdkMinor: null,
       diagnostics: [],
       files: []
     })

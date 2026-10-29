@@ -84,6 +84,7 @@ function project(
     dependencies,
     repositories,
     compileSdk: 30,
+    compileSdkMinor: null,
     diagnostics: [],
     files: ['TeamCode/build.gradle']
   }

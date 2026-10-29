@@ -52,7 +52,7 @@ export function androidSdkChoice(
   return null
 }
 
-// 설치된 플랫폼 목록 글자('android-30, android-34'). 없으면 ''.
-export function platformList(platforms: number[]): string {
-  return platforms.map((level) => `android-${level}`).join(', ')
+// 설치된 플랫폼 목록 글자('android-30, android-36.1'). 메인이 준 폴더 이름과 순서 그대로. 없으면 ''.
+export function platformList(platforms: string[]): string {
+  return platforms.join(', ')
 }

@@ -427,19 +427,32 @@ describe('PlayController + 가짜 사이드카', () => {
   })
 
   it('컴파일 기준·라이브러리를 RunRequest에 싣고, 받는 중 STOP이면 cancelled', async () => {
-    const report = { entries: [], gradle: [], compileSdk: 30, platform: null }
+    const report = { entries: [], gradle: [], compileSdk: 36, compileSdkMinor: 1, platform: null }
     const seen: string[] = []
+    const platforms: unknown[] = []
     const ok = make({
       readGradle: async (projectRoot) => {
         seen.push(projectRoot)
-        return { dependencies: [], repositories: [], compileSdk: 30, diagnostics: [], files: [] }
+        return {
+          dependencies: [],
+          repositories: [],
+          compileSdk: 36,
+          compileSdkMinor: 1,
+          diagnostics: [],
+          files: []
+        }
       },
-      resolvePlatform: async (_projectRoot, compileSdk) => ({
-        ok: true,
-        bootClasspath: [`/platform/android-${compileSdk}.jar`],
-        api: compileSdk,
-        guessed: false
-      }),
+      // Gradle의 compileSdk와 부 버전(minorApiLevel)을 그대로 넘긴다
+      resolvePlatform: async (projectRoot, compileSdk, compileSdkMinor) => {
+        platforms.push([projectRoot, compileSdk, compileSdkMinor])
+        return {
+          ok: true,
+          bootClasspath: [`/platform/android-${compileSdk}.${compileSdkMinor}.jar`],
+          api: compileSdk,
+          minor: compileSdkMinor,
+          guessed: false
+        }
+      },
       resolveLibraries: async (request) => {
         request.progress({ phase: 'downloading', done: 1, total: 2, bytes: 10 })
         return {
@@ -455,16 +468,17 @@ describe('PlayController + 가짜 사이드카', () => {
     const request = opModeRequest('Normal')
     expect(await ok.init(request, owner)).toEqual({ ok: true })
     expect(seen).toEqual([root])
+    expect(platforms).toEqual([[root, 36, 1]])
     expect(of('libraryProgress', request.runId)).toMatchObject([
       { phase: 'downloading', done: 1, total: 2, bytes: 10 }
     ])
     expect(of('libraryReport', request.runId)).toMatchObject([
-      { report: { ...report, platform: { api: 30, guessed: false } } }
+      { report: { ...report, platform: { api: 36, minor: 1, guessed: false } } }
     ])
     await waitFor(() => recorded.at(-1)!.sent.length > 0)
     expect(recorded.at(-1)!.sent[0]).toMatchObject({
       type: 'run',
-      bootClasspath: ['/platform/android-30.jar'],
+      bootClasspath: ['/platform/android-36.1.jar'],
       compileClasspath: [FILES.sdkJar, '/cache/lib.jar'],
       libraryClasspath: ['/cache/lib.jar']
     })

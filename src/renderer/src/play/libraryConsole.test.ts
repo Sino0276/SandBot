@@ -80,7 +80,8 @@ const REPORT: LibraryReport = {
     }
   ],
   compileSdk: null,
-  platform: { api: 34, guessed: true }
+  compileSdkMinor: null,
+  platform: { api: 34, minor: null, guessed: true }
 }
 
 describe('의존성 보고 → Console', () => {
@@ -153,20 +154,43 @@ describe('의존성 보고 → Console', () => {
         entries: [],
         gradle: [],
         compileSdk: 30,
-        platform: { api: 30, guessed: false }
+        compileSdkMinor: null,
+        platform: { api: 30, minor: null, guessed: false }
       })
     ).toEqual([])
     const lines = libraryReportLines({
       entries: [entry('com.pedropathing:revhub:3.0.2')],
       gradle: [],
       compileSdk: 30,
-      platform: { api: 30, guessed: false }
+      compileSdkMinor: null,
+      platform: { api: 30, minor: null, guessed: false }
     })
     expect(lines).toHaveLength(1)
     expect(entrySummary(consoleEntry(lines[0].body, null, lines[0].level), tEn)).toBe(
       '1 libraries in the team Gradle files: 1 used · 0 provided · 0 not loaded · 0 not downloaded · compiled against Android API 30'
     )
     expect(lines[0].level).toBe('info')
+  })
+
+  it('부 버전 플랫폼은 부 버전까지 보인다(android-36.1은 36.1, android-37.0은 37.0)', () => {
+    const summary = (platform: NonNullable<LibraryReport['platform']>, translate = t): string[] =>
+      libraryReportLines({
+        entries: [entry('com.pedropathing:revhub:3.0.2')],
+        gradle: [],
+        compileSdk: platform.guessed ? null : platform.api,
+        compileSdkMinor: platform.guessed ? null : platform.minor,
+        platform
+      }).map((line) => entrySummary(consoleEntry(line.body, null, line.level), translate))
+    // compileSdk를 몰라 android-36과 android-36.1 중 36.1로 컴파일했으면 짐작 경고도 36.1이다
+    const guessed = summary({ api: 36, minor: 1, guessed: true })
+    expect(guessed[1]).toContain('(API 36.1)')
+    expect(summary({ api: 36, minor: 1, guessed: true }, tEn)[1]).toContain('(API 36.1)')
+    expect(summary({ api: 37, minor: 0, guessed: false }, tEn)[0]).toMatch(
+      /compiled against Android API 37\.0$/
+    )
+    expect(summary({ api: 36, minor: null, guessed: false })[0]).toMatch(/Android API 36로 컴파일$/)
+    // compileSdk { version = release(36) { minorApiLevel = 1 } }로 android-36.1을 골랐다
+    expect(summary({ api: 36, minor: 1, guessed: false })[0]).toMatch(/Android API 36\.1로 컴파일$/)
   })
 
   it('모든 이유에 문장이 있다(ko·en), FTC Dashboard는 대체 안내', () => {

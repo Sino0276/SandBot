@@ -94,7 +94,14 @@ export function gradleFileSource(
 }
 
 function emptyProject(): GradleProject {
-  return { dependencies: [], repositories: [], compileSdk: null, diagnostics: [], files: [] }
+  return {
+    dependencies: [],
+    repositories: [],
+    compileSdk: null,
+    compileSdkMinor: null,
+    diagnostics: [],
+    files: []
+  }
 }
 
 // 열거나 저장한 프로젝트가 아니면 읽지 않는다(빈 결과). 실행 준비(sidecar/launch.ts의 prepareRun)가 이미 확인하지만

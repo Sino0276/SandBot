@@ -152,7 +152,7 @@ const en: Messages = {
     playFailed: 'Could not start the run ({{detail}}).',
     playInitFailed: 'Could not start the run ({{detail}}).',
     playNoAndroidSdk:
-      'Android SDK not found. Team code is compiled against the project compileSdk Android API, as in Android Studio, so an Android SDK is required. Choose the SDK folder in Preferences (it is found automatically if Android Studio is installed).',
+      "There is no usable Android SDK. The SDK folder chosen in Preferences can no longer be used (deleted or moved), or no SDK was found where Automatic looks (sdk.dir in the project's local.properties, ANDROID_HOME, ANDROID_SDK_ROOT, the default location). Team code is compiled against the project compileSdk Android API, as in Android Studio, so an Android SDK is required. Choose the SDK folder in Preferences (if the chosen folder can no longer be used, choose it again or switch to Automatic).",
     playNoAndroidPlatform:
       'The Android SDK does not have this project platform ({{detail}}). Install it with the SDK Manager in Android Studio, then INIT again.',
     playCancelled: 'The library download was cancelled, so the run did not start.',
