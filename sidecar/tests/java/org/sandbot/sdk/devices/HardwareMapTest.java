@@ -1,5 +1,6 @@
 package org.sandbot.sdk.devices;
 
+import com.qualcomm.hardware.bosch.BNO055IMU;
 import com.qualcomm.hardware.dfrobot.HuskyLens;
 import com.qualcomm.hardware.digitalchickenlabs.OctoQuad;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
@@ -10,6 +11,7 @@ import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.hardware.rev.RevTouchSensor;
 import com.qualcomm.hardware.sparkfun.SparkFunOTOS;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.ColorSensor;
@@ -19,14 +21,19 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
+import com.qualcomm.robotcore.hardware.Gyroscope;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.I2cAddrConfig;
 import com.qualcomm.robotcore.hardware.IMU;
+import com.qualcomm.robotcore.hardware.IntegratingGyroscope;
 import com.qualcomm.robotcore.hardware.LED;
 import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
+import com.qualcomm.robotcore.hardware.OrientationSensor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoController;
 import com.qualcomm.robotcore.hardware.TouchSensor;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
+import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.sandbot.testing.Check;
@@ -137,6 +144,47 @@ public final class HardwareMapTest {
         Check.throwsType(IllegalArgumentException.class, () -> map.get(DcMotor.class, p + "nothing"), "get missing");
         Check.isTrue(map.getAll(ColorSensor.class).size() == 1, "getAll by interface");
         Check.isTrue(map.getNamesOf(motor).contains(p + "motor"), "getNamesOf");
+    }
+
+    public static void testLegacyBno055DriverHasTheRealInterfaces() {
+        // 실제 LynxEmbeddedIMU(BNO055IMUImpl)는 BNO055IMU·Gyroscope·IntegratingGyroscope·I2cAddrConfig·
+        // OpModeManagerNotifier.Notifications다. 같은 구성 항목의 다른 드라이버(IMU)는 IMU뿐이라 이 형식들은 옛 드라이버를 준다.
+        String p = prefix();
+        HardwareMap map = create(robotXml(p, EXPANSION, CONTROL, null));
+        BNO055IMU legacy = map.get(BNO055IMU.class, p + "imu2");
+        Check.isTrue(map.get(Gyroscope.class, p + "imu2") == legacy, "Gyroscope");
+        Check.isTrue(map.get(IntegratingGyroscope.class, p + "imu2") == legacy, "IntegratingGyroscope");
+        Check.isTrue(map.get(OrientationSensor.class, p + "imu2") == legacy, "OrientationSensor");
+        Check.isTrue(map.get(I2cAddrConfig.class, p + "imu2") == legacy, "I2cAddrConfig");
+        Check.isTrue(legacy instanceof OpModeManagerNotifier.Notifications, "OpModeManagerNotifier.Notifications");
+        Check.equal(0x28, ((I2cAddrConfig) legacy).getI2cAddress().get7Bit(), "default I2C address");
+        Check.equal("[X, Y, Z]", ((Gyroscope) legacy).getAngularVelocityAxes().toString(), "angular velocity axes");
+        Check.equal("[X, Y, Z]", ((OrientationSensor) legacy).getAngularOrientationAxes().toString(), "orientation axes");
+        // BHI260AP의 실제 드라이버(BHI260IMU)는 IMU뿐이다
+        Check.throwsType(IllegalArgumentException.class, () -> map.get(Gyroscope.class, p + "imu"), "BHI260AP is not a Gyroscope");
+    }
+
+    private static boolean bhi260Warning() {
+        return RobotLog.getGlobalWarningMessage().message.contains(
+                "You attempted to use the BNO055 interface when only a BHI260AP IMU is configured.");
+    }
+
+    public static void testBno055InterfaceOnBhi260OnlyRobotWarns() {
+        // 실제 HardwareMap.tryGet: BNO055IMU를 찾지 못했고 장치 클래스 이름에 BHI260만 있으면(BNO055 드라이버 없음) 고치는 법을 알린다
+        String p = prefix();
+        HardwareMap map = create(robotXml(p, null, "            <ControlHubImuBHI260AP name=\"imu\" port=\"0\" bus=\"0\" />\n", null));
+        RobotLog.clearGlobalWarningMsg();
+        try {
+            Check.isTrue(map.tryGet(BNO055IMU.class, p + "imu") == null, "no legacy driver on a BHI260AP");
+            Check.isTrue(bhi260Warning(), "BHI260AP guidance: " + RobotLog.getGlobalWarningMessage().message);
+            RobotLog.clearGlobalWarningMsg();
+            // 다른 허브에 BNO055 드라이버가 있으면 알리지 않는다(실제와 같은 판단: 지도 전체의 클래스 이름)
+            HardwareMap both = create(robotXml(p + "b.", EXPANSION, "            <ControlHubImuBHI260AP name=\"imu\" port=\"0\" bus=\"0\" />\n", null));
+            Check.isTrue(both.tryGet(BNO055IMU.class, p + "b.imu") == null, "still no legacy driver on the BHI260AP");
+            Check.isTrue(!bhi260Warning(), "no guidance while a BNO055 driver exists");
+        } finally {
+            RobotLog.clearGlobalWarningMsg();
+        }
     }
 
     public static void testWebcamAndLimelightOnlyWhenConfigured() {

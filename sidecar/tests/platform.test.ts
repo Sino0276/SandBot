@@ -182,6 +182,20 @@ describe.skipIf(build === null)('컴파일 기준(Android 플랫폼 API)', () =>
   )
 
   it(
+    'Build.VERSION_CODES는 android.jar처럼 컴파일 시간 상수다(API 확인 관용구, 애너테이션 값, switch)',
+    async () => {
+      const platform = await testPlatformJar(b)
+      const run = await runOpMode(b, 'PlatformApiGuard', { bootClasspath: [platform] })
+      expect(compiled(run).diagnostics.filter((d) => d.kind === 'error')).toEqual([])
+      expect(resultLine(run)).toBe(
+        'RESULT sdk=25 branch=pre-O release=N_MR1 min=24 codes=30,35,36,10000'
+      )
+      expect(finishedReason(run)).toBe('returned')
+    },
+    TIMEOUT
+  )
+
+  it(
     'bootClasspath가 비면 지금처럼 --release 8(Java 9 API인 List.of는 컴파일 오류)',
     async () => {
       const run = await runOpMode(b, 'PlatformApis', { bootClasspath: [] })
@@ -402,6 +416,37 @@ describe.skipIf(build === null || !androidSdk)(
             .join('\n')
         ).toEqual([])
         expect(errorFiles(withRelease8.diagnostics).length).toBeLessThan(samples.files.length / 2)
+      },
+      TIMEOUT
+    )
+
+    it(
+      '가짜 SDK의 Build.VERSION_CODES는 그 android.jar의 상수와 값이 같고, 더 있는 것은 그보다 새 API 번호다',
+      async () => {
+        const sdk = androidSdk as string
+        const level = realPlatformLevel(sdk)
+        const javap = join(b.jdkHome, 'bin', process.platform === 'win32' ? 'javap.exe' : 'javap')
+        const constants = async (jar: string): Promise<Map<string, number>> => {
+          const result = await runProcess(javap, [
+            '-constants',
+            '-cp',
+            jar,
+            'android.os.Build$VERSION_CODES'
+          ])
+          expect(result.code, result.output).toBe(0)
+          return new Map(
+            [...result.stdout.matchAll(/public static final int (\w+) = (-?\d+);/g)].map((m) => [
+              m[1],
+              Number(m[2])
+            ])
+          )
+        }
+        const real = await constants(join(sdk, 'platforms', `android-${level}`, 'android.jar'))
+        const fake = await constants(b.sdkJar)
+        expect(real.size).toBeGreaterThan(16)
+        for (const [name, value] of real) expect(fake.get(name), name).toBe(value)
+        for (const [name, value] of fake)
+          if (!real.has(name)) expect(value, name).toBeGreaterThan(level)
       },
       TIMEOUT
     )

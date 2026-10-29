@@ -264,7 +264,11 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
         'com.qualcomm.robotcore.util.Range#extra()I: method not in the real API',
         'com.qualcomm.robotcore.util.RangeHelper: not a class of the FTC SDK',
         'com.qualcomm.robotcore.util.ElapsedTime.SECOND_IN_NANO: constant value long 1000000000 (real) vs long 1000000001',
-        'com.qualcomm.robotcore.util.ElapsedTime$Resolution: enum constants [SECONDS, MILLISECONDS] (real) vs [MILLISECONDS, SECONDS]'
+        'com.qualcomm.robotcore.util.ElapsedTime$Resolution: enum constants [SECONDS, MILLISECONDS] (real) vs [MILLISECONDS, SECONDS]',
+        // 기준 android.jar(API 16)보다 새 상수는 ApiCheck의 표(실제 android.jar API 37에서 옮김)와 대조한다
+        'android.os.Build$VERSION_CODES.S: constant value integer 31 (Android API 37) vs integer 32',
+        'android.os.Build$VERSION_CODES.TIRAMISU: constant value integer 33 (Android API 37) vs none',
+        'android.os.Build$VERSION_CODES.NOT_A_CODE: field not in the real API'
       ]
       for (const message of expected)
         expect(

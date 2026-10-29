@@ -20,6 +20,7 @@ import java.util.TreeSet;
  * volatile·transient는 구현 세부라 비교하지 않는다. enum의 final·abstract(상수에 본문이 있는지)도 비교하지 않는다.
  *
  * <p>안드로이드 손 구현(android.*)은 실제 SDK가 아니라 android.jar와 비교하고, 일부만 구현해도 된다(있는 멤버만 같아야 한다).
+ * 기준 jar보다 새 API에만 있는 상수는 {@link #NEWER_ANDROID_CONSTANTS}에 적은 것만 더할 수 있다.
  * SDK에 없는 손 구현 클래스는 org.sandbot.**에 두거나 이름이 Sandbot으로 시작해야 한다.
  *
  * <p>stub 확인에도 쓴다(생성한 stub이 실제 API와 같은지, {@link #compare}).
@@ -43,6 +44,49 @@ final class ApiCheck {
             | ClassFile.ACC_FINAL | ClassFile.ACC_ENUM;
     private static final int METHOD_MASK = ClassFile.ACC_PUBLIC | ClassFile.ACC_PROTECTED | ClassFile.ACC_STATIC
             | ClassFile.ACC_FINAL | ClassFile.ACC_ABSTRACT | ClassFile.ACC_VARARGS;
+
+    /** {@link #NEWER_ANDROID_CONSTANTS} 값을 옮긴 실제 android.jar */
+    static final String NEWER_ANDROID_SOURCE = "Android API 37";
+
+    /**
+     * 대조 기준 android.jar(Maven Central의 android-4.1.1.4 = API 16, 받을 수 있는 가장 새 android.jar)보다 새 Android API에만
+     * 있어 기준 jar로는 확인할 수 없는 컴파일 시간 상수(내부 이름.필드 → int 값). 안드로이드 손 구현은 기준 jar에 없는 필드 중
+     * 이 표에 있는 것만 더할 수 있고, 수식어(public static final)·형식(int)·상수 값이 표와 같아야 한다. 값은 Android SDK
+     * Platform 17(API 37) r2의 android.jar를 javap -constants로 읽어 옮겼다(API 30·34·36 jar에 있는 것도 같은 값).
+     *
+     * <p>Build.VERSION_CODES: 팀 코드의 API 확인 관용구({@code Build.VERSION.SDK_INT >= Build.VERSION_CODES.N},
+     * {@code @RequiresApi(api = Build.VERSION_CODES.O)})가 Android Studio처럼 컴파일되어야 한다. 플랫폼 jar는 android.*를 빼므로
+     * android.os.Build는 늘 손 구현이다. 프로젝트 compileSdk보다 새 상수도 있으므로 그 상수를 쓴 코드는 Android Studio에서만
+     * 실패한다(반대 방향은 없다).
+     */
+    static final Map<String, Integer> NEWER_ANDROID_CONSTANTS = newerAndroidConstants();
+
+    private static Map<String, Integer> newerAndroidConstants() {
+        Map<String, Integer> codes = new LinkedHashMap<>();
+        String versionCodes = "android/os/Build$VERSION_CODES.";
+        codes.put(versionCodes + "JELLY_BEAN_MR1", 17);
+        codes.put(versionCodes + "JELLY_BEAN_MR2", 18);
+        codes.put(versionCodes + "KITKAT", 19);
+        codes.put(versionCodes + "KITKAT_WATCH", 20);
+        codes.put(versionCodes + "LOLLIPOP", 21);
+        codes.put(versionCodes + "LOLLIPOP_MR1", 22);
+        codes.put(versionCodes + "M", 23);
+        codes.put(versionCodes + "N", 24);
+        codes.put(versionCodes + "N_MR1", 25);
+        codes.put(versionCodes + "O", 26);
+        codes.put(versionCodes + "O_MR1", 27);
+        codes.put(versionCodes + "P", 28);
+        codes.put(versionCodes + "Q", 29);
+        codes.put(versionCodes + "R", 30);
+        codes.put(versionCodes + "S", 31);
+        codes.put(versionCodes + "S_V2", 32);
+        codes.put(versionCodes + "TIRAMISU", 33);
+        codes.put(versionCodes + "UPSIDE_DOWN_CAKE", 34);
+        codes.put(versionCodes + "VANILLA_ICE_CREAM", 35);
+        codes.put(versionCodes + "BAKLAVA", 36);
+        codes.put(versionCodes + "CINNAMON_BUN", 37);
+        return java.util.Collections.unmodifiableMap(codes);
+    }
 
     /**
      * 손 구현 전체를 대조한다.
@@ -167,8 +211,11 @@ final class ApiCheck {
             compareField(id, e.getValue(), fb2, exact);
         }
         for (Map.Entry<String, ClassFile.Member> e : fieldsB.entrySet()) {
-            if (!fieldsA.containsKey(e.getKey()))
-                errors.add(where + "." + e.getValue().name + ": field not in the real API");
+            if (fieldsA.containsKey(e.getKey())) continue;
+            String id = where + "." + e.getValue().name;
+            Integer newer = exact ? null : NEWER_ANDROID_CONSTANTS.get(a.name + "." + e.getValue().name);
+            if (newer == null) errors.add(id + ": field not in the real API");
+            else compareNewerConstant(id, e.getValue(), newer);
         }
         if (exact && isEnum) {
             List<String> ca = enumConstants(a);
@@ -203,6 +250,19 @@ final class ApiCheck {
         String cb = b.constant == null ? "none" : ClassFile.constantText(b.constant);
         if (!ca.equals(cb)) errors.add(id + ": constant value " + ca + " (real) vs " + cb);
         if (exact) compareAnnotations(id, a.annotations, b.annotations);
+    }
+
+    /** 기준 android.jar에 없는 상수를 {@link #NEWER_ANDROID_CONSTANTS}의 값과 비교한다 */
+    private void compareNewerConstant(String id, ClassFile.Member b, int value) {
+        int access = ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL;
+        if ((b.access & FIELD_MASK) != access)
+            errors.add(id + ": field modifiers " + memberFlags(access, false) + " (" + NEWER_ANDROID_SOURCE + ") vs "
+                    + memberFlags(b.access & FIELD_MASK, false));
+        if (!genericOf(b).equals("I")) errors.add(id + ": type I (" + NEWER_ANDROID_SOURCE + ") vs " + genericOf(b));
+        checkedConstants++;
+        String cb = b.constant == null ? "none" : ClassFile.constantText(b.constant);
+        if (!cb.equals(ClassFile.constantText(value)))
+            errors.add(id + ": constant value " + ClassFile.constantText(value) + " (" + NEWER_ANDROID_SOURCE + ") vs " + cb);
     }
 
     private void compareMethod(String id, ClassFile.Member a, ClassFile.Member b, boolean exact, boolean isEnum) {
