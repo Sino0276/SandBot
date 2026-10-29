@@ -301,6 +301,11 @@ function versionOf(
   return { version: null, versionRef: null, problem: 'unsupported version' }
 }
 
+// 문제 설명에 넣는 값(긴 글자는 앞부분만. 설명은 쓰는 자리마다 진단에 붙는다)
+function shown(text: string): string {
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text
+}
+
 function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   const bad = (problem: string): CatalogLibrary => ({
     group: '',
@@ -313,7 +318,7 @@ function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   if (value.kind === 'string') {
     const parts = value.value.split(':')
     if (parts.length !== 2 && parts.length !== 3)
-      return bad(`'${value.value}' is not group:name[:version]`)
+      return bad(`'${shown(value.value)}' is not group:name[:version]`)
     return {
       group: parts[0],
       artifact: parts[1],
@@ -331,7 +336,7 @@ function libraryOf(value: TomlValue, line: number): CatalogLibrary {
   if (module !== undefined) {
     if (module.kind !== 'string') return bad('module is not a string')
     const parts = module.value.split(':')
-    if (parts.length !== 2) return bad(`module '${module.value}' is not group:name`)
+    if (parts.length !== 2) return bad(`module '${shown(module.value)}' is not group:name`)
     ;[group, artifact] = parts
   } else {
     const g = entries.get('group')

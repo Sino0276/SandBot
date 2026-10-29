@@ -25,18 +25,29 @@ function unescape(text: string): string {
   return out
 }
 
+function oddTrailingBackslashes(text: string): boolean {
+  let count = 0
+  for (let i = text.length - 1; i >= 0 && text[i] === '\\'; i--) count++
+  return count % 2 === 1
+}
+
 // 뒤에 있는 같은 키가 앞의 것을 덮는다(Properties.load와 같다)
 export function parseGradleProperties(text: string): Map<string, PropertyEntry> {
   const result = new Map<string, PropertyEntry>()
   const lines = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).split(/\r\n|\r|\n/)
   for (let index = 0; index < lines.length; index++) {
     const line = index + 1
-    let logical = lines[index].replace(/^[ \t\f]+/, '')
-    if (logical === '' || logical.startsWith('#') || logical.startsWith('!')) continue
-    // 끝의 역슬래시가 홀수 개면 다음 줄로 잇는다
-    while (/(?:^|[^\\])(?:\\\\)*\\$/.test(logical) && index + 1 < lines.length) {
-      logical = logical.slice(0, -1) + lines[++index].replace(/^[ \t\f]+/, '')
+    let physical = lines[index].replace(/^[ \t\f]+/, '')
+    if (physical === '' || physical.startsWith('#') || physical.startsWith('!')) continue
+    // 끝의 역슬래시가 홀수 개면 다음 줄로 잇는다. Properties.load처럼 줄마다 센다(앞 줄을 이을 때 뗀 하나를 빼면
+    // 앞 줄 끝의 역슬래시는 짝수라 이은 글자 전체로 세어도 같다). 이은 글자 전체를 줄마다 다시 훑지 않는다.
+    const pieces: string[] = []
+    while (oddTrailingBackslashes(physical) && index + 1 < lines.length) {
+      pieces.push(physical.slice(0, -1))
+      physical = lines[++index].replace(/^[ \t\f]+/, '')
     }
+    pieces.push(physical)
+    const logical = pieces.join('')
     let keyEnd = 0
     while (keyEnd < logical.length) {
       const ch = logical[keyEnd]

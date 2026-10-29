@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lexGradle, type GradleToken } from './lexer'
+import { lexGradle, MAX_STEPS_PER_CHAR, type GradleToken } from './lexer'
 import { parseGradleScript, type Expr, type Stmt } from './parser'
 
 function kinds(tokens: GradleToken[]): string[] {
@@ -76,6 +76,60 @@ describe('lexGradle', () => {
   it('${…} 중첩이 한도를 넘으면 tooDeep', () => {
     expect(lexGradle(`"${'${"'.repeat(30)}${'"}'.repeat(30)}"`, 'groovy').tooDeep).toBe(true)
     expect(lexGradle(`"\${"\${"x"}"}"`, 'groovy').tooDeep).toBe(false)
+  })
+
+  it('Kotlin의 블록 주석은 중첩되고 Groovy는 처음 */에서 끝난다', () => {
+    const text = 'a /* b /* c */ d */ e'
+    expect(kinds(lexGradle(text, 'kotlin').tokens)).toEqual(['a', 'e', 'eof'])
+    expect(kinds(lexGradle(text, 'groovy').tokens)).toEqual(['a', 'd', '*', '/', 'e', 'eof'])
+    expect(kinds(lexGradle('a /**/ b /*/ c */ d', 'kotlin').tokens)).toEqual(['a', 'b', 'd', 'eof'])
+    const open = lexGradle('a /* /* */ b', 'kotlin')
+    expect(kinds(open.tokens)).toEqual(['a', 'eof'])
+    expect(open.problems).toEqual([{ line: 1, detail: 'unterminated comment' }])
+  })
+
+  it('닫히지 않은 슬래시 문자열 시도는 나눗셈으로 다시 읽고, 그 시도의 problems는 남기지 않는다', () => {
+    // 보간이 닫는 /를 삼킨 시도는 버리고 글자로 다시 읽는다
+    const lexed = lexGradle('x = (/${ a\ny /', 'groovy')
+    expect(kinds(lexed.tokens)).toEqual([
+      'x',
+      '=',
+      '(',
+      '/',
+      '$',
+      '{',
+      'a',
+      'newline',
+      'y',
+      '/',
+      'eof'
+    ])
+    expect(lexed.problems).toEqual([])
+    expect(lexed.tooDeep).toBe(false)
+  })
+
+  it('실패한 슬래시 문자열 시도를 되풀이하지 않는다(겹친 시도·닫는 글자 없는 시작이 많아도 빨리 끝난다)', () => {
+    const filler = 'x '.repeat(2000)
+    for (const text of [
+      // 시도마다 보간이 파일 끝까지 가서 실패하고, 실패한 시도가 겹친다(예전에는 2^k)
+      Array.from({ length: 12 }, () => `(/\${ ${filler}`).join('\n'),
+      Array.from({ length: 16 }, () => `(/\${ ${filler}`).join('\n'),
+      `${Array.from({ length: 7 }, () => '(/${ ').join('\n')}\n${'x '.repeat(120000)}`,
+      // 닫는 /$를 찾아 매번 끝까지 훑었다(예전에는 제곱)
+      '$/ '.repeat(85000)
+    ]) {
+      const started = performance.now()
+      const lexed = lexGradle(text, 'groovy')
+      expect(performance.now() - started).toBeLessThan(1000)
+      // 한도를 넘어도 토큰 하나만큼만 더 센다
+      expect(lexed.steps).toBeLessThanOrEqual((MAX_STEPS_PER_CHAR + 1) * (text.length + 1))
+    }
+  })
+
+  it('도는 횟수가 한도(글자당, 또는 부른 쪽이 준 한도)를 넘으면 tooDeep', () => {
+    const plain = lexGradle('a b c', 'groovy')
+    expect(plain).toMatchObject({ tooDeep: false, steps: 5 })
+    expect(lexGradle('a b c', 'groovy', 4)).toMatchObject({ tooDeep: true, tokens: [], steps: 5 })
   })
 })
 

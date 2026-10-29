@@ -1,9 +1,11 @@
 // Gradle 빌드 스크립트의 작은 구문 트리. Groovy·Kotlin DSL의 선언적 부분(블록 호출, 명령식, 대입, def·val, 문자열 보간,
 // 목록·맵, + ·?: 정도)만 식으로 읽고, 나머지(조건문, 메서드 정의, 연산 대부분)는 그 문장 전체를 건너뛴다(control·unknown).
-// 읽지 못한 문장은 그 문장만 버리고 다음 문장부터 계속 읽는다(괄호 짝을 맞춰 건너뛴다). 중첩이 한도를 넘으면 그 파일을
-// 읽지 않는다(tooDeep).
+// 읽지 못한 문장은 그 문장만 버리고 다음 문장부터 계속 읽는다(괄호 짝을 맞춰 건너뛴다). 중첩이 한도를 넘거나, 글자 나누기와
+// 함께 센 일(넘긴 토큰 수)이 한도를 넘으면 그 파일을 읽지 않는다(tooDeep). 읽지 못한 문장이 겹겹이 중첩되면 바깥 문장마다
+// 안쪽 토큰을 다시 넘기므로 일이 토큰 수보다 커질 수 있다.
 import {
   lexGradle,
+  MAX_STEPS_PER_CHAR,
   type GradleDialect,
   type GradleToken,
   type LexProblem,
@@ -46,6 +48,16 @@ export type ParsedScript = {
   statements: Stmt[]
   problems: LexProblem[]
   tooDeep: boolean
+  // 글자 나누기(lexer.ts의 steps)와 구문 나누기(넘긴 토큰 수)의 일
+  steps: number
+}
+
+// 한 파일(과 그 안의 ${…})의 구문 나누기가 함께 쓰는 일
+type Steps = { count: number; max: number }
+
+function spend(steps: Steps, count = 1): void {
+  steps.count += count
+  if (steps.count > steps.max) throw new TooDeep()
 }
 
 // 블록·괄호 중첩 한도
@@ -119,7 +131,8 @@ class Parser {
 
   constructor(
     readonly tokens: GradleToken[],
-    readonly dialect: GradleDialect
+    readonly dialect: GradleDialect,
+    readonly steps: Steps
   ) {}
 
   private peek(offset = 0): GradleToken {
@@ -127,6 +140,7 @@ class Parser {
   }
 
   private next(): GradleToken {
+    spend(this.steps)
     const token = this.peek()
     if (this.pos < this.tokens.length - 1) this.pos++
     return token
@@ -469,11 +483,12 @@ class Parser {
 
   private identsBetween(from: number, to: number): string[] {
     const names = new Set<string>()
+    spend(this.steps, Math.max(0, to - from))
     for (let i = from; i < to; i++) {
       const token = this.tokens[i]
       if (token.kind === 'ident') names.add(token.text)
       if (token.kind === 'string')
-        for (const name of stringIdents(token.parts ?? [])) names.add(name)
+        for (const name of stringIdents(token.parts ?? [], this.steps)) names.add(name)
     }
     return [...names]
   }
@@ -948,7 +963,8 @@ class Parser {
     }
     const inner = new Parser(
       [...part.tokens.filter((t) => t.kind !== 'newline'), eof],
-      this.dialect
+      this.dialect,
+      this.steps
     )
     inner.depth = this.depth
     try {
@@ -980,27 +996,38 @@ export function stringLiteralText(token: GradleToken): string | null {
   return text
 }
 
-function stringIdents(parts: StringPart[]): string[] {
+function stringIdents(parts: StringPart[], steps: Steps): string[] {
   const names: string[] = []
   for (const part of parts) {
     if (part.kind === 'path') names.push(...part.names)
-    else if (part.kind === 'expr')
+    else if (part.kind === 'expr') {
+      spend(steps, part.tokens.length)
       for (const token of part.tokens) {
         if (token.kind === 'ident') names.push(token.text)
-        if (token.kind === 'string') names.push(...stringIdents(token.parts ?? []))
+        if (token.kind === 'string') names.push(...stringIdents(token.parts ?? [], steps))
       }
+    }
   }
   return names
 }
 
-export function parseGradleScript(text: string, dialect: GradleDialect): ParsedScript {
-  const lexed = lexGradle(text, dialect)
-  if (lexed.tooDeep) return { statements: [], problems: lexed.problems, tooDeep: true }
-  const parser = new Parser(lexed.tokens, dialect)
+// maxSteps: 부른 쪽의 남은 일. 글자 나누기와 구문 나누기가 함께 쓰고, 한 파일은 글자당 MAX_STEPS_PER_CHAR까지다.
+export function parseGradleScript(
+  text: string,
+  dialect: GradleDialect,
+  maxSteps = Infinity
+): ParsedScript {
+  const max = Math.min(maxSteps, MAX_STEPS_PER_CHAR * (text.length + 1))
+  const lexed = lexGradle(text, dialect, max)
+  const { problems } = lexed
+  if (lexed.tooDeep) return { statements: [], problems, tooDeep: true, steps: lexed.steps }
+  const steps: Steps = { count: lexed.steps, max }
+  const parser = new Parser(lexed.tokens, dialect, steps)
   try {
-    return { statements: parser.block(false), problems: lexed.problems, tooDeep: false }
+    return { statements: parser.block(false), problems, tooDeep: false, steps: steps.count }
   } catch (error) {
-    if (error instanceof TooDeep) return { statements: [], problems: lexed.problems, tooDeep: true }
+    if (error instanceof TooDeep)
+      return { statements: [], problems, tooDeep: true, steps: steps.count }
     throw error
   }
 }

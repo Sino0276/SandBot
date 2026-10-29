@@ -10,9 +10,24 @@
 // providers.gradleProperty(…).get(), 버전 카탈로그 libs.x.y·libs.versions.x.get()·libs.bundles.x. 그 밖(메서드 호출,
 // 조건문 안의 선언, 환경 변수 등)은 추측하지 않고 쓰는 자리에서 진단으로 남긴다. 쓰지 않는 블록(signingConfigs 등)
 // 안의 식은 보지 않는다.
+//
+// gradle.properties는 Gradle처럼 프로젝트마다 ext 속성으로도 본다(ProjectPropertySettingBuildLoader가 루트의 것,
+// 그다음 그 프로젝트 폴더의 것을 프로젝트 ext에 넣어 둔다). 그래서 TeamCode의 이름 찾기는 TeamCode의 ext →
+// gradle.properties(TeamCode, 루트) → 물려받는 루트 ext 순서이고, ext.x·ext.get·by extra도 gradle.properties를 본다.
+//
+// 읽기는 메인 프로세스에서 하므로 일의 양에 한도가 있다: apply from 실행 횟수(같은 파일을 되풀이해도 센다), 한 문장에서
+// 펼치는 의존성 목록 항목 수, 한 번 읽기 전체의 일(글자·구문 나누기, 실행한 스크립트 글자 수, 값 계산 단계). 넘으면 진단을
+// 남긴다.
 import { type GradleDialect } from './lexer'
 import { parseNotation, isNotationName, isNotationVersion, type Notation } from './notation'
-import { parseGradleScript, type Arg, type ClosureExpr, type Expr, type Stmt } from './parser'
+import {
+  parseGradleScript,
+  type Arg,
+  type ClosureExpr,
+  type Expr,
+  type ParsedScript,
+  type Stmt
+} from './parser'
 import { MAX_GRADLE_FILE_BYTES, resolveProjectPath } from './paths'
 import { parseGradleProperties } from './properties'
 import { parseVersionCatalog, type VersionCatalog } from './toml'
@@ -33,13 +48,23 @@ import type {
 export const MAX_APPLY_DEPTH = 8
 // 한 번 읽기에서 읽는 파일 수
 export const MAX_GRADLE_FILES = 32
+// 한 번 읽기에서 apply from으로 스크립트를 실행하는 횟수(같은 파일을 여러 번 적용해도 실행마다 센다. 파일 수 한도는
+// 처음 읽을 때만 세므로, 작은 파일 몇 개를 겹겹이 되풀이해 적용하면 실행이 지수로 늘어난다)
+export const MAX_APPLIED_SCRIPTS = 64
+// 한 번 읽기 전체의 일 한도(단위: 나눈 글자·토큰 하나, 실행한 스크립트 글자 하나, 값 계산 한 단계 — 식 하나, 이은 글자
+// 하나, 펼친 목록 항목 하나, 의존성에 붙인 exclude 글자 하나 등). 넘으면 tooLarge 진단 하나를 남기고 거기까지 읽은 것만
+// 돌려준다. 실제 FTC 프로젝트(수십 KB)는 이 한도의 몇 %만 쓴다.
+export const MAX_GRADLE_WORK = 2_000_000
 const MAX_DIAGNOSTICS = 200
 const MAX_DEPENDENCIES = 1000
 const MAX_REPOSITORIES = 200
 // 이어 붙여 만든 문자열·목록 길이 한도
 const MAX_VALUE_LENGTH = 4096
+// 목록·맵 항목 수. 의존성 선언 한 문장에서 펼치는 항목 수도(목록 안의 목록, 같은 목록을 여러 번 넣은 [l, l]은 펼친 만큼)
 const MAX_COLLECTION = 1000
 const MAX_DETAIL = 160
+// 진단에 넣는 글자 조각은 식의 앞부분만 본다(긴 식에 진단이 여러 개 붙어도 식 전체를 매번 훑지 않는다)
+const MAX_SNIPPET_SCAN = 1024
 
 export const TEAMCODE_MODULE_DIR = 'TeamCode'
 export const VERSION_CATALOG_PATH = 'gradle/libs.versions.toml'
@@ -65,6 +90,11 @@ type Value =
 
 type Unresolved = Extract<Value, { kind: 'unresolved' }>
 
+// 의존성 선언 한 문장에서 펼친 목록 항목 수
+type Flat = { items: number }
+
+// props: 그 프로젝트가 보는 gradle.properties(루트의 것에 그 프로젝트 폴더의 것을 덮은 것, settings는 루트의 것).
+// Gradle은 이것을 ext에 넣어 두고 스크립트의 ext 쓰기가 덮으므로, ext에 없으면 props를 보는 것과 같다.
 type ProjectState = { ext: Map<string, Value>; props: Map<string, Value> }
 
 type Ctx = {
@@ -147,11 +177,20 @@ function newProject(): ProjectState {
   return { ext: new Map(), props: new Map() }
 }
 
+// 한 번 읽기의 일 한도를 넘었다(run이 받아 거기까지 읽은 것을 돌려준다)
+class OverBudget extends Error {}
+
 function unresolved(
   reason: string,
   flags: { missing?: boolean; catalog?: boolean } = {}
 ): Unresolved {
-  return { kind: 'unresolved', reason, ...flags }
+  // 이유는 진단에 붙는다. 긴 이름을 담아도 값마다 한 번만 자른다(진단마다 긴 글자를 다시 훑지 않게).
+  return { kind: 'unresolved', reason: clip(reason), ...flags }
+}
+
+// 진단에 넣을 글자(팀 파일에서 온 긴 글자는 앞부분만)
+function clip(text: string): string {
+  return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 3)}...` : text
 }
 
 function isScalar(
@@ -273,7 +312,11 @@ class GradleReader {
   private compileSdk: number | null = null
   private catalog: VersionCatalog | null = null
   private reads = 0
+  private applied = 0
+  private work = 0
   private readonly cache = new Map<string, FileRead>()
+  // 읽은 스크립트의 구문 트리(같은 파일을 다시 적용하면 다시 나누지 않는다. 트리는 읽기만 한다)
+  private readonly scripts = new Map<string, ParsedScript>()
   private readonly projects: Record<ProjectId, ProjectState> = {
     settings: newProject(),
     root: newProject(),
@@ -285,17 +328,16 @@ class GradleReader {
   constructor(private readonly source: GradleFileSource) {}
 
   async run(): Promise<GradleProject> {
-    await this.loadProperties('gradle.properties', this.projects.root)
-    await this.loadProperties(`${TEAMCODE_MODULE_DIR}/gradle.properties`, this.projects.module)
-    await this.runFirst(['settings.gradle', 'settings.gradle.kts'], 'settings')
-    await this.loadCatalog()
-    await this.runFirst(['build.gradle', 'build.gradle.kts'], 'root')
-    await this.runFirst(
-      [`${TEAMCODE_MODULE_DIR}/build.gradle`, `${TEAMCODE_MODULE_DIR}/build.gradle.kts`],
-      'module'
-    )
+    let finished = true
+    try {
+      await this.runAll()
+    } catch (error) {
+      if (!(error instanceof OverBudget)) throw error
+      finished = false
+    }
     const includes = this.includes
     if (
+      finished &&
       includes &&
       includes.complete &&
       includes.names.length > 0 &&
@@ -313,6 +355,37 @@ class GradleReader {
       diagnostics: this.diagnostics,
       files: this.files
     }
+  }
+
+  private async runAll(): Promise<void> {
+    // gradle.properties: 루트의 것은 settings·루트·TeamCode 모두, TeamCode 폴더의 것은 TeamCode만 본다(앞의 것을 덮는다)
+    const rootProps = await this.loadProperties('gradle.properties')
+    const moduleProps = await this.loadProperties(`${TEAMCODE_MODULE_DIR}/gradle.properties`)
+    for (const project of [this.projects.settings, this.projects.root, this.projects.module])
+      for (const [key, value] of rootProps) project.props.set(key, value)
+    for (const [key, value] of moduleProps) this.projects.module.props.set(key, value)
+    await this.runFirst(['settings.gradle', 'settings.gradle.kts'], 'settings')
+    await this.loadCatalog()
+    await this.runFirst(['build.gradle', 'build.gradle.kts'], 'root')
+    await this.runFirst(
+      [`${TEAMCODE_MODULE_DIR}/build.gradle`, `${TEAMCODE_MODULE_DIR}/build.gradle.kts`],
+      'module'
+    )
+  }
+
+  // 일을 센다. 한 번 읽기 전체가 한도를 넘으면 그 자리에 진단을 남기고 읽기를 멈춘다. 읽다 멈춘 까닭은 진단이 한도까지
+  // 찼어도 보이도록 마지막 진단 자리에 둔다.
+  private spend(units: number, file: string, line: number): void {
+    this.work += units
+    if (this.work <= MAX_GRADLE_WORK) return
+    const stopped: GradleDiagnostic = {
+      code: 'tooLarge',
+      at: { file, line },
+      detail: `reading the Gradle files takes more than ${MAX_GRADLE_WORK} steps`
+    }
+    if (this.diagnostics.length >= MAX_DIAGNOSTICS) this.diagnostics[MAX_DIAGNOSTICS - 1] = stopped
+    else this.diagnostics.push(stopped)
+    throw new OverBudget()
   }
 
   // ---- 파일 ----
@@ -364,12 +437,19 @@ class GradleReader {
     return result
   }
 
-  private async loadProperties(path: string, project: ProjectState): Promise<void> {
+  private async loadProperties(path: string): Promise<Map<string, Value>> {
+    const props = new Map<string, Value>()
     const read = await this.read(path)
     if (read.kind === 'problem') this.diag(read.code, { file: path, line: 1 }, read.detail)
-    if (read.kind !== 'text') return
+    if (read.kind !== 'text') return props
     for (const [key, entry] of parseGradleProperties(read.text))
-      project.props.set(key, { kind: 'string', value: entry.value })
+      props.set(
+        key,
+        entry.value.length > MAX_VALUE_LENGTH
+          ? unresolved(`gradle property '${key}' is too long`)
+          : { kind: 'string', value: entry.value }
+      )
+    return props
   }
 
   private async loadCatalog(): Promise<void> {
@@ -408,13 +488,22 @@ class GradleReader {
     chain: string[]
   ): Promise<void> {
     const dialect: GradleDialect = path.endsWith('.kts') ? 'kotlin' : 'groovy'
-    const parsed = parseGradleScript(text, dialect)
-    if (parsed.tooDeep) {
-      this.diag('tooDeep', { file: path, line: 1 }, `${path} is nested too deeply`)
-      return
+    let parsed = this.scripts.get(path)
+    if (!parsed) {
+      // 글자 나누기도 한 번 읽기의 일에 센다(남은 일보다 많이 돌면 거기서 멈추고 spend가 읽기를 끝낸다)
+      parsed = parseGradleScript(text, dialect, MAX_GRADLE_WORK - this.work)
+      this.scripts.set(path, parsed)
+      this.spend(parsed.steps, path, 1)
+      // 구문 문제는 처음 나눌 때 한 번만 알린다
+      if (parsed.tooDeep)
+        this.diag('tooDeep', { file: path, line: 1 }, `${path} is nested too deeply or too complex`)
+      else
+        for (const problem of parsed.problems)
+          this.diag('unsupportedSyntax', { file: path, line: problem.line }, problem.detail)
     }
-    for (const problem of parsed.problems)
-      this.diag('unsupportedSyntax', { file: path, line: problem.line }, problem.detail)
+    if (parsed.tooDeep) return
+    // 실행 한 번의 일은 스크립트 글자 수에 비례한다(문장·블록을 한 번씩 본다)
+    this.spend(text.length, path, 1)
     const ctx: Ctx = {
       file: path,
       text,
@@ -433,23 +522,32 @@ class GradleReader {
   // ---- 진단 ----
 
   private snippet(ctx: Ctx, node: { start: number; end: number }): string {
-    const text = ctx.text.slice(node.start, node.end).replace(/\s+/g, ' ').trim()
-    return text.length > 80 ? `${text.slice(0, 77)}...` : text
+    // 진단이 한도까지 찼으면 조각은 어디에도 보이지 않는다(진단과 풀지 못한 값의 이유에만 쓴다)
+    if (this.diagnostics.length >= MAX_DIAGNOSTICS) return ''
+    const end = Math.min(node.end, node.start + MAX_SNIPPET_SCAN)
+    const text = ctx.text.slice(node.start, end).replace(/\s+/g, ' ').trim()
+    return text.length > 80 || end < node.end ? `${text.slice(0, 77)}...` : text
   }
 
   private diag(code: GradleDiagnosticCode, at: GradleLocation, detail: string): void {
-    const clipped = detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL - 3)}...` : detail
+    if (this.diagnostics.length >= MAX_DIAGNOSTICS) return
+    const clipped = clip(detail)
     const key = `${code}\u0000${at.file}\u0000${at.line}\u0000${clipped}`
-    if (this.diagnosticKeys.has(key) || this.diagnostics.length >= MAX_DIAGNOSTICS) return
+    if (this.diagnosticKeys.has(key)) return
     this.diagnosticKeys.add(key)
     this.diagnostics.push({ code, at, detail: clipped })
   }
 
   // 개수 한도는 처음 넘은 자리에서 한 번만 알린다
-  private limitOnce(what: string, at: GradleLocation, detail: string): void {
+  private limitOnce(
+    what: string,
+    at: GradleLocation,
+    detail: string,
+    code: GradleDiagnosticCode = 'tooLarge'
+  ): void {
     if (this.limits.has(what)) return
     this.limits.add(what)
-    this.diag('tooLarge', at, detail)
+    this.diag(code, at, detail)
   }
 
   private at(ctx: Ctx, node: { line: number }): GradleLocation {
@@ -490,6 +588,7 @@ class GradleReader {
 
   // decl·대입·ext.set 등 어느 블록에서나 같은 문장. 처리했으면 true.
   private common(stmt: Stmt, ctx: Ctx): boolean {
+    this.spend(1, ctx.file, stmt.line)
     if (stmt.kind === 'skip') return true
     if (stmt.kind === 'decl') {
       this.declare(stmt, ctx)
@@ -575,7 +674,7 @@ class GradleReader {
         const project = owner?.[0] === 'rootProject' ? 'root' : this.projectOf(ctx)
         scope.set(
           stmt.name,
-          this.projects[project].ext.get(stmt.name) ??
+          this.extValue(project, stmt.name) ??
             unresolved(`extra property '${stmt.name}' is not set`, { missing: true })
         )
         return
@@ -830,10 +929,13 @@ class GradleReader {
     }
     const value = this.evaluate(from.value, ctx)
     let resolved: ReturnType<typeof resolveProjectPath>
-    if (value.kind === 'string')
+    if (value.kind === 'string') {
+      this.spend(value.value.length, ctx.file, call.line)
       resolved = resolveProjectPath(this.projectDir(ctx.target), value.value)
-    else if (value.kind === 'path') resolved = resolveProjectPath(value.base, value.rest)
-    else if (value.kind === 'unresolved') {
+    } else if (value.kind === 'path') {
+      this.spend(value.rest.length, ctx.file, call.line)
+      resolved = resolveProjectPath(value.base, value.rest)
+    } else if (value.kind === 'unresolved') {
       this.unresolvedDiag(ctx, from.value, value)
       return
     } else {
@@ -865,6 +967,16 @@ class GradleReader {
       )
       return
     }
+    if (this.applied >= MAX_APPLIED_SCRIPTS) {
+      this.limitOnce(
+        'applied',
+        this.at(ctx, call),
+        `apply from runs more than ${MAX_APPLIED_SCRIPTS} scripts`,
+        'tooDeep'
+      )
+      return
+    }
+    this.applied++
     const read = await this.read(path)
     if (read.kind === 'missing') {
       this.diag('missingFile', this.at(ctx, call), path)
@@ -1011,8 +1123,10 @@ class GradleReader {
       return
     }
     const value = this.evaluate(urlExpr, ctx)
-    if (value.kind === 'string') this.addRepository('maven', value.value, this.at(ctx, urlExpr))
-    else if (value.kind === 'unresolved') this.unresolvedDiag(ctx, urlExpr, value)
+    if (value.kind === 'string') {
+      this.spend(value.value.length, ctx.file, urlExpr.line)
+      this.addRepository('maven', value.value, this.at(ctx, urlExpr))
+    } else if (value.kind === 'unresolved') this.unresolvedDiag(ctx, urlExpr, value)
     else
       this.diag(
         'unsupportedSyntax',
@@ -1105,14 +1219,30 @@ class GradleReader {
       const notation = this.mapNotation(entries, ctx, call)
       if (notation) notations.push({ notation, line: call.line })
     } else {
-      for (const arg of call.args)
-        for (const notation of this.notations(arg.value, ctx))
-          notations.push({ notation, line: arg.value.line })
+      const flat: Flat = { items: 0 }
+      for (const arg of call.args) {
+        const found = this.notations(arg.value, ctx, flat)
+        if (found === null) {
+          this.diag(
+            'tooLarge',
+            this.at(ctx, call),
+            `dependency list has more than ${MAX_COLLECTION} entries: ${this.snippet(ctx, call)}`
+          )
+          return
+        }
+        for (const notation of found) notations.push({ notation, line: arg.value.line })
+      }
     }
     if (notations.length === 0) return
     const modifiers = call.closure
       ? this.dependencyModifiers(call.closure, ctx)
-      : { excludes: [], transitive: true }
+      : { excludes: [], transitive: null }
+    // 표기마다 exclude를 복사하고 의존성 키(JSON)에 넣는다
+    const excludeSize = modifiers.excludes.reduce(
+      (size, e) => size + 1 + (e.group?.length ?? 0) + (e.module?.length ?? 0),
+      0
+    )
+    this.spend(notations.length * excludeSize, ctx.file, call.line)
     for (const { notation, line } of notations)
       this.addDependency({
         configuration,
@@ -1123,12 +1253,16 @@ class GradleReader {
         extension: notation.extension,
         // 한 문장의 여러 표기가 같은 배열을 나눠 갖지 않게
         excludes: modifiers.excludes.map((exclude) => ({ ...exclude })),
-        transitive: modifiers.transitive,
+        // Gradle은 확장자('g:a:v@aar', ext:)가 있으면 전이 의존성을 끈다
+        // (ModuleFactoryHelper.addExplicitArtifactsIfDefined). 클로저의 transitive는 그 뒤에 적용되어 이긴다.
+        transitive: modifiers.transitive ?? notation.extension === null,
         at: { file: ctx.file, line }
       })
   }
 
   private addDependency(dependency: GradleDependency): void {
+    // 한도를 이미 알렸으면 더 볼 것이 없다(키를 만들지 않는다)
+    if (this.dependencies.length >= MAX_DEPENDENCIES && this.limits.has('dependencies')) return
     const key = JSON.stringify(dependency)
     if (this.dependencyKeys.has(key)) return
     if (this.dependencies.length >= MAX_DEPENDENCIES) {
@@ -1140,7 +1274,8 @@ class GradleReader {
   }
 
   // 인자 하나의 표기들. project(':FtcRobotController')는 조용히 넘기고, 읽지 못하면 진단을 남기고 []다.
-  private notations(expr: Expr, ctx: Ctx): Notation[] {
+  // 펼친 목록 항목이 그 문장에서 한도를 넘으면 null이다(flat에 센다).
+  private notations(expr: Expr, ctx: Ctx, flat: Flat): Notation[] | null {
     if (expr.kind === 'call') {
       const callee = pathOf(expr.callee)
       const name = callee?.length === 1 ? callee[0] : null
@@ -1170,12 +1305,13 @@ class GradleReader {
       if (name === 'kotlin' && ctx.dialect === 'kotlin') return this.kotlinModule(expr, ctx)
     }
     const value = this.evaluate(expr, ctx)
-    return this.notationsOf(value, expr, ctx)
+    return this.notationsOf(value, expr, ctx, flat)
   }
 
-  private notationsOf(value: Value, expr: Expr, ctx: Ctx): Notation[] {
+  private notationsOf(value: Value, expr: Expr, ctx: Ctx, flat: Flat): Notation[] | null {
     switch (value.kind) {
       case 'string': {
+        this.spend(value.value.length, ctx.file, expr.line)
         const notation = parseNotation(value.value)
         if (typeof notation === 'string') {
           this.diag('unsupportedSyntax', this.at(ctx, expr), notation)
@@ -1187,10 +1323,21 @@ class GradleReader {
         const notation = this.mapNotation(value.entries, ctx, expr)
         return notation ? [notation] : []
       }
-      case 'list':
-        return value.items.flatMap((item) => this.notationsOf(item, expr, ctx))
+      case 'list': {
+        // 같은 목록을 여러 번 넣은 목록([l, l], l = [m, m] …)은 값으로는 작아도 펼치면 지수로 커진다
+        flat.items += value.items.length
+        if (flat.items > MAX_COLLECTION) return null
+        this.spend(value.items.length, ctx.file, expr.line)
+        const out: Notation[] = []
+        for (const item of value.items) {
+          const found = this.notationsOf(item, expr, ctx, flat)
+          if (found === null) return null
+          out.push(...found)
+        }
+        return out
+      }
       case 'catalog':
-        return this.catalogNotations(value.path, expr, ctx)
+        return this.catalogNotations(value.path, expr, ctx, flat)
       case 'unresolved':
         this.unresolvedDiag(ctx, expr, value)
         return []
@@ -1208,6 +1355,7 @@ class GradleReader {
   private mapNotation(entries: Map<string, Value>, ctx: Ctx, node: Expr): Notation | null {
     const text: Record<string, string> = {}
     for (const [key, value] of entries) {
+      if (value.kind === 'string') this.spend(value.value.length, ctx.file, node.line)
       if (!['group', 'name', 'version', 'classifier', 'ext'].includes(key)) {
         this.diag(
           'unsupportedSyntax',
@@ -1291,7 +1439,7 @@ class GradleReader {
     return [notation]
   }
 
-  private catalogNotations(path: string[], expr: Expr, ctx: Ctx): Notation[] {
+  private catalogNotations(path: string[], expr: Expr, ctx: Ctx, flat: Flat): Notation[] | null {
     const catalog = this.catalog
     const accessor = path.join('.')
     if (!catalog) {
@@ -1312,6 +1460,9 @@ class GradleReader {
         )
         return []
       }
+      flat.items += bundle.aliases.length
+      if (flat.items > MAX_COLLECTION) return null
+      this.spend(bundle.aliases.length, ctx.file, expr.line)
       return bundle.aliases.flatMap((alias) => this.catalogLibrary(alias, expr, ctx))
     }
     if (path[0] === 'versions' || path[0] === 'plugins') {
@@ -1333,7 +1484,11 @@ class GradleReader {
       return []
     }
     if (library.problem) {
-      this.diag('versionCatalogEntry', this.at(ctx, expr), `libs.${accessor}: ${library.problem}`)
+      this.diag(
+        'versionCatalogEntry',
+        this.at(ctx, expr),
+        `libs.${accessor}: ${clip(library.problem)}`
+      )
       return []
     }
     let version = library.version
@@ -1343,7 +1498,7 @@ class GradleReader {
         this.diag(
           'versionCatalogEntry',
           this.at(ctx, expr),
-          `libs.${accessor}: version.ref '${library.versionRef}' ${ref?.problem ?? `is not in [versions] of ${VERSION_CATALOG_PATH}`}`
+          `libs.${accessor}: version.ref '${clip(library.versionRef)}' ${ref?.problem ?? `is not in [versions] of ${VERSION_CATALOG_PATH}`}`
         )
         return []
       }
@@ -1353,7 +1508,9 @@ class GradleReader {
       this.diag('unsupportedSyntax', this.at(ctx, expr), `libs.${accessor} has no version`)
       return []
     }
-    const notation = parseNotation(`${library.group}:${library.artifact}:${version}`)
+    const coordinate = `${library.group}:${library.artifact}:${version}`
+    this.spend(coordinate.length, ctx.file, expr.line)
+    const notation = parseNotation(coordinate)
     if (typeof notation === 'string') {
       this.diag('versionCatalogEntry', this.at(ctx, expr), `libs.${accessor}: ${notation}`)
       return []
@@ -1361,14 +1518,14 @@ class GradleReader {
     return [notation]
   }
 
-  // implementation('…') { exclude group: …; transitive = false }
+  // implementation('…') { exclude group: …; transitive = false }. transitive는 정하지 않았으면 null.
   private dependencyModifiers(
     closure: ClosureExpr,
     ctx: Ctx
-  ): { excludes: GradleExclude[]; transitive: boolean } {
+  ): { excludes: GradleExclude[]; transitive: boolean | null } {
     const inner = this.child(ctx)
     const excludes: GradleExclude[] = []
-    let transitive = true
+    let transitive: boolean | null = null
     const setTransitive = (expr: Expr | undefined, node: Stmt): void => {
       const value = expr ? this.evaluate(expr, inner) : null
       if (value?.kind === 'boolean') transitive = value.value
@@ -1455,14 +1612,18 @@ class GradleReader {
 
   // ---- 값 ----
 
-  // 프로젝트 속성: 그 프로젝트의 ext → gradle.properties → (TeamCode·settings면) 루트의 ext → gradle.properties
-  private property(project: ProjectId, name: string): Value | null {
+  // 그 프로젝트의 ext 속성(ext.x·ext.get·by extra). Gradle은 gradle.properties를 ext에 넣어 두므로 ext에 없으면 그것을 본다.
+  private extValue(project: ProjectId, name: string): Value | null {
     const own = this.projects[project]
-    const value = own.ext.get(name) ?? own.props.get(name)
-    if (value) return value
-    if (project === 'root') return null
-    const root = this.projects.root
-    return root.ext.get(name) ?? root.props.get(name) ?? null
+    return own.ext.get(name) ?? own.props.get(name) ?? null
+  }
+
+  // 프로젝트 속성($x·findProperty·property): 그 프로젝트의 ext 속성(gradle.properties 포함) → TeamCode면 물려받는 루트의
+  // ext 속성. 루트의 gradle.properties는 TeamCode의 것에 이미 들어 있어 물려받는 루트 ext보다 먼저다.
+  private property(project: ProjectId, name: string): Value | null {
+    const value = this.extValue(project, name)
+    if (value || project !== 'module') return value
+    return this.extValue('root', name)
   }
 
   private projectDir(project: ProjectId): string {
@@ -1517,7 +1678,7 @@ class GradleReader {
         )
       case 'ext':
         return (
-          this.projects[base.project].ext.get(name) ??
+          this.extValue(base.project, name) ??
           unresolved(`extra property '${name}' is not set`, { missing: true })
         )
       case 'map':
@@ -1532,6 +1693,7 @@ class GradleReader {
   }
 
   private evaluate(expr: Expr, ctx: Ctx): Value {
+    this.spend(1, ctx.file, expr.line)
     switch (expr.kind) {
       case 'string':
         return this.interpolate(expr, ctx)
@@ -1591,7 +1753,7 @@ class GradleReader {
 
   private toInteger(value: Value): Value {
     if (value.kind === 'number') return value
-    if (value.kind === 'string' && /^\s*-?[0-9]+\s*$/.test(value.value))
+    if (value.kind === 'string' && value.value.length <= 32 && /^\s*-?[0-9]+\s*$/.test(value.value))
       return { kind: 'number', value: Number(value.value.trim()) }
     return unresolved('not an integer')
   }
@@ -1621,6 +1783,8 @@ class GradleReader {
       }
       if (text.length > MAX_VALUE_LENGTH) return unresolved('string is too long')
     }
+    // 새로 이은 글자(쓰는 쪽이 글자를 훑는다)
+    this.spend(text.length, ctx.file, expr.line)
     if (path)
       return { kind: 'path', base: path.base, rest: path.dir ? text.replace(/^[\\/]+/, '') : text }
     return { kind: 'string', value: text }
@@ -1642,22 +1806,24 @@ class GradleReader {
       return { kind: 'number', value: left.value + right.value }
     if (left.kind === 'string' && isScalar(right)) {
       const value = left.value + scalarText(right)
-      return value.length > MAX_VALUE_LENGTH
-        ? unresolved('string is too long')
-        : { kind: 'string', value }
+      if (value.length > MAX_VALUE_LENGTH) return unresolved('string is too long')
+      this.spend(value.length, ctx.file, expr.line)
+      return { kind: 'string', value }
     }
-    if (left.kind === 'path' && right.kind === 'string')
-      return {
-        kind: 'path',
-        base: left.base,
-        rest: left.rest === '' ? right.value.replace(/^[\\/]+/, '') : left.rest + right.value
-      }
+    if (left.kind === 'path' && right.kind === 'string') {
+      const rest = left.rest === '' ? right.value.replace(/^[\\/]+/, '') : left.rest + right.value
+      if (rest.length > MAX_VALUE_LENGTH) return unresolved('path is too long')
+      this.spend(rest.length, ctx.file, expr.line)
+      return { kind: 'path', base: left.base, rest }
+    }
     if (
       left.kind === 'list' &&
       right.kind === 'list' &&
       left.items.length + right.items.length <= MAX_COLLECTION
-    )
+    ) {
+      this.spend(left.items.length + right.items.length, ctx.file, expr.line)
       return { kind: 'list', items: [...left.items, ...right.items] }
+    }
     return unresolved(`cannot evaluate '${this.snippet(ctx, expr)}'`)
   }
 
@@ -1718,14 +1884,14 @@ class GradleReader {
         const key = arg(0)
         if (key.kind === 'string')
           return (
-            this.projects[owner.project].ext.get(key.value) ??
+            this.extValue(owner.project, key.value) ??
             unresolved(`extra property '${key.value}' is not set`, { missing: true })
           )
       }
       if (owner.kind === 'ext' && method === 'has' && args.length === 1) {
         const key = arg(0)
         if (key.kind === 'string')
-          return { kind: 'boolean', value: this.projects[owner.project].ext.has(key.value) }
+          return { kind: 'boolean', value: this.extValue(owner.project, key.value) !== null }
       }
       if (owner.kind === 'providers' && method === 'gradleProperty' && args.length === 1) {
         // Gradle 속성(gradle.properties)만 본다(ext는 아니다)
@@ -1773,6 +1939,8 @@ class GradleReader {
       return unresolved(`libs.versions.${accessor}: ${entry.problem ?? 'no version'}`, {
         catalog: true
       })
+    if (entry.version.length > MAX_VALUE_LENGTH)
+      return unresolved(`libs.versions.${accessor} is too long`, { catalog: true })
     return { kind: 'string', value: entry.version }
   }
 }

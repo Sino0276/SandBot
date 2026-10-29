@@ -119,6 +119,20 @@ describe('parseGradleProperties', () => {
     })
     expect(props.get('d')?.line).toBe(6)
   })
+
+  it('줄 잇기는 줄마다 끝의 역슬래시 개수로 정한다(Properties.load와 같다)', () => {
+    const props = parseGradleProperties(
+      // a: 짝수(\\)는 잇지 않는다, b: 홀수 셋은 잇는다, c: 역슬래시만 있는 줄도 홀수면 다시 잇는다
+      'a=x\\\\\nb=x\\\\\\\n  y\nc=x\\\n\\\nz\nd=1'
+    )
+    expect(Object.fromEntries([...props].map(([k, v]) => [k, v.value]))).toEqual({
+      a: 'x\\',
+      b: 'x\\y',
+      c: 'xz',
+      d: '1'
+    })
+    expect(props.get('d')?.line).toBe(7)
+  })
 })
 
 describe('parseVersionCatalog', () => {

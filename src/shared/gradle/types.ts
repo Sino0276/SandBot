@@ -15,10 +15,11 @@ export type GradleDependency = {
   // 선언한 버전 글자 그대로(동적 버전 '+'·'latest.release'·범위·SNAPSHOT도 그대로 두고 해석기가 거부한다)
   version: string
   classifier: string | null
-  // 'g:a:v@aar'의 확장자(Gradle은 이때 전이 의존성을 끄지 않지만 해석기가 정한다)
+  // 'g:a:v@aar'·ext: 'aar'의 확장자
   extension: string | null
   excludes: GradleExclude[]
-  // { transitive = false }
+  // 전이 의존성을 따를지. Gradle처럼 확장자가 있으면 false이고(ModuleFactoryHelper.addExplicitArtifactsIfDefined),
+  // 클로저의 transitive = …가 있으면 그 값이다.
   transitive: boolean
   at: GradleLocation
 }
