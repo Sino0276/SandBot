@@ -114,7 +114,9 @@ describe('컴파일 진단의 라이브러리 안내', () => {
     for (const name of [
       'com.pedropathing.geometry',
       'com.pedropathing.follower',
-      'com.pedropathing.ftc.localization.constants'
+      'com.pedropathing.ftc.localization.constants',
+      // 최상위 패키지 자신(core 2.1.2의 VectorCalculator·ErrorCalculator)
+      'com.pedropathing'
     ])
       expect(pedro2(missing(name)), name).toEqual({
         kind: 'libraryNotLoaded',
@@ -122,6 +124,8 @@ describe('컴파일 진단의 라이브러리 안내', () => {
         reason: 'pedro2'
       })
     expect(pedro2(missing('com.pedropathing.config'))).toBeNull()
+    // 표에 없는 하위 패키지는 최상위 패키지의 것이 아니다
+    expect(pedro2(missing('com.pedropathing.example'))).toBeNull()
     // Pedro 1.x(com.pedropathing:pedro)
     const pedro1 = diagnosticHints(
       [entry('com.pedropathing:pedro:1.0.9', 'unsupported', 'notSupported')],
@@ -134,6 +138,83 @@ describe('컴파일 진단의 라이브러리 안내', () => {
       reason: 'notSupported'
     })
     expect(pedro1(missing('com.pedropathing.geometry'))).toBeNull()
+  })
+
+  it('주 버전을 알 수 없는 core(동적 버전)는 어느 판의 패키지든 그 선언을 댄다', () => {
+    for (const version of ['+', 'latest.release', '[3.0,4.0)']) {
+      const coordinate = `com.pedropathing:core:${version}`
+      const hint = diagnosticHints(
+        [entry(coordinate, 'unsupported', 'dynamicVersion')],
+        new Set(),
+        []
+      )
+      for (const name of [
+        'com.pedropathing.follower',
+        'com.pedropathing.geometry',
+        'com.pedropathing.controllers',
+        'com.pedropathing'
+      ])
+        expect(hint(missing(name)), `${version} ${name}`).toEqual({
+          kind: 'libraryNotLoaded',
+          coordinate,
+          reason: 'dynamicVersion'
+        })
+    }
+    // 주 버전을 알면 그 판의 패키지만
+    const three = diagnosticHints(
+      [entry('com.pedropathing:core:3.+', 'unsupported', 'dynamicVersion')],
+      new Set(),
+      []
+    )
+    expect(three(missing('com.pedropathing.follower'))).toEqual({
+      kind: 'libraryNotLoaded',
+      coordinate: 'com.pedropathing:core:3.+',
+      reason: 'dynamicVersion'
+    })
+    expect(three(missing('com.pedropathing.geometry'))).toBeNull()
+  })
+
+  it('FTC Dashboard 패키지는 Dashboard를 끌어오는 Road Runner 모듈(ftc·actions)만 댄다', () => {
+    // core만 선언했으면(0.5.x·1.x 모두 Dashboard를 끌어오지 않는다) Android Studio에서도 없다
+    for (const core of [
+      entry('com.acmerobotics.roadrunner:core:1.0.1', 'used', 'none'),
+      entry('com.acmerobotics.roadrunner:core:0.5.6', 'unsupported', 'notSupported')
+    ])
+      expect(
+        diagnosticHints(
+          [core],
+          new Set(['com.acmerobotics.roadrunner']),
+          []
+        )(missing('com.acmerobotics.dashboard.config')),
+        core.version
+      ).toEqual({ kind: 'undeclared', packageName: 'com.acmerobotics.dashboard.config' })
+    // ftc를 받지 못했다(그래서 Dashboard에 닿지 못함)
+    expect(
+      diagnosticHints(
+        [entry('com.acmerobotics.roadrunner:ftc:0.1.25', 'failed', 'offline')],
+        new Set(),
+        []
+      )(missing('com.acmerobotics.dashboard.config'))
+    ).toEqual({
+      kind: 'libraryNotLoaded',
+      coordinate: 'com.acmerobotics.roadrunner:ftc:0.1.25',
+      reason: 'offline'
+    })
+    // actions를 동적 버전으로 선언했다
+    expect(
+      diagnosticHints(
+        [
+          entry('com.acmerobotics.roadrunner:core:1.0.1', 'used', 'none'),
+          entry('com.acmerobotics.roadrunner:actions:1.+', 'unsupported', 'dynamicVersion')
+        ],
+        new Set(['com.acmerobotics.roadrunner']),
+        []
+      )(missing('com.acmerobotics.dashboard.telemetry'))
+    ).toEqual({
+      kind: 'libraryNotLoaded',
+      coordinate: 'com.acmerobotics.roadrunner:actions:1.+',
+      reason: 'dynamicVersion'
+    })
   })
 
   it('전이 의존성만이면 선언했다고 하지 않고 끌어온 쪽을 댄다', () => {

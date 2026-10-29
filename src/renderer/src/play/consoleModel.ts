@@ -1,6 +1,11 @@
 import type { TFunction } from 'i18next'
 import type { GradleDiagnostic } from '../../../shared/gradle'
-import { coordinateOf, type LibraryEntry, type LibraryReason } from '../../../shared/libraries'
+import {
+  coordinateOf,
+  DASHBOARD_GROUPS,
+  type LibraryEntry,
+  type LibraryReason
+} from '../../../shared/libraries'
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
 import type {
   DiagnosticHint,
@@ -212,12 +217,6 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       })
   }
 }
-
-// FTC Dashboard와 Sloth용 대체판(메인 policy.ts의 DASHBOARD_GROUPS)
-const DASHBOARD_GROUPS: ReadonlySet<string> = new Set([
-  'com.acmerobotics.dashboard',
-  'com.acmerobotics.slothboard'
-])
 
 // 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지
 // 지원하지 않는다는 안내를 따로 보인다.

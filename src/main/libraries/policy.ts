@@ -1,4 +1,4 @@
-import type { LibraryReason } from '../../shared/libraries'
+import { DASHBOARD_GROUPS, type LibraryReason } from '../../shared/libraries'
 import { majorVersion } from './version'
 
 // 라이브러리 정책 표(한곳). 팀 Gradle의 좌표마다 받을지, 가짜 FTC SDK가 이미 제공하는지, 지원하지 않는지를 정한다.
@@ -40,12 +40,6 @@ const PROVIDED_GROUPS: ReadonlySet<string> = new Set([
   'org.firstinspires.ftc',
   'com.jakewharton.threetenabp',
   'org.openftc'
-])
-
-// FTC Dashboard와 Sloth용 대체판(com.acmerobotics.dashboard 패키지를 그대로 담는다)
-const DASHBOARD_GROUPS: ReadonlySet<string> = new Set([
-  'com.acmerobotics.dashboard',
-  'com.acmerobotics.slothboard'
 ])
 
 function inGroup(group: string, prefix: string): boolean {
@@ -105,24 +99,30 @@ export function classifyModule(group: string, artifact: string, version: string)
 }
 
 // ---- 진단 안내: 패키지 → 라이브러리 ----
-// 팀 코드의 'package X does not exist'에서 X가 어느 라이브러리 것인지(가장 긴 접두가 이긴다).
+// 팀 코드의 'package X does not exist'에서 X가 어느 라이브러리 것인지(X 자신만 맞는 exact 항목, 아니면 가장 긴 접두가 이긴다).
 // - owns: 그 패키지를 Android Studio의 컴파일 클래스패스에 두는 좌표. 모듈 자신의 패키지이거나 compile 범위 의존성으로
-//   끌어오는 것이다(Pedro ftc 2.x → core 2.x, revhub 3.x → core 3.x). 버전마다 패키지가 다르면 버전도 본다(실제 jar로 확인).
-// - library: 같은 라이브러리의 좌표(다른 버전·모듈, 그 패키지를 끌어오는 모듈 포함). 이것이 있는데 owns인 좌표가 없으면
-//   다른 버전의 API(Pedro 3.x 프로젝트의 2.x 패키지 등)라 좌표를 대지 않는다. null이면 다른 라이브러리를 거쳐서만 오는
-//   패키지(kotlin·ejml)라 선언했는지 말하지 않는다.
+//   끌어오는 것이다(Pedro ftc 2.x → core 2.x, revhub 3.x → core 3.x, Road Runner ftc·actions → FTC Dashboard). 버전마다
+//   패키지가 다르면 버전도 본다(실제 jar·POM으로 확인).
+// - library: 같은 라이브러리의 좌표(다른 버전·모듈). 이것이 있는데 owns인 좌표가 없으면 다른 버전의 API(Pedro 3.x
+//   프로젝트의 2.x 패키지 등)라 좌표를 대지 않는다. null이면 다른 라이브러리를 거쳐서만 오는 패키지(kotlin·ejml)라
+//   선언했는지 말하지 않는다.
 
 export type KnownPackage = {
   prefix: string
+  // prefix 패키지 자신에만 맞는다(하위 패키지는 아님)
+  exact?: true
   owns: (group: string, artifact: string, version: string) => boolean
   library: ((group: string, artifact: string) => boolean) | null
 }
 
 type Owns = KnownPackage['owns']
 
-function below(version: string, major: number): boolean {
-  const value = majorVersion(version)
-  return value !== null && value < major
+// core는 주 버전으로 판을 나눈다(2.x·3.x). 주 버전을 알 수 없는 버전('+'·latest.release·범위 등 동적 버전)은 어느 판일 수도
+// 있어 둘 다로 본다.
+function pedroCoreLine(version: string, line: 2 | 3): boolean {
+  const major = majorVersion(version)
+  if (major === null) return true
+  return line === 3 ? major >= 3 : major < 3
 }
 
 const PEDRO = 'com.pedropathing'
@@ -136,8 +136,8 @@ const pedroLibrary = (g: string, a: string): boolean => g === PEDRO && !PEDRO_TO
 // 본체의 판: 1.x는 pedro, 2.x는 core 2.x와 그것을 compile 범위로 끌어오는 ftc 2.x, 3.x는 core 3.x와 revhub 3.x
 const PEDRO_LINES: Record<1 | 2 | 3, Owns> = {
   1: (g, a) => g === PEDRO && a === 'pedro',
-  2: (g, a, v) => g === PEDRO && (a === 'ftc' || (a === 'core' && below(v, 3))),
-  3: (g, a, v) => g === PEDRO && (a === 'revhub' || (a === 'core' && atLeast(v, 3)))
+  2: (g, a, v) => g === PEDRO && (a === 'ftc' || (a === 'core' && pedroCoreLine(v, 2))),
+  3: (g, a, v) => g === PEDRO && (a === 'revhub' || (a === 'core' && pedroCoreLine(v, 3)))
 }
 // 본체 패키지와 그것이 있는 판(pedro 1.0.9, core 2.1.2, core 3.0.2 jar로 확인)
 const PEDRO_PACKAGES: readonly (readonly [string, readonly (1 | 2 | 3)[]])[] = [
@@ -162,6 +162,10 @@ const bylazar = (g: string): boolean => inGroup(g, 'com.bylazar')
 const FTCLIB = 'org.ftclib.ftclib'
 const ftcLibVision = (g: string, a: string): boolean => g === FTCLIB && a === 'vision'
 const ROAD_RUNNER = 'com.acmerobotics.roadrunner'
+// FTC Dashboard를 compile 범위로 끌어오는 Road Runner 모듈(ftc 0.1.x → dashboard, actions 1.x → dashboard:core).
+// core(0.5.x·1.x)는 끌어오지 않는다(POM으로 확인).
+const roadRunnerWithDashboard = (g: string, a: string): boolean =>
+  g === ROAD_RUNNER && (a === 'ftc' || a === 'actions')
 const frozenMilk = (g: string): boolean => inGroup(g, 'dev.frozenmilk')
 
 export const KNOWN_PACKAGES: readonly KnownPackage[] = [
@@ -179,7 +183,9 @@ export const KNOWN_PACKAGES: readonly KnownPackage[] = [
     owns: (g, a, v) => lines.some((line) => PEDRO_LINES[line](g, a, v)),
     library: pedroLibrary
   })),
-  // 그 밖: 어느 좌표의 것인지 모른다
+  // 최상위 패키지 자신의 클래스는 2.x core에만 있다(VectorCalculator·ErrorCalculator, 1.0.9·3.0.2에는 없음)
+  { prefix: PEDRO, exact: true, owns: PEDRO_LINES[2], library: pedroLibrary },
+  // 그 밖의 하위 패키지: 어느 좌표의 것인지 모른다
   { prefix: PEDRO, owns: () => false, library: pedroLibrary },
   { prefix: 'com.bylazar', owns: bylazar, library: bylazar },
   { prefix: 'com.arcrobotics.ftclib.vision', owns: ftcLibVision, library: ftcLibVision },
@@ -188,11 +194,10 @@ export const KNOWN_PACKAGES: readonly KnownPackage[] = [
     owns: (g, a) => g === FTCLIB && a !== 'vision',
     library: (g) => g === FTCLIB
   },
-  // Road Runner ftc·actions가 Dashboard를 compile 범위로 끌어온다
   {
     prefix: 'com.acmerobotics.dashboard',
-    owns: (g) => DASHBOARD_GROUPS.has(g),
-    library: (g) => DASHBOARD_GROUPS.has(g) || g === ROAD_RUNNER
+    owns: (g, a) => DASHBOARD_GROUPS.has(g) || roadRunnerWithDashboard(g, a),
+    library: (g) => DASHBOARD_GROUPS.has(g)
   },
   {
     prefix: `${ROAD_RUNNER}.ftc`,
@@ -207,12 +212,17 @@ export const KNOWN_PACKAGES: readonly KnownPackage[] = [
 
 export function knownPackageOf(packageName: string): KnownPackage | null {
   let best: KnownPackage | null = null
-  for (const known of KNOWN_PACKAGES)
+  for (const known of KNOWN_PACKAGES) {
+    if (known.exact) {
+      if (packageName === known.prefix) return known
+      continue
+    }
     if (
       (packageName === known.prefix || packageName.startsWith(`${known.prefix}.`)) &&
       (best === null || known.prefix.length > best.prefix.length)
     )
       best = known
+  }
   return best
 }
 

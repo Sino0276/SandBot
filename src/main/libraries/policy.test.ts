@@ -85,6 +85,9 @@ describe('라이브러리 정책', () => {
     expect(knownPackageOf('com.pedropathing.follower')?.prefix).toBe('com.pedropathing.follower')
     expect(knownPackageOf('com.pedropathing.paths.curves')?.prefix).toBe('com.pedropathing.paths')
     expect(knownPackageOf('com.pedropathing.example')?.prefix).toBe('com.pedropathing')
+    expect(knownPackageOf('com.pedropathing.example')?.exact).toBeUndefined()
+    // 최상위 패키지 자신은 그 패키지만 맞는 항목
+    expect(knownPackageOf('com.pedropathing')?.exact).toBe(true)
     expect(knownPackageOf('com.pedropathing.ivy.pedro')?.prefix).toBe('com.pedropathing.ivy')
     expect(knownPackageOf('com.arcrobotics.ftclib.vision')?.prefix).toBe(
       'com.arcrobotics.ftclib.vision'
@@ -119,10 +122,29 @@ describe('라이브러리 정책', () => {
       true
     )
     expect(owns('com.pedropathing.geometry', 'com.pedropathing:pedro:1.0.9')).toBe(false)
+    // 최상위 패키지 자신의 클래스는 core 2.x에만(ftc 2.x가 끌어옴)
+    expect(owns('com.pedropathing', 'com.pedropathing:core:2.1.2')).toBe(true)
+    expect(owns('com.pedropathing', 'com.pedropathing:ftc:2.1.2')).toBe(true)
+    expect(owns('com.pedropathing', 'com.pedropathing:core:3.0.2')).toBe(false)
+    expect(owns('com.pedropathing', 'com.pedropathing:revhub:3.0.2')).toBe(false)
+    expect(owns('com.pedropathing', 'com.pedropathing:pedro:1.0.9')).toBe(false)
+    // 주 버전을 알 수 없는 core는 두 판 모두
+    for (const version of ['+', 'latest.release', '[3.0,4.0)']) {
+      expect(owns('com.pedropathing.geometry', `com.pedropathing:core:${version}`)).toBe(true)
+      expect(owns('com.pedropathing.controllers', `com.pedropathing:core:${version}`)).toBe(true)
+    }
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:core:3.+')).toBe(false)
     expect(
       owns('com.acmerobotics.dashboard.config', 'com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0')
     ).toBe(true)
     expect(owns('com.bylazar.telemetry', 'com.bylazar.sloth:fullpanels:0.3.2+1.0.13')).toBe(true)
+    // Road Runner ftc·actions는 Dashboard를 compile 범위로 끌어오고 core는 끌어오지 않는다(POM)
+    expect(owns('com.acmerobotics.dashboard', 'com.acmerobotics.roadrunner:ftc:0.1.25')).toBe(true)
+    expect(
+      owns('com.acmerobotics.dashboard.telemetry', 'com.acmerobotics.roadrunner:actions:1.0.1')
+    ).toBe(true)
+    expect(owns('com.acmerobotics.dashboard', 'com.acmerobotics.roadrunner:core:1.0.1')).toBe(false)
+    expect(owns('com.acmerobotics.dashboard', 'com.acmerobotics.roadrunner:core:0.5.6')).toBe(false)
     expect(owns('com.acmerobotics.roadrunner.ftc', 'com.acmerobotics.roadrunner:core:1.0.1')).toBe(
       false
     )
