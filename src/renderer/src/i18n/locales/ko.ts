@@ -875,7 +875,7 @@ const ko = {
       missingFile: 'apply from 대상 파일이 없습니다',
       tooLarge: '파일이 너무 커서 읽지 않았습니다',
       tooDeep: '중첩이나 apply from이 너무 깊거나 파일이 너무 복잡해 더 읽지 않았습니다',
-      tooMany: '개수 한도를 넘어 한도 밖의 것은 읽지 않았습니다',
+      tooMany: '개수 한도를 넘어 넘은 것(목록이 넘은 선언은 그 선언 전체)을 읽지 않았습니다',
       tooMuchWork:
         'Gradle 파일을 읽는 일이 너무 많아 여기서 읽기를 멈췄습니다. 그 앞에서 읽은 것은 씁니다',
       localDependency:

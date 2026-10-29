@@ -338,6 +338,19 @@ describe('일을 부풀리는 입력', () => {
     }
   })
 
+  it('목록 항목마다 같은 진단이 부모 식에 붙는다(예전에는 항목마다 부모의 글자 조각을 다시 만들어 0.6초)', async () => {
+    for (const separator of [' , ', ', ']) {
+      const list = `[${Array.from({ length: 1000 }, () => 'x').join(separator)}]`
+      const project = await timed(
+        applied(
+          `dependencies {\n${fill(` implementation(${list})\n`, MAX_GRADLE_FILE_BYTES - 84)}}\n`
+        ),
+        500
+      )
+      expect(project.diagnostics.at(-1)?.code).toBe('tooMuchWork')
+    }
+  })
+
   it('settings의 include에 같은 목록을 여러 번 넣는다(예전에는 몇 초 뒤 Invalid array length)', async () => {
     const list = `def l = [${Array.from({ length: 1000 }, (_, i) => `':m${i}'`).join(', ')}]\n`
     // 64 KB면 예전에는 2천만 개를 넣었다

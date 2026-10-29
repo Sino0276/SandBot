@@ -130,6 +130,7 @@ describe('의존성 보고 → Console', () => {
       ],
       gradle: [],
       compileSdk: 30,
+      compileSdkMinor: null,
       platform: null
     })
     expect(lines.map((l) => `${l.level} ${l.body.type}`)).toEqual([

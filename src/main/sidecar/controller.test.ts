@@ -533,17 +533,36 @@ describe('PlayController + 가짜 사이드카', () => {
       const controller = make({
         readGradle: async () => {
           await hold('gradle')
-          return { dependencies: [], repositories: [], compileSdk: 30, diagnostics: [], files: [] }
+          return {
+            dependencies: [],
+            repositories: [],
+            compileSdk: 30,
+            compileSdkMinor: null,
+            diagnostics: [],
+            files: []
+          }
         },
         resolvePlatform: async () => {
           await hold('platform')
-          return { ok: true, bootClasspath: ['/platform/android-30.jar'], api: 30, guessed: false }
+          return {
+            ok: true,
+            bootClasspath: ['/platform/android-30.jar'],
+            api: 30,
+            minor: null,
+            guessed: false
+          }
         },
         resolveLibraries: async () => {
           librariesCalled++
           return {
             ok: true,
-            report: { entries: [], gradle: [], compileSdk: 30, platform: null },
+            report: {
+              entries: [],
+              gradle: [],
+              compileSdk: 30,
+              compileSdkMinor: null,
+              platform: null
+            },
             compileClasspath: [],
             libraryClasspath: [],
             jarCoordinates: {},
@@ -591,7 +610,13 @@ describe('PlayController + 가짜 사이드카', () => {
         setTimeout(() => request.progress({ phase: 'downloading', done: 2, total: 3, bytes: 20 }))
         return {
           ok: true,
-          report: { entries: [], gradle: [], compileSdk: null, platform: null },
+          report: {
+            entries: [],
+            gradle: [],
+            compileSdk: null,
+            compileSdkMinor: null,
+            platform: null
+          },
           compileClasspath: [],
           libraryClasspath: [],
           jarCoordinates: {},

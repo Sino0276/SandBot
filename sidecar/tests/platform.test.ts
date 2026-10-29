@@ -5,7 +5,7 @@
 // 거른 jar, FtcRobotController 샘플 포함).
 // JDK가 없으면 모두 건너뛴다.
 import { spawn } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
@@ -293,7 +293,9 @@ const androidSdk = process.env.SANDBOT_ANDROID_SDK
 // 메인이 INIT 때 고르는 플랫폼(androidSdk.ts의 resolveAndroidPlatform)을 platformJar.ts로 거른 jar. SANDBOT_ANDROID_API가 N이면
 // compileSdk N(android-N 또는 android-N.0, Android Gradle 플러그인이 찾는 이름 먼저), N.M이면 부 버전 M(minorApiLevel,
 // android-N.M), 없으면 부 버전까지 가장 높은 것. api는 그 플랫폼의 주 버전이다.
-async function realPlatform(sdk: string): Promise<{ jar: string; api: number }> {
+async function realPlatform(
+  sdk: string
+): Promise<{ jar: string; api: number; androidJar: string }> {
   const wanted = process.env.SANDBOT_ANDROID_API ?? ''
   const match = /^([1-9]\d*)(?:\.(0|[1-9]\d*))?$/.exec(wanted)
   if (wanted !== '' && !match) throw new Error(`SANDBOT_ANDROID_API is not N or N.M: ${wanted}`)
@@ -312,7 +314,17 @@ async function realPlatform(sdk: string): Promise<{ jar: string; api: number }> 
     }
   )
   if (!result.ok) throw new Error(`no platform in ${sdk}: ${result.code} ${result.detail}`)
-  return { jar: result.bootClasspath[0], api: result.api ?? 0 }
+  // 고른 플랫폼의 원래 android.jar(거른 jar에는 android.*가 없다): 부 버전이 있으면 android-N.M, 없으면 android-N 또는 android-N.0
+  const api = result.api ?? 0
+  const folders =
+    result.minor !== null && result.minor > 0
+      ? [`android-${api}.${result.minor}`]
+      : [`android-${api}`, `android-${api}.0`]
+  const androidJar = folders
+    .map((folder) => join(sdk, 'platforms', folder, 'android.jar'))
+    .find((jar) => existsSync(jar))
+  if (!androidJar) throw new Error(`no android.jar for API ${api} in ${sdk}`)
+  return { jar: result.bootClasspath[0], api, androidJar }
 }
 
 // 샘플을 패키지 폴더 구조로 옮기고, 모든 샘플 클래스를 참조하는 OpMode 하나를 만든다(-implicit:class로 한 번에 컴파일)
@@ -424,7 +436,7 @@ describe.skipIf(build === null || !androidSdk)(
       '가짜 SDK의 Build.VERSION_CODES는 그 android.jar의 상수와 값이 같고, 더 있는 것은 그보다 새 API 번호다',
       async () => {
         const sdk = androidSdk as string
-        const level = realPlatformLevel(sdk)
+        const { androidJar, api: level } = await realPlatform(sdk)
         const javap = join(b.jdkHome, 'bin', process.platform === 'win32' ? 'javap.exe' : 'javap')
         const constants = async (jar: string): Promise<Map<string, number>> => {
           const result = await runProcess(javap, [
@@ -441,7 +453,7 @@ describe.skipIf(build === null || !androidSdk)(
             ])
           )
         }
-        const real = await constants(join(sdk, 'platforms', `android-${level}`, 'android.jar'))
+        const real = await constants(androidJar)
         const fake = await constants(b.sdkJar)
         expect(real.size).toBeGreaterThan(16)
         for (const [name, value] of real) expect(fake.get(name), name).toBe(value)

@@ -470,7 +470,7 @@ describe('라이브러리 진행·보고·링크 검사', () => {
     const report: PlayEvent = {
       type: 'libraryReport',
       runId: 'r1',
-      report: { entries: [], gradle: [], compileSdk: null, platform: null }
+      report: { entries: [], gradle: [], compileSdk: null, compileSdkMinor: null, platform: null }
     }
     // 보고 뒤 hello 전(아직 preparing)
     const late = apply(data(), progress, report, { ...progress, done: 4, total: 4 })

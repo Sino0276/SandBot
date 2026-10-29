@@ -371,6 +371,7 @@ class GradleReader {
   private reads = 0
   private applied = 0
   private work = 0
+  private lastSnippet: { text: string; start: number; end: number; value: string } | null = null
   private readonly cache = new Map<string, FileRead>()
   // 읽은 스크립트의 구문 트리(같은 파일을 다시 적용하면 다시 나누지 않는다. 트리는 읽기만 한다)
   private readonly scripts = new Map<string, ParsedScript>()
@@ -579,12 +580,20 @@ class GradleReader {
 
   // ---- 진단 ----
 
-  private snippet(ctx: Ctx, node: { start: number; end: number }): string {
+  private snippet(ctx: Ctx, node: { start: number; end: number; line?: number }): string {
     // 진단이 한도까지 찼으면 조각은 어디에도 보이지 않는다(진단과 풀지 못한 값의 이유에만 쓴다)
     if (this.diagnostics.length >= MAX_DIAGNOSTICS) return ''
+    // 같은 식에 진단이 여럿 붙으면(목록 항목마다 부모 식) 조각은 한 번만 만든다
+    const last = this.lastSnippet
+    if (last && last.text === ctx.text && last.start === node.start && last.end === node.end)
+      return last.value
     const end = Math.min(node.end, node.start + MAX_SNIPPET_SCAN)
+    // 훑는 글자만큼 일로 센다(공백 바꾸기가 글자마다 돈다)
+    this.spend(end - node.start, ctx.file, node.line ?? 1)
     const text = ctx.text.slice(node.start, end).replace(/\s+/g, ' ').trim()
-    return text.length > 80 || end < node.end ? `${text.slice(0, 77)}...` : text
+    const value = text.length > 80 || end < node.end ? `${text.slice(0, 77)}...` : text
+    this.lastSnippet = { text: ctx.text, start: node.start, end: node.end, value }
+    return value
   }
 
   private diag(code: GradleDiagnosticCode, at: GradleLocation, detail: string): void {

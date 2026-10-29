@@ -107,7 +107,13 @@ describe('라이브러리 받기 진행 알림', () => {
     apply({
       type: 'libraryReport',
       runId: 'r1',
-      report: { entries: [], gradle: [], compileSdk: 30, platform: { api: 30, guessed: false } }
+      report: {
+        entries: [],
+        gradle: [],
+        compileSdk: 30,
+        compileSdkMinor: null,
+        platform: { api: 30, minor: null, guessed: false }
+      }
     })
     expect(progressNotices()).toHaveLength(0)
     apply(progress(3))
