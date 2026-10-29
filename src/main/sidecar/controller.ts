@@ -24,7 +24,7 @@ import { isValidSpeed, SidecarSession, type HostClock, type SessionTimeouts } fr
 import type { WorldFactory } from './world'
 
 // 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성 → 사이드카 → JDK → 바쁨) 뒤
-// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(받는 동안 STOP으로 취소),
+// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(그동안 STOP으로 취소),
 // JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만 받는다. 아직 끝나지 않은 실행이
 // 있으면 busy. 끝났지만(finished) 프로세스가 남아 있으면 새 실행 전에 정리한다(shutdown → 잠깐 기다림 → kill).
 
@@ -152,7 +152,7 @@ function errorText(error: unknown): string {
 export class PlayController {
   private active: Active | null = null
   private starting = false
-  // 라이브러리를 받는 중인 INIT(그 창의 STOP이 취소한다)
+  // Gradle 읽기부터 라이브러리를 다 받을 때까지의 INIT(그 창의 STOP·창 닫기가 취소한다)
   private preparing: { owner: PlayOwner; abort: AbortController } | null = null
   // 창마다 disposeOwner를 부른 횟수. 준비(await) 중에 그 창이 닫히거나 새로고침되면 띄운 실행을 바로 정리한다
   // (아니면 받을 창이 없는 JVM이 남아 다른 실행을 busy로 막는다).
@@ -181,9 +181,15 @@ export class PlayController {
     if (this.starting || (this.active && !this.active.session.finished))
       return { ok: false, code: 'busy', detail: '' }
     this.starting = true
+    // 여기서부터 라이브러리를 다 받을 때까지 그 창의 STOP·창 닫기가 INIT을 취소한다(Gradle 읽기·플랫폼 jar는 끝난 뒤
+    // 다음 단계로 가지 않는다). 첫 진행 알림 전에 누른 STOP도 받기를 시작하지 않게 한다.
+    const abort = new AbortController()
+    this.preparing = { owner, abort }
+    const cancelled: PlayInitResult = { ok: false, code: 'cancelled', detail: '' }
     try {
       const gradle = await (this.deps.readGradle?.(prepared.projectRoot) ??
         Promise.resolve(EMPTY_GRADLE))
+      if (abort.signal.aborted) return cancelled
       const platform = await (this.deps.resolvePlatform?.(
         prepared.projectRoot,
         gradle.compileSdk,
@@ -196,22 +202,26 @@ export class PlayController {
           minor: null,
           guessed: false
         }))
+      if (abort.signal.aborted) return cancelled
       if (isFailure(platform)) return platform
-      const abort = new AbortController()
-      this.preparing = { owner, abort }
+      // 해석이 끝난 뒤에 오는 진행(이기지 못한 버전의 미리 받기가 늦게 끝남)은 보내지 않는다. 보고 뒤의 진행은
+      // 실행 내내 남는 진행 알림이 되고, 그 [취소]는 도는 OpMode를 멈춘다.
+      let settled = false
       let libraries: LibraryResolution | Failure
       try {
         libraries = await (this.deps.resolveLibraries ?? noLibraries)({
           projectRoot: prepared.projectRoot,
           gradle,
           signal: abort.signal,
-          progress: (progress) =>
-            owner.send({ type: 'libraryProgress', runId: request.runId, ...progress })
+          progress: (progress) => {
+            if (!settled) owner.send({ type: 'libraryProgress', runId: request.runId, ...progress })
+          }
         })
       } finally {
+        settled = true
         this.preparing = null
       }
-      if (abort.signal.aborted) return { ok: false, code: 'cancelled', detail: '' }
+      if (abort.signal.aborted) return cancelled
       if (isFailure(libraries)) return libraries
       owner.send({
         type: 'libraryReport',
@@ -278,10 +288,13 @@ export class PlayController {
       return prepared.configMissing ? { ok: true, configMissing: true } : { ok: true }
     } finally {
       this.starting = false
+      // Gradle 읽기·플랫폼 jar에서 끝났거나 던졌을 때(starting이라 이 INIT의 것이다)
+      this.preparing = null
     }
   }
 
-  // 실행이 없거나 다른 창의 명령이면 무시한다. 라이브러리를 받는 중이면 그 창의 STOP이 INIT을 취소한다.
+  // 실행이 없거나 다른 창의 명령이면 무시한다. INIT을 준비하는 중(Gradle 읽기~라이브러리 받기)이면 그 창의 STOP이
+  // INIT을 취소한다.
   command(input: unknown, owner: PlayOwner): void {
     const command = parseCommand(input)
     if (!command) return

@@ -132,6 +132,7 @@ const INIT_FAILED_NOTICES: Record<
   failed: { level: 'error', key: 'playFailed' },
   noAndroidSdk: { level: 'error', key: 'playNoAndroidSdk' },
   noAndroidPlatform: { level: 'error', key: 'playNoAndroidPlatform' },
+  // 받기 진행 알림을 보인 뒤의 취소만. 그 전(Gradle 읽기·플랫폼 jar, 캐시만 쓴 해석)의 취소는 STOP처럼 끝난다(runInit)
   cancelled: { level: 'warning', key: 'playCancelled' }
 }
 
@@ -245,6 +246,12 @@ async function runInit(): Promise<void> {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
   if (!result.ok) {
+    // 받기 진행(네트워크에 닿을 때부터 온다)이 오기 전에 STOP이 멈춘 INIT은 받던 것이 없다: 받기 취소로 알리지 않고 JVM을
+    // 띄운 뒤의 STOP처럼 끝낸다(라이브러리가 없는 프로젝트의 빠른 STOP·두 번 누름·다른 프로젝트 열기)
+    if (result.code === 'cancelled' && !run.libraryProgress) {
+      endStoppedBeforeLaunch(runId, run.status.tNanos)
+      return
+    }
     const notice = INIT_FAILED_NOTICES[result.code]
     failRun(runId, notice.level, notice.key, result.detail)
     // 그사이 OpMode 파일을 옮기거나 지웠을 수 있다
@@ -303,6 +310,19 @@ function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, deta
   replacePlayNotice(level, key, { detail }, failedNoticeAction(key))
 }
 
+// JVM을 띄우기 전에 STOP으로 멈춘 실행은 메인이 보내는 끝(finished stopped)과 같은 길로 끝낸다: 알림 없이 Console에 정보
+// 줄, 그사이 다른 프로젝트를 열었으면 실행을 지운다(handlePlayEvent). OpMode를 돌리지 않았으므로 preselectTeleOp은 없다.
+function endStoppedBeforeLaunch(runId: string, tNanos: number): void {
+  handlePlayEvent({
+    type: 'finished',
+    runId,
+    tNanos,
+    reason: 'stopped',
+    detail: '',
+    preselectTeleOp: ''
+  })
+}
+
 export function startPlay(): void {
   const { run } = usePlayStore.getState()
   if (!run || run.phase !== 'init' || !run.accepted || run.startRequested || run.stopRequested)
@@ -314,13 +334,15 @@ export function startPlay(): void {
   focusSceneView()
 }
 
-// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다. 라이브러리를 받는 중이면(응답 전) 바로 보낸다:
-// 메인이 받기를 멈추고 INIT을 cancelled로 끝낸다(라이브러리 진행 알림의 [취소]도 이것이다).
+// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전에도 바로 보낸다: 메인이 INIT을 준비하는 중(Gradle 읽기~라이브러리
+// 받기)이면 그것을 멈추고 INIT을 cancelled로 끝낸다(라이브러리 진행 알림의 [취소]도 이것이다). 그 전 단계(확인·JDK)면
+// 메인이 버리므로 받기가 시작될 때(첫 진행, handlePlayEvent)와 응답을 받은 뒤(runInit) 한 번 더 보낸다. 받기 진행 전에
+// 멈춘 INIT은 경고 없이 STOP처럼 끝난다(받기 취소 알림은 진행 알림을 보인 뒤만).
 export function stopPlay(): void {
   const { run } = usePlayStore.getState()
   if (!isRunActive(run) || run.stopRequested) return
   updateRun(run.runId, () => ({ stopRequested: true }))
-  if (run.accepted || run.libraryProgress) command({ type: 'stop' })
+  command({ type: 'stop' })
 }
 
 // 툴바의 한 버튼과 Ctrl+P: INIT → START → STOP 순서
@@ -418,6 +440,14 @@ export function handlePlayEvent(event: PlayEvent): void {
   usePlayStore.getState().applyEvent(event)
   const after = usePlayStore.getState().run
   if (!isRunActive(after)) stopGamepads()
+  // 메인이 준비를 시작하기 전에 누른 STOP은 버려졌을 수 있다(stopPlay): 받기가 시작되면 다시 보내 받기를 멈춘다
+  if (
+    event.type === 'libraryProgress' &&
+    before.stopRequested &&
+    !before.libraryProgress &&
+    after?.libraryProgress
+  )
+    command({ type: 'stop' })
   // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다. 그사이 다른 프로젝트를 열었으면
   // (STOP을 보내고 끝을 기다리는 중) 그 프로젝트의 같은 이름 OpMode를 고르지 않는다.
   if (

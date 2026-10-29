@@ -466,6 +466,20 @@ describe('라이브러리 진행·보고·링크 검사', () => {
     expect(compiling.run!.libraryProgress).toBeNull()
   })
 
+  it('보고 뒤에 온 진행(쓰지 않게 된 버전의 늦은 미리 받기)은 받지 않고, 준비를 벗어나면 진행을 지운다', () => {
+    const report: PlayEvent = {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: { entries: [], gradle: [], compileSdk: null, platform: null }
+    }
+    // 보고 뒤 hello 전(아직 preparing)
+    const late = apply(data(), progress, report, { ...progress, done: 4, total: 4 })
+    expect(late.run!.phase).toBe('preparing')
+    expect(late.run!.libraryProgress).toBeNull()
+    const compiling = apply(data(), progress, { type: 'phase', runId: 'r1', phase: 'compiling' })
+    expect(compiling.run!.libraryProgress).toBeNull()
+  })
+
   it('보고는 요약과 문제 좌표를 Console에(실행의 프로젝트 루트와 함께)', () => {
     const next = apply(data(), {
       type: 'libraryReport',

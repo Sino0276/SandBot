@@ -212,16 +212,81 @@ describe('INIT → START → STOP', () => {
     expect(commands).toEqual([{ type: 'stop' }])
   })
 
-  it('playInit 응답 전의 STOP은 받은 뒤 보낸다', async () => {
+  it('playInit 응답 전의 STOP은 바로 보내고(메인이 준비 중이면 INIT을 취소한다) 받은 뒤 한 번 더 보낸다', async () => {
     const pending = deferred<PlayInitResult>()
     initResult = () => pending.promise
     void initPlay()
     await settle()
     stopPlay()
-    expect(commands).toEqual([])
+    expect(commands).toEqual([{ type: 'stop' }])
+    // 메인이 아직 준비를 시작하지 않아 버렸을 수 있다
     pending.resolve({ ok: true })
     await settle()
+    expect(commands).toEqual([{ type: 'stop' }, { type: 'stop' }])
+  })
+
+  it('첫 라이브러리 진행 전에 누른 STOP도 받기를 취소한다(진행이 오면 한 번 더 보낸다)', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    // 메인이 아직 Gradle·플랫폼 jar·JDK를 보는 중(진행 알림 전)에 STOP
+    playButton()
     expect(commands).toEqual([{ type: 'stop' }])
+    // 메인이 그 STOP을 받기 전 단계였으면 버렸다: 받기가 시작되면 다시 보낸다(한 번만)
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 0, total: 5, bytes: 0 })
+    )
+    expect(commands).toEqual([{ type: 'stop' }, { type: 'stop' }])
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 1, total: 5, bytes: 10 })
+    )
+    expect(commands).toHaveLength(2)
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(useNoticeStore.getState().notices.map((n) => n.key)).toEqual(['playCancelled'])
+  })
+
+  it('받기 진행 전에 STOP이 멈춘 INIT은 받기 취소 경고 없이 보통 STOP처럼 끝난다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    // 라이브러리가 없는 프로젝트에서 실행 버튼을 두 번 누름(두 번째가 STOP). 메인은 Gradle 읽기·플랫폼 jar 뒤에 멈춘다.
+    playButton()
+    expect(commands).toEqual([{ type: 'stop' }])
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    // 받던 것이 없으므로 알림·실패 줄이 없고, JVM을 띄운 뒤의 STOP과 같은 끝(정보 줄)이다
+    expect(useNoticeStore.getState().notices).toEqual([])
+    const entries = usePlayStore.getState().entries
+    expect(entries.some((entry) => entry.type === 'initFailed')).toBe(false)
+    expect(entries.at(-1)).toMatchObject({ type: 'finished', reason: 'stopped', level: 'info' })
+    expect(usePlayStore.getState().run).toMatchObject({
+      phase: 'finished',
+      finished: { reason: 'stopped' }
+    })
+    expect(commands).toEqual([{ type: 'stop' }])
+    // 버튼은 다시 INIT이다
+    initResult = async () => ({ ok: true })
+    playButton()
+    await settle()
+    expect(api.playInit).toHaveBeenCalledTimes(2)
+    expect(usePlayStore.getState().run!.accepted).toBe(true)
+  })
+
+  it('받기 진행 전에 멈춘 Autonomous는 OpMode를 돌리지 않았으므로 preselectTeleOp을 고르지 않는다', async () => {
+    selectOpMode(AUTO.className)
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    stopPlay()
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    expect(usePlayStore.getState().selectedClass).toBe(AUTO.className)
+    expect(useNoticeStore.getState().notices).toEqual([])
   })
 
   it('라이브러리를 받는 중(playInit 응답 전)의 STOP·[취소]는 바로 보내 INIT을 취소한다', async () => {
@@ -456,9 +521,17 @@ describe('playInit 실패', () => {
       runNoticeAction(notice.id)
       expect(usePreferencesStore.getState()).toEqual({ open: true, target: 'androidSdk' })
     }
-    // 라이브러리 받기를 취소한 것은 행동 버튼이 없는 경고다
-    initResult = async () => ({ ok: false, code: 'cancelled', detail: '' })
-    await initPlay()
+    // 라이브러리 받기를 취소한 것(받기 진행 알림을 보인 뒤)은 행동 버튼이 없는 경고다
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 0, total: 2, bytes: 0 })
+    )
+    stopPlay()
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
     const cancelled = useNoticeStore.getState().notices.at(-1)!
     expect(cancelled).toMatchObject({ level: 'warning', key: 'playCancelled' })
     expect(cancelled.action).toBeUndefined()
@@ -598,6 +671,25 @@ describe('끝난 뒤와 프로젝트 바꾸기', () => {
     expect(usePlayStore.getState().selectedClass).toBeNull()
     await settle()
     expect(api.listOpModes).toHaveBeenCalledWith('/other')
+  })
+
+  it('INIT을 준비하는 중에 다른 프로젝트를 열면 그 INIT을 멈추고, 새 프로젝트에 받기 취소 경고를 띄우지 않는다', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    useProjectStore.setState({ root: '/other', session: useProjectStore.getState().session + 1 })
+    expect(commands).toEqual([{ type: 'stop' }])
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    expect(useNoticeStore.getState().notices).toEqual([])
+    // 다른 프로젝트를 연 뒤 끝난 실행처럼 실행은 지우고 Console에는 끝난 줄을 남긴다
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'finished',
+      reason: 'stopped',
+      level: 'info'
+    })
   })
 
   it('창을 닫거나 새로 고치면 STOP', async () => {

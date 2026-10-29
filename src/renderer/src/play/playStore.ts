@@ -68,7 +68,7 @@ export type PlayRun = {
   robotId: string | null
   configPath: string | null
   phase: PlayPhase
-  // 메인이 playInit을 받았다(그 전의 STOP은 받은 뒤 보낸다)
+  // 메인이 playInit을 받았다(그 전의 STOP은 바로 보내고 받은 뒤 한 번 더 보낸다)
   accepted: boolean
   // STOP을 눌렀다(끝날 때까지 버튼을 막는다)
   stopRequested: boolean
@@ -83,8 +83,11 @@ export type PlayRun = {
     inputs: Record<string, DeviceValues>
   } | null
   finished: { tNanos: number; reason: ConsoleFinishReason; detail: string } | null
-  // INIT 중 라이브러리 받기 진행(받는 동안만, 의존성 보고가 오면 지운다). 진행 알림이 이것을 보인다.
+  // INIT 중 라이브러리 받기 진행(진행 알림이 보인다). 받는 동안만 두고, 의존성 보고가 오거나 준비를 벗어나면 지운다.
   libraryProgress: LibraryProgress | null
+  // 의존성 보고를 받았다. 그 뒤에 온 진행(메인이 해석을 끝낸 뒤 늦게 끝난 미리 받기)은 받지 않는다: 실행 내내 남는 진행
+  // 알림의 [취소]가 도는 OpMode를 멈추지 않게.
+  libraryReported: boolean
 }
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
@@ -225,7 +228,8 @@ export function newRun(options: {
     telemetry: null,
     devices: null,
     finished: null,
-    libraryProgress: null
+    libraryProgress: null,
+    libraryReported: false
   }
 }
 
@@ -252,7 +256,9 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         run: {
           ...run,
           phase: event.phase,
-          startRequested: event.phase === 'running' ? false : run.startRequested
+          startRequested: event.phase === 'running' ? false : run.startRequested,
+          // 단계는 앞으로만 가므로 준비 단계를 벗어났다
+          libraryProgress: null
         }
       }
     }
@@ -312,13 +318,13 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       }
     }
     case 'libraryProgress': {
-      if (run.phase !== 'preparing') return {}
+      if (run.phase !== 'preparing' || run.libraryReported) return {}
       const { phase, done, total, bytes } = event
       return { run: { ...run, libraryProgress: { phase, done, total, bytes } } }
     }
     case 'libraryReport':
       return {
-        run: { ...run, libraryProgress: null },
+        run: { ...run, libraryProgress: null, libraryReported: true },
         ...withEntries(
           data,
           libraryReportLines(event.report).map((line) =>

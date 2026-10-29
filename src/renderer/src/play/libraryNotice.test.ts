@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { OpModeInfo } from '../../../shared/play'
+import type { OpModeInfo, PlayEvent } from '../../../shared/play'
 import { cancelNotice, useNoticeStore } from '../editor/noticeStore'
 import { installLibraryNotice, libraryNoticeText } from './libraryNotice'
 import { newRun, usePlayStore } from './playStore'
@@ -88,6 +88,33 @@ describe('라이브러리 받기 진행 알림', () => {
     const notices = useNoticeStore.getState().notices
     expect(notices).toHaveLength(1)
     expect(notices[0].id).not.toBe(first)
+  })
+
+  it('보고 뒤에 온 늦은 진행은 알림을 다시 띄우지 않는다(실행 내내 남아 [취소]가 OpMode를 멈추지 않게)', () => {
+    const apply = (event: PlayEvent): void => usePlayStore.getState().applyEvent(event)
+    const progress = (done: number): PlayEvent => ({
+      type: 'libraryProgress',
+      runId: 'r1',
+      phase: 'downloading',
+      done,
+      total: 3,
+      bytes: 10
+    })
+    const progressNotices = (): unknown[] =>
+      useNoticeStore.getState().notices.filter((notice) => notice.level === 'progress')
+    apply(progress(1))
+    expect(progressNotices()).toHaveLength(1)
+    apply({
+      type: 'libraryReport',
+      runId: 'r1',
+      report: { entries: [], gradle: [], compileSdk: 30, platform: { api: 30, guessed: false } }
+    })
+    expect(progressNotices()).toHaveLength(0)
+    apply(progress(3))
+    for (const phase of ['compiling', 'init', 'running'] as const)
+      apply({ type: 'phase', runId: 'r1', phase })
+    expect(progressNotices()).toHaveLength(0)
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it('문구', () => {
