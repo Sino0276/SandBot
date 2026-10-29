@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyModule, DASHBOARD_DETAIL, knownPackageOf } from './policy'
+import { classifyModule, DASHBOARD_DETAIL, isKnownLibrary, knownPackageOf } from './policy'
 
 const kind = (coordinate: string): string => {
   const [g, a, v] = coordinate.split(':')
@@ -44,6 +44,16 @@ describe('라이브러리 정책', () => {
     expect(kind('com.acmerobotics.dashboard:core:0.4.7')).toBe('unsupported:notSupported')
   })
 
+  it('Sloth용 대체판은 원본(FTC Dashboard·Panels)과 같다', () => {
+    expect(classifyModule('com.acmerobotics.slothboard', 'dashboard', '0.3.2+0.6.0')).toEqual({
+      kind: 'unsupported',
+      reason: 'notSupported',
+      detail: DASHBOARD_DETAIL
+    })
+    expect(kind('com.bylazar.sloth:fullpanels:0.3.2+1.0.13')).toBe('unsupported:panels')
+    expect(kind('com.bylazarx:y:1.0')).toBe('other')
+  })
+
   it('제공(받지 않음)', () => {
     for (const c of [
       'org.firstinspires.ftc:RobotCore:12.0.0',
@@ -72,12 +82,62 @@ describe('라이브러리 정책', () => {
     expect(knownPackageOf('com.pedropathing.tuning.autotune')?.prefix).toBe(
       'com.pedropathing.tuning'
     )
-    expect(knownPackageOf('com.pedropathing.follower')?.prefix).toBe('com.pedropathing')
+    expect(knownPackageOf('com.pedropathing.follower')?.prefix).toBe('com.pedropathing.follower')
+    expect(knownPackageOf('com.pedropathing.paths.curves')?.prefix).toBe('com.pedropathing.paths')
+    expect(knownPackageOf('com.pedropathing.example')?.prefix).toBe('com.pedropathing')
+    expect(knownPackageOf('com.pedropathing.ivy.pedro')?.prefix).toBe('com.pedropathing.ivy')
     expect(knownPackageOf('com.arcrobotics.ftclib.vision')?.prefix).toBe(
       'com.arcrobotics.ftclib.vision'
     )
     expect(knownPackageOf('com.arcrobotics.ftclib.command')?.prefix).toBe('com.arcrobotics.ftclib')
     expect(knownPackageOf('com.pedropathingx')).toBeNull()
     expect(knownPackageOf('org.firstinspires.ftc.teamcode')).toBeNull()
+  })
+
+  it('패키지를 가진 좌표(버전마다 다른 Pedro 패키지는 실제 jar 기준)', () => {
+    const owns = (packageName: string, coordinate: string): boolean => {
+      const [g, a, v] = coordinate.split(':')
+      return knownPackageOf(packageName)?.owns(g, a, v) ?? false
+    }
+    // core 2.1.2(ftc 2.x가 compile 범위로 끌어옴)와 core 3.0.2·revhub 3.0.2
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:core:2.1.2')).toBe(true)
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:ftc:2.1.2')).toBe(true)
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:core:3.0.2')).toBe(false)
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:revhub:3.0.2')).toBe(false)
+    expect(owns('com.pedropathing.controllers', 'com.pedropathing:revhub:3.0.2')).toBe(true)
+    expect(owns('com.pedropathing.controllers', 'com.pedropathing:core:2.1.2')).toBe(false)
+    expect(owns('com.pedropathing.follower', 'com.pedropathing:core:2.1.2')).toBe(true)
+    expect(owns('com.pedropathing.follower', 'com.pedropathing:core:3.0.2')).toBe(true)
+    // tuning 1.x는 자기 패키지만(revhub는 runtime 범위)
+    expect(owns('com.pedropathing.follower', 'com.pedropathing:tuning:1.0.1')).toBe(false)
+    expect(owns('com.pedropathing.tuning.autotune', 'com.pedropathing:tuning:1.0.1')).toBe(true)
+    expect(owns('com.pedropathing.ftc', 'com.pedropathing:revhub:3.0.2')).toBe(false)
+    expect(owns('com.pedropathing.pathgen', 'com.pedropathing:core:2.1.2')).toBe(false)
+    // 1.x(com.pedropathing:pedro 1.0.9)
+    expect(owns('com.pedropathing.pathgen', 'com.pedropathing:pedro:1.0.9')).toBe(true)
+    expect(owns('com.pedropathing.localization.constants', 'com.pedropathing:pedro:1.0.9')).toBe(
+      true
+    )
+    expect(owns('com.pedropathing.geometry', 'com.pedropathing:pedro:1.0.9')).toBe(false)
+    expect(
+      owns('com.acmerobotics.dashboard.config', 'com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0')
+    ).toBe(true)
+    expect(owns('com.bylazar.telemetry', 'com.bylazar.sloth:fullpanels:0.3.2+1.0.13')).toBe(true)
+    expect(owns('com.acmerobotics.roadrunner.ftc', 'com.acmerobotics.roadrunner:core:1.0.1')).toBe(
+      false
+    )
+    expect(owns('com.acmerobotics.roadrunner', 'com.acmerobotics.roadrunner:actions:1.0.1')).toBe(
+      true
+    )
+    expect(owns('com.arcrobotics.ftclib.vision', 'org.ftclib.ftclib:core:2.1.1')).toBe(false)
+    expect(owns('com.arcrobotics.ftclib.command', 'org.ftclib.ftclib:vision:2.1.0')).toBe(false)
+  })
+
+  it('담은 패키지를 아는 좌표', () => {
+    expect(isKnownLibrary('com.pedropathing', 'pedro', '1.0.9')).toBe(true)
+    expect(isKnownLibrary('com.acmerobotics.slothboard', 'dashboard', '0.3.2+0.6.0')).toBe(true)
+    expect(isKnownLibrary('org.jetbrains.kotlin', 'kotlin-stdlib', '2.3.21')).toBe(true)
+    expect(isKnownLibrary('com.github.someteam', 'pedro-fork', '3.0.2')).toBe(false)
+    expect(isKnownLibrary('com.fasterxml.jackson.core', 'jackson-databind', '2.12.7')).toBe(false)
   })
 })

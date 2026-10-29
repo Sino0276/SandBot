@@ -210,6 +210,51 @@ describe('의존성 보고 → Console', () => {
     expect(entryDetailLines(diagnostic, t)[1]).toContain('선언하지 않았습니다')
   })
 
+  it('전이 의존성은 선언했다고 하지 않고, 다 읽지 못했으면 Android Studio 실패를 단정하지 않는다', () => {
+    const dependency = {
+      kind: 'dependencyNotLoaded',
+      coordinate: 'com.acmerobotics.dashboard:core:0.4.7',
+      reason: 'notSupported',
+      requestedBy: 'com.acmerobotics.roadrunner:actions:1.0.1'
+    } as const
+    for (const translate of [t, tEn]) {
+      const text = hintText(dependency, translate)
+      expect(text).toContain('com.acmerobotics.roadrunner:actions:1.0.1')
+      expect(text).toContain('com.acmerobotics.dashboard:core:0.4.7')
+      expect(text).not.toContain('console.')
+      const maybe = hintText(
+        { kind: 'maybeUndeclared', packageName: 'com.pedropathing.follower' },
+        translate
+      )
+      expect(maybe).toContain('com.pedropathing.follower')
+      expect(maybe).not.toContain('Android Studio')
+      expect(maybe).not.toContain('console.')
+    }
+    expect(hintText(dependency, t)).toContain(
+      '팀 Gradle에 선언한 com.acmerobotics.roadrunner:actions:1.0.1이(가) 끌어오는 com.acmerobotics.dashboard:core:0.4.7의 것이지만'
+    )
+    expect(hintText(dependency, tEn)).toContain(
+      'belongs to com.acmerobotics.dashboard:core:0.4.7, a dependency of com.acmerobotics.roadrunner:actions:1.0.1 declared'
+    )
+    // FTC Dashboard 안내(Sloth용 대체판 slothboard도)
+    expect(hintText(dependency, tEn)).toContain('SandBot Dashboard replacement')
+    const slothboard = entry('com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0', {
+      status: 'unsupported',
+      reason: 'notSupported'
+    })
+    expect(libraryText(slothboard, tEn)).toContain('SandBot Dashboard replacement')
+    expect(
+      hintText(
+        {
+          kind: 'libraryNotLoaded',
+          coordinate: 'com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0',
+          reason: 'notSupported'
+        },
+        tEn
+      )
+    ).toContain('SandBot Dashboard replacement')
+  })
+
   it('링크 검사 경고는 라이브러리별로 묶는다', () => {
     const lines = linkWarningLines([
       { library: 'a:b:1', kind: 'missingClass', from: 'a.X', target: 'android.os.Foo' },

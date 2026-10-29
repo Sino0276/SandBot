@@ -9,10 +9,11 @@ import { majorVersion } from './version'
 //   threetenabp·OpenFTC·slf4j-api. 받지 않는다. 단 androidx.annotation은 Android Studio의 컴파일 클래스패스에 늘 있으므로
 //   (appcompat이 compile 범위로 끌어온다) 받아서 컴파일 클래스패스에만 넣는다.
 // - 지원하지 않음(안내): FTC Dashboard(L1: SandBot 대체가 생기기 전), Pedro AutoTune, Pedro 2.x, Panels, Sloth·Sinister,
-//   FTCLib vision, 그 밖에 직접 선언했지만 지원 계열도 그 전이 의존성도 아닌 것(notSupported).
+//   FTCLib vision, 그 밖에 직접 선언했지만 지원 계열도 그 전이 의존성도 아닌 것(notSupported). Sloth용 대체판
+//   (com.acmerobotics.slothboard:dashboard, com.bylazar.sloth:fullpanels)은 같은 패키지를 담으므로 원본과 같게 본다.
 // 정책을 바꾸면 POLICY_VERSION을 올린다(해석 잠금 resolutions/의 키에 들어간다).
 
-export const POLICY_VERSION = 1
+export const POLICY_VERSION = 2
 
 export const DASHBOARD_DETAIL =
   'FTC Dashboard support arrives with the SandBot Dashboard replacement'
@@ -41,6 +42,12 @@ const PROVIDED_GROUPS: ReadonlySet<string> = new Set([
   'org.openftc'
 ])
 
+// FTC Dashboard와 Sloth용 대체판(com.acmerobotics.dashboard 패키지를 그대로 담는다)
+const DASHBOARD_GROUPS: ReadonlySet<string> = new Set([
+  'com.acmerobotics.dashboard',
+  'com.acmerobotics.slothboard'
+])
+
 function inGroup(group: string, prefix: string): boolean {
   return group === prefix || group.startsWith(`${prefix}.`)
 }
@@ -67,7 +74,7 @@ export function classifyModule(group: string, artifact: string, version: string)
     return { kind: 'provided' }
 
   // ---- 지원 계열과 그 안내 ----
-  if (group === 'com.acmerobotics.dashboard') return unsupported('notSupported', DASHBOARD_DETAIL)
+  if (DASHBOARD_GROUPS.has(group)) return unsupported('notSupported', DASHBOARD_DETAIL)
   if (group === 'com.acmerobotics.roadrunner') {
     if (artifact === 'ftc') return { kind: 'supported' }
     if (artifact === 'core' || artifact === 'actions')
@@ -92,41 +99,110 @@ export function classifyModule(group: string, artifact: string, version: string)
     if (artifact === 'vision') return unsupported('ftcLibVision')
     return unsupported('notSupported')
   }
-  if (group === 'com.bylazar') return unsupported('panels')
+  if (inGroup(group, 'com.bylazar')) return unsupported('panels')
   if (group.startsWith('dev.frozenmilk')) return unsupported('dairy')
   return { kind: 'other' }
 }
 
 // ---- 진단 안내: 패키지 → 라이브러리 ----
-// 팀 코드의 'package X does not exist'에서 X가 어느 라이브러리 것인지(가장 긴 접두가 이긴다). matches는 의존성 보고의
-// 좌표가 그 라이브러리인지 본다.
+// 팀 코드의 'package X does not exist'에서 X가 어느 라이브러리 것인지(가장 긴 접두가 이긴다).
+// - owns: 그 패키지를 Android Studio의 컴파일 클래스패스에 두는 좌표. 모듈 자신의 패키지이거나 compile 범위 의존성으로
+//   끌어오는 것이다(Pedro ftc 2.x → core 2.x, revhub 3.x → core 3.x). 버전마다 패키지가 다르면 버전도 본다(실제 jar로 확인).
+// - library: 같은 라이브러리의 좌표(다른 버전·모듈, 그 패키지를 끌어오는 모듈 포함). 이것이 있는데 owns인 좌표가 없으면
+//   다른 버전의 API(Pedro 3.x 프로젝트의 2.x 패키지 등)라 좌표를 대지 않는다. null이면 다른 라이브러리를 거쳐서만 오는
+//   패키지(kotlin·ejml)라 선언했는지 말하지 않는다.
 
 export type KnownPackage = {
   prefix: string
-  matches: (group: string, artifact: string) => boolean
+  owns: (group: string, artifact: string, version: string) => boolean
+  library: ((group: string, artifact: string) => boolean) | null
 }
 
+type Owns = KnownPackage['owns']
+
+function below(version: string, major: number): boolean {
+  const value = majorVersion(version)
+  return value !== null && value < major
+}
+
+const PEDRO = 'com.pedropathing'
+// 따로 쓰는 도구 모듈. 본체 패키지를 compile 범위로 끌어오지 않는다(tuning 1.x의 revhub는 runtime 범위).
+const PEDRO_TOOLS: ReadonlySet<string> = new Set(['tuning', 'telemetry', 'ivy'])
+const pedroModule =
+  (artifact: string) =>
+  (g: string, a: string): boolean =>
+    g === PEDRO && a === artifact
+const pedroLibrary = (g: string, a: string): boolean => g === PEDRO && !PEDRO_TOOLS.has(a)
+// 본체의 판: 1.x는 pedro, 2.x는 core 2.x와 그것을 compile 범위로 끌어오는 ftc 2.x, 3.x는 core 3.x와 revhub 3.x
+const PEDRO_LINES: Record<1 | 2 | 3, Owns> = {
+  1: (g, a) => g === PEDRO && a === 'pedro',
+  2: (g, a, v) => g === PEDRO && (a === 'ftc' || (a === 'core' && below(v, 3))),
+  3: (g, a, v) => g === PEDRO && (a === 'revhub' || (a === 'core' && atLeast(v, 3)))
+}
+// 본체 패키지와 그것이 있는 판(pedro 1.0.9, core 2.1.2, core 3.0.2 jar로 확인)
+const PEDRO_PACKAGES: readonly (readonly [string, readonly (1 | 2 | 3)[]])[] = [
+  ['follower', [1, 2, 3]],
+  ['localization', [1, 2, 3]],
+  ['util', [1, 2]],
+  ['pathgen', [1]],
+  ['control', [2]],
+  ['geometry', [2]],
+  ['drivetrain', [2, 3]],
+  ['math', [2, 3]],
+  ['paths', [2, 3]],
+  ['algorithm', [3]],
+  ['api', [3]],
+  ['config', [3]],
+  ['controllers', [3]],
+  ['utils', [3]]
+]
+const ivy = (g: string, a: string): boolean =>
+  inGroup(g, 'com.pedropathing.ivy') || (g === PEDRO && a === 'ivy')
+const bylazar = (g: string): boolean => inGroup(g, 'com.bylazar')
+const FTCLIB = 'org.ftclib.ftclib'
+const ftcLibVision = (g: string, a: string): boolean => g === FTCLIB && a === 'vision'
+const ROAD_RUNNER = 'com.acmerobotics.roadrunner'
+const frozenMilk = (g: string): boolean => inGroup(g, 'dev.frozenmilk')
+
 export const KNOWN_PACKAGES: readonly KnownPackage[] = [
+  { prefix: `${PEDRO}.tuning`, owns: pedroModule('tuning'), library: pedroModule('tuning') },
   {
-    prefix: 'com.pedropathing.tuning',
-    matches: (g, a) => g === 'com.pedropathing' && a === 'tuning'
+    prefix: `${PEDRO}.telemetry`,
+    owns: pedroModule('telemetry'),
+    library: pedroModule('telemetry')
+  },
+  { prefix: `${PEDRO}.ivy`, owns: ivy, library: ivy },
+  { prefix: `${PEDRO}.ftc`, owns: pedroModule('ftc'), library: pedroLibrary },
+  { prefix: `${PEDRO}.revhub`, owns: pedroModule('revhub'), library: pedroLibrary },
+  ...PEDRO_PACKAGES.map(([name, lines]): KnownPackage => ({
+    prefix: `${PEDRO}.${name}`,
+    owns: (g, a, v) => lines.some((line) => PEDRO_LINES[line](g, a, v)),
+    library: pedroLibrary
+  })),
+  // 그 밖: 어느 좌표의 것인지 모른다
+  { prefix: PEDRO, owns: () => false, library: pedroLibrary },
+  { prefix: 'com.bylazar', owns: bylazar, library: bylazar },
+  { prefix: 'com.arcrobotics.ftclib.vision', owns: ftcLibVision, library: ftcLibVision },
+  {
+    prefix: 'com.arcrobotics.ftclib',
+    owns: (g, a) => g === FTCLIB && a !== 'vision',
+    library: (g) => g === FTCLIB
+  },
+  // Road Runner ftc·actions가 Dashboard를 compile 범위로 끌어온다
+  {
+    prefix: 'com.acmerobotics.dashboard',
+    owns: (g) => DASHBOARD_GROUPS.has(g),
+    library: (g) => DASHBOARD_GROUPS.has(g) || g === ROAD_RUNNER
   },
   {
-    prefix: 'com.pedropathing.ivy',
-    matches: (g, a) => g === 'com.pedropathing.ivy' || (g === 'com.pedropathing' && a === 'ivy')
+    prefix: `${ROAD_RUNNER}.ftc`,
+    owns: (g, a) => g === ROAD_RUNNER && a === 'ftc',
+    library: (g) => g === ROAD_RUNNER
   },
-  { prefix: 'com.pedropathing', matches: (g) => g === 'com.pedropathing' },
-  { prefix: 'com.bylazar', matches: (g) => g === 'com.bylazar' },
-  {
-    prefix: 'com.arcrobotics.ftclib.vision',
-    matches: (g, a) => g === 'org.ftclib.ftclib' && a === 'vision'
-  },
-  { prefix: 'com.arcrobotics.ftclib', matches: (g) => g === 'org.ftclib.ftclib' },
-  { prefix: 'com.acmerobotics.dashboard', matches: (g) => g === 'com.acmerobotics.dashboard' },
-  { prefix: 'com.acmerobotics.roadrunner', matches: (g) => g === 'com.acmerobotics.roadrunner' },
-  { prefix: 'dev.frozenmilk', matches: (g) => g.startsWith('dev.frozenmilk') },
-  { prefix: 'org.ejml', matches: (g) => g === 'org.ejml' },
-  { prefix: 'kotlin', matches: (g) => g === 'org.jetbrains.kotlin' }
+  { prefix: ROAD_RUNNER, owns: (g) => g === ROAD_RUNNER, library: (g) => g === ROAD_RUNNER },
+  { prefix: 'dev.frozenmilk', owns: frozenMilk, library: frozenMilk },
+  { prefix: 'org.ejml', owns: (g) => g === 'org.ejml', library: null },
+  { prefix: 'kotlin', owns: (g) => g === 'org.jetbrains.kotlin', library: null }
 ]
 
 export function knownPackageOf(packageName: string): KnownPackage | null {
@@ -138,4 +214,11 @@ export function knownPackageOf(packageName: string): KnownPackage | null {
     )
       best = known
   return best
+}
+
+// 이 좌표가 담는 패키지를 아는지(표의 어느 라이브러리인지). 모르는 좌표를 불러오지 않았으면 그 안에 어떤 패키지든 있을 수 있다.
+export function isKnownLibrary(group: string, artifact: string, version: string): boolean {
+  return KNOWN_PACKAGES.some(
+    (known) => known.owns(group, artifact, version) || (known.library?.(group, artifact) ?? false)
+  )
 }

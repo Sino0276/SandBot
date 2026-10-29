@@ -186,10 +186,15 @@ export type PlayDiagnostic = {
 }
 
 // - libraryNotLoaded: 팀 Gradle에 선언했지만 불러오지 않은 라이브러리의 패키지(coordinate·reason은 의존성 보고와 같다)
+// - dependencyNotLoaded: 팀이 선언한 라이브러리(requestedBy, 'g:a:v')가 끌어온 의존성 중 불러오지 않은 것의 패키지
 // - undeclared: 어느 선언에도 속하지 않는 패키지(Android Studio에서도 컴파일되지 않는다)
+// - maybeUndeclared: 읽은 선언에는 없지만, SandBot이 읽지 못한 Gradle 내용이나 담은 패키지를 모르는 불러오지 않은
+//   라이브러리에 있을 수 있다(단정하지 않음)
 export type DiagnosticHint =
   | { kind: 'libraryNotLoaded'; coordinate: string; reason: LibraryReason }
+  | { kind: 'dependencyNotLoaded'; coordinate: string; reason: LibraryReason; requestedBy: string }
   | { kind: 'undeclared'; packageName: string }
+  | { kind: 'maybeUndeclared'; packageName: string }
 
 // 라이브러리 링크 검사 경고 하나(sidecarProtocol.LinkWarning을 좌표로 바꾼 것)
 export type PlayLinkWarning = {

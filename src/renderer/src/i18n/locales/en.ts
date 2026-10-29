@@ -847,8 +847,12 @@ const en: Messages = {
       },
       hintNotLoaded:
         'This package belongs to {{coordinate}}, declared in the team Gradle files, but SandBot did not load it. {{reason}}',
+      hintDependencyNotLoaded:
+        'This package belongs to {{coordinate}}, a dependency of {{requestedBy}} declared in the team Gradle files, but SandBot did not load it. {{reason}}',
       hintUndeclared:
-        'The library of package {{packageName}} is not declared in the team Gradle files (TeamCode/build.gradle and so on). It does not compile in Android Studio either.'
+        'The library of package {{packageName}} is not declared in the team Gradle files (TeamCode/build.gradle and so on). It does not compile in Android Studio either.',
+      hintMaybeUndeclared:
+        'The library of package {{packageName}} was not found in the team Gradle declarations SandBot read. It may be in Gradle content SandBot could not read or in a library it did not load (see the Gradle and library lines in the Console).'
     },
     // What could not be resolved while reading the team Gradle files (GradleDiagnosticCode)
     gradle: {
