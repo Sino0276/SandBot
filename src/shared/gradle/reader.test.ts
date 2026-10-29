@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_APPLIED_SCRIPTS,
   MAX_APPLY_DEPTH,
   MAX_GRADLE_FILE_BYTES,
   MAX_GRADLE_FILES,
+  MAX_GRADLE_WORK,
   readGradleProject,
   type GradleProject
 } from '.'
@@ -233,7 +235,12 @@ describe('apply from', () => {
     const project = await read(files)
     // 기본 파일 8번의 읽기(없는 것 포함: TeamCode/build.gradle이 있어 .kts는 찾지 않음) 뒤 남은 한도만큼
     expect(project.dependencies).toHaveLength(MAX_GRADLE_FILES - 8)
-    expect(project.diagnostics.every((d) => d.code === 'tooDeep')).toBe(true)
+    expect(project.diagnostics[0]).toEqual({
+      code: 'tooMany',
+      at: { file: TEAMCODE, line: MAX_GRADLE_FILES - 7 },
+      detail: `more than ${MAX_GRADLE_FILES} Gradle files`
+    })
+    expect(project.diagnostics.every((d) => d.code === 'tooMany')).toBe(true)
   })
 
   it('apply plugin은 넘기고 apply from … to:는 알린다', async () => {
@@ -248,7 +255,7 @@ describe('apply from', () => {
 })
 
 describe('값 풀기', () => {
-  it('ext의 여러 표기와 gradle.properties, 우선순위(TeamCode의 ext > TeamCode/gradle.properties > 루트)', async () => {
+  it('ext의 여러 표기와 gradle.properties, 우선순위(TeamCode의 ext > gradle.properties(TeamCode, 루트) > 루트 ext)', async () => {
     const project = await read({
       'gradle.properties': 'p1=root-props\np2=root-props\np3=root-props\np4=root-props',
       'TeamCode/gradle.properties': 'p2=module-props',
@@ -276,7 +283,8 @@ describe('값 풀기', () => {
     expect(coords(project)).toEqual([
       'implementation g:a:root-props',
       'implementation g:b:module-props',
-      'implementation g:c:root-ext',
+      // Gradle은 gradle.properties를 TeamCode의 ext에도 넣으므로 물려받는 루트 ext보다 먼저다
+      'implementation g:c:root-props',
       'implementation g:d:module-ext',
       'implementation g:e:root-block-root-set-root-project-ext',
       'implementation g:f:from-module',
@@ -284,9 +292,65 @@ describe('값 풀기', () => {
       'implementation g:h:indexed',
       'implementation g:i:root-props',
       'implementation g:j:module-props',
-      'implementation g:k:root-ext'
+      'implementation g:k:root-props'
     ])
     expect(project.diagnostics).toEqual([])
+  })
+
+  it('gradle.properties는 프로젝트마다 ext 속성이기도 하다(Gradle 8.14에서 확인한 값)', async () => {
+    const groovy = await read({
+      'gradle.properties': 'p1=root-props\np3=root-props\np4=root-props\np5=root-props',
+      'TeamCode/gradle.properties': 'p2=module-props\np4=module-props',
+      'build.gradle': "ext.p3 = 'root-ext'\nallprojects { ext.p5 = 'all-ext' }",
+      [TEAMCODE]: [
+        'dependencies {',
+        '  implementation "g:a:${project.ext.p3}"',
+        '  implementation "g:b:${findProperty(\'p3\')}"',
+        '  implementation "g:c:${rootProject.p3}-${rootProject.ext.p3}"',
+        '  implementation "g:d:${rootProject.ext.p1}"',
+        "  implementation \"g:e:${ext.get('p1')}-${ext.getProperty('p1')}\"",
+        '  implementation "g:f:${ext.p4}"',
+        '  implementation "g:g:$p5-${rootProject.p5}"',
+        "  implementation \"g:h:${ext.has('p2')}-${rootProject.ext.has('p2')}\"",
+        '  implementation "g:i:${rootProject.p2}"',
+        '  implementation "g:j:${rootProject.ext.p2}"',
+        '}'
+      ].join('\n')
+    })
+    expect(coords(groovy)).toEqual([
+      'implementation g:a:root-props',
+      'implementation g:b:root-props',
+      'implementation g:c:root-ext-root-ext',
+      'implementation g:d:root-props',
+      'implementation g:e:root-props-root-props',
+      'implementation g:f:module-props',
+      'implementation g:g:all-ext-all-ext',
+      'implementation g:h:true-false'
+    ])
+    // TeamCode/gradle.properties는 루트 프로젝트의 속성이 아니다
+    expect(groovy.diagnostics.map((d) => `${d.code} ${d.at.line} ${d.detail}`)).toEqual([
+      `unresolvedValue 10 "g:i:\${rootProject.p2}": project property 'p2' is not set`,
+      `unresolvedValue 11 "g:j:\${rootProject.ext.p2}": extra property 'p2' is not set`
+    ])
+    const kotlin = await read({
+      'gradle.properties': 'pv=3.0.2',
+      'build.gradle.kts': 'extra["rv"] = "root-ext"',
+      'TeamCode/build.gradle.kts': [
+        'val pv: String by extra',
+        'val rv: String by rootProject.extra',
+        'dependencies {',
+        '    implementation("com.pedropathing:core:$pv")',
+        '    implementation("g:r:$rv")',
+        '    implementation("g:x:${extra["pv"]}-${rootProject.extra["pv"]}")',
+        '}'
+      ].join('\n')
+    })
+    expect(coords(kotlin)).toEqual([
+      'implementation com.pedropathing:core:3.0.2',
+      'implementation g:r:root-ext',
+      'implementation g:x:3.0.2-3.0.2'
+    ])
+    expect(kotlin.diagnostics).toEqual([])
   })
 
   it('def·val은 그 파일과 블록 안에서만 보인다', async () => {
@@ -555,6 +619,35 @@ describe('의존성 표기', () => {
     ])
   })
 
+  it('확장자(@aar·ext:)가 있으면 Gradle처럼 전이 의존성을 끄고, 클로저의 transitive가 그보다 먼저다', async () => {
+    // Gradle 8.14에서 확인한 값(ModuleFactoryHelper.addExplicitArtifactsIfDefined)
+    const project = await readDeps(
+      [
+        "  implementation 'g:plain:1'",
+        "  implementation 'g:aar:1@aar'",
+        "  implementation('g:aart:1@aar') { transitive = true }",
+        "  implementation 'g:cls:1:sources'",
+        "  implementation group: 'g', name: 'mapext', version: '1', ext: 'aar'",
+        "  implementation group: 'g', name: 'mapcls', version: '1', classifier: 'c'",
+        "  implementation('g:aarf:1@aar') { transitive = false }",
+        "  implementation('g:plainf:1') { transitive = false }",
+        "  implementation('g:aaru:1@aar') { transitive = maybe }"
+      ].join('\n')
+    )
+    expect(project.dependencies.map((d) => [d.artifact, d.transitive])).toEqual([
+      ['plain', true],
+      ['aar', false],
+      ['aart', true],
+      ['cls', true],
+      ['mapext', false],
+      ['mapcls', true],
+      ['aarf', false],
+      ['plainf', false],
+      ['aaru', false]
+    ])
+    expect(codes(project)).toEqual(['unresolvedValue'])
+  })
+
   it("project(':FtcRobotController')만 조용히 넘기고 다른 로컬 의존성은 localDependency", async () => {
     const project = await readDeps(
       [
@@ -666,6 +759,24 @@ describe('의존성 표기', () => {
       'implementation g:after:1'
     ])
     expect(project.diagnostics).toEqual([])
+  })
+
+  it('Kotlin의 블록 주석은 중첩되고 Groovy는 처음 */에서 끝난다', async () => {
+    const commented = [
+      'dependencies {',
+      '  /*',
+      '  implementation("a:b:1") /* old */',
+      '  implementation("c:d:2")',
+      '  */',
+      '  implementation("e:f:3")',
+      '}'
+    ].join('\n')
+    // Gradle 8.14(kotlinc)도 e:f:3만 본다
+    const kotlin = await read({ 'TeamCode/build.gradle.kts': commented })
+    expect(coords(kotlin)).toEqual(['implementation e:f:3'])
+    expect(kotlin.diagnostics).toEqual([])
+    const groovy = await read({ [TEAMCODE]: commented })
+    expect(coords(groovy)).toEqual(['implementation c:d:2', 'implementation e:f:3'])
   })
 
   it('같은 자리를 두 번 적용하면 한 번만 남긴다', async () => {
@@ -796,6 +907,31 @@ describe('settings', () => {
       codes(await read({ 'settings.gradle': "include ':FtcRobotController', modules" }))
     ).toEqual([])
   })
+
+  it('include 한 문장에서 펼치는 이름에 한도가 있다(같은 목록을 여러 번 넣으면 펼친 만큼)', async () => {
+    const names = Array.from({ length: 1000 }, (_, i) => `':m${i}'`).join(', ')
+    const project = await read({
+      'settings.gradle': [`def l = [${names}]`, 'include l', 'include l, l, l'].join('\n')
+    })
+    // 한도를 넘은 문장은 버리므로 TeamCode가 없다고 알리지 않는다
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'tooMany',
+        at: { file: 'settings.gradle', line: 3 },
+        detail: 'include lists more than 1000 projects: include l, l, l'
+      }
+    ])
+    // 한도 안이면 그대로 읽는다
+    expect(
+      codes(await read({ 'settings.gradle': `def l = [${names}]\ninclude l\ninclude l` }))
+    ).toEqual(['unsupportedSyntax'])
+    // TeamCode가 버린 문장에 있었을 수 있다
+    expect(
+      codes(
+        await read({ 'settings.gradle': `def l = [${names}]\ninclude l, ':TeamCode'\ninclude l` })
+      )
+    ).toEqual(['tooMany'])
+  })
 })
 
 describe('compileSdk', () => {
@@ -878,7 +1014,7 @@ describe('한도', () => {
     expect(project.dependencies).toHaveLength(1000)
     expect(project.diagnostics).toEqual([
       {
-        code: 'tooLarge',
+        code: 'tooMany',
         at: { file: TEAMCODE, line: 1002 },
         detail: 'more than 1000 dependencies'
       }
@@ -895,6 +1031,116 @@ describe('한도', () => {
     expect(codes(project)).toEqual(['tooDeep'])
     const interpolation = `dependencies { implementation "${'${"'.repeat(40)}x${'"}'.repeat(40)}" }`
     expect(codes(await read({ [TEAMCODE]: interpolation }))).toEqual(['tooDeep'])
+  })
+
+  it('apply from 실행 횟수에 한도가 있다(같은 파일을 되풀이해 적용해도 실행마다 센다)', async () => {
+    const project = await read({
+      [TEAMCODE]: [
+        ...Array<string>(MAX_APPLIED_SCRIPTS + 6).fill("apply from: 'count.gradle'"),
+        'dependencies { implementation "g:count:$count" }'
+      ].join('\n'),
+      'TeamCode/count.gradle': "ext.count = (findProperty('count') ?: 0) + 1"
+    })
+    expect(coords(project)).toEqual([`implementation g:count:${MAX_APPLIED_SCRIPTS}`])
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'tooMany',
+        at: { file: TEAMCODE, line: MAX_APPLIED_SCRIPTS + 1 },
+        detail: `apply from runs more than ${MAX_APPLIED_SCRIPTS} scripts`
+      }
+    ])
+  })
+
+  it('의존성 한 문장에서 펼치는 목록에 한도가 있다(같은 목록을 겹쳐 넣은 목록도 펼친 만큼)', async () => {
+    const lines = ["def l0 = ['com.pedropathing:core:3.0.2']"]
+    for (let i = 1; i <= 40; i++) lines.push(`def l${i} = [l${i - 1}, l${i - 1}]`)
+    // l8은 펼치면 256개(같은 표기라 하나로 남는다), l40은 2^40개
+    lines.push('dependencies {', '  implementation l40', '  implementation l8', '}')
+    const project = await read({ [TEAMCODE]: lines.join('\n') })
+    expect(coords(project)).toEqual(['implementation com.pedropathing:core:3.0.2'])
+    expect(project.dependencies[0].at.line).toBe(44)
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'tooMany',
+        at: { file: TEAMCODE, line: 43 },
+        detail: 'dependency list has more than 1000 entries: implementation l40'
+      }
+    ])
+  })
+
+  it('한 번 읽기 전체의 일에 한도가 있고, 넘으면 거기까지 읽은 것만 돌려준다', async () => {
+    const heavy = 'a = 1\n'.repeat(Math.floor((MAX_GRADLE_FILE_BYTES - 16) / 6))
+    const project = await read({
+      // 멈춘 읽기는 settings의 include를 다 보았는지 모르므로 TeamCode가 없다고 알리지 않는다
+      'settings.gradle': "include ':Other'",
+      [TEAMCODE]: [
+        "dependencies { implementation 'g:first:1' }",
+        ...Array<string>(40).fill("apply from: 'heavy.gradle'"),
+        "dependencies { implementation 'g:last:1' }"
+      ].join('\n'),
+      'TeamCode/heavy.gradle': heavy
+    })
+    expect(coords(project)).toEqual(['implementation g:first:1'])
+    expect(project.diagnostics).toEqual([
+      {
+        code: 'tooMuchWork',
+        at: { file: 'TeamCode/heavy.gradle', line: expect.any(Number) },
+        detail: `reading the Gradle files takes more than ${MAX_GRADLE_WORK} steps`
+      }
+    ])
+  })
+
+  it('읽다 멈추면 진단이 한도까지 찼어도 멈춘 까닭을 마지막 진단으로 남긴다', async () => {
+    const heavy = 'a = 1\n'.repeat(Math.floor((MAX_GRADLE_FILE_BYTES - 16) / 6))
+    const project = await read({
+      [TEAMCODE]: [
+        ...Array.from({ length: 250 }, (_, i) => `dependencies { implementation "g:a${i}:$v" }`),
+        ...Array<string>(40).fill("apply from: 'heavy.gradle'")
+      ].join('\n'),
+      'TeamCode/heavy.gradle': heavy
+    })
+    expect(project.diagnostics).toHaveLength(200)
+    expect(project.diagnostics[199]).toMatchObject({
+      code: 'tooMuchWork',
+      at: { file: 'TeamCode/heavy.gradle' }
+    })
+  })
+
+  it('다 읽은 뒤 남기는 진단(TeamCode include)이 일 한도를 넘어도 예외 없이 멈춘다', async () => {
+    // 주석 글자 수로 일을 맞춰, 다 읽고 나서 남기는 진단 하나가 한도를 넘는 자리를 찾는다(일은 글자 수에 따라 늘기만 한다)
+    const filler = `# ${'x'.repeat(MAX_GRADLE_FILE_BYTES - 16)}`
+    const files = (n: number): MemoryFiles => ({
+      'gradle.properties': filler,
+      'TeamCode/gradle.properties': filler,
+      'settings.gradle': "include ':Other'",
+      [TEAMCODE]: `// ${'x'.repeat(n)}`
+    })
+    const stopped = async (n: number): Promise<boolean> =>
+      codes(await read(files(n))).includes('tooMuchWork')
+    let low = 0
+    let high = MAX_GRADLE_FILE_BYTES - 16
+    expect(await stopped(low)).toBe(false)
+    expect(await stopped(high)).toBe(true)
+    while (high - low > 1) {
+      const mid = Math.floor((low + high) / 2)
+      if (await stopped(mid)) high = mid
+      else low = mid
+    }
+    for (let n = high - 16; n <= high; n++) {
+      const project = await read(files(n))
+      expect(codes(project)).toEqual([n < high ? 'unsupportedSyntax' : 'tooMuchWork'])
+    }
+  })
+
+  it('gradle.properties의 값이 너무 길면 쓰지 않는다', async () => {
+    const project = await read({
+      'gradle.properties': `long=${'1'.repeat(5000)}\nshort=1`,
+      [TEAMCODE]: 'dependencies {\n  implementation "g:a:$long"\n  implementation "g:b:$short"\n}'
+    })
+    expect(coords(project)).toEqual(['implementation g:b:1'])
+    expect(project.diagnostics.map((d) => `${d.code} ${d.detail}`)).toEqual([
+      `unresolvedValue "g:a:$long": gradle property 'long' is too long`
+    ])
   })
 
   it('닫히지 않은 문자열은 알리고 다음 줄부터 계속 읽는다', async () => {

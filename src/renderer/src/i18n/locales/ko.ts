@@ -874,7 +874,10 @@ const ko = {
       outsideProject: '프로젝트 밖 파일은 읽지 않습니다',
       missingFile: 'apply from 대상 파일이 없습니다',
       tooLarge: '파일이 너무 커서 읽지 않았습니다',
-      tooDeep: '중첩이나 apply from이 너무 깊어 더 읽지 않았습니다',
+      tooDeep: '중첩이나 apply from이 너무 깊거나 파일이 너무 복잡해 더 읽지 않았습니다',
+      tooMany: '개수 한도를 넘어 한도 밖의 것은 읽지 않았습니다',
+      tooMuchWork:
+        'Gradle 파일을 읽는 일이 너무 많아 여기서 읽기를 멈췄습니다. 그 앞에서 읽은 것은 씁니다',
       localDependency:
         '로컬 모듈·파일 의존성(project()·files()·fileTree)은 SandBot이 쓰지 않습니다',
       versionCatalogEntry: 'gradle/libs.versions.toml에서 찾지 못한 항목입니다'

@@ -1,9 +1,11 @@
 // Gradle 빌드 스크립트의 작은 구문 트리. Groovy·Kotlin DSL의 선언적 부분(블록 호출, 명령식, 대입, def·val, 문자열 보간,
 // 목록·맵, + ·?: 정도)만 식으로 읽고, 나머지(조건문, 메서드 정의, 연산 대부분)는 그 문장 전체를 건너뛴다(control·unknown).
-// 읽지 못한 문장은 그 문장만 버리고 다음 문장부터 계속 읽는다(괄호 짝을 맞춰 건너뛴다). 중첩이 한도를 넘으면 그 파일을
-// 읽지 않는다(tooDeep).
+// 읽지 못한 문장은 그 문장만 버리고 다음 문장부터 계속 읽는다(괄호 짝을 맞춰 건너뛴다). 중첩이 한도를 넘거나, 글자 나누기와
+// 함께 센 일(넘긴 토큰 수)이 한도를 넘으면 그 파일을 읽지 않는다(tooDeep). 읽지 못한 문장이 겹겹이 중첩되면 바깥 문장마다
+// 안쪽 토큰을 다시 넘기므로 일이 토큰 수보다 커질 수 있다. 읽지 못한 문장·보간 하나를 버리는 일은 RECOVERY_STEPS로 센다.
 import {
   lexGradle,
+  MAX_STEPS_PER_CHAR,
   type GradleDialect,
   type GradleToken,
   type LexProblem,
@@ -46,12 +48,26 @@ export type ParsedScript = {
   statements: Stmt[]
   problems: LexProblem[]
   tooDeep: boolean
+  // 글자 나누기(lexer.ts의 steps)와 구문 나누기(넘긴 토큰 수)의 일
+  steps: number
+}
+
+// 한 파일(과 그 안의 ${…})의 구문 나누기가 함께 쓰는 일
+type Steps = { count: number; max: number }
+
+function spend(steps: Steps, count = 1): void {
+  steps.count += count
+  if (steps.count > steps.max) throw new TooDeep()
 }
 
 // 블록·괄호 중첩 한도
 export const MAX_NESTING = 64
 // 한 식에서 이어 붙이는 연산자·멤버·명령 사슬 한도(넘으면 그 문장만 버린다)
 export const MAX_CHAIN = 256
+// 읽지 못한 문장·보간 하나를 버리는 일(BAIL을 던져 받고, 문장 끝까지 다시 넘기기). 토큰 하나를 넘기는 일의 열 몇 배라
+// 그만큼 센다(문장마다 읽지 못하는 입력이 일 한도 안에서 오래 붙잡지 않게). 읽지 못한 문장(끝 글자까지)·보간(${})은
+// 적어도 두 글자라 그것만 이어도 글자당 한도(MAX_STEPS_PER_CHAR)에 걸리지 않는다(글자당 열하나쯤).
+export const RECOVERY_STEPS = 16
 
 const GROOVY_MODIFIERS = new Set([
   'def',
@@ -77,6 +93,11 @@ const SKIP_TO_END = new Set(['import', 'package', 'return', 'throw', 'assert', '
 const TYPE_DEFS = new Set(['class', 'interface', 'enum', 'trait', 'object'])
 // 명령식 인자가 될 수 없는 이름(이항 연산자 낱말)
 const OPERATOR_WORDS = new Set(['as', 'in', 'instanceof', 'is', 'to', 'by', 'else'])
+// 앞에 붙는 연산자
+const PREFIX_OPERATORS = new Set(['!', '-', '+', '~', '++', '--', '*'])
+// 문장을 시작할 수 있는 기호(앞 연산자, 괄호·목록·클로저, 주석(annotation)). 다른 기호나 읽지 못한 글자로 시작하는 문장은
+// 식으로 읽어 보면 늘 첫 토큰에서 BAIL이므로 읽어 보지 않고 넘긴다.
+const STATEMENT_START = new Set([...PREFIX_OPERATORS, '(', '[', '{', '@'])
 
 // 이항 연산자 우선순위(클수록 먼저). 값으로 읽는 것은 +와 ?:뿐이고, 나머지는 구조만 맞춘다.
 const BINARY_PRECEDENCE: Record<string, number> = {
@@ -109,7 +130,10 @@ const BINARY_PRECEDENCE: Record<string, number> = {
   '**': 13
 }
 
-class Bail extends Error {}
+// 읽지 못한 문장·보간(statement()·interpolated()가 받아 그것만 버린다). Error가 아니라 만들어 둔 하나를 던진다: Error는
+// 만들 때마다 호출 스택을 잡아, 문장마다 읽지 못하는 입력에서는 그 일이 나머지 읽기를 모두 합친 것보다 크다.
+class Bail {}
+const BAIL = new Bail()
 class TooDeep extends Error {}
 
 class Parser {
@@ -119,7 +143,8 @@ class Parser {
 
   constructor(
     readonly tokens: GradleToken[],
-    readonly dialect: GradleDialect
+    readonly dialect: GradleDialect,
+    readonly steps: Steps
   ) {}
 
   private peek(offset = 0): GradleToken {
@@ -127,6 +152,7 @@ class Parser {
   }
 
   private next(): GradleToken {
+    spend(this.steps)
     const token = this.peek()
     if (this.pos < this.tokens.length - 1) this.pos++
     return token
@@ -143,7 +169,7 @@ class Parser {
   }
 
   private expect(text: string): GradleToken {
-    if (!this.isPunct(text)) throw new Bail()
+    if (!this.isPunct(text)) throw BAIL
     return this.next()
   }
 
@@ -155,6 +181,9 @@ class Parser {
     while (this.peek().kind === 'newline') this.next()
   }
 
+  // 중첩 한 단계. leave()는 정상으로 끝날 때만 부른다(try/finally를 두지 않는다): 읽지 못한 문장·보간(BAIL)이면 받는
+  // 쪽(statement·interpolated)이 깊이와 사슬 수를 되돌리고, TooDeep이면 파일 전체를 버린다. finally는 거쳐 가는 throw를
+  // 받았다 다시 던지므로 문장마다 읽지 못하는 입력에서 그 일이 크다.
   private enter(): void {
     if (++this.depth > MAX_NESTING) throw new TooDeep()
   }
@@ -184,7 +213,7 @@ class Parser {
       this.skipNewlines()
       const token = this.peek()
       if (token.kind === 'eof') {
-        if (closing) throw new Bail()
+        if (closing) throw BAIL
         return statements
       }
       if (closing && token.kind === 'punct' && token.text === '}') return statements
@@ -201,26 +230,34 @@ class Parser {
   private statement(): Stmt {
     const startPos = this.pos
     const start = this.peek()
+    if (start.kind === 'invalid' || (start.kind === 'punct' && !STATEMENT_START.has(start.text)))
+      return this.unreadable(start)
     const depth = this.depth
     const links = this.links
     try {
       const stmt = this.statementInner()
-      if (!this.atStatementEnd()) throw new Bail()
+      if (!this.atStatementEnd()) throw BAIL
       return stmt
     } catch (error) {
-      if (!(error instanceof Bail)) throw error
+      if (error !== BAIL) throw error
       this.depth = depth
       this.links = links
       this.pos = startPos
-      const idents = this.skipStatement()
-      return { kind: 'unknown', keyword: start.text, idents, ...this.span(start) }
+      return this.unreadable(start)
     }
+  }
+
+  // 읽지 못한 문장: start부터 문장 끝까지 넘긴다
+  private unreadable(start: GradleToken): Stmt {
+    spend(this.steps, RECOVERY_STEPS)
+    const idents = this.skipStatement()
+    return { kind: 'unknown', keyword: start.text, idents, ...this.span(start) }
   }
 
   // 식 트리를 한 단계 깊게 하는 사슬 하나(a + b, a.b, a(…), !a, 명령식 사슬). 식 하나(expression)에서 한도를 넘으면
   // 그 문장만 버린다(a + b + …처럼 끝없이 이은 식은 트리가 깊어 해석이 재귀로 스택을 넘길 수 있다).
   private link(): void {
-    if (++this.links > MAX_CHAIN) throw new Bail()
+    if (++this.links > MAX_CHAIN) throw BAIL
   }
 
   private statementInner(): Stmt {
@@ -251,7 +288,7 @@ class Parser {
     const expr = this.expression(true)
     const op = this.peek()
     if (op.kind === 'punct' && ['=', '+=', '-=', '*=', '/='].includes(op.text)) {
-      if (!['name', 'member', 'index'].includes(expr.kind)) throw new Bail()
+      if (!['name', 'member', 'index'].includes(expr.kind)) throw BAIL
       this.next()
       this.skipNewlinesOnly()
       const value = this.expression(true)
@@ -354,12 +391,12 @@ class Parser {
     }
     this.next()
     const nameToken = this.next()
-    if (nameToken.kind !== 'ident') throw new Bail()
+    if (nameToken.kind !== 'ident') throw BAIL
     if (this.isPunct(':')) {
       this.next()
       // 형식: a.b.C<…>?
       this.qualifiedName()
-      if (this.isPunct('<') && !this.skipAngles()) throw new Bail()
+      if (this.isPunct('<') && !this.skipAngles()) throw BAIL
       if (this.isPunct('?')) this.next()
     }
     if (this.isPunct('=')) {
@@ -375,11 +412,11 @@ class Parser {
     }
     if (this.atStatementEnd())
       return { kind: 'decl', name: nameToken.text, value: null, by: null, ...this.span(start) }
-    throw new Bail()
+    throw BAIL
   }
 
   private qualifiedName(): void {
-    if (this.peek().kind !== 'ident') throw new Bail()
+    if (this.peek().kind !== 'ident') throw BAIL
     this.next()
     while (this.isPunct('.') && this.peek(1).kind === 'ident') {
       this.next()
@@ -469,11 +506,12 @@ class Parser {
 
   private identsBetween(from: number, to: number): string[] {
     const names = new Set<string>()
+    spend(this.steps, Math.max(0, to - from))
     for (let i = from; i < to; i++) {
       const token = this.tokens[i]
       if (token.kind === 'ident') names.add(token.text)
       if (token.kind === 'string')
-        for (const name of stringIdents(token.parts ?? [])) names.add(name)
+        for (const name of stringIdents(token.parts ?? [], this.steps)) names.add(name)
     }
     return [...names]
   }
@@ -533,12 +571,10 @@ class Parser {
     this.enter()
     const links = this.links
     this.links = 0
-    try {
-      return this.binary(0, command)
-    } finally {
-      this.links = links
-      this.leave()
-    }
+    const expr = this.binary(0, command)
+    this.links = links
+    this.leave()
+    return expr
   }
 
   private binaryOp(): string | null {
@@ -556,9 +592,9 @@ class Parser {
         this.link()
         const start = this.next()
         const type = this.peek()
-        if (type.kind !== 'ident') throw new Bail()
+        if (type.kind !== 'ident') throw BAIL
         this.qualifiedName()
-        if (this.isPunct('<') && !this.skipAngles()) throw new Bail()
+        if (this.isPunct('<') && !this.skipAngles()) throw BAIL
         if (this.isPunct('?')) this.next()
         left = {
           kind: 'cast',
@@ -599,8 +635,7 @@ class Parser {
     const ops: GradleToken[] = []
     for (;;) {
       const token = this.peek()
-      if (token.kind !== 'punct' || !['!', '-', '+', '~', '++', '--', '*'].includes(token.text))
-        break
+      if (token.kind !== 'punct' || !PREFIX_OPERATORS.has(token.text)) break
       this.link()
       ops.push(this.next())
     }
@@ -628,13 +663,13 @@ class Parser {
           this.next()
           this.skipNewlinesOnly()
           const name = this.next()
-          if (name.kind !== 'ident' && name.kind !== 'string') throw new Bail()
+          if (name.kind !== 'ident' && name.kind !== 'string') throw BAIL
           if (token.text === '.&' || token.text === '::' || token.text === '*.') {
             expr = { kind: 'other', start: expr.start, end: name.end, line: expr.line }
             continue
           }
           const memberName = name.kind === 'ident' ? name.text : stringLiteralText(name)
-          if (memberName === null) throw new Bail()
+          if (memberName === null) throw BAIL
           expr = { kind: 'member', target: expr, name: memberName, ...this.spanFrom(expr) }
           continue
         }
@@ -768,62 +803,57 @@ class Parser {
 
   private parenArgs(): Arg[] {
     this.enter()
-    try {
-      this.expect('(')
-      const args: Arg[] = []
-      this.skipNewlinesOnly()
-      if (this.isPunct(')')) {
-        this.next()
-        return args
-      }
-      for (;;) {
-        this.skipNewlinesOnly()
-        args.push(this.argument(this.dialect === 'kotlin' ? '=' : ':'))
-        this.skipNewlinesOnly()
-        if (this.isPunct(',')) {
-          this.next()
-          this.skipNewlinesOnly()
-          if (this.isPunct(')')) break
-          continue
-        }
-        break
-      }
-      this.skipNewlinesOnly()
-      this.expect(')')
-      return args
-    } finally {
+    this.expect('(')
+    const args: Arg[] = []
+    this.skipNewlinesOnly()
+    if (this.isPunct(')')) {
+      this.next()
       this.leave()
+      return args
     }
+    for (;;) {
+      this.skipNewlinesOnly()
+      args.push(this.argument(this.dialect === 'kotlin' ? '=' : ':'))
+      this.skipNewlinesOnly()
+      if (this.isPunct(',')) {
+        this.next()
+        this.skipNewlinesOnly()
+        if (this.isPunct(')')) break
+        continue
+      }
+      break
+    }
+    this.skipNewlinesOnly()
+    this.expect(')')
+    this.leave()
+    return args
   }
 
   private closure(): ClosureExpr {
     this.enter()
-    try {
-      const start = this.expect('{')
-      // 매개변수: { a, b -> … } / { a: T -> … }
-      const save = this.pos
-      this.skipNewlinesOnly()
-      let sawArrow = false
-      for (let offset = 0; offset < 32; offset++) {
-        const token = this.peek(offset)
-        if (token.kind === 'punct' && token.text === '->') {
-          sawArrow = true
-          this.pos += offset + 1
-          break
-        }
-        if (
-          token.kind !== 'ident' &&
-          !(token.kind === 'punct' && [',', ':', '.', '<', '>', '?'].includes(token.text))
-        )
-          break
+    const start = this.expect('{')
+    // 매개변수: { a, b -> … } / { a: T -> … }
+    const save = this.pos
+    this.skipNewlinesOnly()
+    let sawArrow = false
+    for (let offset = 0; offset < 32; offset++) {
+      const token = this.peek(offset)
+      if (token.kind === 'punct' && token.text === '->') {
+        sawArrow = true
+        this.pos += offset + 1
+        break
       }
-      if (!sawArrow) this.pos = save
-      const body = this.block(true)
-      this.expect('}')
-      return { kind: 'closure', body, ...this.span(start) }
-    } finally {
-      this.leave()
+      if (
+        token.kind !== 'ident' &&
+        !(token.kind === 'punct' && [',', ':', '.', '<', '>', '?'].includes(token.text))
+      )
+        break
     }
+    if (!sawArrow) this.pos = save
+    const body = this.block(true)
+    this.expect('}')
+    this.leave()
+    return { kind: 'closure', body, ...this.span(start) }
   }
 
   private primary(): Expr {
@@ -840,91 +870,85 @@ class Parser {
         if (token.text === 'new') {
           this.next()
           this.qualifiedName()
-          if (this.isPunct('<') && !this.skipAngles()) throw new Bail()
+          if (this.isPunct('<') && !this.skipAngles()) throw BAIL
           if (this.isPunct('(')) this.parenArgs()
           if (this.isPunct('{')) this.closure()
           return { kind: 'other', ...this.span(token) }
         }
-        if (CONTROL.has(token.text) || TYPE_DEFS.has(token.text) || token.text === 'fun')
-          throw new Bail()
+        if (CONTROL.has(token.text) || TYPE_DEFS.has(token.text) || token.text === 'fun') throw BAIL
         this.next()
         return { kind: 'name', name: token.text, ...this.span(token) }
       }
       case 'punct': {
         if (token.text === '(') {
           this.enter()
-          try {
-            this.next()
-            this.skipNewlinesOnly()
-            const inner = this.expression(false)
-            this.skipNewlinesOnly()
-            this.expect(')')
-            return { ...inner, ...this.span(token) }
-          } finally {
-            this.leave()
-          }
+          this.next()
+          this.skipNewlinesOnly()
+          const inner = this.expression(false)
+          this.skipNewlinesOnly()
+          this.expect(')')
+          this.leave()
+          return { ...inner, ...this.span(token) }
         }
         if (token.text === '[') return this.listOrMap()
         if (token.text === '{') return this.closure()
-        throw new Bail()
+        throw BAIL
       }
       default:
-        throw new Bail()
+        throw BAIL
     }
   }
 
   private listOrMap(): Expr {
     this.enter()
-    try {
-      const start = this.expect('[')
-      this.skipNewlinesOnly()
-      // [:] 빈 맵
-      if (this.isPunct(':') && this.isPunct(']', 1)) {
-        this.next()
-        this.next()
-        return { kind: 'map', entries: [], ...this.span(start) }
-      }
-      const items: Expr[] = []
-      const entries: Array<{ key: string | null; value: Expr }> = []
-      let isMap: boolean | null = null
-      while (!this.isPunct(']')) {
-        this.skipNewlinesOnly()
-        const key = this.peek()
-        const keyed =
-          (key.kind === 'ident' || key.kind === 'string' || key.kind === 'number') &&
-          this.isPunct(':', 1)
-        if (isMap === null) isMap = keyed
-        if (keyed !== isMap) throw new Bail()
-        if (keyed) {
-          this.next()
-          this.next()
-          this.skipNewlinesOnly()
-          const name =
-            key.kind === 'string'
-              ? stringLiteralText(key)
-              : key.kind === 'ident'
-                ? key.text
-                : key.text
-          entries.push({ key: name, value: this.expression(false) })
-        } else {
-          items.push(this.expression(false))
-        }
-        this.skipNewlinesOnly()
-        if (this.isPunct(',')) {
-          this.next()
-          this.skipNewlinesOnly()
-          continue
-        }
-        break
-      }
-      this.skipNewlinesOnly()
-      this.expect(']')
-      return isMap
-        ? { kind: 'map', entries, ...this.span(start) }
-        : { kind: 'list', items, ...this.span(start) }
-    } finally {
+    const start = this.expect('[')
+    this.skipNewlinesOnly()
+    // [:] 빈 맵
+    if (this.isPunct(':') && this.isPunct(']', 1)) {
+      this.next()
+      this.next()
       this.leave()
+      return { kind: 'map', entries: [], ...this.span(start) }
     }
+    const items: Expr[] = []
+    const entries: Array<{ key: string | null; value: Expr }> = []
+    let isMap: boolean | null = null
+    while (!this.isPunct(']')) {
+      this.skipNewlinesOnly()
+      const key = this.peek()
+      const keyed =
+        (key.kind === 'ident' || key.kind === 'string' || key.kind === 'number') &&
+        this.isPunct(':', 1)
+      if (isMap === null) isMap = keyed
+      if (keyed !== isMap) throw BAIL
+      if (keyed) {
+        this.next()
+        this.next()
+        this.skipNewlinesOnly()
+        const name =
+          key.kind === 'string'
+            ? stringLiteralText(key)
+            : key.kind === 'ident'
+              ? key.text
+              : key.text
+        entries.push({ key: name, value: this.expression(false) })
+      } else {
+        items.push(this.expression(false))
+      }
+      this.skipNewlinesOnly()
+      if (this.isPunct(',')) {
+        this.next()
+        this.skipNewlinesOnly()
+        continue
+      }
+      break
+    }
+    this.skipNewlinesOnly()
+    this.expect(']')
+    this.leave()
+    return isMap
+      ? { kind: 'map', entries, ...this.span(start) }
+      : { kind: 'list', items, ...this.span(start) }
   }
 
   private stringParts(token: GradleToken): Array<string | Expr> {
@@ -948,16 +972,18 @@ class Parser {
     }
     const inner = new Parser(
       [...part.tokens.filter((t) => t.kind !== 'newline'), eof],
-      this.dialect
+      this.dialect,
+      this.steps
     )
     inner.depth = this.depth
     try {
-      if (inner.peek().kind === 'eof') throw new Bail()
+      if (inner.peek().kind === 'eof') throw BAIL
       const expr = inner.expression(false)
-      if (inner.peek().kind !== 'eof') throw new Bail()
+      if (inner.peek().kind !== 'eof') throw BAIL
       return expr
     } catch (error) {
-      if (!(error instanceof Bail)) throw error
+      if (error !== BAIL) throw error
+      spend(this.steps, RECOVERY_STEPS)
       return { kind: 'other', start: part.start, end: part.end, line: part.line }
     }
   }
@@ -980,27 +1006,38 @@ export function stringLiteralText(token: GradleToken): string | null {
   return text
 }
 
-function stringIdents(parts: StringPart[]): string[] {
+function stringIdents(parts: StringPart[], steps: Steps): string[] {
   const names: string[] = []
   for (const part of parts) {
     if (part.kind === 'path') names.push(...part.names)
-    else if (part.kind === 'expr')
+    else if (part.kind === 'expr') {
+      spend(steps, part.tokens.length)
       for (const token of part.tokens) {
         if (token.kind === 'ident') names.push(token.text)
-        if (token.kind === 'string') names.push(...stringIdents(token.parts ?? []))
+        if (token.kind === 'string') names.push(...stringIdents(token.parts ?? [], steps))
       }
+    }
   }
   return names
 }
 
-export function parseGradleScript(text: string, dialect: GradleDialect): ParsedScript {
-  const lexed = lexGradle(text, dialect)
-  if (lexed.tooDeep) return { statements: [], problems: lexed.problems, tooDeep: true }
-  const parser = new Parser(lexed.tokens, dialect)
+// maxSteps: 부른 쪽의 남은 일. 글자 나누기와 구문 나누기가 함께 쓰고, 한 파일은 글자당 MAX_STEPS_PER_CHAR까지다.
+export function parseGradleScript(
+  text: string,
+  dialect: GradleDialect,
+  maxSteps = Infinity
+): ParsedScript {
+  const max = Math.min(maxSteps, MAX_STEPS_PER_CHAR * (text.length + 1))
+  const lexed = lexGradle(text, dialect, max)
+  const { problems } = lexed
+  if (lexed.tooDeep) return { statements: [], problems, tooDeep: true, steps: lexed.steps }
+  const steps: Steps = { count: lexed.steps, max }
+  const parser = new Parser(lexed.tokens, dialect, steps)
   try {
-    return { statements: parser.block(false), problems: lexed.problems, tooDeep: false }
+    return { statements: parser.block(false), problems, tooDeep: false, steps: steps.count }
   } catch (error) {
-    if (error instanceof TooDeep) return { statements: [], problems: lexed.problems, tooDeep: true }
+    if (error instanceof TooDeep)
+      return { statements: [], problems, tooDeep: true, steps: steps.count }
     throw error
   }
 }

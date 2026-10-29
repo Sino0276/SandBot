@@ -129,8 +129,9 @@ describe('팀 변형', () => {
       'implementation org.ftclib.ftclib:core:2.1.1 [intransitive, exclude org.firstinspires.ftc:*, exclude *:core-ktx] @TeamCode/build.gradle:37',
       // 같은 파일의 def
       'implementation com.example:local:1.2.0 @TeamCode/build.gradle:42',
-      'compileOnly com.example:annotations:1.0 [@jar] @TeamCode/build.gradle:43',
-      'runtimeOnly com.example:native:2.0 [classifier=linux-x86_64, @zip] @TeamCode/build.gradle:44',
+      // 확장자가 있으면 Gradle처럼 전이 의존성을 끈다
+      'compileOnly com.example:annotations:1.0 [@jar, intransitive] @TeamCode/build.gradle:43',
+      'runtimeOnly com.example:native:2.0 [classifier=linux-x86_64, @zip, intransitive] @TeamCode/build.gradle:44',
       // 동적 버전은 글자 그대로(해석기가 거부한다)
       'implementation com.acmerobotics.roadrunner:actions:+ @TeamCode/build.gradle:45'
     ])

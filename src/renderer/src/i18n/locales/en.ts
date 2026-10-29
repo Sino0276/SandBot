@@ -867,7 +867,10 @@ const en: Messages = {
       outsideProject: 'files outside the project are not read',
       missingFile: 'the apply from file does not exist',
       tooLarge: 'the file is too large, so it was not read',
-      tooDeep: 'nesting or apply from is too deep, so reading stopped',
+      tooDeep: 'nesting or apply from is too deep, or the file is too complex, so reading stopped',
+      tooMany: 'a count limit was exceeded, so what is over the limit was not read',
+      tooMuchWork:
+        'reading the Gradle files takes too much work, so reading stopped here; what was read before is used',
       localDependency:
         'SandBot does not use local module or file dependencies (project(), files(), fileTree)',
       versionCatalogEntry: 'not found in gradle/libs.versions.toml'

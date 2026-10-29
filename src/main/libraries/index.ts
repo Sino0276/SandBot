@@ -187,7 +187,7 @@ function rootsOf(item: Declared): Root[] {
     runtime:
       RUNTIME.has(d.configuration) &&
       classifyModule(item.group, item.artifact, d.version).kind !== 'compileOnly',
-    // 'g:a:v@aar'은 Gradle에서 전이 의존성을 끄지 않는다(SandBot도 같게, transitive = false만 끈다)
+    // 'g:a:v@aar'(확장자)는 Gradle처럼 전이 의존성을 끈다(클로저의 transitive = true가 없으면). 읽기가 정한 값이다.
     transitive: d.transitive,
     exclusions: d.excludes.map((e) => ({ group: e.group, module: e.module }))
   }))

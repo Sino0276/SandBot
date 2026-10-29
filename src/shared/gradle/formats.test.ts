@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseNotation } from './notation'
 import { isSafeProjectPath, resolveProjectPath } from './paths'
 import { parseGradleProperties } from './properties'
-import { catalogAccessor, parseVersionCatalog } from './toml'
+import { CATALOG_RECOVERY_WORK, catalogAccessor, parseVersionCatalog } from './toml'
 
 describe('parseNotation', () => {
   it('g:a:v[:classifier][@ext]', () => {
@@ -119,6 +119,20 @@ describe('parseGradleProperties', () => {
     })
     expect(props.get('d')?.line).toBe(6)
   })
+
+  it('줄 잇기는 줄마다 끝의 역슬래시 개수로 정한다(Properties.load와 같다)', () => {
+    const props = parseGradleProperties(
+      // a: 짝수(\\)는 잇지 않는다, b: 홀수 셋은 잇는다, c: 역슬래시만 있는 줄도 홀수면 다시 잇는다
+      'a=x\\\\\nb=x\\\\\\\n  y\nc=x\\\n\\\nz\nd=1'
+    )
+    expect(Object.fromEntries([...props].map(([k, v]) => [k, v.value]))).toEqual({
+      a: 'x\\',
+      b: 'x\\y',
+      c: 'xz',
+      d: '1'
+    })
+    expect(props.get('d')?.line).toBe(7)
+  })
 })
 
 describe('parseVersionCatalog', () => {
@@ -170,5 +184,19 @@ describe('parseVersionCatalog', () => {
     )
     expect(catalog.problems.map((p) => p.line)).toEqual([2, 4, 5])
     expect([...catalog.versions.keys()]).toEqual(['b', 'e'])
+  })
+
+  it('읽은 일(글자 수, 읽지 못한 줄마다 CATALOG_RECOVERY_WORK)을 세고 한도를 넘으면 그 줄에서 멈춘다', () => {
+    const bad = '"\n'.repeat(1000)
+    const all = parseVersionCatalog(bad)
+    expect(all.problems).toHaveLength(1000)
+    expect(all.work).toBe(bad.length + 1000 * CATALOG_RECOVERY_WORK)
+    expect(all.line).toBe(1001)
+    const max = 100 * CATALOG_RECOVERY_WORK
+    const stopped = parseVersionCatalog(`[versions]\na = "1"\n${bad}b = "2"\n`, max)
+    expect(stopped.work).toBeGreaterThan(max)
+    expect(stopped.problems.length).toBeLessThan(100)
+    expect(stopped.line).toBe(stopped.problems[stopped.problems.length - 1].line)
+    expect([...stopped.versions.keys()]).toEqual(['a'])
   })
 })

@@ -15,10 +15,11 @@ export type GradleDependency = {
   // 선언한 버전 글자 그대로(동적 버전 '+'·'latest.release'·범위·SNAPSHOT도 그대로 두고 해석기가 거부한다)
   version: string
   classifier: string | null
-  // 'g:a:v@aar'의 확장자(Gradle은 이때 전이 의존성을 끄지 않지만 해석기가 정한다)
+  // 'g:a:v@aar'·ext: 'aar'의 확장자
   extension: string | null
   excludes: GradleExclude[]
-  // { transitive = false }
+  // 전이 의존성을 따를지. Gradle처럼 확장자가 있으면 false이고(ModuleFactoryHelper.addExplicitArtifactsIfDefined),
+  // 클로저의 transitive = …가 있으면 그 값이다.
   transitive: boolean
   at: GradleLocation
 }
@@ -38,8 +39,11 @@ export type GradleRepository = {
 // - remoteScript: apply from: 'https://…'(읽지 않음)
 // - outsideProject: 프로젝트 밖 파일을 apply from 함(읽지 않음)
 // - missingFile: apply from 대상이 없다
-// - tooLarge: 파일이 너무 크다(읽지 않음)
-// - tooDeep: 중첩·apply from이 너무 깊다
+// - tooLarge: 파일이 256 KB를 넘는다(읽지 않음)
+// - tooDeep: 중첩·apply from 사슬이 너무 깊거나 순환한다, 한 파일이 글자 수에 비해 너무 복잡하다(그 파일은 읽지 않음)
+// - tooMany: 개수 한도(의존성·저장소 수, 한 문장에서 펼치는 의존성·include 목록 항목 수, apply from 실행 횟수, 읽는 파일
+//   수)를 넘었다(넘은 것만 읽지 않음)
+// - tooMuchWork: 한 번 읽기의 일이 한도를 넘어 그 자리에서 읽기를 멈췄다(앞에서 읽은 것은 씀)
 // - localDependency: project(':x')·files()·fileTree·flatDir 이름 의존성(SandBot이 쓰지 않음, :FtcRobotController 제외)
 // - versionCatalogEntry: libs.x를 libs.versions.toml에서 찾지 못함
 export type GradleDiagnosticCode =
@@ -50,6 +54,8 @@ export type GradleDiagnosticCode =
   | 'missingFile'
   | 'tooLarge'
   | 'tooDeep'
+  | 'tooMany'
+  | 'tooMuchWork'
   | 'localDependency'
   | 'versionCatalogEntry'
 
