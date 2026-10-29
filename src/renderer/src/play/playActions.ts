@@ -314,13 +314,14 @@ export function startPlay(): void {
   focusSceneView()
 }
 
-// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전이면 받은 뒤 보낸다. 라이브러리를 받는 중이면(응답 전) 바로 보낸다:
-// 메인이 받기를 멈추고 INIT을 cancelled로 끝낸다(라이브러리 진행 알림의 [취소]도 이것이다).
+// STOP(INIT 중의 작은 ■도 같다). playInit 응답 전에도 바로 보낸다: 메인이 INIT을 준비하는 중(Gradle 읽기~라이브러리
+// 받기)이면 그것을 멈추고 INIT을 cancelled로 끝낸다(라이브러리 진행 알림의 [취소]도 이것이다). 그 전 단계(확인·JDK)면
+// 메인이 버리므로 받기가 시작될 때(첫 진행, handlePlayEvent)와 응답을 받은 뒤(runInit) 한 번 더 보낸다.
 export function stopPlay(): void {
   const { run } = usePlayStore.getState()
   if (!isRunActive(run) || run.stopRequested) return
   updateRun(run.runId, () => ({ stopRequested: true }))
-  if (run.accepted || run.libraryProgress) command({ type: 'stop' })
+  command({ type: 'stop' })
 }
 
 // 툴바의 한 버튼과 Ctrl+P: INIT → START → STOP 순서
@@ -418,6 +419,14 @@ export function handlePlayEvent(event: PlayEvent): void {
   usePlayStore.getState().applyEvent(event)
   const after = usePlayStore.getState().run
   if (!isRunActive(after)) stopGamepads()
+  // 메인이 준비를 시작하기 전에 누른 STOP은 버려졌을 수 있다(stopPlay): 받기가 시작되면 다시 보내 받기를 멈춘다
+  if (
+    event.type === 'libraryProgress' &&
+    before.stopRequested &&
+    !before.libraryProgress &&
+    after?.libraryProgress
+  )
+    command({ type: 'stop' })
   // Autonomous가 끝나면 DS처럼 preselectTeleOp으로 정한 TeleOp을 고른다. 그사이 다른 프로젝트를 열었으면
   // (STOP을 보내고 끝을 기다리는 중) 그 프로젝트의 같은 이름 OpMode를 고르지 않는다.
   if (

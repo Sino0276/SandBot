@@ -212,16 +212,40 @@ describe('INIT → START → STOP', () => {
     expect(commands).toEqual([{ type: 'stop' }])
   })
 
-  it('playInit 응답 전의 STOP은 받은 뒤 보낸다', async () => {
+  it('playInit 응답 전의 STOP은 바로 보내고(메인이 준비 중이면 INIT을 취소한다) 받은 뒤 한 번 더 보낸다', async () => {
     const pending = deferred<PlayInitResult>()
     initResult = () => pending.promise
     void initPlay()
     await settle()
     stopPlay()
-    expect(commands).toEqual([])
+    expect(commands).toEqual([{ type: 'stop' }])
+    // 메인이 아직 준비를 시작하지 않아 버렸을 수 있다
     pending.resolve({ ok: true })
     await settle()
+    expect(commands).toEqual([{ type: 'stop' }, { type: 'stop' }])
+  })
+
+  it('첫 라이브러리 진행 전에 누른 STOP도 받기를 취소한다(진행이 오면 한 번 더 보낸다)', async () => {
+    const pending = deferred<PlayInitResult>()
+    initResult = () => pending.promise
+    void initPlay()
+    await settle()
+    // 메인이 아직 Gradle·플랫폼 jar·JDK를 보는 중(진행 알림 전)에 STOP
+    playButton()
     expect(commands).toEqual([{ type: 'stop' }])
+    // 메인이 그 STOP을 받기 전 단계였으면 버렸다: 받기가 시작되면 다시 보낸다(한 번만)
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 0, total: 5, bytes: 0 })
+    )
+    expect(commands).toEqual([{ type: 'stop' }, { type: 'stop' }])
+    handlePlayEvent(
+      event({ type: 'libraryProgress', phase: 'downloading', done: 1, total: 5, bytes: 10 })
+    )
+    expect(commands).toHaveLength(2)
+    pending.resolve({ ok: false, code: 'cancelled', detail: '' })
+    await settle()
+    expect(usePlayStore.getState().run).toBeNull()
+    expect(useNoticeStore.getState().notices.map((n) => n.key)).toEqual(['playCancelled'])
   })
 
   it('라이브러리를 받는 중(playInit 응답 전)의 STOP·[취소]는 바로 보내 INIT을 취소한다', async () => {
