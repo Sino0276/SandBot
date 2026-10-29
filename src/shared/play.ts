@@ -77,8 +77,9 @@ export type JdkChoice =
 // default(OS 기본 위치)
 export type AndroidSdkInfo = {
   home: string
-  // platforms/android-N/android.jar가 있는 API 수준(오름차순)
-  platforms: number[]
+  // platforms/<이름>/android.jar가 있는 플랫폼 폴더 이름(android-30, 부 버전이 붙은 android-36.1·android-37.0 …,
+  // 주 버전 → 부 버전 순). 메인(androidSdk.ts)이 이름을 확인하고 순서를 정한다.
+  platforms: string[]
   source: 'setting' | 'localProperties' | 'env' | 'default'
 }
 

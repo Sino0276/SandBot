@@ -79,10 +79,10 @@ function fakeFs(
   }
 }
 
-// SDK 폴더 하나(platforms/android-N/android.jar들)
+// SDK 폴더 하나(platforms/android-<버전>/android.jar들, 버전은 30·'37.0' 같은 폴더 이름의 뒷부분)
 function sdkFiles(
   home: string,
-  levels: number[],
+  levels: (number | string)[],
   api: typeof posix = posix
 ): Record<string, string> {
   const files: Record<string, string> = { [api.join(home, 'platforms', '.keep')]: '' }
@@ -151,7 +151,48 @@ describe('Android SDK 찾기', () => {
       '/sdk/platforms/android-35/source.properties': '',
       '/sdk/platforms/android-033/android.jar': 'jar'
     })
-    expect(await installedPlatforms('/sdk', deps)).toEqual([28, 30, 34])
+    expect(await installedPlatforms('/sdk', deps)).toEqual([
+      'android-28',
+      'android-30',
+      'android-34'
+    ])
+  })
+
+  it('부 버전이 붙은 android-N.M(android-36.1, android-37.0)도 플랫폼이고, 주 버전 → 부 버전 순이다', async () => {
+    // Google은 API 36부터 부 버전 플랫폼(platforms;android-36.1)을 내고, API 37은 platforms;android-37.0으로만 낸다
+    const deps = linuxDeps({
+      ...sdkFiles('/sdk', ['37.0', 34, '36.1', '37.1', 36, '36.10']),
+      '/sdk/platforms/android-37.00/android.jar': 'jar',
+      '/sdk/platforms/android-36.01/android.jar': 'jar',
+      '/sdk/platforms/android-37./android.jar': 'jar',
+      '/sdk/platforms/android-37.0.1/android.jar': 'jar',
+      '/sdk/platforms/android-37.0-ext20/android.jar': 'jar',
+      '/sdk/platforms/android-37.2-beta1/android.jar': 'jar',
+      '/sdk/platforms/android-37.2/source.properties': ''
+    })
+    expect(await installedPlatforms('/sdk', deps)).toEqual([
+      'android-34',
+      'android-36',
+      'android-36.1',
+      'android-36.10',
+      'android-37.0',
+      'android-37.1'
+    ])
+    // 환경 설정의 플랫폼 목록(AndroidSdkInfo.platforms)도 같다
+    expect(await detectAndroidSdks({ ...deps, env: { ANDROID_HOME: '/sdk' } }, null)).toEqual([
+      {
+        home: '/sdk',
+        platforms: [
+          'android-34',
+          'android-36',
+          'android-36.1',
+          'android-36.10',
+          'android-37.0',
+          'android-37.1'
+        ],
+        source: 'env'
+      }
+    ])
   })
 
   it('local.properties → ANDROID_HOME → ANDROID_SDK_ROOT → 기본 위치 순이고, 같은 폴더는 한 번만', async () => {
@@ -167,10 +208,10 @@ describe('Android SDK 찾기', () => {
     const env = { ANDROID_HOME: '/opt/home-sdk', ANDROID_SDK_ROOT: '"/opt/root-sdk/"' }
     const found = await detectAndroidSdks(linuxDeps(files, env), '/proj')
     expect(found).toEqual([
-      { home: '/opt/team-sdk', platforms: [30], source: 'localProperties' },
-      { home: '/opt/home-sdk', platforms: [34], source: 'env' },
+      { home: '/opt/team-sdk', platforms: ['android-30'], source: 'localProperties' },
+      { home: '/opt/home-sdk', platforms: ['android-34'], source: 'env' },
       { home: '/opt/root-sdk', platforms: [], source: 'env' },
-      { home: '/home/me/Android/Sdk', platforms: [33], source: 'default' }
+      { home: '/home/me/Android/Sdk', platforms: ['android-33'], source: 'default' }
     ])
     // 프로젝트를 모르면 local.properties는 보지 않는다. 링크로 같은 폴더면 한 번만.
     const linked = await detectAndroidSdks(
@@ -249,7 +290,7 @@ describe('Android SDK 찾기', () => {
       null
     )
     expect(found).toEqual([
-      { home: '/Users/me/Library/Android/sdk', platforms: [34], source: 'default' }
+      { home: '/Users/me/Library/Android/sdk', platforms: ['android-34'], source: 'default' }
     ])
   })
 })
@@ -284,7 +325,11 @@ describe('Android SDK 설정(환경 설정 창)', () => {
   it('설정이 없으면 자동: 찾은 것 중 첫 SDK', async () => {
     const state = await getAndroidSdkState(null, deps())
     expect(state.choice).toEqual({ kind: 'auto' })
-    expect(state.active).toEqual({ home: '/opt/other-sdk', platforms: [33], source: 'env' })
+    expect(state.active).toEqual({
+      home: '/opt/other-sdk',
+      platforms: ['android-33'],
+      source: 'env'
+    })
     expect(state.detected.map((s) => s.home)).toEqual(['/opt/other-sdk', '/home/me/Android/Sdk'])
   })
 
@@ -298,7 +343,7 @@ describe('Android SDK 설정(환경 설정 창)', () => {
     expect(chosen.choice).toEqual({ kind: 'custom', home: '/home/me/Android/Sdk' })
     expect(chosen.active).toEqual({
       home: '/home/me/Android/Sdk',
-      platforms: [30, 34],
+      platforms: ['android-30', 'android-34'],
       source: 'setting'
     })
     expect(JSON.parse(await readFile(settingsFile, 'utf8'))).toEqual({
@@ -342,7 +387,11 @@ describe('Android SDK 설정(환경 설정 창)', () => {
       browse('/opt/picked')
     )
     expect(sdk.error).toBeUndefined()
-    expect(sdk.active).toEqual({ home: '/opt/picked', platforms: [35], source: 'setting' })
+    expect(sdk.active).toEqual({
+      home: '/opt/picked',
+      platforms: ['android-35'],
+      source: 'setting'
+    })
     const viaPlatforms = await setAndroidSdkChoice(
       { kind: 'browse', title: '' },
       null,
@@ -435,7 +484,12 @@ function tinyAndroidJar(names: string[]): Buffer {
 describe('컴파일 기준(플랫폼 jar)', () => {
   let dir: string
 
-  async function realSdk(levels: number[], broken: number[] = [], name = 'sdk'): Promise<string> {
+  // levels는 platforms/android-<버전> 폴더(30, '37.0' …). 각 jar에는 그 버전 표시 클래스(java/util/Api37_0.class)가 있다.
+  async function realSdk(
+    levels: (number | string)[],
+    broken: (number | string)[] = [],
+    name = 'sdk'
+  ): Promise<string> {
     const home = join(dir, name)
     await mkdir(join(home, 'platforms'), { recursive: true })
     for (const level of levels) {
@@ -447,13 +501,21 @@ describe('컴파일 기준(플랫폼 jar)', () => {
           ? 'broken'
           : tinyAndroidJar([
               'java/lang/Object.class',
-              `java/util/Api${level}.class`,
+              `java/util/Api${String(level).replace('.', '_')}.class`,
               'android/app/Activity.class',
               'android/annotation/TargetApi.class'
             ])
       )
     }
     return home
+  }
+
+  // 컴파일 기준 jar가 어느 플랫폼 폴더에서 왔나(realSdk의 표시 클래스)
+  async function platformMarker(result: unknown): Promise<string> {
+    const resolved = result as { ok: boolean; bootClasspath?: string[] }
+    if (!resolved.ok || !resolved.bootClasspath) return `not ok: ${JSON.stringify(result)}`
+    const names = readCentralDirectory(await readFile(resolved.bootClasspath[0])).map((e) => e.name)
+    return names.find((n) => n.startsWith('java/util/Api')) ?? 'none'
   }
 
   function deps(env: NodeJS.ProcessEnv): AndroidSdkDeps {
@@ -528,6 +590,46 @@ describe('컴파일 기준(플랫폼 jar)', () => {
       code: 'noAndroidPlatform',
       detail: 'android-*'
     })
+  })
+
+  it('compileSdk N은 android-N, 없으면 android-N.0을 쓰고(API 37부터의 이름), 부 버전 플랫폼도 가장 높은 것으로 고른다', async () => {
+    const home = await realSdk(['37.0', '36.1', 36])
+    const env = { ANDROID_HOME: home }
+    const project = join(dir, 'proj')
+    const r37 = await resolveAndroidPlatform(project, 37, deps(env))
+    expect(r37).toMatchObject({ ok: true, api: 37, guessed: false })
+    expect(await platformMarker(r37)).toBe('java/util/Api37_0.class')
+    const r36 = await resolveAndroidPlatform(project, 36, deps(env))
+    expect(r36).toMatchObject({ ok: true, api: 36, guessed: false })
+    expect(await platformMarker(r36)).toBe('java/util/Api36.class')
+    // compileSdk를 모르면 주 버전 → 부 버전 순으로 가장 높은 것(api는 주 버전)
+    const guessed = await resolveAndroidPlatform(project, null, deps(env))
+    expect(guessed).toMatchObject({ ok: true, api: 37, guessed: true })
+    expect(await platformMarker(guessed)).toBe('java/util/Api37_0.class')
+    const upTo36 = await realSdk([36, '36.1', 34], [], 'sdk-36')
+    const guessed36 = await resolveAndroidPlatform(project, null, deps({ ANDROID_HOME: upTo36 }))
+    expect(guessed36).toMatchObject({ ok: true, api: 36, guessed: true })
+    expect(await platformMarker(guessed36)).toBe('java/util/Api36_1.class')
+    // 둘 다 있으면 android-N
+    const both = await realSdk([37, '37.0'], [], 'sdk-both')
+    expect(
+      await platformMarker(await resolveAndroidPlatform(project, 37, deps({ ANDROID_HOME: both })))
+    ).toBe('java/util/Api37.class')
+    // android-36.1은 compileSdk 36의 플랫폼이 아니다(Android Studio도 compileSdk 36이면 android-36을 찾는다)
+    const minorOnly = await realSdk(['36.1'], [], 'sdk-36.1')
+    expect(await resolveAndroidPlatform(project, 36, deps({ ANDROID_HOME: minorOnly }))).toEqual({
+      ok: false,
+      code: 'noAndroidPlatform',
+      detail: 'android-36'
+    })
+    // 부 버전 플랫폼만 있어도 compileSdk를 모르면 그것을 쓴다
+    const minorGuessed = await resolveAndroidPlatform(
+      project,
+      null,
+      deps({ ANDROID_HOME: minorOnly })
+    )
+    expect(minorGuessed).toMatchObject({ ok: true, api: 36, guessed: true })
+    expect(await platformMarker(minorGuessed)).toBe('java/util/Api36_1.class')
   })
 
   it('android.jar를 읽지 못하면 failed(이유)', async () => {

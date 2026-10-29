@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AndroidSdkState } from '../../../shared/play'
+import en from '../i18n/locales/en'
+import ko from '../i18n/locales/ko'
 import {
   ANDROID_SDK_BROWSE,
   androidSdkChoice,
@@ -8,7 +10,11 @@ import {
   platformList
 } from './androidSdkOptions'
 
-const sdkA = { home: '/opt/sdk', platforms: [30, 34], source: 'localProperties' as const }
+const sdkA = {
+  home: '/opt/sdk',
+  platforms: ['android-30', 'android-34'],
+  source: 'localProperties' as const
+}
 const sdkB = { home: '/home/me/Android/Sdk', platforms: [], source: 'default' as const }
 
 describe('Android SDK 선택 상자', () => {
@@ -55,8 +61,23 @@ describe('Android SDK 선택 상자', () => {
     expect(androidSdkChoice('auto', custom, 't')).toEqual({ kind: 'auto' })
   })
 
-  it('플랫폼 목록 글자', () => {
-    expect(platformList([30, 34])).toBe('android-30, android-34')
+  it('플랫폼 목록 글자(부 버전 폴더도 이름 그대로, 메인이 정한 순서)', () => {
+    expect(platformList(['android-30', 'android-34'])).toBe('android-30, android-34')
+    expect(platformList(['android-36', 'android-36.1', 'android-37.0'])).toBe(
+      'android-36, android-36.1, android-37.0'
+    )
     expect(platformList([])).toBe('')
+  })
+})
+
+describe('Android SDK가 없을 때의 INIT 실패 안내', () => {
+  it('환경 설정에서 고른 폴더를 쓸 수 없게 된 경우도 말하고, 자동으로 찾는다고 하지 않는다', () => {
+    // 고른 폴더를 쓸 수 없으면 메인은 자동으로 넘어가지 않으므로(androidSdk.ts) 다시 고르거나 자동으로 바꾸게 한다
+    expect(ko.notice.playNoAndroidSdk).toContain('환경 설정에서 고른 SDK 폴더')
+    expect(ko.notice.playNoAndroidSdk).toContain('자동으로 바꾸')
+    expect(ko.notice.playNoAndroidSdk).not.toMatch(/자동으로 찾습니다/)
+    expect(en.notice.playNoAndroidSdk).toContain('chosen in Preferences')
+    expect(en.notice.playNoAndroidSdk).toContain('switch to Automatic')
+    expect(en.notice.playNoAndroidSdk).not.toMatch(/found automatically/)
   })
 })
