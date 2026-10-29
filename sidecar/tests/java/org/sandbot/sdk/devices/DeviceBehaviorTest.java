@@ -1,5 +1,6 @@
 package org.sandbot.sdk.devices;
 
+import com.qualcomm.hardware.bosch.BNO055IMU;
 import com.qualcomm.hardware.dfrobot.HuskyLens;
 import com.qualcomm.hardware.digitalchickenlabs.OctoQuad;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
@@ -26,9 +27,13 @@ import com.qualcomm.robotcore.hardware.TouchSensor;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.navigation.Acceleration;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Velocity;
 import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.testing.Check;
 
@@ -445,6 +450,82 @@ public final class DeviceBehaviorTest {
         bot.in("imu2", "pitch", Math.toRadians(5));
         Check.near(-20, imu2.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-2, "mounted hub yaw");
         Check.near(5, imu2.getRobotYawPitchRollAngles().getPitch(AngleUnit.DEGREES), 1e-2, "mounted hub pitch");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    static final String BNO055 = "            <LynxEmbeddedIMU name=\"imu\" port=\"0\" bus=\"0\" />\n";
+
+    public static void testLegacyBno055InitializeResetsHeading() {
+        // 실제 BNO055IMUImpl.initialize는 칩을 리셋(SYS_TRIGGER 0x20)해 IMU 모드 융합을 다시 시작한다: heading은 그때부터 0이고
+        // 피치·롤은 중력 기준이라 그대로다. 같은 칩을 읽는 IMU 인터페이스도 리셋된 칩 값을 본다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        IMU imu = bot.get(IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "pitch", Math.toRadians(10));
+        Orientation before = legacy.getAngularOrientation();
+        Check.near(30, before.firstAngle, 1e-3, "heading before the second initialize");
+        // 로봇 피치는 칩 축의 둘째·셋째 각에 나뉜다(허브 안 칩 축 방향)
+        Check.near(10, Math.hypot(before.secondAngle, before.thirdAngle), 1e-3, "chip tilt before");
+        Check.near(30, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw before");
+
+        Check.isTrue(legacy.initialize(parameters), "initialize again");
+        Orientation after = legacy.getAngularOrientation();
+        Check.near(0, after.firstAngle, 1e-3, "heading restarts at 0");
+        Check.near(before.secondAngle, after.secondAngle, 1e-3, "tilt is gravity-referenced and stays (second)");
+        Check.near(before.thirdAngle, after.thirdAngle, 1e-3, "tilt is gravity-referenced and stays (third)");
+        Check.near(0, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU view of the same chip");
+        Check.near(10, imu.getRobotYawPitchRollAngles().getPitch(AngleUnit.DEGREES), 1e-3, "IMU pitch stays");
+        bot.in("imu", "yaw", Math.toRadians(50));
+        Check.near(20, legacy.getAngularOrientation().firstAngle, 1e-3, "heading counts from the reset");
+        Check.near(20, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw counts from the reset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    /** 첫 update 전에는 null을 주는 팀 적분기 */
+    private static final class NullUntilUpdate implements BNO055IMU.AccelerationIntegrator {
+        @Override public void initialize(BNO055IMU.Parameters parameters, Position initialPosition, Velocity initialVelocity) {
+        }
+
+        @Override public Position getPosition() {
+            return null;
+        }
+
+        @Override public Velocity getVelocity() {
+            return null;
+        }
+
+        @Override public Acceleration getAcceleration() {
+            return null;
+        }
+
+        @Override public void update(Acceleration linearAcceleration) {
+        }
+    }
+
+    public static void testLegacyBno055IntegrationValuesAreNeverNull() {
+        // 실제 BNO055IMUImpl.getAcceleration·getVelocity·getPosition은 적분기가 null을 주면 새 0 값을 준다
+        // (기본 NaiveAccelerationIntegrator의 가속도는 첫 update 전 null)
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        legacy.initialize(new BNO055IMU.Parameters());
+        Check.isTrue(legacy.getAcceleration() != null, "acceleration before integration starts");
+        legacy.startAccelerationIntegration(new Position(), new Velocity(), 1000);
+        Acceleration acceleration = legacy.getAcceleration();
+        Check.isTrue(acceleration != null, "acceleration after integration starts");
+        Check.near(0, acceleration.xAccel + acceleration.yAccel + acceleration.zAccel, 0, "no linear acceleration");
+        Check.isTrue(legacy.getVelocity() != null && legacy.getPosition() != null, "velocity and position");
+
+        BNO055IMU.Parameters custom = new BNO055IMU.Parameters();
+        custom.accelerationIntegrationAlgorithm = new NullUntilUpdate();
+        legacy.initialize(custom);
+        legacy.startAccelerationIntegration(new Position(), new Velocity(), 100);
+        Check.isTrue(legacy.getAcceleration() != null, "team integrator acceleration");
+        Check.isTrue(legacy.getVelocity() != null, "team integrator velocity");
+        Check.isTrue(legacy.getPosition() != null, "team integrator position");
         SandbotHardware.afterStop(bot.map);
     }
 

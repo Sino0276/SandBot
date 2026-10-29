@@ -48,7 +48,8 @@
  * <tr><td>analog(AnalogInput)</td><td>-</td><td>voltage(V, 0..3.3, 1 mV 단위로 읽힘)</td></tr>
  * <tr><td>imu(ControlHubImuBHI260AP, LynxEmbeddedIMU)</td><td>chip(BHI260AP·BNO055)</td>
  *     <td>yaw·pitch·roll(rad, 로봇 방향: SDK IMU 좌표 X 오른쪽·Y 앞·Z 위, 내재 ZXY), yawRate·pitchRate·rollRate(rad/s);
- *         장치가 구성한 허브 장착 방향으로 바꿔 보고한다</td></tr>
+ *         장치가 구성한 허브 장착 방향으로 바꿔 보고한다. 옛 BNO055IMU의 initialize는 칩을 리셋해 그 뒤 칩 heading은 그때부터
+ *         센다(같은 칩의 IMU 인터페이스도)</td></tr>
  * <tr><td>distance(REV_VL53L0X_RANGE_SENSOR)</td><td>-</td><td>distance(m, 없으면 범위 밖 8190 mm; 33 ms마다 새 측정)</td></tr>
  * <tr><td>color(RevColorSensorV3)</td><td>-</td>
  *     <td>red·green·blue·ir(칩 원래 값 0..65535, 드라이버가 red에 1.07, blue에 1.55를 곱한다), distance(m) 또는 proximity(0..2047)</td></tr>
@@ -90,8 +91,8 @@
  *       bulk read(캐시를 비우면 모든 태그의 기록도 지운다), MANUAL은 clearBulkCache() 뒤 첫 읽기, getBulkData()는 늘.
  *       OpMode마다 OFF로 돌아간다.</li>
  *   <li>I2C_TRANSACTION: 장치 드라이버(실제 소스 그대로)가 부르는 I2cDeviceSynch read·write 한 번. 예: BHI260AP initialize 13번,
- *       BNO055 18번 + 40 ms, 방향·각속도 읽기 1번, Pinpoint update 1번(처음은 펌웨어 버전 읽기 1번 더), VL53L0X getDistance 3번
- *       (새 측정을 기다리는 상태 읽기 포함).</li>
+ *       BNO055 18번 + 40 ms(옛 BNO055IMU initialize는 칩 리셋과 CHIP_ID 다시 묻기까지라 기본 비용표에서 24번 + 780 ms), 방향·각속도
+ *       읽기 1번, Pinpoint update 1번(처음은 펌웨어 버전 읽기 1번 더), VL53L0X getDistance 3번(새 측정을 기다리는 상태 읽기 포함).</li>
  * </ul>
  */
 package org.sandbot.sdk.devices;

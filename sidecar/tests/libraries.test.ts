@@ -4,8 +4,8 @@
 // 세계 설명을 주면 운동학 시뮬레이터(KinematicWorld)를 붙인다(SidecarSession과 같은 순서로 그 틱의 답에 입력을 싣는다).
 //  - 결정성: 해시 순서 컬렉션(enum·Object 키 HashMap·HashSet, Collectors.toSet·toMap, HashMap::new)이 두 JVM에서 같은 순서
 //  - Pedro Pathing 3.0.2: 메카넘 + Pinpoint 로컬라이저로 Follower가 짧은 경로를 따라가 끝나고, 두 번 돌리면 같은 자세열·메시지
-//  - FTCLib 2.1.1: CommandOpMode + ParallelCommandGroup·MotorEx(두 JVM에서 같은 메시지), RevIMU(BNO055 구성, BHI260AP면 실패),
-//    command.old.CommandOpMode의 스레드 풀 오류 안내
+//  - FTCLib 2.1.1: CommandOpMode + ParallelCommandGroup·MotorEx(두 JVM에서 같은 메시지), RevIMU(BNO055 구성,
+//    BHI260AP면 실패와 SDK 안내 경고), command.old.CommandOpMode의 스레드 풀 오류 안내
 //  - Ivy 1.1.1: parallel(두 JVM에서 같은 메시지)
 //  - 라이브러리 클래스의 System.nanoTime이 가상 시계(패치), 링크 검사(linkReport: 일부러 없는 멤버를 참조하는 작은 jar, 실제 라이브러리)
 //  - List.of·Set.of·Map.of를 쓰는 OpMode가 시험 플랫폼 jar(bootClasspath)로 컴파일되고(없으면 --release 8로 컴파일 오류)
@@ -650,6 +650,14 @@ describe.skipIf(build === null || libraries === null)('실제 라이브러리', 
         exception: 'java.lang.IllegalArgumentException'
       })
       expect(error.message).toContain('BNO055IMU')
+      // 실제 HardwareMap.tryGet처럼 IMU 인터페이스로 바꾸라고 알린다(BHI260AP만 있는 지도)
+      expect(
+        bhi.messages.some(
+          (m) =>
+            m.type === 'log' &&
+            m.text.startsWith('W/GlobalWarning: You attempted to use the BNO055 interface')
+        )
+      ).toBe(true)
       expect(finishedReason(bhi)).toBe('exception')
     },
     SIDECAR_TEST_TIMEOUT
