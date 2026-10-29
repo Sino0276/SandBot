@@ -961,6 +961,79 @@ describe('compileSdk', () => {
     ])
   })
 
+  it('TeamCode의 android.X, setX, compileSdk { }의 다른 version 설정도 읽고, 읽지 못하면 앞의 compileSdk를 조용히 쓰지 않는다', async () => {
+    // FTC 템플릿처럼 TeamCode가 build.common.gradle(compileSdkVersion 30)을 먼저 적용한다
+    const template = async (
+      body: string
+    ): Promise<[number | null, number | null, string[], string[]]> => {
+      const project = await read({
+        [TEAMCODE]: `apply from: '../build.common.gradle'\n${body}`,
+        'build.common.gradle': 'android {\n  compileSdkVersion 30\n}'
+      })
+      return [
+        project.compileSdk,
+        project.compileSdkMinor,
+        codes(project),
+        project.diagnostics.map((d) => `${d.at.file}:${d.at.line}`)
+      ]
+    }
+    const read36 = [
+      'android.compileSdk = 36\nandroid.setCompileSdkMinor(1)',
+      'android.setCompileSdkVersion(36)\nandroid.compileSdkMinor = 1',
+      'android.setCompileSdk(36)\nandroid.setCompileSdkMinor 1',
+      'android.compileSdk { version = release(36) { minorApiLevel = 1 } }',
+      'android { setCompileSdk(36)\nsetCompileSdkMinor(1) }',
+      // Groovy가 속성마다 만드는 설정 메서드(version(…), version …, setVersion(…), setMinorApiLevel(…))
+      'android { compileSdk { version(release(36) { minorApiLevel = 1 }) } }',
+      'android { compileSdk { setVersion(release(36, { minorApiLevel 1 })) } }',
+      'android { compileSdk { version = release(36) { setMinorApiLevel(1) } } }',
+      'android { compileSdk { def v = 36\nversion = release(v) { minorApiLevel = 1 } } }'
+    ]
+    for (const body of read36) expect(await template(body), body).toEqual([36, 1, [], []])
+    expect(await template('android { compileSdk { version release(36) } }')).toEqual([
+      36,
+      null,
+      [],
+      []
+    ])
+    // compileSdk { }는 지금 값에서 시작하므로 version을 정하지 않으면 그대로다
+    expect(await template('android { compileSdk { } }')).toEqual([30, null, [], []])
+    const unread = [
+      // Groovy 블록의 this는 스크립트라 compileSdk가 아니다
+      'android { compileSdk { this.version = release(36) { minorApiLevel = 1 } } }',
+      'android { compileSdk { it.version = release(36) } }',
+      // 메서드 정의처럼 보이는 명령식(version release(36) { … })은 읽지 못한다
+      'android { compileSdk { version release(36) { minorApiLevel 1 } } }',
+      'android { compileSdk { if (c) { version = release(36) { minorApiLevel = 1 } } } }',
+      'android { compileSdk { version += release(36) } }',
+      'android { compileSdk { version = release(36, 1) } }',
+      'android { compileSdk { version = release(n: 36) } }',
+      'android { compileSdk { version(release(36)) { minorApiLevel = 1 } } }',
+      'android { compileSdk { println(version) } }',
+      'android { compileSdk { version = addon("Google Inc.", "Google APIs", 30) } }',
+      "android { compileSdkAddon 'Google Inc.', 'Google APIs', 36 }",
+      'android.compileSdkPreview = "Baklava"',
+      'android.setCompileSdkExtension(18)',
+      'android { if (c) { setCompileSdk(36) } }',
+      'if (c) { android.setCompileSdkVersion(36) }'
+    ]
+    for (const body of unread)
+      expect(await template(body), body).toEqual([
+        30,
+        null,
+        ['unsupportedSyntax'],
+        [`${TEAMCODE}:2`]
+      ])
+    const minorUnread = [
+      'android { compileSdk 36\nif (c) { setCompileSdkMinor(1) } }',
+      'android.compileSdk = 36\nif (c) { android.setCompileSdkMinor(1) }',
+      'android { compileSdk { version = release(36) { minorApiLevel += 1 } } }',
+      'android { compileSdk { version = release(36) { minorApiLevel pick(1) { 1 } } } }'
+    ]
+    for (const body of minorUnread)
+      expect((await template(body)).slice(0, 3), body).toEqual([36, null, ['unsupportedSyntax']])
+  })
+
   it('android 블록의 다른 내용(서명 설정의 if, 환경 변수)은 보지 않는다', async () => {
     const project = await sdk(
       [

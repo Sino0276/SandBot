@@ -121,6 +121,21 @@ const DECLARATION_NAMES: ReadonlySet<string> = new Set([
   'compileOnly',
   'runtimeOnly'
 ])
+// android { } 안(과 TeamCode의 android.X)에서 플랫폼을 정하는 이름. Groovy는 속성마다 setX(…)도 만든다
+// (Android Gradle 플러그인 CompileSdkDelegate의 var·fun).
+const COMPILE_SDK_NAMES: ReadonlySet<string> = new Set([
+  'compileSdk',
+  'setCompileSdk',
+  'compileSdkVersion',
+  'setCompileSdkVersion',
+  'compileSdkMinor',
+  'setCompileSdkMinor',
+  'compileSdkPreview',
+  'setCompileSdkPreview',
+  'compileSdkExtension',
+  'setCompileSdkExtension',
+  'compileSdkAddon'
+])
 // 조건문·읽지 못한 문장 안에 이 이름이 있으면 선언이 숨어 있을 수 있다(진단)
 const RELEVANT_NAMES = new Set([
   'dependencies',
@@ -130,9 +145,7 @@ const RELEVANT_NAMES = new Set([
   'compileOnly',
   'runtimeOnly',
   'apply',
-  'compileSdk',
-  'compileSdkVersion',
-  'compileSdkMinor',
+  ...COMPILE_SDK_NAMES,
   'ext',
   'extra',
   'allprojects',
@@ -207,6 +220,42 @@ function namedArg(args: Arg[], name: string): Arg | undefined {
 
 function positional(args: Arg[]): Expr[] {
   return args.filter((arg) => arg.name === null).map((arg) => arg.value)
+}
+
+type Setter = { owner: string[]; property: string; value: Expr | null }
+
+// 설정 문장 a.x = v, a.x v, a.x(v), a.setX(v)(Groovy가 속성마다 만드는 설정 메서드)의 앞 경로 a, 속성 이름 x와 v. 꼴이
+// 다르면(+=, 인자가 여럿이거나 이름 있음, 블록) value는 null이다.
+function setter(stmt: Stmt): Setter | null {
+  const path = stmt.kind === 'assign' ? pathOf(stmt.target) : (callOf(stmt)?.path ?? null)
+  const name = path?.at(-1)
+  if (!path || name === undefined) return null
+  const owner = path.slice(0, -1)
+  if (stmt.kind === 'assign')
+    return { owner, property: name, value: stmt.op === '=' ? stmt.value : null }
+  const call = callOf(stmt)
+  if (!call) return null
+  const args = call.call.args
+  const value =
+    !call.call.closure && args.length === 1 && args[0].name === null ? args[0].value : null
+  const property = /^set[A-Z]/.test(name) ? `${name[3].toLowerCase()}${name.slice(4)}` : name
+  return { owner, property, value }
+}
+
+// 블록 안에서 바로 쓴 속성 x의 설정이면 그 값(this.x·it.x는 아니다: Groovy 블록의 this는 스크립트다)
+function ownSetting(stmt: Stmt, property: string): Expr | null {
+  const set = setter(stmt)
+  return set && set.owner.length === 0 && set.property === property ? set.value : null
+}
+
+// release(N), release(N) { … }, release(N, { … })(Groovy는 블록을 괄호 안에 넣어도 된다). 그 밖이면 null.
+function releaseCall(expr: Expr): { api: Expr; spec: ClosureExpr | null } | null {
+  if (expr.kind !== 'call' || !samePath(pathOf(expr.callee), 'release')) return null
+  if (expr.args.some((arg) => arg.name !== null)) return null
+  const [api, spec, ...rest] = expr.args.map((arg) => arg.value)
+  if (api === undefined || rest.length > 0) return null
+  if (spec === undefined) return { api, spec: expr.closure }
+  return spec.kind === 'closure' && !expr.closure ? { api, spec } : null
 }
 
 // 이 식 안에 나오는 이름들(조건문처럼 건너뛴 곳에 선언이 숨어 있는지)
@@ -758,19 +807,11 @@ class GradleReader {
         this.hidden(ctx, stmt)
         continue
       }
-      if (stmt.kind === 'assign') {
-        const path = pathOf(stmt.target)
-        if (
-          samePath(path, 'android', 'compileSdk') ||
-          samePath(path, 'android', 'compileSdkVersion')
-        ) {
-          this.setCompileSdk(stmt.value, ctx)
-          continue
-        }
-        if (samePath(path, 'android', 'compileSdkMinor')) {
-          this.setCompileSdkMinor(stmt.value, ctx)
-          continue
-        }
+      // android.compileSdk = 36, android.setCompileSdkMinor(1), android.compileSdk { … }(android { } 안과 같다)
+      const sdkPath = stmt.kind === 'assign' ? pathOf(stmt.target) : (callOf(stmt)?.path ?? null)
+      if (sdkPath?.length === 2 && sdkPath[0] === 'android' && COMPILE_SDK_NAMES.has(sdkPath[1])) {
+        this.compileSdkStatement(sdkPath[1], stmt, ctx)
+        continue
       }
       if (this.common(stmt, ctx)) continue
       const call = callOf(stmt)
@@ -780,13 +821,7 @@ class GradleReader {
       if (name === 'repositories' && closure) this.repositoryBlock(closure, ctx)
       else if (name === 'dependencies' && closure) this.dependencyBlock(closure, ctx)
       else if (name === 'android' && closure) this.androidBlock(closure, ctx)
-      else if (name === 'android.compileSdk' || name === 'android.compileSdkVersion') {
-        const arg = positional(call.call.args)[0]
-        if (arg) this.setCompileSdk(arg, ctx)
-      } else if (name === 'android.compileSdkMinor') {
-        const arg = positional(call.call.args)[0]
-        if (arg) this.setCompileSdkMinor(arg, ctx)
-      } else if (name === 'apply') await this.applyFrom(call.call, ctx)
+      else if (name === 'apply') await this.applyFrom(call.call, ctx)
       else if (name === 'buildscript' && closure) this.buildscriptBlock(closure, ctx)
       else if (call.path[0] === 'configurations') {
         if (
@@ -891,16 +926,9 @@ class GradleReader {
 
   private androidBlock(closure: ClosureExpr, ctx: Ctx): void {
     const inner = this.child(ctx)
-    const sdkNames = new Set([
-      'compileSdk',
-      'compileSdkVersion',
-      'compileSdkPreview',
-      'compileSdkMinor',
-      'compileSdkExtension'
-    ])
     for (const stmt of closure.body) {
       if (stmt.kind === 'control' || stmt.kind === 'unknown') {
-        this.hidden(inner, stmt, sdkNames)
+        this.hidden(inner, stmt, COMPILE_SDK_NAMES)
         continue
       }
       if (stmt.kind === 'decl') {
@@ -908,47 +936,61 @@ class GradleReader {
         continue
       }
       const path = stmt.kind === 'assign' ? pathOf(stmt.target) : (callOf(stmt)?.path ?? null)
-      if (!path || path.length !== 1) continue
-      const name = path[0]
-      // 미리보기와 SDK 확장(android-33-ext4 같은 다른 플랫폼)은 고르지 못한다
-      if (name === 'compileSdkPreview' || name === 'compileSdkExtension') {
-        this.diag(
-          'unsupportedSyntax',
-          this.at(ctx, stmt),
-          `${name} is not supported: ${this.snippet(ctx, stmt)}`
-        )
-        continue
-      }
-      if (name === 'compileSdkMinor' || name === 'setCompileSdkMinor') {
-        const value =
-          stmt.kind === 'assign' ? stmt.value : positional(callOf(stmt)?.call.args ?? [])[0]
-        if (value) this.setCompileSdkMinor(value, inner)
-        continue
-      }
-      if (name !== 'compileSdk' && name !== 'compileSdkVersion' && name !== 'setCompileSdkVersion')
-        continue
-      if (stmt.kind === 'assign') {
-        this.setCompileSdk(stmt.value, inner)
-        continue
-      }
-      const call = callOf(stmt)
-      if (!call) continue
-      const arg = positional(call.call.args)[0]
-      if (arg) this.setCompileSdk(arg, inner)
-      else if (call.call.closure) this.compileSdkBlock(call.call.closure, inner)
+      if (path?.length === 1 && COMPILE_SDK_NAMES.has(path[0]))
+        this.compileSdkStatement(path[0], stmt, inner)
     }
   }
 
-  // compileSdk { version = release(36) }, release(36) { minorApiLevel = 1 }(AGP 8.13 이후의 새 표기)
+  // android { } 안의 compileSdk 문장 하나(name은 compileSdk·setCompileSdkMinor 등 COMPILE_SDK_NAMES의 이름). TeamCode의
+  // android.X도 같다. 읽지 못하는 꼴(+=, 인자 여럿, 미리보기·SDK 확장·애드온)은 진단이다.
+  private compileSdkStatement(name: string, stmt: Stmt, ctx: Ctx): void {
+    const set = setter(stmt)
+    const value = set?.value ?? null
+    const property = set?.property
+    const call = callOf(stmt)
+    if ((property === 'compileSdk' || property === 'compileSdkVersion') && value)
+      this.setCompileSdk(value, ctx)
+    else if (property === 'compileSdkMinor' && value) this.setCompileSdkMinor(value, ctx)
+    else if (name === 'compileSdk' && call?.call.closure && call.call.args.length === 0)
+      this.compileSdkBlock(call.call.closure, ctx)
+    // 미리보기·SDK 확장·애드온(android-33-ext4 같은 다른 플랫폼)은 고르지 못한다
+    else if (
+      property === 'compileSdkPreview' ||
+      property === 'compileSdkExtension' ||
+      property === 'compileSdkAddon'
+    )
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, stmt),
+        `${property} is not supported: ${this.snippet(ctx, stmt)}`
+      )
+    else
+      this.diag(
+        'unsupportedSyntax',
+        this.at(ctx, stmt),
+        `${name} could not be read: ${this.snippet(ctx, stmt)}`
+      )
+  }
+
+  // compileSdk { version = release(36) }, release(36) { minorApiLevel = 1 }(AGP 8.13 이후의 새 표기). 이 블록은 플랫폼만
+  // 정하므로 version 설정과 def 말고는 모두 진단이다(조건문 안, Groovy 블록의 this.version처럼 읽지 못한 것 때문에 앞의
+  // compileSdk를 조용히 쓰지 않게). version을 정하지 않으면 AGP처럼 지금 값 그대로다.
   private compileSdkBlock(closure: ClosureExpr, ctx: Ctx): void {
+    const inner = this.child(ctx)
     for (const stmt of closure.body) {
-      if (stmt.kind !== 'assign' || !samePath(pathOf(stmt.target), 'version')) continue
-      const value = stmt.value
-      if (value.kind === 'call' && samePath(pathOf(value.callee), 'release')) {
-        const [arg, ...rest] = positional(value.args)
-        // Groovy는 블록을 괄호 안에 넣어도 된다(release(36, { … }))
-        const spec = value.closure ?? (rest[0]?.kind === 'closure' ? rest[0] : null)
-        if (arg && this.setCompileSdk(arg, ctx) && spec) this.releaseSpec(spec, ctx)
+      if (stmt.kind === 'decl') {
+        this.declare(stmt, inner)
+        continue
+      }
+      if (stmt.kind === 'control' || stmt.kind === 'unknown') {
+        this.hidden(inner, stmt, null)
+        continue
+      }
+      const version = ownSetting(stmt, 'version')
+      const release = version ? releaseCall(version) : null
+      if (release) {
+        if (this.setCompileSdk(release.api, inner) && release.spec)
+          this.releaseSpec(release.spec, inner)
       } else
         this.diag(
           'unsupportedSyntax',
@@ -960,18 +1002,14 @@ class GradleReader {
 
   // release(N) { minorApiLevel = M }의 블록. 부 버전만 읽는다. 그 밖(sdkExtension 등)은 고르는 플랫폼이 달라질 수 있어 진단이다.
   private releaseSpec(closure: ClosureExpr, ctx: Ctx): void {
+    const inner = this.child(ctx)
     for (const stmt of closure.body) {
-      if (stmt.kind === 'skip') continue
-      const call = callOf(stmt)
-      const target = stmt.kind === 'assign' ? pathOf(stmt.target) : (call?.path ?? null)
-      const args = call ? positional(call.call.args) : []
-      const value =
-        stmt.kind === 'assign'
-          ? stmt.value
-          : call && args.length === 1 && !call.call.closure
-            ? args[0]
-            : null
-      if (samePath(target, 'minorApiLevel') && value) this.setCompileSdkMinor(value, ctx)
+      if (stmt.kind === 'decl') {
+        this.declare(stmt, inner)
+        continue
+      }
+      const minor = ownSetting(stmt, 'minorApiLevel')
+      if (minor) this.setCompileSdkMinor(minor, inner)
       else
         this.diag(
           'unsupportedSyntax',
