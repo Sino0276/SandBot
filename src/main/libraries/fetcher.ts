@@ -21,9 +21,11 @@ import {
 // 파일 하나 얻기: SandBot 라이브러리 캐시 → Gradle 캐시(폴더 이름 sha1 = 내용 sha1) → 허용 저장소에서 받기.
 // 무결성(강한 것부터): SandBot이 아는 해시(pins.ts) → .module에 적힌 sha256·sha512·sha1 → 저장소의 .sha256·.sha512·.sha1
 // 파일 → Gradle 캐시의 sha1 → 체크섬이 없는 저장소(maven.brott.dev)는 처음 받은 해시를 기록(first-use.json, 다음부터 다르면
-// checksumMismatch). 새로 얻은 파일은 무결성과 내용(요청의 check: POM·.module을 읽고 jar·AAR을 푼다)을 확인한 뒤에만
-// 처음 받은 해시로 기록하고 라이브러리 캐시에 넣는다(다음부터 네트워크 없이). 200으로 온 차단 페이지 같은 잘못된 내용은
-// 남기지 않아 고쳐진 뒤 다시 받는다. 캐시에 넣지 못해도(디스크) 받은 파일은 그대로 쓴다.
+// checksumMismatch). 새로 얻은 파일은 무결성을 확인하고 라이브러리 캐시에 넣는다(다음부터 네트워크 없이). 확인한 파일은
+// 정책(보호 패키지·jni)이나 읽기가 거부해도 넣는다(다음 INIT도 네트워크 없이 같은 이유로 끝난다). 확인할 해시가 없는 처음
+// 받은 파일은 그 형식인지(요청의 check: POM·.module을 읽고 jar·AAR은 ZIP으로 연다) 본 뒤에만 기록하고 넣는다: 200으로 온
+// 차단 페이지 같은 잘못된 내용은 남기지 않아 고쳐진 뒤 다시 받는다. 처음 받은 해시를 기록하지 못하면(디스크) 이번에는 쓰되
+// 캐시에 넣지 않는다(unrecorded, 부른 쪽이 잠그지 않고 알려 다음 INIT에 다시 기록한다). 캐시에 넣지 못해도 받은 파일은 쓴다.
 
 export const MAX_METADATA_BYTES = 1024 * 1024
 export const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
@@ -58,7 +60,8 @@ export type FileRequest = {
   // 캐시 blob의 확장자
   ext: 'pom' | 'module' | 'jar' | 'aar'
   expected?: ExpectedHashes
-  // 새로 얻은 내용을 확인한다(잘못되었으면 던진다). 라이브러리 캐시에서 읽은 것은 넣을 때 확인했으므로 부르지 않는다.
+  // 확인할 해시가 없는 새 내용(처음 받은 것)이 그 형식인지 본다(아니면 던진다). 정책(보호 패키지·jni·크기 한도)은 보지
+  // 않는다(부른 쪽이 따로 본다). 해시로 확인한 것과 라이브러리 캐시에서 읽은 것에는 부르지 않는다.
   check?: (bytes: Buffer) => void
 }
 
@@ -144,6 +147,13 @@ function hash(algorithm: 'sha1' | 'sha256' | 'sha512', bytes: Buffer): string {
   return createHash(algorithm).update(bytes).digest('hex')
 }
 
+// 디스크 오류의 이유: 코드(EPERM 등)만(메시지에는 임시 파일의 무작위 이름이 든다), 없으면 메시지
+function errorReason(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  if (typeof code === 'string' && code !== '') return code
+  return error instanceof Error ? error.message : String(error)
+}
+
 // 체크섬 파일의 hex: 첫 낱말(파일 이름이 뒤따를 수 있다), 아니면 오래된 OpenSSL 꼴 'SHA1(파일)= hex'
 function checksumText(bytes: Buffer, length: number): string | null {
   const text = bytes.toString('utf8').trim().toLowerCase()
@@ -183,11 +193,29 @@ export class FileFetcher {
   // 닿지 못한 저장소(어느 주소도 응답하지 않음, 다시 해 봐도). 이번 해석에서는 그 저장소에 다시 묻지 않는다(파일마다
   // 기다리지 않게). 다른 저장소는 그대로 받는다.
   private readonly unreachable = new Map<RepositoryId, string>()
+  // 처음 받은 해시를 기록하지 못한 파일(키 → 이유). 이번에는 썼지만 캐시에 넣지 않았다.
+  private readonly unrecorded = new Map<string, string>()
 
   constructor(private readonly options: FetcherOptions) {}
 
   private checkCancelled(): void {
     if (this.options.signal.aborted) throw new CancelledError()
+  }
+
+  // 처음 받은 해시를 기록하지 못한 파일이 있다(잠그지 않는다: 다음 INIT에 다시 확인해 기록한다)
+  hasUnrecorded(): boolean {
+    return this.unrecorded.size > 0
+  }
+
+  // 그 좌표에서 처음 받은 해시를 기록하지 못한 파일(보고의 세부, 파일 이름순이라 결정적). 없으면 null.
+  unrecordedDetail(group: string, artifact: string, version: string): string | null {
+    const prefix = fileKey(group, artifact, version, '')
+    const files = [...this.unrecorded]
+      .filter(([key]) => key.startsWith(prefix))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    if (files.length === 0) return null
+    const names = files.map(([key]) => key.slice(prefix.length)).join(', ')
+    return `could not record the SHA-256 of the first download of ${names} in first-use.json (${files[0][1]}); trust on first use is not in effect until it is recorded`
   }
 
   async fetch(request: FileRequest): Promise<FetchedFile> {
@@ -220,7 +248,7 @@ export class FileFetcher {
     })
   }
 
-  // 새로 얻은 파일: 무결성 → 내용 → 처음 받은 해시 기록 → 캐시
+  // 새로 얻은 파일: 무결성 → (처음 받은 것이면) 형식 확인과 해시 기록 → 캐시
   private async accept(
     request: FileRequest,
     key: string,
@@ -229,13 +257,17 @@ export class FileFetcher {
   ): Promise<FetchedFile> {
     const sha256 = hash('sha256', bytes)
     const { integrity, firstUse } = await this.verify(request, key, bytes, sha256, source)
-    request.check?.(bytes)
     if (firstUse) {
-      let recorded: string | null = null
+      // 확인할 해시가 없다: 그 형식이 아니면(차단 페이지 등) 기록도 캐시도 하지 않고 던진다
+      request.check?.(bytes)
+      let recorded: string | null
       try {
         recorded = await this.options.cache.recordFirstUse(key, sha256)
-      } catch {
-        // 기록하지 못했다(디스크): 이번에는 그대로 쓴다(다음에 받으면 다시 처음 받은 것)
+      } catch (error) {
+        // 기록하지 못했다(쓰기·다시 읽기 실패). verify가 방금 기록이 없음을 읽었으므로 이번에는 쓰지만, 믿는 캐시 항목으로
+        // 넣지 않는다(넣으면 다음부터 기록 없이 캐시를 믿고, 캐시가 지워진 뒤 다른 내용을 처음 받은 것으로 받는다)
+        this.unrecorded.set(key, errorReason(error))
+        return { bytes, sha256, source, integrity }
       }
       // 그사이 같은 파일의 다른 내용이 먼저 기록되었다
       if (recorded !== null)
@@ -298,7 +330,8 @@ export class FileFetcher {
     }
   }
 
-  // firstUse: 확인할 체크섬이 없어 처음 받은 해시로 기록해야 한다(내용을 확인한 뒤 accept가 기록한다)
+  // firstUse: 확인할 체크섬이 없어 처음 받은 해시로 기록해야 한다(형식을 확인한 뒤 accept가 기록한다). 기록을 읽지
+  // 못하면(잠김 등) 기록이 있는지 모르므로 던진다.
   private async verify(
     request: FileRequest,
     key: string,
@@ -350,7 +383,7 @@ export class FileFetcher {
     }
     if (source === 'gradleCache' && repository.checksums)
       return { integrity: 'gradleCache', firstUse: false }
-    // 체크섬이 없다: 처음 본 해시와 같아야 한다(기록이 없으면 내용을 확인한 뒤 기록한다)
+    // 체크섬이 없다: 처음 본 해시와 같아야 한다(기록이 없으면 형식을 확인한 뒤 기록한다)
     const recorded = await this.options.cache.firstUse(key)
     if (recorded !== null && recorded !== sha256)
       throw new IntegrityFailure(

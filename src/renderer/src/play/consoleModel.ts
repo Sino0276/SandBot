@@ -214,12 +214,12 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
 }
 
 // 의존성 보고 좌표 하나의 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지 지원하지 않는다는
-// 안내를 따로 보인다. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse.
+// 안내를 따로 보인다. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
 export function libraryText(library: LibraryEntry, t: TFunction): string {
   const coordinate = coordinateOf(library)
   if (library.status === 'used')
-    return library.integrity === 'firstUse'
-      ? t('console.notices.library.firstUse', { coordinate })
+    return library.integrity === 'firstUse' || library.integrity === 'firstUseUnrecorded'
+      ? t(`console.notices.library.${library.integrity}`, { coordinate })
       : coordinate
   if (library.group === 'com.acmerobotics.dashboard' && library.reason === 'notSupported')
     return t('console.notices.library.dashboardLater', { coordinate })

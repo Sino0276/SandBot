@@ -1,10 +1,11 @@
 import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GradleDependency, GradleProject, GradleRepository } from '../../shared/gradle'
 import type { LibraryEntry, LibraryProgress } from '../../shared/libraries'
 import type { CompileDiagnostic } from '../../shared/sidecarProtocol'
 import type { LibraryRequest, LibraryResolution } from '../sidecar/launch'
+import { LibraryCache } from './cache'
 import { resolveLibraries, type LibraryDeps } from './index'
 import { DASHBOARD_DETAIL } from './policy'
 import {
@@ -24,6 +25,22 @@ import {
   tempDir,
   type Route
 } from './testkit'
+
+// first-use.json을 바꿔 넣을 수 없다(Windows에서 백신·색인기가 잡고 있음 등, 다시 해 봐도 EPERM). 시험이 켠다.
+let blockFirstUseWrite = false
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    rename: async (from: string, to: string): Promise<void> => {
+      if (blockFirstUseWrite && to.endsWith('first-use.json')) {
+        const error = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`)
+        throw Object.assign(error, { code: 'EPERM' })
+      }
+      return actual.rename(from, to)
+    }
+  }
+})
 
 // ---- 팀 Gradle(갈래 B가 읽은 결과 모양) ----
 
@@ -192,6 +209,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  blockFirstUseWrite = false
+  vi.restoreAllMocks()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -1130,5 +1149,177 @@ describe('라이브러리 가져오기: 오프라인·막힌 저장소·잘못�
       'org.jetbrains:annotations:13.0 used'
     ])
     expect(result.report.entries[3].detail).toContain(GOOGLE)
+  })
+
+  it('처음 받은 해시를 기록하지 못하면 이번에는 쓰되 캐시·잠금에 넣지 않고 알리며, 다음 INIT에 다시 받아 기록한다', async () => {
+    const rr = 'com.acmerobotics.roadrunner:core:1.0.0'
+    const pomText = pom({ coordinate: rr })
+    const jar = makeJar(['com/acmerobotics/roadrunner/Pose2d'])
+    const routes = new Map<string, Route>()
+    publish(routes, BROTT, rr, 'core-1.0.0.pom', pomText)
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', jar)
+    const gradle = project([dep(rr)], [BROTT_REPOSITORY])
+    const files = [
+      artifactUrl(BROTT, rr, 'core-1.0.0.pom'),
+      artifactUrl(BROTT, rr, 'core-1.0.0.jar')
+    ]
+
+    blockFirstUseWrite = true
+    const blocked = await run(gradle, routes)
+    const [entry] = blocked.result.report.entries
+    // 기록했다고 하지 않는다(세부에 이유)
+    expect(`${entry.status} ${entry.integrity}`).toBe('used firstUseUnrecorded')
+    expect(entry.detail).toContain('first-use.json')
+    expect(entry.detail).toContain('EPERM')
+    expect(await Promise.all(blocked.result.libraryClasspath.map((p) => readFile(p)))).toEqual([
+      jar
+    ])
+    await expect(readFile(join(cacheDir, 'first-use.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    // 믿는 캐시 항목(색인)도 잠금도 없다
+    expect(await readdir(join(cacheDir, 'index')).catch(() => [])).toEqual([])
+    expect(await readdir(join(cacheDir, 'resolutions')).catch(() => [])).toEqual([])
+
+    // 다음 INIT: 다시 받아 기록한다
+    blockFirstUseWrite = false
+    const retried = await run(gradle, routes)
+    expect(retried.requests).toEqual(expect.arrayContaining(files))
+    expect(`${retried.result.report.entries[0].integrity}`).toBe('firstUse')
+    expect(retried.result.report.entries[0].detail).toBe('')
+    expect(JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8'))).toEqual({
+      [`${rr}/core-1.0.0.pom`]: hex('sha256', pomText),
+      [`${rr}/core-1.0.0.jar`]: hex('sha256', jar)
+    })
+    expect(await readdir(join(cacheDir, 'resolutions'))).toHaveLength(1)
+    // 그다음은 잠금으로 네트워크 없이
+    expect((await run(gradle, {}, { http: noNetwork() })).result.report.entries[0].integrity).toBe(
+      'firstUse'
+    )
+    // 이제 기록이 지킨다: 캐시를 지운 뒤 저장소가 다른 jar를 주면 거부
+    await rm(join(cacheDir, 'index'), { recursive: true })
+    await rm(join(cacheDir, 'resolutions'), { recursive: true })
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', makeJar(['evil/Payload']))
+    expect(statuses((await run(gradle, routes)).result.report.entries)).toEqual([
+      `${rr} failed:checksumMismatch`
+    ])
+  })
+
+  it('기록하는 사이 다른 해시가 먼저 기록되었으면 checksumMismatch, 기록을 다시 읽지 못하면 기록하지 못한 것', async () => {
+    const rr = 'com.acmerobotics.roadrunner:core:1.0.0'
+    const routes = new Map<string, Route>()
+    publish(routes, BROTT, rr, 'core-1.0.0.pom', pom({ coordinate: rr }))
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', makeJar(['com/acmerobotics/roadrunner/Pose2d']))
+    const gradle = project([dep(rr)], [BROTT_REPOSITORY])
+    const record = vi
+      .spyOn(LibraryCache.prototype, 'recordFirstUse')
+      .mockResolvedValue('0'.repeat(64))
+    const conflict = await run(gradle, routes)
+    expect(statuses(conflict.result.report.entries)).toEqual([`${rr} failed:checksumMismatch`])
+    expect(await readdir(join(cacheDir, 'index')).catch(() => [])).toEqual([])
+    // 기록 안에서 다시 읽다 잠김(EBUSY): 이번에는 쓰고 기록하지 못했다고 알린다
+    record.mockRejectedValue(
+      Object.assign(new Error('EBUSY: resource busy or locked, open first-use.json'), {
+        code: 'EBUSY'
+      })
+    )
+    const busy = await run(gradle, routes)
+    expect(busy.result.report.entries.map((e) => `${e.status} ${e.integrity}`)).toEqual([
+      'used firstUseUnrecorded'
+    ])
+    expect(busy.result.report.entries[0].detail).toContain('EBUSY')
+    expect(await readdir(join(cacheDir, 'index')).catch(() => [])).toEqual([])
+    expect(await readdir(join(cacheDir, 'resolutions')).catch(() => [])).toEqual([])
+  })
+
+  it('확인한 파일(체크섬·Gradle 캐시)과 내용을 확인한 처음 받은 파일은 정책·읽기가 거부해도 캐시에 넣는다: 다음 INIT은 네트워크 없이 같은 이유로', async () => {
+    const routes = new Map<string, Route>()
+    // Maven Central(체크섬과 맞음): jni가 든 AAR, 보호 패키지가 든 jar, 다른 좌표를 적은 POM
+    const ftclib = 'org.ftclib.ftclib:core:2.1.1'
+    publish(
+      routes,
+      CENTRAL,
+      ftclib,
+      'core-2.1.1.pom',
+      pom({ coordinate: ftclib, packaging: 'aar' })
+    )
+    publish(
+      routes,
+      CENTRAL,
+      ftclib,
+      'core-2.1.1.aar',
+      makeAar(['com/arcrobotics/ftclib/X'], [{ name: 'jni/arm64-v8a/libx.so', data: 'elf' }])
+    )
+    const pedro = 'com.pedropathing:core:3.0.0'
+    publish(routes, CENTRAL, pedro, 'core-3.0.0.pom', pom({ coordinate: pedro }))
+    publish(routes, CENTRAL, pedro, 'core-3.0.0.jar', makeJar(['com/qualcomm/robotcore/X']))
+    const revhub = 'com.pedropathing:revhub:3.0.0'
+    publish(
+      routes,
+      CENTRAL,
+      revhub,
+      'revhub-3.0.0.pom',
+      pom({ coordinate: 'com.pedropathing:other:3.0.0' })
+    )
+    // maven.brott.dev(처음 받음): 읽을 수 있는 jar지만 보호 패키지가 들었다
+    const rr = 'com.acmerobotics.roadrunner:core:1.0.0'
+    publish(routes, BROTT, rr, 'core-1.0.0.pom', pom({ coordinate: rr }))
+    publish(routes, BROTT, rr, 'core-1.0.0.jar', makeJar(['java/lang/Evil']))
+    // Gradle 캐시에만 있다(Maven Central 것이라 Gradle이 확인함)
+    const ivy = 'com.pedropathing.ivy:ivy:1.0.0'
+    await putGradleCache(gradleHome, ivy, 'ivy-1.0.0.pom', pom({ coordinate: ivy }))
+    await putGradleCache(gradleHome, ivy, 'ivy-1.0.0.jar', makeJar(['org/sandbot/sim/X']))
+    const gradle = project(
+      [dep(ftclib), dep(pedro), dep(revhub), dep(rr), dep(ivy)],
+      [repo('mavenCentral'), BROTT_REPOSITORY]
+    )
+    const expected = [
+      `${ftclib} failed:badArchive`,
+      `${pedro} failed:protectedPackage`,
+      `${revhub} failed:badMetadata`,
+      `${rr} failed:protectedPackage`,
+      `${ivy} failed:protectedPackage`
+    ]
+    const first = await run(gradle, routes)
+    expect(statuses(first.result.report.entries)).toEqual(expected)
+    expect(
+      Object.keys(JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8')))
+    ).toEqual(expect.arrayContaining([`${rr}/core-1.0.0.pom`, `${rr}/core-1.0.0.jar`]))
+    // 네트워크도 Gradle 캐시도 없이 같은 이유(offline이 아니다)
+    await rm(gradleHome, { recursive: true, force: true })
+    const again = await run(gradle, {}, { http: noNetwork() })
+    expect(statuses(again.result.report.entries)).toEqual(expected)
+    expect(again.result.report.entries[0].detail).toContain('jni')
+  })
+
+  it('체크섬을 주는 저장소에서 200으로 온 차단 페이지는 체크섬이 거부하고, 체크섬 파일도 없으면 읽어 보고 거부한다(남기지 않는다)', async () => {
+    const block = '<html>Blocked by the school web filter</html>'
+    const ftclib = 'org.ftclib.ftclib:core:2.1.1'
+    const realJar = makeJar(['com/arcrobotics/ftclib/X'])
+    const jarUrl = artifactUrl(CENTRAL, ftclib, 'core-2.1.1.jar')
+    const routes = new Map<string, Route>()
+    publish(routes, CENTRAL, ftclib, 'core-2.1.1.pom', pom({ coordinate: ftclib }))
+    // 체크섬은 진짜 jar의 것, jar 주소만 차단 페이지
+    publish(routes, CENTRAL, ftclib, 'core-2.1.1.jar', realJar)
+    routes.set(jarUrl, block)
+    const gradle = project([dep(ftclib)])
+    expect(statuses((await run(gradle, routes)).result.report.entries)).toEqual([
+      `${ftclib} failed:checksumMismatch`
+    ])
+    // 체크섬 파일이 없다(404): 처음 받은 것이지만 jar로 읽을 수 없어 기록·캐시하지 않는다
+    routes.delete(`${jarUrl}.sha1`)
+    routes.delete(`${jarUrl}.sha256`)
+    expect(statuses((await run(gradle, routes)).result.report.entries)).toEqual([
+      `${ftclib} failed:badArchive`
+    ])
+    const recorded = Object.keys(
+      JSON.parse(await readFile(join(cacheDir, 'first-use.json'), 'utf8').catch(() => '{}'))
+    )
+    expect(recorded).not.toContain(`${ftclib}/core-2.1.1.jar`)
+    // 고쳐지면 다시 받는다
+    routes.set(jarUrl, realJar)
+    const fixed = await run(gradle, routes)
+    expect(statuses(fixed.result.report.entries)).toEqual([`${ftclib} used`])
+    expect(fixed.requests).toContain(jarUrl)
   })
 })

@@ -786,6 +786,8 @@ const en: Messages = {
           'compileSdk was not found in the Gradle files, so the code is compiled against the highest installed Android platform (API {{api}}). Results may differ from Android Studio.',
         firstUse:
           '{{coordinate}}: the repository publishes no checksums, so the hash of the first download was recorded. If the content changes later, it will not be used.',
+        firstUseUnrecorded:
+          '{{coordinate}}: the repository publishes no checksums, and the hash of the first download could not be saved (first-use.json in the library cache is not writable). It is used this time, but a changed file is not caught yet. The next INIT checks it again and saves the hash.',
         dashboardLater:
           '{{coordinate}}: FTC Dashboard will be supported with the SandBot Dashboard replacement. It is not loaded yet, so code that uses Dashboard (including Road Runner) does not compile.',
         links:
@@ -838,7 +840,9 @@ const en: Messages = {
         checksum: 'matches the repository checksum',
         pinned: 'matches the hash SandBot knows',
         firstUse: 'hash of the first download recorded (no checksums in the repository)',
-        gradleCache: 'matches the Gradle cache SHA-1'
+        gradleCache: 'matches the Gradle cache SHA-1',
+        firstUseUnrecorded:
+          'hash of the first download not saved (no checksums in the repository; saved at the next INIT)'
       },
       linkKind: {
         missingClass: 'missing class',

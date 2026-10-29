@@ -86,6 +86,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// 색인에 둘 수 있는 무결성(기록하지 못한 처음 받은 것 firstUseUnrecorded는 캐시에 넣지 않는다)
 const INTEGRITIES: readonly LibraryIntegrity[] = ['checksum', 'pinned', 'firstUse', 'gradleCache']
 
 export type IndexRecord = {

@@ -16,7 +16,8 @@ import { XmlError } from './xml'
 
 // 모듈 하나의 메타데이터: POM을 먼저 읽고, Gradle 메타데이터 표시가 있으면 .module을 쓴다(저장소에 없으면 POM으로).
 // maven.brott.dev는 표시만 있고 .module이 없어 묻지 않는다(repositories.ts의 moduleMetadata). 결과는 해석기(resolver.ts)가
-// 쓰는 의존성·제약·파일 하나. 받은 POM·.module은 읽을 수 있는지 확인한 뒤에만 캐시에 들어간다(fetcher.ts의 check).
+// 쓰는 의존성·제약·파일 하나. 확인할 해시가 없는(처음 받은) POM·.module은 읽을 수 있는지 본 뒤에만 기록·캐시한다
+// (fetcher.ts의 check). 해시로 확인한 것은 캐시에 넣은 뒤 읽으므로, 읽지 못해도 다음 INIT은 네트워크 없이 같은 이유다.
 
 export type Edge = {
   group: string
@@ -110,7 +111,7 @@ export function metadataSource(
             )
           return raw
         }
-        // 새로 얻은 POM은 캐시에 넣기 전에 읽어 보고, 그 결과를 쓴다
+        // 처음 받은 POM은 기록·캐시하기 전에 읽어 보고 그 결과를 쓴다(확인한 것·캐시의 것은 받은 뒤 읽는다)
         const checked: { raw?: RawPom } = {}
         try {
           const pom = await fetcher.fetch({

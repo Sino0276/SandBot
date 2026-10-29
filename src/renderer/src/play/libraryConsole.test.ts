@@ -117,6 +117,36 @@ describe('의존성 보고 → Console', () => {
     expect(entryTarget(entries[2], '/p')).toBeNull()
   })
 
+  it('처음 받은 해시를 기록하지 못한 좌표는 경고이고, 기록했다고 하지 않는다', () => {
+    const detail =
+      'could not record the SHA-256 of the first download of core-1.0.0.jar in first-use.json (EPERM); trust on first use is not in effect until it is recorded'
+    const lines = libraryReportLines({
+      entries: [
+        entry('com.acmerobotics.roadrunner:core:1.0.0', {
+          integrity: 'firstUseUnrecorded',
+          detail
+        })
+      ],
+      gradle: [],
+      compileSdk: 30,
+      platform: null
+    })
+    expect(lines.map((l) => `${l.level} ${l.body.type}`)).toEqual([
+      'info notice',
+      'warning library'
+    ])
+    const unrecorded = consoleEntry(lines[1].body, null, lines[1].level, '/p')
+    expect(entrySummary(unrecorded, t)).toContain('해시를 기록하지 못했습니다')
+    expect(entrySummary(unrecorded, tEn)).not.toContain('was recorded')
+    expect(entryDetailLines(unrecorded, t)).toEqual([
+      expect.stringContaining('com.acmerobotics.roadrunner:core:1.0.0: 저장소가 체크섬을'),
+      `세부: ${detail}`,
+      '출처: 저장소에서 받음',
+      '무결성: 처음 받은 해시를 기록하지 못함(저장소에 체크섬 없음, 다음 INIT에 다시 기록)'
+    ])
+    expect(entryDetailLines(unrecorded, tEn).at(-1)).not.toContain('console.')
+  })
+
   it('좌표가 없으면 요약을 쓰지 않고, 플랫폼을 알면 요약에 넣는다', () => {
     expect(
       libraryReportLines({

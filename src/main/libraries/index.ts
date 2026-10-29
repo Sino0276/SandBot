@@ -7,7 +7,7 @@ import type {
   LibrarySource
 } from '../../shared/libraries'
 import type { Failure, LibraryRequest, LibraryResolution } from '../sidecar/launch'
-import { classpathJars, type ClasspathJar } from './archive'
+import { checkArchive, classpathJars } from './archive'
 import { LibraryCache, MAX_LIBRARY_CACHE_BYTES, sha256Hex } from './cache'
 import { FileFetcher, ProgressTracker, type ExpectedHashes } from './fetcher'
 import { diagnosticHints } from './hints'
@@ -40,8 +40,9 @@ import {
 // 2. 해석 잠금(resolutions/)과 그 jar가 모두 캐시에 있으면 네트워크·메타데이터 없이 끝낸다.
 // 3. 아니면 메타데이터로 그래프를 풀고(resolver.ts) 파일을 얻는다(fetcher.ts: 캐시 → Gradle 캐시 → 받기, 무결성 확인).
 //    AAR은 classes.jar·libs/*.jar만(archive.ts). 받지 못한 좌표는 그 좌표만 failed이고 실행은 계속한다(컴파일 진단에 안내).
-// 4. 실패가 없으면 잠금을 쓴다. 캐시가 용량을 넘으면 오래 쓰지 않은 것부터 지운다(이번 jar는 남긴다). 잠금·jar 목록·
-//    정리는 다음을 위한 것이라 실패해도(디스크) 이번 결과는 그대로 돌려준다.
+// 4. 실패가 없고 처음 받은 해시를 모두 기록했으면 잠금을 쓴다(기록하지 못한 파일은 이번에는 쓰고 보고에 알리며, 캐시·잠금에
+//    넣지 않아 다음 INIT에 다시 확인해 기록한다). 캐시가 용량을 넘으면 오래 쓰지 않은 것부터 지운다(이번 jar는 남긴다).
+//    잠금·jar 목록·정리는 다음을 위한 것이라 실패해도(디스크) 이번 결과는 그대로 돌려준다.
 // 결과의 순서(보고·클래스패스)는 직접 선언(파일·줄 순서) 다음 전이 의존성(group:artifact 순)이라 결정적이다.
 
 export type LibraryDeps = {
@@ -480,8 +481,8 @@ async function resolveFresh(
       try {
         if (plan instanceof LibraryFailure) throw plan
         if (plan === null) return { ga, jars: [] as Jar[], source: null, integrity: null }
-        // 새로 얻은 jar·AAR은 캐시에 넣기 전에 풀어 보고(차단 페이지 등은 남기지 않는다), 그 결과를 쓴다
-        const checked: { jars?: ClasspathJar[] } = {}
+        // 처음 받은 jar·AAR은 ZIP으로 열리는 것만 기록·캐시한다(차단 페이지 등은 남기지 않는다). 정책(jni·보호 패키지)은
+        // 아래 classpathJars가 본다: 거부해도 받은 파일은 캐시에 있어 다음 INIT도 네트워크 없이 같은 이유로 끝난다.
         const fetched = await fetcher.fetch({
           group: module.group,
           artifact: module.artifact,
@@ -490,13 +491,11 @@ async function resolveFresh(
           kind: 'artifact',
           ext: plan.ext,
           expected: plan.expected,
-          check: (bytes) => {
-            checked.jars = classpathJars(plan.file, bytes)
-          }
+          check: (bytes) => checkArchive(plan.file, bytes)
         })
         let set = await cache.readJarSet(fetched.sha256)
         if (!set) {
-          const jars = checked.jars ?? classpathJars(plan.file, fetched.bytes)
+          const jars = classpathJars(plan.file, fetched.bytes)
           const stored: { name: string; sha256: string; packages: string[] }[] = []
           for (const jar of jars) {
             const { sha256 } = await cache.storeBlob(jar.bytes, 'jar')
@@ -597,6 +596,10 @@ async function resolveFresh(
       jars = outcome.jars
       entry = { ...entry, source: outcome.source, integrity: outcome.integrity }
     }
+    // 그 좌표의 파일(POM·jar) 중 처음 받은 해시를 기록하지 못한 것이 있다: 기록했다고 하지 않는다(이번에는 쓴다)
+    const unrecorded = fetcher.unrecordedDetail(module.group, module.artifact, module.version)
+    if (entry.status === 'used' && unrecorded !== null)
+      entry = { ...entry, integrity: 'firstUseUnrecorded', detail: unrecorded }
     if (implicit && ga === gaOf(implicit.root.group, implicit.root.artifact) && !item)
       entry = { ...entry, requestedBy: [implicit.requestedBy] }
     return {
@@ -628,7 +631,8 @@ async function resolveFresh(
       ? b.jars.map((jar) => ({ jar, compile: b.compile, runtime: b.runtime }))
       : []
   )
-  if (!entries.some((entry) => entry.status === 'failed')) {
+  // 처음 받은 해시를 기록하지 못한 파일이 있으면 잠그지 않는다(잠금이 그 파일을 기록 없이 믿게 된다)
+  if (!entries.some((entry) => entry.status === 'failed') && !fetcher.hasUnrecorded()) {
     const lock: LockFile = {
       format: LOCK_FORMAT,
       entries,

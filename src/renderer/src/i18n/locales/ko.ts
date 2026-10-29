@@ -793,6 +793,8 @@ const ko = {
           'Gradle 파일에서 compileSdk를 찾지 못해 설치된 가장 높은 Android 플랫폼(API {{api}})으로 컴파일합니다. Android Studio와 결과가 다를 수 있습니다.',
         firstUse:
           '{{coordinate}}: 저장소가 체크섬을 주지 않아 처음 받은 파일의 해시를 기록했습니다. 다음부터 내용이 바뀌면 쓰지 않습니다.',
+        firstUseUnrecorded:
+          '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
         dashboardLater:
           '{{coordinate}}: FTC Dashboard는 SandBot의 Dashboard 대체가 생길 때 지원합니다. 지금은 불러오지 않아 Dashboard를 쓰는 코드(Road Runner 포함)는 컴파일되지 않습니다.',
         links:
@@ -845,7 +847,9 @@ const ko = {
         checksum: '저장소의 체크섬과 맞음',
         pinned: 'SandBot이 아는 해시와 맞음',
         firstUse: '처음 받은 해시를 기록함(저장소에 체크섬 없음)',
-        gradleCache: 'Gradle 캐시의 SHA-1과 맞음'
+        gradleCache: 'Gradle 캐시의 SHA-1과 맞음',
+        firstUseUnrecorded:
+          '처음 받은 해시를 기록하지 못함(저장소에 체크섬 없음, 다음 INIT에 다시 기록)'
       },
       linkKind: {
         missingClass: '없는 클래스',
