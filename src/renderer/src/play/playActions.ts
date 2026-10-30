@@ -200,14 +200,7 @@ function logRegisteredProblem(
   if (problem.kind === 'failed')
     added.push(
       consoleEntry(
-        {
-          type: 'notice',
-          key: 'registeredFailed',
-          params: {
-            reason: i18n.t(`play.list.registeredFailure.${problem.code}`),
-            detail: problem.detail
-          }
-        },
+        { type: 'registeredFailed', code: problem.code, detail: problem.detail },
         null,
         'error'
       )

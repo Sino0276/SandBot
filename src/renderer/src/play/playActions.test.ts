@@ -1002,9 +1002,10 @@ describe('등록기(@OpModeRegistrar) OpMode', () => {
     })
     const notices = usePlayStore
       .getState()
-      .entries.filter((entry) => entry.type === 'notice' && entry.key === 'registeredFailed')
+      .entries.filter((entry) => entry.type === 'registeredFailed')
     expect(notices).toHaveLength(1)
-    expect(notices[0]).toMatchObject({ level: 'error', params: { detail: 'no java' } })
+    // 이유는 번역하지 않은 코드로 두고 그릴 때 번역한다(언어를 바꾸면 따라 바뀜)
+    expect(notices[0]).toMatchObject({ level: 'error', code: 'noJdk', detail: 'no java' })
   })
 
   it('컴파일 오류·던진 등록기는 목록 아래 한 줄과 Console(진단은 그 줄을 연다)로 알린다', async () => {
