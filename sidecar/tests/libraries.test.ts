@@ -191,6 +191,9 @@ function runRequest(b: SidecarBuild, host: Host): RunRequest {
     sourceRoots: [OPMODES],
     opModeSource: join(OPMODES, ...PACKAGE.split('.'), `${host.opMode}.java`),
     opModeClass: `${PACKAGE}.${host.opMode}`,
+    registeredName: null,
+    registrars: [],
+    firstFolder: testTempDir('first'),
     bootClasspath: [],
     compileClasspath: [b.sdkJar],
     libraryClasspath: [],
@@ -260,7 +263,8 @@ function runSidecar(b: SidecarBuild, host: Host): Promise<Run> {
         tick: message.tick,
         events: host.events?.[message.tick] ?? (message.tick === START_TICK ? ['start'] : []),
         gamepads: [null, null],
-        inputs
+        inputs,
+        configSet: []
       })
     }
     child.stdout.setEncoding('utf8')

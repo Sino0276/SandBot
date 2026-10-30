@@ -679,6 +679,7 @@ const ko = {
       stuckInStop: 'STOP 뒤 끝나지 않음',
       load: 'OpMode를 불러오지 못함',
       config: '로봇 구성 오류',
+      registrar: 'OpMode 등록기 오류',
       internal: '사이드카 내부 오류'
     },
     stallHint:
@@ -692,6 +693,7 @@ const ko = {
       loadFailed: 'OpMode나 로봇 구성을 불러오지 못함',
       stuck: 'STOP 뒤 끝나지 않아 포기함',
       shutdown: '정리하며 끝냄',
+      listed: '등록기 OpMode 목록을 읽음',
       killed: 'JVM을 강제로 끝냄',
       crashed: '실행기가 비정상 종료됨'
     },
@@ -781,7 +783,12 @@ const ko = {
       sim: {
         sharedEncoderMode:
           '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
-        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).'
+        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).',
+        dashCamera:
+          'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
+        dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
+        rrTuningSaved:
+          'Road Runner 튜닝 결과를 모의 저장소의 {{path}}에 저장했습니다. 회귀 웹 페이지는 SandBot에서 지원하지 않으니 그 파일을 Road Runner 튜닝 페이지에서 [Browse]로 여세요.'
       },
       // 라이브러리 의존성 보고(INIT, src/main/libraries). 좌표마다 이유(LibraryReason)로 한 줄.
       library: {

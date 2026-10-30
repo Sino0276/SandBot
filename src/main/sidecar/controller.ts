@@ -1,3 +1,4 @@
+import { MAX_DASH_CONFIG_DEPTH, MAX_DASH_TEXT } from '../../shared/dashboard'
 import type { GradleProject } from '../../shared/gradle'
 import type {
   GamepadState,
@@ -140,6 +141,20 @@ export function parseCommand(value: unknown): PlayCommand | null {
       return typeof data.paused === 'boolean' ? { type: 'pause', paused: data.paused } : null
     case 'speed':
       return isValidSpeed(data.speed) ? { type: 'speed', speed: data.speed } : null
+    case 'config': {
+      // Dashboard 설정 경로(루트부터 이름들)와 값 글자. 사이드카가 형식에 맞는지 다시 본다.
+      const { path, value } = data
+      if (
+        !Array.isArray(path) ||
+        path.length === 0 ||
+        path.length > MAX_DASH_CONFIG_DEPTH ||
+        !path.every((name) => typeof name === 'string' && name.length <= MAX_DASH_TEXT) ||
+        typeof value !== 'string' ||
+        value.length > MAX_DASH_TEXT
+      )
+        return null
+      return { type: 'config', path: [...(path as string[])], value }
+    }
     default:
       return null
   }
@@ -258,6 +273,8 @@ export class PlayController {
             compileClasspath: [files.sdkJar, ...libraries.compileClasspath],
             libraryClasspath: libraries.libraryClasspath
           },
+          // 라이브러리 L2 갈래 A: TeamCode의 등록기와 프로젝트마다의 모의 저장소(userData/sim-files)
+          { registrars: [], firstFolder: runDir },
           (this.deps.epochMillis ?? Date.now)()
         ),
         {

@@ -19,6 +19,7 @@ import {
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
+  type RegistrarRef,
   type RunRequest
 } from '../../shared/sidecarProtocol'
 import {
@@ -88,10 +89,22 @@ const IDENTIFIER = /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*$/u
 export type ValidRequest = {
   runId: string
   root: string
-  opMode: { className: string; path: string; flavor: OpModeFlavor }
+  // registeredName: 등록기 OpMode의 DS 이름(className·path는 그 등록기). 없으면 null.
+  opMode: { className: string; path: string; flavor: OpModeFlavor; registeredName: string | null }
   configPath: string | null
   settings: PlaySettings
   world: WorldSpec | null
+}
+
+// 등록기 OpMode의 DS 이름: 1–200자, 제어 문자 없음(OpModeMeta는 이름을 그대로 쓴다)
+export function isRegisteredName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length >= 1 &&
+    name.length <= 200 &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(name)
+  )
 }
 
 // OpMode 바이너리 이름이 그 파일의 것인지: 최상위 클래스 이름은 파일 이름과 같다(public 최상위 클래스만 OpMode가
@@ -114,11 +127,13 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   if (typeof runId !== 'string' || !RUN_ID.test(runId)) return bad('runId')
   if (typeof root !== 'string' || root === '') return bad('root')
   if (typeof opMode !== 'object' || opMode === null) return bad('opMode')
-  const { className, path: relPath, flavor } = opMode as Record<string, unknown>
+  const { className, path: relPath, flavor, registeredName } = opMode as Record<string, unknown>
   if (typeof relPath !== 'string' || !isLinkableJavaPath(relPath)) return bad('opMode.path')
   if (typeof className !== 'string' || !isBinaryNameOf(className, relPath))
     return bad('opMode.className')
   if (flavor !== 'TeleOp' && flavor !== 'Autonomous') return bad('opMode.flavor')
+  if (registeredName !== undefined && !isRegisteredName(registeredName))
+    return bad('opMode.registeredName')
   if (
     configPath !== null &&
     (typeof configPath !== 'string' ||
@@ -146,7 +161,7 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   return {
     runId,
     root,
-    opMode: { className, path: relPath, flavor },
+    opMode: { className, path: relPath, flavor, registeredName: registeredName ?? null },
     configPath: configPath ?? null,
     settings: { speed, jitter, seed, autoStopAutonomous, batteryVoltage },
     world: parsedWorld
@@ -268,10 +283,17 @@ export type RunClasspaths = {
   libraryClasspath: string[]
 }
 
+// 등록기와 모의 저장소(라이브러리 L2). registrars: TeamCode의 모든 등록기(절대 경로 소스), firstFolder: AppUtil.ROOT_FOLDER.
+export type RunRegistrars = {
+  registrars: RegistrarRef[]
+  firstFolder: string
+}
+
 export function buildRunRequest(
   prepared: PreparedRun,
   request: ValidRequest,
   classpaths: RunClasspaths,
+  registrars: RunRegistrars,
   now: number = Date.now()
 ): RunRequest {
   return {
@@ -281,7 +303,11 @@ export function buildRunRequest(
     tickNanos: DEFAULT_TICK_NANOS,
     sourceRoots: prepared.sourceRoots,
     opModeSource: prepared.opModeSource,
-    opModeClass: request.opMode.className,
+    // 등록기 OpMode면 className은 등록기이고 실행할 것은 이름으로 고른다
+    opModeClass: request.opMode.registeredName === null ? request.opMode.className : null,
+    registeredName: request.opMode.registeredName,
+    registrars: registrars.registrars,
+    firstFolder: registrars.firstFolder,
     bootClasspath: classpaths.bootClasspath,
     compileClasspath: classpaths.compileClasspath,
     libraryClasspath: classpaths.libraryClasspath,

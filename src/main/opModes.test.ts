@@ -57,6 +57,7 @@ describe('listOpModes', () => {
     expect(await listOpModes(root)).toEqual({
       ok: true,
       opModes: [],
+      registrars: [],
       truncated: false,
       hasTeamCode: false
     })

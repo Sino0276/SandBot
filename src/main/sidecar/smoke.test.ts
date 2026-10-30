@@ -158,7 +158,7 @@ public class Main {
     public static void main(String[] args) throws Exception {
         PrintStream out = new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8");
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        out.println("{\\"type\\":\\"hello\\",\\"protocol\\":2,\\"runtime\\":\\"stub\\",\\"java\\":\\"" + System.getProperty("java.version") + "\\"}");
+        out.println("{\\"type\\":\\"hello\\",\\"protocol\\":3,\\"runtime\\":\\"stub\\",\\"java\\":\\"" + System.getProperty("java.version") + "\\"}");
         String run = in.readLine();
         boolean crash = run.contains("Crash");
         out.println("{\\"type\\":\\"compiled\\",\\"ok\\":true,\\"diagnostics\\":[],\\"millis\\":1}");

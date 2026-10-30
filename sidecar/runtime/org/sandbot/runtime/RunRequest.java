@@ -8,7 +8,19 @@ import java.util.Map;
 
 /** 호스트의 run 메시지(src/shared/sidecarProtocol.ts의 RunRequest)를 검사해 읽은 것 */
 final class RunRequest {
-    static final int PROTOCOL = 2;
+    static final int PROTOCOL = 3;
+
+    /** TeamCode의 @OpModeRegistrar 메서드가 있는 클래스(sidecarProtocol RegistrarRef) */
+    static final class Registrar {
+        final String className;
+        /** 소스 파일 절대 경로(컴파일 시작 파일에 더한다) */
+        final String source;
+
+        Registrar(String className, String source) {
+            this.className = className;
+            this.source = source;
+        }
+    }
 
     /** 받을 수 없는 요청(메시지는 영어, error kind internal) */
     static final class Invalid extends Exception {
@@ -20,7 +32,14 @@ final class RunRequest {
     final long tickNanos;
     final List<String> sourceRoots;
     final String opModeSource;
+    /** @TeleOp·@Autonomous 클래스(registeredName이면 null) */
     final String opModeClass;
+    /** @OpModeRegistrar가 등록한 OpMode의 DS 이름(opModeClass면 null) */
+    final String registeredName;
+    /** TeamCode의 모든 등록기(실제 SDK처럼 OpMode를 고르기 전에 모두 실행한다) */
+    final List<Registrar> registrars;
+    /** AppUtil.ROOT_FOLDER(프로젝트마다의 모의 저장소, 호스트가 만든 절대 경로) */
+    final String firstFolder;
     /** javac -bootclasspath(Android 플랫폼 API). 비면 --release 8(시험만). */
     final List<String> bootClasspath;
     /** javac -classpath(sandbot-sdk.jar + 컴파일용 라이브러리 jar) */
@@ -44,7 +63,12 @@ final class RunRequest {
         tickNanos = positiveLong(m, "tickNanos");
         sourceRoots = stringList(m, "sourceRoots");
         opModeSource = string(m, "opModeSource");
-        opModeClass = string(m, "opModeClass");
+        opModeClass = nullableString(m, "opModeClass");
+        registeredName = nullableString(m, "registeredName");
+        if ((opModeClass == null) == (registeredName == null))
+            throw new Invalid("exactly one of opModeClass and registeredName must be set");
+        registrars = registrars(m);
+        firstFolder = string(m, "firstFolder");
         bootClasspath = stringList(m, "bootClasspath");
         compileClasspath = stringList(m, "compileClasspath");
         libraryClasspath = stringList(m, "libraryClasspath");
@@ -75,6 +99,27 @@ final class RunRequest {
         Object v = m.get(key);
         if (!(v instanceof String) || ((String) v).isEmpty()) throw new Invalid(key + " must be a non-empty string");
         return (String) v;
+    }
+
+    private static String nullableString(Map<String, Object> m, String key) throws Invalid {
+        Object v = m.get(key);
+        if (v == null) return null;
+        if (!(v instanceof String) || ((String) v).isEmpty())
+            throw new Invalid(key + " must be a non-empty string or null");
+        return (String) v;
+    }
+
+    private static List<Registrar> registrars(Map<String, Object> m) throws Invalid {
+        Object v = m.get("registrars");
+        if (!(v instanceof List)) throw new Invalid("registrars must be an array");
+        List<Registrar> out = new ArrayList<>();
+        for (Object item : (List<?>) v) {
+            if (!(item instanceof Map)) throw new Invalid("registrars must be an array of objects");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> registrar = (Map<String, Object>) item;
+            out.add(new Registrar(string(registrar, "className"), string(registrar, "source")));
+        }
+        return Collections.unmodifiableList(out);
     }
 
     private static List<String> stringList(Map<String, Object> m, String key) throws Invalid {

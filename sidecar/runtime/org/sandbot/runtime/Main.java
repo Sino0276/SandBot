@@ -130,6 +130,11 @@ public final class Main {
         input.start();
 
         HostInput.Message first = input.take();
+        if ("list".equals(first.type)) {
+            // 라이브러리 L2 갈래 A: 등록기 OpMode 목록(컴파일 → 등록기 실행 → registered → finished listed)
+            failBeforeRun(session, "this sidecar cannot list registered OpModes yet", "loadFailed");
+            return;
+        }
         if (!"run".equals(first.type)) {
             session.protocolError("expected run but got " + first.type);
             parkForever();
@@ -139,6 +144,11 @@ public final class Main {
             request = RunRequest.parse(first.body);
         } catch (RunRequest.Invalid e) {
             failBeforeRun(session, e.getMessage(), "loadFailed");
+            return;
+        }
+        if (request.registeredName != null) {
+            // 라이브러리 L2 갈래 A: 등록기가 등록한 OpMode를 이름으로 고른다
+            failBeforeRun(session, "this sidecar cannot run registered OpModes yet", "loadFailed");
             return;
         }
 

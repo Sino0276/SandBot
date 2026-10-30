@@ -42,7 +42,29 @@ function valid(input: PlayInitRequest): ValidRequest {
 
 describe('validateRequest', () => {
   it('맞는 요청은 그대로 받는다', () => {
-    expect(valid(request())).toEqual(request())
+    const base = request()
+    // registeredName이 없으면 null로 채운다(annotated OpMode)
+    expect(valid(base)).toEqual({ ...base, opMode: { ...base.opMode, registeredName: null } })
+    const registered = request({
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+        path: `${PKG}/TuningOpModes.java`,
+        flavor: 'TeleOp',
+        registeredName: 'AngularRampLogger'
+      }
+    })
+    expect(valid(registered)).toEqual(registered)
+    for (const registeredName of ['', 'a\nb', 'x'.repeat(201), 3])
+      expect(
+        validateRequest(
+          request({
+            opMode: {
+              ...registered.opMode,
+              registeredName: registeredName as unknown as string
+            }
+          })
+        )
+      ).toMatchObject({ ok: false, code: 'notAllowed' })
   })
 
   it('모양이 틀리면 notAllowed', () => {
@@ -252,9 +274,9 @@ describe('사이드카 빌드 결과와 명령', () => {
     expect(await readSidecarFiles(dir)).toMatchObject({
       ok: false,
       code: 'noSidecar',
-      detail: 'sidecar protocol 1, expected 2'
+      detail: 'sidecar protocol 1, expected 3'
     })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 2, sourceHash: 'x' }))
+    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 3, sourceHash: 'x' }))
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
@@ -307,16 +329,20 @@ describe('사이드카 빌드 결과와 명령', () => {
         compileClasspath: [files.sdkJar],
         libraryClasspath: []
       },
+      { registrars: [], firstFolder: '/u/sim-files/abc/FIRST' },
       1234
     )
     expect(run).toEqual({
       type: 'run',
-      protocol: 2,
+      protocol: 3,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
       opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
       opModeClass: 'org.firstinspires.ftc.teamcode.Drive',
+      registeredName: null,
+      registrars: [],
+      firstFolder: '/u/sim-files/abc/FIRST',
       bootClasspath: ['/p/android-platform.jar'],
       compileClasspath: ['/s/sandbot-sdk.jar'],
       libraryClasspath: [],

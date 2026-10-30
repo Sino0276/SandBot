@@ -666,6 +666,7 @@ const en: Messages = {
       stuckInStop: 'Did not finish after STOP',
       load: 'Could not load the OpMode',
       config: 'Robot configuration error',
+      registrar: 'OpMode registrar error',
       internal: 'Sidecar internal error'
     },
     stallHint:
@@ -679,6 +680,7 @@ const en: Messages = {
       loadFailed: 'Could not load the OpMode or the robot configuration',
       stuck: 'Gave up: did not finish after STOP',
       shutdown: 'Shut down',
+      listed: 'Read the registered OpModes',
       killed: 'The JVM was killed',
       crashed: 'The runner exited unexpectedly'
     },
@@ -774,7 +776,12 @@ const en: Messages = {
         sharedEncoderMode:
           'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
         worldError:
-          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).'
+          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).',
+        dashCamera:
+          'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
+        dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
+        rrTuningSaved:
+          'Saved the Road Runner tuning result to {{path}} in the simulated storage. SandBot does not support the regression web page; open that file with [Browse] on a Road Runner tuning page.'
       },
       // Library dependency report (INIT, src/main/libraries)
       library: {

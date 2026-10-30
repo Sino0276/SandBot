@@ -1,10 +1,12 @@
 // 렌더러 ↔ 메인 프로세스의 실행(Play) API 타입. 메인이 JDK를 찾고 사이드카(JVM)를 띄워 팀의 OpMode를
 // 가상 시계로 실행한다(프로토콜은 sidecarProtocol.ts). 렌더러는 Driver Station처럼 OpMode를 고르고 INIT → START → STOP을
 // 보내며, Unity처럼 일시 정지·한 단계·속도를 바꾼다.
+import type { DashConfigNode, DashOp } from './dashboard'
 import type {
   DeviceValues,
   FinishReason,
   GamepadState,
+  SidecarNoticeCode,
   SimErrorKind,
   TelemetryFrame
 } from './sidecarProtocol'
@@ -15,7 +17,8 @@ import type { SimPose, WorldSpec } from './sim/worldSpec'
 
 export type OpModeFlavor = 'TeleOp' | 'Autonomous'
 
-// TeamCode의 @TeleOp·@Autonomous 클래스 하나(@Disabled·abstract 제외). 소스를 읽어 정한다(컴파일하지 않음).
+// TeamCode의 @TeleOp·@Autonomous 클래스 하나(@Disabled·abstract 제외, 소스를 읽어 정한다, 컴파일하지 않음), 또는
+// @OpModeRegistrar가 등록한 OpMode 하나(registered, 사이드카가 등록기를 실행해 정한다).
 export type OpModeInfo = {
   // 바이너리 이름(중첩 클래스는 Outer$Inner)
   className: string
@@ -30,11 +33,46 @@ export type OpModeInfo = {
   group: string
   // @Autonomous(preselectTeleOp = …). 없으면 ''
   preselectTeleOp: string
+  // 등록기 OpMode: className은 등록한 OpMode 클래스, path·line은 등록기 소스와 그 메서드 줄, preselectTeleOp은
+  // OpModeMeta의 transitionTarget. 고르는 키는 'registered:' + name(DS 이름은 유일하다), annotated는 className.
+  registered?: { registrar: string }
+}
+
+// TeamCode의 @OpModeRegistrar 메서드 하나(소스를 읽어 찾는다). 사이드카가 실제 SDK 규칙으로 다시 거른다.
+export type RegistrarInfo = {
+  // 메서드가 있는 클래스의 바이너리 이름
+  className: string
+  path: string
+  // 애너테이션이 있는 줄
+  line: number
 }
 
 export type ListOpModesResult =
-  | { ok: true; opModes: OpModeInfo[]; truncated: boolean; hasTeamCode: boolean }
+  | {
+      ok: true
+      opModes: OpModeInfo[]
+      // 이 목록이 비어 있지 않으면 렌더러가 listRegisteredOpModes로 등록기 OpMode를 읽는다
+      registrars: RegistrarInfo[]
+      truncated: boolean
+      hasTeamCode: boolean
+    }
   | { ok: false; code: 'notAllowed'; detail: string }
+
+// 등록기 OpMode 목록(메인이 INIT 준비와 같은 Gradle·라이브러리·플랫폼을 쓰고 JVM에서 등록기를 실행한다, 결과는 캐시).
+// diagnostics에 오류가 있으면 컴파일하지 못했다(opModes 빈 목록). errors는 던진 등록기(그 등록기의 OpMode만 빠진다).
+// UTILITY·SYSTEM flavor는 넣지 않는다.
+export type ListRegisteredResult =
+  | {
+      ok: true
+      opModes: OpModeInfo[]
+      diagnostics: PlayDiagnostic[]
+      errors: { registrar: string; message: string }[]
+    }
+  | {
+      ok: false
+      code: Exclude<PlayInitFailureCode, 'busy' | 'cancelled'>
+      detail: string
+    }
 
 // ---- JDK ----
 
@@ -126,7 +164,8 @@ export type PlayInitRequest = {
   // 렌더러가 정하는 실행 id. 이벤트를 이 실행의 것인지 가리는 데 쓴다.
   runId: string
   root: string
-  opMode: { className: string; path: string; flavor: OpModeFlavor }
+  // registeredName이 있으면 등록기 OpMode: className·path는 그것을 등록한 등록기 클래스와 소스다.
+  opMode: { className: string; path: string; flavor: OpModeFlavor; registeredName?: string }
   // 로봇 구성 XML의 TeamCode 기준 경로(src/main/res/xml/sandbot_*.xml, generatedFiles.ts 규칙). 없으면 null.
   configPath: string | null
   settings: PlaySettings
@@ -145,22 +184,19 @@ export type PlayInitRequest = {
 //   'android-36.1' 등, Android Studio에서 설치)
 // - cancelled: 라이브러리를 받는 중 사용자가 STOP으로 취소했다
 // ok의 configMissing: 요청한 구성 XML이 디스크에 없어 장치 없는 hardwareMap으로 실행한다(렌더러가 Console에 경고)
+export type PlayInitFailureCode =
+  | 'notAllowed'
+  | 'missing'
+  | 'noJdk'
+  | 'noSidecar'
+  | 'busy'
+  | 'failed'
+  | 'noAndroidSdk'
+  | 'noAndroidPlatform'
+  | 'cancelled'
+
 export type PlayInitResult =
-  | { ok: true; configMissing?: true }
-  | {
-      ok: false
-      code:
-        | 'notAllowed'
-        | 'missing'
-        | 'noJdk'
-        | 'noSidecar'
-        | 'busy'
-        | 'failed'
-        | 'noAndroidSdk'
-        | 'noAndroidPlatform'
-        | 'cancelled'
-      detail: string
-    }
+  { ok: true; configMissing?: true } | { ok: false; code: PlayInitFailureCode; detail: string }
 
 export type PlayCommand =
   | { type: 'start' }
@@ -169,6 +205,8 @@ export type PlayCommand =
   // 일시 정지 중에 루프 하나가 지날 때까지 진행하고 다시 멈춘다(Unity의 Step)
   | { type: 'step' }
   | { type: 'speed'; speed: PlaySpeed }
+  // Dashboard 설정 하나 바꾸기(Config 탭, 실행 중). 다음 틱 경계에서 적용한다(sidecarProtocol TickReply.configSet).
+  | { type: 'config'; path: string[]; value: string }
 
 // 실행 단계: preparing(JDK 확인·JVM 시작), compiling, init, running, stopping, finished
 export type PlayPhase = 'preparing' | 'compiling' | 'init' | 'running' | 'stopping' | 'finished'
@@ -231,6 +269,19 @@ export type PlayEvent =
     }
   | { type: 'compiled'; runId: string; ok: boolean; millis: number; diagnostics: PlayDiagnostic[] }
   | { type: 'telemetry'; runId: string; tNanos: number; frame: TelemetryFrame }
+  // Dashboard 패킷 묶음(약 30 Hz). 메인이 묶음 사이도 같은 규칙으로 합친다: cleared는 OR, data는 cleared 뒤부터 키마다
+  // 마지막 값(키 정렬), log·ops는 마지막 null 아닌 것(sidecarProtocol DashMessage).
+  | {
+      type: 'dash'
+      runId: string
+      tNanos: number
+      cleared: boolean
+      data: [string, string][]
+      log: string[] | null
+      ops: DashOp[] | null
+    }
+  // Dashboard 설정 트리(마지막 것)
+  | { type: 'dashConfig'; runId: string; tNanos: number; root: DashConfigNode }
   // 여러 줄을 묶어 보낸다
   | {
       type: 'log'
@@ -285,6 +336,7 @@ export type PlayEvent =
 // - sharedEncoderMode: 데드휠과 포트를 함께 쓰는 모터를 엔코더 모드로 돌린다(실제로는 포드 엔코더로 제어되지만
 //   시뮬레이터는 축 엔코더로 제어한다고 가정), params.device
 // - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
-export type SimNoticeCode = 'sharedEncoderMode' | 'worldError'
+// - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path)
+export type SimNoticeCode = 'sharedEncoderMode' | 'worldError' | SidecarNoticeCode
 
 export type { GamepadState }

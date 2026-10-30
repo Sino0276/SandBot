@@ -7,6 +7,7 @@ import type {
   JdkChoice,
   JdkState,
   ListOpModesResult,
+  ListRegisteredResult,
   PlayCommand,
   PlayEvent,
   PlayInitRequest,
@@ -38,6 +39,8 @@ export const IPC = {
   getAndroidSdk: 'android-sdk:get',
   setAndroidSdk: 'android-sdk:set',
   listOpModes: 'play:list-opmodes',
+  listRegisteredOpModes: 'play:list-registered-opmodes',
+  readTeamCodeAsset: 'teamcode:read-asset',
   playInit: 'play:init',
   playCommand: 'play:command',
   playGamepads: 'play:gamepads',
@@ -56,6 +59,13 @@ export type OpenProjectResult = {
   // sandbot/project.json 내용. 없으면 새 프로젝트다.
   content: string | null
 }
+
+// TeamCode의 assets 파일 하나(Dashboard 그림 '/images/x.png' → TeamCode/src/main/assets/images/x.png). 그림만(png·jpeg·
+// webp·gif), 열거나 저장한 루트, 경로 규칙, 크기 한도.
+export type TeamCodeAssetMime = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+export type ReadTeamCodeAssetResult =
+  | { ok: true; mime: TeamCodeAssetMime; bytes: Uint8Array }
+  | { ok: false; code: 'notAllowed' | 'missing' | 'tooLarge' | 'failed'; detail: string }
 
 // STEP 읽기 결과. 캐시가 있으면 model(변환 결과, 렌더러의 ImportedModel)을, 없으면 파일 내용을 준다.
 // 캐시가 없을 때 렌더러가 변환한 뒤 key로 storeMeshCache를 부른다.
@@ -249,6 +259,10 @@ export type SandbotApi = {
   setAndroidSdk: (choice: AndroidSdkChoice, root: string | null) => Promise<AndroidSdkState>
   // 실행(Play). root는 열거나 저장한 프로젝트여야 한다(메인이 확인한다).
   listOpModes: (root: string) => Promise<ListOpModesResult>
+  // TeamCode의 @OpModeRegistrar가 등록하는 OpMode(JVM에서 등록기를 실행, 결과는 캐시). listOpModes의 registrars가 있을 때.
+  listRegisteredOpModes: (root: string) => Promise<ListRegisteredResult>
+  // Dashboard 오버레이 그림('/images/…'를 TeamCode/src/main/assets 기준 경로로 바꾼 'images/…')
+  readTeamCodeAsset: (root: string, path: string) => Promise<ReadTeamCodeAssetResult>
   // JDK·사이드카를 확인하고 JVM을 띄워 컴파일·INIT까지 시작한다. 진행은 onPlayEvent로 온다.
   playInit: (request: PlayInitRequest) => Promise<PlayInitResult>
   // 지금 실행에 보내는 명령(실행이 없으면 무시)

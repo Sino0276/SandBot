@@ -294,6 +294,10 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
     }
     case 'telemetry':
       return { run: { ...run, telemetry: { tNanos: event.tNanos, frame: event.frame } } }
+    // 라이브러리 L2 갈래 C: Dashboard 텔레메트리 보기·Config 탭·씬 뷰 오버레이
+    case 'dash':
+    case 'dashConfig':
+      return {}
     case 'devices':
       return {
         run: {

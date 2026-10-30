@@ -18,7 +18,7 @@ import {
 } from '../../src/shared/sidecarProtocol'
 import { KinematicWorld } from '../../src/shared/sim/world'
 import { WORLD_SPEC_VERSION, type SimPose, type WorldSpec } from '../../src/shared/sim/worldSpec'
-import { SIDECAR_TEST_TIMEOUT, sidecarBuild, type SidecarBuild } from './support'
+import { SIDECAR_TEST_TIMEOUT, sidecarBuild, testTempDir, type SidecarBuild } from './support'
 
 const build = await sidecarBuild()
 
@@ -179,7 +179,8 @@ function runSim(
         tick: message.tick,
         events: message.tick === START_TICK ? ['start'] : [],
         gamepads: [pad(message.tick), null],
-        inputs
+        inputs,
+        configSet: []
       })
     }
     child.stdout.setEncoding('utf8')
@@ -207,6 +208,9 @@ function runSim(
       sourceRoots: [OPMODES],
       opModeSource: join(OPMODES, 'org', 'firstinspires', 'ftc', 'teamcode', `${opMode}.java`),
       opModeClass: `org.firstinspires.ftc.teamcode.${opMode}`,
+      registeredName: null,
+      registrars: [],
+      firstFolder: testTempDir('first'),
       bootClasspath: [],
       compileClasspath: [b.sdkJar],
       libraryClasspath: [],

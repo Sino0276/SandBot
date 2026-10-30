@@ -59,6 +59,7 @@ const AUTO = opMode('RedAuto', 'Autonomous', 'Drive')
 const LIST: ListOpModesResult = {
   ok: true,
   opModes: [AUTO, DRIVE],
+  registrars: [],
   truncated: false,
   hasTeamCode: true
 }

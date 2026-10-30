@@ -1,8 +1,13 @@
 import { ipcMain } from 'electron'
 import { resolve } from 'path'
-import { IPC, MAX_SOURCE_PATHS, MAX_USAGE_FILE_BYTES } from '../shared/ipc'
+import {
+  IPC,
+  MAX_SOURCE_PATHS,
+  MAX_USAGE_FILE_BYTES,
+  type ReadTeamCodeAssetResult
+} from '../shared/ipc'
 import { compareOpModes, parseOpModes, type ParsedOpMode } from '../shared/java/opModes'
-import type { ListOpModesResult, OpModeInfo } from '../shared/play'
+import type { ListOpModesResult, ListRegisteredResult, OpModeInfo } from '../shared/play'
 import { isTrustedRoot } from './projectRoots'
 import { listJavaFiles, readJavaSources } from './teamCodeJava'
 
@@ -26,7 +31,7 @@ export async function listOpModes(root: unknown): Promise<ListOpModesResult> {
   const list = await listJavaFiles(root)
   if (!list.hasTeamCode) {
     cache.delete(key)
-    return { ok: true, opModes: [], truncated: false, hasTeamCode: false }
+    return { ok: true, opModes: [], registrars: [], truncated: false, hasTeamCode: false }
   }
   const previous = cache.get(key) ?? new Map<string, CachedFile>()
   const next = new Map<string, CachedFile>()
@@ -67,7 +72,8 @@ export async function listOpModes(root: unknown): Promise<ListOpModesResult> {
     for (const opMode of entry.opModes) opModes.push({ ...opMode, path })
   }
   opModes.sort(compareOpModes)
-  return { ok: true, opModes, truncated: list.truncated, hasTeamCode: true }
+  // 라이브러리 L2 갈래 A: @OpModeRegistrar 메서드를 글자로 찾아 채운다
+  return { ok: true, opModes, registrars: [], truncated: list.truncated, hasTeamCode: true }
 }
 
 // 테스트용
@@ -77,4 +83,15 @@ export function clearOpModeCache(): void {
 
 export function registerOpModesIpc(): void {
   ipcMain.handle(IPC.listOpModes, (_event, root: unknown) => listOpModes(root))
+  // 라이브러리 L2 갈래 A(src/main/registeredOpModes.ts)·C(src/main/teamCodeAssets.ts)가 바꾼다
+  ipcMain.handle(IPC.listRegisteredOpModes, (): ListRegisteredResult => ({
+    ok: false,
+    code: 'failed',
+    detail: 'not implemented'
+  }))
+  ipcMain.handle(IPC.readTeamCodeAsset, (): ReadTeamCodeAssetResult => ({
+    ok: false,
+    code: 'failed',
+    detail: 'not implemented'
+  }))
 }

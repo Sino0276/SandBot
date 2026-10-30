@@ -18,7 +18,13 @@ import {
   type TelemetryMessage
 } from '../../src/shared/sidecarProtocol'
 import { MAX_LINE_CHARS } from '../../src/main/sidecar/protocol'
-import { compileJavaTests, runJavaTests, sidecarBuild, type SidecarBuild } from './support'
+import {
+  compileJavaTests,
+  runJavaTests,
+  sidecarBuild,
+  testTempDir,
+  type SidecarBuild
+} from './support'
 
 const OPMODES = resolve(__dirname, 'opmodes')
 const PACKAGE = 'org.firstinspires.ftc.teamcode'
@@ -56,6 +62,9 @@ function runRequest(b: SidecarBuild, script: Script): RunRequest {
     sourceRoots: [OPMODES],
     opModeSource: join(OPMODES, ...PACKAGE.split('.'), `${script.opMode}.java`),
     opModeClass: `${PACKAGE}.${script.opMode}`,
+    registeredName: null,
+    registrars: [],
+    firstFolder: testTempDir('first'),
     bootClasspath: [],
     compileClasspath: [b.sdkJar],
     libraryClasspath: [],
@@ -130,7 +139,8 @@ function runSidecar(b: SidecarBuild, script: Script): Promise<RunResult> {
           tick: message.tick,
           events: script.events?.[message.tick] ?? [],
           gamepads: script.gamepads?.(message.tick) ?? [null, null],
-          inputs: {}
+          inputs: {},
+          configSet: []
         })
       }
     }

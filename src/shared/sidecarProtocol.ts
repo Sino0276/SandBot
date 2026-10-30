@@ -7,8 +7,9 @@
 //   실행 속도·일시 정지·한 단계를 정한다(사이드카는 벽시계를 모른다).
 // - 실시간 실행(진짜 시계 + 하드웨어 호출에서 실제로 기다림)은 구현하지 않고 길만 열어 둔다: RunRequest.clock에
 //   다른 값을 더하고 사이드카에 SimClock 구현을 하나 더 두면 된다. 지금 사이드카는 'virtual'이 아니면 거부한다.
+import type { DashConfigNode, DashConfigSet, DashOp } from './dashboard'
 
-export const SIDECAR_PROTOCOL_VERSION = 2
+export const SIDECAR_PROTOCOL_VERSION = 3
 
 // 틱 길이(가상 나노초). 틱 경계마다 장치 출력을 내보내고 입력(게임패드·센서)과 DS 사건(START·STOP)을 받는다.
 // 실제 Robot Controller의 이벤트 루프 한 바퀴에 해당한다(LinearOpMode.waitForStart가 깨어나는 때, 게임패드가 바뀌는 때).
@@ -43,6 +44,15 @@ export type HubTimingOverrides = Partial<Record<HubTimingKey, number>>
 
 // ---- 호스트 → 사이드카 ----
 
+// TeamCode의 @OpModeRegistrar 메서드가 있는 클래스(호스트가 소스 글자로 찾는다, shared/java/opModes.ts). 사이드카가 실제
+// SDK 규칙(static, (OpModeManager) 또는 (Context, OpModeManager))으로 메서드를 고른다.
+export type RegistrarRef = {
+  // 바이너리 이름(중첩 클래스는 Outer$Inner)
+  className: string
+  // 소스 파일 절대 경로(컴파일 시작 파일에 더한다)
+  source: string
+}
+
 export type RunRequest = {
   type: 'run'
   protocol: typeof SIDECAR_PROTOCOL_VERSION
@@ -51,10 +61,19 @@ export type RunRequest = {
   // 컴파일(사이드카 안에서 javax.tools로, 결과는 메모리에만 둔다). 경로는 모두 절대 경로.
   // sourceRoots: TeamCode/src/main/java와, 있으면 FtcRobotController/src/main/java(-sourcepath 순서대로)
   sourceRoots: string[]
-  // 고른 OpMode의 소스 파일. 이 파일에서 시작해 -sourcepath로 필요한 것만 컴파일한다.
+  // 고른 OpMode의 소스 파일. 이 파일(과 registrars의 소스)에서 시작해 -sourcepath로 필요한 것만 컴파일한다.
+  // registeredName이면 그 OpMode를 등록한 등록기의 소스다.
   opModeSource: string
-  // 바이너리 이름(중첩 클래스는 Outer$Inner)
-  opModeClass: string
+  // 실행할 OpMode: @TeleOp·@Autonomous 클래스의 바이너리 이름(중첩 클래스는 Outer$Inner), 또는 null이고 registeredName
+  opModeClass: string | null
+  // @OpModeRegistrar가 등록한 OpMode의 DS 이름(OpModeMeta.name). null이면 opModeClass.
+  registeredName: string | null
+  // TeamCode의 모든 등록기. 실제 SDK처럼 OpMode를 고르기 전에 모두 실행한다(클래스 이름 순, 클래스 안은 메서드 이름 순).
+  // annotated OpMode를 실행할 때도 돈다(부작용 — Dashboard withConfigRoot 등 — 이 로봇과 같게).
+  registrars: RegistrarRef[]
+  // AppUtil.ROOT_FOLDER·FIRST_FOLDER(로봇의 /sdcard/FIRST). 프로젝트마다의 모의 저장소(메인이 만든 절대 경로,
+  // userData/sim-files/<루트 해시>/FIRST, TeamCode 밖). Road Runner 튜닝 JSON 등이 여기 쓰인다.
+  firstFolder: string
   // javac -bootclasspath: 팀 프로젝트 compileSdk의 Android 플랫폼 API(android.jar에서 java.*·javax.*·org.w3c.*·
   // org.xml.*·android.annotation.*만 고른 jar, 메인의 androidSdk.ts). 팀 코드는 Android Studio처럼 Java 8 문법(-source 8
   // -target 8)과 Android API로 컴파일한다. 비어 있으면 javac --release 8(호스트 JDK의 Java 8 API)이고, 이것은 사이드카
@@ -120,12 +139,33 @@ export type TickReply = {
   gamepads: [GamepadState | null, GamepadState | null]
   // 장치 이름 → 센서 값. 1단계(시뮬레이터 없음)는 비어 있고 장치는 기본값(0 등)을 쓴다. 보낸 키만 바꾼다.
   inputs: Record<string, DeviceValues>
+  // Dashboard 설정 바꾸기(Config 탭). 이 틱 경계에서 차례로 ValueProvider.set한다. 찾지 못한 경로·맞지 않는 값은 버리고
+  // (영어 경고 로그) dashConfig로 지금 값을 다시 보낸다. Dashboard가 없으면 버린다.
+  configSet: DashConfigSet[]
+}
+
+// 등록기 OpMode 목록 요청(run 대신 첫 메시지). 컴파일하고 등록기를 실행해 registered를 보낸 뒤 finished(listed)로 끝난다.
+// hardwareMap·틱 교환은 없다(가상 시계는 돌지만 틱 경계에서 기다리지 않는다).
+export type ListRequest = {
+  type: 'list'
+  protocol: typeof SIDECAR_PROTOCOL_VERSION
+  clock: SimClockKind
+  tickNanos: number
+  sourceRoots: string[]
+  // 하나 이상
+  registrars: RegistrarRef[]
+  bootClasspath: string[]
+  compileClasspath: string[]
+  libraryClasspath: string[]
+  firstFolder: string
+  startEpochMillis: number
+  stallMillis: number
 }
 
 // 정리하고 끝내라(정지 시간 초과, 창 닫기). 사이드카는 바로 finished(shutdown)를 보내고 끝낸다.
 export type ShutdownRequest = { type: 'shutdown' }
 
-export type HostMessage = RunRequest | TickReply | ShutdownRequest
+export type HostMessage = RunRequest | ListRequest | TickReply | ShutdownRequest
 
 // ---- 사이드카 → 호스트 ----
 
@@ -163,9 +203,18 @@ export type StackFrame = {
 // - stuckInStop: STOP 뒤 SDK의 정지 대기 시간(가상) 안에 끝나지 않았다
 // - load: OpMode 클래스를 찾거나 만들지 못했다(OpMode가 아님, public 인수 없는 생성자 없음 등)
 // - config: 로봇 구성 XML을 읽지 못했거나 지원하지 않는 장치가 있다
+// - registrar: @OpModeRegistrar 메서드가 던졌다(그 등록기만 건너뛰고 다음으로 간다)
 // - internal: 사이드카 자체 오류
 export type SimErrorKind =
-  'exception' | 'unsupported' | 'thread' | 'stall' | 'stuckInStop' | 'load' | 'config' | 'internal'
+  | 'exception'
+  | 'unsupported'
+  | 'thread'
+  | 'stall'
+  | 'stuckInStop'
+  | 'load'
+  | 'config'
+  | 'registrar'
+  | 'internal'
 
 // - stopped: STOP 뒤 정상적으로 끝남
 // - returned: STOP 전에 OpMode가 스스로 끝남(runOpMode가 돌아옴, requestOpModeStop)
@@ -175,6 +224,7 @@ export type SimErrorKind =
 // - loadFailed: OpMode·구성을 읽지 못함(error 메시지가 먼저 온다)
 // - stuck: STOP 뒤 끝나지 않아 사이드카가 포기함
 // - shutdown: 호스트가 shutdown을 보냄
+// - listed: 목록 요청(ListRequest)을 마침
 export type FinishReason =
   | 'stopped'
   | 'returned'
@@ -184,6 +234,7 @@ export type FinishReason =
   | 'loadFailed'
   | 'stuck'
   | 'shutdown'
+  | 'listed'
 
 // Driver Station이 보이는 텔레메트리 한 번(telemetry.update가 실제로 보낸 것). lines는 DS 화면의 줄 그대로
 // (캡션·구분자·값을 합친 글자), log는 telemetry.log()의 줄(표시 순서대로).
@@ -266,6 +317,48 @@ export type LinkWarning = {
 }
 export type LinkReportMessage = { type: 'linkReport'; warnings: LinkWarning[] }
 
+// 등록기가 등록한 OpMode 하나(등록 순서: 등록기 클래스 이름 순, 그 안에서 부른 순서. 같은 이름은 처음 것만)
+export type RegisteredOpMode = {
+  name: string
+  // OpModeMeta.group('' 아니면 DefaultGroup은 '$$$$$$$')
+  group: string
+  flavor: 'TeleOp' | 'Autonomous' | 'Utility' | 'System'
+  // 등록한 OpMode의 클래스(인스턴스면 그 런타임 클래스) 바이너리 이름
+  className: string
+  // 등록한 등록기 클래스(RegistrarRef.className)
+  registrar: string
+  // OpModeMeta.autoTransition('' 없음, Autonomous의 preselectTeleOp)
+  transitionTarget: string
+}
+export type RegisteredMessage = { type: 'registered'; opModes: RegisteredOpMode[] }
+
+// Dashboard 패킷 묶음(sendTelemetryPacket을 전송 간격 — 기본 100 ms 가상 — 마다 합친 것). data는 키마다 마지막 값
+// (키 정렬), log는 묶음의 마지막 비어 있지 않은 로그(없으면 null), ops는 마지막으로 fieldOverlay가 비어 있지 않은
+// 패킷의 field op + fieldOverlay op(없으면 null), cleared는 묶음 사이에 clearTelemetry가 있었음(그 앞 data는 뺐다).
+export type DashMessage = {
+  type: 'dash'
+  tNanos: number
+  cleared: boolean
+  data: [string, string][]
+  log: string[] | null
+  ops: DashOp[] | null
+}
+
+// Dashboard 설정 트리 전체(시작 뒤 한 번, 바뀔 때, configSet 뒤)
+export type DashConfigMessage = { type: 'dashConfig'; tNanos: number; root: DashConfigNode }
+
+// 사이드카 안내(호스트가 simNotice로 보낸다, 같은 code·params는 실행마다 한 번)
+// - dashCamera: Dashboard 카메라 스트림은 시뮬레이션하지 않는다
+// - dashImage: Dashboard sendImage는 보이지 않는다
+// - rrTuningSaved: Road Runner 튜닝 OpMode가 결과 JSON을 모의 저장소에 썼다(params.path, firstFolder 기준 상대 경로)
+export type SidecarNoticeCode = 'dashCamera' | 'dashImage' | 'rrTuningSaved'
+export type NoticeMessage = {
+  type: 'notice'
+  tNanos: number
+  code: SidecarNoticeCode
+  params: Record<string, string>
+}
+
 export type SidecarMessage =
   | HelloMessage
   | CompiledMessage
@@ -276,3 +369,7 @@ export type SidecarMessage =
   | ErrorMessage
   | FinishedMessage
   | LinkReportMessage
+  | RegisteredMessage
+  | DashMessage
+  | DashConfigMessage
+  | NoticeMessage

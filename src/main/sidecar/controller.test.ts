@@ -179,9 +179,11 @@ describe('PlayController + 가짜 사이드카', () => {
     const run = JSON.parse(robotLog.find((text) => text.startsWith('request '))!.slice(8))
     expect(run).toMatchObject({
       type: 'run',
-      protocol: 2,
+      protocol: 3,
       clock: 'virtual',
       opModeClass: 'org.firstinspires.ftc.teamcode.Normal',
+      registeredName: null,
+      registrars: [],
       opModeSource: join(root, 'TeamCode', PKG, 'Normal.java'),
       sourceRoots: [join(root, 'TeamCode', 'src', 'main', 'java')],
       bootClasspath: [],

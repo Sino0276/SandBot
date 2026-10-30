@@ -94,7 +94,8 @@ function runSidecar(
           tick: message.tick,
           events: [],
           gamepads: [null, null],
-          inputs: {}
+          inputs: {},
+          configSet: []
         })
     }
     child.stdout.setEncoding('utf8')
@@ -122,6 +123,9 @@ function runSidecar(
       sourceRoots: [OPMODES],
       opModeSource,
       opModeClass,
+      registeredName: null,
+      registrars: [],
+      firstFolder: testTempDir('first'),
       bootClasspath: [],
       compileClasspath: [b.sdkJar],
       libraryClasspath: [],

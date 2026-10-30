@@ -7,6 +7,10 @@
 //   Ivy 1.1.1             com.pedropathing.ivy:core(jar), com.pedropathing.ivy:pedro(AAR)
 //   FTCLib 2.1.1          org.ftclib.ftclib:core(AAR) + EJML 0.39(ejml-simple가 끌어오는 묶음) + jsr305 3.0.2
 //   androidx.annotation   androidx.annotation:annotation:1.1.0(Google Maven)
+//   Road Runner 1.0       com.acmerobotics.roadrunner:core·actions 1.0.1(jar), ftc 0.1.25(AAR) + kotlin-stdlib 1.9.0 +
+//                         jackson-databind·core·annotations 2.12.7(ftc의 TuningFiles)
+//   FTC Dashboard 0.6.0   com.acmerobotics.dashboard:dashboard(AAR)·core(jar). 팀 코드 컴파일용(실행은 SandBot 대체 jar)
+//   maven.brott.dev는 체크섬을 주지 않으므로 해시는 src/main/libraries/pins.ts의 값(받아서 잰 것)과 같다.
 //
 // 사용법: pnpm fetch:test-libraries, node scripts/fetch-test-libraries.mjs [--json]
 //   --json이면 마지막 줄에 { dir, jars: { id: 절대 경로 } }를 쓴다(시험이 child process로 부를 때).
@@ -27,6 +31,8 @@ const CENTRAL = [
   'https://maven-central.storage-download.googleapis.com/maven2'
 ]
 const GOOGLE = ['https://dl.google.com/dl/android/maven2']
+// Azure 정적 사이트로 302(fetch가 따라간다)
+const BROTT = ['https://maven.brott.dev']
 
 // [id, group, artifact, version, 확장자(aar이면 classes.jar를 꺼낸다), 저장소, 받은 파일의 SHA-256]
 const LIBRARIES = [
@@ -164,6 +170,87 @@ const LIBRARIES = [
     'jar',
     GOOGLE,
     'd38d63edb30f1467818d50aaf05f8a692dea8b31392a049bfa991b159ad5b692'
+  ],
+  [
+    'rrCore',
+    'com.acmerobotics.roadrunner',
+    'core',
+    '1.0.1',
+    'jar',
+    BROTT,
+    'a23f507bc28982be1340ce642e7494151c3ad540285093460e323a799ace8ba1'
+  ],
+  [
+    'rrActions',
+    'com.acmerobotics.roadrunner',
+    'actions',
+    '1.0.1',
+    'jar',
+    BROTT,
+    '4890d81b6433499dc012a4ba718c465dc7a8f1a42ca7bb879646d27073676e00'
+  ],
+  [
+    'rrFtc',
+    'com.acmerobotics.roadrunner',
+    'ftc',
+    '0.1.25',
+    'aar',
+    BROTT,
+    '51525131d65d809d1d9d8e0da9cf329ae6f105b3ed0412adfa23b3f7bacc05e8'
+  ],
+  [
+    'dashboard',
+    'com.acmerobotics.dashboard',
+    'dashboard',
+    '0.6.0',
+    'aar',
+    BROTT,
+    'dda97467cbe09ca5fdfefe59297d27594783c9702535694398ef13407ca8602c'
+  ],
+  [
+    'dashboardCore',
+    'com.acmerobotics.dashboard',
+    'core',
+    '0.6.0',
+    'jar',
+    BROTT,
+    '6269019587494d5fe97c42eba06fc8653d507736de46d0a038b68fe6ab3920c5'
+  ],
+  [
+    'kotlinStdlib',
+    'org.jetbrains.kotlin',
+    'kotlin-stdlib',
+    '1.9.0',
+    'jar',
+    CENTRAL,
+    '35aeffbe2db5aa446072cee50fcee48b7fa9e2fc51ca37c0cc7d7d0bc39d952e'
+  ],
+  [
+    'jacksonDatabind',
+    'com.fasterxml.jackson.core',
+    'jackson-databind',
+    '2.12.7',
+    'jar',
+    CENTRAL,
+    '4ed50208a764347fb86e79305d3b91c68a5232b22b763214683db07d88b6c687'
+  ],
+  [
+    'jacksonCore',
+    'com.fasterxml.jackson.core',
+    'jackson-core',
+    '2.12.7',
+    'jar',
+    CENTRAL,
+    '3987a6a335046e226e56b81d69668fb5a91b155ea7fd96b0851adbb7d4ac1ca6'
+  ],
+  [
+    'jacksonAnnotations',
+    'com.fasterxml.jackson.core',
+    'jackson-annotations',
+    '2.12.7',
+    'jar',
+    CENTRAL,
+    '3cacef714a89f3d68b69fa11263afa55a6aa2fdef1fff93ded22caa16b54687c'
   ]
 ]
 
@@ -183,7 +270,19 @@ export const TEST_LIBRARY_SETS = {
     'ejmlFsparse',
     'jsr305'
   ],
-  annotations: ['androidxAnnotation']
+  annotations: ['androidxAnnotation'],
+  // 실행 클래스패스(Dashboard는 SandBot 대체 jar를 따로 넣는다)
+  roadrunner: [
+    'rrFtc',
+    'rrActions',
+    'rrCore',
+    'kotlinStdlib',
+    'jacksonDatabind',
+    'jacksonCore',
+    'jacksonAnnotations'
+  ],
+  // 팀 코드 컴파일용 실제 Dashboard
+  dashboard: ['dashboard', 'dashboardCore']
 }
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))

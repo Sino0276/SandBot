@@ -128,7 +128,7 @@ const readline = require('readline')
 const TICK = 5000000
 const out = (m) => process.stdout.write(JSON.stringify(m) + '\n')
 process.stderr.write('Picked up JAVA_TOOL_OPTIONS: -Dfake=1\n')
-out({ type: 'hello', protocol: Number(process.env.FAKE_PROTOCOL || 2), runtime: 'fake', java: '21' })
+out({ type: 'hello', protocol: Number(process.env.FAKE_PROTOCOL || 3), runtime: 'fake', java: '21' })
 let request = null
 let waiting = null
 let t = 0

@@ -1,4 +1,5 @@
 import path from 'path'
+import type { DashConfigSet } from '../../shared/dashboard'
 import {
   AUTONOMOUS_SECONDS,
   type DiagnosticHint,
@@ -266,6 +267,8 @@ export class SidecarSession {
   private readonly devicesThrottle: Throttle
   // 세계가 보낸 입력: 다음 답에 실을 것(답 없이 넘긴 틱의 것도 합친다)과 지금까지의 누적(devices 이벤트)
   private pendingInputs: InputState = new Map()
+  // Config 탭에서 바꾼 Dashboard 값(다음 tickReply.configSet)
+  private pendingConfig: DashConfigSet[] = []
   private readonly inputState: InputState = new Map()
   private latestPose: ({ tNanos: number } & SimPose) | null = null
   private lastPoseKey = ''
@@ -335,7 +338,17 @@ export class SidecarSession {
       case 'speed':
         this.setSpeed(command.speed)
         break
+      case 'config':
+        // 다음 틱 답에 싣는다(일시 정지 중이면 답을 보낼 때)
+        this.pendingConfig.push({ path: command.path, value: command.value })
+        break
     }
+  }
+
+  private takeConfig(): DashConfigSet[] {
+    const config = this.pendingConfig
+    this.pendingConfig = []
+    return config
   }
 
   setGamepads(gamepads: [GamepadState | null, GamepadState | null]): void {
@@ -480,7 +493,8 @@ export class SidecarSession {
       tick: tick.tick,
       events,
       gamepads: this.gamepads,
-      inputs
+      inputs,
+      configSet: this.takeConfig()
     })
     this.lastRepliedNanos = tick.tNanos
     this.addSample(tick.tNanos)

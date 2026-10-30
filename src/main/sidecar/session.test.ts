@@ -12,12 +12,15 @@ const SOURCE = `${ROOT}/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Dr
 
 const REQUEST: RunRequest = {
   type: 'run',
-  protocol: 2,
+  protocol: 3,
   clock: 'virtual',
   tickNanos: 5_000_000,
   sourceRoots: [`${ROOT}/TeamCode/src/main/java`],
   opModeSource: SOURCE,
   opModeClass: 'org.firstinspires.ftc.teamcode.Drive',
+  registeredName: null,
+  registrars: [],
+  firstFolder: '/u/sim-files/abc/FIRST',
   bootClasspath: [],
   compileClasspath: ['/sidecar/sandbot-sdk.jar'],
   libraryClasspath: [],
@@ -61,7 +64,7 @@ function setup(
 }
 
 function boot(proc: FakeProcess): void {
-  proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
+  proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
   proc.line({ type: 'compiled', ok: true, diagnostics: [], millis: 4 })
   proc.line({ type: 'state', tNanos: 0, phase: 'init' })
 }
@@ -102,7 +105,7 @@ describe('SidecarSession 시작과 이벤트', () => {
           ? { kind: 'undeclared', packageName: 'com.example' }
           : null
     })
-    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
     proc.line({
       type: 'linkReport',
       warnings: [
@@ -148,7 +151,7 @@ describe('SidecarSession 시작과 이벤트', () => {
 
   it('진단과 스택 프레임의 경로를 TeamCode 기준으로 바꾼다', () => {
     const { proc, of } = setup()
-    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
     proc.line({
       type: 'compiled',
       ok: false,
@@ -374,7 +377,7 @@ describe('SidecarSession 일시 정지와 Step', () => {
 
   it('START는 init 단계에서 한 번만, STOP 뒤에는 받지 않는다', () => {
     const { clock, proc, session } = setup()
-    proc.line({ type: 'hello', protocol: 2, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
     session.command({ type: 'start' })
     proc.line({ type: 'state', tNanos: 0, phase: 'init' })
     proc.line(tick(0))
@@ -554,7 +557,11 @@ describe('SidecarSession 끝내기', () => {
   it('JSON이 아닌 줄, 모양이 틀린 메시지, 너무 긴 줄, 잘린 줄 → crashed', async () => {
     const cases: [string, (proc: FakeProcess) => void, string][] = [
       ['garbage', (proc) => proc.raw('not json\n'), 'protocol error: invalid JSON'],
-      ['shape', (proc) => proc.line({ type: 'tick', tick: 'x' }), 'protocol error: tick.tick'],
+      [
+        'shape',
+        (proc) => proc.line({ type: 'tick', tick: 'x' } as Record<string, unknown>),
+        'protocol error: tick.tick'
+      ],
       ['unknown', (proc) => proc.line({ type: 'mystery' }), 'protocol error: unknown message'],
       ['long', (proc) => proc.raw('x'.repeat(MAX_LINE_CHARS + 1)), 'protocol error: line too long'],
       [
@@ -564,8 +571,8 @@ describe('SidecarSession 끝내기', () => {
       ],
       [
         'protocol',
-        (proc) => proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' }),
-        'protocol error: protocol 3'
+        (proc) => proc.line({ type: 'hello', protocol: 4, runtime: 'x', java: '21' }),
+        'protocol error: protocol 4'
       ]
     ]
     for (const [, act, detail] of cases) {
@@ -588,7 +595,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('조각난 줄과 CRLF를 이어 읽는다', () => {
     const { proc, of } = setup()
-    const text = JSON.stringify({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
+    const text = JSON.stringify({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
     proc.raw(text.slice(0, 5))
     proc.raw(`${text.slice(5)}\r\n`)
     expect(of('phase').at(-1)?.phase).toBe('compiling')
@@ -604,7 +611,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('compiling 중 STOP은 shutdown을 보낸다', () => {
     const { proc, session, of } = setup()
-    proc.line({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
     session.command({ type: 'stop' })
     expect(proc.sent.at(-1)).toEqual({ type: 'shutdown' })
     proc.line({ type: 'finished', tNanos: 0, reason: 'shutdown' })
@@ -655,7 +662,7 @@ describe('SidecarSession 이벤트 묶기', () => {
 
   it('로그는 50 ms 묶음이고, 오류·단계·끝 전에 먼저 보낸다', () => {
     const { clock, proc, events } = setup()
-    proc.line({ type: 'hello', protocol: 2, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
     const log = (text: string): void => proc.line({ type: 'log', tNanos: 0, stream: 'out', text })
     log('a')
     log('b')
@@ -759,7 +766,8 @@ describe('SidecarSession 이벤트 묶기', () => {
       tick: 2,
       events: [],
       gamepads: [pad, null],
-      inputs: { imu: { yaw: 0.01 } }
+      inputs: { imu: { yaw: 0.01 } },
+      configSet: []
     })
     expect(seen).toEqual([10 * MS])
   })
