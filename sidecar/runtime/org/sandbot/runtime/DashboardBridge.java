@@ -106,7 +106,8 @@ final class DashboardBridge implements SimDashboardHost {
     // ---- OpMode 스레드
 
     /**
-     * FtcDashboard를 초기화하고 @Config 클래스를 찾는다. 팀 코드의 정적 초기화가 던진 것은 그대로 던진다(OpMode 오류로 알린다).
+     * FtcDashboard를 초기화하고 @Config 클래스를 찾는다. 트리에 넣은 @Config 클래스는 여기서 초기화되고(필드가 기본 형식뿐이어도),
+     * 팀 코드의 정적 초기화가 던진 것은 그대로 던진다(OpMode 오류로 알린다).
      */
     void start(ClassLoader loader) throws Throwable {
         Class<?> type;
@@ -125,7 +126,14 @@ final class DashboardBridge implements SimDashboardHost {
             throw e.getCause();
         }
         hooks.connect(this);
-        hooks.addConfigClasses(loader, candidates);
+        try {
+            hooks.addConfigClasses(loader, candidates);
+        } catch (Throwable t) {
+            // 시작하지 못했다(실행이 끝난다): 끝낼 때 트리를 보내지 않는다(초기화에 실패한 클래스를 읽으면 경고만 는다)
+            hooks = null;
+            listener = null;
+            throw t;
+        }
     }
 
     boolean active() {

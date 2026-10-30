@@ -19,11 +19,13 @@ import org.sandbot.sim.SimDashboardHost;
  * <ul>
  *   <li>패킷: 실제 전송 스레드는 대기열이 비면 기다렸다가 오면 바로 보내고 전송 간격만큼 잔다. 그래서 대기열이 있고 지난 전송에서
  *       간격(가상)이 지난 첫 경계에 그때까지의 묶음을 보낸다. 묶음은 호스트 화면 의미대로 하나로 합친다(SandbotDashboardJson).
- *       clearTelemetry는 실제로 바로 빈 묶음을 보내므로 다음 경계에 cleared를 보낸다(간격과 관계없이).
+ *       clearTelemetry는 실제로 바로 빈 묶음을 보내므로 다음 경계에 cleared를 보낸다(간격과 관계없이). 실제 웹 화면은 빈
+ *       묶음에 data와 로그를 지우므로 cleared 묶음의 로그는 null이 아니다(뒤에 로그가 없으면 빈 배열).
  *   <li>설정 트리: 실제는 updateConfig마다 트리 전체를 보낸다. 바뀐 표시를 두고 다음 경계에 트리 전체를 보낸다
  *       (SandbotDashboardConfig, 이름순). withConfigRoot 안에서 시계를 써 경계가 오면 그 경계에서는 트리를 읽지 않는다.
  *   <li>Config 탭의 값 바꾸기(tickReply.configSet)는 경계에서 차례로 ValueProvider.set하고 트리를 다시 보낸다.
  *   <li>안내(카메라·이미지)는 실행마다 한 번.
+ *   <li>@Config 스캔은 트리에 넣은 클래스를 그 자리에서 초기화한다(정적 초기화의 오류가 첫 경계가 아니라 시작에서 나오게).
  * </ul>
  *
  * <p>{@link #addConfigClasses}의 본문은 FTC Dashboard 0.6.0 FtcDashboard.addConfigClasses를 옮긴 것이다(MIT, 고지는
@@ -78,7 +80,9 @@ final class SandbotDashboardHooks implements SimDashboard {
         configDepth--;
     }
 
+    /** 카메라·이미지 안내(실행마다 한 번). 다른 스레드가 부르면 메시지 순서가 스레드 일정에 달리므로 시계 규칙으로 막는다. */
     void notice(String code) {
+        checkThread();
         if (code.equals("dashCamera")) {
             if (cameraNoticed) return;
             cameraNoticed = true;
@@ -99,6 +103,7 @@ final class SandbotDashboardHooks implements SimDashboard {
     @Override
     public void addConfigClasses(ClassLoader classLoader, List<String> names) {
         // 실제 FtcDashboard.addConfigClasses(생성자의 core.withConfigRoot 안). 클래스 목록은 APK의 DexFile 대신 런타임이 준다.
+        List<Class<?>> added = new ArrayList<>();
         dashboard.withConfigRoot(new CustomVariableConsumer() {
             @Override
             public void accept(CustomVariable customVariable) {
@@ -131,6 +136,8 @@ final class SandbotDashboardHooks implements SimDashboard {
 
                         customVariable.putVariable(name,
                             ReflectionConfig.createVariableFromClass(configClass));
+                        // SandBot: 정적 초기화는 아래에서(트리에 넣은 클래스만)
+                        added.add(configClass);
                     } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
                         // dash is unable to access many classes and reporting every instance
                         // only clutters the logs
@@ -138,6 +145,16 @@ final class SandbotDashboardHooks implements SimDashboard {
                 }
             }
         });
+        // SandBot: 기본 형식 필드만 있는 클래스는 실제로는 웹 화면에 트리를 보낼 때(FieldProvider.get) 초기화된다. 사이드카는 첫
+        // 틱 경계에 트리를 보내므로 그 전에 여기서(이름순) 초기화해, 정적 초기화가 던진 것이 그 클래스의 OpMode 오류로 알려지게
+        // 한다(ExceptionInInitializerError를 그대로 던진다, 런타임이 원인을 꺼낸다).
+        for (Class<?> configClass : added) {
+            try {
+                Class.forName(configClass.getName(), true, classLoader);
+            } catch (ClassNotFoundException e) {
+                throw new IllegalStateException(e);
+            }
+        }
     }
 
     @Override
@@ -188,7 +205,10 @@ final class SandbotDashboardHooks implements SimDashboard {
         boolean wasCleared = cleared;
         cleared = false;
         SandbotDashboardJson.Batch merged = json.batch(batch);
-        host.dash(tNanos, wasCleared, merged.data, merged.log, merged.ops);
+        // 실제 웹 화면은 빈 묶음(clearTelemetry)에 data와 로그를 함께 지운다: cleared 뒤에 로그가 없으면 빈 로그를 보낸다
+        // (null은 "그대로"라 화면에 이전 로그가 남는다)
+        String log = merged.log == null && wasCleared ? "[]" : merged.log;
+        host.dash(tNanos, wasCleared, merged.data, log, merged.ops);
     }
 
     private void sendConfig(long tNanos) {

@@ -318,6 +318,7 @@ describe.skipIf(build === null)('FTC Dashboard 대체: Road Runner Actions.runBl
         tNanos: DEFAULT_TICK_NANOS,
         cleared: true,
         data: [],
+        log: [],
         ops: null
       })
       const batches = packets.slice(1, -1)
@@ -553,9 +554,10 @@ describe.skipIf(build === null)('FTC Dashboard 대체: 텔레메트리', () => {
         log: ['line', 'logged'],
         ops: null
       })
-      // clear 뒤의 묶음
+      // clear 뒤의 묶음. 실제 웹 화면처럼 로그도 지우므로 cleared 묶음의 log는 null이 아니다
       const cleared = packets.filter((p) => p.cleared)
       expect(cleared.length).toBe(2)
+      for (const p of cleared) expect(p.log).not.toBeNull()
       expect(packets.some((p) => p.data.some(([k, v]) => k === 'after' && v === 'clear'))).toBe(
         true
       )
@@ -572,6 +574,76 @@ describe.skipIf(build === null)('FTC Dashboard 대체: 텔레메트리', () => {
       const log = robotLog(run)
       expect(log.filter((line) => line.includes('more than 500 keys'))).toHaveLength(1)
       expect(log.filter((line) => line.includes('NaN, infinite or missing'))).toHaveLength(1)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+})
+
+describe.skipIf(build === null)('FTC Dashboard 대체: 팀 코드의 오류', () => {
+  const b = build as SidecarBuild
+
+  it.skipIf(libraries === null)(
+    '기본 형식 필드만 있는 @Config 클래스의 정적 초기화 오류는 Dashboard가 없을 때처럼 error exception(팀 줄)이다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'DashBadConfigInit' })
+      const [error, ...rest] = errors(run)
+      expect(rest).toEqual([])
+      expect(error).toMatchObject({
+        kind: 'exception',
+        exception: 'java.lang.NumberFormatException',
+        message: expect.stringContaining('For input string: "fast"'),
+        thread: 'OpModeThread'
+      })
+      expect(error.stack).toContainEqual(
+        expect.objectContaining({
+          className: `${PACKAGE}.DashBadConfigInit`,
+          method: '<clinit>',
+          source: join(OPMODES, ...PACKAGE.split('.'), 'DashBadConfigInit.java')
+        })
+      )
+      expect(finishedReason(run)).toBe('exception')
+      // 시작하지 못했으므로 트리·패킷을 보내지 않는다(초기화에 실패한 클래스를 다시 읽지 않는다)
+      expect(configs(run)).toEqual([])
+      expect(dashes(run)).toEqual([])
+      expect(robotLog(run).filter((line) => line.includes('Dashboard config'))).toEqual([])
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    '팀 ValueProvider의 get·set이 Error를 던져도 OpMode는 그대로 돌고 경고 로그만 남는다',
+    async () => {
+      const run = await runSidecar(b, {
+        opMode: 'DashProviderErrors',
+        configSet: { [START_TICK + 10]: [{ path: ['Faulty', 'set'], value: '3' }] }
+      })
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      expect(results(run)).toEqual([{ loops: '40' }])
+      const final = configs(run).at(-1)!.root
+      expect(nodeAt(final, ['Faulty', 'get'])).toMatchObject({ type: 'double', value: 'null' })
+      expect(nodeAt(final, ['Faulty', 'set'])).toMatchObject({ type: 'double', value: '2.0' })
+      const log = robotLog(run)
+      expect(log.filter((line) => line.includes('could not be read'))).toEqual([
+        expect.stringContaining('java.lang.AssertionError: get failed')
+      ])
+      expect(log.filter((line) => line.includes('could not be set'))).toEqual([
+        expect.stringContaining(
+          'Faulty/set could not be set: java.lang.StackOverflowError: set failed'
+        )
+      ])
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    '다른 스레드의 startCameraStream은 다른 Dashboard 호출처럼 error thread이고 안내를 보내지 않는다',
+    async () => {
+      const run = await runSidecar(b, { opMode: 'DashCameraThread' })
+      const [error] = errors(run)
+      expect(error).toMatchObject({ kind: 'thread', thread: 'Camera' })
+      expect(run.messages.filter((m) => m.type === 'notice')).toEqual([])
+      expect(finishedReason(run)).toBe('exception')
     },
     SIDECAR_TEST_TIMEOUT
   )

@@ -9,7 +9,7 @@ public interface SimDashboardHost {
      * 패킷 묶음 하나(DashMessage).
      *
      * @param data JSON 배열 [[키, 값] …](키 정렬)
-     * @param log JSON 배열 또는 null
+     * @param log JSON 배열 또는 null(바뀌지 않음). cleared면 null이 아니다(로그가 없으면 [])
      * @param ops JSON 배열(DashOp) 또는 null
      */
     void dash(long tNanos, boolean cleared, String data, String log, String ops);

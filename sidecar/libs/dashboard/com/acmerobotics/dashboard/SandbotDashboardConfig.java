@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import org.sandbot.sim.SimExit;
+import org.sandbot.sim.SimThreadError;
 
 /**
  * SandBot: Dashboard 설정 트리(CustomVariable)를 호스트로 보내는 모양(src/shared/dashboard.ts의 DashConfigNode)으로 쓰고, Config 탭의
@@ -21,8 +23,9 @@ import java.util.TreeMap;
  * <ul>
  *   <li>자식은 이름순(실제 CustomVariable은 HashMap이라 정렬해 결정적으로 보낸다).
  *   <li>값은 ValueProvider.get()의 글자: Double·Float는 Double.toString·Float.toString, enum은 name(), null은 "null", 그 밖은
- *       toString. 형식은 BasicVariable의 VariableType이고, 기본 형식이 아닌 값(CUSTOM 형식의 BasicVariable)은 읽기 전용 글자로
- *       보인다. enum은 상수 이름들(선언 순서, 실제 직렬화처럼 @Deprecated 상수는 뺀다)을 함께 준다.
+ *       toString. 팀 provider가 던지면 "null"이고 경고 로그를 한 번 남긴다. 형식은 BasicVariable의 VariableType이고, 기본
+ *       형식이 아닌 값(CUSTOM 형식의 BasicVariable)은 읽기 전용 글자로 보인다. enum은 상수 이름들(선언 순서, 실제 직렬화처럼
+ *       @Deprecated 상수는 뺀다)을 함께 준다.
  *   <li>source: FieldProvider면 그 Field의 선언 클래스 바이너리 이름과 필드 이름(배열 원소·다른 Provider는 null). 렌더러가 TeamCode
  *       튜닝 값과 맞춘다.
  *   <li>값 바꾸기: 경로로 변수를 찾아 형식에 맞게 읽고(boolean true·false, 정수는 범위 안, float·double은 유한, enum은 상수 이름,
@@ -55,6 +58,21 @@ final class SandbotDashboardConfig {
         } catch (IllegalAccessException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /**
+     * 팀 ValueProvider(get·set)가 던진 것. 실제로는 Dashboard 서버 스레드에서 돌아 OpMode에 닿지 않으므로 Error도 경고로 남기고
+     * 넘어간다. 실행을 끝내는 것(System.exit의 SimExit, 스레드 규칙의 SimThreadError)만 그대로 던진다.
+     */
+    private static void rethrowIfStopping(Throwable e) {
+        if (e instanceof SimExit) throw (SimExit) e;
+        if (e instanceof SimThreadError) throw (SimThreadError) e;
+    }
+
+    /** 경고에 넣는 글자(정적 초기화 오류처럼 원인이 따로 있으면 함께) */
+    private static String describe(Throwable e) {
+        Throwable cause = e.getCause();
+        return cause == null || cause == e ? e.toString() : e + " (caused by " + cause + ")";
     }
 
     // ---- 트리
@@ -121,8 +139,9 @@ final class SandbotDashboardConfig {
         Object value;
         try {
             value = variable.getValue();
-        } catch (RuntimeException e) {
-            json.warnOnce("configGet", "a Dashboard config value could not be read: " + e);
+        } catch (Throwable e) {
+            rethrowIfStopping(e);
+            json.warnOnce("configGet", "a Dashboard config value could not be read: " + describe(e));
             value = null;
         }
         String wire = wireType(type);
@@ -250,8 +269,9 @@ final class SandbotDashboardConfig {
             }
             try {
                 ((BasicVariable) variable).update(new BasicVariable(type, new ConstantProvider(value)));
-            } catch (RuntimeException e) {
-                RobotLog.ww(TAG, "Dashboard config: " + where + " could not be set: " + e);
+            } catch (Throwable e) {
+                rethrowIfStopping(e);
+                RobotLog.ww(TAG, "Dashboard config: " + where + " could not be set: " + describe(e));
             }
         });
     }
@@ -301,7 +321,8 @@ final class SandbotDashboardConfig {
                 Object current;
                 try {
                     current = variable.getValue();
-                } catch (RuntimeException e) {
+                } catch (Throwable e) {
+                    rethrowIfStopping(e);
                     current = null;
                 }
                 Class<?> enumClass = enumClass(variable, current);
