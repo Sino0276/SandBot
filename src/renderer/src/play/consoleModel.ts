@@ -77,6 +77,13 @@ const ERROR_FINISH: ReadonlySet<ConsoleFinishReason> = new Set([
   'crashed'
 ])
 
+// 의존성 보고 좌표 하나의 수준: 불러오지 않았거나 받지 못한 것과 처음 받은 해시를 기록하지 못한 것은 경고, 나머지(쓰는 것,
+// SandBot 구현으로 실행하는 FTC Dashboard, SDK가 주는 것)는 정보(libraryConsole의 줄도 이것을 쓴다)
+export function libraryLevel(library: LibraryEntry): ConsoleLevel {
+  if (library.status === 'unsupported' || library.status === 'failed') return 'warning'
+  return library.integrity === 'firstUseUnrecorded' ? 'warning' : 'info'
+}
+
 // 항목의 수준(아이콘과 개수 토글). System.err는 Android logcat처럼 경고로 본다.
 export function consoleLevel(
   body: ConsoleBody,
@@ -104,7 +111,7 @@ export function consoleLevel(
     case 'initFailed':
       return noticeLevel
     case 'library':
-      return body.library.status === 'used' ? 'info' : 'warning'
+      return libraryLevel(body.library)
     case 'gradle':
     case 'linkWarnings':
       return 'warning'

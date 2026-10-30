@@ -1,6 +1,6 @@
 import type { LibraryReport, LibraryStatus } from '../../../shared/libraries'
 import type { PlayLinkWarning } from '../../../shared/play'
-import type { ConsoleBody, ConsoleLevel } from './consoleModel'
+import { libraryLevel, type ConsoleBody, type ConsoleLevel } from './consoleModel'
 
 // 라이브러리 의존성 보고·링크 검사 → Console 항목(순수). 보고는 상태별 요약 한 줄(좌표가 있을 때), 컴파일 기준을 짐작했으면
 // 경고, 불러오지 않았거나 받지 못한 좌표마다 경고 한 줄, SandBot 구현으로 실행하는 FTC Dashboard와 처음 받은 해시를 기록한
@@ -55,12 +55,13 @@ export function libraryReportLines(report: LibraryReport): ConsoleLine[] {
     })
   for (const entry of report.entries) {
     const loaded = entry.status === 'used' || entry.status === 'replaced'
-    if (entry.status === 'unsupported' || entry.status === 'failed')
-      lines.push({ body: { type: 'library', library: entry }, level: 'warning' })
-    else if (loaded && entry.integrity === 'firstUseUnrecorded')
-      lines.push({ body: { type: 'library', library: entry }, level: 'warning' })
-    else if (entry.status === 'replaced' || (loaded && entry.integrity === 'firstUse'))
-      lines.push({ body: { type: 'library', library: entry }, level: 'info' })
+    if (
+      entry.status === 'unsupported' ||
+      entry.status === 'failed' ||
+      entry.status === 'replaced' ||
+      (loaded && (entry.integrity === 'firstUse' || entry.integrity === 'firstUseUnrecorded'))
+    )
+      lines.push({ body: { type: 'library', library: entry }, level: libraryLevel(entry) })
   }
   for (const diagnostic of report.gradle)
     lines.push({ body: { type: 'gradle', diagnostic }, level: 'warning' })

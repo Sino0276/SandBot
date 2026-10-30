@@ -3,7 +3,14 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import type { LibraryEntry, LibraryReason, LibraryReport } from '../../../shared/libraries'
 import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
-import { entryDetailLines, entrySummary, entryTarget, hintText, libraryText } from './consoleModel'
+import {
+  consoleLevel,
+  entryDetailLines,
+  entrySummary,
+  entryTarget,
+  hintText,
+  libraryText
+} from './consoleModel'
 import { formatBytes, libraryReportLines, linkWarningLines } from './libraryConsole'
 import { consoleEntry } from './playStore'
 
@@ -269,6 +276,47 @@ describe('의존성 보고 → Console', () => {
       expect(entrySummary(entries[3], translate)).toContain('com.acmerobotics.dashboard:dashboard')
     }
     expect(entrySummary(entries[3], t)).toContain('원래 FTC Dashboard')
+  })
+
+  it('좌표 줄의 기본 수준(consoleLevel)은 보고 줄의 수준과 같다(대체는 정보)', () => {
+    const entries = [
+      entry('com.acmerobotics.dashboard:dashboard:0.6.0', { status: 'replaced' }),
+      entry('com.acmerobotics.dashboard:core:0.6.0', {
+        status: 'replaced',
+        integrity: 'firstUseUnrecorded'
+      }),
+      entry('com.acmerobotics.roadrunner:core:1.0.1', { integrity: 'firstUse' }),
+      entry('com.acmerobotics.roadrunner:ftc:0.1.25', { integrity: 'firstUseUnrecorded' }),
+      entry('com.pedropathing:tuning:1.0.1', {
+        status: 'unsupported',
+        reason: 'pedroTuning',
+        source: null,
+        integrity: null
+      }),
+      entry('org.example:gone:1.0', { status: 'failed', reason: 'notFound', source: null })
+    ]
+    const lines = libraryReportLines({
+      entries,
+      gradle: [],
+      compileSdk: 30,
+      compileSdkMinor: null,
+      platform: { api: 30, minor: null, guessed: false }
+    }).filter((line) => line.body.type === 'library')
+    expect(lines.map((line) => line.level)).toEqual([
+      'info',
+      'warning',
+      'info',
+      'warning',
+      'warning',
+      'warning'
+    ])
+    for (const line of lines) expect(consoleLevel(line.body)).toBe(line.level)
+    const provided = entry('org.firstinspires.ftc:RobotCore:12.0.0', {
+      status: 'provided',
+      source: null,
+      integrity: null
+    })
+    expect(consoleLevel({ type: 'library', library: provided })).toBe('info')
   })
 
   it('컴파일 진단의 안내', () => {
