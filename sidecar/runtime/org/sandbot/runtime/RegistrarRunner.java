@@ -32,12 +32,17 @@ import java.util.TreeSet;
  *       2개(Context, 관리자)인 것. Context는 null이다(Android 앱이 없다).
  *   <li>순서: 등록기 클래스 이름 순, 한 클래스 안은 메서드 이름 순(실제는 HashSet 순서). 시계는 돌지만 hardwareMap은 아직 없다.
  *   <li>던지면 실제는 조용히 무시하지만 사이드카는 {@link Errors}로 알리고(error kind registrar) 다음으로 간다. 던지기 전에 한
- *       등록은 남는다(실제와 같다). System.exit(SimExit)·다른 스레드(SimThreadError)는 실행을 끝내므로 그대로 나간다.
+ *       등록은 남는다(실제와 같다). System.exit(SimExit)·다른 스레드(SimThreadError)는 실행을 끝내므로 그대로 나간다. 등록기가
+ *       띄운 스레드가 시계를 썼으면(이미 알림) 그 등록기가 돌아온 뒤 시계를 다시 쓰지 않았어도 다음 등록기로 가지 않고
+ *       SimThreadError로 나간다(그대로 두면 다음 시계 호출 — 구성 읽기 — 이 엉뚱한 오류로 알린다).
  *   <li>register 다섯 가지의 확인은 실제 OpModeRegistrarMethodManager와 같다(OpMode 상속, static이 아닌 중첩 클래스·public이
  *       아닌 클래스는 설정 오류 로그, 이름은 OpModeMeta.nameIsLegalForOpMode). 이름이 없으면 실제처럼 RuntimeException이 등록기
  *       밖으로 나간다(OpModeMeta.Builder.build).
  *   <li>SandBot에서 정한 것: 등록은 부른 순서대로 모으고, 이미 있는 이름(또는 이미 등록한 클래스)이면 뒤의 것을 버리고 경고
  *       로그를 남긴다. 실제는 인스턴스는 버리지만 클래스는 모든 등록기가 끝난 뒤 이름 뒤에 "-클래스 이름"을 붙여 둘 다 남긴다.
+ *   <li>SandBot에서 정한 것: flavor나 group이 null인 OpModeMeta(@NonNull 필드지만 Builder가 받는다)와 null 인스턴스는 실제는
+ *       받아 두지만(DS 목록·실행에서 깨진다) 버리고 경고 로그를 남긴다. 클래스 등록의 null group은 실제처럼 등록기 안에서
+ *       NullPointerException이다(addUserNamedOpMode의 meta.group.isEmpty()).
  * </ul>
  */
 final class RegistrarRunner implements AnnotatedOpModeManager {
@@ -79,10 +84,15 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
         }
     }
 
+    private final VirtualClock clock;
     private final List<Registration> registrations = new ArrayList<>();
     private final Map<String, Registration> byName = new HashMap<>();
     /** 지금 부르는 등록기 클래스 */
     private String current = "";
+
+    RegistrarRunner(VirtualClock clock) {
+        this.clock = clock;
+    }
 
     static String quote(String text) {
         return "\"" + text + "\"";
@@ -139,9 +149,18 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
                         + StackFrames.describe(e), e);
                 continue;
             }
-            for (Method method : methods) call(method, errors);
+            for (Method method : methods) {
+                call(method, errors);
+                stopIfFatal();
+            }
         }
         current = "";
+    }
+
+    /** 다른 스레드가 시계를 써서 실행을 멈추라고 했으면(VirtualClock.fatalMessage, 이미 알림) 나간다 */
+    private void stopIfFatal() {
+        String fatal = clock.fatalMessage();
+        if (fatal != null) throw new SimThreadError(fatal, true);
     }
 
     /** 실제 filterOpModeRegistrarMethods의 규칙. 순서는 이름 → 매개변수 수 → 서명. */
@@ -270,11 +289,23 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
     }
 
     private void addInstance(OpModeMeta meta, OpMode instance) {
+        if (instance == null) {
+            ignored(meta.name, "no OpMode instance (null)");
+            return;
+        }
         add(new Registration(meta, null, instance, current));
     }
 
     private void add(Registration registration) {
         String name = registration.meta.name;
+        if (registration.meta.flavor == null) {
+            ignored(name, "a null flavor");
+            return;
+        }
+        if (registration.meta.group == null) {
+            ignored(name, "a null group");
+            return;
+        }
         if (byName.containsKey(name)) {
             duplicate("an OpMode with the name '" + name + "' is already registered");
             return;
@@ -285,6 +316,10 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
 
     private static void duplicate(String what) {
         RobotLog.ww("RegisteredOpModes", "configuration error: %s; the later registration is ignored", what);
+    }
+
+    private static void ignored(String name, String what) {
+        RobotLog.ww("RegisteredOpModes", "configuration error: the OpMode '%s' has %s; it is ignored", name, what);
     }
 
     // ---- 실제 AnnotatedOpModeClassFilter의 확인 ----

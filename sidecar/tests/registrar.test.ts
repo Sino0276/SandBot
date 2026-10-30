@@ -332,6 +332,70 @@ describe.skipIf(build === null)('등록기 OpMode', () => {
   )
 
   it(
+    '등록기가 띄운 스레드가 시계를 쓰면 error thread 하나로 끝난다(목록은 exception, 실행은 구성 오류로 바꾸지 않는다)',
+    async () => {
+      const list = await runSidecar(b, listRequest(b, ['ThreadRegistrar', 'TuningLike']))
+      expect(errors(list)).toEqual([
+        expect.objectContaining({ kind: 'thread', thread: 'RegistrarWorker' })
+      ])
+      // 뒤의 등록기는 부르지 않고, 목록을 알리지 않는다(실행도 모두 이 오류로 끝나므로)
+      expect(registered(list)).toEqual([])
+      expect(finishedReason(list)).toBe('exception')
+
+      const run = await runSidecar(
+        b,
+        runRequest(b, {
+          opModeSource: source('FoldersOpMode'),
+          opModeClass: `${PACKAGE}.FoldersOpMode`,
+          registrars: [registrar('ThreadRegistrar')]
+        }),
+        { 5: ['start'] }
+      )
+      expect(errors(run)).toEqual([
+        expect.objectContaining({ kind: 'thread', thread: 'RegistrarWorker' })
+      ])
+      expect(run.messages.some((m) => m.type === 'state' || m.type === 'tick')).toBe(false)
+      expect(finishedReason(run)).toBe('exception')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'null인 flavor·group·인스턴스의 등록은 그것만 경고하고 버린다(클래스 등록의 null group은 실제처럼 등록기 오류)',
+    async () => {
+      const run = await runSidecar(b, listRequest(b, ['NullMetaRegistrar']))
+      expect(registered(run).map((op) => op.name)).toEqual(['GoodOne', 'AfterNulls'])
+      const failed = errors(run)
+      expect(failed).toHaveLength(1)
+      expect(failed[0]).toMatchObject({
+        kind: 'registrar',
+        exception: 'java.lang.NullPointerException'
+      })
+      expect(failed[0].message).toContain(`${PACKAGE}.NullMetaRegistrar.b threw`)
+      const warnings = robotLog(run).filter((text) => text.includes('configuration error'))
+      expect(warnings).toEqual([
+        expect.stringContaining("the OpMode 'NullGroup' has a null group; it is ignored"),
+        expect.stringContaining("the OpMode 'NullFlavor' has a null flavor; it is ignored"),
+        expect.stringContaining("the OpMode 'NullFlavorClass' has a null flavor; it is ignored"),
+        expect.stringContaining(
+          "the OpMode 'NullInstance' has no OpMode instance (null); it is ignored"
+        )
+      ])
+      expect(finishedReason(run)).toBe('listed')
+
+      const good = await runSidecar(
+        b,
+        runRequest(b, { registeredName: 'GoodOne', registrars: [registrar('NullMetaRegistrar')] }),
+        { 5: ['start'] }
+      )
+      expect(errors(good).map((error) => error.kind)).toEqual(['registrar'])
+      expect(results(good)).toMatchObject({ label: 'good', started: 'good' })
+      expect(finishedReason(good)).toBe('returned')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
     '목록의 등록기 sleep은 가상 시간만 보낸다(틱 답을 기다리지 않는다)',
     async () => {
       const run = await runSidecar(b, listRequest(b, ['SleepyRegistrar']))

@@ -53,7 +53,7 @@ final class ListRunner implements SimHost, Watchdog.Stall {
     }
 
     private void runInner() {
-        RegistrarRunner registrars = new RegistrarRunner();
+        RegistrarRunner registrars = new RegistrarRunner(clock);
         try {
             registrars.runAll(RunRequest.registrarClasses(request.registrars), loader, this::registrarFailed);
         } catch (SimExit e) {

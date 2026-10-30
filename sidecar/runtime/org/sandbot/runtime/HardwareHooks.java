@@ -2,6 +2,8 @@ package org.sandbot.runtime;
 
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
+import org.sandbot.sim.SimThreadError;
+
 import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -62,6 +64,10 @@ final class HardwareHooks {
         return create != null;
     }
 
+    /**
+     * 구성을 읽어 hardwareMap을 만든다. 다른 스레드가 시계를 써서 실행을 멈추라고 했으면(등록기가 띄운 스레드 등, 이미 알림)
+     * 구성 오류가 아니라 그 SimThreadError를 그대로 던진다.
+     */
     HardwareMap create(String configXml) throws ConfigFailure {
         if (create == null) return new HardwareMap(null, null);
         try {
@@ -70,6 +76,7 @@ final class HardwareHooks {
             return (HardwareMap) map;
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
+            if (cause instanceof SimThreadError) throw (SimThreadError) cause;
             if (cause != null && cause.getClass().getName().equals(CONFIG_EXCEPTION))
                 throw new ConfigFailure(String.valueOf(cause.getMessage()), null);
             throw new ConfigFailure("Reading the robot configuration failed: " + StackFrames.describe(cause), cause);

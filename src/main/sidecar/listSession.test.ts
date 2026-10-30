@@ -91,12 +91,17 @@ describe('runListSidecar', () => {
     expect(await result).toEqual({ kind: 'compileFailed', diagnostics: [diagnostic] })
   })
 
-  it('javac가 없어 compiled 없이 끝난 것, 등록기의 System.exit·멈춤은 failed(오류 문장)', async () => {
-    for (const [reason, message] of [
-      ['compileFailed', 'no Java compiler'],
-      ['exception', 'An @OpModeRegistrar method has not used the simulator clock for 2000 ms'],
-      ['terminated', ''],
-      ['loadFailed', 'registrars must not be empty']
+  it('javac가 없어 compiled 없이 끝난 것, 등록기의 System.exit·멈춤·다른 스레드는 failed(오류 문장)', async () => {
+    for (const [reason, kind, message] of [
+      ['compileFailed', 'internal', 'no Java compiler'],
+      [
+        'exception',
+        'stall',
+        'An @OpModeRegistrar method has not used the simulator clock for 2000 ms'
+      ],
+      ['exception', 'thread', 'Thread "Worker" used the simulator clock or hardware'],
+      ['terminated', 'internal', ''],
+      ['loadFailed', 'internal', 'registrars must not be empty']
     ] as const) {
       const { proc, result } = start()
       hello(proc)
@@ -104,7 +109,7 @@ describe('runListSidecar', () => {
         proc.line({
           type: 'error',
           tNanos: 0,
-          kind: reason === 'exception' ? 'stall' : 'internal',
+          kind,
           message,
           exception: null,
           stack: [],

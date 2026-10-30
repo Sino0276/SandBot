@@ -107,6 +107,11 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     void run() {
         try {
             runInner();
+        } catch (SimThreadError e) {
+            // OpMode를 만들기 전(tick 0 등)에 다른 스레드가 시계를 썼다: 등록기가 띄워 두고 기다리지 않은 스레드
+            if (!e.reported()) reportThrowable("thread", e);
+            endPhase();
+            finish("exception");
         } catch (Throwable t) {
             // 런타임 자체의 잘못(여기까지 오면 안 된다)
             internalError("sidecar runtime failure: " + StackFrames.describe(t), t);
@@ -121,7 +126,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         target = request.registeredName != null ? "the OpMode registered as \"" + request.registeredName + "\""
                 : request.opModeClass;
         // 0. 등록기(실제 SDK는 앱이 시작할 때 모두 부른다: annotated OpMode를 실행할 때도) → Road Runner 튜닝 폴더
-        RegistrarRunner registrars = new RegistrarRunner();
+        RegistrarRunner registrars = new RegistrarRunner(clock);
         if (!request.registrars.isEmpty()) {
             try {
                 registrars.runAll(RunRequest.registrarClasses(request.registrars), loader, this::registrarFailed);
@@ -145,6 +150,11 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                     e.cause == null ? new ArrayList<>() : StackFrames.of(e.cause.getStackTrace(), sources, false),
                     Thread.currentThread().getName());
             finish("loadFailed");
+            return;
+        } catch (SimThreadError e) {
+            // 등록기가 띄운 스레드가 시계를 썼다(구성 오류가 아니다)
+            if (!e.reported()) reportThrowable("thread", e);
+            finish("exception");
             return;
         }
         if (!hooks.available() && request.configXml != null) {
