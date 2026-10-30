@@ -4,7 +4,13 @@ import type { ReadJavaFileResult } from '../../../shared/ipc'
 import { sourceFromRead, useJavaSourcesStore, type JavaSource } from '../java/javaSources'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
-import { applyConfigValue, useConfigSourcesStore } from './dashConfigApply'
+import {
+  applyConfigValue,
+  ensureConfigSource,
+  localConfigSource,
+  syncConfigSourcesRun,
+  useConfigSourcesStore
+} from './dashConfigApply'
 import {
   checkApply,
   configInputValue,
@@ -181,6 +187,8 @@ describe('[파일에 반영]', () => {
     useProjectStore.setState({ root: '/p', session: 1, busy: false })
     useJavaSourcesStore.setState(useJavaSourcesStore.getInitialState())
     useConfigSourcesStore.setState(useConfigSourcesStore.getInitialState())
+    // Config 탭이 이 실행의 트리를 보였다
+    syncConfigSourcesRun('run-1')
     useSceneStore.getState().replaceObjects({})
     useSceneStore.setState({ tunables: {} })
   })
@@ -190,7 +198,7 @@ describe('[파일에 반영]', () => {
   })
 
   it('파일을 다시 읽고 인스펙터와 같은 길(setTunable)로 저장하지 않은 튜닝 값을 만든다', async () => {
-    expect(await applyConfigValue(value('double', '0.75', 'kP'))).toBe(true)
+    expect(await applyConfigValue(value('double', '0.75', 'kP'), 'run-1')).toBe(true)
     expect(readJavaFile).toHaveBeenCalledWith('/p', LIFT_PATH)
     expect(useSceneStore.getState().tunables).toEqual({
       [LIFT_PATH]: { 'Lift#kP': { value: '0.75', base: '0.5' } }
@@ -201,7 +209,7 @@ describe('[파일에 반영]', () => {
 
   it('다시 읽은 파일에서 고칠 수 없게 바뀌었으면 옮기지 않는다', async () => {
     readJavaFile.mockResolvedValueOnce(ok(LIFT.replace('kP = 0.5', 'kP = 1.0 / 2')))
-    expect(await applyConfigValue(value('double', '0.75', 'kP'))).toBe(false)
+    expect(await applyConfigValue(value('double', '0.75', 'kP'), 'run-1')).toBe(false)
     expect(useSceneStore.getState().tunables).toEqual({})
   })
 
@@ -210,8 +218,93 @@ describe('[파일에 반영]', () => {
       useProjectStore.setState({ session: 2 })
       return ok(LIFT)
     })
-    expect(await applyConfigValue(value('double', '0.75', 'kP'))).toBe(false)
+    expect(await applyConfigValue(value('double', '0.75', 'kP'), 'run-1')).toBe(false)
     expect(useSceneStore.getState().tunables).toEqual({})
+  })
+
+  it('그사이 다른 실행의 트리가 왔으면 옮기되 읽은 내용을 그 실행의 캐시에 넣지 않는다', async () => {
+    readJavaFile.mockImplementationOnce(async () => {
+      syncConfigSourcesRun('run-2')
+      return ok(LIFT)
+    })
+    expect(await applyConfigValue(value('double', '0.75', 'kP'), 'run-1')).toBe(true)
+    const state = useConfigSourcesStore.getState()
+    expect(state.runId).toBe('run-2')
+    expect(state.files).toEqual({})
+  })
+})
+
+describe('연결하지 않은 파일 읽기(Config 탭)', () => {
+  const project = { root: '/p', session: 1 }
+  let resolvers: ((result: ReadJavaFileResult) => void)[] = []
+  const readJavaFile = vi.fn(
+    (): Promise<ReadJavaFileResult> =>
+      new Promise((resolve) => {
+        resolvers.push(resolve)
+      })
+  )
+  const settle = async (index: number, result: ReadJavaFileResult): Promise<void> => {
+    resolvers[index](result)
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+  const local = (runId: string): JavaSource | undefined =>
+    localConfigSource(useConfigSourcesStore.getState(), project, runId, LIFT_PATH)
+
+  beforeEach(() => {
+    resolvers = []
+    readJavaFile.mockClear()
+    vi.stubGlobal('window', { api: { readJavaFile } })
+    useProjectStore.setState({ root: '/p', session: 1, busy: false })
+    useJavaSourcesStore.setState(useJavaSourcesStore.getInitialState())
+    useConfigSourcesStore.setState(useConfigSourcesStore.getInitialState())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    useProjectStore.setState(useProjectStore.getInitialState())
+  })
+
+  it('칸이 탭보다 먼저 읽기를 시작해도(자식 effect가 먼저 돈다) 탭이 실행을 맞추며 그 읽기를 버리지 않는다', async () => {
+    // ApplyButton의 effect
+    ensureConfigSource(LIFT_PATH, 'run-2')
+    // ConfigView의 effect(이 실행의 트리를 처음 보임)
+    syncConfigSourcesRun('run-2')
+    expect(readJavaFile).toHaveBeenCalledTimes(1)
+    await settle(0, ok(LIFT))
+    expect(local('run-2')).toMatchObject({ status: 'ready' })
+  })
+
+  it('이전 실행에서 읽은 파일은 새 실행의 칸에 보이지 않고 새로 읽는다', async () => {
+    ensureConfigSource(LIFT_PATH, 'run-1')
+    await settle(0, ok(LIFT))
+    expect(local('run-1')).toMatchObject({ status: 'ready' })
+    // 새 실행의 칸이 탭보다 먼저 그려져도 이전 실행의 내용을 쓰지 않는다
+    expect(local('run-2')).toBeUndefined()
+    ensureConfigSource(LIFT_PATH, 'run-2')
+    expect(readJavaFile).toHaveBeenCalledTimes(2)
+    expect(local('run-1')).toBeUndefined()
+    await settle(1, ok(LIFT))
+    expect(local('run-2')).toMatchObject({ status: 'ready' })
+  })
+
+  it('실행이 바뀐 뒤 끝난 이전 읽기는 새 실행의 같은 파일 읽기를 덮지 않는다', async () => {
+    ensureConfigSource(LIFT_PATH, 'run-1')
+    ensureConfigSource(LIFT_PATH, 'run-2')
+    expect(readJavaFile).toHaveBeenCalledTimes(2)
+    await settle(0, ok(LIFT.replace('kP = 0.5', 'kP = 0.9')))
+    expect(local('run-2')).toBeUndefined()
+    // 같은 실행의 칸이 더 있어도 읽는 중이면 다시 읽지 않는다
+    ensureConfigSource(LIFT_PATH, 'run-2')
+    expect(readJavaFile).toHaveBeenCalledTimes(2)
+    await settle(1, ok(LIFT))
+    const source = local('run-2')
+    expect(source?.status === 'ready' && source.hash).toBe(ok(LIFT).hash)
+  })
+
+  it('프로젝트를 열거나 저장하는 중에는 읽지 않는다', () => {
+    useProjectStore.setState({ busy: true })
+    ensureConfigSource(LIFT_PATH, 'run-1')
+    expect(readJavaFile).not.toHaveBeenCalled()
   })
 })
 

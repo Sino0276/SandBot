@@ -107,11 +107,13 @@ function applyBlockText(
   return t(`config.applyBlocked.${block}`, params)
 }
 
-// 실행 중 바꾼 값의 [파일에 반영]. 쓸 수 없으면 버튼을 막고 이유를 도움말로 보인다.
+// 실행 중 바꾼 값의 [파일에 반영]. 쓸 수 없으면 버튼을 막고 이유를 도움말로 보인다. runId는 이 트리를 보낸 실행이다.
 function ApplyButton({
-  node
+  node,
+  runId
 }: {
   node: Extract<DashConfigNode, { kind: 'value' }>
+  runId: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const target = useMemo(() => (node.source ? tunableTarget(node.source) : null), [node.source])
@@ -121,7 +123,7 @@ function ApplyButton({
     target ? currentJavaSource(state, { root, session }, target.path) : undefined
   )
   const local = useConfigSourcesStore((state) =>
-    target ? localConfigSource(state, { root, session }, target.path) : undefined
+    target ? localConfigSource(state, { root, session }, runId, target.path) : undefined
   )
   const pending = useSceneStore((state) =>
     target ? state.tunables[target.path]?.[target.fieldId] : undefined
@@ -132,8 +134,8 @@ function ApplyButton({
   const check = checkApply(node, target, source, pending)
   const [applying, setApplying] = useState(false)
   useEffect(() => {
-    if (target && !source && !projectBusy) ensureConfigSource(target.path)
-  }, [target, source, projectBusy])
+    if (target && !source && !projectBusy) ensureConfigSource(target.path, runId)
+  }, [target, source, projectBusy, runId])
 
   if (!check.ok && check.block === 'applied')
     return (
@@ -157,7 +159,7 @@ function ApplyButton({
       onClick={() => {
         if (!check.ok || applying) return
         setApplying(true)
-        void applyConfigValue(node).finally(() => setApplying(false))
+        void applyConfigValue(node, runId).finally(() => setApplying(false))
       }}
     >
       {t('config.apply')}
@@ -246,7 +248,7 @@ function ValueRow({
             {t('config.startValue', { value: start })}
           </span>
         )}
-        {changed && <ApplyButton node={node} />}
+        {changed && <ApplyButton node={node} runId={config.runId} />}
       </span>
     </div>
   )
@@ -298,7 +300,7 @@ function ConfigView(): React.JSX.Element {
   const editable = usePlayStore(canEditDashConfig)
   const expanded = useExpandedStore((state) => state.expanded)
   const runId = config?.runId ?? null
-  // 실행마다 [파일에 반영]이 볼 파일을 새로 읽는다
+  // 실행마다 [파일에 반영]이 볼 파일을 새로 읽는다(이전 실행에서 읽은 것을 놓는다. 칸도 읽기 전에 맞춘다)
   useEffect(() => {
     if (runId !== null) syncConfigSourcesRun(runId)
   }, [runId])
