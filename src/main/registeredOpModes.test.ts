@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { JdkInfo } from '../shared/play'
+import type { JdkInfo, ListOpModesResult, OpModeInfo } from '../shared/play'
 import type {
   ErrorMessage,
   ListRequest,
@@ -14,6 +14,7 @@ import { clearOpModeCache, scanOpModes } from './opModes'
 import { clearTrustedRoots, trustRoot } from './projectRoots'
 import {
   RegisteredOpModes,
+  registeredInfos,
   registrarOfError,
   type RegisteredOpModesDeps
 } from './registeredOpModes'
@@ -63,6 +64,7 @@ const op = (overrides: Partial<RegisteredOpMode>): RegisteredOpMode => ({
   group: '$$$$$$$',
   flavor: 'TeleOp',
   className: `${TEAM}.X`,
+  instance: true,
   registrar: `${TEAM}.TuningOpModes`,
   transitionTarget: '',
   ...overrides
@@ -161,7 +163,7 @@ describe('RegisteredOpModes', () => {
       op({ name: 'Util', flavor: 'Utility' }),
       op({ name: 'Sys', flavor: 'System' }),
       op({ name: 'Alpha', registrar: `${TEAM}.b.Other` }),
-      // annotated OpMode를 그 이름 그대로 다시 등록한 것(실제 SDK는 한 번만 보인다)
+      // annotated OpMode 클래스의 인스턴스를 그 이름 그대로 등록한 것은 빼고, 다른 이름은 둔다(annotated를 가리지 않는다)
       op({ name: 'Drive', className: `${TEAM}.Drive` }),
       op({ name: 'Drive2', className: `${TEAM}.Drive` })
     ])
@@ -170,6 +172,7 @@ describe('RegisteredOpModes', () => {
     const registered = (registrar: string): { registrar: string } => ({ registrar })
     expect(result).toEqual({
       ok: true,
+      replaced: [],
       diagnostics: [],
       errors: [],
       opModes: [
@@ -347,6 +350,7 @@ describe('RegisteredOpModes', () => {
     expect(await lister.list(root)).toEqual({
       ok: true,
       opModes: [],
+      replaced: [],
       errors: [],
       diagnostics: [
         {
@@ -420,6 +424,7 @@ describe('RegisteredOpModes', () => {
     expect(await new RegisteredOpModes(deps).list(root)).toEqual({
       ok: true,
       opModes: [],
+      replaced: [],
       diagnostics: [],
       errors: []
     })
@@ -437,6 +442,79 @@ describe('RegisteredOpModes', () => {
     ])
     clearTrustedRoots()
     expect(await lister.registrarsFor(root)).toEqual([])
+  })
+})
+
+describe('registeredInfos', () => {
+  const annotated = (overrides: Partial<OpModeInfo>): OpModeInfo => ({
+    className: `${TEAM}.Drive`,
+    path: `${PKG}/Drive.java`,
+    line: 3,
+    flavor: 'TeleOp',
+    name: 'Drive',
+    group: '',
+    preselectTeleOp: '',
+    ...overrides
+  })
+  const listedOf = (opModes: OpModeInfo[]): ListOpModesResult => ({
+    ok: true,
+    opModes,
+    registrars: [
+      { className: `${TEAM}.TuningOpModes`, path: `${PKG}/TuningOpModes.java`, line: 5 }
+    ],
+    truncated: false,
+    hasTeamCode: true
+  })
+  const names = (result: { opModes: OpModeInfo[] }): string[] => result.opModes.map((i) => i.name)
+
+  it('annotated 클래스를 클래스로 다시 등록하면 실제 SDK처럼 등록 쪽만 보인다(replaced), 같은 항목이면 annotated를 둔다', () => {
+    const list = listedOf([
+      annotated({}),
+      annotated({
+        className: `${TEAM}.Auto`,
+        path: `${PKG}/Auto.java`,
+        name: 'Auto',
+        flavor: 'Autonomous'
+      })
+    ])
+    // register(Class): 애너테이션에서 읽은 같은 항목(기본 그룹은 '$$$$$$$' → '')
+    expect(
+      registeredInfos([op({ name: 'Drive', className: `${TEAM}.Drive`, instance: false })], list)
+    ).toEqual({ opModes: [], replaced: [] })
+    // 다른 이름·group·flavor로 등록: 등록이 annotated를 대신한다(UTILITY라 목록 밖이어도)
+    const result = registeredInfos(
+      [
+        op({ name: 'Renamed', className: `${TEAM}.Drive`, instance: false }),
+        op({ name: 'AutoUtility', className: `${TEAM}.Auto`, flavor: 'Utility', instance: false })
+      ],
+      list
+    )
+    expect(names(result)).toEqual(['Renamed'])
+    expect(result.replaced).toEqual([`${TEAM}.Auto`, `${TEAM}.Drive`])
+    expect(
+      registeredInfos(
+        [op({ name: 'Drive', group: 'tuning', className: `${TEAM}.Drive`, instance: false })],
+        list
+      )
+    ).toMatchObject({ opModes: [{ name: 'Drive', group: 'tuning' }], replaced: [`${TEAM}.Drive`] })
+  })
+
+  it('인스턴스 등록은 annotated를 가리지 않는다(같은 클래스·이름만 뺀다), annotated가 아닌 클래스는 그대로', () => {
+    const list = listedOf([annotated({})])
+    const result = registeredInfos(
+      [
+        op({ name: 'Drive', className: `${TEAM}.Drive` }),
+        op({ name: 'Other', className: `${TEAM}.Drive` }),
+        op({ name: 'Plain', className: `${TEAM}.Plain`, instance: false })
+      ],
+      list
+    )
+    expect(names(result)).toEqual(['Other', 'Plain'])
+    expect(result.replaced).toEqual([])
+    expect(registeredInfos([op({})], { ok: false, code: 'notAllowed', detail: '' })).toEqual({
+      opModes: [],
+      replaced: []
+    })
   })
 })
 

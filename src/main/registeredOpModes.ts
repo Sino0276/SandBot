@@ -41,7 +41,13 @@ import { javaTool } from './jdk'
 // - 결과의 OpModeInfo: className은 등록한 OpMode 클래스(라이브러리 클래스일 수 있다), path·line은 등록기 소스와 그 클래스의
 //   첫 등록기 메서드 줄, flavor는 TELEOP·AUTONOMOUS만(UTILITY·SYSTEM은 SandBot이 실행하지 않아 뺀다), group은 OpModeMeta의
 //   기본 그룹('$$$$$$$')이면 ''(annotated 목록과 같다), preselectTeleOp은 transitionTarget, registered.registrar는 등록기
-//   클래스. 등록기가 annotated OpMode 클래스를 그 이름 그대로 다시 등록한 것(실제 SDK는 한 번만 보인다)은 뺀다.
+//   클래스.
+// - annotated OpMode 클래스를 등록기가 다시 등록하면 실제 SDK는 DS에 하나만 보인다(AnnotatedOpModeClassFilter: 등록기가 먼저
+//   돌고, 클래스 등록은 classNameOverrides·knownOpModes에 들어가 annotated 차례가 그 클래스를 건너뛴다). 클래스 등록이 애너테이션과
+//   같은 항목(register(Class), 같은 이름·flavor·group·preselectTeleOp)이면 등록 쪽을 빼고 annotated를 둔다(소스가 그 클래스다).
+//   다르면 등록 쪽을 두고 그 클래스를 replaced로 알린다(렌더러가 annotated 목록에서 뺀다, UTILITY로 등록했어도). 인스턴스 등록은
+//   annotated를 가리지 않는다(실제도 둘 다 보인다). 같은 클래스·이름의 인스턴스 등록만 뺀다(실제는 이름이 겹쳐 하나에
+//   '-클래스 이름'이 붙는다).
 // - INIT은 실행마다 TeamCode의 등록기를 다시 찾고(registrarsFor, OpMode 목록의 캐시를 쓴다), 등록기 OpMode의
 //   preselectTeleOp은 마지막 목록에서 찾는다(preselectTeleOp).
 
@@ -125,6 +131,47 @@ export function registeredInfo(
   }
 }
 
+// DS에서 같은 항목인가(소스 위치·등록 여부는 보지 않는다)
+function sameEntry(a: OpModeInfo, b: OpModeInfo): boolean {
+  return (
+    a.name === b.name &&
+    a.flavor === b.flavor &&
+    a.group === b.group &&
+    a.preselectTeleOp === b.preselectTeleOp
+  )
+}
+
+// 사이드카가 등록한 것 → 렌더러 목록(flavor·group·name 순)과 annotated 목록에서 뺄 클래스(머리 주석의 규칙)
+export function registeredInfos(
+  registered: readonly RegisteredOpMode[],
+  listed: ListOpModesResult
+): { opModes: OpModeInfo[]; replaced: string[] } {
+  if (!listed.ok) return { opModes: [], replaced: [] }
+  // 등록기 클래스 → 소스와 첫 등록기 메서드 줄(registrars는 클래스·경로·줄 순)
+  const lines = new Map<string, { path: string; line: number }>()
+  for (const registrar of listed.registrars)
+    if (!lines.has(registrar.className))
+      lines.set(registrar.className, { path: registrar.path, line: registrar.line })
+  const annotated = new Map(listed.opModes.map((info) => [info.className, info]))
+  const opModes: OpModeInfo[] = []
+  const replaced = new Set<string>()
+  for (const one of registered) {
+    const info = registeredInfo(one, lines)
+    const same = annotated.get(one.className)
+    if (same && !one.instance) {
+      if (info && sameEntry(info, same)) continue
+      replaced.add(one.className)
+    } else if (info && same && info.name === same.name) {
+      continue
+    }
+    if (info) opModes.push(info)
+  }
+  return {
+    opModes: opModes.sort(compareOpModes),
+    replaced: [...replaced].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  }
+}
+
 async function sha256File(file: string): Promise<string> {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer)
@@ -203,7 +250,13 @@ export class RegisteredOpModes {
     if (!listed.hasTeamCode) return { ok: false, code: 'missing', detail: 'TeamCode' }
     const refs = await this.locate(root, listed)
     if (refs.length === 0) {
-      const empty: CacheEntry['result'] = { ok: true, opModes: [], diagnostics: [], errors: [] }
+      const empty: CacheEntry['result'] = {
+        ok: true,
+        opModes: [],
+        replaced: [],
+        diagnostics: [],
+        errors: []
+      }
       this.cache.set(rootKey, { key: '', result: empty })
       return empty
     }
@@ -282,11 +335,11 @@ export class RegisteredOpModes {
             hint: libraries.diagnosticHint(d)
           }
         })
-      result = { ok: true, opModes: [], diagnostics, errors: [] }
+      result = { ok: true, opModes: [], replaced: [], diagnostics, errors: [] }
     } else {
       result = {
         ok: true,
-        opModes: this.toInfos(outcome.opModes, listed),
+        ...registeredInfos(outcome.opModes, listed),
         diagnostics: [],
         errors: outcome.errors.map((error: ErrorMessage) => ({
           registrar: registrarOfError(error.message, refs),
@@ -296,22 +349,6 @@ export class RegisteredOpModes {
     }
     this.cache.set(rootKey, { key, result })
     return result
-  }
-
-  private toInfos(registered: RegisteredOpMode[], listed: ListOpModesResult): OpModeInfo[] {
-    if (!listed.ok) return []
-    // 등록기 클래스 → 소스와 첫 등록기 메서드 줄(registrars는 클래스·경로·줄 순)
-    const lines = new Map<string, { path: string; line: number }>()
-    for (const registrar of listed.registrars)
-      if (!lines.has(registrar.className))
-        lines.set(registrar.className, { path: registrar.path, line: registrar.line })
-    const annotated = new Set(listed.opModes.map((info) => `${info.className}\n${info.name}`))
-    const out: OpModeInfo[] = []
-    for (const one of registered) {
-      const info = registeredInfo(one, lines)
-      if (info && !annotated.has(`${info.className}\n${info.name}`)) out.push(info)
-    }
-    return out.sort(compareOpModes)
   }
 
   private async cacheKey(

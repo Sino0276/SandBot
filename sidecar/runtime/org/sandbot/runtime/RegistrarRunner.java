@@ -79,7 +79,7 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
         /** sidecarProtocol RegisteredOpMode */
         Map<String, Object> toJson() {
             return Json.obj("name", meta.name, "group", meta.group, "flavor", flavorName(meta.flavor), "className",
-                    className(), "registrar", registrar, "transitionTarget",
+                    className(), "instance", instance != null, "registrar", registrar, "transitionTarget",
                     meta.autoTransition == null ? "" : meta.autoTransition);
         }
     }

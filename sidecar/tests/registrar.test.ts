@@ -214,6 +214,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: 'quickstart',
     flavor: 'TeleOp',
     className: `${PACKAGE}.FactoryTuner`,
+    instance: true,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -222,6 +223,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: 'quickstart',
     flavor: 'TeleOp',
     className: `${PACKAGE}.FactoryTuner`,
+    instance: true,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -230,6 +232,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: 'quickstart',
     flavor: 'TeleOp',
     className: `${PACKAGE}.SplineLike`,
+    instance: false,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -238,6 +241,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: 'quickstart',
     flavor: 'TeleOp',
     className: `${PACKAGE}.LocalizationLike`,
+    instance: false,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -246,6 +250,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: '$$$$$$$',
     flavor: 'Autonomous',
     className: `${PACKAGE}.FactoryTuner`,
+    instance: true,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: 'SplineLike'
   },
@@ -254,6 +259,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: '$$$$$$$',
     flavor: 'Utility',
     className: `${PACKAGE}.UtilityLike`,
+    instance: false,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -262,6 +268,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: 'annotated',
     flavor: 'TeleOp',
     className: `${PACKAGE}.AnnotatedTuner`,
+    instance: false,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   },
@@ -270,6 +277,7 @@ const TUNING_LIKE: RegisteredOpMode[] = [
     group: '$$$$$$$',
     flavor: 'TeleOp',
     className: `${PACKAGE}.FactoryTuner`,
+    instance: true,
     registrar: `${PACKAGE}.TuningLike`,
     transitionTarget: ''
   }
@@ -617,6 +625,7 @@ describe.skipIf(build === null || libraries === null)('등록기 OpMode(실제 R
           group: 'quickstart',
           flavor: 'TeleOp',
           className: 'com.acmerobotics.roadrunner.ftc.ForwardRampLogger',
+          instance: true,
           registrar: `${PACKAGE}.RrTuners`,
           transitionTarget: ''
         },
@@ -625,6 +634,7 @@ describe.skipIf(build === null || libraries === null)('등록기 OpMode(실제 R
           group: 'quickstart',
           flavor: 'TeleOp',
           className: 'com.acmerobotics.roadrunner.ftc.LateralRampLogger',
+          instance: true,
           registrar: `${PACKAGE}.RrTuners`,
           transitionTarget: ''
         }

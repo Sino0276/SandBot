@@ -325,6 +325,9 @@ export type RegisteredOpMode = {
   flavor: 'TeleOp' | 'Autonomous' | 'Utility' | 'System'
   // 등록한 OpMode의 클래스(인스턴스면 그 런타임 클래스) 바이너리 이름
   className: string
+  // 인스턴스로 등록했다(register(…, OpMode)). false면 클래스 등록(register(…, Class)): 실제 SDK는 등록기가 클래스로 등록한
+  // annotated 클래스를 등록기의 이름으로만 보인다(AnnotatedOpModeClassFilter의 classNameOverrides·isKnown).
+  instance: boolean
   // 등록한 등록기 클래스(RegistrarRef.className)
   registrar: string
   // OpModeMeta.autoTransition('' 없음, Autonomous의 preselectTeleOp)

@@ -65,6 +65,10 @@ export type ListRegisteredResult =
   | {
       ok: true
       opModes: OpModeInfo[]
+      // 등록기가 클래스로 다시 등록한 annotated OpMode 클래스(바이너리 이름, 정렬). 실제 SDK는 그 클래스를 등록기가 준
+      // 이름·flavor·group으로만 보이므로(AnnotatedOpModeClassFilter의 classNameOverrides·isKnown) 렌더러는 이 클래스를
+      // listOpModes의 annotated 목록에서 뺀다. 등록이 애너테이션과 같은 항목(register(Class))이면 넣지 않는다(annotated를 둔다).
+      replaced: string[]
       diagnostics: PlayDiagnostic[]
       errors: { registrar: string; message: string }[]
     }

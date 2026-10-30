@@ -190,9 +190,20 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
     const listed = await lister.list(root)
     expect(listed).toEqual({
       ok: true,
+      replaced: ['org.firstinspires.ftc.teamcode.Smoke'],
       diagnostics: [],
       errors: [],
       opModes: [
+        {
+          className: 'org.firstinspires.ftc.teamcode.Smoke',
+          path: 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java',
+          line: 24,
+          flavor: 'TeleOp',
+          name: 'Smoke (registered)',
+          group: '',
+          preselectTeleOp: '',
+          registered: { registrar: 'org.firstinspires.ftc.teamcode.Tuning' }
+        },
         {
           className: 'org.firstinspires.ftc.teamcode.Tuning$Tuner',
           path: 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java',
@@ -284,6 +295,8 @@ public final class Tuning {
                 new Tuner(direction));
         manager.register(new OpModeMeta.Builder().setName("Hidden").setFlavor(OpModeMeta.Flavor.UTILITY).build(),
                 new Tuner("utility"));
+        // annotated OpMode를 다른 이름의 클래스로: 실제 SDK처럼 등록기의 이름으로만 보인다
+        manager.register("Smoke (registered)", Smoke.class);
     }
 }
 `

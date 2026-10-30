@@ -78,6 +78,12 @@ function strOrNull(data: Json, key: string): string | null {
   return value
 }
 
+function bool(data: Json, key: string): boolean {
+  const value = data[key]
+  if (typeof value !== 'boolean') fail(`${String(data.type)}.${key}`)
+  return value
+}
+
 function oneOf<T extends string>(data: Json, key: string, values: readonly T[]): T {
   const value = data[key]
   if (typeof value !== 'string' || !(values as readonly string[]).includes(value))
@@ -186,6 +192,7 @@ function registeredOpMode(value: unknown): RegisteredOpMode {
     group: limited(data, 'group', 0, MAX_REGISTERED_TEXT),
     flavor: oneOf(data, 'flavor', REGISTERED_FLAVORS),
     className: limited(data, 'className', 1, MAX_CLASS_NAME),
+    instance: bool(data, 'instance'),
     registrar: limited(data, 'registrar', 1, MAX_CLASS_NAME),
     transitionTarget: limited(data, 'transitionTarget', 0, MAX_REGISTERED_TEXT)
   }

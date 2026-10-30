@@ -29,6 +29,7 @@ const OPMODE: RegisteredOpMode = {
   group: 'quickstart',
   flavor: 'TeleOp',
   className: 'com.acmerobotics.roadrunner.ftc.ForwardRampLogger',
+  instance: true,
   registrar: 'org.firstinspires.ftc.teamcode.TuningOpModes',
   transitionTarget: ''
 }
@@ -215,9 +216,10 @@ describe('parseSidecarLine registered', () => {
   const line = (opModes: unknown): string => JSON.stringify({ type: 'registered', opModes })
 
   it('모양을 확인해 읽는다', () => {
-    expect(parseSidecarLine(line([OPMODE, { ...OPMODE, flavor: 'Utility', group: '' }]))).toEqual({
+    const byClass = { ...OPMODE, flavor: 'Utility', group: '', instance: false }
+    expect(parseSidecarLine(line([OPMODE, byClass]))).toEqual({
       type: 'registered',
-      opModes: [OPMODE, { ...OPMODE, flavor: 'Utility', group: '' }]
+      opModes: [OPMODE, byClass]
     })
     // group·transitionTarget의 제어 문자는 받는다(실행할 이름만 실행 요청 규칙을 따른다)
     expect(parseSidecarLine(line([{ ...OPMODE, group: 'a\tb' }]))).toMatchObject({
@@ -225,7 +227,7 @@ describe('parseSidecarLine registered', () => {
     })
   })
 
-  it('이름·group·flavor·클래스 이름·개수 한도를 넘거나 틀리면 프로토콜 오류', () => {
+  it('이름·group·flavor·클래스 이름·instance·개수 한도를 넘거나 틀리면 프로토콜 오류', () => {
     const bad: unknown[] = [
       { ...OPMODE, name: '' },
       { ...OPMODE, name: 'x'.repeat(201) },
@@ -236,6 +238,8 @@ describe('parseSidecarLine registered', () => {
       { ...OPMODE, className: 'c'.repeat(1025) },
       { ...OPMODE, registrar: '' },
       { ...OPMODE, transitionTarget: null },
+      { ...OPMODE, instance: 'true' },
+      { ...OPMODE, instance: undefined },
       'not an object'
     ]
     for (const opMode of bad) expect(() => parseSidecarLine(line([opMode]))).toThrow(ProtocolError)
