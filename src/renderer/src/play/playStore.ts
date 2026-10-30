@@ -1,11 +1,14 @@
 import { create } from 'zustand'
+import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { LibraryProgress } from '../../../shared/libraries'
 import type {
+  ListRegisteredResult,
   OpModeInfo,
   PlayEvent,
   PlayPhase,
   PlaySettings,
-  PlaySpeed
+  PlaySpeed,
+  RegistrarInfo
 } from '../../../shared/play'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import type { Transform } from '../scene/model'
@@ -19,8 +22,10 @@ import {
   type ConsoleLevel,
   type ConsoleNoticeKey
 } from './consoleModel'
+import { configPathKey, extendBaseline } from './dashConfigModel'
 import type { PadSlots } from './gamepad'
 import { libraryReportLines, linkWarningLines } from './libraryConsole'
+import { compareOpModes } from './opModeList'
 import {
   loadConsolePrefs,
   loadDockTab,
@@ -38,11 +43,36 @@ import {
 
 export type OpModeListStatus = 'none' | 'loading' | 'ready' | 'failed'
 
+// 등록기 OpMode 목록을 읽지 못했거나 일부만 읽은 이유(목록 아래 한 줄, Console에도 남긴다)
+export type RegisteredProblem =
+  | { kind: 'failed'; code: Extract<ListRegisteredResult, { ok: false }>['code']; detail: string }
+  // 컴파일 오류(등록기 OpMode가 없다)
+  | { kind: 'compile'; errors: number }
+  // 던진 등록기(그 등록기의 OpMode만 빠진다)
+  | { kind: 'registrar'; registrars: string[] }
+
+// @OpModeRegistrar가 등록한 OpMode(메인이 JVM에서 등록기를 실행해 읽는다, listRegisteredOpModes). 등록기가 없으면 none.
+export type RegisteredListState = {
+  status: OpModeListStatus
+  opModes: OpModeInfo[]
+  problem: RegisteredProblem | null
+}
+
+export const EMPTY_REGISTERED_LIST: RegisteredListState = {
+  status: 'none',
+  opModes: [],
+  problem: null
+}
+
 export type OpModeListState = {
   // 이 목록을 읽은 프로젝트 루트
   root: string | null
   status: OpModeListStatus
+  // @TeleOp·@Autonomous 클래스(소스 글자로 찾음)
   opModes: OpModeInfo[]
+  // TeamCode의 @OpModeRegistrar 메서드(비어 있지 않으면 registered를 읽는다)
+  registrars: RegistrarInfo[]
+  registered: RegisteredListState
   truncated: boolean
   hasTeamCode: boolean
   // 읽지 못한 이유(failed)
@@ -88,6 +118,8 @@ export type PlayRun = {
   // 의존성 보고를 받았다. 그 뒤에 온 진행(메인이 해석을 끝낸 뒤 늦게 끝난 미리 받기)은 받지 않는다: 실행 내내 남는 진행
   // 알림의 [취소]가 도는 OpMode를 멈추지 않게.
   libraryReported: boolean
+  // 프로젝트를 다시 열어 새 씬과 떼어 놓은 실행(끝나기를 기다리는 중). Dashboard 오버레이·설정은 받지 않는다.
+  detached: boolean
 }
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
@@ -105,9 +137,42 @@ export type SimPoseState = {
 // 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다.
 export type GhostPose = { robotId: string; x: number; y: number; yaw: number }
 
+// ---- FTC Dashboard(라이브러리 L2) ----
+// 패킷은 약 30 Hz로 오므로 run과 따로 둔다(run을 구독하는 툴바·장치 탭이 그때마다 다시 그리지 않게).
+
+// Dashboard 텔레메트리(웹 클라이언트 TelemetryView처럼): 키마다 마지막 값과 마지막 비어 있지 않은 로그. clearTelemetry
+// (cleared)는 둘 다 비운다. values는 최근에 바뀐 키가 뒤에 오는 순서다(한도를 넘으면 오래 바뀌지 않은 키부터 버린다).
+// 화면은 키 정렬로 보인다(dashTelemetryRows). INIT에서 비운다.
+export type DashTelemetry = {
+  runId: string
+  tNanos: number
+  values: ReadonlyMap<string, string>
+  log: readonly string[]
+}
+
+// 텔레메트리 키 수 한도(팀 코드가 바뀌는 키를 계속 넣어도 화면이 끝없이 커지지 않게)
+export const MAX_DASH_KEYS = 1000
+
+// 씬 뷰 필드 오버레이: 마지막으로 받은 op 목록(Dashboard처럼 fieldOverlay가 빈 패킷은 그림을 바꾸지 않는다). 실행이 끝나도
+// 다음 INIT·프로젝트 열기까지 남는다(잔상처럼).
+export type DashOverlayState = { runId: string; tNanos: number; ops: readonly DashOp[] }
+
+// Config 탭: 마지막 설정 트리, 실행의 시작 값(값 칸마다 처음 받은 값, [파일에 반영]을 둘 칸), 보냈지만 아직 새 트리를 받지
+// 못한 값(일시 정지 중에는 다음 틱 답까지 적용되지 않는다). 다음 INIT까지 남는다(STOP하면 값은 되돌아간다).
+export type DashConfigState = {
+  runId: string
+  // 실행의 프로젝트 루트([파일에 반영]이 그 TeamCode를 읽는다)
+  root: string
+  tNanos: number
+  tree: DashConfigNode
+  baseline: ReadonlyMap<string, string>
+  pending: Readonly<Record<string, string>>
+}
+
 export type PlayData = {
   opModeList: OpModeListState
-  // 고른 OpMode의 클래스(프로젝트 루트마다 localStorage에 기억). 목록에 없으면 고른 것이 없는 것으로 보인다.
+  // 고른 OpMode의 키(opModeList.ts opModeKey: annotated는 클래스 이름, 등록기 OpMode는 'registered:' + 이름. 프로젝트
+  // 루트마다 localStorage에 기억). 목록에 없으면 고른 것이 없는 것으로 보인다.
   selectedClass: string | null
   run: PlayRun | null
   // 일시 정지 토글(Unity처럼 실행 전에도 켤 수 있다. 켜고 INIT하면 init에서 바로 멈춘다)
@@ -121,15 +186,35 @@ export type PlayData = {
   dockTab: DockTab
   simPose: SimPoseState | null
   ghostPose: GhostPose | null
+  dash: DashTelemetry | null
+  dashOverlay: DashOverlayState | null
+  dashConfig: DashConfigState | null
 }
 
 export const EMPTY_OPMODE_LIST: OpModeListState = {
   root: null,
   status: 'none',
   opModes: [],
+  registrars: [],
+  registered: EMPTY_REGISTERED_LIST,
   truncated: false,
   hasTeamCode: false,
   detail: ''
+}
+
+// 고를 수 있는 OpMode 전부(annotated + 등록기, DS처럼 flavor·group·이름 순). 목록 상태마다 한 번 만든다.
+const listedMemo = new WeakMap<OpModeListState, readonly OpModeInfo[]>()
+
+export function listedOpModes(list: OpModeListState): readonly OpModeInfo[] {
+  let listed = listedMemo.get(list)
+  if (!listed) {
+    listed =
+      list.registered.opModes.length === 0
+        ? list.opModes
+        : [...list.opModes, ...list.registered.opModes].sort(compareOpModes)
+    listedMemo.set(list, listed)
+  }
+  return listed
 }
 
 let nextEntryId = 1
@@ -229,8 +314,48 @@ export function newRun(options: {
     devices: null,
     finished: null,
     libraryProgress: null,
-    libraryReported: false
+    libraryReported: false,
+    detached: false
   }
+}
+
+// Dashboard 패킷 묶음 하나를 텔레메트리에 합친다(웹 클라이언트 TelemetryView와 같다): cleared면 data·로그를 비우고,
+// data는 키마다 마지막 값, 로그는 비어 있지 않은 것이 오면 바꾼다.
+export function mergeDashTelemetry(
+  previous: DashTelemetry | null,
+  event: Extract<PlayEvent, { type: 'dash' }>
+): DashTelemetry {
+  const values = new Map(event.cleared || !previous ? [] : previous.values)
+  for (const [key, value] of event.data) {
+    // 최근에 바뀐 키를 뒤로(한도를 넘으면 앞에서 버린다)
+    values.delete(key)
+    values.set(key, value)
+  }
+  for (const key of values.keys()) {
+    if (values.size <= MAX_DASH_KEYS) break
+    values.delete(key)
+  }
+  const log =
+    event.log !== null && event.log.length > 0
+      ? event.log
+      : event.cleared || !previous
+        ? []
+        : previous.log
+  return { runId: event.runId, tNanos: event.tNanos, values, log }
+}
+
+// 텔레메트리 탭에 보이는 줄(키 정렬, Java TreeMap처럼 UTF-16 순서)
+export function dashTelemetryRows(dash: DashTelemetry): [string, string][] {
+  return [...dash.values].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+// Config 탭에서 보낸 값(새 트리를 받을 때까지 그 칸에 보인다)
+export function withPendingConfig(
+  config: DashConfigState,
+  path: readonly string[],
+  value: string
+): DashConfigState {
+  return { ...config, pending: { ...config.pending, [configPathKey(path)]: value } }
 }
 
 const PHASE_ORDER: readonly PlayPhase[] = [
@@ -294,10 +419,28 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
     }
     case 'telemetry':
       return { run: { ...run, telemetry: { tNanos: event.tNanos, frame: event.frame } } }
-    // 라이브러리 L2 갈래 C: Dashboard 텔레메트리 보기·Config 탭·씬 뷰 오버레이
-    case 'dash':
-    case 'dashConfig':
-      return {}
+    case 'dash': {
+      const dash = mergeDashTelemetry(data.dash?.runId === run.runId ? data.dash : null, event)
+      // 오버레이는 fieldOverlay가 비어 있지 않은 패킷이 있을 때만 바뀐다(ops null이면 그대로). 새 씬과 떼어 놓은 실행의
+      // 그림은 받지 않는다.
+      if (event.ops === null || run.detached) return { dash }
+      return { dash, dashOverlay: { runId: run.runId, tNanos: event.tNanos, ops: event.ops } }
+    }
+    case 'dashConfig': {
+      if (run.detached) return {}
+      const previous = data.dashConfig?.runId === run.runId ? data.dashConfig : null
+      return {
+        dashConfig: {
+          runId: run.runId,
+          root: run.root,
+          tNanos: event.tNanos,
+          tree: event.root,
+          baseline: extendBaseline(previous?.baseline ?? null, event.root),
+          // 사이드카가 지금 값을 다시 보냈다(보낸 값을 받았거나 거부했다)
+          pending: {}
+        }
+      }
+    }
     case 'devices':
       return {
         run: {
@@ -421,7 +564,10 @@ export function initialPlayData(): PlayData {
     gamepads: [null, null],
     dockTab: loadDockTab(),
     simPose: null,
-    ghostPose: null
+    ghostPose: null,
+    dash: null,
+    dashOverlay: null,
+    dashConfig: null
   }
 }
 

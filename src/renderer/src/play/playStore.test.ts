@@ -1,17 +1,22 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { OpModeInfo, PlayDiagnostic, PlayEvent } from '../../../shared/play'
 import { CONSOLE_LIMIT } from './consoleModel'
 import { DEFAULT_CONSOLE_PREFS, DEFAULT_PLAY_SETTINGS } from './playSettings'
 import {
   applyPlayEvent,
   consoleEntry,
+  dashTelemetryRows,
   displayRootOverride,
   EMPTY_OPMODE_LIST,
   isRunActive,
+  listedOpModes,
+  MAX_DASH_KEYS,
   newRun,
   runningRobotId,
   simPoseOf,
   withEntries,
+  withPendingConfig,
   type PlayData
 } from './playStore'
 
@@ -48,6 +53,9 @@ function data(patch: Partial<PlayData> = {}): PlayData {
     dockTab: 'console',
     simPose: null,
     ghostPose: null,
+    dash: null,
+    dashOverlay: null,
+    dashConfig: null,
     ...patch
   }
 }
@@ -528,5 +536,161 @@ describe('라이브러리 진행·보고·링크 검사', () => {
       library: 'a:b:1',
       level: 'warning'
     })
+  })
+})
+
+describe('FTC Dashboard 패킷·설정', () => {
+  type DashEvent = Extract<PlayEvent, { type: 'dash' }>
+  const dash = (patch: Partial<DashEvent> = {}): DashEvent => ({
+    type: 'dash',
+    runId: 'r1',
+    tNanos: 1,
+    cleared: false,
+    data: [],
+    log: null,
+    ops: null,
+    ...patch
+  })
+  const OPS_A: DashOp[] = [{ type: 'stroke', color: 'red' }]
+  const OPS_B: DashOp[] = [{ type: 'circle', x: 1, y: 2, radius: 3, stroke: true }]
+  const leaf = (value: string): DashConfigNode => ({
+    kind: 'value',
+    type: 'double',
+    value,
+    enumValues: [],
+    source: null
+  })
+  const tree = (...entries: [string, string][]): DashConfigNode => ({
+    kind: 'custom',
+    children: [
+      {
+        name: 'Lift',
+        node: {
+          kind: 'custom',
+          children: entries.map(([name, value]) => ({ name, node: leaf(value) }))
+        }
+      }
+    ]
+  })
+
+  it('텔레메트리는 키마다 마지막 값을 합치고 키 정렬로 보인다', () => {
+    const next = apply(
+      data(),
+      dash({
+        data: [
+          ['b', '1'],
+          ['a', '2']
+        ]
+      }),
+      dash({ tNanos: 2, data: [['b', '3']], log: ['first'] })
+    )
+    expect(dashTelemetryRows(next.dash!)).toEqual([
+      ['a', '2'],
+      ['b', '3']
+    ])
+    expect(next.dash).toMatchObject({ runId: 'r1', tNanos: 2, log: ['first'] })
+  })
+
+  it('로그는 비어 있지 않은 것이 오면 바꾸고, cleared는 data와 로그를 비운다(Dashboard 웹 클라이언트처럼)', () => {
+    const before = apply(data(), dash({ data: [['a', '1']], log: ['x'] }), dash({ log: [] }))
+    expect(before.dash!.log).toEqual(['x'])
+    const cleared = apply(before, dash({ cleared: true, data: [['c', '5']] }))
+    expect(dashTelemetryRows(cleared.dash!)).toEqual([['c', '5']])
+    expect(cleared.dash!.log).toEqual([])
+    // 키 정렬은 Java TreeMap처럼 UTF-16 순서다(대문자가 먼저)
+    const sorted = apply(
+      data(),
+      dash({
+        data: [
+          ['b', '1'],
+          ['B', '2'],
+          ['a', '3']
+        ]
+      })
+    )
+    expect(dashTelemetryRows(sorted.dash!).map(([key]) => key)).toEqual(['B', 'a', 'b'])
+  })
+
+  it('키 수 한도를 넘으면 오래 바뀌지 않은 키부터 버린다', () => {
+    const many: [string, string][] = Array.from({ length: MAX_DASH_KEYS }, (_, i) => [`k${i}`, '0'])
+    const next = apply(
+      data(),
+      dash({ data: many }),
+      dash({
+        data: [
+          ['k0', '1'],
+          ['new', '2']
+        ]
+      })
+    )
+    const keys = [...next.dash!.values.keys()]
+    expect(keys).toHaveLength(MAX_DASH_KEYS)
+    expect(keys).not.toContain('k1')
+    expect(keys.slice(-2)).toEqual(['k0', 'new'])
+  })
+
+  it('오버레이는 ops가 있는 패킷만 바꾸고(null이면 그대로), 다른 실행의 것은 받지 않는다', () => {
+    let next = apply(data(), dash({ ops: OPS_A }), dash({ ops: null }))
+    expect(next.dashOverlay).toEqual({ runId: 'r1', tNanos: 1, ops: OPS_A })
+    next = apply(next, dash({ tNanos: 3, ops: OPS_B }), dash({ runId: 'other', ops: OPS_A }))
+    expect(next.dashOverlay).toEqual({ runId: 'r1', tNanos: 3, ops: OPS_B })
+  })
+
+  it('새 씬과 떼어 놓은 실행의 오버레이·설정은 받지 않는다(텔레메트리는 받는다)', () => {
+    const detached = data()
+    detached.run = { ...detached.run!, detached: true }
+    const next = apply(detached, dash({ data: [['a', '1']], ops: OPS_A }), {
+      type: 'dashConfig',
+      runId: 'r1',
+      tNanos: 1,
+      root: tree(['kP', '1'])
+    })
+    expect(next.dashOverlay).toBeNull()
+    expect(next.dashConfig).toBeNull()
+    expect(dashTelemetryRows(next.dash!)).toEqual([['a', '1']])
+  })
+
+  it('설정 트리: 시작 값은 처음 받은 값이고, 새 트리가 오면 보낸 값을 지운다', () => {
+    let next = apply(data(), {
+      type: 'dashConfig',
+      runId: 'r1',
+      tNanos: 0,
+      root: tree(['kP', '0.5'])
+    })
+    expect(next.dashConfig).toMatchObject({ runId: 'r1', root: '/p', tNanos: 0, pending: {} })
+    next = { ...next, dashConfig: withPendingConfig(next.dashConfig!, ['Lift', 'kP'], '0.9') }
+    expect(next.dashConfig!.pending).toEqual({ '["Lift","kP"]': '0.9' })
+    next = apply(next, {
+      type: 'dashConfig',
+      runId: 'r1',
+      tNanos: 5,
+      root: tree(['kP', '0.9'], ['kD', '2'])
+    })
+    expect(next.dashConfig!.pending).toEqual({})
+    expect(next.dashConfig!.baseline.get('["Lift","kP"]')).toBe('0.5')
+    expect(next.dashConfig!.baseline.get('["Lift","kD"]')).toBe('2')
+    expect(next.dashConfig!.tree).toEqual(tree(['kP', '0.9'], ['kD', '2']))
+  })
+})
+
+describe('고를 수 있는 OpMode 목록', () => {
+  const registered: OpModeInfo = {
+    ...TELEOP,
+    className: 'com.acmerobotics.roadrunner.ftc.ForwardRampLogger',
+    name: 'Ramp',
+    registered: { registrar: 'org.firstinspires.ftc.teamcode.TuningOpModes' }
+  }
+
+  it('annotated와 등록기 OpMode를 DS 순서로 합치고 목록마다 한 번 만든다', () => {
+    const list = {
+      ...EMPTY_OPMODE_LIST,
+      opModes: [TELEOP],
+      registered: { status: 'ready' as const, opModes: [registered], problem: null }
+    }
+    expect(listedOpModes(list)).toEqual([TELEOP, registered])
+    expect(listedOpModes(list)).toBe(listedOpModes(list))
+    // 등록기 OpMode가 없으면 annotated 목록 그대로
+    const plain = { ...EMPTY_OPMODE_LIST, opModes: [TELEOP] }
+    expect(listedOpModes(plain)).toBe(plain.opModes)
   })
 })

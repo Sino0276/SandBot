@@ -196,10 +196,12 @@ const en: Messages = {
     scene: 'Scene',
     inspector: 'Inspector',
     // Tabs of the panel below the Scene view (Unity's Console spot)
-    dock: 'Console, Telemetry, Devices',
+    dock: 'Console, Telemetry, Devices, Config',
     console: 'Console',
     telemetry: 'Telemetry',
-    devices: 'Devices'
+    devices: 'Devices',
+    // Edit @Config values during a run, like the FTC Dashboard Configuration panel
+    config: 'Config'
   },
   objectKind: {
     robot: 'Robot',
@@ -612,7 +614,30 @@ const en: Messages = {
       failed: 'Could not read the OpMode list ({{detail}}).',
       noTeamCode: 'The project has no TeamCode folder.',
       empty: 'TeamCode has no @TeleOp or @Autonomous OpModes (@Disabled ones are not shown).',
-      truncated: 'TeamCode has too many files; only some OpModes are shown.'
+      truncated: 'TeamCode has too many files; only some OpModes are shown.',
+      // OpModes registered by @OpModeRegistrar (the sidecar runs the registrars to read them)
+      registeredLoading: 'Reading registrar (@OpModeRegistrar) OpModes…',
+      registeredFailed: 'Could not read the registrar OpModes: {{reason}}',
+      registeredCompile:
+        'The registrar files did not compile ({{count}} errors), so registrar OpModes are not shown. You can open the lines from the Console.',
+      registeredRegistrar:
+        'The registrar {{names}} threw an exception, so its OpModes are missing (see the Console).',
+      // Failure reasons of ListRegisteredResult
+      registeredFailure: {
+        notAllowed: 'this project cannot run',
+        missing: 'TeamCode or a registrar file was not found',
+        noJdk: 'no JDK 17 or newer was found (Preferences > External Tools)',
+        noSidecar: 'the runner (sidecar) is not built',
+        failed: 'runner error',
+        noAndroidSdk: 'no Android SDK was found (Preferences > External Tools)',
+        noAndroidPlatform: "the project's Android platform is not installed"
+      },
+      registeredTag: 'Registrar',
+      registeredTooltip: '{{className}} · registrar {{registrar}}\n{{file}}',
+      open: 'Open',
+      openTooltip: "Open this OpMode's source in the external script editor (Alt+Enter)",
+      openRegistrarTooltip:
+        'Open the registrar line that registers this OpMode in the external script editor (Alt+Enter)'
     },
     init: 'INIT',
     start: 'START',
@@ -771,6 +796,10 @@ const en: Messages = {
         '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
       configMissing:
         'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.',
+      // Reading the registrar (@OpModeRegistrar) OpMode list
+      registeredFailed: 'Could not read the registrar OpMode list: {{reason}} ({{detail}})',
+      registeredCompileFailed:
+        'The registrar (@OpModeRegistrar) files did not compile, so the registrar OpModes could not be read ({{count}} errors). Double-click a diagnostic to open its line.',
       // Simulator notices (simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
@@ -889,7 +918,58 @@ const en: Messages = {
     noRun: 'Run an OpMode to see telemetry like on the Driver Station.',
     empty: 'No telemetry received yet (it appears when telemetry.update() sends).',
     log: 'Telemetry log',
-    sentAt: 'Virtual time sent'
+    sentAt: 'Virtual time sent',
+    // FTC Dashboard telemetry (sendTelemetryPacket; last value per key, like the Dashboard Telemetry panel)
+    dashboard: 'FTC Dashboard',
+    dashboardHint:
+      'Packets sent to FTC Dashboard (TelemetryPacket.put and addLine). The last value of each key is shown, and clearTelemetry clears it. The field drawing (fieldOverlay) is drawn on the Scene view floor.',
+    dashboardEmpty: 'The packets received so far have no values.',
+    dashboardLog: 'Dashboard log'
+  },
+  // Config tab (@Config and addConfigVariable variables, like the FTC Dashboard Configuration panel)
+  config: {
+    noRun:
+      'Run an OpMode to see the FTC Dashboard @Config values here and edit them while it runs (like the Dashboard Configuration panel).',
+    empty:
+      'This run has no Dashboard configuration variables (no @Config classes or addConfigVariable).',
+    tree: 'Dashboard configuration variables',
+    revertHint:
+      'Values changed during a run revert on STOP (the next run uses the file values). To keep one, press [Apply to file] and then save (Ctrl+S).',
+    readOnlyHint:
+      'Values can be edited only during INIT and while running. The last values stay until the next INIT.',
+    hardware: 'Hardware (withHardwareRoot)',
+    expand: 'Expand',
+    collapse: 'Collapse',
+    changed: 'Some values differ from the start of this run.',
+    startValue: '(start {{value}})',
+    startValueHint: 'The value when this run started.',
+    sentHint: 'Sent. It is applied at the next tick boundary (when the run continues, if paused).',
+    invalidHint: 'This value does not fit the type, so it is not sent.',
+    apply: 'Apply to file',
+    applyHint:
+      'Move this value to the {{field}} tunable value in {{file}} as an unsaved change. Saving (Ctrl+S) writes it to the Java file. You can undo it.',
+    applied: 'Applied (unsaved)',
+    // Why [Apply to file] is unavailable (play/dashConfigModel.ts ApplyBlock)
+    applyBlocked: {
+      noSource:
+        'This variable is not read from a field (addConfigVariable, an array element and so on), so it cannot be applied to a file.',
+      notTeamCode:
+        'This value belongs to a class outside the TeamCode Java files, so it cannot be applied to a file.',
+      loading: 'Reading {{file}}.',
+      missing:
+        '{{file}} was not found in TeamCode, so the value cannot be applied (it may be a library class).',
+      readFailed: 'Could not read {{file}}, so the value cannot be applied.',
+      file: '{{file}} cannot be edited (read-only, another encoding, a generated file, \\u escapes and so on), so the value cannot be applied.',
+      noField:
+        'The {{field}} tunable value was not found in {{file}} (a field of a superclass in another file, a removed field and so on).',
+      typeChanged:
+        'The type of {{field}} in the file differs from the code that ran, so the value cannot be applied.',
+      value:
+        'This value cannot be written as a Java literal of that type (NaN, infinity and so on).',
+      inFile: 'The file already has this value.',
+      applied: 'Already applied. Saving (Ctrl+S) writes it to the file.',
+      readOnly: '{{field}} in the file: {{reason}}'
+    }
   },
   // Devices tab (device output table)
   devices: {
