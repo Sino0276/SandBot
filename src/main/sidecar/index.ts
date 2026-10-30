@@ -10,7 +10,7 @@ import { electronHttpGet } from '../libraries/electronHttp'
 import { gradleUserHome } from '../libraries/gradleCache'
 import { createLibraryResolver } from '../libraries'
 import { PlayController, type PlayOwner } from './controller'
-import { DASHBOARD_JAR, readSidecarFiles } from './launch'
+import { dashboardJarPath, readSidecarFiles } from './launch'
 import { spawnSidecar } from './process'
 import { kinematicWorld } from './world'
 
@@ -68,7 +68,7 @@ export function registerPlayIpc(): void {
       cacheDir: join(app.getPath('userData'), 'library-cache'),
       gradleHome: gradleUserHome(process.env),
       http: electronHttpGet,
-      dashboardJar: join(sidecarDir(), DASHBOARD_JAR)
+      dashboardJar: dashboardJarPath(sidecarDir())
     })
   })
 

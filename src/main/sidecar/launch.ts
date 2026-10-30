@@ -45,13 +45,24 @@ function failure(code: Failure['code'], detail: string): Failure {
 
 // ---- 사이드카 위치 ----
 
-export type SidecarFiles = { dir: string; runtimeJar: string; sdkJar: string }
+// dashboardJar: FTC Dashboard 대체 jar(이 빌드에 없으면 null). Dashboard를 쓰는 실행에만 필요하다(controller가 확인한다).
+export type SidecarFiles = {
+  dir: string
+  runtimeJar: string
+  sdkJar: string
+  dashboardJar: string | null
+}
 
 export const RUNTIME_JAR = 'sandbot-runtime.jar'
 export const SDK_JAR = 'sandbot-sdk.jar'
 // FTC Dashboard 대체(라이브러리 L2). 팀 Gradle이 Dashboard를 선언하면 라이브러리 해석이 실제 jar 대신 실행 클래스패스에 넣는다.
 export const DASHBOARD_JAR = 'sandbot-dashboard.jar'
 export const SIDECAR_INFO = 'sidecar.json'
+
+// 사이드카 폴더의 FTC Dashboard 대체 jar(라이브러리 해석이 실행 클래스패스에 넣는 경로)
+export function dashboardJarPath(dir: string): string {
+  return path.join(dir, DASHBOARD_JAR)
+}
 
 async function isFile(target: string): Promise<boolean> {
   return (await stat(target).catch(() => null))?.isFile() ?? false
@@ -79,7 +90,13 @@ export async function readSidecarFiles(dir: string): Promise<SidecarFiles | Fail
   const sdkJar = path.join(dir, SDK_JAR)
   for (const jar of [runtimeJar, sdkJar])
     if (!(await isFile(jar))) return failure('noSidecar', `${path.basename(jar)} not found`)
-  return { dir, runtimeJar, sdkJar }
+  const dashboardJar = dashboardJarPath(dir)
+  return {
+    dir,
+    runtimeJar,
+    sdkJar,
+    dashboardJar: (await isFile(dashboardJar)) ? dashboardJar : null
+  }
 }
 
 // ---- 요청 확인 ----

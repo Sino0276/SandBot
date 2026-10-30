@@ -10,6 +10,8 @@ import type {
 import { javaTool } from '../jdk'
 import {
   buildRunRequest,
+  DASHBOARD_JAR,
+  dashboardJarPath,
   javaArgs,
   prepareRun,
   sourceMapper,
@@ -238,6 +240,13 @@ export class PlayController {
       }
       if (abort.signal.aborted) return cancelled
       if (isFailure(libraries)) return libraries
+      // FTC Dashboard 대체를 쓰는 실행인데 이 사이드카 빌드에 그 jar가 없으면 다른 사이드카 파일처럼 안내한다(JVM이 라이브러리
+      // jar를 읽지 못한다고 늦게 실패하지 않게)
+      if (
+        files.dashboardJar === null &&
+        libraries.libraryClasspath.includes(dashboardJarPath(files.dir))
+      )
+        return { ok: false, code: 'noSidecar', detail: `${DASHBOARD_JAR} not found` }
       owner.send({
         type: 'libraryReport',
         runId: request.runId,
