@@ -509,7 +509,7 @@ describe.skipIf(build === null)('링크 검사(linkReport)', () => {
           jar,
           kind: 'unsupported',
           from: 'linkdemo.User',
-          target: 'org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta$Builder#<init>()V'
+          target: 'com.qualcomm.ftccommon.ClassManagerFactory#<init>()V'
         },
         {
           jar,

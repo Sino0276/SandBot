@@ -1,5 +1,6 @@
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.invoke.MethodHandle;
@@ -22,12 +23,16 @@ import java.util.List;
  *   <li>상수 풀의 필드·메서드 참조를 모두 푼다(JVM은 처음 실행할 때 풀므로, 실행하지 않은 길의 NoSuchMethodError·
  *       NoSuchFieldError를 여기서 미리 찾는다). 빌드의 링크 확인(Lifter)과 다른 방법(MethodHandles·리플렉션)으로 한다.
  * </ul>
- * 줄마다 "FAIL …"이고, 끝 줄은 "LINKED classes=… refs=…".
+ * 줄마다 "FAIL …"이고, 끝 줄은 "LINKED classes=… refs=…". 런타임처럼 먼저 모의 저장소를 넣는다(AppUtil의 폴더 상수가 정적
+ * 초기화에서 읽는다).
  */
 public final class LinkProbe {
     public static void main(String[] args) throws Exception {
         List<String> names = Files.readAllLines(Paths.get(args[0]), StandardCharsets.UTF_8);
         ClassLoader loader = LinkProbe.class.getClassLoader();
+        File first = Files.createTempDirectory(Paths.get(args[0]).toAbsolutePath().getParent(), "FIRST").toFile();
+        Class.forName("org.sandbot.sim.Sim", true, loader).getMethod("installFirstFolder", File.class)
+                .invoke(null, first);
         int classes = 0;
         int refs = 0;
         int failures = 0;

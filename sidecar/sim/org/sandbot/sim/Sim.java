@@ -1,5 +1,7 @@
 package org.sandbot.sim;
 
+import java.io.File;
+
 /**
  * 가짜 SDK와 패치한 코드가 쓰는 시뮬레이터 서비스. 런타임이 실행마다(JVM 하나에 한 번) {@link #install}로 넣는다.
  * 넣기 전에 부르면 IllegalStateException이다(사이드카 밖에서 가짜 SDK를 쓴 것).
@@ -9,6 +11,7 @@ public final class Sim {
     private static volatile HubTiming timing;
     private static volatile SimHost host;
     private static final SimDevices DEVICES = new SimDevices();
+    private static volatile File firstFolder;
 
     private Sim() {}
 
@@ -45,6 +48,22 @@ public final class Sim {
 
     public static SimDevices devices() {
         return DEVICES;
+    }
+
+    /**
+     * 모의 저장소(로봇의 /sdcard/FIRST, RunRequest.firstFolder)를 넣는다. 런타임만, 팀 코드를 부르기 전에 한 번. AppUtil의
+     * 폴더 상수(ROOT_FOLDER·FIRST_FOLDER 등)가 클래스를 초기화할 때 읽는다.
+     */
+    public static synchronized void installFirstFolder(File folder) {
+        if (firstFolder != null) throw new IllegalStateException("first folder already installed");
+        if (folder == null) throw new NullPointerException();
+        firstFolder = folder;
+    }
+
+    public static File firstFolder() {
+        File f = firstFolder;
+        if (f == null) throw new IllegalStateException("SandBot simulator is not running");
+        return f;
     }
 
     /** 허브 작업 하나의 비용만큼 가상 시간을 보낸다 */

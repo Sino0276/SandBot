@@ -65,6 +65,37 @@ public final class SandbotOpModeBridge {
         opMode.internalOnEventLoopIteration();
     }
 
+    /**
+     * 사이드카의 OpMode 관리자(OpModeManagerImpl.getOpModeManagerOfActivity가 주는 것과 같다). hardwareMap은 이것을 notifier로
+     * 받아 리스너를 등록하고, 팀 코드·라이브러리도 registerListener로 OpMode 수명 알림을 받는다.
+     */
+    public static OpModeManagerImpl manager() {
+        return OpModeManagerImpl.sandbotManager();
+    }
+
+    /** 실행할 OpMode를 만들었다(registerListener가 돌려주는 지금 OpMode). null이면 끝났다. */
+    public static void setActiveOpMode(OpMode opMode) {
+        manager().sandbotSetActiveOpMode(opMode);
+    }
+
+    /**
+     * OpMode 수명 알림(callActiveOpModeInit의 앞부분): 등록한 리스너(등록 순서) → hardwareMap의 Notifications 장치. 리스너가
+     * 던진 것은 그대로 나간다(런타임이 정한다).
+     */
+    public static void notifyPreInit(OpMode opMode, HardwareMap hardwareMap) {
+        manager().sandbotNotify(0, opMode, hardwareMap);
+    }
+
+    /** callActiveOpModeStart의 앞부분(internalStart 전) */
+    public static void notifyPreStart(OpMode opMode, HardwareMap hardwareMap) {
+        manager().sandbotNotify(1, opMode, hardwareMap);
+    }
+
+    /** callActiveOpModeStop의 끝(OpMode 본문이 끝난 뒤) */
+    public static void notifyPostStop(OpMode opMode, HardwareMap hardwareMap) {
+        manager().sandbotNotify(2, opMode, hardwareMap);
+    }
+
     /** OpMode 스레드에서 남은 예외(RuntimeException 또는 NoClassDefFoundError), 없으면 null */
     public static Throwable exception(OpMode opMode) {
         if (opMode.exception != null) return opMode.exception;

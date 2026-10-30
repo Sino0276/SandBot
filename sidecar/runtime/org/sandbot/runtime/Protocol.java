@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * 사이드카 → 호스트 메시지 쓰기(src/shared/sidecarProtocol.ts의 SidecarMessage). 원래 stdout은 이 클래스만 쓴다.
@@ -118,6 +119,16 @@ final class Protocol {
             String thread) {
         send(Json.obj("type", "error", "tNanos", tNanos, "kind", kind, "message", clip(message), "exception", exception,
                 "stack", stack, "thread", thread));
+    }
+
+    /** 등록기가 등록한 OpMode(목록 요청, sidecarProtocol RegisteredMessage). 항목은 RegistrarRunner.Registration.toJson. */
+    void registered(List<Map<String, Object>> opModes) {
+        send(Json.obj("type", "registered", "opModes", opModes));
+    }
+
+    /** 사이드카 안내(sidecarProtocol NoticeMessage). params는 키 이름순으로 쓴다(결정성). */
+    void notice(long tNanos, String code, Map<String, String> params) {
+        send(Json.obj("type", "notice", "tNanos", tNanos, "code", code, "params", new TreeMap<>(params)));
     }
 
     void finished(long tNanos, String reason) {

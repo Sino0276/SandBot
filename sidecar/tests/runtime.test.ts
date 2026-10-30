@@ -29,6 +29,8 @@ import {
 const OPMODES = resolve(__dirname, 'opmodes')
 const PACKAGE = 'org.firstinspires.ftc.teamcode'
 const TIMEOUT = 10 * 60 * 1000
+// HardwareMap의 OpMode 수명 리스너가 onOpModePreInit에서 쓰는 디버그 줄(RobotLog.dd)
+const HARDWARE_MAP_PRE_INIT = 'D/HardwareMap: Clearing which device instances have been retrieved'
 
 const build = await sidecarBuild()
 
@@ -524,12 +526,14 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     async () => {
       const run = await runSidecar(b, { opMode: 'Spammer' })
       const logs = run.messages.flatMap((m) => (m.type === 'log' ? [m] : []))
+      // INIT의 수명 알림(onOpModePreInit)에서 hardwareMap 리스너가 실제 SDK처럼 디버그 줄 하나를 쓴다(같은 한도를 쓴다)
+      expect(logs[0]).toMatchObject({ stream: 'robotLog', text: HARDWARE_MAP_PRE_INIT })
       const lines = logs.filter((m) => m.text.startsWith('line '))
-      expect(lines.length).toBe(500)
-      expect(lines[499].text).toBe('line 499')
-      const rest = logs.slice(logs.indexOf(lines[499]) + 1).map((m) => [m.stream, m.text])
+      expect(lines.length).toBe(499)
+      expect(lines[498].text).toBe('line 498')
+      const rest = logs.slice(logs.indexOf(lines[498]) + 1).map((m) => [m.stream, m.text])
       expect(rest.slice(0, 2)).toEqual([
-        ['out', '\u2026 1500 lines dropped'],
+        ['out', '\u2026 1501 lines dropped'],
         ['out', 'after']
       ])
       expect(rest).toContainEqual(['err', 'err'])
@@ -617,7 +621,9 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     async () => {
       const run = await runSidecar(b, { opMode: 'HugeOutput', events: { 1: ['start'] } })
       expect(Math.max(...run.raw.map((line) => line.length))).toBeLessThan(MAX_LINE_CHARS)
-      const robotLog = run.messages.find((m) => m.type === 'log' && m.stream === 'robotLog')
+      const robotLog = run.messages.find(
+        (m) => m.type === 'log' && m.stream === 'robotLog' && m.text !== HARDWARE_MAP_PRE_INIT
+      )
       expect(robotLog?.type === 'log' && robotLog.text.length).toBe(64 * 1024)
       expect(robotLog?.type === 'log' && robotLog.text.endsWith('…')).toBe(true)
       const telemetry = run.messages.find((m): m is TelemetryMessage => m.type === 'telemetry')

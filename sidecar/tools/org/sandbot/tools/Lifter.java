@@ -200,6 +200,13 @@ final class Lifter {
             if (sup != null && !sup.file.isInterface())
                 failures.putIfAbsent(type, self + " implements class " + dotted(type));
         }
+        // native 메서드는 링크할 라이브러리가 없다(Android .so, 보통 정적 초기화의 System.loadLibrary와 함께): 손 구현해야 한다
+        for (ClassFile.Member method : file.methods) {
+            if ((method.access & ClassFile.ACC_NATIVE) == 0) continue;
+            failures.putIfAbsent(file.name + "#" + method.name + method.descriptor,
+                    self + " has the native method " + method.name + " (no native libraries in the sidecar)");
+            break;
+        }
         for (ClassFile.MemberRef ref : file.memberRefs) {
             String owner = ref.owner.startsWith("[") ? "java/lang/Object" : ref.owner;
             Found found = lookup(owner);
