@@ -181,4 +181,48 @@ describe('listOpModes', () => {
       'org.firstinspires.ftc.teamcode.a.A'
     ])
   })
+
+  it('파일 이름과 다른 최상위 형식 안의 등록기·OpMode는 빼고(실행 요청이 그 파일의 것으로 받지 않는다), 같으면 public이 아니어도 둔다', async () => {
+    await write(
+      `${PKG}/Tuning.java`,
+      [
+        'package org.firstinspires.ftc.teamcode;',
+        'import com.qualcomm.robotcore.eventloop.opmode.*;',
+        'public class Tuning {',
+        '  @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '}',
+        'class Helpers {',
+        '  public static class Reg {',
+        '    @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '  }',
+        '  @TeleOp public static class Nested extends LinearOpMode {',
+        '    @Override public void runOpMode() {}',
+        '  }',
+        '}',
+        ''
+      ].join('\n')
+    )
+    await write(
+      `${PKG}/Quiet.java`,
+      [
+        'package org.firstinspires.ftc.teamcode;',
+        'import com.qualcomm.robotcore.eventloop.opmode.*;',
+        'final class Quiet {',
+        '  public static class Reg {',
+        '    @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '  }',
+        '}',
+        ''
+      ].join('\n')
+    )
+    const result = await listOpModes(root)
+    expect(result).toMatchObject({
+      ok: true,
+      opModes: [],
+      registrars: [
+        { className: 'org.firstinspires.ftc.teamcode.Quiet$Reg', path: `${PKG}/Quiet.java` },
+        { className: 'org.firstinspires.ftc.teamcode.Tuning', path: `${PKG}/Tuning.java`, line: 4 }
+      ]
+    })
+  })
 })

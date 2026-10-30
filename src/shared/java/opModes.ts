@@ -601,6 +601,16 @@ export function parseOpModeSource(text: string): {
   return { opModes: found, registrars }
 }
 
+// 바이너리 이름의 최상위 형식이 그 파일(경로의 마지막 이름, .java 뺀 것)의 이름과 같은가. javac는 public 최상위 형식을 같은
+// 이름의 파일에만 두게 한다. 다른 이름의 최상위 형식(public일 수 없다) 안의 public static 중첩 클래스는 실제 SDK에서는 OpMode·
+// 등록기가 될 수 있지만, SandBot은 실행 요청의 className·path를 이 규칙으로 맞추므로(launch.ts isBinaryNameOf) 목록에도
+// 넣지 않는다(src/main/opModes.ts).
+export function isTopLevelOfFile(className: string, path: string): boolean {
+  const topLevel = className.slice(className.lastIndexOf('.') + 1).split('$')[0]
+  const stem = path.slice(path.lastIndexOf('/') + 1).replace(/\.java$/, '')
+  return topLevel === stem
+}
+
 const FLAVOR_ORDER: Record<OpModeFlavor, number> = { TeleOp: 0, Autonomous: 1 }
 
 function compareText(a: string, b: string): number {

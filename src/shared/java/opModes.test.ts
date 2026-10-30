@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { OpModeInfo } from '../play'
-import { compareOpModes, parseOpModes, parseOpModeSource } from './opModes'
+import { compareOpModes, isTopLevelOfFile, parseOpModes, parseOpModeSource } from './opModes'
 
 const HEADER = 'package org.firstinspires.ftc.teamcode;\n'
 const IMPORTS = [
@@ -340,6 +340,18 @@ class PackagePrivate { @OpModeRegistrar public static void r(OpModeManager m) {}
     ]) {
       expect(() => parseOpModeSource(text)).not.toThrow()
     }
+  })
+})
+
+describe('isTopLevelOfFile', () => {
+  it('바이너리 이름의 최상위 형식 이름이 파일 이름과 같은가(중첩은 $ 앞, 패키지 없음도)', () => {
+    const path = 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java'
+    expect(isTopLevelOfFile('org.firstinspires.ftc.teamcode.Tuning', path)).toBe(true)
+    expect(isTopLevelOfFile('org.firstinspires.ftc.teamcode.Tuning$Reg$Deeper', path)).toBe(true)
+    expect(isTopLevelOfFile('Tuning', 'src/main/java/Tuning.java')).toBe(true)
+    expect(isTopLevelOfFile('org.firstinspires.ftc.teamcode.Helpers$Reg', path)).toBe(false)
+    expect(isTopLevelOfFile('org.firstinspires.ftc.teamcode.TuningX', path)).toBe(false)
+    expect(isTopLevelOfFile('org.firstinspires.ftc.teamcode.tuning', path)).toBe(false)
   })
 })
 

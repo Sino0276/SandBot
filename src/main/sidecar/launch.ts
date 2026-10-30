@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
 import type { GradleProject } from '../../shared/gradle'
-import { parseOpModes } from '../../shared/java/opModes'
+import { isTopLevelOfFile, parseOpModes } from '../../shared/java/opModes'
 import type { LibraryProgress, LibraryReport } from '../../shared/libraries'
 import {
   MAX_BATTERY_VOLTAGE,
@@ -110,14 +110,14 @@ export function isRegisteredName(name: unknown): name is string {
 }
 
 // OpMode 바이너리 이름이 그 파일의 것인지: 최상위 클래스 이름은 파일 이름과 같다(public 최상위 클래스만 OpMode가
-// 될 수 있고, javac는 public 최상위 클래스의 파일 이름을 강제한다). 중첩 클래스는 Outer$Inner.
+// 될 수 있고, javac는 public 최상위 클래스의 파일 이름을 강제한다). 중첩 클래스는 Outer$Inner. OpMode 목록도 같은
+// 규칙으로 거른다(src/shared/java/opModes.ts isTopLevelOfFile).
 export function isBinaryNameOf(className: string, relPath: string): boolean {
   if (className.length > 1024) return false
   const segments = className.split('.')
   if (!segments.every((segment) => segment.split('$').every((part) => IDENTIFIER.test(part))))
     return false
-  const stem = relPath.slice(relPath.lastIndexOf('/') + 1).replace(/\.java$/, '')
-  return segments[segments.length - 1].split('$')[0] === stem
+  return isTopLevelOfFile(className, relPath)
 }
 
 // 모양 확인. 틀리면 notAllowed(렌더러 오류).

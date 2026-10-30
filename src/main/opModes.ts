@@ -9,6 +9,7 @@ import {
 } from '../shared/ipc'
 import {
   compareOpModes,
+  isTopLevelOfFile,
   parseOpModeSource,
   type ParsedOpMode,
   type ParsedRegistrar
@@ -83,11 +84,14 @@ export async function scanOpModes(
         const parsed = MAY_HAVE_OPMODE.test(read.text)
           ? parseOpModeSource(read.text)
           : { opModes: [], registrars: [] }
+        // 다른 이름의 최상위 형식 안의 것은 실행 요청이 그 파일의 것으로 받지 않는다(isTopLevelOfFile)
+        const inFile = (found: { className: string }): boolean =>
+          isTopLevelOfFile(found.className, read.path)
         next.set(read.path, {
           size: read.size,
           mtimeMs: read.mtimeMs,
-          opModes: parsed.opModes,
-          registrars: parsed.registrars
+          opModes: parsed.opModes.filter(inFile),
+          registrars: parsed.registrars.filter(inFile)
         })
       }
       // 읽지 못한 파일(없어짐, 잠김, 허용하지 않는 링크)은 목록에서 빼고 다음에 다시 읽는다
