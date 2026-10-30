@@ -215,6 +215,22 @@ describe('컴파일 진단의 라이브러리 안내', () => {
       coordinate: 'com.acmerobotics.roadrunner:actions:1.+',
       reason: 'dynamicVersion'
     })
+    // RR quickstart를 오프라인으로: ftc·actions는 받지 못했고 Dashboard는 L1에서 불러오지 않는다. 패키지는 Dashboard jar에
+    // 있으므로(ftc는 끌어올 뿐) 선언 순서와 관계없이 Dashboard를 댄다(인터넷에 연결해도 풀리지 않는다)
+    const offline = [
+      entry('com.acmerobotics.roadrunner:ftc:0.1.25', 'failed', 'offline'),
+      entry('com.acmerobotics.roadrunner:core:1.0.1', 'failed', 'offline'),
+      entry('com.acmerobotics.roadrunner:actions:1.0.1', 'failed', 'offline'),
+      entry('com.acmerobotics.dashboard:dashboard:0.5.1', 'unsupported', 'notSupported')
+    ]
+    for (const entries of [offline, [...offline].reverse()])
+      expect(
+        diagnosticHints(entries, new Set(), [])(missing('com.acmerobotics.dashboard.config'))
+      ).toEqual({
+        kind: 'libraryNotLoaded',
+        coordinate: 'com.acmerobotics.dashboard:dashboard:0.5.1',
+        reason: 'notSupported'
+      })
   })
 
   it('전이 의존성만이면 선언했다고 하지 않고 끌어온 쪽을 댄다', () => {

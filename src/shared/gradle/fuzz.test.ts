@@ -351,6 +351,36 @@ describe('일을 부풀리는 입력', () => {
     }
   })
 
+  it('아주 긴 카탈로그 이름을 변수로 받아 되풀이해 쓴다(예전에는 쓸 때마다 긴 이름을 다시 이어 5–16초)', async () => {
+    const long = 'v'.repeat(150_000)
+    for (const use of [
+      'y = "$x"\n',
+      'y = x.get()\n',
+      `y = [${Array(50).fill('"$x"').join(', ')}]\n`
+    ]) {
+      const files: MemoryFiles = {
+        'gradle/libs.versions.toml': `[versions]\n${long} = "1"\n`,
+        'TeamCode/build.gradle': `ext.x = libs.versions.${long}\n${"apply from: 'u.gradle'\n".repeat(64)}`,
+        'TeamCode/u.gradle': use.repeat(1000)
+      }
+      const project = await timed(files, 500)
+      expect(project.diagnostics.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('괄호로 감싼 아주 긴 이름 사슬을 부르는 문장(예전에는 사슬을 문장마다 제곱 시간으로 펼쳐 9초)', async () => {
+    let chain = 'a'
+    for (let level = 0; level < 30; level++) chain = `(${chain}${'.b'.repeat(255)})`
+    const files: MemoryFiles = {
+      'TeamCode/build.gradle': `dependencies { implementation 'g:a:1' }\n${"apply from: 'u.gradle'\n".repeat(60)}`,
+      'TeamCode/u.gradle': `${chain}()\n`
+    }
+    const project = await timed(files, 500)
+    expect(project.dependencies.map((d) => d.artifact)).toEqual(['a'])
+    // 한 파일에 그런 문장을 가득
+    await timed({ 'TeamCode/build.gradle': fill(`${chain}()\n`) }, 500)
+  })
+
   it('settings의 include에 같은 목록을 여러 번 넣는다(예전에는 몇 초 뒤 Invalid array length)', async () => {
     const list = `def l = [${Array.from({ length: 1000 }, (_, i) => `':m${i}'`).join(', ')}]\n`
     // 64 KB면 예전에는 2천만 개를 넣었다

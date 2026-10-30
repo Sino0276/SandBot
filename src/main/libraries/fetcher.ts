@@ -360,14 +360,18 @@ export class FileFetcher {
     const repository = repositoryFor(request.group)
     if (repository.checksums && source === 'download') {
       let unreadable: string | null = null
+      // 한 알고리즘의 체크섬 파일을 받지 못해도(429·시간 제한 — 거울에 .sha256이 없으면 처음 저장소의 실패를 따른다)
+      // 다음 알고리즘을 해 본다. 오래된 Maven Central 파일(ejml 0.39, jsr305, annotations 13.0)은 .sha1만 있다.
+      let failure: FetchFailure | null = null
       for (const [algorithm, length] of CHECKSUM_FILES[request.kind]) {
         const file = `${request.file}.${algorithm}`
         let text: Buffer
         try {
           text = await this.download(request, file, 1024)
         } catch (error) {
-          if (error instanceof FetchFailure && error.code === 'notFound') continue
-          throw error
+          if (!(error instanceof FetchFailure)) throw error
+          if (error.code !== 'notFound') failure ??= error
+          continue
         }
         const value = checksumText(text, length)
         if (value === null) {
@@ -380,6 +384,8 @@ export class FileFetcher {
       }
       // 체크섬 파일이 왔지만 체크섬이 아니다(차단 페이지 등): 확인하지 못한 파일을 처음 받은 것으로 보지 않는다
       if (unreadable !== null) throw new IntegrityFailure(`${key}: ${unreadable} is not a checksum`)
+      // 어느 체크섬도 받지 못했고 없다는 것도 확인하지 못했다(404만이 아니다): 처음 받은 것으로 보지 않는다
+      if (failure !== null) throw failure
     }
     if (source === 'gradleCache' && repository.checksums)
       return { integrity: 'gradleCache', firstUse: false }

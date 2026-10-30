@@ -18,6 +18,7 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
+import com.qualcomm.robotcore.hardware.Gyroscope;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.NormalizedRGBA;
@@ -29,6 +30,7 @@ import com.qualcomm.robotcore.hardware.VoltageSensor;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.robotcore.external.navigation.Acceleration;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
 import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
 import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
@@ -488,6 +490,32 @@ public final class DeviceBehaviorTest {
         bot.in("imu", "yaw", Math.toRadians(50));
         Check.near(20, legacy.getAngularOrientation().firstAngle, 1e-3, "heading counts from the reset");
         Check.near(20, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw counts from the reset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testLegacyBno055AngularVelocitySigns() {
+        // 실제 BNO055IMUImpl.getAngularVelocity는 레지스터 값(BNO055Util.getRawAngularVelocity)의 X·Y 부호를 바꾸고 Z는 그대로
+        // 준다(IMU 인터페이스의 BNO055IMUNew는 바꾸지 않는다). 허브를 세워 달면 로봇 요 속도가 칩 X·Y 축에 나온다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        SimImu imu = (SimImu) bot.get(IMU.class, "imu");
+        imu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                RevHubOrientationOnRobot.LogoFacingDirection.LEFT, RevHubOrientationOnRobot.UsbFacingDirection.UP)));
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yawRate", 1.0);
+        AngularVelocity raw = imu.chipAngularVelocity().toAngleUnit(AngleUnit.DEGREES);
+        Check.isTrue(Math.abs(raw.xRotationRate) + Math.abs(raw.yRotationRate) > 30, "the yaw rate shows on a chip X/Y axis");
+        AngularVelocity rates = legacy.getAngularVelocity();
+        Check.near(-raw.xRotationRate, rates.xRotationRate, 1e-4, "legacy X is the negated register value");
+        Check.near(-raw.yRotationRate, rates.yRotationRate, 1e-4, "legacy Y is the negated register value");
+        Check.near(raw.zRotationRate, rates.zRotationRate, 1e-4, "legacy Z is the register value");
+        AngularVelocity gyro = ((Gyroscope) legacy).getAngularVelocity(AngleUnit.DEGREES);
+        Check.near(rates.xRotationRate, gyro.xRotationRate, 1e-4, "Gyroscope view X");
+        Check.near(rates.yRotationRate, gyro.yRotationRate, 1e-4, "Gyroscope view Y");
+        // IMU 인터페이스는 부호를 바꾸지 않은 레지스터 값으로 로봇 요 속도를 낸다
+        Check.near(Math.toDegrees(1), imu.getRobotAngularVelocity(AngleUnit.DEGREES).zRotationRate, 1e-2, "IMU robot yaw rate");
         SandbotHardware.afterStop(bot.map);
     }
 

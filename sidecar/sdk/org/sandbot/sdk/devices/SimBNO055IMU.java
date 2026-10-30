@@ -46,7 +46,7 @@ import java.util.Set;
  * ({@link #chipEulerZyx}). 허브 장착 방향을 모르는 옛 API라 로봇 축이 아니라 칩 축이다(허브 로고 위·USB 앞이면 로봇 축과 같다).
  * 적분기가 null을 주면 getAcceleration·getVelocity·getPosition은 새 0 값을 준다.
  *
- * <p>시뮬레이션 근사: 각속도는 칩 축 물리 값, 중력 가속도는 칩 축으로 돌린 (0, 0, 9.80665) m/s²(선형 가속도는 시뮬레이터 입력이
+ * <p>시뮬레이션 근사: 각속도는 칩 축 레지스터 값(실제처럼 X·Y 부호를 바꿔서), 중력 가속도는 칩 축으로 돌린 (0, 0, 9.80665) m/s²(선형 가속도는 시뮬레이터 입력이
  * 없어 0), 자기장 0, 온도 25 °C, 보정 상태는 모두 완료(0xFF). 가속도 적분은 실제와 달리 따로 스레드를 돌리지 않고(사이드카는
  * OpMode 스레드 하나) 적분기에 시작 위치·속도만 넣는다(선형 가속도가 0이라 그대로다, 팀 적분기의 update는 부르지 않는다).
  * 레지스터 직접 읽기·쓰기는 지원하지 않는다. I2C 비용: 초기화는 실제 internalInitializeOnce의 트랜잭션·기다림({@link #resetChip}),
@@ -192,7 +192,10 @@ public final class SimBNO055IMU extends I2cDeviceSynchDeviceWithParameters<I2cDe
 
     @Override public synchronized AngularVelocity getAngularVelocity(org.firstinspires.ftc.robotcore.external.navigation.AngleUnit unit) {
         throwIfNotInitialized();
-        return chip.chipAngularVelocity().toAngleUnit(unit);
+        // 실제 BNO055IMUImpl처럼 레지스터 값의 X·Y 부호를 바꾼다(IMU 인터페이스의 BNO055IMUNew는 바꾸지 않는다)
+        AngularVelocity raw = chip.chipAngularVelocity().toAngleUnit(unit);
+        return new AngularVelocity(unit, -raw.xRotationRate, -raw.yRotationRate, raw.zRotationRate,
+                raw.acquisitionTime);
     }
 
     /** 실제처럼 X·Y·Z(실제는 HashSet, 여기서는 결정성을 위해 넣은 순서) */

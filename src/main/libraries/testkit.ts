@@ -127,20 +127,20 @@ export function artifactUrl(base: string, coordinate: string, file: string): str
   return `${base}${group.split('.').join('/')}/${artifact}/${version}/${file}`
 }
 
-// 저장소에 파일을 올린다(checksums면 .sha1·.sha256도)
+// 저장소에 파일을 올린다(checksums면 .sha1·.sha256도, 'sha1'이면 .sha1만 — 오래된 Maven Central 파일처럼)
 export function publish(
   routes: Map<string, Route>,
   base: string,
   coordinate: string,
   file: string,
   bytes: Buffer | string,
-  checksums = base !== BROTT
+  checksums: boolean | 'sha1' = base !== BROTT
 ): void {
   const url = artifactUrl(base, coordinate, file)
   routes.set(url, Buffer.from(bytes))
   if (checksums) {
     routes.set(`${url}.sha1`, hex('sha1', bytes))
-    if (!file.endsWith('.pom') && !file.endsWith('.module'))
+    if (checksums !== 'sha1' && !file.endsWith('.pom') && !file.endsWith('.module'))
       routes.set(`${url}.sha256`, `${hex('sha256', bytes)}  ${file}`)
   }
 }

@@ -103,6 +103,8 @@ export function classifyModule(group: string, artifact: string, version: string)
 // - owns: 그 패키지를 Android Studio의 컴파일 클래스패스에 두는 좌표. 모듈 자신의 패키지이거나 compile 범위 의존성으로
 //   끌어오는 것이다(Pedro ftc 2.x → core 2.x, revhub 3.x → core 3.x, Road Runner ftc·actions → FTC Dashboard). 버전마다
 //   패키지가 다르면 버전도 본다(실제 jar·POM으로 확인).
+// - holds: owns 가운데 자기 jar에 그 패키지를 가진 좌표(없으면 owns 전부). 안내는 끌어오기만 하는 좌표보다 이것을 먼저
+//   댄다(Road Runner ftc를 받지 못했어도 Dashboard 패키지는 Dashboard를 불러와야 생긴다).
 // - library: 같은 라이브러리의 좌표(다른 버전·모듈). 이것이 있는데 owns인 좌표가 없으면 다른 버전의 API(Pedro 3.x
 //   프로젝트의 2.x 패키지 등)라 좌표를 대지 않는다. null이면 다른 라이브러리를 거쳐서만 오는 패키지(kotlin·ejml)라
 //   선언했는지 말하지 않는다.
@@ -112,6 +114,7 @@ export type KnownPackage = {
   // prefix 패키지 자신에만 맞는다(하위 패키지는 아님)
   exact?: true
   owns: (group: string, artifact: string, version: string) => boolean
+  holds?: (group: string, artifact: string, version: string) => boolean
   library: ((group: string, artifact: string) => boolean) | null
 }
 
@@ -138,6 +141,12 @@ const PEDRO_LINES: Record<1 | 2 | 3, Owns> = {
   1: (g, a) => g === PEDRO && a === 'pedro',
   2: (g, a, v) => g === PEDRO && (a === 'ftc' || (a === 'core' && pedroCoreLine(v, 2))),
   3: (g, a, v) => g === PEDRO && (a === 'revhub' || (a === 'core' && pedroCoreLine(v, 3)))
+}
+// 그 판의 본체 패키지를 자기 jar에 가진 좌표(ftc 2.x·revhub 3.x는 core를 끌어올 뿐이다)
+const PEDRO_HOLDERS: Record<1 | 2 | 3, Owns> = {
+  1: PEDRO_LINES[1],
+  2: (g, a, v) => g === PEDRO && a === 'core' && pedroCoreLine(v, 2),
+  3: (g, a, v) => g === PEDRO && a === 'core' && pedroCoreLine(v, 3)
 }
 // 본체 패키지와 그것이 있는 판(pedro 1.0.9, core 2.1.2, core 3.0.2 jar로 확인)
 const PEDRO_PACKAGES: readonly (readonly [string, readonly (1 | 2 | 3)[]])[] = [
@@ -181,10 +190,17 @@ export const KNOWN_PACKAGES: readonly KnownPackage[] = [
   ...PEDRO_PACKAGES.map(([name, lines]): KnownPackage => ({
     prefix: `${PEDRO}.${name}`,
     owns: (g, a, v) => lines.some((line) => PEDRO_LINES[line](g, a, v)),
+    holds: (g, a, v) => lines.some((line) => PEDRO_HOLDERS[line](g, a, v)),
     library: pedroLibrary
   })),
   // 최상위 패키지 자신의 클래스는 2.x core에만 있다(VectorCalculator·ErrorCalculator, 1.0.9·3.0.2에는 없음)
-  { prefix: PEDRO, exact: true, owns: PEDRO_LINES[2], library: pedroLibrary },
+  {
+    prefix: PEDRO,
+    exact: true,
+    owns: PEDRO_LINES[2],
+    holds: PEDRO_HOLDERS[2],
+    library: pedroLibrary
+  },
   // 그 밖의 하위 패키지: 어느 좌표의 것인지 모른다
   { prefix: PEDRO, owns: () => false, library: pedroLibrary },
   { prefix: 'com.bylazar', owns: bylazar, library: bylazar },
@@ -197,6 +213,7 @@ export const KNOWN_PACKAGES: readonly KnownPackage[] = [
   {
     prefix: 'com.acmerobotics.dashboard',
     owns: (g, a) => DASHBOARD_GROUPS.has(g) || roadRunnerWithDashboard(g, a),
+    holds: (g) => DASHBOARD_GROUPS.has(g),
     library: (g) => DASHBOARD_GROUPS.has(g)
   },
   {

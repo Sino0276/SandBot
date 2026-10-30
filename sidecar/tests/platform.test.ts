@@ -294,8 +294,10 @@ const androidSdk = process.env.SANDBOT_ANDROID_SDK
 // compileSdk N(android-N 또는 android-N.0, Android Gradle 플러그인이 찾는 이름 먼저), N.M이면 부 버전 M(minorApiLevel,
 // android-N.M), 없으면 부 버전까지 가장 높은 것. api는 그 플랫폼의 주 버전이다.
 async function realPlatform(
-  sdk: string
+  folder: string
 ): Promise<{ jar: string; api: number; androidJar: string }> {
+  // 메인은 절대 경로인 ANDROID_HOME만 쓰므로 작업 폴더 기준 경로도 받게 푼다
+  const sdk = resolve(folder)
   const wanted = process.env.SANDBOT_ANDROID_API ?? ''
   const match = /^([1-9]\d*)(?:\.(0|[1-9]\d*))?$/.exec(wanted)
   if (wanted !== '' && !match) throw new Error(`SANDBOT_ANDROID_API is not N or N.M: ${wanted}`)

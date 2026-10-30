@@ -224,18 +224,28 @@ function scalarText(value: Extract<Value, { kind: 'string' | 'number' | 'boolean
 }
 
 // name·member·index(글자 키) 사슬의 이름들. 그 밖이면 null.
+// 이름 사슬(a.b['c'].d)의 이름들. Gradle DSL 경로는 짧으므로 MAX_PATH를 넘는 사슬은 경로로 보지 않는다(긴 사슬을 문장마다
+// 여러 번 펼치는 일이 단위로 세지 않은 채 몇 초씩 걸리지 않게). 한 번 훑어 거꾸로 모은다.
+const MAX_PATH = 64
+// libs. 뒤 카탈로그 이름의 글자 수 한도
+const MAX_CATALOG_NAME = 256
+
 function pathOf(expr: Expr): string[] | null {
-  if (expr.kind === 'name') return [expr.name]
-  if (expr.kind === 'member') {
-    const base = pathOf(expr.target)
-    return base ? [...base, expr.name] : null
+  const names: string[] = []
+  let node = expr
+  while (node.kind === 'member' || node.kind === 'index') {
+    if (names.length >= MAX_PATH) return null
+    if (node.kind === 'member') names.push(node.name)
+    else {
+      const key = literalString(node.index)
+      if (key === null) return null
+      names.push(key)
+    }
+    node = node.target
   }
-  if (expr.kind === 'index') {
-    const base = pathOf(expr.target)
-    const key = literalString(expr.index)
-    return base && key !== null ? [...base, key] : null
-  }
-  return null
+  if (node.kind !== 'name') return null
+  names.push(node.name)
+  return names.reverse()
 }
 
 function literalString(expr: Expr): string | null {
@@ -1827,8 +1837,14 @@ class GradleReader {
         )
       case 'map':
         return base.entries.get(name) ?? unresolved(`no key '${name}'`, { missing: true })
-      case 'catalog':
+      case 'catalog': {
+        // 카탈로그 이름(libs.a.b.c)은 쓸 때마다 잇고 찾으므로 길이를 묶는다(실제 별칭은 수십 자다)
+        let length = name.length
+        for (const part of base.path) length += part.length + 1
+        if (base.path.length >= MAX_PATH || length > MAX_CATALOG_NAME)
+          return unresolved('version catalog name is too long', { catalog: true })
         return { kind: 'catalog', path: [...base.path, name] }
+      }
       case 'provider':
         if (name === 'orNull') return base.value
         break

@@ -173,12 +173,14 @@ function publishPedro(routes: Map<string, Route>): void {
     'annotations-13.0.pom',
     pom({ coordinate: 'org.jetbrains:annotations:13.0' })
   )
+  // Maven Central의 annotations 13.0에는 .sha256이 없고 .sha1만 있다
   publish(
     routes,
     CENTRAL,
     'org.jetbrains:annotations:13.0',
     'annotations-13.0.jar',
-    ANNOTATIONS_JAR
+    ANNOTATIONS_JAR,
+    'sha1'
   )
   publish(
     routes,
@@ -1183,6 +1185,31 @@ describe('라이브러리 가져오기: 오프라인·막힌 저장소·잘못�
       'org.jetbrains:annotations:13.0 used'
     ])
     expect(result.report.entries[3].detail).toContain(GOOGLE)
+  })
+
+  it('Maven Central 본 주소가 429면 .sha256이 없는 파일(.sha1만)도 거울의 .sha1로 확인한다', async () => {
+    const routes = new Map<string, Route>()
+    publishPedro(routes)
+    const repository = fakeHttp(routes)
+    const http: LibraryDeps['http'] = async (url, options) => {
+      if (url.startsWith(CENTRAL))
+        return {
+          status: 429,
+          header: () => null,
+          body: (async function* () {
+            // 429는 본문을 보지 않는다
+          })()
+        }
+      return repository(url.replace(MIRROR, CENTRAL), options)
+    }
+    const { result } = await run(
+      project([...FTC_TEMPLATE(), dep('com.pedropathing:revhub:3.0.2')]),
+      {},
+      { http }
+    )
+    expect(statuses(result.report.entries)).toContain('org.jetbrains:annotations:13.0 used')
+    const annotations = result.report.entries.find((e) => e.artifact === 'annotations')
+    expect(annotations?.integrity).toBe('checksum')
   })
 
   it('처음 받은 해시를 기록하지 못하면 이번에는 쓰되 캐시·잠금에 넣지 않고 알리며, 다음 INIT에 다시 받아 기록한다', async () => {

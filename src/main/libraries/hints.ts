@@ -52,22 +52,32 @@ export function diagnosticHints(
     const known = knownPackageOf(packageName)
     if (!known) return null
     const owners = entries.filter((entry) => known.owns(entry.group, entry.artifact, entry.version))
-    const notLoaded = owners.filter((entry) => NOT_LOADED.has(entry.status))
-    // 직접 선언한 것을 먼저
-    const declared = notLoaded.find((entry) => entry.declaredAt !== null)
-    if (declared)
+    const holds = known.holds ?? known.owns
+    // 그 패키지를 자기 jar에 가진 좌표를 끌어오기만 하는 좌표보다 먼저, 같으면 직접 선언한 것을 먼저(같은 순위는 보고 순서)
+    const rank = (entry: LibraryEntry): number =>
+      (holds(entry.group, entry.artifact, entry.version) ? 0 : 2) +
+      (entry.declaredAt !== null ? 0 : 1)
+    const notLoaded = owners
+      .filter(
+        (entry) =>
+          NOT_LOADED.has(entry.status) &&
+          (entry.declaredAt !== null || entry.requestedBy.length > 0)
+      )
+      .map((entry, index) => ({ entry, index, rank: rank(entry) }))
+      .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    const chosen = notLoaded[0]?.entry
+    if (chosen && chosen.declaredAt !== null)
       return {
         kind: 'libraryNotLoaded',
-        coordinate: coordinateOf(declared),
-        reason: declared.reason
+        coordinate: coordinateOf(chosen),
+        reason: chosen.reason
       }
-    const dependency = notLoaded.find((entry) => entry.requestedBy.length > 0)
-    if (dependency)
+    if (chosen)
       return {
         kind: 'dependencyNotLoaded',
-        coordinate: coordinateOf(dependency),
-        reason: dependency.reason,
-        requestedBy: dependency.requestedBy[0]
+        coordinate: coordinateOf(chosen),
+        reason: chosen.reason,
+        requestedBy: chosen.requestedBy[0]
       }
     // 그 패키지를 가진 좌표를 불러왔거나(실행 범위만인 것 등) 같은 라이브러리의 다른 버전·모듈을 선언했다: 좌표 안내가
     // 맞지 않다. 다른 라이브러리를 거쳐서만 오는 패키지(library null)는 선언했는지 말하지 않는다.
