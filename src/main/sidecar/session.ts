@@ -1,5 +1,5 @@
 import path from 'path'
-import type { DashConfigSet } from '../../shared/dashboard'
+import { MAX_DASH_DATA, type DashConfigSet, type DashOp } from '../../shared/dashboard'
 import {
   AUTONOMOUS_SECONDS,
   type DiagnosticHint,
@@ -16,6 +16,8 @@ import {
 import {
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
+  type DashConfigMessage,
+  type DashMessage,
   type DeviceValues,
   type DsEvent,
   type FinishReason,
@@ -52,9 +54,14 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   그 틱의 답(tickReply)에 싣는다. 그래서 답을 늦추거나(속도·일시 정지) 답하지 못한 틱(끝)도 적분은 틱 순서대로 한 번씩
 //   결정적으로 하고, 일시 정지 중의 자세는 둔 틱의 것이다. 답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다(세계는 바뀐 키만
 //   주므로). 세계의 예외는 실행을 멈추지 않는다: simNotice worldError를 한 번 보내고 사이드카는 이전 입력을 계속 쓴다.
-// 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz,
-//   바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시 정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는
-//   한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
+// FTC Dashboard(라이브러리 L2): 사이드카가 전송 간격(가상)마다 보낸 패킷 묶음(dash)을 텔레메트리처럼 30 Hz 이하로 다시 묶어
+//   보낸다. 묶음 사이도 사이드카와 같은 규칙으로 합친다(cleared는 OR, data는 마지막 cleared 묶음부터 키마다 마지막 값, log는
+//   마지막 cleared 묶음부터의 마지막 null 아닌 것, ops는 마지막 null 아닌 것). 설정 트리(dashConfig)는 마지막 것만 보낸다. Config 탭의 값(PlayCommand config)은 다음 틱 답의
+//   configSet에 싣는다(일시 정지 중이면 답을 보낼 때). 사이드카 안내(notice)는 simNotice다.
+// 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·dash(합쳐서, 30 Hz 이하)·dashConfig(최신만,
+//   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시
+//   정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는 한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·
+//   finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
   // 단조 증가하는 밀리초
@@ -114,6 +121,8 @@ export type SessionOptions = {
 
 const STATUS_INTERVAL_MS = 100
 const TELEMETRY_INTERVAL_MS = 34
+// 다음 틱 답을 기다리는 Config 탭의 값 바꾸기 수(일시 정지 중에 계속 바꿔도 끝없이 쌓이지 않게, 넘으면 버린다)
+const MAX_PENDING_CONFIG = 256
 const DEVICES_INTERVAL_MS = 50
 const POSE_INTERVAL_MS = 16
 // 실행 하나에서 보내는 simNotice의 최대 수(세계가 안내를 끝없이 만들지 않게)
@@ -164,6 +173,41 @@ function inputsRecord(state: InputState): Record<string, DeviceValues> {
   return Object.fromEntries(
     [...state].map(([device, values]) => [device, Object.fromEntries(values)])
   )
+}
+
+// 아직 보내지 않은 Dashboard 패킷 묶음(사이드카 dash 여럿을 합친 것)
+type DashMerge = {
+  tNanos: number
+  cleared: boolean
+  // 키 → 마지막 값(마지막 cleared 묶음부터)
+  data: Map<string, string>
+  log: string[] | null
+  ops: DashOp[] | null
+}
+
+// 사이드카가 묶음 안에서 하는 것과 같다: clearTelemetry는 그 앞의 data·로그를 지우고(실제 웹 화면도 둘 다 지운다) 그림은
+// 남긴다(실제 FieldView는 빈 묶음에 그림을 그대로 둔다). log·ops는 마지막 null 아닌 것.
+function mergeDash(into: DashMerge | null, message: DashMessage): DashMerge {
+  const merged: DashMerge =
+    into === null || message.cleared
+      ? {
+          tNanos: message.tNanos,
+          cleared: message.cleared || (into?.cleared ?? false),
+          data: new Map(),
+          log: null,
+          ops: into?.ops ?? null
+        }
+      : into
+  merged.tNanos = message.tNanos
+  for (const [key, value] of message.data) merged.data.set(key, value)
+  if (message.log !== null) merged.log = message.log
+  if (message.ops !== null) merged.ops = message.ops
+  return merged
+}
+
+// 키 정렬(사이드카의 TreeMap과 같은 UTF-16 순서), 한 묶음의 키 한도까지
+function dashData(data: Map<string, string>): [string, string][] {
+  return [...data].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, MAX_DASH_DATA)
 }
 
 function errorMessage(error: unknown): string {
@@ -262,6 +306,10 @@ export class SidecarSession {
   private logTimer: unknown = null
   private telemetry: TelemetryMessage | null = null
   private readonly telemetryThrottle: Throttle
+  private dash: DashMerge | null = null
+  private readonly dashThrottle: Throttle
+  private dashConfig: DashConfigMessage | null = null
+  private readonly dashConfigThrottle: Throttle
   private outputs: { tNanos: number; outputs: Record<string, DeviceValues> } | null = null
   private lastDevicesKey = ''
   private readonly devicesThrottle: Throttle
@@ -288,6 +336,10 @@ export class SidecarSession {
     this.speed = isValidSpeed(options.speed) ? options.speed : 1
     this.telemetryThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () =>
       this.sendTelemetry()
+    )
+    this.dashThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () => this.sendDash())
+    this.dashConfigThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () =>
+      this.sendDashConfig()
     )
     this.devicesThrottle = new Throttle(this.clock, DEVICES_INTERVAL_MS, () => this.sendDevices())
     this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => this.sendPose())
@@ -340,7 +392,8 @@ export class SidecarSession {
         break
       case 'config':
         // 다음 틱 답에 싣는다(일시 정지 중이면 답을 보낼 때)
-        this.pendingConfig.push({ path: command.path, value: command.value })
+        if (this.pendingConfig.length < MAX_PENDING_CONFIG)
+          this.pendingConfig.push({ path: [...command.path], value: command.value })
         break
     }
   }
@@ -724,6 +777,20 @@ export class SidecarSession {
         this.telemetry = message
         this.telemetryThrottle.request()
         break
+      case 'dash':
+        this.observe(message.tNanos)
+        this.dash = mergeDash(this.dash, message)
+        this.dashThrottle.request()
+        break
+      case 'dashConfig':
+        this.observe(message.tNanos)
+        this.dashConfig = message
+        this.dashConfigThrottle.request()
+        break
+      case 'notice':
+        this.observe(message.tNanos)
+        this.simNotice(message.tNanos, message.code, message.params)
+        break
       case 'log':
         this.observe(message.tNanos)
         this.pushLog(message)
@@ -815,6 +882,8 @@ export class SidecarSession {
     this.clearKillTimer()
     this.flushLogs()
     this.telemetryThrottle.flush()
+    this.dashThrottle.flush()
+    this.dashConfigThrottle.flush()
     this.devicesThrottle.flush()
     this.poseThrottle.flush()
     this.emitStatus(true)
@@ -883,6 +952,28 @@ export class SidecarSession {
       tNanos: message.tNanos,
       frame: message.frame
     })
+  }
+
+  private sendDash(): void {
+    const merged = this.dash
+    if (!merged) return
+    this.dash = null
+    this.emit({
+      type: 'dash',
+      runId: this.runId,
+      tNanos: merged.tNanos,
+      cleared: merged.cleared,
+      data: dashData(merged.data),
+      log: merged.log,
+      ops: merged.ops
+    })
+  }
+
+  private sendDashConfig(): void {
+    const message = this.dashConfig
+    if (!message) return
+    this.dashConfig = null
+    this.emit({ type: 'dashConfig', runId: this.runId, tNanos: message.tNanos, root: message.root })
   }
 
   private sendDevices(): void {

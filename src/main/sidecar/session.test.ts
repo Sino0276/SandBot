@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { DashConfigNode } from '../../shared/dashboard'
 import type { PlayEvent, SimNoticeCode } from '../../shared/play'
 import type { DeviceValues, RunRequest, TickMessage } from '../../shared/sidecarProtocol'
 import { sourceMapper } from './launch'
@@ -955,5 +956,232 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       .filter((e) => e.type === 'log' || e.type === 'simNotice')
       .map((e) => e.type)
     expect(kinds.slice(0, 2)).toEqual(['log', 'simNotice'])
+  })
+})
+
+describe('SidecarSession FTC Dashboard', () => {
+  const dash = (
+    tNanos: number,
+    patch: Partial<{
+      cleared: boolean
+      data: [string, string][]
+      log: string[] | null
+      ops: Record<string, unknown>[] | null
+    }> = {}
+  ): Record<string, unknown> => ({
+    type: 'dash',
+    tNanos,
+    cleared: false,
+    data: [],
+    log: null,
+    ops: null,
+    ...patch
+  })
+  const circle = (x: number): Record<string, unknown> => ({
+    type: 'circle',
+    x,
+    y: 0,
+    radius: 1,
+    stroke: true
+  })
+
+  it('dash는 34 ms에 한 번, 사이를 합친다: data는 키마다 마지막 값(정렬), log·ops는 마지막 null 아닌 것', () => {
+    const { clock, proc, of } = setup()
+    boot(proc)
+    proc.line(dash(1, { data: [['b', '1']], log: ['first'], ops: [circle(1)] }))
+    expect(of('dash')).toEqual([
+      {
+        type: 'dash',
+        runId: 'run-1',
+        tNanos: 1,
+        cleared: false,
+        data: [['b', '1']],
+        log: ['first'],
+        ops: [{ type: 'circle', x: 1, y: 0, radius: 1, stroke: true }]
+      }
+    ])
+    proc.line(
+      dash(2, {
+        data: [
+          ['b', '2'],
+          ['a', '1']
+        ],
+        log: ['second'],
+        ops: [circle(2)]
+      })
+    )
+    proc.line(dash(3, { data: [['c', '3']] }))
+    clock.advance(33)
+    expect(of('dash')).toHaveLength(1)
+    clock.advance(1)
+    expect(of('dash')[1]).toEqual({
+      type: 'dash',
+      runId: 'run-1',
+      tNanos: 3,
+      cleared: false,
+      // 'B' < 'a' < 'b'(UTF-16 순서, 사이드카의 TreeMap과 같다)
+      data: [
+        ['a', '1'],
+        ['b', '2'],
+        ['c', '3']
+      ],
+      log: ['second'],
+      ops: [{ type: 'circle', x: 2, y: 0, radius: 1, stroke: true }]
+    })
+    clock.advance(100)
+    expect(of('dash')).toHaveLength(2)
+  })
+
+  it('cleared는 OR이고 그 앞의 data·로그를 버린다(그림은 남긴다)', () => {
+    const { clock, proc, of } = setup()
+    boot(proc)
+    proc.line(dash(1))
+    proc.line(dash(2, { data: [['old', '1']], log: ['old'], ops: [circle(1)] }))
+    proc.line(dash(3, { cleared: true, data: [['new', '2']] }))
+    proc.line(dash(4, { data: [['B', '3']] }))
+    clock.advance(34)
+    expect(of('dash')[1]).toMatchObject({
+      tNanos: 4,
+      cleared: true,
+      data: [
+        ['B', '3'],
+        ['new', '2']
+      ],
+      log: null,
+      ops: [{ type: 'circle', x: 1, y: 0, radius: 1, stroke: true }]
+    })
+    // cleared 뒤에 온 로그는 남는다
+    proc.line(dash(5, { cleared: true, log: ['a'] }))
+    proc.line(dash(6, { data: [['k', 'v']] }))
+    clock.advance(34)
+    expect(of('dash')[2]).toMatchObject({ cleared: true, data: [['k', 'v']], log: ['a'] })
+    // 다음 묶음은 cleared가 아니다
+    proc.line(dash(7))
+    clock.advance(34)
+    expect(of('dash')[3]).toMatchObject({ cleared: false, data: [], log: null, ops: null })
+  })
+
+  it('합친 data도 키 한도(MAX_DASH_DATA)까지', () => {
+    const { clock, proc, of } = setup()
+    boot(proc)
+    proc.line(dash(1))
+    const keys = (from: number): [string, string][] =>
+      Array.from({ length: 400 }, (_, i): [string, string] => [
+        `k${String(from + i).padStart(4, '0')}`,
+        '1'
+      ])
+    proc.line(dash(2, { data: keys(0) }))
+    proc.line(dash(3, { data: keys(400) }))
+    clock.advance(34)
+    const data = of('dash')[1].data
+    expect(data).toHaveLength(500)
+    expect(data[0][0]).toBe('k0000')
+    expect(data.at(-1)?.[0]).toBe('k0499')
+  })
+
+  it('dashConfig는 마지막 것만 34 ms에 한 번', () => {
+    const { clock, proc, of } = setup()
+    boot(proc)
+    const tree = (value: string): DashConfigNode => ({
+      kind: 'custom',
+      children: [
+        {
+          name: 'Drive',
+          node: {
+            kind: 'value',
+            type: 'double',
+            value,
+            enumValues: [],
+            source: { declaringClass: 'org.example.Drive', field: 'kP' }
+          }
+        }
+      ]
+    })
+    proc.line({ type: 'dashConfig', tNanos: 1, root: tree('1.0') })
+    proc.line({ type: 'dashConfig', tNanos: 2, root: tree('2.0') })
+    proc.line({ type: 'dashConfig', tNanos: 3, root: tree('3.0') })
+    expect(of('dashConfig')).toEqual([
+      { type: 'dashConfig', runId: 'run-1', tNanos: 1, root: tree('1.0') }
+    ])
+    clock.advance(34)
+    expect(of('dashConfig').map((e) => e.tNanos)).toEqual([1, 3])
+    expect(of('dashConfig')[1].root).toEqual(tree('3.0'))
+  })
+
+  it('끝날 때 기다리던 dash·dashConfig를 phase·finished보다 먼저 보낸다', () => {
+    const { proc, events } = setup()
+    boot(proc)
+    proc.line(dash(1))
+    proc.line({ type: 'dashConfig', tNanos: 1, root: { kind: 'custom', children: [] } })
+    proc.line(dash(2, { data: [['last', '1']] }))
+    proc.line({ type: 'dashConfig', tNanos: 2, root: { kind: 'custom', children: [] } })
+    proc.line({ type: 'finished', tNanos: 3, reason: 'returned' })
+    const order = events
+      .filter((e) => ['dash', 'dashConfig', 'phase', 'finished'].includes(e.type))
+      .slice(-4)
+      .map((e) => e.type)
+    expect(order).toEqual(['dash', 'dashConfig', 'phase', 'finished'])
+  })
+
+  it('사이드카 notice는 simNotice(같은 code·params는 실행마다 한 번, 모아 둔 로그를 먼저)', () => {
+    const { proc, events, of } = setup()
+    boot(proc)
+    proc.line({ type: 'log', tNanos: 0, stream: 'out', text: 'hello' })
+    proc.line({ type: 'notice', tNanos: 5, code: 'dashCamera', params: {} })
+    proc.line({ type: 'notice', tNanos: 6, code: 'dashCamera', params: {} })
+    proc.line({ type: 'notice', tNanos: 7, code: 'rrTuningSaved', params: { path: 'a.json' } })
+    proc.line({ type: 'notice', tNanos: 8, code: 'rrTuningSaved', params: { path: 'b.json' } })
+    expect(of('simNotice').map((n) => [n.tNanos, n.code, n.params])).toEqual([
+      [5, 'dashCamera', {}],
+      [7, 'rrTuningSaved', { path: 'a.json' }],
+      [8, 'rrTuningSaved', { path: 'b.json' }]
+    ])
+    const kinds = events
+      .filter((e) => e.type === 'log' || e.type === 'simNotice')
+      .map((e) => e.type)
+    expect(kinds[0]).toBe('log')
+  })
+
+  it('Config 탭의 값은 다음 틱 답의 configSet에 차례로 싣고, 일시 정지 중이면 답할 때 싣는다', () => {
+    const { clock, proc, session } = setup()
+    boot(proc)
+    proc.line(tick(0))
+    expect(proc.replies()[0].configSet).toEqual([])
+    session.command({ type: 'config', path: ['Drive', 'kP'], value: '0.5' })
+    session.command({ type: 'config', path: ['Drive', 'mode'], value: 'FAST' })
+    proc.line(tick(1))
+    clock.advance(5)
+    expect(proc.replies()[1].configSet).toEqual([
+      { path: ['Drive', 'kP'], value: '0.5' },
+      { path: ['Drive', 'mode'], value: 'FAST' }
+    ])
+    // 한 번만 싣는다
+    proc.line(tick(2))
+    clock.advance(5)
+    expect(proc.replies()[2].configSet).toEqual([])
+    // 일시 정지: 답하지 않다가 풀 때(다음 답) 싣는다
+    session.command({ type: 'pause', paused: true })
+    proc.line(tick(3))
+    session.command({ type: 'config', path: ['Drive', 'kP'], value: '0.7' })
+    clock.advance(100)
+    expect(proc.replies()).toHaveLength(3)
+    session.command({ type: 'pause', paused: false })
+    clock.advance(5)
+    expect(proc.replies()[3]).toMatchObject({
+      tick: 3,
+      configSet: [{ path: ['Drive', 'kP'], value: '0.7' }]
+    })
+  })
+
+  it('답을 기다리는 configSet은 한도까지만 쌓는다', () => {
+    const { proc, session } = setup({ speed: 'max' })
+    boot(proc)
+    for (let i = 0; i < 300; i++)
+      session.command({ type: 'config', path: ['A', 'x'], value: String(i) })
+    proc.line(tick(0))
+    const configSet = proc.replies()[0].configSet
+    expect(configSet).toHaveLength(256)
+    expect(configSet[0].value).toBe('0')
+    expect(configSet.at(-1)?.value).toBe('255')
   })
 })
