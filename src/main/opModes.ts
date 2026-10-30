@@ -1,14 +1,10 @@
 import { ipcMain } from 'electron'
 import { resolve } from 'path'
-import {
-  IPC,
-  MAX_SOURCE_PATHS,
-  MAX_USAGE_FILE_BYTES,
-  type ReadTeamCodeAssetResult
-} from '../shared/ipc'
+import { IPC, MAX_SOURCE_PATHS, MAX_USAGE_FILE_BYTES } from '../shared/ipc'
 import { compareOpModes, parseOpModes, type ParsedOpMode } from '../shared/java/opModes'
 import type { ListOpModesResult, ListRegisteredResult, OpModeInfo } from '../shared/play'
 import { isTrustedRoot } from './projectRoots'
+import { readTeamCodeAsset } from './teamCodeAssets'
 import { listJavaFiles, readJavaSources } from './teamCodeJava'
 
 // TeamCode의 OpMode 목록(실행 툴바의 OpMode 고르기, Driver Station처럼). teamCodeJava.ts의 목록(같은 경로 규칙·5000개
@@ -83,15 +79,13 @@ export function clearOpModeCache(): void {
 
 export function registerOpModesIpc(): void {
   ipcMain.handle(IPC.listOpModes, (_event, root: unknown) => listOpModes(root))
-  // 라이브러리 L2 갈래 A(src/main/registeredOpModes.ts)·C(src/main/teamCodeAssets.ts)가 바꾼다
+  // 라이브러리 L2 갈래 A(src/main/registeredOpModes.ts)가 바꾼다
   ipcMain.handle(IPC.listRegisteredOpModes, (): ListRegisteredResult => ({
     ok: false,
     code: 'failed',
     detail: 'not implemented'
   }))
-  ipcMain.handle(IPC.readTeamCodeAsset, (): ReadTeamCodeAssetResult => ({
-    ok: false,
-    code: 'failed',
-    detail: 'not implemented'
-  }))
+  ipcMain.handle(IPC.readTeamCodeAsset, (_event, root: unknown, path: unknown) =>
+    readTeamCodeAsset(root, path)
+  )
 }
