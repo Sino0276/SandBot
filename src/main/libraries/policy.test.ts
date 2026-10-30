@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyModule, DASHBOARD_DETAIL, isKnownLibrary, knownPackageOf } from './policy'
+import { classifyModule, isKnownLibrary, knownPackageOf, SLOTHBOARD_DETAIL } from './policy'
 
 const kind = (coordinate: string): string => {
   const [g, a, v] = coordinate.split(':')
@@ -34,21 +34,19 @@ describe('라이브러리 정책', () => {
     expect(kind('com.acmerobotics.roadrunner:core:0.5.6')).toBe('unsupported:notSupported')
   })
 
-  it('FTC Dashboard는 L1에서 지원하지 않는다(대체 안내)', () => {
-    const decision = classifyModule('com.acmerobotics.dashboard', 'dashboard', '0.6.0')
-    expect(decision).toEqual({
-      kind: 'unsupported',
-      reason: 'notSupported',
-      detail: DASHBOARD_DETAIL
+  it('FTC Dashboard는 대체(컴파일은 실제 jar, 실행은 SandBot 구현)다: dashboard·core, 모든 버전', () => {
+    expect(classifyModule('com.acmerobotics.dashboard', 'dashboard', '0.6.0')).toEqual({
+      kind: 'replaced'
     })
-    expect(kind('com.acmerobotics.dashboard:core:0.4.7')).toBe('unsupported:notSupported')
+    expect(kind('com.acmerobotics.dashboard:dashboard:0.5.1')).toBe('replaced')
+    expect(kind('com.acmerobotics.dashboard:core:0.4.7')).toBe('replaced')
   })
 
-  it('Sloth용 대체판은 원본(FTC Dashboard·Panels)과 같다', () => {
+  it('Sloth용 Dashboard는 지원하지 않고 원래 FTC Dashboard를 쓰라고 안내한다, Sloth용 Panels는 원본과 같다', () => {
     expect(classifyModule('com.acmerobotics.slothboard', 'dashboard', '0.3.2+0.6.0')).toEqual({
       kind: 'unsupported',
       reason: 'notSupported',
-      detail: DASHBOARD_DETAIL
+      detail: SLOTHBOARD_DETAIL
     })
     expect(kind('com.bylazar.sloth:fullpanels:0.3.2+1.0.13')).toBe('unsupported:panels')
     expect(kind('com.bylazarx:y:1.0')).toBe('other')

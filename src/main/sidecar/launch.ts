@@ -49,6 +49,8 @@ export type SidecarFiles = { dir: string; runtimeJar: string; sdkJar: string }
 
 export const RUNTIME_JAR = 'sandbot-runtime.jar'
 export const SDK_JAR = 'sandbot-sdk.jar'
+// FTC Dashboard 대체(라이브러리 L2). 팀 Gradle이 Dashboard를 선언하면 라이브러리 해석이 실제 jar 대신 실행 클래스패스에 넣는다.
+export const DASHBOARD_JAR = 'sandbot-dashboard.jar'
 export const SIDECAR_INFO = 'sidecar.json'
 
 async function isFile(target: string): Promise<boolean> {

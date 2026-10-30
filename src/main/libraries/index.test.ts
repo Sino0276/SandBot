@@ -7,7 +7,7 @@ import type { CompileDiagnostic } from '../../shared/sidecarProtocol'
 import type { LibraryRequest, LibraryResolution } from '../sidecar/launch'
 import { LibraryCache } from './cache'
 import { resolveLibraries, type LibraryDeps } from './index'
-import { DASHBOARD_DETAIL } from './policy'
+import { SLOTHBOARD_DETAIL } from './policy'
 import {
   artifactUrl,
   BROTT,
@@ -198,7 +198,61 @@ function publishPedro(routes: Map<string, Route>): void {
   )
 }
 
+// 가짜 FTC Dashboard 0.5.1(maven.brott.dev, 체크섬 없음). POM은 실제처럼 core·FTC SDK·androidx.annotation·nanohttpd를 끌어온다.
+function publishDashboard(routes: Map<string, Route>): void {
+  const dashboard = 'com.acmerobotics.dashboard:dashboard:0.5.1'
+  const core = 'com.acmerobotics.dashboard:core:0.5.1'
+  publish(
+    routes,
+    BROTT,
+    dashboard,
+    'dashboard-0.5.1.pom',
+    pom({
+      coordinate: dashboard,
+      packaging: 'aar',
+      dependencies: [
+        { coordinate: core },
+        { coordinate: 'org.firstinspires.ftc:RobotCore:10.0.0' },
+        { coordinate: 'androidx.annotation:annotation:1.1.0' },
+        { coordinate: 'org.nanohttpd:nanohttpd-websocket:2.3.1' }
+      ]
+    })
+  )
+  publish(
+    routes,
+    BROTT,
+    dashboard,
+    'dashboard-0.5.1.aar',
+    makeAar(['com/acmerobotics/dashboard/FtcDashboard'])
+  )
+  publish(routes, BROTT, core, 'core-0.5.1.pom', pom({ coordinate: core }))
+  publish(
+    routes,
+    GOOGLE,
+    'androidx.annotation:annotation:1.1.0',
+    'annotation-1.1.0.pom',
+    pom({ coordinate: 'androidx.annotation:annotation:1.1.0' })
+  )
+  publish(
+    routes,
+    GOOGLE,
+    'androidx.annotation:annotation:1.1.0',
+    'annotation-1.1.0.jar',
+    ANDROIDX_JAR
+  )
+  publish(
+    routes,
+    BROTT,
+    core,
+    'core-0.5.1.jar',
+    makeJar(['com/acmerobotics/dashboard/telemetry/TelemetryPacket'])
+  )
+}
+
 // ---- 실행 ----
+
+// FTC Dashboard 대체(사이드카 폴더의 sandbot-dashboard.jar)
+const DASHBOARD_JAR = join('/sidecar', 'sandbot-dashboard.jar')
 
 let dir: string
 let cacheDir: string
@@ -239,6 +293,7 @@ async function run(
     http,
     sleep: async () => undefined,
     now: () => (clock += 30),
+    dashboardJar: DASHBOARD_JAR,
     ...extra
   })
   if (!result.ok) throw new Error(`resolution failed: ${result.code} ${result.detail}`)
@@ -398,7 +453,7 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     expect(await readdir(join(cacheDir, 'resolutions')).catch(() => [])).toEqual([])
   })
 
-  it('정책: AutoTune·Pedro 2.x·Panels·Dashboard·동적 버전·지원 밖, 그리고 지원 계열이 끌어온 것을 직접 선언', async () => {
+  it('정책: AutoTune·Pedro 2.x·Panels·Sloth용 Dashboard·동적 버전·지원 밖, 그리고 지원 계열이 끌어온 것을 직접 선언', async () => {
     const routes = new Map<string, Route>()
     publishPedro(routes)
     const gradle = project(
@@ -408,6 +463,8 @@ describe('라이브러리 해석(가짜 저장소)', () => {
         dep('com.pedropathing:tuning:1.0.1'),
         dep('com.pedropathing:ftc:2.1.1'),
         dep('com.bylazar:fullpanels:1.0.12'),
+        dep('com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0'),
+        // FTC Dashboard는 대체라 받으려 한다(그 저장소 maven.brott.dev를 선언하지 않았다)
         dep('com.acmerobotics.dashboard:dashboard:0.6.0'),
         dep('org.ftclib.ftclib:core:+'),
         dep('com.github.someone:lib:1.0'),
@@ -428,7 +485,8 @@ describe('라이브러리 해석(가짜 저장소)', () => {
       'com.pedropathing:tuning:1.0.1 unsupported:pedroTuning',
       'com.pedropathing:ftc:2.1.1 unsupported:pedro2',
       'com.bylazar:fullpanels:1.0.12 unsupported:panels',
-      'com.acmerobotics.dashboard:dashboard:0.6.0 unsupported:notSupported',
+      'com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0 unsupported:notSupported',
+      'com.acmerobotics.dashboard:dashboard:0.6.0 unsupported:repositoryNotAllowed',
       'org.ftclib.ftclib:core:+ unsupported:dynamicVersion',
       'com.github.someone:lib:1.0 unsupported:notSupported',
       'org.jetbrains.kotlin:kotlin-stdlib:2.3.21 used',
@@ -436,8 +494,8 @@ describe('라이브러리 해석(가짜 저장소)', () => {
       'com.pedropathing:core:3.0.2 used',
       'org.jetbrains:annotations:13.0 used'
     ])
-    const dashboard = result.report.entries.find((e) => e.group === 'com.acmerobotics.dashboard')!
-    expect(dashboard.detail).toBe(DASHBOARD_DETAIL)
+    const sloth = result.report.entries.find((e) => e.group === 'com.acmerobotics.slothboard')!
+    expect(sloth.detail).toBe(SLOTHBOARD_DETAIL)
     expect(
       result.report.entries.find((e) => e.artifact === 'kotlin-stdlib')?.declaredAt
     ).not.toBeNull()
@@ -505,8 +563,57 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     expect(result.report.entries[0].reason).toBe('checksumMismatch')
   })
 
-  it('Road Runner quickstart(실제 POM): 대시보드는 지원 안 함, RobotCore는 제공, jackson은 실행 범위, POM은 고정 해시로 확인', async () => {
+  it('FTC Dashboard(대체): 컴파일은 팀 버전의 실제 jar, 실행은 SandBot 구현 하나, 잠금에서도 같다', async () => {
     const routes = new Map<string, Route>()
+    publishDashboard(routes)
+    publishPedro(routes)
+    const gradle = project(
+      [dep('com.acmerobotics.dashboard:dashboard:0.5.1'), dep('com.pedropathing:revhub:3.0.2')],
+      [repo('mavenCentral'), repo('google'), repo('maven', 'https://maven.brott.dev/')]
+    )
+    const { result } = await run(gradle, routes)
+    expect(statuses(result.report.entries)).toEqual([
+      'com.acmerobotics.dashboard:dashboard:0.5.1 replaced',
+      'com.pedropathing:revhub:3.0.2 used',
+      'androidx.annotation:annotation:1.1.0 used',
+      'com.acmerobotics.dashboard:core:0.5.1 replaced',
+      'com.pedropathing:core:3.0.2 used',
+      'org.firstinspires.ftc:RobotCore:10.0.0 provided',
+      'org.jetbrains.kotlin:kotlin-stdlib:2.3.21 used',
+      'org.jetbrains:annotations:13.0 used',
+      'org.nanohttpd:nanohttpd-websocket:2.3.1 provided'
+    ])
+    // maven.brott.dev는 체크섬이 없어 처음 받은 해시를 기록한다(대체도 받은 파일은 같게 확인한다)
+    const dashboard = result.report.entries.find((e) => e.artifact === 'dashboard')!
+    expect(dashboard.integrity).toBe('firstUse')
+    // 컴파일: 실제 Dashboard jar 둘(AAR의 classes.jar와 core)
+    expect(coordinatesOf(result, result.compileClasspath)).toEqual(
+      expect.arrayContaining([
+        'com.acmerobotics.dashboard:dashboard:0.5.1',
+        'com.acmerobotics.dashboard:core:0.5.1'
+      ])
+    )
+    // 실행: 실제 jar 둘 대신 첫 Dashboard 자리에 SandBot 구현 하나(링크 검사 경고는 그 좌표로 보인다)
+    const [first, ...rest] = result.libraryClasspath
+    expect(first).toBe(DASHBOARD_JAR)
+    expect(result.jarCoordinates[DASHBOARD_JAR]).toBe('com.acmerobotics.dashboard:dashboard:0.5.1')
+    expect(coordinatesOf(result, rest)).toEqual([
+      'com.pedropathing:revhub:3.0.2',
+      'com.pedropathing:core:3.0.2',
+      'org.jetbrains.kotlin:kotlin-stdlib:2.3.21',
+      'org.jetbrains:annotations:13.0'
+    ])
+    // 잠금(네트워크 없이)도 같은 클래스패스
+    const again = await run(gradle, {}, { http: noNetwork() })
+    expect(again.result.compileClasspath).toEqual(result.compileClasspath)
+    expect(again.result.libraryClasspath).toEqual(result.libraryClasspath)
+    expect(again.result.jarCoordinates).toEqual(result.jarCoordinates)
+    expect(statuses(again.result.report.entries)).toEqual(statuses(result.report.entries))
+  })
+
+  it('Road Runner quickstart(실제 POM): 대시보드는 대체, RobotCore는 제공, jackson은 실행 범위, POM은 고정 해시로 확인', async () => {
+    const routes = new Map<string, Route>()
+    publishDashboard(routes)
     publish(
       routes,
       BROTT,
@@ -572,17 +679,24 @@ describe('라이브러리 해석(가짜 저장소)', () => {
       'com.acmerobotics.roadrunner:ftc:0.1.25 failed:notFound',
       'com.acmerobotics.roadrunner:core:1.0.1 failed:checksumMismatch',
       'com.acmerobotics.roadrunner:actions:1.0.1 failed:notFound',
-      'com.acmerobotics.dashboard:dashboard:0.5.1 unsupported:notSupported',
-      'com.acmerobotics.dashboard:core:0.4.7 unsupported:notSupported',
+      'com.acmerobotics.dashboard:dashboard:0.5.1 replaced',
+      'androidx.annotation:annotation:1.1.0 used',
+      'com.acmerobotics.dashboard:core:0.5.1 replaced',
       'com.fasterxml.jackson.core:jackson-core:2.12.7 used',
       'com.fasterxml.jackson.core:jackson-databind:2.12.7 used',
       'org.firstinspires.ftc:RobotCore:10.0.0 provided',
       'org.jetbrains.kotlin:kotlin-stdlib:1.9.0 used',
-      'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0 used'
+      'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0 used',
+      'org.nanohttpd:nanohttpd-websocket:2.3.1 provided'
     ])
     const byArtifact = Object.fromEntries(result.report.entries.map((e) => [e.artifact, e]))
     expect(byArtifact.dashboard.requested).toEqual(['0.5.1', '0.4.10'])
-    expect(byArtifact.dashboard.detail).toBe(DASHBOARD_DETAIL)
+    // Dashboard core: actions의 0.4.7과 dashboard 0.5.1의 0.5.1 중 높은 것
+    expect(
+      result.report.entries.find(
+        (e) => e.group === 'com.acmerobotics.dashboard' && e.artifact === 'core'
+      )?.requested
+    ).toEqual(['0.4.7', '0.5.1'])
     // 고정 해시와 다른 jar(가짜): ftc·actions의 jar는 저장소에 없어 404이고, core의 jar는 해시가 다르다
     const rrCore = result.report.entries.find(
       (e) => e.group === 'com.acmerobotics.roadrunner' && e.artifact === 'core'
@@ -598,9 +712,21 @@ describe('라이브러리 해석(가짜 저장소)', () => {
     expect(coordinatesOf(result, result.compileClasspath)).toContain(
       'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
     )
-    // POM은 고정 해시로 확인했으니 처음 받은 해시로 기록하지 않는다
+    // Dashboard: 컴파일은 실제 jar, 실행은 SandBot 구현
+    expect(coordinatesOf(result, result.compileClasspath)).toEqual(
+      expect.arrayContaining([
+        'com.acmerobotics.dashboard:dashboard:0.5.1',
+        'com.acmerobotics.dashboard:core:0.5.1'
+      ])
+    )
+    expect(result.libraryClasspath).toContain(DASHBOARD_JAR)
+    // Road Runner POM은 고정 해시로 확인했으니 처음 받은 해시로 기록하지 않는다(가짜 Dashboard 0.5.1은 기록한다)
     const firstUse = await readFile(join(cacheDir, 'first-use.json'), 'utf8').catch(() => '{}')
-    expect(Object.keys(JSON.parse(firstUse)).filter((k) => k.endsWith('.pom'))).toEqual([])
+    expect(
+      Object.keys(JSON.parse(firstUse)).filter(
+        (k) => k.endsWith('.pom') && k.includes('roadrunner')
+      )
+    ).toEqual([])
   })
 
   it('FTCLib core 2.1.1(실제 POM): androidx.core는 제공, ejml-all은 제외, JSR 305(javax.annotation)는 쓴다', async () => {
@@ -770,7 +896,13 @@ describe('라이브러리 해석(가짜 저장소)', () => {
         signal: abort.signal,
         progress: () => undefined
       },
-      { cacheDir, gradleHome, http: fakeHttp(routes), sleep: async () => undefined }
+      {
+        cacheDir,
+        gradleHome,
+        http: fakeHttp(routes),
+        sleep: async () => undefined,
+        dashboardJar: DASHBOARD_JAR
+      }
     )
     expect(result).toEqual({ ok: false, code: 'cancelled', detail: '' })
   })

@@ -111,6 +111,9 @@ export const DASHBOARD_GROUPS: ReadonlySet<string> = new Set([
   'com.acmerobotics.slothboard'
 ])
 
+// Sloth용 대체판. SandBot은 원래 FTC Dashboard만 대체하므로 불러오지 않고 원래 것을 쓰라고 안내한다.
+export const SLOTHBOARD_GROUP = 'com.acmerobotics.slothboard'
+
 export function coordinateOf(entry: Pick<LibraryEntry, 'group' | 'artifact' | 'version'>): string {
   return `${entry.group}:${entry.artifact}:${entry.version}`
 }

@@ -795,8 +795,12 @@ const en: Messages = {
           '{{coordinate}}: the repository publishes no checksums, so the hash of the first download was recorded. If the content changes later, it will not be used.',
         firstUseUnrecorded:
           '{{coordinate}}: the repository publishes no checksums, and the hash of the first download could not be saved (first-use.json in the library cache is not writable). It is used this time, but a changed file is not caught yet. The next INIT checks it again and saves the hash.',
-        dashboardLater:
-          '{{coordinate}}: FTC Dashboard will be supported with the SandBot Dashboard replacement. It is not loaded yet, so code that uses Dashboard (including Road Runner) does not compile.',
+        // FTC Dashboard (status replaced): compiled against the team's real jar, run on SandBot's implementation
+        replaced:
+          '{{coordinate}}: FTC Dashboard compiles against the real jar of this version and runs on the SandBot implementation (no port or web server). Packets appear in Telemetry and the Scene view, @Config values in the Config tab; camera streams and images are not shown.',
+        // The Sloth build of FTC Dashboard (com.acmerobotics.slothboard)
+        slothboard:
+          '{{coordinate}}: the Sloth build of FTC Dashboard is not supported, so it is not loaded. Use the original FTC Dashboard (com.acmerobotics.dashboard:dashboard).',
         links:
           '{{library}}: {{count}} link problem(s) (missing classes or members, SDK features not supported yet). Reaching that code causes a runtime error.',
         none: '{{coordinate}}',
@@ -809,7 +813,7 @@ const en: Messages = {
           '{{coordinate}}: Sloth and Sinister (dev.frozenmilk) are Android app hooks and hot reload, which SandBot cannot use, so they are not loaded.',
         ftcLibVision: '{{coordinate}}: FTCLib vision uses native OpenCV, so it is not loaded.',
         notSupported:
-          '{{coordinate}}: not a library SandBot supports (Road Runner 1.0, Pedro Pathing 3.x, FTCLib core) or one of their dependencies, so it is not loaded.',
+          '{{coordinate}}: not a library SandBot supports (Road Runner 1.0, Pedro Pathing 3.x, FTCLib core, FTC Dashboard) or one of their dependencies, so it is not loaded.',
         dynamicVersion:
           '{{coordinate}}: the version is not fixed (+, latest, a range or SNAPSHOT), so it is not loaded. Use an exact version so every run is the same.',
         localModule: '{{coordinate}}: SandBot does not read local module or file dependencies.',
