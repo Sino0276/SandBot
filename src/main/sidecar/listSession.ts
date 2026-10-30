@@ -40,6 +40,11 @@ export const DEFAULT_LIST_TIMEOUTS: ListTimeouts = {
   exitAfterFinishedMs: 2000
 }
 
+// 오류 메시지 없이 끝난 이유의 설명(영어 detail)
+const REASON_TEXT: Partial<Record<FinishReason, string>> = {
+  terminated: 'an @OpModeRegistrar method called System.exit',
+  shutdown: 'the sidecar was shut down'
+}
 const DETAIL_LIMIT = 2000
 const STDERR_TAIL_LINES = 30
 // 결과에 담는 오류 수(등록기마다 하나라 보통 몇 개다)
@@ -142,7 +147,7 @@ export function runListSidecar(
         }
       }
       default:
-        return { kind: 'failed', detail: clip(errorText || finished) }
+        return { kind: 'failed', detail: clip(errorText || (REASON_TEXT[finished] ?? finished)) }
     }
   }
 

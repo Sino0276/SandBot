@@ -95,7 +95,8 @@ describe('runListSidecar', () => {
     for (const [reason, message] of [
       ['compileFailed', 'no Java compiler'],
       ['exception', 'An @OpModeRegistrar method has not used the simulator clock for 2000 ms'],
-      ['terminated', '']
+      ['terminated', ''],
+      ['loadFailed', 'registrars must not be empty']
     ] as const) {
       const { proc, result } = start()
       hello(proc)
@@ -111,7 +112,10 @@ describe('runListSidecar', () => {
         })
       proc.line({ type: 'finished', tNanos: 0, reason })
       proc.exit(0)
-      expect(await result).toEqual({ kind: 'failed', detail: message || reason })
+      expect(await result).toEqual({
+        kind: 'failed',
+        detail: message || 'an @OpModeRegistrar method called System.exit'
+      })
     }
   })
 
