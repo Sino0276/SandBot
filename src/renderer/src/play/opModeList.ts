@@ -2,6 +2,15 @@ import type { OpModeFlavor, OpModeInfo } from '../../../shared/play'
 
 // 툴바 OpMode 선택 목록. Driver Station처럼 TeleOp·Autonomous를 따로 묶고, 그 안을 group으로 나눈다.
 // 기본 그룹('')은 머리 없이 맨 앞에 두고, 나머지 그룹과 이름은 대소문자를 가리지 않는 순서로 놓는다.
+// @TeleOp·@Autonomous 클래스와 @OpModeRegistrar가 등록한 OpMode(registered)가 한 목록에 섞인다.
+
+// 고르는 키(selectedClass, localStorage sandbot:lastOpMode): 등록기 OpMode는 'registered:' + DS 이름(DS 이름은
+// 유일하다), annotated는 클래스 이름이다. 예전에 기억한 값(클래스 이름)도 그대로 맞는다.
+export const REGISTERED_KEY_PREFIX = 'registered:'
+
+export function opModeKey(info: OpModeInfo): string {
+  return info.registered ? `${REGISTERED_KEY_PREFIX}${info.name}` : info.className
+}
 
 export const OPMODE_FLAVORS: readonly OpModeFlavor[] = ['TeleOp', 'Autonomous']
 
@@ -27,7 +36,8 @@ export function compareOpModes(a: OpModeInfo, b: OpModeInfo): number {
     OPMODE_FLAVORS.indexOf(a.flavor) - OPMODE_FLAVORS.indexOf(b.flavor) ||
     compareGroup(a.group, b.group) ||
     compareText(a.name, b.name) ||
-    compareText(a.className, b.className)
+    compareText(a.className, b.className) ||
+    compareText(opModeKey(a), opModeKey(b))
   )
 }
 
@@ -56,12 +66,10 @@ export function orderedOpModes(sections: readonly OpModeSection[]): OpModeInfo[]
   return sections.flatMap((section) => section.groups.flatMap((group) => group.opModes))
 }
 
-export function findOpMode(
-  opModes: readonly OpModeInfo[],
-  className: string | null
-): OpModeInfo | null {
-  if (className === null) return null
-  return opModes.find((opMode) => opMode.className === className) ?? null
+// 고르는 키(opModeKey)로 찾는다
+export function findOpMode(opModes: readonly OpModeInfo[], key: string | null): OpModeInfo | null {
+  if (key === null) return null
+  return opModes.find((opMode) => opModeKey(opMode) === key) ?? null
 }
 
 // Autonomous가 끝나면 DS처럼 preselectTeleOp(TeleOp의 DS 이름)을 고른다. 없거나 이름이 겹치지 않으면 null.

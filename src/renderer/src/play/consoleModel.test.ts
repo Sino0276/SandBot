@@ -125,6 +125,21 @@ describe('Console 항목 글자', () => {
     expect(stall.level).toBe('warning')
   })
 
+  it('등록기 목록 실패는 이유 코드를 두고 그릴 때 번역한다(언어를 바꾸면 따라 바뀜)', () => {
+    const entry = consoleEntry(
+      { type: 'registeredFailed', code: 'noJdk', detail: 'no java' },
+      null,
+      'error'
+    )
+    expect(entry.level).toBe('error')
+    expect(entrySummary(entry, t)).toBe(
+      `등록기 OpMode 목록을 읽지 못했습니다: ${ko.play.list.registeredFailure.noJdk} (no java)`
+    )
+    expect(entrySummary(entry, tEn)).toBe(
+      `Could not read the registrar OpMode list: ${en.play.list.registeredFailure.noJdk} (no java)`
+    )
+  })
+
   it('스택 줄은 Java 모양이다', () => {
     expect(
       frameText({ className: 'a.B', method: 'run', file: 'B.java', line: 3, path: null })

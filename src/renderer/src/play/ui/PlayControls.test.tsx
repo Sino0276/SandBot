@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { OpModeInfo } from '../../../../shared/play'
 import ko from '../../i18n/locales/ko'
 import { useProjectStore } from '../../project/projectStore'
-import { newRun, usePlayStore, type PlayRun } from '../playStore'
+import { EMPTY_REGISTERED_LIST, newRun, usePlayStore, type PlayRun } from '../playStore'
 import PlayControls from './PlayControls'
 
 // 툴바 실행 버튼의 글자·도움말·막힘(renderToStaticMarkup, DOM 없음). 흐름은 playActions.test.ts가 확인한다.
@@ -52,6 +52,8 @@ function withList(): void {
       root: '/p',
       status: 'ready',
       opModes: [AUTO],
+      registrars: [],
+      registered: EMPTY_REGISTERED_LIST,
       truncated: false,
       hasTeamCode: true,
       detail: ''

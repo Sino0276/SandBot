@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import type {
   ListOpModesResult,
+  ListRegisteredResult,
   OpModeInfo,
   PlayCommand,
   PlayEvent,
@@ -24,8 +26,10 @@ import {
   isKeyboardPadInput,
   playButton,
   refreshOpModes,
+  refreshRegisteredOpModes,
   resetPlayActionsState,
   selectOpMode,
+  sendDashConfig,
   startPlay,
   setPlaySpeed,
   stepPlay,
@@ -35,7 +39,8 @@ import {
 import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
-import { EMPTY_OPMODE_LIST, initialPlayData, usePlayStore } from './playStore'
+import { opModeKey } from './opModeList'
+import { EMPTY_OPMODE_LIST, initialPlayData, listedOpModes, usePlayStore } from './playStore'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
@@ -110,9 +115,19 @@ const listeners = new Map<string, (() => void)[]>()
 let playEventListener: ((event: PlayEvent) => void) | null = null
 let initResult: () => Promise<PlayInitResult> = async () => ({ ok: true })
 let listResult: () => Promise<ListOpModesResult> = async () => LIST
+let registeredResult: () => Promise<ListRegisteredResult> = async () => ({
+  ok: true,
+  opModes: [],
+  replaced: [],
+  diagnostics: [],
+  errors: []
+})
 
 const api = {
   listOpModes: vi.fn<(root: string) => Promise<ListOpModesResult>>(() => listResult()),
+  listRegisteredOpModes: vi.fn<(root: string) => Promise<ListRegisteredResult>>(() =>
+    registeredResult()
+  ),
   playInit: vi.fn<(request: PlayInitRequest) => Promise<PlayInitResult>>(() => initResult()),
   playCommand: (command: PlayCommand) => void commands.push(command),
   playGamepads: (pair: unknown) => void gamepads.push(pair),
@@ -148,8 +163,16 @@ beforeEach(async () => {
   gamepads.length = 0
   initResult = async () => ({ ok: true })
   listResult = async () => LIST
+  registeredResult = async () => ({
+    ok: true,
+    opModes: [],
+    replaced: [],
+    diagnostics: [],
+    errors: []
+  })
   api.playInit.mockClear()
   api.listOpModes.mockClear()
+  api.listRegisteredOpModes.mockClear()
   vi.mocked(saveProject).mockClear()
   vi.mocked(saveProject).mockImplementation(async () => true)
   resetPlayActionsState()
@@ -888,5 +911,281 @@ describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
     fire('keyup', backspace)
     expect(isKeyboardPadInput(repeat)).toBe(false)
     expect(shortcut().command).toBe('delete')
+  })
+})
+
+describe('등록기(@OpModeRegistrar) OpMode', () => {
+  const TUNING = 'org.firstinspires.ftc.teamcode.tuning.TuningOpModes'
+  const TUNING_PATH = `${P}tuning/TuningOpModes.java`
+  const registered = (name: string, flavor: OpModeInfo['flavor'] = 'TeleOp'): OpModeInfo => ({
+    className: `com.acmerobotics.roadrunner.ftc.${name.replace(/\s/g, '')}`,
+    path: TUNING_PATH,
+    line: 40,
+    flavor,
+    name,
+    group: 'tuning',
+    preselectTeleOp: '',
+    registered: { registrar: TUNING }
+  })
+  const RAMP = registered('ForwardRampLogger')
+  const WITH_REGISTRARS: ListOpModesResult = {
+    ...LIST,
+    registrars: [{ className: TUNING, path: TUNING_PATH, line: 39 }]
+  }
+
+  beforeEach(() => {
+    listResult = async () => WITH_REGISTRARS
+    registeredResult = async () => ({
+      ok: true,
+      opModes: [RAMP],
+      replaced: [],
+      diagnostics: [],
+      errors: []
+    })
+  })
+
+  it('등록기가 있을 때만 읽고, 등록 OpMode를 같은 목록에 넣는다', async () => {
+    listResult = async () => LIST
+    await refreshOpModes()
+    expect(api.listRegisteredOpModes).not.toHaveBeenCalled()
+
+    listResult = async () => WITH_REGISTRARS
+    await refreshOpModes()
+    expect(api.listRegisteredOpModes).toHaveBeenCalledWith('/p')
+    const list = usePlayStore.getState().opModeList
+    expect(list.registered).toEqual({
+      status: 'ready',
+      opModes: [RAMP],
+      replaced: [],
+      problem: null
+    })
+    expect(listedOpModes(list)).toEqual([DRIVE, RAMP, AUTO])
+  })
+
+  it('고르는 키는 registered:이름이고, INIT은 등록기 클래스·소스와 DS 이름을 보낸다', async () => {
+    await refreshOpModes()
+    selectOpMode(opModeKey(RAMP))
+    expect(usePlayStore.getState().selectedClass).toBe('registered:ForwardRampLogger')
+    expect(initBlock({ root: '/p', busy: false }, usePlayStore.getState())).toBeNull()
+    await initPlay()
+    expect(lastRequest().opMode).toEqual({
+      className: TUNING,
+      path: TUNING_PATH,
+      flavor: 'TeleOp',
+      registeredName: 'ForwardRampLogger'
+    })
+    expect(usePlayStore.getState().run!.opMode).toBe(RAMP)
+  })
+
+  it('예전에 기억한 클래스 이름은 annotated OpMode에 그대로 맞는다', async () => {
+    await refreshOpModes()
+    selectOpMode(DRIVE.className)
+    await initPlay()
+    expect(lastRequest().opMode).toEqual({
+      className: DRIVE.className,
+      path: DRIVE.path,
+      flavor: 'TeleOp'
+    })
+  })
+
+  it('읽는 동안 다시 부르면 하나만 돌고, 끝난 뒤 한 번 더 읽는다', async () => {
+    const slow = deferred<ListRegisteredResult>()
+    registeredResult = () => slow.promise
+    const first = refreshRegisteredOpModes('/p')
+    usePlayStore.setState({
+      opModeList: { ...usePlayStore.getState().opModeList, registrars: WITH_REGISTRARS.registrars }
+    })
+    const second = refreshRegisteredOpModes('/p')
+    const third = refreshRegisteredOpModes('/p')
+    expect(second).toBe(first)
+    expect(third).toBe(first)
+    expect(api.listRegisteredOpModes).toHaveBeenCalledTimes(1)
+    registeredResult = async () => ({
+      ok: true,
+      opModes: [RAMP],
+      replaced: [],
+      diagnostics: [],
+      errors: []
+    })
+    slow.resolve({ ok: true, opModes: [], replaced: [], diagnostics: [], errors: [] })
+    await first
+    expect(api.listRegisteredOpModes).toHaveBeenCalledTimes(2)
+    expect(usePlayStore.getState().opModeList.registered.opModes).toEqual([RAMP])
+  })
+
+  it('읽지 못하면 이전 등록 OpMode를 두고 한 줄로 알리며, Console에는 같은 문제를 한 번만 남긴다', async () => {
+    await refreshOpModes()
+    registeredResult = async () => ({ ok: false, code: 'noJdk', detail: 'no java' })
+    await refreshOpModes()
+    await refreshOpModes()
+    const list = usePlayStore.getState().opModeList
+    expect(list.registered).toEqual({
+      status: 'failed',
+      opModes: [RAMP],
+      replaced: [],
+      problem: { kind: 'failed', code: 'noJdk', detail: 'no java' }
+    })
+    const notices = usePlayStore
+      .getState()
+      .entries.filter((entry) => entry.type === 'registeredFailed')
+    expect(notices).toHaveLength(1)
+    // 이유는 번역하지 않은 코드로 두고 그릴 때 번역한다(언어를 바꾸면 따라 바뀜)
+    expect(notices[0]).toMatchObject({ level: 'error', code: 'noJdk', detail: 'no java' })
+  })
+
+  it('컴파일 오류·던진 등록기는 목록 아래 한 줄과 Console(진단은 그 줄을 연다)로 알린다', async () => {
+    registeredResult = async () => ({
+      ok: true,
+      opModes: [],
+      replaced: [],
+      diagnostics: [
+        {
+          kind: 'error',
+          file: 'TuningOpModes.java',
+          path: TUNING_PATH,
+          line: 12,
+          column: 3,
+          message: 'cannot find symbol',
+          code: 'compiler.err.cant.resolve',
+          hint: null
+        }
+      ],
+      errors: []
+    })
+    await refreshOpModes()
+    expect(usePlayStore.getState().opModeList.registered.problem).toEqual({
+      kind: 'compile',
+      errors: 1
+    })
+    const entries = usePlayStore.getState().entries
+    expect(entries.map((entry) => entry.type)).toEqual(['notice', 'diagnostic'])
+    expect(entries[1].root).toBe('/p')
+
+    registeredResult = async () => ({
+      ok: true,
+      opModes: [RAMP],
+      replaced: [],
+      diagnostics: [],
+      errors: [{ registrar: TUNING, message: 'java.lang.IllegalStateException: boom' }]
+    })
+    await refreshOpModes()
+    expect(usePlayStore.getState().opModeList.registered.problem).toEqual({
+      kind: 'registrar',
+      registrars: [TUNING]
+    })
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'error',
+      kind: 'registrar',
+      message: `${TUNING}: java.lang.IllegalStateException: boom`
+    })
+  })
+
+  it('같은 프로젝트를 다시 연 뒤 온 이전 결과는 버리고 새로 읽는다', async () => {
+    const slow = deferred<ListRegisteredResult>()
+    registeredResult = () => slow.promise
+    const done = refreshOpModes()
+    await settle()
+    // 다시 열면 목록을 다시 읽는다(읽는 중인 등록기 목록은 끝난 뒤 한 번 더)
+    registeredResult = async () => ({
+      ok: true,
+      opModes: [],
+      replaced: [],
+      diagnostics: [],
+      errors: []
+    })
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    slow.resolve({ ok: true, opModes: [RAMP], replaced: [], diagnostics: [], errors: [] })
+    await done
+    await settle()
+    expect(api.listRegisteredOpModes).toHaveBeenCalledTimes(2)
+    expect(usePlayStore.getState().opModeList.registered).toMatchObject({
+      status: 'ready',
+      opModes: []
+    })
+  })
+})
+
+describe('FTC Dashboard 상태', () => {
+  const TREE: DashConfigNode = {
+    kind: 'custom',
+    children: [
+      {
+        name: 'Lift',
+        node: {
+          kind: 'custom',
+          children: [
+            {
+              name: 'kP',
+              node: {
+                kind: 'value',
+                type: 'double',
+                value: '0.5',
+                enumValues: [],
+                source: { declaringClass: 'org.firstinspires.ftc.teamcode.Lift', field: 'kP' }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+  const OPS = [{ type: 'circle' as const, x: 0, y: 0, radius: 9, stroke: true }]
+
+  it('Config 탭 값은 INIT·실행 중에만 보내고, 새 트리를 받을 때까지 보낸 값을 둔다', async () => {
+    await initPlay()
+    handlePlayEvent(event({ type: 'phase', phase: 'init' }))
+    handlePlayEvent(event({ type: 'dashConfig', tNanos: 0, root: TREE }))
+    sendDashConfig(['Lift', 'kP'], '0.75')
+    expect(commands).toContainEqual({ type: 'config', path: ['Lift', 'kP'], value: '0.75' })
+    expect(usePlayStore.getState().dashConfig!.pending).toEqual({ '["Lift","kP"]': '0.75' })
+    handlePlayEvent(event({ type: 'dashConfig', tNanos: 5, root: TREE }))
+    expect(usePlayStore.getState().dashConfig!.pending).toEqual({})
+
+    // 메인이 버릴 명령(너무 긴 글자)은 보내지 않고 보낸 값으로도 두지 않는다
+    commands.length = 0
+    sendDashConfig(['Lift', 'kP'], 'x'.repeat(MAX_DASH_TEXT + 1))
+    expect(commands).toEqual([])
+    expect(usePlayStore.getState().dashConfig!.pending).toEqual({})
+
+    stopPlay()
+    commands.length = 0
+    sendDashConfig(['Lift', 'kP'], '0.9')
+    expect(commands).toEqual([])
+  })
+
+  it('INIT은 이전 실행의 Dashboard 텔레메트리·오버레이·설정을 지운다', async () => {
+    await initPlay()
+    handlePlayEvent(
+      event({ type: 'dash', tNanos: 1, cleared: false, data: [['x', '1']], log: null, ops: OPS })
+    )
+    handlePlayEvent(event({ type: 'dashConfig', tNanos: 1, root: TREE }))
+    handlePlayEvent(
+      event({ type: 'finished', tNanos: 2, reason: 'stopped', detail: '', preselectTeleOp: '' })
+    )
+    // 끝나도 다음 INIT까지 남는다
+    expect(usePlayStore.getState().dashOverlay).not.toBeNull()
+    expect(usePlayStore.getState().dashConfig).not.toBeNull()
+    await initPlay()
+    expect(usePlayStore.getState()).toMatchObject({
+      dash: null,
+      dashOverlay: null,
+      dashConfig: null
+    })
+  })
+
+  it('프로젝트를 열면 오버레이·설정을 지우고, 아직 도는 실행의 것은 더 받지 않는다', async () => {
+    await initPlay()
+    handlePlayEvent(
+      event({ type: 'dash', tNanos: 1, cleared: false, data: [], log: null, ops: OPS })
+    )
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().dashOverlay).toBeNull()
+    expect(usePlayStore.getState().run!.detached).toBe(true)
+    handlePlayEvent(
+      event({ type: 'dash', tNanos: 2, cleared: false, data: [['y', '2']], log: null, ops: OPS })
+    )
+    handlePlayEvent(event({ type: 'dashConfig', tNanos: 2, root: TREE }))
+    expect(usePlayStore.getState().dashOverlay).toBeNull()
+    expect(usePlayStore.getState().dashConfig).toBeNull()
   })
 })

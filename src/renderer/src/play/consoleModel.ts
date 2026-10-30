@@ -9,6 +9,7 @@ import {
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
 import type {
   DiagnosticHint,
+  ListRegisteredResult,
   PlayDiagnostic,
   PlayLinkWarning,
   PlayStackFrame
@@ -53,6 +54,12 @@ export type ConsoleBody =
   | { type: 'notice'; key: ConsoleNoticeKey; params: Record<string, string | number> }
   // playInit이 실패했다(알림과 같은 문장, notice.play*)
   | { type: 'initFailed'; notice: NoticeKey; detail: string }
+  // 등록기 OpMode 목록을 읽지 못했다(이유는 play.list.registeredFailure.<code>)
+  | {
+      type: 'registeredFailed'
+      code: Extract<ListRegisteredResult, { ok: false }>['code']
+      detail: string
+    }
   // 의존성 보고의 좌표 하나(불러오지 않음·받지 못함, 처음 받은 해시 기록)
   | { type: 'library'; library: LibraryEntry }
   // 팀 Gradle 파일을 읽다 풀지 못한 것
@@ -109,6 +116,7 @@ export function consoleLevel(
       return ERROR_FINISH.has(body.reason) ? 'error' : body.reason === 'killed' ? 'warning' : 'info'
     case 'notice':
     case 'initFailed':
+    case 'registeredFailed':
       return noticeLevel
     case 'library':
       return libraryLevel(body.library)
@@ -204,6 +212,11 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       return t(`console.notices.${entry.key}`, entry.params)
     case 'initFailed':
       return t(`notice.${entry.notice}`, { detail: entry.detail })
+    case 'registeredFailed':
+      return t('console.notices.registeredFailed', {
+        reason: t(`play.list.registeredFailure.${entry.code}`),
+        detail: entry.detail
+      })
     case 'library': {
       const { library } = entry
       const location = library.declaredAt

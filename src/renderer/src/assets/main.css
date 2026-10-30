@@ -2527,6 +2527,176 @@ button.usage-header:hover {
   border-top: 1px dashed var(--color-border);
 }
 
+/* FTC Dashboard 텔레메트리(DS 화면 아래) */
+.telemetry-dashboard {
+  margin-top: 12px;
+}
+
+.telemetry-key {
+  color: var(--color-text-muted);
+}
+
+/* Config 탭(FTC Dashboard 설정 패널처럼) */
+.config {
+  padding: 4px 0 8px;
+}
+
+.config-hint {
+  margin: 0;
+  padding: 4px 10px 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 0 10px;
+}
+
+.config-row:hover {
+  background: var(--color-panel-header);
+}
+
+.config-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-toggle:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.config-caret {
+  flex: none;
+  width: 14px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.config-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-changed-dot {
+  color: #fbbf24;
+  font-weight: 700;
+}
+
+.config-name {
+  flex: 0 0 40%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-row.is-changed .config-name {
+  color: #fbbf24;
+}
+
+.config-control {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.config-input {
+  flex: 0 1 180px;
+}
+
+.config-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.config-sent {
+  color: var(--color-accent);
+}
+
+.config-start {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.config-apply[aria-disabled='true'] {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.config-apply[aria-disabled='true']:hover {
+  border-color: var(--color-border);
+}
+
+.config-applied {
+  color: #7fbf7f;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* OpMode 목록: 등록기 OpMode 표시와 소스 열기 */
+.opmode-registered {
+  flex: none;
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.opmode-option.is-active .opmode-registered {
+  color: rgb(255 255 255 / 75%);
+  border-color: rgb(255 255 255 / 40%);
+}
+
+.opmode-open {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  visibility: hidden;
+  cursor: pointer;
+}
+
+.opmode-option:hover .opmode-open,
+.opmode-option.is-active .opmode-open {
+  visibility: visible;
+}
+
+.opmode-open:hover {
+  border-color: currentColor;
+}
+
+.opmode-problem {
+  color: #e0b341;
+}
+
 /* 장치 출력 표 */
 .devices-table {
   width: 100%;

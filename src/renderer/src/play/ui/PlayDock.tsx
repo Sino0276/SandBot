@@ -6,6 +6,7 @@ import { consoleCounts, formatCount } from '../consoleModel'
 import type { PadInfo } from '../gamepad'
 import { DOCK_TABS, type DockTab } from '../playSettings'
 import { usePlayStore } from '../playStore'
+import ConfigView from './ConfigView'
 import ConsoleView from './ConsoleView'
 import DevicesView from './DevicesView'
 import { LevelIcon, PlayIcon } from './PlayIcons'
@@ -48,7 +49,7 @@ function GamepadStatus(): React.JSX.Element {
   )
 }
 
-// 씬 뷰 아래 패널(Unity의 Console 자리): [콘솔] [텔레메트리] [장치] 탭. 안에 포커스가 있으면 씬 단축키(F·Delete·
+// 씬 뷰 아래 패널(Unity의 Console 자리): [콘솔] [텔레메트리] [장치] [설정값] 탭. 안에 포커스가 있으면 씬 단축키(F·Delete·
 // Q/W/E 등)는 쓰지 않는다(인스펙터와 같은 localKeys). 실행 단축키(Ctrl+P 등)는 그대로 받는다.
 function PlayDock(): React.JSX.Element {
   const { t } = useTranslation()
@@ -159,6 +160,11 @@ function PlayDock(): React.JSX.Element {
         {tab === 'devices' && (
           <div className="play-dock-scroll">
             <DevicesView />
+          </div>
+        )}
+        {tab === 'config' && (
+          <div className="play-dock-scroll">
+            <ConfigView />
           </div>
         )}
       </div>

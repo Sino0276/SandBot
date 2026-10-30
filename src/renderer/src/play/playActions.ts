@@ -1,5 +1,11 @@
 import i18n from 'i18next'
-import type { ListOpModesResult, PlayEvent, PlayInitResult, PlaySpeed } from '../../../shared/play'
+import type {
+  ListOpModesResult,
+  ListRegisteredResult,
+  PlayEvent,
+  PlayInitResult,
+  PlaySpeed
+} from '../../../shared/play'
 import { openPreferences, showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
@@ -8,6 +14,8 @@ import { ipcErrorDetail } from '../java/ipcError'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
+import type { ConsoleEntry } from './consoleModel'
+import { configCommandFits } from './dashConfigModel'
 import {
   browserGamepads,
   createGamepadPoller,
@@ -24,9 +32,22 @@ import {
   type PadKeyEvent
 } from './keyboardGamepad'
 import { installLibraryNotice } from './libraryNotice'
-import { compareOpModes, findOpMode, preselectedTeleOp } from './opModeList'
+import { compareOpModes, findOpMode, opModeKey, preselectedTeleOp } from './opModeList'
 import { loadLastOpMode, saveLastOpMode } from './playSettings'
-import { EMPTY_OPMODE_LIST, isRunActive, newRun, usePlayStore, type PlayData } from './playStore'
+import {
+  consoleEntry,
+  EMPTY_OPMODE_LIST,
+  EMPTY_REGISTERED_LIST,
+  isRunActive,
+  listedOpModes,
+  newRun,
+  usePlayStore,
+  withEntries,
+  withPendingConfig,
+  type PlayData,
+  type RegisteredListState,
+  type RegisteredProblem
+} from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
 import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
 
@@ -38,6 +59,7 @@ import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
 let opModeRequest = 0
 
 // TeamCode의 OpMode를 다시 읽는다(프로젝트를 열 때, 선택 목록을 열 때, 창 포커스 때). 늦게 온 이전 결과는 버린다.
+// 등록기(@OpModeRegistrar)가 있으면 그것이 등록하는 OpMode도 읽는다(refreshRegisteredOpModes).
 export async function refreshOpModes(): Promise<void> {
   const root = useProjectStore.getState().root
   const request = ++opModeRequest
@@ -57,16 +79,25 @@ export async function refreshOpModes(): Promise<void> {
   }
   if (request !== opModeRequest || useProjectStore.getState().root !== root) return
   if (result.ok) {
+    const previous = usePlayStore.getState().opModeList
+    const registrars = result.registrars
     usePlayStore.setState({
       opModeList: {
         root,
         status: 'ready',
         opModes: [...result.opModes].sort(compareOpModes),
+        registrars,
+        // 등록기가 있으면 이전 등록 OpMode를 보인 채로 다시 읽는다(고른 것을 잃지 않게)
+        registered:
+          registrars.length > 0 && previous.root === root
+            ? previous.registered
+            : EMPTY_REGISTERED_LIST,
         truncated: result.truncated,
         hasTeamCode: result.hasTeamCode,
         detail: ''
       }
     })
+    if (registrars.length > 0) await refreshRegisteredOpModes(root)
     return
   }
   // 읽지 못하면 이 프로젝트의 이전 목록은 그대로 두고(잠깐의 실패로 고른 OpMode를 잃지 않게) 이유만 보인다
@@ -80,12 +111,138 @@ export async function refreshOpModes(): Promise<void> {
   })
 }
 
-// DS처럼 고른 OpMode는 프로젝트마다 기억한다. 실행 중에는 바꾸지 않는다.
-export function selectOpMode(className: string): void {
+// ---- 등록기 OpMode ----
+
+// 루트마다 한 번에 하나만 읽는다(JVM에서 등록기를 실행한다. 메인이 결과를 캐시해 같으면 JVM을 띄우지 않는다). 읽는
+// 동안 다시 부르면 끝난 뒤 한 번 더 읽는다(그사이 바뀐 파일을 놓치지 않게).
+const registeredReads = new Map<string, { promise: Promise<void>; again: boolean }>()
+// Console에 마지막으로 남긴 문제(같은 문제를 창 포커스마다 다시 남기지 않는다). 다른 프로젝트를 열면 지운다.
+let loggedRegisteredProblem: { root: string; key: string } | null = null
+
+function setRegistered(root: string, patch: Partial<RegisteredListState>): void {
+  usePlayStore.setState((state) =>
+    state.opModeList.root === root && state.opModeList.registrars.length > 0
+      ? {
+          opModeList: {
+            ...state.opModeList,
+            registered: { ...state.opModeList.registered, ...patch }
+          }
+        }
+      : {}
+  )
+}
+
+export function refreshRegisteredOpModes(root: string): Promise<void> {
+  const running = registeredReads.get(root)
+  if (running) {
+    running.again = true
+    return running.promise
+  }
+  const entry = { promise: Promise.resolve(), again: false }
+  entry.promise = (async () => {
+    try {
+      do {
+        entry.again = false
+        await readRegistered(root)
+      } while (entry.again && useProjectStore.getState().root === root)
+    } finally {
+      registeredReads.delete(root)
+    }
+  })()
+  registeredReads.set(root, entry)
+  return entry.promise
+}
+
+async function readRegistered(root: string): Promise<void> {
+  const { session } = useProjectStore.getState()
+  setRegistered(root, { status: 'loading' })
+  let result: ListRegisteredResult
+  try {
+    result = await window.api.listRegisteredOpModes(root)
+  } catch (error) {
+    result = { ok: false, code: 'failed', detail: ipcErrorDetail(error) }
+  }
+  const project = useProjectStore.getState()
+  if (project.root !== root || project.session !== session) return
+  if (!result.ok) {
+    // 읽지 못하면 이전 등록 OpMode는 그대로 둔다(annotated 목록과 같음)
+    const problem: RegisteredProblem = { kind: 'failed', code: result.code, detail: result.detail }
+    setRegistered(root, { status: 'failed', problem })
+    logRegisteredProblem(root, problem, result)
+    return
+  }
+  const errors = result.diagnostics.filter((d) => d.kind === 'error').length
+  const problem: RegisteredProblem | null =
+    errors > 0
+      ? { kind: 'compile', errors }
+      : result.errors.length > 0
+        ? { kind: 'registrar', registrars: result.errors.map((error) => error.registrar) }
+        : null
+  setRegistered(root, {
+    status: 'ready',
+    opModes: [...result.opModes].sort(compareOpModes),
+    replaced: result.replaced,
+    problem
+  })
+  logRegisteredProblem(root, problem, result)
+}
+
+// 문제를 Console에도 남긴다(컴파일 진단은 더블클릭하면 그 줄을 연다). 같은 결과는 한 번만 남긴다.
+function logRegisteredProblem(
+  root: string,
+  problem: RegisteredProblem | null,
+  result: ListRegisteredResult
+): void {
+  const key = problem === null ? '' : JSON.stringify(result)
+  if (loggedRegisteredProblem?.root === root && loggedRegisteredProblem.key === key) return
+  loggedRegisteredProblem = { root, key }
+  if (problem === null) return
+  const added: ConsoleEntry[] = []
+  if (problem.kind === 'failed')
+    added.push(
+      consoleEntry(
+        { type: 'registeredFailed', code: problem.code, detail: problem.detail },
+        null,
+        'error'
+      )
+    )
+  else if (result.ok) {
+    if (problem.kind === 'compile')
+      added.push(
+        consoleEntry(
+          { type: 'notice', key: 'registeredCompileFailed', params: { count: problem.errors } },
+          null,
+          'error'
+        )
+      )
+    for (const diagnostic of result.diagnostics)
+      added.push(consoleEntry({ type: 'diagnostic', diagnostic }, null, undefined, root))
+    for (const error of result.errors)
+      added.push(
+        consoleEntry(
+          {
+            type: 'error',
+            kind: 'registrar',
+            message: `${error.registrar}: ${error.message}`,
+            exception: null,
+            stack: [],
+            thread: ''
+          },
+          null,
+          undefined,
+          root
+        )
+      )
+  }
+  usePlayStore.setState((state) => withEntries(state, added))
+}
+
+// DS처럼 고른 OpMode는 프로젝트마다 기억한다(key는 opModeKey). 실행 중에는 바꾸지 않는다.
+export function selectOpMode(key: string): void {
   const root = useProjectStore.getState().root
   if (!root || isRunActive(usePlayStore.getState().run)) return
-  usePlayStore.setState({ selectedClass: className })
-  saveLastOpMode(root, className)
+  usePlayStore.setState({ selectedClass: key })
+  saveLastOpMode(root, key)
 }
 
 // ---- INIT을 막는 이유 ----
@@ -102,7 +259,8 @@ export function initBlock(
   const list = play.opModeList
   if (list.root === project.root && list.status === 'ready' && !list.hasTeamCode)
     return 'noTeamCode'
-  if (list.root !== project.root || !findOpMode(list.opModes, play.selectedClass)) return 'noOpMode'
+  if (list.root !== project.root || !findOpMode(listedOpModes(list), play.selectedClass))
+    return 'noOpMode'
   if (project.busy) return 'busy'
   return null
 }
@@ -191,7 +349,7 @@ async function runInit(): Promise<void> {
   if (currentInitBlock()) return
   const { root, generation } = useProjectStore.getState()
   const play = usePlayStore.getState()
-  const opMode = findOpMode(play.opModeList.opModes, play.selectedClass)
+  const opMode = findOpMode(listedOpModes(play.opModeList), play.selectedClass)
   if (!root || !opMode) return
 
   const config = chooseRobotConfig(
@@ -205,10 +363,13 @@ async function runInit(): Promise<void> {
   const world = config ? worldFor(config.robotId, play.settings) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
-  // 이전 실행의 잔상은 다음 INIT에 지운다(Unity처럼 로봇은 편집 위치에서 다시 시작한다)
+  // 이전 실행의 잔상·Dashboard 오버레이·설정은 다음 INIT에 지운다(Unity처럼 로봇은 편집 위치에서 다시 시작한다)
   usePlayStore.setState({
     simPose: null,
     ghostPose: null,
+    dash: null,
+    dashOverlay: null,
+    dashConfig: null,
     run: newRun({
       runId,
       root,
@@ -234,7 +395,15 @@ async function runInit(): Promise<void> {
     result = await window.api.playInit({
       runId,
       root,
-      opMode: { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
+      // 등록기 OpMode: className·path는 그것을 등록한 등록기 클래스와 소스다
+      opMode: opMode.registered
+        ? {
+            className: opMode.registered.registrar,
+            path: opMode.path,
+            flavor: opMode.flavor,
+            registeredName: opMode.name
+          }
+        : { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
       settings: play.settings,
       world: world?.spec ?? null
@@ -457,14 +626,21 @@ export function handlePlayEvent(event: PlayEvent): void {
     usePlayStore.getState().opModeList.root === before.root
   ) {
     const teleOp = preselectedTeleOp(
-      usePlayStore.getState().opModeList.opModes,
+      listedOpModes(usePlayStore.getState().opModeList),
       event.preselectTeleOp
     )
-    if (teleOp) selectOpMode(teleOp.className)
+    if (teleOp) selectOpMode(opModeKey(teleOp))
   }
   // 다른 프로젝트를 연 뒤 끝난 실행은 지운다(그 프로젝트의 텔레메트리·장치·시간이 남지 않게, Console은 그대로)
   if (!isRunActive(after) && before.root !== useProjectStore.getState().root)
-    usePlayStore.setState({ run: null, simPose: null, ghostPose: null })
+    usePlayStore.setState({
+      run: null,
+      simPose: null,
+      ghostPose: null,
+      dash: null,
+      dashOverlay: null,
+      dashConfig: null
+    })
 }
 
 // 프로젝트를 바꾸면(다른 프로젝트를 열거나 같은 것을 다시 염) 지금 실행을 멈추고 그 프로젝트의 목록·선택을 읽는다
@@ -472,13 +648,17 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   const { run } = usePlayStore.getState()
   // 끝난 실행은 바로 지운다(아직 도는 실행은 끝날 때 handlePlayEvent가 지운다)
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
-  // 잔상은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다)
-  usePlayStore.setState({ ghostPose: null })
+  // 잔상·Dashboard 오버레이·설정은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다. 설정의 [파일에 반영]은 그
+  // 실행의 TeamCode를 가리킨다)
+  usePlayStore.setState({ ghostPose: null, dashOverlay: null, dashConfig: null })
+  if (rootChanged) loggedRegisteredProblem = null
   if (isRunActive(run)) {
     // 아직 도는 실행은 새로 연 씬과 떼어 놓는다: 그 로봇을 시뮬레이터 자세로 그리거나 잠그지 않고, 끝나도 잔상을 남기지
-    // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다)
+    // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다). Dashboard 오버레이·설정도 더 받지 않는다.
     usePlayStore.setState((state) =>
-      state.run?.runId === run.runId ? { run: { ...state.run, robotId: null }, simPose: null } : {}
+      state.run?.runId === run.runId
+        ? { run: { ...state.run, robotId: null, detached: true }, simPose: null }
+        : {}
     )
     stopPlay()
   }
@@ -526,11 +706,38 @@ export function initPlaySession(): void {
   if (root) onProjectChanged(root, true)
 }
 
+// ---- Dashboard 설정(Config 탭) ----
+
+// Config 탭 값을 고칠 수 있는지: 그 실행이 받아들여졌고 INIT·실행 중이다(정지 중·끝난 뒤는 읽기 전용)
+export function canEditDashConfig(data: Pick<PlayData, 'run' | 'dashConfig'>): boolean {
+  const { run, dashConfig } = data
+  return (
+    isRunActive(run) &&
+    run.accepted &&
+    !run.stopRequested &&
+    !run.detached &&
+    (run.phase === 'init' || run.phase === 'running') &&
+    dashConfig?.runId === run.runId
+  )
+}
+
+// 실행 중 Config 탭에서 확정한 값 하나를 보낸다(다음 틱 경계에서 사이드카가 적용하고 트리를 다시 보낸다). 일시 정지
+// 중이면 다음 틱 답에 실려 간다. 새 트리를 받을 때까지 칸은 보낸 값을 보인다. 메인이 받지 않을 명령(너무 긴 글자 등,
+// configCommandFits)은 보내지 않는다(입력칸이 먼저 막는다).
+export function sendDashConfig(path: readonly string[], value: string): void {
+  const state = usePlayStore.getState()
+  if (!canEditDashConfig(state) || !state.dashConfig || !configCommandFits(path, value)) return
+  usePlayStore.setState({ dashConfig: withPendingConfig(state.dashConfig, path, value) })
+  command({ type: 'config', path: [...path], value })
+}
+
 // 테스트용: 모듈 상태를 처음으로 되돌린다
 export function resetPlayActionsState(): void {
   initInFlight = false
   opModeRequest = 0
   lastPlayNotice = 0
+  registeredReads.clear()
+  loggedRegisteredProblem = null
   poller.stop()
   keyboardPad.releaseAll()
 }

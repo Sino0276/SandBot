@@ -3,6 +3,7 @@ import type { OpModeInfo } from '../../../shared/play'
 import {
   compareOpModes,
   findOpMode,
+  opModeKey,
   opModeSections,
   orderedOpModes,
   preselectedTeleOp
@@ -88,5 +89,25 @@ describe('OpMode 목록 묶음(DS처럼)', () => {
     expect(preselectedTeleOp(LIST, '')).toBeNull()
     const twice = [...LIST, opMode('t.Drive2', 'TeleOp', 'drive')]
     expect(preselectedTeleOp(twice, 'drive')).toBeNull()
+  })
+
+  it('고르는 키: 등록기 OpMode는 registered:이름, annotated는 클래스 이름(예전에 기억한 값도 맞는다)', () => {
+    const registered: OpModeInfo = {
+      ...opMode('com.acmerobotics.roadrunner.ftc.AngularRampLogger', 'TeleOp', 'AngularRampLogger'),
+      path: 'src/main/java/t/TuningOpModes.java',
+      registered: { registrar: 't.TuningOpModes' }
+    }
+    // 같은 클래스를 다른 이름으로 두 번 등록할 수 있다
+    const again: OpModeInfo = { ...registered, name: 'Angular (again)' }
+    const all = [...LIST, registered, again]
+    expect(opModeKey(registered)).toBe('registered:AngularRampLogger')
+    expect(opModeKey(LIST[0])).toBe('t.RedLeft')
+    expect(findOpMode(all, 'registered:Angular (again)')).toBe(again)
+    expect(findOpMode(all, 't.Drive')?.name).toBe('drive')
+    // 등록 OpMode의 클래스 이름은 고르는 키가 아니다
+    expect(findOpMode(all, registered.className)).toBeNull()
+    // 이름·클래스가 같아도 키로 순서를 정한다
+    const twin: OpModeInfo = { ...registered, registered: undefined }
+    expect([registered, twin].sort(compareOpModes)).toEqual([twin, registered])
   })
 })

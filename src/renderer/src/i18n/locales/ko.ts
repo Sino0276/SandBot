@@ -199,10 +199,12 @@ const ko = {
     scene: '씬',
     inspector: '인스펙터',
     // 씬 뷰 아래 패널(Unity의 Console 자리)의 탭
-    dock: '콘솔·텔레메트리·장치',
+    dock: '콘솔·텔레메트리·장치·설정값',
     console: '콘솔',
     telemetry: '텔레메트리',
-    devices: '장치'
+    devices: '장치',
+    // FTC Dashboard 설정 패널(Configuration)처럼 @Config 값을 실행 중 고친다
+    config: '설정값'
   },
   objectKind: {
     robot: '로봇',
@@ -624,7 +626,30 @@ const ko = {
       failed: 'OpMode 목록을 읽지 못했습니다 ({{detail}}).',
       noTeamCode: '프로젝트에 TeamCode 폴더가 없습니다.',
       empty: 'TeamCode에 @TeleOp·@Autonomous OpMode가 없습니다(@Disabled는 보이지 않습니다).',
-      truncated: 'TeamCode 파일이 너무 많아 일부 OpMode만 보입니다.'
+      truncated: 'TeamCode 파일이 너무 많아 일부 OpMode만 보입니다.',
+      // @OpModeRegistrar가 등록하는 OpMode(사이드카가 등록기를 실행해 읽는다)
+      registeredLoading: '등록기(@OpModeRegistrar) OpMode 읽는 중…',
+      registeredFailed: '등록기 OpMode를 읽지 못했습니다: {{reason}}',
+      registeredCompile:
+        '등록기 파일을 컴파일하지 못해(오류 {{count}}개) 등록기 OpMode가 보이지 않습니다. Console에서 그 줄을 열 수 있습니다.',
+      registeredRegistrar:
+        '등록기 {{names}}이(가) 오류를 던져 그 등록기의 OpMode가 빠졌습니다(Console).',
+      // ListRegisteredResult의 실패 이유
+      registeredFailure: {
+        notAllowed: '이 프로젝트에서는 실행할 수 없음',
+        missing: 'TeamCode나 등록기 파일을 찾지 못함',
+        noJdk: 'JDK 17 이상을 찾지 못함(환경 설정 > 외부 도구)',
+        noSidecar: '실행기(사이드카)가 빌드되지 않음',
+        failed: '실행기 오류',
+        noAndroidSdk: 'Android SDK를 찾지 못함(환경 설정 > 외부 도구)',
+        noAndroidPlatform: '프로젝트의 Android 플랫폼이 설치되지 않음'
+      },
+      registeredTag: '등록기',
+      registeredTooltip: '{{className}} · 등록기 {{registrar}}\n{{file}}',
+      open: '열기',
+      openTooltip: '외부 스크립트 편집기로 이 OpMode의 소스를 엽니다 (Alt+Enter)',
+      openRegistrarTooltip:
+        '외부 스크립트 편집기로 이 OpMode를 등록하는 등록기 줄을 엽니다 (Alt+Enter)'
     },
     init: 'INIT',
     start: 'START',
@@ -779,6 +804,10 @@ const ko = {
         '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
       configMissing:
         '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.',
+      // 등록기(@OpModeRegistrar) OpMode 목록을 읽을 때
+      registeredFailed: '등록기 OpMode 목록을 읽지 못했습니다: {{reason}} ({{detail}})',
+      registeredCompileFailed:
+        '등록기(@OpModeRegistrar) 파일을 컴파일하지 못해 등록기 OpMode를 읽지 못했습니다(오류 {{count}}개). 진단을 더블클릭하면 그 줄을 엽니다.',
       // 시뮬레이터 안내(simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
@@ -899,7 +928,54 @@ const ko = {
     noRun: 'OpMode를 실행하면 Driver Station처럼 텔레메트리가 보입니다.',
     empty: '아직 받은 텔레메트리가 없습니다(telemetry.update()가 보낼 때 보입니다).',
     log: '텔레메트리 로그',
-    sentAt: '보낸 가상 시간'
+    sentAt: '보낸 가상 시간',
+    // FTC Dashboard 텔레메트리(sendTelemetryPacket, Dashboard의 Telemetry 패널처럼 키마다 마지막 값)
+    dashboard: 'FTC Dashboard',
+    dashboardHint:
+      'FTC Dashboard로 보낸 패킷(TelemetryPacket.put·addLine)입니다. 키마다 마지막 값을 보이고, clearTelemetry가 지웁니다. 필드 그림(fieldOverlay)은 씬 뷰 바닥에 그립니다.',
+    dashboardEmpty: '받은 패킷에 값이 없습니다.',
+    dashboardLog: 'Dashboard 로그'
+  },
+  // Config 탭(FTC Dashboard 설정 패널처럼 @Config·addConfigVariable 변수)
+  config: {
+    noRun:
+      'OpMode를 실행하면 FTC Dashboard의 @Config 값이 여기에 보이고, 실행 중에 고칠 수 있습니다(Dashboard 설정 패널처럼).',
+    empty: '이 실행에는 Dashboard 설정 변수가 없습니다(@Config 클래스나 addConfigVariable이 없음).',
+    tree: 'Dashboard 설정 변수',
+    revertHint:
+      '실행 중 바꾼 값은 STOP하면 되돌아갑니다(다음 실행은 파일 값). 파일에 남기려면 [파일에 반영]을 누른 뒤 저장(Ctrl+S)하세요.',
+    readOnlyHint: 'INIT·실행 중에만 고칠 수 있습니다. 마지막 값은 다음 INIT까지 보입니다.',
+    hardware: '하드웨어(withHardwareRoot)',
+    expand: '펼치기',
+    collapse: '접기',
+    changed: '이 실행이 시작할 때와 다른 값이 있습니다.',
+    startValue: '(시작 {{value}})',
+    startValueHint: '이 실행이 시작할 때의 값입니다.',
+    sentHint: '보낸 값입니다. 다음 틱 경계에서 적용합니다(일시 정지 중이면 진행할 때).',
+    invalidHint: '이 형식으로 받을 수 없는 값이라 보내지 않습니다.',
+    tooLongHint: '글자가 {{max}}자를 넘어 보내지 않습니다.',
+    apply: '파일에 반영',
+    applyHint:
+      '이 값을 {{file}}의 {{field}} 튜닝 값(저장하지 않은 변경)으로 옮깁니다. 저장(Ctrl+S)하면 Java 파일에 씁니다. 실행 취소할 수 있습니다.',
+    applied: '반영함(저장하지 않음)',
+    // [파일에 반영]을 쓸 수 없는 이유(play/dashConfigModel.ts ApplyBlock)
+    applyBlocked: {
+      noSource:
+        '필드에서 읽는 변수가 아니라(addConfigVariable, 배열 원소 등) 파일에 반영할 수 없습니다.',
+      notTeamCode: 'TeamCode의 Java 파일이 아닌 클래스의 값이라 파일에 반영할 수 없습니다.',
+      loading: '{{file}}을(를) 읽는 중입니다.',
+      missing:
+        '{{file}}을(를) TeamCode에서 찾지 못해 반영할 수 없습니다(라이브러리 클래스일 수 있음).',
+      readFailed: '{{file}}을(를) 읽지 못해 반영할 수 없습니다.',
+      file: '{{file}}을(를) 고칠 수 없어(읽기 전용, 다른 인코딩, 생성 파일, \\u 이스케이프 등) 반영할 수 없습니다.',
+      noField:
+        '{{file}}에서 {{field}} 튜닝 값을 찾지 못했습니다(다른 파일의 상위 클래스 필드, 지운 필드 등).',
+      typeChanged: '파일의 {{field}} 형식이 실행한 코드와 달라 반영할 수 없습니다.',
+      value: '이 값은 그 형식의 Java 리터럴로 쓸 수 없습니다(NaN·무한대 등).',
+      inFile: '이미 파일의 값과 같습니다.',
+      applied: '이미 반영했습니다. 저장(Ctrl+S)하면 파일에 씁니다.',
+      readOnly: '파일의 {{field}}: {{reason}}'
+    }
   },
   // 장치 탭(장치 출력 표)
   devices: {
