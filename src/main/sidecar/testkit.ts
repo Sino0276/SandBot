@@ -110,7 +110,7 @@ export async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-// 가짜 사이드카(Node CommonJS). RunRequest.opModeClass의 단순 이름으로 동작을 고른다:
+// 가짜 사이드카(Node CommonJS). RunRequest.opModeClass의 단순 이름(등록기 OpMode면 registeredName)으로 동작을 고른다:
 // - Normal: 틱마다 텔레메트리·로그·장치 출력, start → running, stop → stopping → 2틱 뒤 finished stopped
 // - SlowLoop: loops가 4틱마다 하나 는다
 // - Crash: 3틱 뒤 stderr에 오류를 쓰고 exit 1
@@ -143,7 +143,7 @@ rl.on('line', (line) => {
   }
   if (msg.type === 'run') {
     request = msg
-    mode = msg.opModeClass.split('.').pop()
+    mode = (msg.opModeClass ?? msg.registeredName).split('.').pop()
     main()
   }
   if (msg.type === 'tickReply') {

@@ -1,5 +1,6 @@
-// Java 소스 → Driver Station이 보이는 OpMode 목록(@TeleOp·@Autonomous 클래스). 컴파일하지 않고 글자로 정한다.
-// 메인 프로세스(src/main/opModes.ts)가 TeamCode를 훑을 때와 실행할 때(Autonomous의 preselectTeleOp) 쓴다.
+// Java 소스 → Driver Station이 보이는 OpMode 목록(@TeleOp·@Autonomous 클래스)과 등록기(@OpModeRegistrar 메서드). 컴파일하지
+// 않고 글자로 정한다. 메인 프로세스(src/main/opModes.ts)가 TeamCode를 훑을 때와 실행할 때(Autonomous의 preselectTeleOp,
+// 실행마다 보내는 등록기) 쓴다.
 //
 // 고르는 규칙은 FTC SDK 12의 AnnotatedOpModeClassFilter와 같다:
 // - filterClass: @TeleOp·@Autonomous·@Utility 중 둘 이상이면 버린다(설정 오류). @Utility만 있으면 목록 밖(SandBot은
@@ -12,6 +13,10 @@
 // 포함)일 때만 읽고, 상수 이름 같은 식이면 기본값(name은 단순 이름, 나머지는 '')을 쓴다. 메서드 안의 지역 클래스·익명
 // 클래스는 public일 수 없으므로 보지 않는다.
 //
+// 등록기(@OpModeRegistrar): 실제 SDK(filterOpModeRegistrarMethods)는 앱의 모든 클래스에서 public static이고 이 애너테이션이
+// 있는 메서드를 부른다. 여기서는 public 최상위 형식이나 public static 중첩 형식(클래스·인터페이스·enum)의 public static
+// 메서드까지만 본다(매개변수 수·형식은 사이드카가 실제 규칙으로 거른다). 메서드 하나마다 애너테이션 줄을 준다.
+//
 // 애너테이션 이름은 javac처럼 푼다: 전체 이름(com.qualcomm.robotcore.eventloop.opmode.TeleOp), 또는 단순 이름을 단일
 // import·패키지 import(.*)로 들여왔거나 같은 패키지일 때. 이 파일의 형식이 같은 단순 이름으로 가리면 그 형식이다.
 //
@@ -19,16 +24,18 @@
 // 이스케이프가 있으면(lexer의 unsafeUnicodeEscape) 먼저 바꾼 글자로 다시 나눠 javac가 보는 토큰으로 읽는다(주석 안의
 // \u000a 뒤에 있는 애너테이션도 javac처럼 본다). 줄 번호는 원래 글자의 줄이다. 읽기만 하므로 튜닝 값(tunables.ts)처럼
 // 파일 전체를 거부할 필요가 없다.
-import type { OpModeFlavor, OpModeInfo } from '../play'
+import type { OpModeFlavor, OpModeInfo, RegistrarInfo } from '../play'
 import { decodeJavaQuoted, lexJava, lineAt, type JavaToken, type UnicodeEscape } from './lexer'
 
 export type ParsedOpMode = Omit<OpModeInfo, 'path'>
+export type ParsedRegistrar = Omit<RegistrarInfo, 'path'>
 
 const OPMODE_PACKAGE = 'com.qualcomm.robotcore.eventloop.opmode'
 const TELEOP = `${OPMODE_PACKAGE}.TeleOp`
 const AUTONOMOUS = `${OPMODE_PACKAGE}.Autonomous`
 const UTILITY = `${OPMODE_PACKAGE}.Utility`
 const DISABLED = `${OPMODE_PACKAGE}.Disabled`
+const OPMODE_REGISTRAR = `${OPMODE_PACKAGE}.OpModeRegistrar`
 
 const MODIFIER_KEYWORDS = new Set([
   'public',
@@ -63,6 +70,8 @@ type TypeDecl = {
   modifiers: Modifiers
   parent: TypeDecl | null
   nested: TypeDecl[]
+  // 애너테이션이 붙은 메서드(등록기 후보)
+  methods: Modifiers[]
 }
 
 type Imports = { single: Map<string, string>; onDemand: Set<string> }
@@ -301,7 +310,7 @@ class Parser {
       j++
     }
     if (!this.isIdent(j)) return { next: j, decl: null }
-    const decl: TypeDecl = { kind, name: this.tx(j), modifiers, parent, nested: [] }
+    const decl: TypeDecl = { kind, name: this.tx(j), modifiers, parent, nested: [], methods: [] }
     j++
     // 머리(형식 매개변수, extends·implements, record 성분)를 건너뛴다
     while (j < this.length && !this.isOp(j, '{')) {
@@ -340,9 +349,21 @@ class Parser {
         i = Math.max(parsed.next, i + 1)
         continue
       }
+      if (modifiers.annotations.length > 0 && this.isMethodHead(next)) decl.methods.push(modifiers)
       i = Math.max(this.skipMember(next), i + 1)
     }
     return Math.min(i + 1, this.length)
+  }
+
+  // 멤버 머리(수식어 다음)가 메서드인지: '=' ';' '{' '}'보다 이름 뒤의 '('가 먼저 나온다(형식 매개변수·제네릭의 <…>는
+  // 이 기호들이 아니라 그대로 지나간다)
+  isMethodHead(i: number): boolean {
+    for (let j = i; j < this.length; j++) {
+      if (this.isOp(j, '(')) return j > i && this.isIdent(j - 1)
+      if (this.isOp(j, '=') || this.isOp(j, ';') || this.isOp(j, '{') || this.isOp(j, '}'))
+        return false
+    }
+    return false
   }
 
   // 형식이 아닌 멤버(필드·메서드·생성자) 하나를 건너뛴다. 필드는 ';'에서, 메서드·생성자는 본문을 닫는 '}'에서 끝난다.
@@ -391,11 +412,16 @@ function findNested(decl: TypeDecl, name: string): boolean {
   return decl.nested.some((nested) => nested.name === name)
 }
 
-// 선언에 붙은 애너테이션은 선언을 감싼 범위에서 풀린다: 감싸는 형식들(그 이름과 중첩 형식), 최상위 형식이 가린다
-function shadowedAt(decl: TypeDecl, simple: string, topLevel: readonly TypeDecl[]): boolean {
+// 선언에 붙은 애너테이션은 선언을 감싼 범위에서 풀린다: 감싸는 형식들(그 이름과 중첩 형식), 최상위 형식이 가린다.
+// 멤버(메서드)의 애너테이션은 그 멤버를 선언한 형식부터다(scope = 그 형식).
+function shadowedAt(
+  scope: TypeDecl | null,
+  simple: string,
+  topLevel: readonly TypeDecl[]
+): boolean {
   if (topLevel.some((top) => top.name === simple)) return true
-  for (let scope = decl.parent; scope; scope = scope.parent) {
-    if (scope.name === simple || findNested(scope, simple)) return true
+  for (let current = scope; current; current = current.parent) {
+    if (current.name === simple || findNested(current, simple)) return true
   }
   return false
 }
@@ -482,7 +508,29 @@ function enclosedByInterface(decl: TypeDecl): boolean {
   )
 }
 
+// 바깥에서 보이는 형식인가(등록기를 부를 수 있는가): public이고, 중첩이면 static(인터페이스·enum·record는 늘 static,
+// 인터페이스·어노테이션 안의 형식은 늘 public static). 감싸는 형식은 보지 않는다(리플렉션은 중첩 클래스 자신의 접근을 본다).
+function reachableType(decl: TypeDecl): boolean {
+  const { keywords } = decl.modifiers
+  const isPublic = keywords.has('public') || enclosedByInterface(decl)
+  const isStatic =
+    keywords.has('static') ||
+    enclosedByInterface(decl) ||
+    decl.kind === 'interface' ||
+    decl.kind === 'enum' ||
+    decl.kind === 'record'
+  return isPublic && (decl.parent === null || isStatic)
+}
+
 export function parseOpModes(text: string): ParsedOpMode[] {
+  return parseOpModeSource(text).opModes
+}
+
+// 한 파일의 OpMode와 등록기 메서드(같은 토큰으로 한 번에 읽는다)
+export function parseOpModeSource(text: string): {
+  opModes: ParsedOpMode[]
+  registrars: ParsedRegistrar[]
+} {
   const raw = lexJava(text)
   let tokens = raw.tokens
   let source = text
@@ -497,10 +545,30 @@ export function parseOpModes(text: string): ParsedOpMode[] {
   parser.parseCompilationUnit()
 
   const found: ParsedOpMode[] = []
+  const registrars: ParsedRegistrar[] = []
   for (const decl of allTypes(parser.types)) {
+    if (decl.methods.length > 0 && decl.kind !== 'annotation' && reachableType(decl)) {
+      const memberShadowed = (simple: string): boolean => shadowedAt(decl, simple, parser.types)
+      const inInterface = decl.kind === 'interface'
+      for (const method of decl.methods) {
+        const registrar = method.annotations.find((annotation) =>
+          annotationIs(annotation.name, OPMODE_REGISTRAR, parser, memberShadowed)
+        )
+        if (!registrar || !method.keywords.has('static')) continue
+        // 인터페이스의 static 메서드는 private이 아니면 public이다
+        const isPublic = inInterface
+          ? !method.keywords.has('private')
+          : method.keywords.has('public')
+        if (!isPublic) continue
+        registrars.push({
+          className: binaryName(parser, decl),
+          line: lineAt(raw.lineStarts, toRaw(tokens[registrar.at].start))
+        })
+      }
+    }
     if (decl.kind !== 'class') continue
     const { annotations, keywords } = decl.modifiers
-    const shadowed = (simple: string): boolean => shadowedAt(decl, simple, parser.types)
+    const shadowed = (simple: string): boolean => shadowedAt(decl.parent, simple, parser.types)
     const find = (fqn: string): Annotation | undefined =>
       annotations.find((annotation) => annotationIs(annotation.name, fqn, parser, shadowed))
     const teleOp = find(TELEOP)
@@ -530,7 +598,17 @@ export function parseOpModes(text: string): ParsedOpMode[] {
       preselectTeleOp: flavor === 'Autonomous' ? (values.get('preselectTeleOp') ?? '') : ''
     })
   }
-  return found
+  return { opModes: found, registrars }
+}
+
+// 바이너리 이름의 최상위 형식이 그 파일(경로의 마지막 이름, .java 뺀 것)의 이름과 같은가. javac는 public 최상위 형식을 같은
+// 이름의 파일에만 두게 한다. 다른 이름의 최상위 형식(public일 수 없다) 안의 public static 중첩 클래스는 실제 SDK에서는 OpMode·
+// 등록기가 될 수 있지만, SandBot은 실행 요청의 className·path를 이 규칙으로 맞추므로(launch.ts isBinaryNameOf) 목록에도
+// 넣지 않는다(src/main/opModes.ts).
+export function isTopLevelOfFile(className: string, path: string): boolean {
+  const topLevel = className.slice(className.lastIndexOf('.') + 1).split('$')[0]
+  const stem = path.slice(path.lastIndexOf('/') + 1).replace(/\.java$/, '')
+  return topLevel === stem
 }
 
 const FLAVOR_ORDER: Record<OpModeFlavor, number> = { TeleOp: 0, Autonomous: 1 }

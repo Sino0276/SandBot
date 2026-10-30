@@ -54,12 +54,7 @@ final class RunRequest {
     final long stallMillis;
 
     private RunRequest(Map<String, Object> m) throws Invalid {
-        Object protocol = m.get("protocol");
-        if (!(protocol instanceof Long) || (Long) protocol != PROTOCOL)
-            throw new Invalid("unsupported protocol " + protocol + " (this sidecar speaks protocol " + PROTOCOL + ")");
-        Object clock = m.get("clock");
-        if (!"virtual".equals(clock))
-            throw new Invalid("unsupported clock " + Json.write(clock) + " (this sidecar supports \"virtual\" only)");
+        checkProtocolAndClock(m);
         tickNanos = positiveLong(m, "tickNanos");
         sourceRoots = stringList(m, "sourceRoots");
         opModeSource = string(m, "opModeSource");
@@ -95,13 +90,38 @@ final class RunRequest {
         return new RunRequest(message);
     }
 
-    private static String string(Map<String, Object> m, String key) throws Invalid {
+    /** run·list 공통: 프로토콜 버전과 시계 종류 */
+    static void checkProtocolAndClock(Map<String, Object> m) throws Invalid {
+        Object protocol = m.get("protocol");
+        if (!(protocol instanceof Long) || (Long) protocol != PROTOCOL)
+            throw new Invalid("unsupported protocol " + protocol + " (this sidecar speaks protocol " + PROTOCOL + ")");
+        Object clock = m.get("clock");
+        if (!"virtual".equals(clock))
+            throw new Invalid("unsupported clock " + Json.write(clock) + " (this sidecar supports \"virtual\" only)");
+    }
+
+    /** 등록기 클래스 이름들(요청 순서) */
+    static List<String> registrarClasses(List<Registrar> registrars) {
+        List<String> out = new ArrayList<>();
+        for (Registrar r : registrars) out.add(r.className);
+        return out;
+    }
+
+    /** 컴파일 시작 파일: 먼저 first(있으면), 그다음 등록기 소스(같은 파일은 TeamCompiler가 한 번만 넣는다) */
+    static List<String> startFiles(String first, List<Registrar> registrars) {
+        List<String> out = new ArrayList<>();
+        if (first != null) out.add(first);
+        for (Registrar r : registrars) out.add(r.source);
+        return out;
+    }
+
+    static String string(Map<String, Object> m, String key) throws Invalid {
         Object v = m.get(key);
         if (!(v instanceof String) || ((String) v).isEmpty()) throw new Invalid(key + " must be a non-empty string");
         return (String) v;
     }
 
-    private static String nullableString(Map<String, Object> m, String key) throws Invalid {
+    static String nullableString(Map<String, Object> m, String key) throws Invalid {
         Object v = m.get(key);
         if (v == null) return null;
         if (!(v instanceof String) || ((String) v).isEmpty())
@@ -109,7 +129,7 @@ final class RunRequest {
         return (String) v;
     }
 
-    private static List<Registrar> registrars(Map<String, Object> m) throws Invalid {
+    static List<Registrar> registrars(Map<String, Object> m) throws Invalid {
         Object v = m.get("registrars");
         if (!(v instanceof List)) throw new Invalid("registrars must be an array");
         List<Registrar> out = new ArrayList<>();
@@ -122,7 +142,7 @@ final class RunRequest {
         return Collections.unmodifiableList(out);
     }
 
-    private static List<String> stringList(Map<String, Object> m, String key) throws Invalid {
+    static List<String> stringList(Map<String, Object> m, String key) throws Invalid {
         Object v = m.get(key);
         if (!(v instanceof List)) throw new Invalid(key + " must be an array of strings");
         List<String> out = new ArrayList<>();
@@ -134,7 +154,7 @@ final class RunRequest {
     }
 
     /** JSON 정수(JavaScript가 1.0처럼 보낸 정수 값도 받는다) */
-    private static long integer(Map<String, Object> m, String key) throws Invalid {
+    static long integer(Map<String, Object> m, String key) throws Invalid {
         Object v = m.get(key);
         if (v instanceof Long) return (Long) v;
         if (v instanceof Double) {
@@ -144,7 +164,7 @@ final class RunRequest {
         throw new Invalid(key + " must be an integer");
     }
 
-    private static long positiveLong(Map<String, Object> m, String key) throws Invalid {
+    static long positiveLong(Map<String, Object> m, String key) throws Invalid {
         long v = integer(m, key);
         if (v <= 0) throw new Invalid(key + " must be positive");
         return v;

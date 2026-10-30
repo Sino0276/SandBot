@@ -7,6 +7,7 @@ import type {
   PlayEvent,
   PlayInitResult
 } from '../../shared/play'
+import type { RegistrarRef } from '../../shared/sidecarProtocol'
 import { javaTool } from '../jdk'
 import {
   buildRunRequest,
@@ -25,7 +26,8 @@ import { isValidSpeed, SidecarSession, type HostClock, type SessionTimeouts } fr
 import type { WorldFactory } from './world'
 
 // 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성 → 사이드카 → JDK → 바쁨) 뒤
-// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(그동안 STOP으로 취소),
+// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(그동안 STOP으로 취소), TeamCode의 등록기
+// (@OpModeRegistrar, 실제 SDK처럼 실행마다 모두 돈다)와 프로젝트의 모의 저장소(AppUtil.ROOT_FOLDER)를 정한 뒤
 // JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만 받는다. 아직 끝나지 않은 실행이
 // 있으면 busy. 끝났지만(finished) 프로세스가 남아 있으면 새 실행 전에 정리한다(shutdown → 잠깐 기다림 → kill).
 
@@ -57,9 +59,15 @@ export type ControllerDeps = {
   ) => Promise<PlatformResolution | Failure>
   // 라이브러리 받기·캐시. 없으면 라이브러리 없음.
   resolveLibraries?: (request: LibraryRequest) => Promise<LibraryResolution | Failure>
+  // TeamCode의 모든 등록기(@OpModeRegistrar, 소스는 절대 경로). 실제 SDK처럼 실행마다 모두 돈다. 없으면 [].
+  registrars?: (root: string) => Promise<RegistrarRef[]>
+  // 등록기 OpMode의 preselectTeleOp(등록기 OpMode 목록 캐시의 transitionTarget, 모르면 '')
+  registeredPreselect?: (root: string, name: string) => string
+  // 프로젝트의 모의 저장소(AppUtil.ROOT_FOLDER)를 만들고 그 경로를 준다. 없으면 실행 작업 폴더.
+  makeFirstFolder?: (projectRoot: string) => Promise<string>
 }
 
-const EMPTY_GRADLE: GradleProject = {
+export const EMPTY_GRADLE: GradleProject = {
   dependencies: [],
   repositories: [],
   compileSdk: null,
@@ -68,7 +76,7 @@ const EMPTY_GRADLE: GradleProject = {
   files: []
 }
 
-function noLibraries(request: LibraryRequest): Promise<LibraryResolution> {
+export function noLibraries(request: LibraryRequest): Promise<LibraryResolution> {
   return Promise.resolve({
     ok: true,
     report: {
@@ -250,6 +258,23 @@ export class PlayController {
         }
       })
       if (ownerGone()) return { ok: false, code: 'failed', detail: 'the window was closed' }
+      // 등록기(annotated OpMode를 실행할 때도 모두)와 모의 저장소
+      const registrars = (await this.deps.registrars?.(request.root).catch(() => [])) ?? []
+      let firstFolder: string | null = null
+      if (this.deps.makeFirstFolder) {
+        try {
+          firstFolder = await this.deps.makeFirstFolder(prepared.projectRoot)
+        } catch (error) {
+          return { ok: false, code: 'failed', detail: `sim files: ${errorText(error)}` }
+        }
+      }
+      const registeredName = request.opMode.registeredName
+      const preselectTeleOp =
+        registeredName === null
+          ? prepared.preselectTeleOp
+          : request.opMode.flavor === 'Autonomous'
+            ? (this.deps.registeredPreselect?.(request.root, registeredName) ?? '')
+            : ''
       if (this.active) await this.active.session.dispose()
       const runDir = await this.deps.makeRunDir()
       let process: SidecarProcess
@@ -273,8 +298,7 @@ export class PlayController {
             compileClasspath: [files.sdkJar, ...libraries.compileClasspath],
             libraryClasspath: libraries.libraryClasspath
           },
-          // 라이브러리 L2 갈래 A: TeamCode의 등록기와 프로젝트마다의 모의 저장소(userData/sim-files)
-          { registrars: [], firstFolder: runDir },
+          { registrars, firstFolder: firstFolder ?? runDir },
           (this.deps.epochMillis ?? Date.now)()
         ),
         {
@@ -282,7 +306,7 @@ export class PlayController {
           flavor: request.opMode.flavor,
           speed: request.settings.speed,
           autoStopAutonomous: request.settings.autoStopAutonomous,
-          preselectTeleOp: prepared.preselectTeleOp,
+          preselectTeleOp,
           mapSource: sourceMapper(prepared.projectRoot),
           jarCoordinates: libraries.jarCoordinates,
           diagnosticHint: libraries.diagnosticHint,

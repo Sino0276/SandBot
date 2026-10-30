@@ -8,19 +8,26 @@ package org.sandbot.runtime;
  *   <li>다른 스레드가 시계를 써서 OpMode를 멈추라고 했는데(VirtualClock.fatalMessage) OpMode 스레드가 2초(실제) 안에 끝나지 않으면
  *       (시계를 다시 부르지 않는 대기 등) 런타임이 finished exception으로 끝낸다.
  * </ul>
+ * 목록 요청(등록기만 실행, 틱 교환 없음)은 멈추면 기다릴 호스트 STOP이 없으므로 stall을 알린 뒤 바로 끝낸다(finished exception).
  * 벽시계는 여기서만 쓴다(팀 코드·프로토콜의 시간에는 들어가지 않는다).
  */
 final class Watchdog extends Thread {
     static final long PERIOD_MILLIS = 250;
     static final long FATAL_GRACE_NANOS = 2_000_000_000L;
 
+    /** 멈춘 스레드를 알리는 쪽(OpModeRunner·ListRunner) */
+    interface Stall {
+        void reportStall(Thread thread, long stallMillis);
+    }
+
     private final VirtualClock clock;
-    private final OpModeRunner runner;
+    private final Stall runner;
     private final Main.Session session;
     private final long stallNanos;
     private final long stallMillis;
+    private final boolean finishOnStall;
 
-    Watchdog(VirtualClock clock, OpModeRunner runner, Main.Session session, long stallMillis) {
+    Watchdog(VirtualClock clock, Stall runner, Main.Session session, long stallMillis, boolean finishOnStall) {
         super("SandBotWatchdog");
         setDaemon(true);
         this.clock = clock;
@@ -28,6 +35,7 @@ final class Watchdog extends Thread {
         this.session = session;
         this.stallMillis = stallMillis;
         this.stallNanos = stallMillis * 1_000_000L;
+        this.finishOnStall = finishOnStall;
     }
 
     @Override
@@ -59,6 +67,10 @@ final class Watchdog extends Thread {
             if (!reported && now - lastChange >= stallNanos) {
                 reported = true;
                 runner.reportStall(thread, stallMillis);
+                if (finishOnStall) {
+                    session.forceFinish("exception");
+                    return;
+                }
             }
         }
     }

@@ -5,6 +5,7 @@ import org.sandbot.sim.HubTiming;
 import org.sandbot.sim.Sim;
 
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -20,9 +21,10 @@ import java.util.Map;
  * JVM 사이드카 진입점(spec §R-1, 프로토콜은 src/shared/sidecarProtocol.ts).
  *
  * <p>원래 stdout은 프로토콜 전용으로 잡고 System.out·System.err는 가로채 log 메시지로 보낸다. 흐름:
- * hello → run 읽기·확인 → (라이브러리가 있으면) jar 열기·링크 검사(linkReport) → 컴파일(compiled) → 가상 시계·Hub 타이밍·
- * 호스트를 Sim에 넣기 → OpMode 스레드(OpModeRunner, 클래스는 TeamClassLoader → LibraryClassLoader → 앱 로더) → finished →
- * Runtime.halt(0). 어느 길로 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
+ * hello → run 읽기·확인 → (라이브러리가 있으면) jar 열기·링크 검사(linkReport) → 컴파일(compiled, OpMode·등록기 소스) →
+ * 가상 시계·Hub 타이밍·호스트·모의 저장소를 Sim에 넣기 → OpMode 스레드(OpModeRunner, 클래스는 TeamClassLoader →
+ * LibraryClassLoader → 앱 로더) → finished → Runtime.halt(0). run 대신 list(등록기 OpMode 목록)면 같은 준비 뒤 ListRunner가
+ * 등록기를 실행해 registered → finished listed. 어느 길로 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
  */
 public final class Main {
     private Main() {}
@@ -131,8 +133,7 @@ public final class Main {
 
         HostInput.Message first = input.take();
         if ("list".equals(first.type)) {
-            // 라이브러리 L2 갈래 A: 등록기 OpMode 목록(컴파일 → 등록기 실행 → registered → finished listed)
-            failBeforeRun(session, "this sidecar cannot list registered OpModes yet", "loadFailed");
+            runList(session, first);
             return;
         }
         if (!"run".equals(first.type)) {
@@ -146,46 +147,15 @@ public final class Main {
             failBeforeRun(session, e.getMessage(), "loadFailed");
             return;
         }
-        if (request.registeredName != null) {
-            // 라이브러리 L2 갈래 A: 등록기가 등록한 OpMode를 이름으로 고른다
-            failBeforeRun(session, "this sidecar cannot run registered OpModes yet", "loadFailed");
-            return;
-        }
 
         // 라이브러리(실행 클래스패스): 열기 → 링크 검사(linkReport, compiled 전)
         ClassLoader appLoader = Main.class.getClassLoader();
-        LibraryJars libraries = null;
-        if (!request.libraryClasspath.isEmpty()) {
-            try {
-                libraries = LibraryJars.open(request.libraryClasspath);
-            } catch (IOException e) {
-                failBeforeRun(session, e.getMessage(), "loadFailed");
-                return;
-            }
-            List<Map<String, Object>> warnings = new ArrayList<>();
-            for (LinkCheck.Warning w : new LinkCheck(libraries, appLoader).run()) warnings.add(w.toJson());
-            protocol.linkReport(warnings);
-        }
+        LibraryJars libraries = openLibraries(session, request.libraryClasspath, appLoader);
 
-        // 컴파일
-        long started = System.nanoTime();
-        TeamCompiler.Result compiled;
-        try {
-            compiled = TeamCompiler.compile(request.sourceRoots, request.opModeSource, request.bootClasspath,
-                    request.compileClasspath);
-        } catch (TeamCompiler.NoCompilerException e) {
-            failBeforeRun(session, e.getMessage(), "compileFailed");
-            return;
-        }
-        long millis = (System.nanoTime() - started) / 1_000_000L;
-        protocol.compiled(compiled.ok, compiled.diagnostics, millis);
-        if (!compiled.ok) {
-            if (session.beginFinish()) {
-                protocol.finished(0, "compileFailed");
-                halt();
-            }
-            parkForever();
-        }
+        // 컴파일(시작 파일: OpMode 소스와 등록기 소스)
+        TeamCompiler.Result compiled = compile(session, request.sourceRoots,
+                RunRequest.startFiles(request.opModeSource, request.registrars), request.bootClasspath,
+                request.compileClasspath);
 
         // 시뮬레이터
         HubTiming timing;
@@ -198,27 +168,105 @@ public final class Main {
         OpModeRunner[] runnerRef = new OpModeRunner[1];
         VirtualClock clock = new VirtualClock(request.tickNanos, request.startEpochMillis,
                 (thread, message, stack) -> runnerRef[0].reportForeignThread(thread, message, stack));
-        // 팀 로더 → (라이브러리 로더 →) 앱 로더. 둘 다 정의할 때 같은 패치를 건다.
-        TeamClassLoader loader;
-        if (libraries != null) {
-            LibraryClassLoader libraryLoader = new LibraryClassLoader(libraries, appLoader);
-            loader = new TeamClassLoader(compiled.classes, libraryLoader, libraryLoader.hierarchy);
-        } else {
-            loader = new TeamClassLoader(compiled.classes, appLoader, ClassHierarchy.ofClassLoader(appLoader));
-        }
+        TeamClassLoader loader = teamLoader(compiled, libraries, appLoader);
         OpModeRunner runner = new OpModeRunner(session, clock, input, request, loader, compiled.sources,
                 HardwareHooks.load(appLoader));
         runnerRef[0] = runner;
         session.clock = clock;
         session.running = true;
+        Sim.installFirstFolder(new File(request.firstFolder));
         Sim.install(clock, timing, runner);
         clock.setBoundary(runner);
 
         Thread thread = new Thread(runner::run, "OpModeThread");
         thread.setContextClassLoader(loader);
         clock.setOwner(thread);
-        new Watchdog(clock, runner, session, request.stallMillis).start();
+        new Watchdog(clock, runner, session, request.stallMillis, false).start();
         thread.start();
+    }
+
+    /**
+     * 등록기 OpMode 목록(ListRequest): (라이브러리 → linkReport) → 컴파일(등록기 소스) → OpMode 스레드에서 등록기 실행
+     * (ListRunner) → registered → finished listed. 틱을 열지 않으므로 호스트를 기다리지 않는다.
+     */
+    private static void runList(Session session, HostInput.Message first) throws IOException {
+        ListRequest request;
+        try {
+            request = ListRequest.parse(first.body);
+        } catch (RunRequest.Invalid e) {
+            failBeforeRun(session, e.getMessage(), "loadFailed");
+            return;
+        }
+        ClassLoader appLoader = Main.class.getClassLoader();
+        LibraryJars libraries = openLibraries(session, request.libraryClasspath, appLoader);
+        TeamCompiler.Result compiled = compile(session, request.sourceRoots,
+                RunRequest.startFiles(null, request.registrars), request.bootClasspath, request.compileClasspath);
+
+        ListRunner[] runnerRef = new ListRunner[1];
+        VirtualClock clock = new VirtualClock(request.tickNanos, request.startEpochMillis,
+                (thread, message, stack) -> runnerRef[0].reportForeignThread(thread, message, stack));
+        TeamClassLoader loader = teamLoader(compiled, libraries, appLoader);
+        ListRunner runner = new ListRunner(session, clock, request, loader, compiled.sources);
+        runnerRef[0] = runner;
+        session.clock = clock;
+        session.running = true;
+        Sim.installFirstFolder(new File(request.firstFolder));
+        Sim.install(clock, HubTiming.defaults(), runner);
+
+        Thread thread = new Thread(runner::run, "OpModeThread");
+        thread.setContextClassLoader(loader);
+        clock.setOwner(thread);
+        new Watchdog(clock, runner, session, request.stallMillis, true).start();
+        thread.start();
+    }
+
+    /** 실행 클래스패스의 라이브러리를 열고 링크 검사(linkReport)를 보낸다. 없으면 null. 열지 못하면 끝낸다(돌아오지 않음). */
+    private static LibraryJars openLibraries(Session session, List<String> libraryClasspath, ClassLoader appLoader) {
+        if (libraryClasspath.isEmpty()) return null;
+        LibraryJars libraries;
+        try {
+            libraries = LibraryJars.open(libraryClasspath);
+        } catch (IOException e) {
+            failBeforeRun(session, e.getMessage(), "loadFailed");
+            throw new AssertionError(e);
+        }
+        List<Map<String, Object>> warnings = new ArrayList<>();
+        for (LinkCheck.Warning w : new LinkCheck(libraries, appLoader).run()) warnings.add(w.toJson());
+        session.protocol.linkReport(warnings);
+        return libraries;
+    }
+
+    /** 컴파일하고 compiled를 보낸다. 실패하면 끝낸다(돌아오지 않음). */
+    private static TeamCompiler.Result compile(Session session, List<String> sourceRoots, List<String> startFiles,
+            List<String> bootClasspath, List<String> compileClasspath) throws IOException {
+        long started = System.nanoTime();
+        TeamCompiler.Result compiled;
+        try {
+            compiled = TeamCompiler.compile(sourceRoots, startFiles, bootClasspath, compileClasspath);
+        } catch (TeamCompiler.NoCompilerException e) {
+            failBeforeRun(session, e.getMessage(), "compileFailed");
+            throw new AssertionError(e);
+        }
+        long millis = (System.nanoTime() - started) / 1_000_000L;
+        session.protocol.compiled(compiled.ok, compiled.diagnostics, millis);
+        if (!compiled.ok) {
+            if (session.beginFinish()) {
+                session.protocol.finished(0, "compileFailed");
+                halt();
+            }
+            parkForever();
+        }
+        return compiled;
+    }
+
+    /** 팀 로더 → (라이브러리 로더 →) 앱 로더. 둘 다 정의할 때 같은 패치를 건다. */
+    private static TeamClassLoader teamLoader(TeamCompiler.Result compiled, LibraryJars libraries,
+            ClassLoader appLoader) {
+        if (libraries != null) {
+            LibraryClassLoader libraryLoader = new LibraryClassLoader(libraries, appLoader);
+            return new TeamClassLoader(compiled.classes, libraryLoader, libraryLoader.hierarchy);
+        }
+        return new TeamClassLoader(compiled.classes, appLoader, ClassHierarchy.ofClassLoader(appLoader));
     }
 
     private static void failBeforeRun(Session session, String message, String reason) {

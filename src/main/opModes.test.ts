@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_USAGE_FILE_BYTES } from '../shared/ipc'
-import { clearOpModeCache, listOpModes } from './opModes'
+import { clearOpModeCache, listOpModes, scanOpModes } from './opModes'
 import { clearTrustedRoots, trustRoot } from './projectRoots'
 
 const PKG = 'src/main/java/org/firstinspires/ftc/teamcode'
@@ -129,5 +129,100 @@ describe('listOpModes', () => {
     await rm(other)
     const second = await listOpModes(root)
     expect(second.ok && second.opModes.map((op) => op.name)).toEqual(['Renamed'])
+  })
+
+  it('등록기(@OpModeRegistrar)를 클래스·경로·줄 순으로 함께 주고, 바뀐 파일은 다시 읽는다', async () => {
+    const registrar = (pkg: string, name: string, methods: string[]): string =>
+      [
+        `package ${pkg};`,
+        'import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;',
+        'import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;',
+        `public final class ${name} {`,
+        ...methods.map((m) => `  @OpModeRegistrar public static void ${m}(OpModeManager m) {}`),
+        '}',
+        ''
+      ].join('\n')
+    const tuning = await write(
+      `${PKG}/TuningOpModes.java`,
+      registrar('org.firstinspires.ftc.teamcode', 'TuningOpModes', ['register', 'more'])
+    )
+    await write(`${PKG}/a/A.java`, registrar('org.firstinspires.ftc.teamcode.a', 'A', ['r']))
+    await write(`${PKG}/Drive.java`, opMode('Drive', '@TeleOp'))
+    const first = await scanOpModes(root)
+    expect(first.result).toMatchObject({
+      ok: true,
+      opModes: [{ name: 'Drive' }],
+      registrars: [
+        {
+          className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+          path: `${PKG}/TuningOpModes.java`,
+          line: 5
+        },
+        {
+          className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+          path: `${PKG}/TuningOpModes.java`,
+          line: 6
+        },
+        { className: 'org.firstinspires.ftc.teamcode.a.A', path: `${PKG}/a/A.java`, line: 5 }
+      ]
+    })
+    // 캐시 키에 쓰는 파일 목록(크기·수정 시각)
+    expect(first.files.map((file) => file.path).sort()).toEqual([
+      `${PKG}/Drive.java`,
+      `${PKG}/TuningOpModes.java`,
+      `${PKG}/a/A.java`
+    ])
+
+    await writeFile(tuning, registrar('org.firstinspires.ftc.teamcode', 'TuningOpModes', []))
+    const later = new Date(Date.now() + 5000)
+    await utimes(tuning, later, later)
+    const second = await listOpModes(root)
+    expect(second.ok && second.registrars.map((r) => r.className)).toEqual([
+      'org.firstinspires.ftc.teamcode.a.A'
+    ])
+  })
+
+  it('파일 이름과 다른 최상위 형식 안의 등록기·OpMode는 빼고(실행 요청이 그 파일의 것으로 받지 않는다), 같으면 public이 아니어도 둔다', async () => {
+    await write(
+      `${PKG}/Tuning.java`,
+      [
+        'package org.firstinspires.ftc.teamcode;',
+        'import com.qualcomm.robotcore.eventloop.opmode.*;',
+        'public class Tuning {',
+        '  @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '}',
+        'class Helpers {',
+        '  public static class Reg {',
+        '    @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '  }',
+        '  @TeleOp public static class Nested extends LinearOpMode {',
+        '    @Override public void runOpMode() {}',
+        '  }',
+        '}',
+        ''
+      ].join('\n')
+    )
+    await write(
+      `${PKG}/Quiet.java`,
+      [
+        'package org.firstinspires.ftc.teamcode;',
+        'import com.qualcomm.robotcore.eventloop.opmode.*;',
+        'final class Quiet {',
+        '  public static class Reg {',
+        '    @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '  }',
+        '}',
+        ''
+      ].join('\n')
+    )
+    const result = await listOpModes(root)
+    expect(result).toMatchObject({
+      ok: true,
+      opModes: [],
+      registrars: [
+        { className: 'org.firstinspires.ftc.teamcode.Quiet$Reg', path: `${PKG}/Quiet.java` },
+        { className: 'org.firstinspires.ftc.teamcode.Tuning', path: `${PKG}/Tuning.java`, line: 4 }
+      ]
+    })
   })
 })

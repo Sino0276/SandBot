@@ -345,6 +345,92 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(finished(request.runId)).toMatchObject({ reason: 'returned', preselectTeleOp: 'Normal' })
   })
 
+  it('등록기와 모의 저장소를 실행마다 보내고, 등록기 OpMode는 이름으로·preselectTeleOp은 등록 결과에서', async () => {
+    const first = join(dir, 'sim', 'FIRST')
+    const registrars = [
+      {
+        className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+        source: join(root, 'TeamCode', PKG, 'TuningOpModes.java')
+      }
+    ]
+    const asked: string[] = []
+    controller = make({
+      registrars: async (projectRoot) => {
+        asked.push(projectRoot)
+        return registrars
+      },
+      makeFirstFolder: async (projectRoot) => {
+        asked.push(`first ${projectRoot}`)
+        return first
+      },
+      registeredPreselect: (_projectRoot, name) => (name === 'Returns' ? 'Normal' : '?')
+    })
+    const runRequest = (): Record<string, unknown> => {
+      const text = of('log')
+        .flatMap((event) => event.entries)
+        .map((entry) => entry.text)
+        .filter((line) => line.startsWith('request '))
+        .at(-1)!
+      return JSON.parse(text.slice(8))
+    }
+
+    const annotated = opModeRequest('Returns', {
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.Returns',
+        path: `${PKG}/Returns.java`,
+        flavor: 'TeleOp'
+      },
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+    })
+    expect(await controller.init(annotated, owner)).toEqual({ ok: true })
+    await waitFor(() => finished(annotated.runId) !== undefined)
+    expect(runRequest()).toMatchObject({
+      opModeClass: 'org.firstinspires.ftc.teamcode.Returns',
+      registeredName: null,
+      registrars,
+      firstFolder: first
+    })
+    expect(asked).toEqual([root, `first ${root}`])
+
+    // 등록기 OpMode: className·path는 등록기, 실행할 것은 이름(가짜 사이드카는 이름으로 동작을 고른다)
+    const registered = opModeRequest('Returns', {
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.Returns',
+        path: `${PKG}/Returns.java`,
+        flavor: 'Autonomous',
+        registeredName: 'Returns'
+      },
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+    })
+    expect(await controller.init(registered, owner)).toEqual({ ok: true })
+    await waitFor(() => finished(registered.runId) !== undefined)
+    expect(runRequest()).toMatchObject({
+      opModeClass: null,
+      registeredName: 'Returns',
+      opModeSource: join(root, 'TeamCode', PKG, 'Returns.java'),
+      registrars,
+      firstFolder: first
+    })
+    expect(finished(registered.runId)).toMatchObject({
+      reason: 'returned',
+      preselectTeleOp: 'Normal'
+    })
+  })
+
+  it('모의 저장소를 만들지 못하면 JVM을 띄우지 않고 failed', async () => {
+    controller = make({
+      makeFirstFolder: async () => {
+        throw new Error('EACCES')
+      }
+    })
+    expect(await controller.init(opModeRequest('Normal'), owner)).toEqual({
+      ok: false,
+      code: 'failed',
+      detail: 'sim files: EACCES'
+    })
+    expect(spawned).toHaveLength(0)
+  })
+
   it('창을 닫으면 shutdown, 답하지 않으면 kill', async () => {
     const polite = opModeRequest('Normal')
     await controller.init(polite, owner)
