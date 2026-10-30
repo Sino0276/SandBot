@@ -7,9 +7,12 @@ import { promisify } from 'util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MIN_JDK_MAJOR, type JdkInfo, type PlayEvent } from '../../shared/play'
 import { detectJdks, javaTool, nodeJdkFs } from '../jdk'
+import { clearOpModeCache, scanOpModes } from '../opModes'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
+import { RegisteredOpModes } from '../registeredOpModes'
 import { PlayController, type ControllerDeps } from './controller'
-import { spawnSidecar } from './process'
+import { simFirstFolder } from './launch'
+import { spawnSidecar, type SpawnSidecar } from './process'
 
 // 진짜 사이드카(JVM) 연기 테스트. sidecar/tests/support.ts(툴체인)가 지금 소스로 빌드한 사이드카를 주고, JDK가 없으면
 // null을 준다(그러면 건너뛴다). support.ts가 아직 없는 브랜치에서도 이 파일은 통과해야 하므로 경로로 불러온다.
@@ -144,7 +147,146 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
     )
     expect(events.every((event) => event.runId === 'smoke')).toBe(true)
   }, 600_000)
+
+  it('등록기 OpMode: 목록(JVM 한 번, 같은 입력이면 캐시)과 이름으로 실행(등록한 인스턴스, 모의 저장소)', async (context) => {
+    if (!build) {
+      context.skip()
+      return
+    }
+    const sidecar = build
+    const root = join(dir, 'registrar-project')
+    const pkg = join(root, 'TeamCode/src/main/java/org/firstinspires/ftc/teamcode')
+    await mkdir(pkg, { recursive: true })
+    await writeFile(join(pkg, 'Tuning.java'), TUNING)
+    await writeFile(join(pkg, 'Smoke.java'), SMOKE)
+    clearTrustedRoots()
+    clearOpModeCache()
+    trustRoot(root)
+    let spawns = 0
+    const spawn: SpawnSidecar = (command, args, options) => {
+      spawns++
+      return spawnSidecar(command, args, options)
+    }
+    const simRoot = join(dir, 'sim-files')
+    const deps: ControllerDeps = {
+      resolveJdk: async () => ({ home: sidecar.jdkHome, version: '', major: 21, source: 'path' }),
+      locateSidecar: async () => ({
+        dir: sidecar.dir,
+        runtimeJar: sidecar.runtimeJar,
+        sdkJar: sidecar.sdkJar
+      }),
+      spawn,
+      makeRunDir: () => mkdtemp(join(dir, 'run-')),
+      removeRunDir: (path) => rm(path, { recursive: true, force: true }),
+      platform: process.platform,
+      env: process.env,
+      makeFirstFolder: (projectRoot) => simFirstFolder(simRoot, projectRoot)
+    }
+    const lister = new RegisteredOpModes({
+      ...deps,
+      scan: scanOpModes,
+      makeFirstFolder: (projectRoot) => simFirstFolder(simRoot, projectRoot)
+    })
+    const listed = await lister.list(root)
+    expect(listed).toEqual({
+      ok: true,
+      diagnostics: [],
+      errors: [],
+      opModes: [
+        {
+          className: 'org.firstinspires.ftc.teamcode.Tuning$Tuner',
+          path: 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java',
+          line: 24,
+          flavor: 'TeleOp',
+          name: 'Tuner-forward',
+          group: 'tuning',
+          preselectTeleOp: '',
+          registered: { registrar: 'org.firstinspires.ftc.teamcode.Tuning' }
+        }
+      ]
+    })
+    expect(await lister.list(root)).toBe(listed)
+    expect(spawns).toBe(1)
+
+    const events: PlayEvent[] = []
+    const controller = new PlayController({
+      ...deps,
+      registrars: (projectRoot) => lister.registrarsFor(projectRoot)
+    })
+    const owner = { send: (event: PlayEvent): void => void events.push(event) }
+    const result = await controller.init(
+      {
+        runId: 'registered',
+        root,
+        opMode: {
+          className: 'org.firstinspires.ftc.teamcode.Tuning',
+          path: 'src/main/java/org/firstinspires/ftc/teamcode/Tuning.java',
+          flavor: 'TeleOp',
+          registeredName: 'Tuner-forward'
+        },
+        configPath: null,
+        settings: {
+          speed: 'max',
+          jitter: 0,
+          seed: 0,
+          autoStopAutonomous: true,
+          batteryVoltage: 12.5
+        },
+        world: null
+      },
+      owner
+    )
+    expect(result).toEqual({ ok: true })
+    const finished = (): Extract<PlayEvent, { type: 'finished' }> | undefined =>
+      events.find(
+        (event): event is Extract<PlayEvent, { type: 'finished' }> => event.type === 'finished'
+      )
+    try {
+      await waitFor(() => finished() !== undefined, 120_000)
+    } finally {
+      await controller.disposeAll()
+    }
+    expect(finished()).toMatchObject({ reason: 'returned' })
+    const out = events.flatMap((event) =>
+      event.type === 'log' ? event.entries.filter((e) => e.stream === 'out').map((e) => e.text) : []
+    )
+    expect(out).toEqual([`tuner forward ${await simFirstFolder(simRoot, root)}`])
+  }, 600_000)
 })
+
+const TUNING = `package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;
+
+import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
+import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
+
+public final class Tuning {
+    public static class Tuner extends LinearOpMode {
+        private final String direction;
+
+        public Tuner(String direction) {
+            this.direction = direction;
+        }
+
+        @Override
+        public void runOpMode() {
+            System.out.println("tuner " + direction + " " + AppUtil.ROOT_FOLDER);
+        }
+    }
+
+    @OpModeRegistrar
+    public static void register(OpModeManager manager) {
+        String direction = "forward";
+        manager.register(new OpModeMeta.Builder().setName("Tuner-" + direction).setGroup("tuning").build(),
+                new Tuner(direction));
+        manager.register(new OpModeMeta.Builder().setName("Hidden").setFlavor(OpModeMeta.Flavor.UTILITY).build(),
+                new Tuner("utility"));
+    }
+}
+`
 
 // 사이드카 빌드 없이 이 PC의 JDK로 진짜 JVM을 띄운다: 프로토콜의 사이드카 쪽을 아주 작게 흉내 내는 Main을 컴파일해
 // 런타임 jar 자리(클래스 폴더)에 둔다. JVM 인자(-D…encoding 등)가 받아들여지는지, 한글이 UTF-8로 오가는지,

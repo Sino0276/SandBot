@@ -1,16 +1,20 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises'
+import { createHash } from 'crypto'
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { PlayInitRequest } from '../../shared/play'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import {
+  buildListRequest,
   buildRunRequest,
   isBinaryNameOf,
   javaArgs,
   prepareRun,
   readSidecarFiles,
+  simFirstFolder,
   sourceMapper,
+  sourceRootsOf,
   validateRequest,
   type ValidRequest
 } from './launch'
@@ -254,6 +258,90 @@ describe('prepareRun', () => {
       )
     )
     expect(blue).toMatchObject({ preselectTeleOp: 'Other' })
+    // 등록기 OpMode는 그 파일(등록기)의 애너테이션을 읽지 않는다(controller가 등록 결과에서 찾는다)
+    const registered = await prepareRun(
+      valid(
+        request({
+          root,
+          opMode: {
+            className: 'org.firstinspires.ftc.teamcode.Red',
+            path: `${PKG}/Red.java`,
+            flavor: 'Autonomous',
+            registeredName: 'RedLike'
+          }
+        })
+      )
+    )
+    expect(registered).toMatchObject({ preselectTeleOp: '' })
+  })
+})
+
+describe('모의 저장소와 목록 요청', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'sandbot-simfiles-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('프로젝트마다 <sim-files>/<sha256(링크를 푼 루트) 앞 16자>/FIRST를 만든다(링크로 연 같은 루트는 같은 폴더)', async () => {
+    const project = join(dir, 'project')
+    await mkdir(project)
+    const simRoot = join(dir, 'sim-files')
+    const first = await simFirstFolder(simRoot, project)
+    const key = createHash('sha256')
+      .update(await realpath(project))
+      .digest('hex')
+      .slice(0, 16)
+    expect(first).toBe(join(simRoot, key, 'FIRST'))
+    expect((await stat(first)).isDirectory()).toBe(true)
+    // 다시 불러도(INIT마다) 그대로
+    expect(await simFirstFolder(simRoot, project)).toBe(first)
+    const link = join(dir, 'link')
+    await symlink(project, link)
+    expect(await simFirstFolder(simRoot, link)).toBe(first)
+    expect(await simFirstFolder(simRoot, join(dir, 'other'))).not.toBe(first)
+  })
+
+  it('소스 루트는 TeamCode와, 있으면 FtcRobotController', async () => {
+    const project = join(dir, 'p')
+    const teamCode = join(project, 'TeamCode', 'src', 'main', 'java')
+    expect(await sourceRootsOf(project)).toEqual([teamCode])
+    const controller = join(project, 'FtcRobotController', 'src', 'main', 'java')
+    await mkdir(controller, { recursive: true })
+    expect(await sourceRootsOf(project)).toEqual([teamCode, controller])
+  })
+
+  it('ListRequest', () => {
+    expect(
+      buildListRequest(
+        ['/proj/TeamCode/src/main/java'],
+        [{ className: 'a.R', source: '/proj/TeamCode/src/main/java/a/R.java' }],
+        {
+          bootClasspath: ['/p.jar'],
+          compileClasspath: ['/s/sdk.jar', '/l.jar'],
+          libraryClasspath: ['/l.jar']
+        },
+        '/u/sim-files/abc/FIRST',
+        77
+      )
+    ).toEqual({
+      type: 'list',
+      protocol: 3,
+      clock: 'virtual',
+      tickNanos: 5_000_000,
+      sourceRoots: ['/proj/TeamCode/src/main/java'],
+      registrars: [{ className: 'a.R', source: '/proj/TeamCode/src/main/java/a/R.java' }],
+      bootClasspath: ['/p.jar'],
+      compileClasspath: ['/s/sdk.jar', '/l.jar'],
+      libraryClasspath: ['/l.jar'],
+      firstFolder: '/u/sim-files/abc/FIRST',
+      startEpochMillis: 77,
+      stallMillis: 2000
+    })
   })
 })
 

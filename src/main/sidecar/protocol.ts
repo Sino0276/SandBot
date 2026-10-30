@@ -5,6 +5,7 @@ import type {
   LinkWarning,
   LinkWarningKind,
   OpModePhase,
+  RegisteredOpMode,
   SidecarMessage,
   SimErrorKind,
   StackFrame
@@ -99,6 +100,7 @@ const ERROR_KINDS: readonly SimErrorKind[] = [
   'stuckInStop',
   'load',
   'config',
+  'registrar',
   'internal'
 ]
 const FINISH_REASONS: readonly FinishReason[] = [
@@ -109,7 +111,8 @@ const FINISH_REASONS: readonly FinishReason[] = [
   'compileFailed',
   'loadFailed',
   'stuck',
-  'shutdown'
+  'shutdown',
+  'listed'
 ]
 
 function diagnostic(value: unknown): CompileDiagnostic {
@@ -151,6 +154,40 @@ function frame(value: unknown): StackFrame {
     file: strOrNull(data, 'file'),
     line: int(data, 'line'),
     source: strOrNull(data, 'source')
+  }
+}
+
+// 등록기 OpMode 목록의 한도(사이드카 ListRunner와 같다): 이름은 실행 요청의 registeredName 규칙(launch.ts
+// isRegisteredName: 1–200자, 제어 문자 없음), group·transitionTarget은 200자, 클래스 이름은 1024자, 1000개
+export const MAX_REGISTERED_OPMODES = 1000
+const MAX_REGISTERED_TEXT = 200
+const MAX_CLASS_NAME = 1024
+const REGISTERED_FLAVORS: readonly RegisteredOpMode['flavor'][] = [
+  'TeleOp',
+  'Autonomous',
+  'Utility',
+  'System'
+]
+
+function limited(data: Json, key: string, min: number, max: number): string {
+  const value = str(data, key)
+  if (value.length < min || value.length > max) fail(`${String(data.type)}.${key}`)
+  return value
+}
+
+function registeredOpMode(value: unknown): RegisteredOpMode {
+  if (!isObject(value)) fail('registered.opModes')
+  const data = { ...value, type: 'registered.opMode' }
+  const name = limited(data, 'name', 1, MAX_REGISTERED_TEXT)
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(name)) fail('registered.opMode.name')
+  return {
+    name,
+    group: limited(data, 'group', 0, MAX_REGISTERED_TEXT),
+    flavor: oneOf(data, 'flavor', REGISTERED_FLAVORS),
+    className: limited(data, 'className', 1, MAX_CLASS_NAME),
+    registrar: limited(data, 'registrar', 1, MAX_CLASS_NAME),
+    transitionTarget: limited(data, 'transitionTarget', 0, MAX_REGISTERED_TEXT)
   }
 }
 
@@ -260,6 +297,11 @@ export function parseSidecarLine(line: string): SidecarMessage {
       }
     case 'linkReport':
       return { type: 'linkReport', warnings: list(data, 'warnings', linkWarning) }
+    case 'registered': {
+      if (Array.isArray(data.opModes) && data.opModes.length > MAX_REGISTERED_OPMODES)
+        fail('registered.opModes')
+      return { type: 'registered', opModes: list(data, 'opModes', registeredOpMode) }
+    }
     case 'finished':
       return {
         type: 'finished',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { OpModeInfo } from '../play'
-import { compareOpModes, parseOpModes } from './opModes'
+import { compareOpModes, parseOpModes, parseOpModeSource } from './opModes'
 
 const HEADER = 'package org.firstinspires.ftc.teamcode;\n'
 const IMPORTS = [
@@ -229,6 +229,116 @@ public class Text {
       `${IMPORTS}@TeleOp public class A { public class B { } } } } @TeleOp public class C {}`
     ]) {
       expect(() => parseOpModes(text)).not.toThrow()
+    }
+  })
+})
+
+describe('parseOpModeSource: 등록기', () => {
+  const REGISTRAR_IMPORTS = [
+    'import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;',
+    'import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;',
+    ''
+  ].join('\n')
+
+  const registrars = (text: string): { className: string; line: number }[] =>
+    parseOpModeSource(text).registrars
+
+  it('Road Runner quickstart처럼: 애너테이션 OpMode 없이 public static 등록기 메서드(줄은 애너테이션 줄)', () => {
+    const text = `${HEADER}${REGISTRAR_IMPORTS}
+public final class TuningOpModes {
+    public static final boolean DISABLED = false;
+    private static OpModeMeta metaForClass(Class<? extends OpMode> cls) { return null; }
+
+    @OpModeRegistrar
+    public static void register(OpModeManager manager) {
+        if (DISABLED) return;
+        manager.register(metaForClass(SplineTest.class), SplineTest.class);
+    }
+}
+`
+    const parsed = parseOpModeSource(text)
+    expect(parsed.opModes).toEqual([])
+    expect(parsed.registrars).toEqual([
+      { className: 'org.firstinspires.ftc.teamcode.TuningOpModes', line: 9 }
+    ])
+  })
+
+  it('애너테이션 이름은 javac처럼 푼다: 단일·on-demand import, 전체 이름, 같은 패키지, 가린 이름', () => {
+    const onDemand = `package a;\nimport com.qualcomm.robotcore.eventloop.opmode.*;\npublic class A {\n  @OpModeRegistrar public static void r(OpModeManager m) {}\n}\n`
+    expect(registrars(onDemand)).toEqual([{ className: 'a.A', line: 4 }])
+    const full = `package a;\npublic class B {\n  @com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar\n  public static void r(Object m) {}\n}\n`
+    expect(registrars(full)).toEqual([{ className: 'a.B', line: 3 }])
+    const samePackage = `package com.qualcomm.robotcore.eventloop.opmode;\npublic class C {\n  @OpModeRegistrar public static void r(OpModeManager m) {}\n}\n`
+    expect(registrars(samePackage)).toHaveLength(1)
+    // import 없는 단순 이름, 다른 패키지의 같은 이름, 이 파일의 형식이 가린 이름은 아니다
+    const missing = `package a;\npublic class D {\n  @OpModeRegistrar public static void r(Object m) {}\n}\n`
+    expect(registrars(missing)).toEqual([])
+    const other = `package a;\nimport b.OpModeRegistrar;\nimport com.qualcomm.robotcore.eventloop.opmode.*;\npublic class E {\n  @OpModeRegistrar public static void r(Object m) {}\n}\n`
+    expect(registrars(other)).toEqual([])
+    const shadowed = `package a;\nimport com.qualcomm.robotcore.eventloop.opmode.*;\npublic class F {\n  @interface OpModeRegistrar {}\n  @OpModeRegistrar public static void r(Object m) {}\n}\n`
+    expect(registrars(shadowed)).toEqual([])
+  })
+
+  it('static·public이 아닌 메서드, public이 아니거나 static이 아닌 중첩 형식, 필드, 지역 클래스는 보지 않는다', () => {
+    const text = `${HEADER}${REGISTRAR_IMPORTS}
+public class Outer {
+  @OpModeRegistrar public void notStatic(OpModeManager m) {}
+  @OpModeRegistrar static void notPublic(OpModeManager m) {}
+  @OpModeRegistrar public static <T> void generic(OpModeManager m) {}
+  @OpModeRegistrar public static int field = 0;
+  public class Inner { @OpModeRegistrar public static void inner(OpModeManager m) {} }
+  static class Hidden { @OpModeRegistrar public static void hidden(OpModeManager m) {} }
+  public static class Nested {
+    @OpModeRegistrar public static void one(OpModeManager m) {}
+    @OpModeRegistrar
+    public static void two(android.content.Context c, OpModeManager m) {}
+  }
+  public interface Api { @OpModeRegistrar static void fromInterface(OpModeManager m) {} }
+  public enum Kind { A; @OpModeRegistrar public static void fromEnum(OpModeManager m) {} }
+  void method() { class Local { @OpModeRegistrar public static void local(OpModeManager m) {} } }
+}
+class PackagePrivate { @OpModeRegistrar public static void r(OpModeManager m) {} }
+`
+    expect(registrars(text)).toEqual([
+      { className: 'org.firstinspires.ftc.teamcode.Outer', line: 8 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 13 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 14 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Api', line: 17 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Kind', line: 18 }
+    ])
+  })
+
+  it('인터페이스의 static 메서드는 private이 아니면 public이다', () => {
+    const text = `package a;\nimport com.qualcomm.robotcore.eventloop.opmode.*;\npublic interface Api {\n  @OpModeRegistrar static void open(OpModeManager m) {}\n  @OpModeRegistrar private static void hidden(OpModeManager m) {}\n}\n`
+    expect(registrars(text)).toEqual([{ className: 'a.Api', line: 4 }])
+  })
+
+  it('같은 파일의 annotated OpMode도 함께 읽고, 주석·문자열 안의 애너테이션과 \\u 이스케이프는 javac처럼', () => {
+    const text = `${HEADER}${IMPORTS}${REGISTRAR_IMPORTS}
+@TeleOp public class Both extends LinearOpMode {
+  // @OpModeRegistrar public static void comment(OpModeManager m) {}
+  String s = "@OpModeRegistrar public static void text(OpModeManager m) {}";
+  \\u0040OpModeRegistrar public static void escaped(OpModeManager m) {}
+  @Override public void runOpMode() {}
+}
+`
+    const parsed = parseOpModeSource(text)
+    expect(parsed.opModes.map((opMode) => opMode.className)).toEqual([
+      'org.firstinspires.ftc.teamcode.Both'
+    ])
+    expect(parsed.registrars).toEqual([
+      { className: 'org.firstinspires.ftc.teamcode.Both', line: 12 }
+    ])
+  })
+
+  it('깨진 소스에도 예외를 던지지 않는다', () => {
+    for (const text of [
+      '@OpModeRegistrar',
+      `${REGISTRAR_IMPORTS}public class A { @OpModeRegistrar public static`,
+      `${REGISTRAR_IMPORTS}public class A { @OpModeRegistrar public static void r(`,
+      `${REGISTRAR_IMPORTS}public class A { @OpModeRegistrar( public static void r() {} }`
+    ]) {
+      expect(() => parseOpModeSource(text)).not.toThrow()
     }
   })
 })

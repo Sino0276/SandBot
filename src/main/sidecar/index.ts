@@ -9,14 +9,17 @@ import { resolveActiveJdk } from '../jdk'
 import { electronHttpGet } from '../libraries/electronHttp'
 import { gradleUserHome } from '../libraries/gradleCache'
 import { createLibraryResolver } from '../libraries'
-import { PlayController, type PlayOwner } from './controller'
-import { readSidecarFiles } from './launch'
+import { scanOpModes } from '../opModes'
+import { RegisteredOpModes, setRegisteredOpModes } from '../registeredOpModes'
+import { PlayController, type ControllerDeps, type PlayOwner } from './controller'
+import { readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
 import { spawnSidecar } from './process'
 import { kinematicWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
-// 쓴다)이고, SANDBOT_SIDECAR_DIR로 다른 빌드를 가리킬 수 있다(stepConverter.ts와 같은 방식).
+// 쓴다)이고, SANDBOT_SIDECAR_DIR로 다른 빌드를 가리킬 수 있다(stepConverter.ts와 같은 방식). 등록기 OpMode 목록
+// (registeredOpModes.ts, IPC는 opModes.ts)도 같은 준비(사이드카·JDK·Gradle·플랫폼·라이브러리)와 모의 저장소를 쓴다.
 
 export function sidecarDir(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'sidecar')
@@ -47,7 +50,11 @@ export function registerPlayIpc(): void {
   const runRoot = join(app.getPath('userData'), RUN_DIR)
   void sweepRunDirs(runRoot)
 
-  const controller = new PlayController({
+  // 프로젝트마다의 모의 저장소(AppUtil.ROOT_FOLDER): 실행과 등록기 목록이 같은 폴더를 본다
+  const simRoot = join(app.getPath('userData'), SIM_FILES_DIR)
+  const makeFirstFolder = (projectRoot: string): Promise<string> =>
+    simFirstFolder(simRoot, projectRoot)
+  const deps: ControllerDeps = {
     resolveJdk: () => resolveActiveJdk(),
     locateSidecar: () => readSidecarFiles(sidecarDir()),
     spawn: spawnSidecar,
@@ -58,7 +65,6 @@ export function registerPlayIpc(): void {
     removeRunDir: (dir) => rm(dir, { recursive: true, force: true }),
     platform: process.platform,
     env: process.env,
-    world: kinematicWorld,
     readGradle: (projectRoot) => readProjectGradle(projectRoot),
     resolvePlatform: (projectRoot, compileSdk, compileSdkMinor) =>
       resolveAndroidPlatform(projectRoot, compileSdk, compileSdkMinor),
@@ -68,6 +74,15 @@ export function registerPlayIpc(): void {
       gradleHome: gradleUserHome(process.env),
       http: electronHttpGet
     })
+  }
+  const registered = new RegisteredOpModes({ ...deps, scan: scanOpModes, makeFirstFolder })
+  setRegisteredOpModes(registered)
+  const controller = new PlayController({
+    ...deps,
+    world: kinematicWorld,
+    makeFirstFolder,
+    registrars: (root) => registered.registrarsFor(root),
+    registeredPreselect: (root, name) => registered.preselectTeleOp(root, name)
   })
 
   // 창마다 같은 owner 객체(명령이 실행을 시작한 창의 것인지 본다)

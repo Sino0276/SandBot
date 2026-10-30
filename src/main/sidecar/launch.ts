@@ -1,4 +1,5 @@
-import { lstat, readFile, realpath, stat } from 'fs/promises'
+import { createHash } from 'crypto'
+import { lstat, mkdir, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
 import type { GradleProject } from '../../shared/gradle'
@@ -19,6 +20,7 @@ import {
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
+  type ListRequest,
   type RegistrarRef,
   type RunRequest
 } from '../../shared/sidecarProtocol'
@@ -225,21 +227,45 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
     }
   }
 
-  const sourceRoots = [javaRoot]
-  const robotController = path.join(projectRoot, 'FtcRobotController', 'src', 'main', 'java')
-  if (await isDirectory(robotController)) sourceRoots.push(robotController)
-
   return {
     projectRoot,
-    sourceRoots,
+    sourceRoots: await sourceRootsOf(projectRoot),
     opModeSource: located.file,
     configXml,
     configMissing: request.configPath !== null && configXml === null,
+    // 등록기 OpMode의 preselectTeleOp은 등록 결과(OpModeMeta의 transitionTarget)다(controller가 목록 캐시에서 찾는다)
     preselectTeleOp:
-      request.opMode.flavor === 'Autonomous'
+      request.opMode.flavor === 'Autonomous' && request.opMode.registeredName === null
         ? await preselectOf(located.file, request.opMode.className)
         : ''
   }
+}
+
+// javac -sourcepath: TeamCode/src/main/java와, 있으면 FtcRobotController/src/main/java
+export async function sourceRootsOf(projectRoot: string): Promise<string[]> {
+  const javaRoot = path.join(
+    projectRoot,
+    TEAMCODE_DIR,
+    ...JAVA_SOURCE_PREFIX.split('/').filter(Boolean)
+  )
+  const sourceRoots = [javaRoot]
+  const robotController = path.join(projectRoot, 'FtcRobotController', 'src', 'main', 'java')
+  if (await isDirectory(robotController)) sourceRoots.push(robotController)
+  return sourceRoots
+}
+
+// ---- 모의 저장소(AppUtil.ROOT_FOLDER, 로봇의 /sdcard/FIRST) ----
+
+export const SIM_FILES_DIR = 'sim-files'
+
+// 프로젝트마다의 모의 저장소: <simRoot>/<sha256(링크를 푼 프로젝트 루트) 앞 16자>/FIRST. simRoot는 userData/sim-files라
+// TeamCode·프로젝트 밖이다. 실행마다(INIT·등록기 목록) 만든다(mkdir -p, 지우지 않는다: Road Runner 튜닝 결과 등이 남는다).
+export async function simFirstFolder(simRoot: string, projectRoot: string): Promise<string> {
+  const real = await realpath(projectRoot).catch(() => path.resolve(projectRoot))
+  const key = createHash('sha256').update(real, 'utf8').digest('hex').slice(0, 16)
+  const dir = path.join(simRoot, key, 'FIRST')
+  await mkdir(dir, { recursive: true })
+  return dir
 }
 
 // ---- 컴파일 기준과 라이브러리(controller가 JVM을 띄우기 전에 정한다) ----
@@ -316,6 +342,30 @@ export function buildRunRequest(
     timing: {},
     jitter: request.settings.jitter,
     seed: request.settings.seed,
+    startEpochMillis: now,
+    stallMillis: DEFAULT_STALL_MILLIS
+  }
+}
+
+// 등록기 OpMode 목록 요청(registeredOpModes.ts). 클래스패스·플랫폼은 INIT과 같게 정한 것이다.
+export function buildListRequest(
+  sourceRoots: string[],
+  registrars: RegistrarRef[],
+  classpaths: RunClasspaths,
+  firstFolder: string,
+  now: number = Date.now()
+): ListRequest {
+  return {
+    type: 'list',
+    protocol: SIDECAR_PROTOCOL_VERSION,
+    clock: 'virtual',
+    tickNanos: DEFAULT_TICK_NANOS,
+    sourceRoots,
+    registrars,
+    bootClasspath: classpaths.bootClasspath,
+    compileClasspath: classpaths.compileClasspath,
+    libraryClasspath: classpaths.libraryClasspath,
+    firstFolder,
     startEpochMillis: now,
     stallMillis: DEFAULT_STALL_MILLIS
   }
