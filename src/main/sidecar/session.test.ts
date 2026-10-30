@@ -1032,14 +1032,15 @@ describe('SidecarSession FTC Dashboard', () => {
     expect(of('dash')).toHaveLength(2)
   })
 
-  it('cleared는 OR이고 그 앞의 data·로그를 버린다(그림은 남긴다)', () => {
+  it('cleared는 OR이고 그 앞의 data·로그를 버린다(로그는 빈 배열, 그림은 남긴다)', () => {
     const { clock, proc, of } = setup()
     boot(proc)
     proc.line(dash(1))
     proc.line(dash(2, { data: [['old', '1']], log: ['old'], ops: [circle(1)] }))
-    proc.line(dash(3, { cleared: true, data: [['new', '2']] }))
+    proc.line(dash(3, { cleared: true, data: [['new', '2']], log: [] }))
     proc.line(dash(4, { data: [['B', '3']] }))
     clock.advance(34)
+    // 렌더러가 cleared에 data만 비우고 null 아닌 로그로 바꿔도 이전 로그가 남지 않는다(실제 웹 화면과 같다)
     expect(of('dash')[1]).toMatchObject({
       tNanos: 4,
       cleared: true,
@@ -1047,18 +1048,24 @@ describe('SidecarSession FTC Dashboard', () => {
         ['B', '3'],
         ['new', '2']
       ],
-      log: null,
+      log: [],
       ops: [{ type: 'circle', x: 1, y: 0, radius: 1, stroke: true }]
     })
     // cleared 뒤에 온 로그는 남는다
-    proc.line(dash(5, { cleared: true, log: ['a'] }))
-    proc.line(dash(6, { data: [['k', 'v']] }))
+    proc.line(dash(5, { log: ['stale'] }))
+    proc.line(dash(6, { cleared: true, log: ['a'] }))
+    proc.line(dash(7, { data: [['k', 'v']] }))
     clock.advance(34)
     expect(of('dash')[2]).toMatchObject({ cleared: true, data: [['k', 'v']], log: ['a'] })
-    // 다음 묶음은 cleared가 아니다
-    proc.line(dash(7))
+    // 사이드카와 다르게 cleared에 log null이 와도 빈 로그로 보낸다
+    proc.line(dash(8, { log: ['stale'] }))
+    proc.line(dash(9, { cleared: true }))
     clock.advance(34)
-    expect(of('dash')[3]).toMatchObject({ cleared: false, data: [], log: null, ops: null })
+    expect(of('dash')[3]).toMatchObject({ cleared: true, data: [], log: [] })
+    // 다음 묶음은 cleared가 아니다
+    proc.line(dash(10))
+    clock.advance(34)
+    expect(of('dash')[4]).toMatchObject({ cleared: false, data: [], log: null, ops: null })
   })
 
   it('합친 data도 키 한도(MAX_DASH_DATA)까지', () => {

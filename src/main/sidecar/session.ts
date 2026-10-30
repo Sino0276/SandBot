@@ -185,8 +185,9 @@ type DashMerge = {
   ops: DashOp[] | null
 }
 
-// 사이드카가 묶음 안에서 하는 것과 같다: clearTelemetry는 그 앞의 data·로그를 지우고(실제 웹 화면도 둘 다 지운다) 그림은
-// 남긴다(실제 FieldView는 빈 묶음에 그림을 그대로 둔다). log·ops는 마지막 null 아닌 것.
+// 사이드카가 묶음 안에서 하는 것과 같다: cleared는 OR, data는 cleared 뒤부터, log·ops는 마지막 null 아닌 것.
+// clearTelemetry는 그 앞의 data와 로그를 지우고(실제 웹 화면도 둘 다 지운다) 그림은 남긴다(실제 FieldView는 빈 묶음에
+// 그림을 그대로 둔다). 지운 로그는 빈 배열이라 cleared 묶음의 log는 null이 아니다(사이드카도 그렇게 보낸다).
 function mergeDash(into: DashMerge | null, message: DashMessage): DashMerge {
   const merged: DashMerge =
     into === null || message.cleared
@@ -194,7 +195,7 @@ function mergeDash(into: DashMerge | null, message: DashMessage): DashMerge {
           tNanos: message.tNanos,
           cleared: message.cleared || (into?.cleared ?? false),
           data: new Map(),
-          log: null,
+          log: message.cleared ? [] : null,
           ops: into?.ops ?? null
         }
       : into
