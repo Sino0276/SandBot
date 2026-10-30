@@ -945,6 +945,7 @@ const en: Messages = {
     startValueHint: 'The value when this run started.',
     sentHint: 'Sent. It is applied at the next tick boundary (when the run continues, if paused).',
     invalidHint: 'This value does not fit the type, so it is not sent.',
+    tooLongHint: 'Longer than {{max}} characters, so it is not sent.',
     apply: 'Apply to file',
     applyHint:
       'Move this value to the {{field}} tunable value in {{file}} as an unsaved change. Saving (Ctrl+S) writes it to the Java file. You can undo it.',

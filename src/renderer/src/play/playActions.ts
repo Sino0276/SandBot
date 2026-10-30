@@ -15,6 +15,7 @@ import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
 import type { ConsoleEntry } from './consoleModel'
+import { configCommandFits } from './dashConfigModel'
 import {
   browserGamepads,
   createGamepadPoller,
@@ -727,10 +728,11 @@ export function canEditDashConfig(data: Pick<PlayData, 'run' | 'dashConfig'>): b
 }
 
 // 실행 중 Config 탭에서 확정한 값 하나를 보낸다(다음 틱 경계에서 사이드카가 적용하고 트리를 다시 보낸다). 일시 정지
-// 중이면 다음 틱 답에 실려 간다. 새 트리를 받을 때까지 칸은 보낸 값을 보인다.
+// 중이면 다음 틱 답에 실려 간다. 새 트리를 받을 때까지 칸은 보낸 값을 보인다. 메인이 받지 않을 명령(너무 긴 글자 등,
+// configCommandFits)은 보내지 않는다(입력칸이 먼저 막는다).
 export function sendDashConfig(path: readonly string[], value: string): void {
   const state = usePlayStore.getState()
-  if (!canEditDashConfig(state) || !state.dashConfig) return
+  if (!canEditDashConfig(state) || !state.dashConfig || !configCommandFits(path, value)) return
   usePlayStore.setState({ dashConfig: withPendingConfig(state.dashConfig, path, value) })
   command({ type: 'config', path: [...path], value })
 }

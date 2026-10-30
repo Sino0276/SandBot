@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DashConfigNode } from '../../../shared/dashboard'
+import {
+  MAX_DASH_CONFIG_DEPTH,
+  MAX_DASH_TEXT,
+  type DashConfigNode
+} from '../../../shared/dashboard'
 import type { ReadJavaFileResult } from '../../../shared/ipc'
 import { sourceFromRead, useJavaSourcesStore, type JavaSource } from '../java/javaSources'
 import { useProjectStore } from '../project/projectStore'
@@ -13,6 +17,7 @@ import {
 } from './dashConfigApply'
 import {
   checkApply,
+  configCommandFits,
   configInputValue,
   configPathKey,
   configRows,
@@ -395,8 +400,24 @@ describe('Config 트리', () => {
     expect(configInputValue('double', '1e999', [])).toBeNull()
     expect(configInputValue('float', '1e39', [])).toBeNull()
     expect(configInputValue('string', ' keep spaces ', [])).toBe(' keep spaces ')
+    // 메인이 받는 길이까지(UTF-16 단위)
+    expect(configInputValue('string', 'x'.repeat(MAX_DASH_TEXT), [])).toBe(
+      'x'.repeat(MAX_DASH_TEXT)
+    )
+    expect(configInputValue('string', 'x'.repeat(MAX_DASH_TEXT + 1), [])).toBeNull()
+    expect(configInputValue('string', '😀'.repeat(MAX_DASH_TEXT / 2 + 1), [])).toBeNull()
     expect(configInputValue('enum', 'DOWN', ['UP', 'DOWN'])).toBe('DOWN')
     expect(configInputValue('enum', 'LEFT', ['UP', 'DOWN'])).toBeNull()
     expect(configInputValue('readonlyString', 'x', [])).toBeNull()
+  })
+
+  it('메인(parseCommand)이 받는 config 명령만 보낼 수 있다', () => {
+    expect(configCommandFits(['Lift', 'kP'], '0.5')).toBe(true)
+    expect(configCommandFits([], '0.5')).toBe(false)
+    expect(configCommandFits(Array(MAX_DASH_CONFIG_DEPTH).fill('a'), '')).toBe(true)
+    expect(configCommandFits(Array(MAX_DASH_CONFIG_DEPTH + 1).fill('a'), '')).toBe(false)
+    expect(configCommandFits(['x'.repeat(MAX_DASH_TEXT + 1)], '')).toBe(false)
+    expect(configCommandFits(['Lift'], 'x'.repeat(MAX_DASH_TEXT))).toBe(true)
+    expect(configCommandFits(['Lift'], 'x'.repeat(MAX_DASH_TEXT + 1))).toBe(false)
   })
 })

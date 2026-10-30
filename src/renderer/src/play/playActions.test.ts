@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DashConfigNode } from '../../../shared/dashboard'
+import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import type {
   ListOpModesResult,
   ListRegisteredResult,
@@ -1105,6 +1105,12 @@ describe('FTC Dashboard 상태', () => {
     expect(commands).toContainEqual({ type: 'config', path: ['Lift', 'kP'], value: '0.75' })
     expect(usePlayStore.getState().dashConfig!.pending).toEqual({ '["Lift","kP"]': '0.75' })
     handlePlayEvent(event({ type: 'dashConfig', tNanos: 5, root: TREE }))
+    expect(usePlayStore.getState().dashConfig!.pending).toEqual({})
+
+    // 메인이 버릴 명령(너무 긴 글자)은 보내지 않고 보낸 값으로도 두지 않는다
+    commands.length = 0
+    sendDashConfig(['Lift', 'kP'], 'x'.repeat(MAX_DASH_TEXT + 1))
+    expect(commands).toEqual([])
     expect(usePlayStore.getState().dashConfig!.pending).toEqual({})
 
     stopPlay()

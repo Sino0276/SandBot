@@ -949,6 +949,7 @@ const ko = {
     startValueHint: '이 실행이 시작할 때의 값입니다.',
     sentHint: '보낸 값입니다. 다음 틱 경계에서 적용합니다(일시 정지 중이면 진행할 때).',
     invalidHint: '이 형식으로 받을 수 없는 값이라 보내지 않습니다.',
+    tooLongHint: '글자가 {{max}}자를 넘어 보내지 않습니다.',
     apply: '파일에 반영',
     applyHint:
       '이 값을 {{file}}의 {{field}} 튜닝 값(저장하지 않은 변경)으로 옮깁니다. 저장(Ctrl+S)하면 Java 파일에 씁니다. 실행 취소할 수 있습니다.',

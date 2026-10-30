@@ -1,4 +1,10 @@
-import type { DashConfigNode, DashFieldSource, DashVariableType } from '../../../shared/dashboard'
+import {
+  MAX_DASH_CONFIG_DEPTH,
+  MAX_DASH_TEXT,
+  type DashConfigNode,
+  type DashFieldSource,
+  type DashVariableType
+} from '../../../shared/dashboard'
 import type { TunableReadOnlyReason, TunableValueType } from '../../../shared/java/tunableTypes'
 import { isLinkableJavaPath, JAVA_SOURCE_PREFIX } from '../../../shared/teamCodePaths'
 import type { JavaSource } from '../java/javaSources'
@@ -103,7 +109,8 @@ const LONG_RANGE = { min: -(2n ** 63n), max: 2n ** 63n - 1n }
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
 
 // 입력 → 사이드카에 보낼 값 글자(받을 수 없으면 null). 사이드카가 형식에 맞는지 다시 본다(B4).
-// boolean은 true/false, 정수는 범위 안의 10진, float·double은 유한한 10진 수, 글자는 그대로, enum은 상수 이름.
+// boolean은 true/false, 정수는 범위 안의 10진, float·double은 유한한 10진 수, 글자는 그대로(MAX_DASH_TEXT 글자까지,
+// configCommandFits), enum은 상수 이름.
 export function configInputValue(
   type: DashVariableType,
   input: string,
@@ -131,12 +138,24 @@ export function configInputValue(
       return text.replace(/^\+/, '')
     }
     case 'string':
-      return input
+      return input.length > MAX_DASH_TEXT ? null : input
     case 'enum':
       return enumValues.includes(input) ? input : null
     case 'readonlyString':
       return null
   }
+}
+
+// 메인이 받는 config 명령인가(src/main/sidecar/controller.ts parseCommand와 같은 한도: 경로 1–MAX_DASH_CONFIG_DEPTH개,
+// 이름과 값은 MAX_DASH_TEXT 글자까지, UTF-16 단위). 메인은 받지 않는 명령을 말없이 버리므로 그런 값은 보내지 않는다
+// (보내지 않은 값을 칸이 '보낸 값'으로 계속 보이지 않게).
+export function configCommandFits(path: readonly string[], value: string): boolean {
+  return (
+    path.length > 0 &&
+    path.length <= MAX_DASH_CONFIG_DEPTH &&
+    path.every((name) => name.length <= MAX_DASH_TEXT) &&
+    value.length <= MAX_DASH_TEXT
+  )
 }
 
 // ---- [파일에 반영] ----

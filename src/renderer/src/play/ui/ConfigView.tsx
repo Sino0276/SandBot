@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
-import type { DashConfigNode } from '../../../../shared/dashboard'
+import { MAX_DASH_TEXT, type DashConfigNode } from '../../../../shared/dashboard'
 import { currentJavaSource, useJavaSourcesStore } from '../../java/javaSources'
 import { tunableFieldLabel } from '../../java/tunableEdits'
 import { useProjectStore } from '../../project/projectStore'
@@ -45,7 +45,7 @@ function toggleExpanded(key: string): void {
 const fileNameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 
 // 수·글자 입력칸: 확정하지 않은 글자는 이 칸에만 있고(씬 문서의 초안이 아니다), Enter·포커스 이동에 보낸다. Esc는 취소.
-// 형식에 맞지 않는 글자는 보내지 않고 테두리로 알린다(포커스를 잃으면 버린다).
+// 형식에 맞지 않거나 너무 긴(메인이 받지 않는) 글자는 보내지 않고 테두리와 도움말로 알린다(포커스를 잃으면 버린다).
 function ValueInput({
   row,
   node,
@@ -59,6 +59,7 @@ function ValueInput({
   const [draft, setDraft] = useState<string | null>(null)
   const cancelled = useRef(false)
   const invalid = draft !== null && configInputValue(node.type, draft, node.enumValues) === null
+  const tooLong = invalid && draft.length > MAX_DASH_TEXT
   const commit = (): void => {
     if (draft !== null && !cancelled.current && draft !== shown) {
       const value = configInputValue(node.type, draft, node.enumValues)
@@ -73,7 +74,13 @@ function ValueInput({
       className={invalid ? 'text-field config-input is-invalid' : 'text-field config-input'}
       aria-label={row.name}
       aria-invalid={invalid || undefined}
-      title={invalid ? t('config.invalidHint') : undefined}
+      title={
+        tooLong
+          ? t('config.tooLongHint', { max: MAX_DASH_TEXT })
+          : invalid
+            ? t('config.invalidHint')
+            : undefined
+      }
       spellCheck={false}
       value={draft ?? shown}
       onChange={(event) => setDraft(event.target.value)}
