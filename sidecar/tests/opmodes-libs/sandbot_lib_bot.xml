@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!-- 라이브러리 통합 시험(sidecar/tests/libraries.test.ts)의 로봇 구성(sim.test.ts와 같은 로봇): goBILDA 메카넘 4륜, 내장 IMU, Pinpoint -->
+<Robot type="FirstInspires-FTC" name="Library Bot">
+    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">
+        <LynxModule name="Control Hub" port="173">
+            <goBILDA5202SeriesMotor name="frontLeft" port="0" />
+            <goBILDA5202SeriesMotor name="frontRight" port="1" />
+            <goBILDA5202SeriesMotor name="backLeft" port="2" />
+            <goBILDA5202SeriesMotor name="backRight" port="3" />
+            <ControlHubImuBHI260AP name="imu" port="0" bus="0" />
+            <goBILDAPinpoint name="pinpoint" port="0" bus="1" />
+        </LynxModule>
+    </LynxUsbDevice>
+</Robot>

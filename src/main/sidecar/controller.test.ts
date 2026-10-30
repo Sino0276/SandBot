@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { LibraryProgress } from '../../shared/libraries'
 import type { JdkInfo, PlayEvent, PlayInitRequest } from '../../shared/play'
 import type { HostMessage } from '../../shared/sidecarProtocol'
 import { WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
@@ -178,12 +179,14 @@ describe('PlayController + 가짜 사이드카', () => {
     const run = JSON.parse(robotLog.find((text) => text.startsWith('request '))!.slice(8))
     expect(run).toMatchObject({
       type: 'run',
-      protocol: 1,
+      protocol: 2,
       clock: 'virtual',
       opModeClass: 'org.firstinspires.ftc.teamcode.Normal',
       opModeSource: join(root, 'TeamCode', PKG, 'Normal.java'),
       sourceRoots: [join(root, 'TeamCode', 'src', 'main', 'java')],
-      sdkClasspath: [FILES.sdkJar],
+      bootClasspath: [],
+      compileClasspath: [FILES.sdkJar],
+      libraryClasspath: [],
       configXml: join(root, 'TeamCode', 'src', 'main', 'res', 'xml', 'sandbot_robot.xml'),
       seed: 7,
       startEpochMillis: 1000
@@ -417,10 +420,221 @@ describe('PlayController + 가짜 사이드카', () => {
         ok: false,
         code: 'failed'
       })
-      expect(events).toEqual([])
+      // JVM을 띄우기 전의 라이브러리 보고(빈 보고)만 왔다
+      expect(events.map((event) => event.type)).toEqual(['libraryReport'])
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
+  })
+
+  it('컴파일 기준·라이브러리를 RunRequest에 싣고, 받는 중 STOP이면 cancelled', async () => {
+    const report = { entries: [], gradle: [], compileSdk: 36, compileSdkMinor: 1, platform: null }
+    const seen: string[] = []
+    const platforms: unknown[] = []
+    const ok = make({
+      readGradle: async (projectRoot) => {
+        seen.push(projectRoot)
+        return {
+          dependencies: [],
+          repositories: [],
+          compileSdk: 36,
+          compileSdkMinor: 1,
+          diagnostics: [],
+          files: []
+        }
+      },
+      // Gradle의 compileSdk와 부 버전(minorApiLevel)을 그대로 넘긴다
+      resolvePlatform: async (projectRoot, compileSdk, compileSdkMinor) => {
+        platforms.push([projectRoot, compileSdk, compileSdkMinor])
+        return {
+          ok: true,
+          bootClasspath: [`/platform/android-${compileSdk}.${compileSdkMinor}.jar`],
+          api: compileSdk,
+          minor: compileSdkMinor,
+          guessed: false
+        }
+      },
+      resolveLibraries: async (request) => {
+        request.progress({ phase: 'downloading', done: 1, total: 2, bytes: 10 })
+        return {
+          ok: true,
+          report,
+          compileClasspath: ['/cache/lib.jar'],
+          libraryClasspath: ['/cache/lib.jar'],
+          jarCoordinates: { '/cache/lib.jar': 'g:a:1' },
+          diagnosticHint: () => null
+        }
+      }
+    })
+    const request = opModeRequest('Normal')
+    expect(await ok.init(request, owner)).toEqual({ ok: true })
+    expect(seen).toEqual([root])
+    expect(platforms).toEqual([[root, 36, 1]])
+    expect(of('libraryProgress', request.runId)).toMatchObject([
+      { phase: 'downloading', done: 1, total: 2, bytes: 10 }
+    ])
+    expect(of('libraryReport', request.runId)).toMatchObject([
+      { report: { ...report, platform: { api: 36, minor: 1, guessed: false } } }
+    ])
+    await waitFor(() => recorded.at(-1)!.sent.length > 0)
+    expect(recorded.at(-1)!.sent[0]).toMatchObject({
+      type: 'run',
+      bootClasspath: ['/platform/android-36.1.jar'],
+      compileClasspath: [FILES.sdkJar, '/cache/lib.jar'],
+      libraryClasspath: ['/cache/lib.jar']
+    })
+    ok.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(request.runId) !== undefined)
+
+    const noPlatform = make({
+      resolvePlatform: async () => ({ ok: false, code: 'noAndroidSdk', detail: '' })
+    })
+    expect(await noPlatform.init(opModeRequest('Normal'), owner)).toEqual({
+      ok: false,
+      code: 'noAndroidSdk',
+      detail: ''
+    })
+
+    let started!: () => void
+    const waiting = new Promise<void>((resolve) => (started = resolve))
+    const cancellable = make({
+      resolveLibraries: (request) =>
+        new Promise((resolve) => {
+          started()
+          request.signal.addEventListener('abort', () =>
+            resolve({ ok: false, code: 'cancelled', detail: '' })
+          )
+        })
+    })
+    const pending = cancellable.init(opModeRequest('Normal'), owner)
+    await waiting
+    // 다른 창의 STOP은 무시한다
+    cancellable.command({ type: 'stop' }, { send: () => undefined })
+    cancellable.command({ type: 'stop' }, owner)
+    expect(await pending).toEqual({ ok: false, code: 'cancelled', detail: '' })
+  })
+
+  it('Gradle 읽기·플랫폼 jar 중의 STOP·창 닫기도 INIT을 취소한다(라이브러리를 받거나 JVM을 띄우지 않는다)', async () => {
+    let librariesCalled = 0
+    // 고른 단계에서 멈춰 있는 컨트롤러(그 단계에 들어가면 reached, release로 계속)
+    type Stage = 'gradle' | 'platform'
+    const heldAt = (
+      stage: Stage
+    ): { controller: PlayController; reached: Promise<void>; release: () => void } => {
+      let entered!: () => void
+      const reached = new Promise<void>((resolve) => (entered = resolve))
+      let release!: () => void
+      const held = new Promise<void>((resolve) => (release = resolve))
+      const hold = async (at: Stage): Promise<void> => {
+        if (at !== stage) return
+        entered()
+        await held
+      }
+      const controller = make({
+        readGradle: async () => {
+          await hold('gradle')
+          return {
+            dependencies: [],
+            repositories: [],
+            compileSdk: 30,
+            compileSdkMinor: null,
+            diagnostics: [],
+            files: []
+          }
+        },
+        resolvePlatform: async () => {
+          await hold('platform')
+          return {
+            ok: true,
+            bootClasspath: ['/platform/android-30.jar'],
+            api: 30,
+            minor: null,
+            guessed: false
+          }
+        },
+        resolveLibraries: async () => {
+          librariesCalled++
+          return {
+            ok: true,
+            report: {
+              entries: [],
+              gradle: [],
+              compileSdk: 30,
+              compileSdkMinor: null,
+              platform: null
+            },
+            compileClasspath: [],
+            libraryClasspath: [],
+            jarCoordinates: {},
+            diagnosticHint: () => null
+          }
+        }
+      })
+      return { controller, reached, release }
+    }
+    for (const stage of ['gradle', 'platform'] as const) {
+      const { controller: held, reached, release } = heldAt(stage)
+      const pending = held.init(opModeRequest('Normal'), owner)
+      await reached
+      // 다른 창의 STOP은 무시하고, 그 창의 STOP은 다음 단계로 가지 않게 한다
+      held.command({ type: 'stop' }, { send: () => undefined })
+      held.command({ type: 'stop' }, owner)
+      release()
+      expect(await pending).toEqual({ ok: false, code: 'cancelled', detail: '' })
+    }
+    // 창이 닫혀도(새로고침) 같다. 그 뒤 다른 창의 INIT은 busy가 아니다.
+    const { controller: closing, reached, release } = heldAt('platform')
+    const pending = closing.init(opModeRequest('Normal'), owner)
+    await reached
+    void closing.disposeOwner(owner)
+    release()
+    expect(await pending).toMatchObject({ ok: false })
+    expect(librariesCalled).toBe(0)
+    expect(spawned).toEqual([])
+    expect(events.filter((event) => event.type === 'libraryReport')).toEqual([])
+    const other = { send: (): void => undefined }
+    const next = opModeRequest('Normal')
+    expect(await closing.init(next, other)).toEqual({ ok: true })
+    expect(librariesCalled).toBe(1)
+    closing.command({ type: 'stop' }, other)
+    await waitFor(() => !closing.hasProcess)
+  })
+
+  it('라이브러리 해석이 끝난 뒤에 온 진행(쓰지 않게 된 버전의 미리 받기)은 보내지 않는다', async () => {
+    let late: ((progress: LibraryProgress) => void) | null = null
+    const lingering = make({
+      resolveLibraries: async (request) => {
+        request.progress({ phase: 'downloading', done: 1, total: 3, bytes: 10 })
+        late = request.progress
+        // 해석이 끝난 뒤(보고 뒤, JVM을 띄우는 동안) 늦게 끝난 미리 받기
+        setTimeout(() => request.progress({ phase: 'downloading', done: 2, total: 3, bytes: 20 }))
+        return {
+          ok: true,
+          report: {
+            entries: [],
+            gradle: [],
+            compileSdk: null,
+            compileSdkMinor: null,
+            platform: null
+          },
+          compileClasspath: [],
+          libraryClasspath: [],
+          jarCoordinates: {},
+          diagnosticHint: () => null
+        }
+      }
+    })
+    const request = opModeRequest('Normal')
+    expect(await lingering.init(request, owner)).toEqual({ ok: true })
+    late!({ phase: 'downloading', done: 3, total: 3, bytes: 30 })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const types = events
+      .filter((event) => event.runId === request.runId)
+      .map((event) => event.type)
+      .filter((type) => type === 'libraryProgress' || type === 'libraryReport')
+    expect(types).toEqual(['libraryProgress', 'libraryReport'])
+    lingering.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(request.runId) !== undefined)
   })
 
   it('진짜 파이프에서도 가짜 시계로 페이스·일시 정지·Step이 맞다', async () => {

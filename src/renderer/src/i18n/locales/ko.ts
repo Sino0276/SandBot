@@ -149,12 +149,21 @@ const ko = {
     playNoSidecar:
       '실행기(사이드카)가 빌드되지 않았습니다. 개발 중이면 pnpm build:sidecar를 실행한 뒤 다시 INIT하세요.',
     playBusy: '이전 실행이 아직 끝나지 않았습니다. 잠시 뒤 다시 INIT하세요.',
-    playFailed: 'JVM을 시작하지 못했습니다 ({{detail}}).',
-    playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).'
+    playFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
+    playInitFailed: '실행을 시작하지 못했습니다 ({{detail}}).',
+    playNoAndroidSdk:
+      '쓸 수 있는 Android SDK가 없습니다. 환경 설정에서 고른 SDK 폴더를 쓸 수 없게 되었거나(지웠거나 옮김), 자동으로 찾는 곳(프로젝트 local.properties의 sdk.dir, ANDROID_HOME·ANDROID_SDK_ROOT, 기본 위치)에 SDK가 없습니다. 팀 코드는 Android Studio처럼 프로젝트 compileSdk의 Android API로 컴파일하므로 Android SDK가 필요합니다. 환경 설정에서 SDK 폴더를 고르세요(고른 폴더를 쓸 수 없게 되었다면 다시 고르거나 자동으로 바꾸세요).',
+    playNoAndroidPlatform:
+      'Android SDK에 이 프로젝트의 플랫폼({{detail}})이 없습니다. Android Studio의 SDK Manager에서 설치한 뒤 다시 INIT하세요.',
+    playCancelled: '라이브러리 받기를 취소해 실행하지 않았습니다.',
+    // INIT 중 라이브러리 받기 진행([취소] = STOP)
+    libraryResolving: '라이브러리 의존성 확인 중(파일 {{done}}개, {{size}})',
+    libraryDownloading: '라이브러리 받는 중({{done}}/{{total}}, {{size}})'
   },
   // 알림의 행동 버튼
   noticeAction: {
-    openJdkPreferences: 'JDK 설정 열기'
+    openJdkPreferences: 'JDK 설정 열기',
+    openAndroidSdkPreferences: 'Android SDK 설정 열기'
   },
   // 진행 알림에 덧붙이는 STEP 불러오기 단계
   importPhase: {
@@ -544,6 +553,35 @@ const ko = {
       loading: 'JDK 찾는 중…',
       loadFailed: 'JDK를 찾지 못했습니다 ({{detail}}). 창을 닫았다 다시 열어 보세요.'
     },
+    // 팀 코드를 컴파일할 Android SDK(프로젝트 compileSdk 플랫폼의 Java API)
+    androidSdk: {
+      title: 'Android SDK',
+      label: '컴파일에 쓸 Android SDK',
+      auto: '자동 (권장)',
+      browse: '찾아보기…',
+      browseTitle: 'Android SDK 폴더 선택',
+      option: '{{source}} — {{home}} ({{platforms}})',
+      sources: {
+        setting: '직접 고름',
+        localProperties: 'local.properties',
+        env: '환경 변수',
+        default: '기본 위치'
+      },
+      errors: {
+        notSdk: '고른 폴더는 Android SDK가 아닙니다(platforms 폴더가 없음). 설정은 그대로입니다.'
+      },
+      applyFailed: 'Android SDK 설정을 바꾸지 못했습니다 ({{detail}}).',
+      active: '사용 중',
+      activeValue: '{{home}} ({{source}})',
+      platforms: '설치된 플랫폼',
+      noPlatforms: '플랫폼 없음',
+      none: 'Android SDK를 찾지 못했습니다. Android Studio를 설치했다면 자동으로 찾습니다.',
+      customMissing:
+        '고른 Android SDK 폴더를 쓸 수 없습니다(지웠거나 옮김). 자동으로 바꾸거나 다시 고르세요.',
+      hint: '팀 코드는 Android Studio처럼 프로젝트 compileSdk 플랫폼의 Java API로 컴파일합니다(없는 플랫폼은 Android Studio의 SDK Manager에서 설치). 자동은 프로젝트 local.properties의 sdk.dir → ANDROID_HOME·ANDROID_SDK_ROOT → 기본 위치 순으로 찾습니다.',
+      loading: 'Android SDK 찾는 중…',
+      loadFailed: 'Android SDK를 찾지 못했습니다 ({{detail}}). 창을 닫았다 다시 열어 보세요.'
+    },
     // 시뮬레이션(개인 설정, 다음 INIT부터)
     simulation: {
       title: '시뮬레이션',
@@ -744,7 +782,105 @@ const ko = {
         sharedEncoderMode:
           '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
         worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).'
+      },
+      // 라이브러리 의존성 보고(INIT, src/main/libraries). 좌표마다 이유(LibraryReason)로 한 줄.
+      library: {
+        summary:
+          '팀 Gradle의 라이브러리 {{count}}개: 사용 {{used}} · 제공 {{provided}} · 불러오지 않음 {{unsupported}} · 받지 못함 {{failed}}',
+        summaryPlatform:
+          '팀 Gradle의 라이브러리 {{count}}개: 사용 {{used}} · 제공 {{provided}} · 불러오지 않음 {{unsupported}} · 받지 못함 {{failed}} · Android API {{api}}로 컴파일',
+        platformGuessed:
+          'Gradle 파일에서 compileSdk를 찾지 못해 설치된 가장 높은 Android 플랫폼(API {{api}})으로 컴파일합니다. Android Studio와 결과가 다를 수 있습니다.',
+        firstUse:
+          '{{coordinate}}: 저장소가 체크섬을 주지 않아 처음 받은 파일의 해시를 기록했습니다. 다음부터 내용이 바뀌면 쓰지 않습니다.',
+        firstUseUnrecorded:
+          '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
+        dashboardLater:
+          '{{coordinate}}: FTC Dashboard는 SandBot의 Dashboard 대체가 생길 때 지원합니다. 지금은 불러오지 않아 Dashboard를 쓰는 코드(Road Runner 포함)는 컴파일되지 않습니다.',
+        links:
+          '{{library}}: 링크 검사에서 문제 {{count}}개(없는 클래스·멤버, 아직 지원하지 않는 SDK 기능). 그 코드에 닿으면 실행 중 오류가 납니다.',
+        none: '{{coordinate}}',
+        pedroTuning:
+          '{{coordinate}}: Pedro AutoTune(tuning)은 웹 서버와 자체 스레드를 써서 로봇에서만 동작합니다. SandBot은 불러오지 않습니다(튜닝 코드는 컴파일되지 않습니다).',
+        pedro2:
+          '{{coordinate}}: Pedro Pathing 2.x는 지원하지 않습니다. 3.x 이상(com.pedropathing:revhub)으로 옮기세요.',
+        panels: '{{coordinate}}: Panels(com.bylazar)는 지원하지 않아 불러오지 않습니다.',
+        dairy:
+          '{{coordinate}}: Sloth·Sinister(dev.frozenmilk)는 Android 앱 훅·핫 리로드라 SandBot에서 쓸 수 없어 불러오지 않습니다.',
+        ftcLibVision: '{{coordinate}}: FTCLib vision은 네이티브 OpenCV를 써서 불러오지 않습니다.',
+        notSupported:
+          '{{coordinate}}: SandBot이 지원하는 라이브러리(Road Runner 1.0, Pedro Pathing 3.x, FTCLib core)도 그 의존성도 아니어서 불러오지 않습니다.',
+        dynamicVersion:
+          '{{coordinate}}: 버전이 고정되지 않아(+·latest·범위·SNAPSHOT) 불러오지 않습니다. 실행이 매번 같도록 정확한 버전을 쓰세요.',
+        localModule: '{{coordinate}}: 로컬 모듈·파일 의존성은 SandBot이 읽지 않습니다.',
+        repositoryNotAllowed:
+          '{{coordinate}}: 이 라이브러리를 받을 저장소를 Gradle 파일이 선언하지 않았고, 선언한 다른 저장소는 SandBot이 허용하지 않습니다.',
+        notFound: '{{coordinate}}: 저장소와 Gradle 캐시에서 찾지 못했습니다.',
+        offline:
+          '{{coordinate}}: 네트워크에 닿지 못했고 캐시에도 없습니다. 인터넷에 연결한 뒤 다시 INIT하세요(Android Studio에서 한 번 빌드했다면 Gradle 캐시에서 읽습니다).',
+        rateLimited:
+          '{{coordinate}}: 저장소가 요청을 막았습니다(HTTP 429). 잠시 뒤 다시 INIT하세요.',
+        checksumMismatch:
+          '{{coordinate}}: 받은 파일이 체크섬이나 기록한 해시와 달라 쓰지 않습니다.',
+        tooLarge: '{{coordinate}}: 파일이 크기 한도를 넘어 받지 않았습니다.',
+        badArchive:
+          '{{coordinate}}: jar·AAR을 읽을 수 없거나 네이티브 코드(jni)가 들어 있어 쓰지 않습니다.',
+        protectedPackage:
+          '{{coordinate}}: JDK나 FTC SDK 패키지의 클래스를 담고 있어 쓰지 않습니다.',
+        badMetadata: '{{coordinate}}: POM이나 Gradle 모듈 메타데이터를 읽을 수 없습니다.',
+        cancelled: '{{coordinate}}: 받기를 취소했습니다.'
       }
+    },
+    // 의존성 보고 항목의 자세히 칸
+    library: {
+      detail: '세부',
+      requestedBy: '끌어온 쪽',
+      requested: '요청된 버전',
+      source: '출처',
+      integrity: '무결성',
+      sources: {
+        gradleCache: 'Android Studio의 Gradle 캐시',
+        libraryCache: 'SandBot 라이브러리 캐시',
+        download: '저장소에서 받음'
+      },
+      integrities: {
+        checksum: '저장소의 체크섬과 맞음',
+        pinned: 'SandBot이 아는 해시와 맞음',
+        firstUse: '처음 받은 해시를 기록함(저장소에 체크섬 없음)',
+        gradleCache: 'Gradle 캐시의 SHA-1과 맞음',
+        firstUseUnrecorded:
+          '처음 받은 해시를 기록하지 못함(저장소에 체크섬 없음, 다음 INIT에 다시 기록)'
+      },
+      linkKind: {
+        missingClass: '없는 클래스',
+        missingMember: '없는 멤버',
+        unsupported: '아직 지원하지 않음'
+      },
+      // 컴파일 진단(패키지를 찾지 못함)에 붙는 안내(DiagnosticHint)
+      hintNotLoaded:
+        '이 패키지는 팀 Gradle에 선언한 {{coordinate}}의 것이지만 SandBot이 불러오지 않았습니다. {{reason}}',
+      hintDependencyNotLoaded:
+        '이 패키지는 팀 Gradle에 선언한 {{requestedBy}}이(가) 끌어오는 {{coordinate}}의 것이지만 SandBot이 불러오지 않았습니다. {{reason}}',
+      hintUndeclared:
+        '패키지 {{packageName}}의 라이브러리를 팀 Gradle 파일(TeamCode/build.gradle 등)에 선언하지 않았습니다. Android Studio에서도 컴파일되지 않습니다.',
+      hintMaybeUndeclared:
+        '패키지 {{packageName}}의 라이브러리를 SandBot이 읽은 팀 Gradle 선언에서 찾지 못했습니다. SandBot이 읽지 못한 Gradle 내용이나 불러오지 않은 라이브러리에 있을 수 있습니다(Console의 Gradle·라이브러리 줄).'
+    },
+    // 팀 Gradle 파일을 읽다 풀지 못한 것(GradleDiagnosticCode)
+    gradle: {
+      unresolvedValue: '값을 리터럴로 풀 수 없어 이 선언을 읽지 않았습니다',
+      unsupportedSyntax: '읽지 못하는 문법이라 건너뛰었습니다',
+      remoteScript: '원격 스크립트(apply from: https://…)는 읽지 않습니다',
+      outsideProject: '프로젝트 밖 파일은 읽지 않습니다',
+      missingFile: 'apply from 대상 파일이 없습니다',
+      tooLarge: '파일이 너무 커서 읽지 않았습니다',
+      tooDeep: '중첩이나 apply from이 너무 깊거나 파일이 너무 복잡해 더 읽지 않았습니다',
+      tooMany: '개수 한도를 넘어 넘은 것(목록이 넘은 선언은 그 선언 전체)을 읽지 않았습니다',
+      tooMuchWork:
+        'Gradle 파일을 읽는 일이 너무 많아 여기서 읽기를 멈췄습니다. 그 앞에서 읽은 것은 씁니다',
+      localDependency:
+        '로컬 모듈·파일 의존성(project()·files()·fileTree)은 SandBot이 쓰지 않습니다',
+      versionCatalogEntry: 'gradle/libs.versions.toml에서 찾지 못한 항목입니다'
     }
   },
   // 텔레메트리 탭(Driver Station 화면처럼)

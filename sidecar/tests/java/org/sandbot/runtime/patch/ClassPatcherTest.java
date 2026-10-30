@@ -146,13 +146,15 @@ public final class ClassPatcherTest {
     public static void testEveryTargetHasARedirectMethod() throws Exception {
         for (ClassPatcher.Target t : ClassPatcher.TARGETS) {
             boolean found = false;
-            for (Method m : TimeRedirects.class.getMethods()) {
+            Class<?> redirect = Class.forName(t.redirectClass.replace('/', '.'));
+            for (Method m : redirect.getMethods()) {
                 String desc = MethodType.methodType(m.getReturnType(), m.getParameterTypes()).toMethodDescriptorString();
                 if (m.getName().equals(t.newName) && desc.equals(t.newDesc) && Modifier.isStatic(m.getModifiers()))
                     found = true;
             }
-            Check.isTrue(found, "TimeRedirects." + t.newName + t.newDesc + " for " + t);
+            Check.isTrue(found, redirect.getSimpleName() + "." + t.newName + t.newDesc + " for " + t);
         }
+        Check.isTrue(TimeRedirects.class.getName().replace('.', '/').equals(ClassPatcher.REDIRECTS), "time redirects");
         Check.isTrue(ClassPatcher.TARGETS.size() >= 25, "target count");
     }
 

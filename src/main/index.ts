@@ -9,6 +9,7 @@ import { registerTeamCodeIpc } from './teamCode'
 import { registerTeamCodeJavaIpc } from './teamCodeJava'
 import { registerExternalEditorIpc } from './externalEditor'
 import { registerJdkIpc } from './jdk'
+import { registerAndroidSdkIpc } from './androidSdk'
 import { registerOpModesIpc } from './opModes'
 import { registerPlayIpc } from './sidecar'
 
@@ -89,6 +90,7 @@ app.whenReady().then(() => {
   registerMeshCacheIpc()
   registerStepConverterIpc()
   registerJdkIpc()
+  registerAndroidSdkIpc()
   registerOpModesIpc()
   registerPlayIpc()
   createWindow()

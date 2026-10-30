@@ -1,6 +1,18 @@
 import type { TFunction } from 'i18next'
+import type { GradleDiagnostic } from '../../../shared/gradle'
+import {
+  coordinateOf,
+  DASHBOARD_GROUPS,
+  type LibraryEntry,
+  type LibraryReason
+} from '../../../shared/libraries'
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
-import type { PlayDiagnostic, PlayStackFrame } from '../../../shared/play'
+import type {
+  DiagnosticHint,
+  PlayDiagnostic,
+  PlayLinkWarning,
+  PlayStackFrame
+} from '../../../shared/play'
 import type { NoticeKey } from '../editor/noticeStore'
 import type { Messages } from '../i18n/locales/ko'
 import type { ConsoleLevel } from './playSettings'
@@ -15,10 +27,13 @@ export const CONSOLE_LIMIT = 2000
 
 export type ConsoleFinishReason = FinishReason | 'killed' | 'crashed'
 
-// 실행 흐름이 남기는 안내(console.notices.*). 시뮬레이터 안내(simNotice)는 console.notices.sim.<code>다.
+// 실행 흐름이 남기는 안내(console.notices.*). 시뮬레이터 안내(simNotice)는 console.notices.sim.<code>, 라이브러리
+// 의존성 보고는 console.notices.library.<이유>다.
 type NoticeMessages = Messages['console']['notices']
 export type ConsoleNoticeKey =
-  Exclude<keyof NoticeMessages, 'sim'> | `sim.${keyof NoticeMessages['sim'] & string}`
+  | Exclude<keyof NoticeMessages, 'sim' | 'library'>
+  | `sim.${keyof NoticeMessages['sim'] & string}`
+  | `library.${keyof NoticeMessages['library'] & string}`
 
 export type ConsoleBody =
   | { type: 'log'; stream: 'out' | 'err' | 'robotLog'; text: string }
@@ -38,6 +53,12 @@ export type ConsoleBody =
   | { type: 'notice'; key: ConsoleNoticeKey; params: Record<string, string | number> }
   // playInit이 실패했다(알림과 같은 문장, notice.play*)
   | { type: 'initFailed'; notice: NoticeKey; detail: string }
+  // 의존성 보고의 좌표 하나(불러오지 않음·받지 못함, 처음 받은 해시 기록)
+  | { type: 'library'; library: LibraryEntry }
+  // 팀 Gradle 파일을 읽다 풀지 못한 것
+  | { type: 'gradle'; diagnostic: GradleDiagnostic }
+  // 라이브러리 하나의 링크 검사 경고(라이브러리별로 묶음)
+  | { type: 'linkWarnings'; library: string; warnings: PlayLinkWarning[] }
 
 export type ConsoleEntry = ConsoleBody & {
   id: number
@@ -82,6 +103,11 @@ export function consoleLevel(
     case 'notice':
     case 'initFailed':
       return noticeLevel
+    case 'library':
+      return body.library.status === 'used' ? 'info' : 'warning'
+    case 'gradle':
+    case 'linkWarnings':
+      return 'warning'
   }
 }
 
@@ -171,6 +197,63 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       return t(`console.notices.${entry.key}`, entry.params)
     case 'initFailed':
       return t(`notice.${entry.notice}`, { detail: entry.detail })
+    case 'library': {
+      const { library } = entry
+      const location = library.declaredAt
+        ? `${library.declaredAt.file}:${library.declaredAt.line}: `
+        : ''
+      return `${location}${libraryText(library, t)}`
+    }
+    case 'gradle': {
+      const { diagnostic } = entry
+      const text = t(`console.gradle.${diagnostic.code}`)
+      const detail = diagnostic.detail ? ` (${diagnostic.detail})` : ''
+      return `${diagnostic.at.file}:${diagnostic.at.line}: ${text}${detail}`
+    }
+    case 'linkWarnings':
+      return t('console.notices.library.links', {
+        library: entry.library,
+        count: entry.warnings.length
+      })
+  }
+}
+
+// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지
+// 지원하지 않는다는 안내를 따로 보인다.
+function reasonText(coordinate: string, reason: LibraryReason, t: TFunction): string {
+  if (DASHBOARD_GROUPS.has(coordinate.split(':')[0]) && reason === 'notSupported')
+    return t('console.notices.library.dashboardLater', { coordinate })
+  return t(`console.notices.library.${reason}`, { coordinate })
+}
+
+// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
+export function libraryText(library: LibraryEntry, t: TFunction): string {
+  const coordinate = coordinateOf(library)
+  if (library.status === 'used')
+    return library.integrity === 'firstUse' || library.integrity === 'firstUseUnrecorded'
+      ? t(`console.notices.library.${library.integrity}`, { coordinate })
+      : coordinate
+  return reasonText(coordinate, library.reason, t)
+}
+
+// 컴파일 진단에 붙은 라이브러리 안내 문장
+export function hintText(hint: DiagnosticHint, t: TFunction): string {
+  switch (hint.kind) {
+    case 'undeclared':
+      return t('console.library.hintUndeclared', { packageName: hint.packageName })
+    case 'maybeUndeclared':
+      return t('console.library.hintMaybeUndeclared', { packageName: hint.packageName })
+    case 'libraryNotLoaded':
+      return t('console.library.hintNotLoaded', {
+        coordinate: hint.coordinate,
+        reason: reasonText(hint.coordinate, hint.reason, t)
+      })
+    case 'dependencyNotLoaded':
+      return t('console.library.hintDependencyNotLoaded', {
+        coordinate: hint.coordinate,
+        requestedBy: hint.requestedBy,
+        reason: reasonText(hint.coordinate, hint.reason, t)
+      })
   }
 }
 
@@ -196,9 +279,36 @@ export function entryDetailLines(entry: ConsoleEntry, t: TFunction): string[] {
     }
     case 'diagnostic': {
       const lines = [entryHeadline(entry, t)]
+      if (entry.diagnostic.hint) lines.push(hintText(entry.diagnostic.hint, t))
       if (entry.diagnostic.code) lines.push(`${t('console.code')}: ${entry.diagnostic.code}`)
       return lines
     }
+    case 'library': {
+      const { library } = entry
+      const lines = [entryHeadline(entry, t)]
+      if (library.detail) lines.push(`${t('console.library.detail')}: ${library.detail}`)
+      if (library.requestedBy.length > 0)
+        lines.push(`${t('console.library.requestedBy')}: ${library.requestedBy.join(' → ')}`)
+      if (library.requested.length > 1)
+        lines.push(`${t('console.library.requested')}: ${library.requested.join(', ')}`)
+      if (library.source)
+        lines.push(
+          `${t('console.library.source')}: ${t(`console.library.sources.${library.source}`)}`
+        )
+      if (library.integrity)
+        lines.push(
+          `${t('console.library.integrity')}: ${t(`console.library.integrities.${library.integrity}`)}`
+        )
+      return lines
+    }
+    case 'linkWarnings':
+      return [
+        entryHeadline(entry, t),
+        ...entry.warnings.map(
+          (warning) =>
+            `${t(`console.library.linkKind.${warning.kind}`)}: ${warning.from} → ${warning.target}`
+        )
+      ]
     case 'finished':
       return entry.detail
         ? [entryHeadline(entry, t), finishDetail(entry.reason, entry.detail, t)]

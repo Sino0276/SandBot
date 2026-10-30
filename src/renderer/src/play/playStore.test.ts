@@ -67,7 +67,8 @@ const diagnostic = (kind: PlayDiagnostic['kind'], line: number): PlayDiagnostic 
   line,
   column: 5,
   message: "';' expected",
-  code: 'compiler.err.expected'
+  code: 'compiler.err.expected',
+  hint: null
 })
 
 describe('applyPlayEvent', () => {
@@ -431,5 +432,101 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
         params: { detail: 'x' }
       })
     ).toEqual({})
+  })
+})
+
+describe('라이브러리 진행·보고·링크 검사', () => {
+  const progress: PlayEvent = {
+    type: 'libraryProgress',
+    runId: 'r1',
+    phase: 'downloading',
+    done: 1,
+    total: 4,
+    bytes: 2048
+  }
+
+  it('진행은 준비 중에만 run에 두고, 보고가 오면 지운다', () => {
+    const state = data()
+    const next = apply(state, progress)
+    expect(next.run!.libraryProgress).toEqual({
+      phase: 'downloading',
+      done: 1,
+      total: 4,
+      bytes: 2048
+    })
+    const reported = apply(next, {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: { entries: [], gradle: [], compileSdk: null, compileSdkMinor: null, platform: null }
+    })
+    expect(reported.run!.libraryProgress).toBeNull()
+    // 좌표가 없으면 Console에 아무것도 쓰지 않는다
+    expect(reported.entries).toEqual([])
+    const compiling = apply(data(), { type: 'phase', runId: 'r1', phase: 'compiling' }, progress)
+    expect(compiling.run!.libraryProgress).toBeNull()
+  })
+
+  it('보고 뒤에 온 진행(쓰지 않게 된 버전의 늦은 미리 받기)은 받지 않고, 준비를 벗어나면 진행을 지운다', () => {
+    const report: PlayEvent = {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: { entries: [], gradle: [], compileSdk: null, compileSdkMinor: null, platform: null }
+    }
+    // 보고 뒤 hello 전(아직 preparing)
+    const late = apply(data(), progress, report, { ...progress, done: 4, total: 4 })
+    expect(late.run!.phase).toBe('preparing')
+    expect(late.run!.libraryProgress).toBeNull()
+    const compiling = apply(data(), progress, { type: 'phase', runId: 'r1', phase: 'compiling' })
+    expect(compiling.run!.libraryProgress).toBeNull()
+  })
+
+  it('보고는 요약과 문제 좌표를 Console에(실행의 프로젝트 루트와 함께)', () => {
+    const next = apply(data(), {
+      type: 'libraryReport',
+      runId: 'r1',
+      report: {
+        entries: [
+          {
+            group: 'com.pedropathing',
+            artifact: 'tuning',
+            version: '1.0.1',
+            requested: ['1.0.1'],
+            status: 'unsupported',
+            reason: 'pedroTuning',
+            detail: '',
+            declaredAt: { file: 'build.dependencies.gradle', line: 12 },
+            requestedBy: [],
+            source: null,
+            integrity: null
+          }
+        ],
+        gradle: [],
+        compileSdk: 30,
+        compileSdkMinor: null,
+        platform: { api: 30, minor: null, guessed: false }
+      }
+    })
+    expect(next.entries.map((e) => `${e.level} ${e.type}`)).toEqual([
+      'warning notice',
+      'warning library'
+    ])
+    expect(next.entries.every((e) => e.root === '/p')).toBe(true)
+  })
+
+  it('링크 검사 경고는 라이브러리별 한 줄', () => {
+    const next = apply(data(), {
+      type: 'linkWarnings',
+      runId: 'r1',
+      warnings: [
+        { library: 'a:b:1', kind: 'missingClass', from: 'a.X', target: 'q.Y' },
+        { library: 'a:b:1', kind: 'missingMember', from: 'a.X', target: 'q.Y#f()V' }
+      ]
+    })
+    expect(next.entries).toHaveLength(1)
+    expect(next.entries[0]).toMatchObject({
+      type: 'linkWarnings',
+      library: 'a:b:1',
+      level: 'warning'
+    })
   })
 })

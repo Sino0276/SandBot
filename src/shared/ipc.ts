@@ -1,6 +1,8 @@
 // 메인 프로세스 ↔ preload ↔ 렌더러가 함께 쓰는 IPC 채널과 API 타입
 import type { GeneratedFile, SyncGeneratedResult } from './generatedFiles'
 import type {
+  AndroidSdkChoice,
+  AndroidSdkState,
   GamepadState,
   JdkChoice,
   JdkState,
@@ -33,6 +35,8 @@ export const IPC = {
   setExternalEditor: 'editor:set-external-editor',
   getJdk: 'jdk:get',
   setJdk: 'jdk:set',
+  getAndroidSdk: 'android-sdk:get',
+  setAndroidSdk: 'android-sdk:set',
   listOpModes: 'play:list-opmodes',
   playInit: 'play:init',
   playCommand: 'play:command',
@@ -239,6 +243,10 @@ export type SandbotApi = {
   // 사이드카가 쓸 JDK(Unity External Tools처럼 환경 설정에서 고름). 설정은 메인의 userData/jdk.json.
   getJdk: () => Promise<JdkState>
   setJdk: (choice: JdkChoice) => Promise<JdkState>
+  // 팀 코드를 컴파일할 Android SDK(플랫폼 API). 설정은 메인의 userData/android-sdk.json. root가 있으면 그 프로젝트의
+  // local.properties(sdk.dir)도 찾는다(열거나 저장한 프로젝트만).
+  getAndroidSdk: (root: string | null) => Promise<AndroidSdkState>
+  setAndroidSdk: (choice: AndroidSdkChoice, root: string | null) => Promise<AndroidSdkState>
   // 실행(Play). root는 열거나 저장한 프로젝트여야 한다(메인이 확인한다).
   listOpModes: (root: string) => Promise<ListOpModesResult>
   // JDK·사이드카를 확인하고 JVM을 띄워 컴파일·INIT까지 시작한다. 진행은 onPlayEvent로 온다.

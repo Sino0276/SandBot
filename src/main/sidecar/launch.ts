@@ -1,10 +1,13 @@
 import { lstat, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
+import type { GradleProject } from '../../shared/gradle'
 import { parseOpModes } from '../../shared/java/opModes'
+import type { LibraryProgress, LibraryReport } from '../../shared/libraries'
 import {
   MAX_BATTERY_VOLTAGE,
   MIN_BATTERY_VOLTAGE,
+  type DiagnosticHint,
   type OpModeFlavor,
   type PlayInitRequest,
   type PlayInitResult,
@@ -15,6 +18,7 @@ import {
   DEFAULT_STALL_MILLIS,
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
+  type CompileDiagnostic,
   type RunRequest
 } from '../../shared/sidecarProtocol'
 import {
@@ -223,10 +227,51 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
   }
 }
 
+// ---- 컴파일 기준과 라이브러리(controller가 JVM을 띄우기 전에 정한다) ----
+
+// 팀 프로젝트 compileSdk의 플랫폼 API jar(src/main/androidSdk.ts). bootClasspath가 비면 javac --release 8(시험만)이고
+// api는 null. api·minor는 그 플랫폼의 주·부 버전(android-36.1이면 36·1, android-37.0이면 37·0, android-N이면 minor null).
+// guessed: compileSdk를 몰라 설치된 플랫폼 중 가장 높은 것을 골랐다(의존성 보고에 경고로 보인다).
+export type PlatformResolution = {
+  ok: true
+  bootClasspath: string[]
+  api: number | null
+  minor: number | null
+  guessed: boolean
+}
+
+export type LibraryRequest = {
+  projectRoot: string
+  gradle: GradleProject
+  // STOP(INIT 취소)으로 멈춘다. 멈추면 cancelled 실패를 돌려준다.
+  signal: AbortSignal
+  progress: (progress: LibraryProgress) => void
+}
+
+// 팀 Gradle의 라이브러리(src/main/libraries). 클래스패스는 라이브러리 캐시 안의 절대 경로.
+export type LibraryResolution = {
+  ok: true
+  report: LibraryReport
+  // javac -classpath에 sandbot-sdk.jar 다음으로 넣을 jar(순서대로)
+  compileClasspath: string[]
+  // 실행 때 LibraryClassLoader가 읽는 jar(순서대로)
+  libraryClasspath: string[]
+  // jar 절대 경로 → 'g:a:v'(링크 검사 경고를 좌표로 보이려고)
+  jarCoordinates: Record<string, string>
+  // 컴파일 진단에 붙일 안내(라이브러리 패키지를 찾지 못한 오류). 없으면 null.
+  diagnosticHint: (diagnostic: CompileDiagnostic) => DiagnosticHint | null
+}
+
+export type RunClasspaths = {
+  bootClasspath: string[]
+  compileClasspath: string[]
+  libraryClasspath: string[]
+}
+
 export function buildRunRequest(
   prepared: PreparedRun,
   request: ValidRequest,
-  files: SidecarFiles,
+  classpaths: RunClasspaths,
   now: number = Date.now()
 ): RunRequest {
   return {
@@ -237,7 +282,9 @@ export function buildRunRequest(
     sourceRoots: prepared.sourceRoots,
     opModeSource: prepared.opModeSource,
     opModeClass: request.opMode.className,
-    sdkClasspath: [files.sdkJar],
+    bootClasspath: classpaths.bootClasspath,
+    compileClasspath: classpaths.compileClasspath,
+    libraryClasspath: classpaths.libraryClasspath,
     configXml: prepared.configXml,
     // 1단계는 Hub 타이밍을 덮어쓰지 않는다(측정 보정은 나중)
     timing: {},

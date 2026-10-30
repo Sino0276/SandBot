@@ -2,6 +2,8 @@ import type {
   CompileDiagnostic,
   DeviceValues,
   FinishReason,
+  LinkWarning,
+  LinkWarningKind,
   OpModePhase,
   SidecarMessage,
   SimErrorKind,
@@ -123,6 +125,23 @@ function diagnostic(value: unknown): CompileDiagnostic {
   }
 }
 
+const LINK_WARNING_KINDS: readonly LinkWarningKind[] = [
+  'missingClass',
+  'missingMember',
+  'unsupported'
+]
+
+function linkWarning(value: unknown): LinkWarning {
+  if (!isObject(value)) fail('linkReport.warnings')
+  const data = { ...value, type: 'linkReport.warning' }
+  return {
+    jar: str(data, 'jar'),
+    kind: oneOf(data, 'kind', LINK_WARNING_KINDS),
+    from: str(data, 'from'),
+    target: str(data, 'target')
+  }
+}
+
 function frame(value: unknown): StackFrame {
   if (!isObject(value)) fail('error.stack')
   const data = { ...value, type: 'error.frame' }
@@ -239,6 +258,8 @@ export function parseSidecarLine(line: string): SidecarMessage {
         stack: list(data, 'stack', frame),
         thread: str(data, 'thread')
       }
+    case 'linkReport':
+      return { type: 'linkReport', warnings: list(data, 'warnings', linkWarning) }
     case 'finished':
       return {
         type: 'finished',

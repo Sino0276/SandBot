@@ -1,5 +1,6 @@
 package org.sandbot.sdk.devices;
 
+import com.qualcomm.hardware.bosch.BNO055IMU;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
@@ -200,6 +201,21 @@ public final class HubCostTest {
         IMU imu2 = bot.get(IMU.class, "imu2");
         Check.equal(ms(18 * 3.5 + 40), elapsed(() -> imu2.initialize(parameters)), "BNO055 on expansion: 18 transactions + 40 ms");
         Check.equal(ms(3.5), elapsed(() -> imu2.getRobotYawPitchRollAngles()), "expansion orientation");
+        bot.stop();
+    }
+
+    public static void testLegacyBno055InitializeResetsTheChip() {
+        // 실제 BNO055IMUImpl.internalInitializeOnce: CHIP_ID 확인(1), CONFIG 모드(모드 읽기·쓰기 2 + 25 ms), SYS_TRIGGER 리셋 쓰기(1),
+        // 400 ms 뒤 칩이 리셋에서 나올 때까지(리셋 뒤 650 ms) CHIP_ID 읽기(1) + 60 ms 반복, 100 ms, sharedInit(14 + 15 ms), 상태 읽기(1).
+        // Expansion Hub(I2C 3.5 ms)에서는 리셋 뒤 400·463.5·527·590.5·654 ms에 읽어 다섯째에 나온다.
+        Bot bot = new Bot();
+        // hardwareMap.get의 지연 초기화는 DISABLED 매개변수라 칩을 건드리지 않는다
+        Check.equal(0L, elapsed(() -> bot.get(BNO055IMU.class, "imu2")), "hardwareMap.get does not initialize the chip");
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu2");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        Check.equal(ms(24 * 3.5 + 25 + 400 + 4 * 60 + 100 + 15), elapsed(() -> legacy.initialize(parameters)),
+                "legacy initialize resets the chip: 24 transactions + 780 ms");
+        Check.equal(ms(24 * 3.5 + 780), elapsed(() -> legacy.initialize(parameters)), "every initialize resets again");
         bot.stop();
     }
 

@@ -149,12 +149,20 @@ const en: Messages = {
     playNoSidecar:
       'The runner (sidecar) has not been built. During development, run pnpm build:sidecar and INIT again.',
     playBusy: 'The previous run has not finished yet. INIT again in a moment.',
-    playFailed: 'Could not start the JVM ({{detail}}).',
-    playInitFailed: 'Could not start the run ({{detail}}).'
+    playFailed: 'Could not start the run ({{detail}}).',
+    playInitFailed: 'Could not start the run ({{detail}}).',
+    playNoAndroidSdk:
+      "There is no usable Android SDK. The SDK folder chosen in Preferences can no longer be used (deleted or moved), or no SDK was found where Automatic looks (sdk.dir in the project's local.properties, ANDROID_HOME, ANDROID_SDK_ROOT, the default location). Team code is compiled against the project compileSdk Android API, as in Android Studio, so an Android SDK is required. Choose the SDK folder in Preferences (if the chosen folder can no longer be used, choose it again or switch to Automatic).",
+    playNoAndroidPlatform:
+      'The Android SDK does not have this project platform ({{detail}}). Install it with the SDK Manager in Android Studio, then INIT again.',
+    playCancelled: 'The library download was cancelled, so the run did not start.',
+    libraryResolving: 'Checking library dependencies ({{done}} files, {{size}})',
+    libraryDownloading: 'Downloading libraries ({{done}}/{{total}}, {{size}})'
   },
   // Notice action buttons
   noticeAction: {
-    openJdkPreferences: 'Open JDK settings'
+    openJdkPreferences: 'Open JDK settings',
+    openAndroidSdkPreferences: 'Open Android SDK settings'
   },
   importPhase: {
     checking: 'checking the file',
@@ -531,6 +539,36 @@ const en: Messages = {
       loading: 'Looking for JDKs…',
       loadFailed: 'Could not look for JDKs ({{detail}}). Close and reopen this window.'
     },
+    // The Android SDK that team code is compiled against (the Java API of the project's compileSdk platform)
+    androidSdk: {
+      title: 'Android SDK',
+      label: 'Android SDK for compiling',
+      auto: 'Automatic (recommended)',
+      browse: 'Browse…',
+      browseTitle: 'Choose an Android SDK folder',
+      option: '{{source}} — {{home}} ({{platforms}})',
+      sources: {
+        setting: 'Chosen',
+        localProperties: 'local.properties',
+        env: 'Environment variable',
+        default: 'Default location'
+      },
+      errors: {
+        notSdk:
+          'The chosen folder is not an Android SDK (no platforms folder). The setting was not changed.'
+      },
+      applyFailed: 'Could not change the Android SDK setting ({{detail}}).',
+      active: 'In use',
+      activeValue: '{{home}} ({{source}})',
+      platforms: 'Installed platforms',
+      noPlatforms: 'no platforms',
+      none: 'No Android SDK was found. If Android Studio is installed it is found automatically.',
+      customMissing:
+        'The chosen Android SDK folder can no longer be used (deleted or moved). Switch to Automatic or choose again.',
+      hint: "Like Android Studio, team code is compiled against the Java API of the project's compileSdk platform (install missing platforms with Android Studio's SDK Manager). Automatic looks at sdk.dir in the project's local.properties, then ANDROID_HOME and ANDROID_SDK_ROOT, then the default location.",
+      loading: 'Looking for Android SDKs…',
+      loadFailed: 'Could not look for Android SDKs ({{detail}}). Close and reopen this window.'
+    },
     // Simulation (personal settings, used from the next INIT)
     simulation: {
       title: 'Simulation',
@@ -737,7 +775,106 @@ const en: Messages = {
           'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
         worldError:
           'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).'
+      },
+      // Library dependency report (INIT, src/main/libraries)
+      library: {
+        summary:
+          '{{count}} libraries in the team Gradle files: {{used}} used · {{provided}} provided · {{unsupported}} not loaded · {{failed}} not downloaded',
+        summaryPlatform:
+          '{{count}} libraries in the team Gradle files: {{used}} used · {{provided}} provided · {{unsupported}} not loaded · {{failed}} not downloaded · compiled against Android API {{api}}',
+        platformGuessed:
+          'compileSdk was not found in the Gradle files, so the code is compiled against the highest installed Android platform (API {{api}}). Results may differ from Android Studio.',
+        firstUse:
+          '{{coordinate}}: the repository publishes no checksums, so the hash of the first download was recorded. If the content changes later, it will not be used.',
+        firstUseUnrecorded:
+          '{{coordinate}}: the repository publishes no checksums, and the hash of the first download could not be saved (first-use.json in the library cache is not writable). It is used this time, but a changed file is not caught yet. The next INIT checks it again and saves the hash.',
+        dashboardLater:
+          '{{coordinate}}: FTC Dashboard will be supported with the SandBot Dashboard replacement. It is not loaded yet, so code that uses Dashboard (including Road Runner) does not compile.',
+        links:
+          '{{library}}: {{count}} link problem(s) (missing classes or members, SDK features not supported yet). Reaching that code causes a runtime error.',
+        none: '{{coordinate}}',
+        pedroTuning:
+          '{{coordinate}}: Pedro AutoTune (tuning) uses a web server and its own threads, so it only runs on the robot. SandBot does not load it (tuning code does not compile).',
+        pedro2:
+          '{{coordinate}}: Pedro Pathing 2.x is not supported. Move to 3.x or newer (com.pedropathing:revhub).',
+        panels: '{{coordinate}}: Panels (com.bylazar) is not supported, so it is not loaded.',
+        dairy:
+          '{{coordinate}}: Sloth and Sinister (dev.frozenmilk) are Android app hooks and hot reload, which SandBot cannot use, so they are not loaded.',
+        ftcLibVision: '{{coordinate}}: FTCLib vision uses native OpenCV, so it is not loaded.',
+        notSupported:
+          '{{coordinate}}: not a library SandBot supports (Road Runner 1.0, Pedro Pathing 3.x, FTCLib core) or one of their dependencies, so it is not loaded.',
+        dynamicVersion:
+          '{{coordinate}}: the version is not fixed (+, latest, a range or SNAPSHOT), so it is not loaded. Use an exact version so every run is the same.',
+        localModule: '{{coordinate}}: SandBot does not read local module or file dependencies.',
+        repositoryNotAllowed:
+          '{{coordinate}}: the Gradle files do not declare the repository this library comes from, and SandBot does not allow the other declared repositories.',
+        notFound: '{{coordinate}}: not found in the repository or the Gradle cache.',
+        offline:
+          '{{coordinate}}: the network could not be reached and it is not cached. Connect to the internet and INIT again (after one Android Studio build it is read from the Gradle cache).',
+        rateLimited:
+          '{{coordinate}}: the repository refused the request (HTTP 429). INIT again in a moment.',
+        checksumMismatch:
+          '{{coordinate}}: the downloaded file does not match its checksum or recorded hash, so it is not used.',
+        tooLarge: '{{coordinate}}: the file is over the size limit, so it was not downloaded.',
+        badArchive:
+          '{{coordinate}}: the jar or AAR cannot be read or contains native code (jni), so it is not used.',
+        protectedPackage:
+          '{{coordinate}}: it contains classes in JDK or FTC SDK packages, so it is not used.',
+        badMetadata: '{{coordinate}}: the POM or Gradle module metadata cannot be read.',
+        cancelled: '{{coordinate}}: the download was cancelled.'
       }
+    },
+    // Details of a dependency report entry
+    library: {
+      detail: 'Detail',
+      requestedBy: 'Requested by',
+      requested: 'Requested versions',
+      source: 'Source',
+      integrity: 'Integrity',
+      sources: {
+        gradleCache: 'Android Studio Gradle cache',
+        libraryCache: 'SandBot library cache',
+        download: 'downloaded from the repository'
+      },
+      integrities: {
+        checksum: 'matches the repository checksum',
+        pinned: 'matches the hash SandBot knows',
+        firstUse: 'hash of the first download recorded (no checksums in the repository)',
+        gradleCache: 'matches the Gradle cache SHA-1',
+        firstUseUnrecorded:
+          'hash of the first download not saved (no checksums in the repository; saved at the next INIT)'
+      },
+      linkKind: {
+        missingClass: 'missing class',
+        missingMember: 'missing member',
+        unsupported: 'not supported yet'
+      },
+      hintNotLoaded:
+        'This package belongs to {{coordinate}}, declared in the team Gradle files, but SandBot did not load it. {{reason}}',
+      hintDependencyNotLoaded:
+        'This package belongs to {{coordinate}}, a dependency of {{requestedBy}} declared in the team Gradle files, but SandBot did not load it. {{reason}}',
+      hintUndeclared:
+        'The library of package {{packageName}} is not declared in the team Gradle files (TeamCode/build.gradle and so on). It does not compile in Android Studio either.',
+      hintMaybeUndeclared:
+        'The library of package {{packageName}} was not found in the team Gradle declarations SandBot read. It may be in Gradle content SandBot could not read or in a library it did not load (see the Gradle and library lines in the Console).'
+    },
+    // What could not be resolved while reading the team Gradle files (GradleDiagnosticCode)
+    gradle: {
+      unresolvedValue:
+        'the value cannot be resolved to a literal, so this declaration was not read',
+      unsupportedSyntax: 'syntax SandBot cannot read, skipped',
+      remoteScript: 'remote scripts (apply from: https://…) are not read',
+      outsideProject: 'files outside the project are not read',
+      missingFile: 'the apply from file does not exist',
+      tooLarge: 'the file is too large, so it was not read',
+      tooDeep: 'nesting or apply from is too deep, or the file is too complex, so reading stopped',
+      tooMany:
+        'a count limit was exceeded, so what is over the limit (or the whole declaration whose list is over it) was not read',
+      tooMuchWork:
+        'reading the Gradle files takes too much work, so reading stopped here; what was read before is used',
+      localDependency:
+        'SandBot does not use local module or file dependencies (project(), files(), fileTree)',
+      versionCatalogEntry: 'not found in gradle/libs.versions.toml'
     }
   },
   // Telemetry tab (like the Driver Station screen)

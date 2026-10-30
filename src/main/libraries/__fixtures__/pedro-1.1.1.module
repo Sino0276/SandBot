@@ -1,0 +1,96 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.pedropathing.ivy",
+    "module": "pedro",
+    "version": "1.1.1",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.14.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "com.pedropathing.ivy",
+          "module": "core",
+          "version": {
+            "requires": "1.1.1"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "pedro-1.1.1.aar",
+          "url": "pedro-1.1.1.aar",
+          "size": 2000,
+          "sha512": "d79cf3f35c48afe7913bf326b9b7ba75089bc63ba78a16b03680bf7856dec8d2bb150496cc8b9b5194c4987abd9f46cd6c390d0fe5694bd9b2484f5543023b7a",
+          "sha256": "a7cb598c3246f58a17ab2c4827b79147c42f6738f2bccc16b0793b628a51f67f",
+          "sha1": "243e53512b3dd29f506e05493972edc5d56b737a",
+          "md5": "589354e411e0ec028595ed7760b56a56"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.pedropathing.ivy",
+          "module": "core",
+          "version": {
+            "requires": "1.1.1"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "pedro-1.1.1.aar",
+          "url": "pedro-1.1.1.aar",
+          "size": 2000,
+          "sha512": "d79cf3f35c48afe7913bf326b9b7ba75089bc63ba78a16b03680bf7856dec8d2bb150496cc8b9b5194c4987abd9f46cd6c390d0fe5694bd9b2484f5543023b7a",
+          "sha256": "a7cb598c3246f58a17ab2c4827b79147c42f6738f2bccc16b0793b628a51f67f",
+          "sha1": "243e53512b3dd29f506e05493972edc5d56b737a",
+          "md5": "589354e411e0ec028595ed7760b56a56"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "pedro-1.1.1-sources.jar",
+          "url": "pedro-1.1.1-sources.jar",
+          "size": 1308,
+          "sha512": "dd6dc9d8bc6eaf598be6b6f2d6fe91702f7fe85cde8e7d96fc284a419f12d6130d810ded399eaac824a561f6520111d1a721f184764397734a0c75f83ba06de7",
+          "sha256": "46bb201bedacf1b25f015d7ccfc53383906dde4dfbbda0f20c2dc22950bfd31e",
+          "sha1": "829728b73358c272a35a8557a45af54dffe8f7e4",
+          "md5": "94a1dd49b77f33f7405675bd3f617df4"
+        }
+      ]
+    }
+  ]
+}

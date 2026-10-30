@@ -60,7 +60,12 @@ final class Protocol {
     // ---- 메시지 ----
 
     void hello(String runtimeHash, String javaVersion) {
-        send(Json.obj("type", "hello", "protocol", 1, "runtime", runtimeHash, "java", javaVersion));
+        send(Json.obj("type", "hello", "protocol", RunRequest.PROTOCOL, "runtime", runtimeHash, "java", javaVersion));
+    }
+
+    /** 라이브러리 링크 검사(LinkCheck, hello 뒤·compiled 전) */
+    void linkReport(List<Map<String, Object>> warnings) {
+        send(Json.obj("type", "linkReport", "warnings", warnings));
     }
 
     void compiled(boolean ok, List<Map<String, Object>> diagnostics, long millis) {

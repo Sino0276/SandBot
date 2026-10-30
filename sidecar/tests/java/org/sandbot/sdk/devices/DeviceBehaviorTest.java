@@ -1,5 +1,6 @@
 package org.sandbot.sdk.devices;
 
+import com.qualcomm.hardware.bosch.BNO055IMU;
 import com.qualcomm.hardware.dfrobot.HuskyLens;
 import com.qualcomm.hardware.digitalchickenlabs.OctoQuad;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
@@ -17,6 +18,7 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
+import com.qualcomm.robotcore.hardware.Gyroscope;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.NormalizedRGBA;
@@ -26,11 +28,22 @@ import com.qualcomm.robotcore.hardware.TouchSensor;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.navigation.Acceleration;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
+import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
+import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Velocity;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.testing.Check;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.sandbot.sdk.devices.SimTestSupport.CLOCK;
 import static org.sandbot.sdk.devices.SimTestSupport.create;
@@ -445,6 +458,201 @@ public final class DeviceBehaviorTest {
         bot.in("imu2", "pitch", Math.toRadians(5));
         Check.near(-20, imu2.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-2, "mounted hub yaw");
         Check.near(5, imu2.getRobotYawPitchRollAngles().getPitch(AngleUnit.DEGREES), 1e-2, "mounted hub pitch");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    static final String BNO055 = "            <LynxEmbeddedIMU name=\"imu\" port=\"0\" bus=\"0\" />\n";
+
+    public static void testLegacyBno055InitializeResetsHeading() {
+        // 실제 BNO055IMUImpl.initialize는 칩을 리셋(SYS_TRIGGER 0x20)해 IMU 모드 융합을 다시 시작한다: heading은 그때부터 0이고
+        // 피치·롤은 중력 기준이라 그대로다. 같은 칩을 읽는 IMU 인터페이스도 리셋된 칩 값을 본다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        IMU imu = bot.get(IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "pitch", Math.toRadians(10));
+        Orientation before = legacy.getAngularOrientation();
+        Check.near(30, before.firstAngle, 1e-3, "heading before the second initialize");
+        // 로봇 피치는 칩 축의 둘째·셋째 각에 나뉜다(허브 안 칩 축 방향)
+        Check.near(10, Math.hypot(before.secondAngle, before.thirdAngle), 1e-3, "chip tilt before");
+        Check.near(30, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw before");
+
+        Check.isTrue(legacy.initialize(parameters), "initialize again");
+        Orientation after = legacy.getAngularOrientation();
+        Check.near(0, after.firstAngle, 1e-3, "heading restarts at 0");
+        Check.near(before.secondAngle, after.secondAngle, 1e-3, "tilt is gravity-referenced and stays (second)");
+        Check.near(before.thirdAngle, after.thirdAngle, 1e-3, "tilt is gravity-referenced and stays (third)");
+        Check.near(0, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU view of the same chip");
+        Check.near(10, imu.getRobotYawPitchRollAngles().getPitch(AngleUnit.DEGREES), 1e-3, "IMU pitch stays");
+        bot.in("imu", "yaw", Math.toRadians(50));
+        Check.near(20, legacy.getAngularOrientation().firstAngle, 1e-3, "heading counts from the reset");
+        Check.near(20, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw counts from the reset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testLegacyBno055AngularVelocitySigns() {
+        // 실제 BNO055IMUImpl.getAngularVelocity는 레지스터 값(BNO055Util.getRawAngularVelocity)의 X·Y 부호를 바꾸고 Z는 그대로
+        // 준다(IMU 인터페이스의 BNO055IMUNew는 바꾸지 않는다). 허브를 세워 달면 로봇 요 속도가 칩 X·Y 축에 나온다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        SimImu imu = (SimImu) bot.get(IMU.class, "imu");
+        imu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                RevHubOrientationOnRobot.LogoFacingDirection.LEFT, RevHubOrientationOnRobot.UsbFacingDirection.UP)));
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yawRate", 1.0);
+        AngularVelocity raw = imu.chipAngularVelocity().toAngleUnit(AngleUnit.DEGREES);
+        Check.isTrue(Math.abs(raw.xRotationRate) + Math.abs(raw.yRotationRate) > 30, "the yaw rate shows on a chip X/Y axis");
+        AngularVelocity rates = legacy.getAngularVelocity();
+        Check.near(-raw.xRotationRate, rates.xRotationRate, 1e-4, "legacy X is the negated register value");
+        Check.near(-raw.yRotationRate, rates.yRotationRate, 1e-4, "legacy Y is the negated register value");
+        Check.near(raw.zRotationRate, rates.zRotationRate, 1e-4, "legacy Z is the register value");
+        AngularVelocity gyro = ((Gyroscope) legacy).getAngularVelocity(AngleUnit.DEGREES);
+        Check.near(rates.xRotationRate, gyro.xRotationRate, 1e-4, "Gyroscope view X");
+        Check.near(rates.yRotationRate, gyro.yRotationRate, 1e-4, "Gyroscope view Y");
+        // IMU 인터페이스는 부호를 바꾸지 않은 레지스터 값으로 로봇 요 속도를 낸다
+        Check.near(Math.toDegrees(1), imu.getRobotAngularVelocity(AngleUnit.DEGREES).zRotationRate, 1e-2, "IMU robot yaw rate");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    /** from에서 to까지의 각도 차(°, (-180, 180]) */
+    static double angleBetween(double from, double to) {
+        double d = (to - from) % 360;
+        if (d > 180) d -= 360;
+        if (d <= -180) d += 360;
+        return d;
+    }
+
+    public static void testLegacyBno055ResetOnEveryHubMount() {
+        // 옛 initialize의 칩 리셋은 칩이 그 자리에서 전원을 켠 것과 같다. 허브를 세워 칩 X가 수직이어도
+        // (칩 축 ZYX의 짐벌 잠금), 뒤집어도, 로봇이 기울어도 같은 칩을 읽는 IMU 인터페이스의 요는 0부터
+        // 로봇 yaw를 그대로 따르고 피치·롤은 그대로다. 옛 heading(칩 축 ZYX의 첫째 각)은 리셋한 자리에서
+        // 다시 세어 로봇 yaw만큼 돌고(허브 장착에 로봇이 수평이면 0부터), 기울기(둘째·셋째 각)는 그대로다.
+        List<Object[]> mounts = new ArrayList<>(); // {이름, 장착, 허브 장착(로고·USB)인지, 칩 X가 수직인지}
+        for (RevHubOrientationOnRobot.LogoFacingDirection logo : RevHubOrientationOnRobot.LogoFacingDirection.values()) {
+            for (RevHubOrientationOnRobot.UsbFacingDirection usb : RevHubOrientationOnRobot.UsbFacingDirection.values()) {
+                try {
+                    // USB가 위·아래면 칩 X가 수직이다(팀은 SDK 변환이 잠기지 않는 ZXY로 바꿔 읽기도 한다)
+                    boolean chipXVertical = usb == RevHubOrientationOnRobot.UsbFacingDirection.UP
+                            || usb == RevHubOrientationOnRobot.UsbFacingDirection.DOWN;
+                    mounts.add(new Object[] {logo + "/" + usb, new RevHubOrientationOnRobot(logo, usb), true, chipXVertical});
+                } catch (IllegalArgumentException e) {
+                    // 로고와 USB가 같은 축을 향하는 조합은 SDK가 받지 않는다
+                }
+            }
+        }
+        Check.equal(24, mounts.size(), "every valid hub mount");
+        // 칩이 로봇에 기울어 달린 사용자 장착: 수평 로봇에서도 옛 heading이 0이 아닐 수 있지만 로봇 yaw만큼 돈다
+        mounts.add(new Object[] {"xyz(180, 0, 45)",
+                new RevHubOrientationOnRobot(RevHubOrientationOnRobot.xyzOrientation(180, 0, 45)), false, false});
+        mounts.add(new Object[] {"xyz(30, 20, 10)",
+                new RevHubOrientationOnRobot(RevHubOrientationOnRobot.xyzOrientation(30, 20, 10)), false, false});
+
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        IMU imu = bot.get(IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        Check.isTrue(legacy.initialize(parameters), "first legacy initialize");
+        for (Object[] mount : mounts) {
+            boolean hubMount = (Boolean) mount[2], chipXVertical = (Boolean) mount[3];
+            imu.initialize(new IMU.Parameters((RevHubOrientationOnRobot) mount[1]));
+            for (double heading : new double[] {0, 40, 143, -100}) {
+                for (double[] tilt : new double[][] {{0, 0}, {7, -4}}) { // 로봇 피치·롤(°)
+                    boolean level = tilt[0] == 0 && tilt[1] == 0;
+                    String where = " (" + mount[0] + ", heading " + heading + ", tilt " + tilt[0] + "/" + tilt[1] + ")";
+                    bot.in("imu", "yaw", Math.toRadians(heading));
+                    bot.in("imu", "pitch", Math.toRadians(tilt[0]));
+                    bot.in("imu", "roll", Math.toRadians(tilt[1]));
+                    YawPitchRollAngles imuBefore = imu.getRobotYawPitchRollAngles();
+                    Orientation chipBefore = legacy.getAngularOrientation();
+
+                    Check.isTrue(legacy.initialize(parameters), "legacy initialize" + where);
+                    YawPitchRollAngles imuReset = imu.getRobotYawPitchRollAngles();
+                    Check.near(0, imuReset.getYaw(AngleUnit.DEGREES), 1e-3, "IMU yaw restarts at 0" + where);
+                    Check.near(imuBefore.getPitch(AngleUnit.DEGREES), imuReset.getPitch(AngleUnit.DEGREES), 1e-3,
+                            "IMU pitch stays" + where);
+                    Check.near(imuBefore.getRoll(AngleUnit.DEGREES), imuReset.getRoll(AngleUnit.DEGREES), 1e-3,
+                            "IMU roll stays" + where);
+                    Orientation chipReset = legacy.getAngularOrientation();
+                    Check.near(0, angleBetween(chipBefore.secondAngle, chipReset.secondAngle), 1e-3,
+                            "legacy tilt stays (second)" + where);
+                    Check.near(0, angleBetween(chipBefore.thirdAngle, chipReset.thirdAngle), 1e-3,
+                            "legacy tilt stays (third)" + where);
+                    float zxyReset = legacy.getAngularOrientation(
+                            AxesReference.INTRINSIC, AxesOrder.ZXY, AngleUnit.DEGREES).firstAngle;
+                    if (hubMount && level) {
+                        Check.near(0, chipReset.firstAngle, 1e-3, "legacy heading restarts at 0" + where);
+                        if (chipXVertical) Check.near(0, zxyReset, 1e-3, "legacy ZXY heading restarts at 0" + where);
+                    }
+
+                    bot.in("imu", "yaw", Math.toRadians(heading + 30));
+                    Check.near(30, imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3,
+                            "IMU yaw counts from the reset" + where);
+                    Orientation chipTurned = legacy.getAngularOrientation();
+                    Check.near(30, angleBetween(chipReset.firstAngle, chipTurned.firstAngle), 1e-3,
+                            "legacy heading follows the robot yaw" + where);
+                    Check.near(0, angleBetween(chipReset.secondAngle, chipTurned.secondAngle), 1e-3,
+                            "legacy second angle stays" + where);
+                    Check.near(0, angleBetween(chipReset.thirdAngle, chipTurned.thirdAngle), 1e-3,
+                            "legacy third angle stays" + where);
+                    if (chipXVertical) {
+                        float zxyTurned = legacy.getAngularOrientation(
+                                AxesReference.INTRINSIC, AxesOrder.ZXY, AngleUnit.DEGREES).firstAngle;
+                        Check.near(30, angleBetween(zxyReset, zxyTurned), 1e-3,
+                                "legacy ZXY heading follows the robot yaw" + where);
+                    }
+                }
+            }
+        }
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    /** 첫 update 전에는 null을 주는 팀 적분기 */
+    private static final class NullUntilUpdate implements BNO055IMU.AccelerationIntegrator {
+        @Override public void initialize(BNO055IMU.Parameters parameters, Position initialPosition, Velocity initialVelocity) {
+        }
+
+        @Override public Position getPosition() {
+            return null;
+        }
+
+        @Override public Velocity getVelocity() {
+            return null;
+        }
+
+        @Override public Acceleration getAcceleration() {
+            return null;
+        }
+
+        @Override public void update(Acceleration linearAcceleration) {
+        }
+    }
+
+    public static void testLegacyBno055IntegrationValuesAreNeverNull() {
+        // 실제 BNO055IMUImpl.getAcceleration·getVelocity·getPosition은 적분기가 null을 주면 새 0 값을 준다
+        // (기본 NaiveAccelerationIntegrator의 가속도는 첫 update 전 null)
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        legacy.initialize(new BNO055IMU.Parameters());
+        Check.isTrue(legacy.getAcceleration() != null, "acceleration before integration starts");
+        legacy.startAccelerationIntegration(new Position(), new Velocity(), 1000);
+        Acceleration acceleration = legacy.getAcceleration();
+        Check.isTrue(acceleration != null, "acceleration after integration starts");
+        Check.near(0, acceleration.xAccel + acceleration.yAccel + acceleration.zAccel, 0, "no linear acceleration");
+        Check.isTrue(legacy.getVelocity() != null && legacy.getPosition() != null, "velocity and position");
+
+        BNO055IMU.Parameters custom = new BNO055IMU.Parameters();
+        custom.accelerationIntegrationAlgorithm = new NullUntilUpdate();
+        legacy.initialize(custom);
+        legacy.startAccelerationIntegration(new Position(), new Velocity(), 100);
+        Check.isTrue(legacy.getAcceleration() != null, "team integrator acceleration");
+        Check.isTrue(legacy.getVelocity() != null, "team integrator velocity");
+        Check.isTrue(legacy.getPosition() != null, "team integrator position");
         SandbotHardware.afterStop(bot.map);
     }
 

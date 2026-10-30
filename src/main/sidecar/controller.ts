@@ -1,3 +1,4 @@
+import type { GradleProject } from '../../shared/gradle'
 import type {
   GamepadState,
   JdkInfo,
@@ -13,6 +14,9 @@ import {
   sourceMapper,
   validateRequest,
   type Failure,
+  type LibraryRequest,
+  type LibraryResolution,
+  type PlatformResolution,
   type SidecarFiles
 } from './launch'
 import type { SidecarProcess, SpawnSidecar } from './process'
@@ -20,6 +24,7 @@ import { isValidSpeed, SidecarSession, type HostClock, type SessionTimeouts } fr
 import type { WorldFactory } from './world'
 
 // 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성 → 사이드카 → JDK → 바쁨) 뒤
+// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(그동안 STOP으로 취소),
 // JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만 받는다. 아직 끝나지 않은 실행이
 // 있으면 busy. 끝났지만(finished) 프로세스가 남아 있으면 새 실행 전에 정리한다(shutdown → 잠깐 기다림 → kill).
 
@@ -41,6 +46,42 @@ export type ControllerDeps = {
   world?: WorldFactory
   // 팀 코드의 currentTimeMillis 시작값
   epochMillis?: () => number
+  // 팀 Gradle 파일 읽기(프로젝트 루트 안만). 없으면 빈 프로젝트.
+  readGradle?: (projectRoot: string) => Promise<GradleProject>
+  // compileSdk(부 버전 compileSdkMinor)의 플랫폼 API jar(javac 부트 클래스패스). 없으면 [](--release 8, 시험만).
+  resolvePlatform?: (
+    projectRoot: string,
+    compileSdk: number | null,
+    compileSdkMinor: number | null
+  ) => Promise<PlatformResolution | Failure>
+  // 라이브러리 받기·캐시. 없으면 라이브러리 없음.
+  resolveLibraries?: (request: LibraryRequest) => Promise<LibraryResolution | Failure>
+}
+
+const EMPTY_GRADLE: GradleProject = {
+  dependencies: [],
+  repositories: [],
+  compileSdk: null,
+  compileSdkMinor: null,
+  diagnostics: [],
+  files: []
+}
+
+function noLibraries(request: LibraryRequest): Promise<LibraryResolution> {
+  return Promise.resolve({
+    ok: true,
+    report: {
+      entries: [],
+      gradle: request.gradle.diagnostics,
+      compileSdk: request.gradle.compileSdk,
+      compileSdkMinor: request.gradle.compileSdkMinor,
+      platform: null
+    },
+    compileClasspath: [],
+    libraryClasspath: [],
+    jarCoordinates: {},
+    diagnosticHint: () => null
+  })
 }
 
 type Active = { session: SidecarSession; owner: PlayOwner }
@@ -111,6 +152,8 @@ function errorText(error: unknown): string {
 export class PlayController {
   private active: Active | null = null
   private starting = false
+  // Gradle 읽기부터 라이브러리를 다 받을 때까지의 INIT(그 창의 STOP·창 닫기가 취소한다)
+  private preparing: { owner: PlayOwner; abort: AbortController } | null = null
   // 창마다 disposeOwner를 부른 횟수. 준비(await) 중에 그 창이 닫히거나 새로고침되면 띄운 실행을 바로 정리한다
   // (아니면 받을 창이 없는 JVM이 남아 다른 실행을 busy로 막는다).
   private readonly disposals = new WeakMap<PlayOwner, number>()
@@ -138,7 +181,60 @@ export class PlayController {
     if (this.starting || (this.active && !this.active.session.finished))
       return { ok: false, code: 'busy', detail: '' }
     this.starting = true
+    // 여기서부터 라이브러리를 다 받을 때까지 그 창의 STOP·창 닫기가 INIT을 취소한다(Gradle 읽기·플랫폼 jar는 끝난 뒤
+    // 다음 단계로 가지 않는다). 첫 진행 알림 전에 누른 STOP도 받기를 시작하지 않게 한다.
+    const abort = new AbortController()
+    this.preparing = { owner, abort }
+    const cancelled: PlayInitResult = { ok: false, code: 'cancelled', detail: '' }
     try {
+      const gradle = await (this.deps.readGradle?.(prepared.projectRoot) ??
+        Promise.resolve(EMPTY_GRADLE))
+      if (abort.signal.aborted) return cancelled
+      const platform = await (this.deps.resolvePlatform?.(
+        prepared.projectRoot,
+        gradle.compileSdk,
+        gradle.compileSdkMinor
+      ) ??
+        Promise.resolve<PlatformResolution>({
+          ok: true,
+          bootClasspath: [],
+          api: null,
+          minor: null,
+          guessed: false
+        }))
+      if (abort.signal.aborted) return cancelled
+      if (isFailure(platform)) return platform
+      // 해석이 끝난 뒤에 오는 진행(이기지 못한 버전의 미리 받기가 늦게 끝남)은 보내지 않는다. 보고 뒤의 진행은
+      // 실행 내내 남는 진행 알림이 되고, 그 [취소]는 도는 OpMode를 멈춘다.
+      let settled = false
+      let libraries: LibraryResolution | Failure
+      try {
+        libraries = await (this.deps.resolveLibraries ?? noLibraries)({
+          projectRoot: prepared.projectRoot,
+          gradle,
+          signal: abort.signal,
+          progress: (progress) => {
+            if (!settled) owner.send({ type: 'libraryProgress', runId: request.runId, ...progress })
+          }
+        })
+      } finally {
+        settled = true
+        this.preparing = null
+      }
+      if (abort.signal.aborted) return cancelled
+      if (isFailure(libraries)) return libraries
+      owner.send({
+        type: 'libraryReport',
+        runId: request.runId,
+        report: {
+          ...libraries.report,
+          platform:
+            platform.api === null
+              ? null
+              : { api: platform.api, minor: platform.minor, guessed: platform.guessed }
+        }
+      })
+      if (ownerGone()) return { ok: false, code: 'failed', detail: 'the window was closed' }
       if (this.active) await this.active.session.dispose()
       const runDir = await this.deps.makeRunDir()
       let process: SidecarProcess
@@ -154,7 +250,16 @@ export class PlayController {
       }
       const session = new SidecarSession(
         process,
-        buildRunRequest(prepared, request, files, (this.deps.epochMillis ?? Date.now)()),
+        buildRunRequest(
+          prepared,
+          request,
+          {
+            bootClasspath: platform.bootClasspath,
+            compileClasspath: [files.sdkJar, ...libraries.compileClasspath],
+            libraryClasspath: libraries.libraryClasspath
+          },
+          (this.deps.epochMillis ?? Date.now)()
+        ),
         {
           runId: request.runId,
           flavor: request.opMode.flavor,
@@ -162,6 +267,8 @@ export class PlayController {
           autoStopAutonomous: request.settings.autoStopAutonomous,
           preselectTeleOp: prepared.preselectTeleOp,
           mapSource: sourceMapper(prepared.projectRoot),
+          jarCoordinates: libraries.jarCoordinates,
+          diagnosticHint: libraries.diagnosticHint,
           emit: (event) => owner.send(event),
           clock: this.deps.clock,
           world: this.deps.world?.(request.world),
@@ -181,15 +288,24 @@ export class PlayController {
       return prepared.configMissing ? { ok: true, configMissing: true } : { ok: true }
     } finally {
       this.starting = false
+      // Gradle 읽기·플랫폼 jar에서 끝났거나 던졌을 때(starting이라 이 INIT의 것이다)
+      this.preparing = null
     }
   }
 
-  // 실행이 없거나 다른 창의 명령이면 무시한다
+  // 실행이 없거나 다른 창의 명령이면 무시한다. INIT을 준비하는 중(Gradle 읽기~라이브러리 받기)이면 그 창의 STOP이
+  // INIT을 취소한다.
   command(input: unknown, owner: PlayOwner): void {
+    const command = parseCommand(input)
+    if (!command) return
+    const preparing = this.preparing
+    if (preparing && preparing.owner === owner && command.type === 'stop') {
+      preparing.abort.abort()
+      return
+    }
     const active = this.active
     if (!active || active.owner !== owner) return
-    const command = parseCommand(input)
-    if (command) active.session.command(command)
+    active.session.command(command)
   }
 
   gamepads(input: unknown, owner: PlayOwner): void {
@@ -198,9 +314,10 @@ export class PlayController {
     active.session.setGamepads([sanitizeGamepad(input[0]), sanitizeGamepad(input[1])])
   }
 
-  // 창이 닫히거나 새로고침되면 그 창의 실행을 정리한다
+  // 창이 닫히거나 새로고침되면 그 창의 실행을 정리한다(받는 중인 라이브러리도 멈춘다)
   disposeOwner(owner: PlayOwner): Promise<void> {
     this.disposals.set(owner, (this.disposals.get(owner) ?? 0) + 1)
+    if (this.preparing?.owner === owner) this.preparing.abort.abort()
     const active = this.active
     if (!active || active.owner !== owner) return Promise.resolve()
     return active.session.dispose()

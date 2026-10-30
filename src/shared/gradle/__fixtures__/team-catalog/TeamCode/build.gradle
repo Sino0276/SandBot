@@ -1,0 +1,17 @@
+apply from: '../build.common.gradle'
+
+android {
+    namespace = 'org.firstinspires.ftc.teamcode'
+    compileSdk libs.versions.compileSdk.get().toInteger()
+}
+
+dependencies {
+    implementation project(':FtcRobotController')
+    implementation libs.bundles.pedro
+    implementation libs.ftclib.core
+    implementation(libs.ivy)
+    implementation "com.pedropathing.ivy:pedro:${libs.versions.ivy.get()}"
+    implementation libs.broken
+    implementation libs.strict
+    implementation libs.missing.lib
+}
