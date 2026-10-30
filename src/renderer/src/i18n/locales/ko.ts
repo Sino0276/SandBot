@@ -802,8 +802,12 @@ const ko = {
           '{{coordinate}}: 저장소가 체크섬을 주지 않아 처음 받은 파일의 해시를 기록했습니다. 다음부터 내용이 바뀌면 쓰지 않습니다.',
         firstUseUnrecorded:
           '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
-        dashboardLater:
-          '{{coordinate}}: FTC Dashboard는 SandBot의 Dashboard 대체가 생길 때 지원합니다. 지금은 불러오지 않아 Dashboard를 쓰는 코드(Road Runner 포함)는 컴파일되지 않습니다.',
+        // FTC Dashboard(status replaced): 컴파일은 팀 버전의 실제 jar, 실행은 SandBot 구현
+        replaced:
+          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 Config 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
+        // Sloth용 FTC Dashboard(com.acmerobotics.slothboard)
+        slothboard:
+          '{{coordinate}}: Sloth용 FTC Dashboard는 지원하지 않아 불러오지 않습니다. 원래 FTC Dashboard(com.acmerobotics.dashboard:dashboard)를 쓰세요.',
         links:
           '{{library}}: 링크 검사에서 문제 {{count}}개(없는 클래스·멤버, 아직 지원하지 않는 SDK 기능). 그 코드에 닿으면 실행 중 오류가 납니다.',
         none: '{{coordinate}}',
@@ -816,7 +820,7 @@ const ko = {
           '{{coordinate}}: Sloth·Sinister(dev.frozenmilk)는 Android 앱 훅·핫 리로드라 SandBot에서 쓸 수 없어 불러오지 않습니다.',
         ftcLibVision: '{{coordinate}}: FTCLib vision은 네이티브 OpenCV를 써서 불러오지 않습니다.',
         notSupported:
-          '{{coordinate}}: SandBot이 지원하는 라이브러리(Road Runner 1.0, Pedro Pathing 3.x, FTCLib core)도 그 의존성도 아니어서 불러오지 않습니다.',
+          '{{coordinate}}: SandBot이 지원하는 라이브러리(Road Runner 1.0, Pedro Pathing 3.x, FTCLib core, FTC Dashboard)도 그 의존성도 아니어서 불러오지 않습니다.',
         dynamicVersion:
           '{{coordinate}}: 버전이 고정되지 않아(+·latest·범위·SNAPSHOT) 불러오지 않습니다. 실행이 매번 같도록 정확한 버전을 쓰세요.',
         localModule: '{{coordinate}}: 로컬 모듈·파일 의존성은 SandBot이 읽지 않습니다.',

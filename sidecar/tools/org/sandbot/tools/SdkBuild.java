@@ -41,7 +41,10 @@ import javax.tools.ToolProvider;
  *   <li>runtime 컴파일(--release 17).
  *   <li>들여온 클래스 패치(R의 org.sandbot.runtime.patch.PatchTool, 따로 JVM) → 링크 확인.
  *   <li>API 대조(손 구현, 그리고 stub이 실제와 같은지), 반드시 있어야 할 클래스 확인.
- *   <li>sandbot-sdk.jar·sandbot-runtime.jar와 보고(JSON).
+ *   <li>FTC Dashboard 층(--dashboard-real이 있으면, 라이브러리 L2): 실제 Dashboard 0.6.0 jar를 또 하나의 SDK처럼 같은 순서로
+ *       다룬다(손 구현 sidecar/libs/dashboard → 들여오기 → stub → 컴파일 → 패치 → 링크 확인 → API 대조). 세계는 위의 최종 SDK에서
+ *       stub을 뺀 것이고, 스레드·서버를 띄우는 클래스(DashboardCore·hardware·limelight)는 닫혀도 stub으로 둔다.
+ *   <li>sandbot-sdk.jar·sandbot-runtime.jar·sandbot-dashboard.jar와 보고(JSON).
  * </ol>
  *
  * 실패하면 종료 코드 1. --allow-missing이면 아직 없는 것(반드시 있어야 할 클래스가 stub, runtime Main·PatchTool 없음)을
@@ -269,10 +272,18 @@ public final class SdkBuild {
 
         // 8. 반드시 있어야 할 클래스
         Map<String, String> mustProvide = new TreeMap<>();
+        ClassSource dashboardReal = dashboardRealJars().isEmpty() ? null
+                : ClassSource.chain(dashboardRealJars().stream().map(ClassSource::jar).collect(Collectors.toList()));
+        List<String> dashboardMustProvide = new ArrayList<>();
         for (String line : Files.readAllLines(path("--must-provide"), StandardCharsets.UTF_8)) {
             String name = line.replaceAll("#.*", "").trim();
             if (name.isEmpty()) continue;
             String internal = name.replace('.', '/');
+            // Dashboard 층의 형식은 그 층에서 확인한다
+            if (dashboardReal != null && dashboardReal.has(internal) && !real.has(internal)) {
+                dashboardMustProvide.add(name);
+                continue;
+            }
             String kind;
             if (!real.has(internal) && !hand.has(internal)) kind = "unknown";
             else if (hand.has(internal)) kind = "hand";
@@ -318,6 +329,16 @@ public final class SdkBuild {
             blocked.put(ApiCheck.dotted(e.getKey()), e.getValue());
         report.put("stubs", blocked);
 
+        // 8b. FTC Dashboard 층
+        Path[] dashboardOut = null;
+        if (dashboardReal != null && errors.isEmpty()) {
+            dashboardOut = buildDashboard(work, classesRuntime, classesSdk, lifted, new TreeSet<>(stubNests),
+                    dashboardReal, jdk, android, dashboardMustProvide);
+            if (dashboardOut == null) return false;
+        } else if (dashboardReal == null) {
+            missing("--dashboard-real was not given: sandbot-dashboard.jar (the FTC Dashboard replacement) is not built");
+        }
+
         // 9. jar
         if (!errors.isEmpty()) return false;
         step("write jars");
@@ -327,8 +348,218 @@ public final class SdkBuild {
         Jars.write(out.resolve("sandbot-sdk.jar"), sdkFiles, Collections.<String, byte[]>emptyMap(), null);
         Jars.write(out.resolve("sandbot-runtime.jar"), Jars.collect(classesRuntime),
                 Collections.<String, byte[]>emptyMap(), hasMain ? "org.sandbot.runtime.Main" : null);
+        if (dashboardOut != null)
+            Jars.write(out.resolve("sandbot-dashboard.jar"), Jars.collect(dashboardOut),
+                    Collections.<String, byte[]>emptyMap(), null);
 
         return true;
+    }
+
+    // ---- FTC Dashboard 층(라이브러리 L2)
+
+    /** 닫혀도 들여오지 않는 Dashboard 묶음(최상위 내부 이름, "/"로 끝나면 패키지 접두) → 이유 */
+    private static final String[][] DASHBOARD_FORCED_STUBS = {
+        {"com/acmerobotics/dashboard/DashboardCore",
+            "SandBot: DashboardCore starts its own telemetry thread (the sidecar runs on the OpMode thread only); "
+                    + "FtcDashboard is hand-implemented without it"},
+        {"com/acmerobotics/dashboard/hardware/",
+            "SandBot: the Dashboard hardware configuration editor (HardwareOpMode) is not simulated"},
+        {"com/acmerobotics/dashboard/limelight/", "SandBot: the Limelight proxy opens network sockets and threads"},
+    };
+
+    private List<Path> dashboardRealJars() {
+        List<Path> jars = new ArrayList<>();
+        String value = options.get("--dashboard-real");
+        if (value == null) return jars;
+        for (String p : value.split(File.pathSeparator)) if (!p.isEmpty()) jars.add(Paths.get(p).toAbsolutePath());
+        return jars;
+    }
+
+    /** 최상위가 tops에 든 클래스를 뺀 묶음(Dashboard 세계에서 SDK stub을 뺀다) */
+    private static ClassSource without(ClassSource source, Set<String> tops) {
+        return new ClassSource() {
+            @Override
+            List<String> names() {
+                List<String> names = new ArrayList<>();
+                for (String n : source.names()) if (!tops.contains(topOf(n))) names.add(n);
+                return names;
+            }
+
+            @Override
+            byte[] bytes(String internalName) {
+                return tops.contains(topOf(internalName)) ? null : source.bytes(internalName);
+            }
+        };
+    }
+
+    /**
+     * FTC Dashboard 층을 만든다: SDK 층과 같은 순서(손 구현 미리 컴파일 → 들여오기 → stub → 컴파일 → 패치 → 링크 확인 → API
+     * 대조 → 반드시 있어야 할 것). Dashboard 클래스가 볼 수 있는 세계는 최종 가짜 SDK(손 구현·들여온 것·불투명 껍데기)이고,
+     * SDK stub은 없는 것으로 본다(멤버가 던지므로 들여온 Dashboard 클래스가 그것에 기대면 안 된다).
+     *
+     * @return jar에 넣을 폴더(컴파일한 손 구현·stub, 패치한 들여온 클래스). 실패하면 null(errors에 이유)
+     */
+    private Path[] buildDashboard(Path work, Path classesRuntime, Path classesSdk, Path liftedSdk,
+            Set<String> sdkStubTops, ClassSource real, ClassSource jdk, ClassSource android, List<String> mustProvideNames)
+            throws Exception {
+        Path dir = work.resolve("dashboard");
+        Path handPre = dir.resolve("hand-pre");
+        Path stubs = dir.resolve("stubs");
+        Path liftedRaw = dir.resolve("lifted-raw");
+        Path lifted = dir.resolve("lifted");
+        Path classes = dir.resolve("classes");
+        for (Path p : Arrays.asList(handPre, stubs, liftedRaw, lifted, classes)) Files.createDirectories(p);
+        List<Path> realJars = dashboardRealJars();
+        Path handRoot = path("--dashboard-hand");
+        List<Path> handSources = javaFiles(handRoot);
+        Map<String, Object> layer = new LinkedHashMap<>();
+        report.put("dashboard", layer);
+        layer.put("handSourceFiles", handSources.size());
+
+        ClassSource sdkAll = ClassSource.chain(Arrays.asList(ClassSource.directory(classesSdk),
+                ClassSource.directory(liftedSdk)));
+        ClassSource sdkWorld = without(sdkAll, sdkStubTops);
+
+        // 1. 손 구현을 실제 Dashboard + 최종 SDK에 대고(들여오기 분석용)
+        step("Dashboard: compile " + handSources.size() + " hand sources against the real FTC Dashboard");
+        List<Path> preClasspath = new ArrayList<>(realJars);
+        preClasspath.add(classesSdk);
+        preClasspath.add(liftedSdk);
+        if (!compile(handSources, preClasspath, handPre, "8", "Dashboard hand sources (against the real Dashboard)"))
+            return null;
+        ClassSource hand = ClassSource.directory(handPre);
+        for (String name : hand.names()) {
+            if (!name.startsWith("com/acmerobotics/dashboard/"))
+                errors.add("Dashboard: hand class " + ApiCheck.dotted(name) + " is outside com.acmerobotics.dashboard");
+        }
+
+        // 2. 들여오기
+        step("Dashboard: lift");
+        Lifter lifter = new Lifter(ClassSource.chain(Arrays.asList(hand, sdkWorld)), real, jdk);
+        Set<String> realNests = new TreeSet<>();
+        for (String name : real.names()) realNests.add(lifter.nest(real, name));
+        for (String nest : realNests) {
+            for (String[] forced : DASHBOARD_FORCED_STUBS) {
+                if (forced[0].endsWith("/") ? nest.startsWith(forced[0]) : nest.equals(forced[0]))
+                    lifter.forcedStubs.put(nest, forced[1]);
+            }
+        }
+        lifter.run();
+        List<String> liftedNames = lifter.liftedClasses();
+        for (String name : liftedNames) {
+            Path file = liftedRaw.resolve(name + ".class");
+            Files.createDirectories(file.getParent());
+            Files.write(file, real.bytes(name));
+        }
+        Set<String> stubNests = new TreeSet<>(lifter.candidates.keySet());
+        stubNests.removeAll(lifter.lifted);
+        Set<String> handNames = new TreeSet<>(hand.names());
+
+        // 3. stub. 손 구현이 쓰는 형식은 모두 SDK·Dashboard에 있어야 한다(이 층에는 불투명 껍데기를 만들지 않는다).
+        step("Dashboard: generate stubs");
+        Set<String> provided = new TreeSet<>(sdkAll.names());
+        provided.addAll(hand.names());
+        provided.addAll(liftedNames);
+        for (String name : hand.names()) {
+            for (String dep : hand.get(name).dependencies) {
+                if (hand.has(dep) || jdk.has(dep) || sdkAll.has(dep) || real.has(dep)) continue;
+                errors.add("Dashboard: " + ApiCheck.dotted(name) + " uses " + ApiCheck.dotted(dep)
+                        + ", which neither the fake SDK nor FTC Dashboard provides");
+            }
+        }
+        List<Path> stubClasspath = new ArrayList<>();
+        stubClasspath.add(handPre);
+        stubClasspath.addAll(realJars);
+        stubClasspath.add(classesSdk);
+        stubClasspath.add(liftedSdk);
+        stubClasspath.add(path("--android"));
+        int stubCount = generateStubs(stubClasspath, "FTC Dashboard 0.6.0", real, android, stubNests, provided,
+                Collections.<String>emptySet(), stubs, true, (top, inAndroid) -> false);
+        if (!errors.isEmpty()) return null;
+
+        // 4. 최종 컴파일(--release 8): 손 구현 + stub, 들여온 Dashboard·최종 SDK에 대고
+        step("Dashboard: compile hand + " + stubCount + " stubs (--release 8)");
+        List<Path> all = new ArrayList<>(handSources);
+        all.addAll(javaFiles(stubs));
+        if (!compile(all, Arrays.asList(liftedRaw, classesSdk, liftedSdk), classes, "8", "Dashboard (hand + stubs)"))
+            return null;
+        copyResources(handRoot, classes);
+
+        // 5. 패치(SDK의 들여온 클래스와 같은 시간·컬렉션 패치)
+        if (Files.exists(classesRuntime.resolve("org/sandbot/runtime/patch/PatchTool.class"))) {
+            step("Dashboard: patch " + liftedNames.size() + " lifted classes");
+            if (!patch(classesRuntime, Arrays.asList(classes, classesSdk, liftedSdk), liftedRaw, lifted)) return null;
+        } else {
+            copyTree(liftedRaw, lifted);
+        }
+
+        // 6. 링크 확인
+        step("Dashboard: link check");
+        ClassSource liftedSource = ClassSource.directory(lifted);
+        if (!new TreeSet<>(liftedSource.names()).equals(new TreeSet<>(liftedNames)))
+            throw new BuildFailure("the patcher did not write exactly the lifted Dashboard classes");
+        ClassSource dashboardClasses = ClassSource.directory(classes);
+        ClassSource universe = ClassSource.chain(Arrays.asList(dashboardClasses, liftedSource, sdkAll));
+        for (String p : Lifter.linkCheck(liftedNames, liftedSource, universe, jdk)) errors.add("Dashboard link: " + p);
+
+        // 7. API 대조(실제 Dashboard 0.6.0과)
+        step("Dashboard: API check");
+        ClassSource finalWorld = ClassSource.chain(Arrays.asList(dashboardClasses, liftedSource, sdkAll, jdk));
+        ApiCheck handCheck = new ApiCheck();
+        handCheck.annotationFilter = finalWorld::has;
+        handCheck.checkHand(dashboardClasses, handNames, real, android, lifter);
+        for (String e : handCheck.errors) errors.add("Dashboard api: " + e);
+        for (String w : handCheck.warnings) warnings.add("Dashboard api: " + w);
+        ApiCheck stubCheck = new ApiCheck();
+        stubCheck.annotationFilter = finalWorld::has;
+        for (String name : dashboardClasses.names()) {
+            if (handNames.contains(name) || !stubNests.contains(lifter.nest(real, name)) || !real.has(name)) continue;
+            if (ApiCheck.visible(real, real.get(name))) stubCheck.compare(real.get(name), dashboardClasses.get(name), true);
+        }
+        for (String name : real.names()) {
+            if (stubNests.contains(lifter.nest(real, name)) && ApiCheck.visible(real, real.get(name))
+                    && !dashboardClasses.has(name))
+                stubCheck.errors.add(ApiCheck.dotted(name) + ": no stub was generated");
+        }
+        for (String e : stubCheck.errors) errors.add("Dashboard stub differs from the real API: " + e);
+
+        // 8. 반드시 있어야 할 것(must-provide.txt의 Dashboard 형식)
+        Map<String, String> mustProvide = new TreeMap<>();
+        Set<String> liftedSet = new TreeSet<>(liftedNames);
+        for (String name : mustProvideNames) {
+            String internal = name.replace('.', '/');
+            String kind;
+            if (hand.has(internal)) kind = "hand";
+            else if (liftedSet.contains(internal)) kind = "lifted";
+            else if (lifter.handNests().contains(lifter.nest(real, internal))) kind = "missing";
+            else kind = "stub";
+            mustProvide.put(name, kind);
+            if (!kind.equals("hand") && !kind.equals("lifted")) {
+                String reason = lifter.blockedReason.get(lifter.nest(real, internal));
+                missing("must-provide: " + name + " is " + (kind.equals("stub") ? "only a stub" : "missing")
+                        + (reason != null ? " (" + reason + ")" : ""));
+            }
+        }
+
+        Set<String> handTops = new TreeSet<>();
+        for (String name : handNames) handTops.add(lifter.nest(hand, name));
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("handTopLevel", handTops.size());
+        counts.put("liftedTopLevel", lifter.lifted.size());
+        counts.put("liftedClasses", liftedNames.size());
+        counts.put("stubTopLevel", stubCount);
+        layer.put("counts", counts);
+        layer.put("hand", handTops.stream().map(ApiCheck::dotted).collect(Collectors.toList()));
+        layer.put("lifted", lifter.lifted.stream().map(ApiCheck::dotted).collect(Collectors.toList()));
+        Map<String, String> blocked = new TreeMap<>();
+        for (Map.Entry<String, String> e : lifter.blockedReason.entrySet())
+            blocked.put(ApiCheck.dotted(e.getKey()), e.getValue());
+        layer.put("stubs", blocked);
+        layer.put("mustProvide", mustProvide);
+        System.out.printf(Locale.ROOT, "Dashboard: hand %d, lifted %d (%d classes), stub %d%n", handTops.size(),
+                lifter.lifted.size(), liftedNames.size(), stubCount);
+        if (!errors.isEmpty()) return null;
+        return new Path[] {classes, lifted};
     }
 
     private int lastOpaqueCount;
@@ -337,17 +568,26 @@ public final class SdkBuild {
     private int generateStubs(ClassSource real, ClassSource android, List<Path> handClasses, Set<String> stubNests,
             Set<String> provided, Set<String> extraOpaque, Path out, boolean writeStubs,
             java.util.function.BiPredicate<String, Boolean> opaqueFilter) throws IOException, BuildFailure {
+        List<Path> cp = new ArrayList<>(handClasses);
+        for (String p : options.get("--real").split(File.pathSeparator)) cp.add(Paths.get(p));
+        cp.add(path("--android"));
+        return generateStubs(cp, "FTC SDK 12.0.0", real, android, stubNests, provided, extraOpaque, out, writeStubs,
+                opaqueFilter);
+    }
+
+    /** generateStubs와 같다. cp: javac 모델이 읽는 클래스 경로, origin: stub 머리줄의 출처 */
+    private int generateStubs(List<Path> cp, String origin, ClassSource real, ClassSource android,
+            Set<String> stubNests, Set<String> provided, Set<String> extraOpaque, Path out, boolean writeStubs,
+            java.util.function.BiPredicate<String, Boolean> opaqueFilter) throws IOException, BuildFailure {
         JavaCompiler compiler = compiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         try (StandardJavaFileManager fm = compiler.getStandardFileManager(diagnostics, Locale.ENGLISH,
                 StandardCharsets.UTF_8)) {
-            List<Path> cp = new ArrayList<>(handClasses);
-            for (String p : options.get("--real").split(File.pathSeparator)) cp.add(Paths.get(p));
-            cp.add(path("--android"));
             fm.setLocationFromPaths(StandardLocation.CLASS_PATH, cp);
             JavacTask task = (JavacTask) compiler.getTask(null, fm, diagnostics,
                     Arrays.asList("--release", "8", "-proc:none"), null, Collections.<JavaFileObject>emptyList());
             StubGen gen = new StubGen(task.getElements(), task.getTypes(), stubNests, provided, real, android, out);
+            gen.origin = origin;
             int count = gen.run(extraOpaque, writeStubs, opaqueFilter);
             lastOpaqueCount = gen.opaqueCount();
             if (writeStubs) for (String w : gen.warnings) warnings.add("stub: " + w);
@@ -442,11 +682,20 @@ public final class SdkBuild {
     }
 
     private boolean patch(Path runtime, Path sdk, Path in, Path out) throws IOException, InterruptedException {
+        return patch(runtime, Arrays.asList(sdk), in, out);
+    }
+
+    /** sdk: 상위 형식을 찾을 손 구현·sim·다른 층의 클래스 폴더(앞이 이김) */
+    private boolean patch(Path runtime, List<Path> sdk, Path in, Path out) throws IOException, InterruptedException {
         String java = options.getOrDefault("--java",
                 Paths.get(System.getProperty("java.home"), "bin", "java").toString());
-        String cp = String.join(File.pathSeparator, runtime.toString(), sdk.toString(), in.toString());
+        List<String> cpParts = new ArrayList<>();
+        cpParts.add(runtime.toString());
+        for (Path p : sdk) cpParts.add(p.toString());
+        cpParts.add(in.toString());
+        String cp = String.join(File.pathSeparator, cpParts);
         // --classpath: 상위 형식을 찾을 손 구현·sim 클래스(R의 PatchTool)
-        String lookup = String.join(File.pathSeparator, sdk.toString(), in.toString());
+        String lookup = String.join(File.pathSeparator, cpParts.subList(1, cpParts.size()));
         ProcessBuilder pb = new ProcessBuilder(java, "-cp", cp, "org.sandbot.runtime.patch.PatchTool", "--classpath",
                 lookup, in.toString(), out.toString());
         pb.redirectErrorStream(true);

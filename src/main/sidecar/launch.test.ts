@@ -368,15 +368,26 @@ describe('사이드카 빌드 결과와 명령', () => {
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
+    // FTC Dashboard 대체 jar는 없어도 된다(그것을 쓰는 실행만 controller가 막는다)
     expect(await readSidecarFiles(dir)).toEqual({
       dir,
       runtimeJar: join(dir, 'sandbot-runtime.jar'),
-      sdkJar: join(dir, 'sandbot-sdk.jar')
+      sdkJar: join(dir, 'sandbot-sdk.jar'),
+      dashboardJar: null
+    })
+    await writeFile(join(dir, 'sandbot-dashboard.jar'), '')
+    expect(await readSidecarFiles(dir)).toMatchObject({
+      dashboardJar: join(dir, 'sandbot-dashboard.jar')
     })
   })
 
   it('JVM 인자와 RunRequest', () => {
-    const files = { dir: '/s', runtimeJar: '/s/sandbot-runtime.jar', sdkJar: '/s/sandbot-sdk.jar' }
+    const files = {
+      dir: '/s',
+      runtimeJar: '/s/sandbot-runtime.jar',
+      sdkJar: '/s/sandbot-sdk.jar',
+      dashboardJar: '/s/sandbot-dashboard.jar'
+    }
     expect(javaArgs(files, 'linux')).toEqual([
       '-Xlog:disable',
       '-Xlog:all=warning:stderr',

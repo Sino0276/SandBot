@@ -91,7 +91,8 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
       locateSidecar: async () => ({
         dir: sidecar.dir,
         runtimeJar: sidecar.runtimeJar,
-        sdkJar: sidecar.sdkJar
+        sdkJar: sidecar.sdkJar,
+        dashboardJar: null
       }),
       spawn: spawnSidecar,
       makeRunDir: () => mkdtemp(join(dir, 'run-')),
@@ -173,7 +174,8 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
       locateSidecar: async () => ({
         dir: sidecar.dir,
         runtimeJar: sidecar.runtimeJar,
-        sdkJar: sidecar.sdkJar
+        sdkJar: sidecar.sdkJar,
+        dashboardJar: null
       }),
       spawn,
       makeRunDir: () => mkdtemp(join(dir, 'run-')),
@@ -378,7 +380,12 @@ describe('진짜 JVM(작은 프로토콜 흉내)', () => {
     const events: PlayEvent[] = []
     const deps: ControllerDeps = {
       resolveJdk: async () => jdk,
-      locateSidecar: async () => ({ dir: classes, runtimeJar: classes, sdkJar: classes }),
+      locateSidecar: async () => ({
+        dir: classes,
+        runtimeJar: classes,
+        sdkJar: classes,
+        dashboardJar: null
+      }),
       spawn: spawnSidecar,
       makeRunDir: () => mkdtemp(join(dir, 'run-')),
       removeRunDir: (path) => rm(path, { recursive: true, force: true }),

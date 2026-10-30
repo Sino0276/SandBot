@@ -337,7 +337,8 @@ export type RegisteredMessage = { type: 'registered'; opModes: RegisteredOpMode[
 
 // Dashboard 패킷 묶음(sendTelemetryPacket을 전송 간격 — 기본 100 ms 가상 — 마다 합친 것). data는 키마다 마지막 값
 // (키 정렬), log는 묶음의 마지막 비어 있지 않은 로그(없으면 null), ops는 마지막으로 fieldOverlay가 비어 있지 않은
-// 패킷의 field op + fieldOverlay op(없으면 null), cleared는 묶음 사이에 clearTelemetry가 있었음(그 앞 data는 뺐다).
+// 패킷의 field op + fieldOverlay op(없으면 null), cleared는 묶음 사이에 clearTelemetry가 있었음(그 앞 패킷은 뺐다).
+// cleared면 log는 null이 아니다(실제 웹 화면처럼 로그도 지운다: 뒤에 로그가 없으면 []).
 export type DashMessage = {
   type: 'dash'
   tNanos: number

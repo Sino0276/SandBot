@@ -274,7 +274,9 @@ export type PlayEvent =
   | { type: 'compiled'; runId: string; ok: boolean; millis: number; diagnostics: PlayDiagnostic[] }
   | { type: 'telemetry'; runId: string; tNanos: number; frame: TelemetryFrame }
   // Dashboard 패킷 묶음(약 30 Hz). 메인이 묶음 사이도 같은 규칙으로 합친다: cleared는 OR, data는 cleared 뒤부터 키마다
-  // 마지막 값(키 정렬), log·ops는 마지막 null 아닌 것(sidecarProtocol DashMessage).
+  // 마지막 값(키 정렬), log·ops는 마지막 null 아닌 것(sidecarProtocol DashMessage). cleared 묶음의 log는 null이 아니다
+  // (실제 웹 화면처럼 clearTelemetry가 로그도 지우므로 뒤에 로그가 없으면 []). 그래서 cleared면 data를 비우고, null 아닌
+  // log로 바꾸면 실제 화면과 같다(그림은 cleared에 지우지 않는다).
   | {
       type: 'dash'
       runId: string

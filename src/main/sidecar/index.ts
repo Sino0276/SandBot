@@ -12,7 +12,7 @@ import { createLibraryResolver } from '../libraries'
 import { scanOpModes } from '../opModes'
 import { RegisteredOpModes, setRegisteredOpModes } from '../registeredOpModes'
 import { PlayController, type ControllerDeps, type PlayOwner } from './controller'
-import { readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
+import { dashboardJarPath, readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
 import { spawnSidecar } from './process'
 import { kinematicWorld } from './world'
 
@@ -68,11 +68,13 @@ export function registerPlayIpc(): void {
     readGradle: (projectRoot) => readProjectGradle(projectRoot),
     resolvePlatform: (projectRoot, compileSdk, compileSdkMinor) =>
       resolveAndroidPlatform(projectRoot, compileSdk, compileSdkMinor),
-    // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries)
+    // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries).
+    // FTC Dashboard는 실행 때 사이드카 폴더의 SandBot 구현으로 바꾼다.
     resolveLibraries: createLibraryResolver({
       cacheDir: join(app.getPath('userData'), 'library-cache'),
       gradleHome: gradleUserHome(process.env),
-      http: electronHttpGet
+      http: electronHttpGet,
+      dashboardJar: dashboardJarPath(sidecarDir())
     })
   }
   const registered = new RegisteredOpModes({ ...deps, scan: scanOpModes, makeFirstFolder })

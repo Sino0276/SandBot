@@ -10,6 +10,7 @@ public final class Sim {
     private static volatile SimClock clock;
     private static volatile HubTiming timing;
     private static volatile SimHost host;
+    private static volatile SimDashboard dashboard;
     private static final SimDevices DEVICES = new SimDevices();
     private static volatile File firstFolder;
 
@@ -64,6 +65,17 @@ public final class Sim {
         File f = firstFolder;
         if (f == null) throw new IllegalStateException("SandBot simulator is not running");
         return f;
+    }
+
+    /** FTC Dashboard 대체(sandbot-dashboard.jar)의 FtcDashboard가 클래스 초기화 때 부른다. 처음 것만 쓴다. */
+    public static synchronized void attachDashboard(SimDashboard d) {
+        if (d == null) throw new NullPointerException();
+        if (dashboard == null) dashboard = d;
+    }
+
+    /** 붙은 Dashboard 대체(실행 클래스패스에 없거나 아직 초기화하지 않았으면 null) */
+    public static SimDashboard dashboard() {
+        return dashboard;
     }
 
     /** 허브 작업 하나의 비용만큼 가상 시간을 보낸다 */

@@ -27,7 +27,8 @@ const JDK: JdkInfo = { home: '/fake/jdk', version: '21.0.4', major: 21, source: 
 const FILES: SidecarFiles = {
   dir: '/fake/sidecar',
   runtimeJar: '/fake/sidecar/sandbot-runtime.jar',
-  sdkJar: '/fake/sidecar/sandbot-sdk.jar'
+  sdkJar: '/fake/sidecar/sandbot-sdk.jar',
+  dashboardJar: null
 }
 
 const TUNING = [

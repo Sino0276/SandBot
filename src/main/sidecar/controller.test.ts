@@ -8,7 +8,7 @@ import type { HostMessage } from '../../shared/sidecarProtocol'
 import { WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } from './controller'
-import { javaArgs, type SidecarFiles } from './launch'
+import { dashboardJarPath, javaArgs, type SidecarFiles } from './launch'
 import { spawnSidecar, type SidecarProcess, type SpawnSidecar } from './process'
 import { FAKE_SIDECAR_SCRIPT, FakeClock } from './testkit'
 import { kinematicWorld } from './world'
@@ -20,7 +20,8 @@ const JDK: JdkInfo = { home: '/fake/jdk', version: '21.0.4', major: 21, source: 
 const FILES: SidecarFiles = {
   dir: '/fake/sidecar',
   runtimeJar: '/fake/sidecar/sandbot-runtime.jar',
-  sdkJar: '/fake/sidecar/sandbot-sdk.jar'
+  sdkJar: '/fake/sidecar/sandbot-sdk.jar',
+  dashboardJar: '/fake/sidecar/sandbot-dashboard.jar'
 }
 
 type Recorded = { sent: HostMessage[]; ticksSeen: number }
@@ -686,6 +687,49 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(librariesCalled).toBe(1)
     closing.command({ type: 'stop' }, other)
     await waitFor(() => !closing.hasProcess)
+  })
+
+  it('FTC Dashboard 대체를 쓰는데 사이드카 빌드에 그 jar가 없으면 noSidecar(JVM을 띄우지 않는다)', async () => {
+    const resolved =
+      (libraryClasspath: string[]): ControllerDeps['resolveLibraries'] =>
+      async () => ({
+        ok: true,
+        report: {
+          entries: [],
+          gradle: [],
+          compileSdk: null,
+          compileSdkMinor: null,
+          platform: null
+        },
+        compileClasspath: ['/cache/dashboard.jar'],
+        libraryClasspath,
+        jarCoordinates: {},
+        diagnosticHint: () => null
+      })
+    const withoutJar = { ...FILES, dashboardJar: null }
+    const missing = make({
+      locateSidecar: async () => withoutJar,
+      resolveLibraries: resolved(['/cache/rr.jar', dashboardJarPath(FILES.dir)])
+    })
+    const before = spawned.length
+    const request = opModeRequest('Normal')
+    expect(await missing.init(request, owner)).toEqual({
+      ok: false,
+      code: 'noSidecar',
+      detail: 'sandbot-dashboard.jar not found'
+    })
+    expect(spawned.length).toBe(before)
+    expect(of('libraryReport', request.runId)).toEqual([])
+
+    // Dashboard를 쓰지 않는 실행은 그 jar 없이도 돈다
+    const unused = make({
+      locateSidecar: async () => withoutJar,
+      resolveLibraries: resolved(['/cache/rr.jar'])
+    })
+    const other = opModeRequest('Normal')
+    expect(await unused.init(other, owner)).toEqual({ ok: true })
+    unused.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(other.runId) !== undefined)
   })
 
   it('라이브러리 해석이 끝난 뒤에 온 진행(쓰지 않게 된 버전의 미리 받기)은 보내지 않는다', async () => {

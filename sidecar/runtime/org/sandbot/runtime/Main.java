@@ -22,9 +22,10 @@ import java.util.Map;
  *
  * <p>원래 stdout은 프로토콜 전용으로 잡고 System.out·System.err는 가로채 log 메시지로 보낸다. 흐름:
  * hello → run 읽기·확인 → (라이브러리가 있으면) jar 열기·링크 검사(linkReport) → 컴파일(compiled, OpMode·등록기 소스) →
- * 가상 시계·Hub 타이밍·호스트·모의 저장소를 Sim에 넣기 → OpMode 스레드(OpModeRunner, 클래스는 TeamClassLoader →
- * LibraryClassLoader → 앱 로더) → finished → Runtime.halt(0). run 대신 list(등록기 OpMode 목록)면 같은 준비 뒤 ListRunner가
- * 등록기를 실행해 registered → finished listed. 어느 길로 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
+ * 가상 시계·Hub 타이밍·호스트·모의 저장소를 Sim에 넣기 → (라이브러리에 FTC Dashboard 대체가 있으면 DashboardBridge) →
+ * OpMode 스레드(OpModeRunner, 클래스는 TeamClassLoader → LibraryClassLoader → 앱 로더) → finished → Runtime.halt(0).
+ * run 대신 list(등록기 OpMode 목록)면 같은 준비 뒤 ListRunner가 등록기를 실행해 registered → finished listed. 어느 길로
+ * 끝나도 finished를 한 번 보낸다(stdout을 쓸 수 없을 때만 빼고).
  */
 public final class Main {
     private Main() {}
@@ -169,8 +170,16 @@ public final class Main {
         VirtualClock clock = new VirtualClock(request.tickNanos, request.startEpochMillis,
                 (thread, message, stack) -> runnerRef[0].reportForeignThread(thread, message, stack));
         TeamClassLoader loader = teamLoader(compiled, libraries, appLoader);
+        // FTC Dashboard 대체(라이브러리 L2): @Config 후보는 여기서 바이트로 고르고, 초기화는 OpMode 스레드에서 한다
+        DashboardBridge dashboard;
+        try {
+            dashboard = DashboardBridge.find(libraries, compiled.classes, protocol, clock);
+        } catch (IOException e) {
+            failBeforeRun(session, "cannot read the library jars: " + e.getMessage(), "loadFailed");
+            return;
+        }
         OpModeRunner runner = new OpModeRunner(session, clock, input, request, loader, compiled.sources,
-                HardwareHooks.load(appLoader));
+                HardwareHooks.load(appLoader), dashboard);
         runnerRef[0] = runner;
         session.clock = clock;
         session.running = true;

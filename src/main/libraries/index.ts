@@ -1,10 +1,11 @@
 import type { GradleDependency, GradleLocation } from '../../shared/gradle'
-import type {
-  LibraryEntry,
-  LibraryIntegrity,
-  LibraryReason,
-  LibraryReport,
-  LibrarySource
+import {
+  coordinateOf,
+  type LibraryEntry,
+  type LibraryIntegrity,
+  type LibraryReason,
+  type LibraryReport,
+  type LibrarySource
 } from '../../shared/libraries'
 import type { Failure, LibraryRequest, LibraryResolution } from '../sidecar/launch'
 import { checkArchive, classpathJars } from './archive'
@@ -34,12 +35,14 @@ import {
 } from './version'
 
 // 팀 Gradle의 라이브러리를 실행에 쓸 jar로(PlayController의 resolveLibraries). 순서:
-// 1. 직접 선언을 정책(policy.ts)으로 나눈다: 제공·지원 안 함·동적 버전은 받지 않고, 지원 계열은 해석의 뿌리, 그 밖은 후보
+// 1. 직접 선언을 정책(policy.ts)으로 나눈다: 제공·지원 안 함·동적 버전은 받지 않고, 지원 계열·대체는 해석의 뿌리, 그 밖은 후보
 //    (지원 계열이 끌어온 모듈이면 뿌리로 올리고, 아니면 notSupported). androidx를 선언했으면(FTC 템플릿의 appcompat)
 //    androidx.annotation을 컴파일 클래스패스에 넣는다(Android Studio처럼).
 // 2. 해석 잠금(resolutions/)과 그 jar가 모두 캐시에 있으면 네트워크·메타데이터 없이 끝낸다.
 // 3. 아니면 메타데이터로 그래프를 풀고(resolver.ts) 파일을 얻는다(fetcher.ts: 캐시 → Gradle 캐시 → 받기, 무결성 확인).
 //    AAR은 classes.jar·libs/*.jar만(archive.ts). 받지 못한 좌표는 그 좌표만 failed이고 실행은 계속한다(컴파일 진단에 안내).
+//    FTC Dashboard(대체)는 받은 실제 jar를 컴파일 클래스패스에만 넣고, 실행 클래스패스에는 그 자리에 SandBot 구현
+//    (LibraryDeps.dashboardJar) 하나를 넣는다.
 // 4. 실패가 없고 처음 받은 해시를 모두 기록했으면 잠금을 쓴다(기록하지 못한 파일은 이번에는 쓰고 보고에 알리며, 캐시·잠금에
 //    넣지 않아 다음 INIT에 다시 확인해 기록한다). 캐시가 용량을 넘으면 오래 쓰지 않은 것부터 지운다(이번 jar는 남긴다).
 //    잠금·jar 목록·정리는 다음을 위한 것이라 실패해도(디스크) 이번 결과는 그대로 돌려준다.
@@ -56,6 +59,8 @@ export type LibraryDeps = {
   maxCacheBytes?: number
   // 받기 시간 제한(없으면 http.ts의 DEFAULT_TIMEOUTS, 시험이 줄인다)
   timeouts?: DownloadTimeouts
+  // FTC Dashboard 대체(사이드카 폴더의 sandbot-dashboard.jar, 라이브러리 L2): Dashboard를 실행에 쓰면 실제 jar 대신 넣는다
+  dashboardJar: string
 }
 
 const LOCK_FORMAT = 1
@@ -151,6 +156,7 @@ function decide(
     case 'unsupported':
       return fixed('unsupported', policy.reason, policy.detail)
     case 'supported':
+    case 'replaced':
     case 'compileOnly':
       return { kind: 'root' }
     case 'other':
@@ -297,16 +303,22 @@ function isLock(value: unknown): value is LockFile {
 
 // ---- 결과 ----
 
+// 대체(FTC Dashboard)의 jar는 컴파일에만 쓰고, 실행에 쓰는 것이 있으면 그 첫 자리에 SandBot 구현을 한 번 넣는다(링크 검사
+// 경고에는 그 자리의 좌표로 보인다)
 function resolution(
   request: LibraryRequest,
   cache: LibraryCache,
   entries: LibraryEntry[],
-  jars: { jar: Jar; compile: boolean; runtime: boolean }[]
+  jars: { jar: Jar; compile: boolean; runtime: boolean }[],
+  dashboardJar: string
 ): LibraryResolution {
   const compileClasspath: string[] = []
   const libraryClasspath: string[] = []
   const jarCoordinates: Record<string, string> = {}
   const compilePackages = new Set<string>()
+  const replaced = new Set(
+    entries.filter((entry) => entry.status === 'replaced').map((entry) => coordinateOf(entry))
+  )
   for (const { jar, compile, runtime } of jars) {
     const path = cache.blobPath(jar.sha256, 'jar')
     if (jarCoordinates[path] !== undefined) continue
@@ -315,7 +327,12 @@ function resolution(
       compileClasspath.push(path)
       for (const name of jar.packages) compilePackages.add(name)
     }
-    if (runtime) libraryClasspath.push(path)
+    if (!runtime) continue
+    if (!replaced.has(jar.coordinate)) libraryClasspath.push(path)
+    else if (!libraryClasspath.includes(dashboardJar)) {
+      libraryClasspath.push(dashboardJar)
+      jarCoordinates[dashboardJar] = jar.coordinate
+    }
   }
   const report: LibraryReport = {
     entries,
@@ -337,7 +354,8 @@ function resolution(
 async function fromLock(
   cache: LibraryCache,
   key: string,
-  request: LibraryRequest
+  request: LibraryRequest,
+  dashboardJar: string
 ): Promise<LibraryResolution | null> {
   const lock = await cache.readLock(key)
   if (!isLock(lock)) return null
@@ -354,7 +372,8 @@ async function fromLock(
       jar: { path: '', sha256: jar.sha256, packages: jar.packages, coordinate: jar.coordinate },
       compile: jar.compile,
       runtime: jar.runtime
-    }))
+    })),
+    dashboardJar
   )
 }
 
@@ -385,7 +404,12 @@ function statusOf(module: ResolvedModule): Pick<LibraryEntry, 'status' | 'reason
       reason: module.failure.reason,
       detail: module.failure.detail
     }
-  return { status: 'used', reason: 'none', detail: '' }
+  return { status: policy.kind === 'replaced' ? 'replaced' : 'used', reason: 'none', detail: '' }
+}
+
+// 받아서 클래스패스에 넣는 상태(대체도 컴파일에 실제 jar를 쓴다)
+function isLoaded(status: LibraryEntry['status']): boolean {
+  return status === 'used' || status === 'replaced'
 }
 
 type ArtifactPlan = { file: string; ext: 'jar' | 'aar'; expected: ExpectedHashes | undefined }
@@ -471,7 +495,7 @@ async function resolveFresh(
   const declaredKeys = new Set(declared.map((item) => gaOf(item.group, item.artifact)))
 
   // 파일 받기
-  const wanted = modules.filter((m) => statusOf(m).status === 'used' && m.metadata !== null)
+  const wanted = modules.filter((m) => isLoaded(statusOf(m).status) && m.metadata !== null)
   progress.setPhase('downloading', wanted.length)
   const built = new Map<string, Built>()
   const outcomes = await Promise.all(
@@ -554,7 +578,7 @@ async function resolveFresh(
           ? item.decision
           : { status: 'unsupported' as const, reason: 'notSupported' as const, detail: '' }
       // 동적 버전으로 선언했지만 지원 계열이 고정 버전을 끌어와 쓴다: 그 결과를 따른다
-      if (!(decision.reason === 'dynamicVersion' && module && statusOf(module).status === 'used'))
+      if (!(decision.reason === 'dynamicVersion' && module && isLoaded(statusOf(module).status)))
         return {
           entry: {
             ...base,
@@ -599,7 +623,7 @@ async function resolveFresh(
     }
     // 그 좌표의 파일(POM·jar) 중 처음 받은 해시를 기록하지 못한 것이 있다: 기록했다고 하지 않는다(이번에는 쓴다)
     const unrecorded = fetcher.unrecordedDetail(module.group, module.artifact, module.version)
-    if (entry.status === 'used' && unrecorded !== null)
+    if (isLoaded(entry.status) && unrecorded !== null)
       entry = { ...entry, integrity: 'firstUseUnrecorded', detail: unrecorded }
     if (implicit && ga === gaOf(implicit.root.group, implicit.root.artifact) && !item)
       entry = { ...entry, requestedBy: [implicit.requestedBy] }
@@ -628,7 +652,7 @@ async function resolveFresh(
   const ordered = [...built.values()]
   const entries = ordered.map((b) => b.entry)
   const jars = ordered.flatMap((b) =>
-    b.entry.status === 'used'
+    isLoaded(b.entry.status)
       ? b.jars.map((jar) => ({ jar, compile: b.compile, runtime: b.runtime }))
       : []
   )
@@ -651,7 +675,7 @@ async function resolveFresh(
   await cache
     .prune(new Set(jars.map(({ jar }) => jar.path)), deps.maxCacheBytes ?? MAX_LIBRARY_CACHE_BYTES)
     .catch(() => undefined)
-  return resolution(request, cache, entries, jars)
+  return resolution(request, cache, entries, jars, deps.dashboardJar)
 }
 
 function errorText(error: unknown): string {
@@ -687,10 +711,11 @@ export async function resolveLibraries(
             integrity: null
           }
         }),
-        []
+        [],
+        deps.dashboardJar
       )
     const key = lockKey(request, implicit !== null)
-    const locked = await fromLock(cache, key, request)
+    const locked = await fromLock(cache, key, request, deps.dashboardJar)
     if (locked) return locked
     return await resolveFresh(request, deps, cache, declared, implicit, key)
   } catch (error) {

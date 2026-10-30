@@ -126,7 +126,21 @@ final class Protocol {
         send(Json.obj("type", "registered", "opModes", opModes));
     }
 
-    /** 사이드카 안내(sidecarProtocol NoticeMessage). params는 키 이름순으로 쓴다(결정성). */
+    /**
+     * FTC Dashboard 패킷 묶음(DashboardBridge, sidecarProtocol DashMessage). data·log·ops는 Dashboard 대체가 만든 JSON
+     * 글자(log·ops는 null일 수 있다)로 그대로 싣는다.
+     */
+    void dash(long tNanos, boolean cleared, String data, String log, String ops) {
+        send(Json.obj("type", "dash", "tNanos", tNanos, "cleared", cleared, "data", Json.raw(data), "log",
+                Json.raw(log), "ops", Json.raw(ops)));
+    }
+
+    /** FTC Dashboard 설정 트리 전체(DashConfigMessage, root는 Dashboard 대체가 만든 JSON) */
+    void dashConfig(long tNanos, String root) {
+        send(Json.obj("type", "dashConfig", "tNanos", tNanos, "root", Json.raw(root)));
+    }
+
+    /** 사이드카 안내(NoticeMessage). params는 키 정렬로 쓴다. */
     void notice(long tNanos, String code, Map<String, String> params) {
         send(Json.obj("type", "notice", "tNanos", tNanos, "code", code, "params", new TreeMap<>(params)));
     }

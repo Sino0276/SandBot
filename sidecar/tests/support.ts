@@ -26,6 +26,8 @@ export type SidecarBuild = {
   javac: string
   sdkJar: string
   runtimeJar: string
+  // FTC Dashboard 대체(라이브러리 L2): 팀 Gradle이 Dashboard를 선언하면 실행 클래스패스에 넣는 jar
+  dashboardJar: string
   dir: string
 }
 
@@ -128,6 +130,14 @@ export type SidecarReport = {
   }[]
   incomplete: string[]
   warnings: string[]
+  // FTC Dashboard 층(sandbot-dashboard.jar, 라이브러리 L2)
+  dashboard: {
+    counts: Record<string, number>
+    hand: string[]
+    lifted: string[]
+    stubs: Record<string, string>
+    mustProvide: Record<string, string>
+  }
 }
 
 export function sidecarReport(build: SidecarBuild): SidecarReport {
@@ -203,6 +213,7 @@ async function buildOnce(): Promise<SidecarBuild | null> {
     javac: jdk.javac,
     sdkJar: join(dir, 'sandbot-sdk.jar'),
     runtimeJar: join(dir, 'sandbot-runtime.jar'),
+    dashboardJar: join(dir, 'sandbot-dashboard.jar'),
     dir
   }
 }

@@ -1,8 +1,9 @@
 // JVM 사이드카의 소스 식별과 빌드용 JDK 찾기. 빌드(build-sidecar.mjs)와 테스트(sidecar/tests/support.ts)가 같이 쓴다.
 //
-// 소스 해시: 사이드카 결과(sandbot-sdk.jar·sandbot-runtime.jar·sidecar.json)를 바꿀 수 있는 파일(sidecar/{sim,sdk,runtime,tools},
-// 빌드·받기 스크립트, NOTICE, 프로토콜 번호가 있는 src/shared/sidecarProtocol.ts)의 내용 해시다. 빌드는 이 값을 sidecar.json과
-// runtime jar(org/sandbot/runtime/source-hash.txt, 사이드카가 hello.runtime으로 보냄)에 넣고, --if-stale은 같으면 건너뛴다.
+// 소스 해시: 사이드카 결과(sandbot-sdk.jar·sandbot-runtime.jar·sandbot-dashboard.jar·sidecar.json)를 바꿀 수 있는 파일
+// (sidecar/{sim,sdk,runtime,tools,libs}, 빌드·받기 스크립트, NOTICE, 프로토콜 번호가 있는 src/shared/sidecarProtocol.ts)의
+// 내용 해시다. 빌드는 이 값을 sidecar.json과 runtime jar(org/sandbot/runtime/source-hash.txt, 사이드카가 hello.runtime으로
+// 보냄)에 넣고, --if-stale은 같으면 건너뛴다.
 // Windows에서 git이 줄 끝을 CRLF로 바꿔도 같도록 CR은 빼고 계산한다(step-converter-source.mjs와 같은 방식).
 //
 // 직접 실행: node scripts/sidecar-source.mjs [--json]
@@ -23,6 +24,7 @@ const SOURCE_PATHS = [
   'sidecar/sdk',
   'sidecar/runtime',
   'sidecar/tools',
+  'sidecar/libs',
   'sidecar/NOTICE.txt',
   'scripts/build-sidecar.mjs',
   'scripts/fetch-ftc-sdk.mjs',

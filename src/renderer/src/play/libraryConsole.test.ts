@@ -3,7 +3,14 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import type { LibraryEntry, LibraryReason, LibraryReport } from '../../../shared/libraries'
 import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
-import { entryDetailLines, entrySummary, entryTarget, hintText, libraryText } from './consoleModel'
+import {
+  consoleLevel,
+  entryDetailLines,
+  entrySummary,
+  entryTarget,
+  hintText,
+  libraryText
+} from './consoleModel'
 import { formatBytes, libraryReportLines, linkWarningLines } from './libraryConsole'
 import { consoleEntry } from './playStore'
 
@@ -194,7 +201,7 @@ describe('의존성 보고 → Console', () => {
     expect(summary({ api: 36, minor: 1, guessed: false })[0]).toMatch(/Android API 36\.1로 컴파일$/)
   })
 
-  it('모든 이유에 문장이 있다(ko·en), FTC Dashboard는 대체 안내', () => {
+  it('모든 이유에 문장이 있다(ko·en)', () => {
     const reasons: LibraryReason[] = [
       'pedroTuning',
       'pedro2',
@@ -221,15 +228,95 @@ describe('의존성 보고 → Console', () => {
         expect(text, reason).toMatch(/^x:y:1: ./)
         expect(text).not.toContain('console.')
       }
-    expect(
-      libraryText(
-        entry('com.acmerobotics.dashboard:dashboard:0.6.0', {
-          status: 'unsupported',
-          reason: 'notSupported'
+  })
+
+  it('FTC Dashboard(대체)는 SandBot 구현으로 실행한다는 정보 한 줄, Sloth용 Dashboard는 원래 것을 쓰라는 경고', () => {
+    const lines = libraryReportLines({
+      entries: [
+        entry('com.acmerobotics.dashboard:dashboard:0.5.1', {
+          status: 'replaced',
+          integrity: 'firstUse',
+          declaredAt: { file: 'TeamCode/build.gradle', line: 30 }
         }),
-        tEn
-      )
-    ).toContain('SandBot Dashboard replacement')
+        entry('com.acmerobotics.dashboard:core:0.5.1', {
+          status: 'replaced',
+          integrity: 'firstUseUnrecorded'
+        }),
+        entry('com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0', {
+          status: 'unsupported',
+          reason: 'notSupported',
+          source: null,
+          integrity: null
+        })
+      ],
+      gradle: [],
+      compileSdk: 30,
+      compileSdkMinor: null,
+      platform: { api: 30, minor: null, guessed: false }
+    })
+    expect(lines.map((l) => `${l.level} ${l.body.type}`)).toEqual([
+      'warning notice',
+      'info library',
+      'warning library',
+      'warning library'
+    ])
+    const entries = lines.map((line) => consoleEntry(line.body, null, line.level, '/p'))
+    // 대체는 요약의 '사용'에 센다
+    expect(entrySummary(entries[0], t)).toMatch(
+      /^팀 Gradle의 라이브러리 3개: 사용 2 · 제공 0 · 불러오지 않음 1/
+    )
+    expect(entrySummary(entries[1], t)).toBe(
+      'TeamCode/build.gradle:30: com.acmerobotics.dashboard:dashboard:0.5.1: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 Config 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.'
+    )
+    expect(entrySummary(entries[1], tEn)).toContain('runs on the SandBot implementation')
+    // 처음 받은 해시를 기록하지 못한 것은 대체여도 그 경고
+    expect(entrySummary(entries[2], tEn)).toContain('could not be saved')
+    for (const translate of [t, tEn]) {
+      expect(entrySummary(entries[3], translate)).not.toContain('console.')
+      expect(entrySummary(entries[3], translate)).toContain('com.acmerobotics.dashboard:dashboard')
+    }
+    expect(entrySummary(entries[3], t)).toContain('원래 FTC Dashboard')
+  })
+
+  it('좌표 줄의 기본 수준(consoleLevel)은 보고 줄의 수준과 같다(대체는 정보)', () => {
+    const entries = [
+      entry('com.acmerobotics.dashboard:dashboard:0.6.0', { status: 'replaced' }),
+      entry('com.acmerobotics.dashboard:core:0.6.0', {
+        status: 'replaced',
+        integrity: 'firstUseUnrecorded'
+      }),
+      entry('com.acmerobotics.roadrunner:core:1.0.1', { integrity: 'firstUse' }),
+      entry('com.acmerobotics.roadrunner:ftc:0.1.25', { integrity: 'firstUseUnrecorded' }),
+      entry('com.pedropathing:tuning:1.0.1', {
+        status: 'unsupported',
+        reason: 'pedroTuning',
+        source: null,
+        integrity: null
+      }),
+      entry('org.example:gone:1.0', { status: 'failed', reason: 'notFound', source: null })
+    ]
+    const lines = libraryReportLines({
+      entries,
+      gradle: [],
+      compileSdk: 30,
+      compileSdkMinor: null,
+      platform: { api: 30, minor: null, guessed: false }
+    }).filter((line) => line.body.type === 'library')
+    expect(lines.map((line) => line.level)).toEqual([
+      'info',
+      'warning',
+      'info',
+      'warning',
+      'warning',
+      'warning'
+    ])
+    for (const line of lines) expect(consoleLevel(line.body)).toBe(line.level)
+    const provided = entry('org.firstinspires.ftc:RobotCore:12.0.0', {
+      status: 'provided',
+      source: null,
+      integrity: null
+    })
+    expect(consoleLevel({ type: 'library', library: provided })).toBe('info')
   })
 
   it('컴파일 진단의 안내', () => {
@@ -291,13 +378,14 @@ describe('의존성 보고 → Console', () => {
     expect(hintText(dependency, tEn)).toContain(
       'belongs to com.acmerobotics.dashboard:core:0.4.7, a dependency of com.acmerobotics.roadrunner:actions:1.0.1 declared'
     )
-    // FTC Dashboard 안내(Sloth용 대체판 slothboard도)
-    expect(hintText(dependency, tEn)).toContain('SandBot Dashboard replacement')
+    // 지원 목록 밖(FTC Dashboard도 지원 목록에 있다)
+    expect(hintText(dependency, tEn)).toContain('FTC Dashboard)')
+    // Sloth용 Dashboard는 원래 FTC Dashboard를 쓰라고 안내한다
     const slothboard = entry('com.acmerobotics.slothboard:dashboard:0.3.2+0.6.0', {
       status: 'unsupported',
       reason: 'notSupported'
     })
-    expect(libraryText(slothboard, tEn)).toContain('SandBot Dashboard replacement')
+    expect(libraryText(slothboard, tEn)).toContain('Use the original FTC Dashboard')
     expect(
       hintText(
         {
@@ -307,7 +395,7 @@ describe('의존성 보고 → Console', () => {
         },
         tEn
       )
-    ).toContain('SandBot Dashboard replacement')
+    ).toContain('Use the original FTC Dashboard')
   })
 
   it('링크 검사 경고는 라이브러리별로 묶는다', () => {

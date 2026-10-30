@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import type { GradleDiagnostic } from '../../../shared/gradle'
 import {
   coordinateOf,
-  DASHBOARD_GROUPS,
+  SLOTHBOARD_GROUP,
   type LibraryEntry,
   type LibraryReason
 } from '../../../shared/libraries'
@@ -77,6 +77,13 @@ const ERROR_FINISH: ReadonlySet<ConsoleFinishReason> = new Set([
   'crashed'
 ])
 
+// 의존성 보고 좌표 하나의 수준: 불러오지 않았거나 받지 못한 것과 처음 받은 해시를 기록하지 못한 것은 경고, 나머지(쓰는 것,
+// SandBot 구현으로 실행하는 FTC Dashboard, SDK가 주는 것)는 정보(libraryConsole의 줄도 이것을 쓴다)
+export function libraryLevel(library: LibraryEntry): ConsoleLevel {
+  if (library.status === 'unsupported' || library.status === 'failed') return 'warning'
+  return library.integrity === 'firstUseUnrecorded' ? 'warning' : 'info'
+}
+
 // 항목의 수준(아이콘과 개수 토글). System.err는 Android logcat처럼 경고로 본다.
 export function consoleLevel(
   body: ConsoleBody,
@@ -104,7 +111,7 @@ export function consoleLevel(
     case 'initFailed':
       return noticeLevel
     case 'library':
-      return body.library.status === 'used' ? 'info' : 'warning'
+      return libraryLevel(body.library)
     case 'gradle':
     case 'linkWarnings':
       return 'warning'
@@ -218,21 +225,26 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
   }
 }
 
-// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지
-// 지원하지 않는다는 안내를 따로 보인다.
+// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). Sloth용 FTC Dashboard는 원래 Dashboard를 쓰라는
+// 안내를 따로 보인다.
 function reasonText(coordinate: string, reason: LibraryReason, t: TFunction): string {
-  if (DASHBOARD_GROUPS.has(coordinate.split(':')[0]) && reason === 'notSupported')
-    return t('console.notices.library.dashboardLater', { coordinate })
+  if (coordinate.split(':')[0] === SLOTHBOARD_GROUP && reason === 'notSupported')
+    return t('console.notices.library.slothboard', { coordinate })
   return t(`console.notices.library.${reason}`, { coordinate })
 }
 
-// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
+// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록하지 못한 것(쓰는 좌표)은 firstUseUnrecorded, FTC Dashboard 대체는
+// replaced, 기록한 것은 firstUse.
 export function libraryText(library: LibraryEntry, t: TFunction): string {
   const coordinate = coordinateOf(library)
-  if (library.status === 'used')
-    return library.integrity === 'firstUse' || library.integrity === 'firstUseUnrecorded'
-      ? t(`console.notices.library.${library.integrity}`, { coordinate })
+  if (library.status === 'used' || library.status === 'replaced') {
+    if (library.integrity === 'firstUseUnrecorded')
+      return t('console.notices.library.firstUseUnrecorded', { coordinate })
+    if (library.status === 'replaced') return t('console.notices.library.replaced', { coordinate })
+    return library.integrity === 'firstUse'
+      ? t('console.notices.library.firstUse', { coordinate })
       : coordinate
+  }
   return reasonText(coordinate, library.reason, t)
 }
 
