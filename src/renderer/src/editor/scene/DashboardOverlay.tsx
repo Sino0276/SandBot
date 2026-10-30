@@ -4,15 +4,11 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
-  DoubleSide,
-  LineBasicMaterial,
   LineSegments,
   Mesh,
-  MeshBasicMaterial,
   SRGBColorSpace,
   Texture,
   type Group,
-  type Material,
   type Object3D
 } from 'three'
 import {
@@ -26,12 +22,14 @@ import {
 import type { Rgba } from '../../play/cssColor'
 import { usePlayStore } from '../../play/playStore'
 import { useProjectStore } from '../../project/projectStore'
+import { OverlayMaterials } from './overlayMaterials'
 
 // FTC Dashboard 필드 오버레이(라이브러리 L2): 마지막 패킷의 field() + fieldOverlay() op를 Dashboard 웹 클라이언트처럼
 // 필드 바닥 바로 위에 그린다(변환은 play/dashOverlay.ts). 씬 문서 밖이고(실행 취소·저장과 관계없음), 숨김과 관계없고,
 // 클릭되지 않는다. 다음 INIT·프로젝트 열기까지 남는다(playStore.dashOverlay).
 // 그리기 순서는 op 순서다: 묶음마다 renderOrder를 하나씩 올리고 깊이를 쓰지 않아 뒤의 것이 위에 쌓인다(바닥·로봇과는
-// 깊이 검사를 한다). 반투명 잔상·벽보다 먼저 그려 그것들이 오버레이 위에 비친다.
+// 깊이 검사를 한다). 반투명 잔상·벽보다 먼저 그려 그것들이 오버레이 위에 비친다. 패킷마다 형상만 다시 만들고 재질은
+// 이어 쓴다(overlayMaterials.ts, 셰이더를 다시 컴파일하지 않게).
 
 const RENDER_ORDER_BASE = -100_000
 // 글자 텍스처의 글꼴 크기(px). 글자 틀 단위(font.size)를 이 픽셀로 그린다.
@@ -195,24 +193,13 @@ function imageTexture(root: string, scope: string, path: string, onLoaded: () =>
   return entry
 }
 
-function overlayMaterial(
-  params: ConstructorParameters<typeof MeshBasicMaterial>[0]
-): MeshBasicMaterial {
-  return new MeshBasicMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-    toneMapped: false,
-    ...params
-  })
-}
-
 function DashboardOverlay(): React.JSX.Element | null {
   const overlay = usePlayStore((state) => state.dashOverlay)
   const root = useProjectStore((state) => state.root)
   const session = useProjectStore((state) => state.session)
   const invalidate = useThree((state) => state.invalidate)
   const group = useRef<Group>(null)
+  const materials = useRef<OverlayMaterials | null>(null)
   const texts = useRef(new Map<string, TextEntry>())
   // 그림을 다 읽으면 다시 만든다
   const [imageRevision, setImageRevision] = useState(0)
@@ -239,13 +226,25 @@ function DashboardOverlay(): React.JSX.Element | null {
     }
   }, [])
 
+  // 재질은 오버레이가 바뀌어도 이어 쓰고 내려갈 때 해제한다. 그리기 effect보다 앞에 두어 붙을 때 먼저 만들어진다
+  // (StrictMode가 떼었다 다시 붙이면 새로 만든다).
+  useLayoutEffect(() => {
+    const created = new OverlayMaterials()
+    materials.current = created
+    return () => {
+      created.dispose()
+      if (materials.current === created) materials.current = null
+    }
+  }, [])
+
   useLayoutEffect(() => {
     const parent = group.current
-    if (!parent) return
+    const pool = materials.current
+    if (!parent || !pool) return
     const objects: Object3D[] = []
     const geometries: BufferGeometry[] = []
-    const materials: Material[] = []
     const usedTexts = new Set<string>()
+    pool.begin()
     const add = (object: Mesh | LineSegments, index: number): void => {
       object.renderOrder = RENDER_ORDER_BASE + index
       object.raycast = noRaycast
@@ -261,20 +260,8 @@ function DashboardOverlay(): React.JSX.Element | null {
           geometry.setAttribute('position', new BufferAttribute(run.positions, 3))
           geometry.setAttribute('color', new BufferAttribute(linearColors(run.colors), 4))
           geometries.push(geometry)
-          if (run.kind === 'mesh') {
-            const material = overlayMaterial({ vertexColors: true })
-            materials.push(material)
-            add(new Mesh(geometry, material), index)
-          } else {
-            const material = new LineBasicMaterial({
-              vertexColors: true,
-              transparent: true,
-              depthWrite: false,
-              toneMapped: false
-            })
-            materials.push(material)
-            add(new LineSegments(geometry, material), index)
-          }
+          if (run.kind === 'mesh') add(new Mesh(geometry, pool.mesh), index)
+          else add(new LineSegments(geometry, pool.lines), index)
           break
         }
         case 'text': {
@@ -290,9 +277,7 @@ function DashboardOverlay(): React.JSX.Element | null {
           const [x0, y0, x1, y1] = entry.quad
           const geometry = quadGeometry(run.matrix, x0, y0, x1, y1)
           geometries.push(geometry)
-          const material = overlayMaterial({ map: entry.texture })
-          materials.push(material)
-          add(new Mesh(geometry, material), index)
+          add(new Mesh(geometry, pool.map(entry.texture, 1)), index)
           break
         }
         case 'image': {
@@ -304,13 +289,12 @@ function DashboardOverlay(): React.JSX.Element | null {
           const [x, y, width, height] = run.rect
           const geometry = quadGeometry(run.matrix, x, y, x + width, y + height)
           geometries.push(geometry)
-          const material = overlayMaterial({ map: entry.texture, opacity: run.alpha })
-          materials.push(material)
-          add(new Mesh(geometry, material), index)
+          add(new Mesh(geometry, pool.map(entry.texture, run.alpha)), index)
           break
         }
       }
     })
+    pool.end()
     // 이번 그림에 쓰지 않은 글자 텍스처는 해제한다(바뀌는 글자가 쌓이지 않게)
     for (const [key, entry] of texts.current)
       if (!usedTexts.has(key)) {
@@ -321,7 +305,6 @@ function DashboardOverlay(): React.JSX.Element | null {
     return () => {
       for (const object of objects) parent.remove(object)
       for (const geometry of geometries) geometry.dispose()
-      for (const material of materials) material.dispose()
       invalidate()
     }
   }, [runs, root, session, imageRevision, invalidate])

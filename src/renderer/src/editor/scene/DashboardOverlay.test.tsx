@@ -1,7 +1,15 @@
 import { act, createRoot, extend, type ReconcilerRoot, type RootStore } from '@react-three/fiber'
 import { StrictMode } from 'react'
 import * as THREE from 'three'
-import { LineSegments, Mesh, Object3D, Raycaster, Vector3, type BufferGeometry } from 'three'
+import {
+  LineSegments,
+  Mesh,
+  Object3D,
+  Raycaster,
+  Vector3,
+  type BufferGeometry,
+  type Material
+} from 'three'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashOp } from '../../../../shared/dashboard'
 import { INCH, OVERLAY_Z } from '../../play/dashOverlay'
@@ -74,16 +82,18 @@ afterAll(() => {
   vi.restoreAllMocks()
 })
 
-beforeEach(async () => {
-  usePlayStore.setState({ dashOverlay: null })
-  const canvas = {
+const fakeCanvas = (): HTMLCanvasElement =>
+  ({
     style: {},
     width: 800,
     height: 600,
     addEventListener: () => {},
     removeEventListener: () => {}
-  } as unknown as HTMLCanvasElement
-  root = createRoot(canvas)
+  }) as unknown as HTMLCanvasElement
+
+beforeEach(async () => {
+  usePlayStore.setState({ dashOverlay: null })
+  root = createRoot(fakeCanvas())
   await root.configure({
     gl: fakeRenderer() as never,
     frameloop: 'never',
@@ -152,5 +162,32 @@ describe('Dashboard 오버레이(씬 뷰)', () => {
       usePlayStore.setState({ dashOverlay: null })
     })
     expect(drawn()).toHaveLength(0)
+  })
+
+  it('패킷이 바뀌어도 재질은 이어 쓰고(셰이더를 다시 컴파일하지 않게) 내려갈 때 해제한다', async () => {
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: OPS } })
+    })
+    const materials = new Set(drawn().map((object) => object.material as Material))
+    // 채움과 선 띠는 한 재질, 격자 선은 다른 재질
+    expect(materials.size).toBe(2)
+    const disposed = vi.fn()
+    for (const material of materials) material.addEventListener('dispose', disposed)
+    const moved = OPS.map((op) =>
+      op.type === 'polyline' ? { ...op, xPoints: [0, 30], yPoints: [5, 5] } : op
+    )
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 1, ops: moved } })
+    })
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: null })
+    })
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 2, ops: OPS } })
+    })
+    expect(disposed).not.toHaveBeenCalled()
+    expect(new Set(drawn().map((object) => object.material as Material))).toEqual(materials)
+    await act(async () => root.unmount())
+    expect(disposed).toHaveBeenCalledTimes(2)
   })
 })
