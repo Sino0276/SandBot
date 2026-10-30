@@ -29,6 +29,10 @@ const realJars = [
   ...['gson-2.8.0', 'gson-extras-0.2.1'].map((n) => join(sdkDir, '12.0.0', 'libs', `${n}.jar`))
 ]
 const androidJar = join(sdkDir, 'android-4.1.1.4.jar')
+// FTC Dashboard 층의 기준(scripts/fetch-ftc-sdk.mjs의 ensureFtcDashboard: core jar, AAR의 classes.jar)
+const dashboardRealJars = ['core', 'dashboard'].map((n) =>
+  join(sdkDir, 'dashboard', '0.6.0', `${n}-0.6.0.jar`)
+)
 const tools = join(repoRoot, 'sidecar', 'build', 'tools-classes')
 const fixtures = join(repoRoot, 'sidecar', 'tests', 'fixtures')
 
@@ -77,7 +81,118 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
     expect(entries).toContain('org/sandbot/sim/SimUnsupportedException.class')
     expect(entries).toContain('com/qualcomm/robotcore/eventloop/opmode/LinearOpMode.class')
     expect(entries.some((e) => e.startsWith('org/sandbot/tools/'))).toBe(false)
+    // FTC Dashboard 대체는 가짜 SDK에 넣지 않고 따로 둔다(팀 Gradle이 Dashboard를 선언할 때만 실행 클래스패스에)
+    expect(entries.some((e) => e.startsWith('com/acmerobotics/'))).toBe(false)
+    const dashboard = jarEntries(build.dashboardJar).filter((e) => e.endsWith('.class'))
+    expect(dashboard).toContain('com/acmerobotics/dashboard/FtcDashboard.class')
+    expect(dashboard).toContain('com/acmerobotics/dashboard/telemetry/TelemetryPacket.class')
+    expect(dashboard.every((e) => e.startsWith('com/acmerobotics/dashboard/'))).toBe(true)
+    const notice = readFileSync(join(build.dir, 'NOTICE.txt'), 'utf8')
+    expect(notice).toContain('FTC Dashboard 0.6.0')
+    expect(notice).toContain('Copyright (c) 2018-2022 ACME Robotics')
   })
+
+  it.skipIf(lenientBuild)(
+    'FTC Dashboard 층: 반드시 있어야 할 형식은 손 구현이거나 들여온 것이고, 스레드를 띄우는 것은 stub이다',
+    () => {
+      const { dashboard } = sidecarReport(build)
+      expect(
+        Object.entries(dashboard.mustProvide).filter(
+          ([, kind]) => kind !== 'hand' && kind !== 'lifted'
+        )
+      ).toEqual([])
+      expect(dashboard.mustProvide['com.acmerobotics.dashboard.FtcDashboard']).toBe('hand')
+      expect(dashboard.mustProvide['com.acmerobotics.dashboard.telemetry.MultipleTelemetry']).toBe(
+        'lifted'
+      )
+      expect(Object.keys(dashboard.stubs)).toEqual(
+        expect.arrayContaining([
+          'com.acmerobotics.dashboard.DashboardCore',
+          'com.acmerobotics.dashboard.hardware.HardwareOpMode',
+          'com.acmerobotics.dashboard.limelight.LimelightProxyManager'
+        ])
+      )
+      // SDK 패키지에 더한 손 구현은 Sandbot으로 시작한다
+      for (const name of dashboard.hand.filter(
+        (n) => n !== 'com.acmerobotics.dashboard.FtcDashboard'
+      ))
+        expect(name.split('.').at(-1)).toMatch(/^Sandbot/)
+      const entries = new Set(jarEntries(build.dashboardJar))
+      for (const name of Object.keys(dashboard.mustProvide))
+        expect(entries.has(`${name.replace(/\./g, '/')}.class`), name).toBe(true)
+    }
+  )
+
+  it(
+    'FTC Dashboard 대체의 public·protected API가 실제 Dashboard 0.6.0과 같다',
+    async () => {
+      const result = await runProcess(build.java, [
+        '-cp',
+        tools,
+        'org.sandbot.tools.ApiCheck',
+        '--real',
+        dashboardRealJars.join(delimiter),
+        '--android',
+        androidJar,
+        '--sdk',
+        build.dashboardJar
+      ])
+      expect(result.output.match(/^error: .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(result.code).toBe(0)
+      const summary = /checked (\d+) classes, (\d+) constants, 0 errors/.exec(result.output)
+      expect(Number(summary?.[1])).toBeGreaterThan(60)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'FTC Dashboard 대체: 들여온 클래스와 손 구현은 JVM에서 불러오고 초기화되며 멤버 참조가 풀리고, stub은 던진다',
+    async () => {
+      const { dashboard } = sidecarReport(build)
+      const classes = jarEntries(build.dashboardJar)
+        .filter((e) => e.endsWith('.class'))
+        .map((e) => e.slice(0, -'.class'.length).replace(/\//g, '.'))
+      const stubTops = new Set(Object.keys(dashboard.stubs))
+      const linked = classes.filter((name) => !stubTops.has(name.split('$')[0]))
+      const stubs = classes.filter((name) => stubTops.has(name.split('$')[0]))
+      expect(linked.length).toBeGreaterThan(dashboard.lifted.length)
+      // 보이지 않는(package-private) 묶음은 stub도 없다(limelight의 Forwarder)
+      expect(stubs).toEqual(
+        expect.arrayContaining([
+          'com.acmerobotics.dashboard.DashboardCore',
+          'com.acmerobotics.dashboard.hardware.HardwareOpMode',
+          'com.acmerobotics.dashboard.limelight.LimelightProxyManager'
+        ])
+      )
+      const dir = testTempDir('dashboard-probe')
+      writeFileSync(join(dir, 'linked.txt'), `${linked.join('\n')}\n`)
+      writeFileSync(join(dir, 'stubs.txt'), `${stubs.join('\n')}\n`)
+      for (const probe of [
+        join(fixtures, 'link', 'LinkProbe.java'),
+        join(fixtures, 'stub', 'StubProbe.java')
+      ]) {
+        const compiled = await runProcess(build.javac, [
+          '--release',
+          '17',
+          '-cp',
+          build.sdkJar,
+          '-d',
+          dir,
+          probe
+        ])
+        expect(compiled.code, compiled.output).toBe(0)
+      }
+      const cp = [dir, build.dashboardJar, build.sdkJar].join(delimiter)
+      const link = await runProcess(build.java, ['-cp', cp, 'LinkProbe', join(dir, 'linked.txt')])
+      expect(link.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(link.code).toBe(0)
+      expect(Number(/LINKED classes=(\d+)/.exec(link.output)?.[1])).toBe(linked.length)
+      const stub = await runProcess(build.java, ['-cp', cp, 'StubProbe', join(dir, 'stubs.txt')])
+      expect(stub.output.match(/^FAIL .*/gm)?.slice(0, 20) ?? []).toEqual([])
+      expect(stub.code).toBe(0)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
 
   it.skipIf(lenientBuild)('반드시 있어야 할 클래스는 손 구현이거나 들여온 것이다', () => {
     const report = sidecarReport(build)

@@ -4,6 +4,9 @@
 //   sidecar/build/ftc-sdk/12.0.0/<이름>.jar로(AAR의 libs/*.jar는 libs/로)
 // - com.google.android:android:4.1.1.4 jar(안드로이드 API 껍데기, stub 생성기가 형식 이름·종류를 읽는다)
 // - 호환 테스트용 FtcRobotController v12.0 샘플(고정 커밋, 파일마다 SHA-256) → sidecar/build/ftc-samples/12.0/
+// - FTC Dashboard 0.6.0(MIT, maven.brott.dev): dashboard AAR(안의 classes.jar → dashboard.jar)과 core jar →
+//   sidecar/build/ftc-sdk/dashboard/0.6.0/. 사이드카 빌드가 Dashboard 대체(sandbot-dashboard.jar)를 만들 때 들여오기·API 대조의
+//   기준이다. 저장소가 체크섬을 주지 않으므로 해시는 src/main/libraries/pins.ts의 값(받아서 잰 것)과 같다.
 //
 // 사용법: node scripts/fetch-ftc-sdk.mjs [--no-samples]
 // 프록시 뒤에서는 NODE_USE_ENV_PROXY=1로 HTTPS_PROXY를 쓰게 한다(Node 22.21 이상).
@@ -387,6 +390,68 @@ export async function ensureFtcSdk({ log = console.log } = {}) {
   return { version: SDK_VERSION, jars, libs, androidJar }
 }
 
+// ---- FTC Dashboard
+
+export const DASHBOARD_VERSION = '0.6.0'
+export const dashboardDir = join(ftcSdkDir, 'dashboard', DASHBOARD_VERSION)
+
+// maven.brott.dev는 Azure 정적 사이트로 302한다(fetch가 따라간다)
+const DASHBOARD_REPOSITORY = 'https://maven.brott.dev'
+
+// [artifact, 확장자, SHA-256, 쓸 jar 이름]. AAR은 안의 classes.jar만 꺼낸다(res·assets·libs는 쓰지 않는다).
+const DASHBOARD_ARTIFACTS = [
+  [
+    'core',
+    'jar',
+    '6269019587494d5fe97c42eba06fc8653d507736de46d0a038b68fe6ab3920c5',
+    `core-${DASHBOARD_VERSION}.jar`
+  ],
+  [
+    'dashboard',
+    'aar',
+    'dda97467cbe09ca5fdfefe59297d27594783c9702535694398ef13407ca8602c',
+    `dashboard-${DASHBOARD_VERSION}.jar`
+  ]
+]
+
+/**
+ * FTC Dashboard jar들을 받아 둔다(있고 맞으면 그대로).
+ * @returns {Promise<{ version: string, jars: string[] }>} jars: core, dashboard(classes.jar) 순서
+ */
+export async function ensureFtcDashboard({ log = console.log } = {}) {
+  const jars = []
+  for (const [artifact, extension, hash, jarName] of DASHBOARD_ARTIFACTS) {
+    const base = `${artifact}-${DASHBOARD_VERSION}`
+    const downloaded = join(dashboardDir, `${base}.${extension}`)
+    let bytes = null
+    if (fileHash(downloaded) !== hash) {
+      log(`downloading com.acmerobotics.dashboard:${artifact}:${DASHBOARD_VERSION}`)
+      const url = `${DASHBOARD_REPOSITORY}/com/acmerobotics/dashboard/${artifact}/${DASHBOARD_VERSION}/${base}.${extension}`
+      bytes = await download(url, hash, log)
+      writeAtomic(downloaded, bytes)
+    }
+    const jar = join(dashboardDir, jarName)
+    if (extension === 'aar') {
+      // classes.jar는 이 AAR에서 꺼낸 것일 때만 쓴다
+      const stamp = join(dashboardDir, `${base}.extracted`)
+      let extracted = null
+      try {
+        extracted = JSON.parse(readFileSync(stamp, 'utf8'))
+      } catch {
+        // 다시 꺼낸다
+      }
+      if (extracted?.aar !== hash || fileHash(jar) !== extracted.jar) {
+        const classes = readZip(bytes ?? readFileSync(downloaded)).read('classes.jar')
+        if (!classes) throw new FetchError(`${base}.aar has no classes.jar`)
+        writeAtomic(jar, classes)
+        writeAtomic(stamp, `${JSON.stringify({ aar: hash, jar: sha256(classes) }, null, 2)}\n`)
+      }
+    }
+    jars.push(jar)
+  }
+  return { version: DASHBOARD_VERSION, jars }
+}
+
 // ---- 샘플
 
 /**
@@ -411,6 +476,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const sdk = await ensureFtcSdk()
     console.log(`FTC SDK ${sdk.version}: ${dirname(sdk.jars[0])}`)
+    const dashboard = await ensureFtcDashboard()
+    console.log(`FTC Dashboard ${dashboard.version}: ${dirname(dashboard.jars[0])}`)
     if (!process.argv.includes('--no-samples')) {
       const samples = await ensureFtcSamples()
       console.log(`FtcRobotController samples (${samples.files.length}): ${samples.dir}`)

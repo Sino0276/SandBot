@@ -1,10 +1,12 @@
 // JVM 사이드카(가짜 FTC SDK + 런타임)를 빌드해 resources/sidecar/에 둔다(pnpm build:sidecar).
 //   sandbot-sdk.jar     sim + 손 구현(sidecar/sdk) + 들여온 실제 SDK 클래스(시간 API 패치) + 껍데기(stub)
 //   sandbot-runtime.jar runtime(sidecar/runtime, Main-Class org.sandbot.runtime.Main)
+//   sandbot-dashboard.jar FTC Dashboard 대체(라이브러리 L2): 손 구현(sidecar/libs/dashboard) + 들여온 실제 Dashboard 0.6.0
+//                       클래스(시간 API 패치) + 껍데기. 팀 Gradle이 Dashboard를 선언하면 메인이 실행 클래스패스에 넣는다
 //   sidecar.json        { sourceHash, sdkVersion, protocol, javaRelease }(--allow-missing으로 빠진 것이 있으면 incomplete)
-//   NOTICE.txt          FTC SDK의 BSD 고지(들여온 바이너리를 배포하므로)
-// 순서: JDK 찾기 → SDK 받기(scripts/fetch-ftc-sdk.mjs) → 빌드 도구(sidecar/tools) 컴파일 → org.sandbot.tools.SdkBuild
-// (stub 생성·컴파일·들여오기·패치·링크 확인·API 대조·jar). 자세한 단계는 SdkBuild.java.
+//   NOTICE.txt          FTC SDK의 BSD 고지, Gson의 Apache 2.0, FTC Dashboard의 MIT 고지(들여온 바이너리를 배포하므로)
+// 순서: JDK 찾기 → SDK·Dashboard 받기(scripts/fetch-ftc-sdk.mjs) → 빌드 도구(sidecar/tools) 컴파일 → org.sandbot.tools.SdkBuild
+// (stub 생성·컴파일·들여오기·패치·링크 확인·API 대조·jar, 그다음 같은 순서로 Dashboard 층). 자세한 단계는 SdkBuild.java.
 //
 // 사용법: node scripts/build-sidecar.mjs [--if-stale] [--optional] [--allow-missing] [--out <dir>] [--report <file>]
 //   --if-stale      출력 폴더의 sidecar.json의 sourceHash가 지금 소스와 같으면 건너뛴다(scripts/sidecar-source.mjs)
@@ -30,7 +32,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
-import { ensureFtcSdk, FetchError, SDK_VERSION } from './fetch-ftc-sdk.mjs'
+import { ensureFtcDashboard, ensureFtcSdk, FetchError, SDK_VERSION } from './fetch-ftc-sdk.mjs'
 import {
   MIN_JDK,
   findJdk,
@@ -80,8 +82,8 @@ function isFresh(dir, hash, lenient) {
   const info = readJson(join(dir, 'sidecar.json'))
   if (!info || info.sourceHash !== hash) return false
   if (!lenient && Array.isArray(info.incomplete) && info.incomplete.length > 0) return false
-  return ['sandbot-sdk.jar', 'sandbot-runtime.jar', 'NOTICE.txt'].every((f) =>
-    existsSync(join(dir, f))
+  return ['sandbot-sdk.jar', 'sandbot-runtime.jar', 'sandbot-dashboard.jar', 'NOTICE.txt'].every(
+    (f) => existsSync(join(dir, f))
   )
 }
 
@@ -217,8 +219,10 @@ async function main() {
       return 0
     }
     let sdk
+    let dashboard
     try {
       sdk = await ensureFtcSdk()
+      dashboard = await ensureFtcDashboard()
     } catch (error) {
       if (!(error instanceof FetchError)) throw error
       if (optional) {
@@ -253,6 +257,10 @@ async function main() {
       join(repoRoot, 'sidecar', 'sdk'),
       '--runtime',
       join(repoRoot, 'sidecar', 'runtime'),
+      '--dashboard-real',
+      dashboard.jars.join(delimiter),
+      '--dashboard-hand',
+      join(repoRoot, 'sidecar', 'libs', 'dashboard'),
       '--must-provide',
       join(repoRoot, 'sidecar', 'tools', 'must-provide.txt'),
       '--source-hash',
