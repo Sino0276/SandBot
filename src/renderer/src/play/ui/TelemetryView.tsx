@@ -30,7 +30,7 @@ function DashboardTelemetry({ dash }: { dash: DashTelemetry }): React.JSX.Elemen
             <div className="telemetry-log" aria-label={t('telemetry.dashboardLog')}>
               {dash.log.map((line, index) => (
                 <div key={index} className="telemetry-line">
-                  {line === '' ? ' ' : line}
+                  {line === '' ? ' ' : line}
                 </div>
               ))}
             </div>
@@ -73,14 +73,14 @@ function TelemetryView(): React.JSX.Element {
         <div className={monospace ? 'telemetry-body is-monospace' : 'telemetry-body'}>
           {shown.lines.map((line, index) => (
             <div key={index} className="telemetry-line">
-              {line === '' ? ' ' : line}
+              {line === '' ? ' ' : line}
             </div>
           ))}
           {shown.log.length > 0 && (
             <div className="telemetry-log" aria-label={t('telemetry.log')}>
               {shown.log.map((line, index) => (
                 <div key={index} className="telemetry-line">
-                  {line === '' ? ' ' : line}
+                  {line === '' ? ' ' : line}
                 </div>
               ))}
             </div>
