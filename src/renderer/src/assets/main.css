@@ -794,13 +794,16 @@ body {
   color: var(--color-text-muted);
 }
 
-/* 질량 카드·Rigidbody 카드(editor/mass)의 읽기 전용 세 축 값: 이름 칸은 .hw-row와 같은 열 */
+/* 질량 카드·Rigidbody 카드(editor/mass)의 읽기 전용 세 축 값: 인스펙터의 "로봇 중심 기준"(.robot-center)처럼 이름을 한
+   줄에 두고 값 칸은 폭 전체를 쓴다(한 줄에 나누면 값 칸이 좁아 "-10.00"·영어 이름이 잘린다) */
 .mass-vector {
-  display: grid;
-  grid-template-columns: minmax(72px, 38%) 1fr;
-  align-items: center;
-  gap: 6px;
   margin-bottom: 4px;
+}
+
+.mass-vector > .hw-row-label {
+  display: block;
+  margin-bottom: 2px;
+  white-space: normal;
 }
 
 .mass-center > .vector-row-fields {

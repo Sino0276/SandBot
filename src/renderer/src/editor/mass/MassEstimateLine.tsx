@@ -22,24 +22,26 @@ function MassEstimateLine({ object }: { object: SceneObject }): React.JSX.Elemen
   const summaryOf = useCadMassSummary()
   const result = model.objects[object.id]
   if (object.kind === 'robot' || object.mass || !result) return null
-  // 이 오브젝트를 가리키는 알림(포드로 볼 수 없음 등)도 카드 없이 보인다
+  // 이 오브젝트를 가리키는 알림(데이터시트 질량을 쓰지 않음 등)도 카드 없이 보인다
   const notices = objectNotices(model, object.id)
+  const text = estimateLine(
+    t,
+    objects,
+    result,
+    lengthUnit,
+    DEFAULT_DESCRIBERS,
+    loadingCad(objects, object.id, summaryOf, hasMassProps)
+  )
+  // 한 줄은 좁은 인스펙터에서 잘리므로(긴 CAD 이름의 출처) 도움말이 전체 글자와 누르면 하는 일을 보인다
   return (
     <>
       <button
         type="button"
         className="mass-estimate"
-        title={t('mass.estimateHint')}
+        title={`${text}\n${t('mass.estimateHint')}`}
         onClick={() => setObjectMass(object.id, {})}
       >
-        {estimateLine(
-          t,
-          objects,
-          result,
-          lengthUnit,
-          DEFAULT_DESCRIBERS,
-          loadingCad(objects, object.id, summaryOf, hasMassProps)
-        )}
+        {text}
       </button>
       {notices.length > 0 && (
         <ul className="hw-issues">

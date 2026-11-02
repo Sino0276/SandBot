@@ -926,6 +926,12 @@ describe('질량 카드 그리기', () => {
       `질량(추정) ${massText(t, 0.437, 'mm')} · 로봇 기본 재질: 알루미늄 6061</button>`
     )
     expect(plate).toContain('컴포넌트가 없습니다')
+    // 한 줄은 좁은 인스펙터에서 잘리므로 도움말(title)이 전체 글자와 누르면 하는 일을 보인다
+    const line = `질량(추정) ${massText(t, 0.437, 'mm')} · 로봇 기본 재질: 알루미늄 6061`
+    expect(plate).toContain(
+      `title="${line}
+누르면 질량 카드를 붙여 재질·질량을 정할 수 있습니다."`
+    )
     // 로봇에는 질량 카드가 없다(Rigidbody 카드), 추정 한 줄도 없다
     const robot = render(objects, () => <HardwareComponentsSection object={objects.R} />)
     expect(option(robot)).toContain('disabled')
