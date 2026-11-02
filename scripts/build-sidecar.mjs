@@ -251,6 +251,8 @@ async function main() {
       liftableJars(sdk).join(delimiter),
       '--android',
       sdk.androidJar,
+      '--api-reference',
+      sdk.apiJars.join(delimiter),
       '--sim',
       join(repoRoot, 'sidecar', 'sim'),
       '--sdk',

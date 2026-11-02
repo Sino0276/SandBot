@@ -13,14 +13,18 @@ sandbot-sdk.jar contains:
 2. Java sources derived from the same SDK and compiled by SandBot: the public and protected
    API of the remaining SDK classes (method bodies replaced), and SDK classes re-implemented
    for the simulator from the SDK sources (each such source file keeps its original
-   copyright header).
+   copyright header). One of them,
+   org.firstinspires.ftc.robotserver.internal.webserver.MimeTypesUtil, comes from the
+   RobotServer 12.0.0 sources (org.firstinspires.ftc:RobotServer, 3-Clause BSD); the rest of
+   RobotServer is not included.
 
 Each SDK file is licensed under the terms in its source header. The copyright holders include
 FIRST, Qualcomm Technologies Inc., Robert Atkinson, REV Robotics, Craig MacFarlane,
 Noah Andrews, Michael Hoogasian, Molly Nicholas, Ryan Brott, Phil Malone, Steve Geffner,
 AndyMark Inc., Limelight Vision, DigitalChickenLabs, Miriam Sinton-Remes, Base 10 Assets LLC,
-goBILDA, Kauai Labs and other contributors. Most files use the following BSD-style license
-(with the respective copyright holder named in the first line and in the third condition):
+goBILDA, Kauai Labs, Google Inc. and other contributors. Most files use the following BSD-style
+license (with the respective copyright holder named in the first line and in the third
+condition):
 
 ------------------------------------------------------------------------------------------
 Copyright (c) 2014-2025 FIRST. All rights reserved.
@@ -137,7 +141,8 @@ and limitations under the License.
 
 The other Android and library type names that appear in the SDK API are declared as empty
 placeholder types or written by SandBot (android.graphics.Color, android.opengl.Matrix,
-android.util.Log, android.os.SystemClock); no other Android code is included.
+android.util.Log, android.os.SystemClock, and the signatures of android.content.Context#getAssets
+and parts of android.content.res.AssetManager); no other Android code is included.
 
 sandbot-dashboard.jar contains:
 
@@ -145,8 +150,9 @@ sandbot-dashboard.jar contains:
    and com.acmerobotics.dashboard:dashboard 0.6.0, https://github.com/acmerobotics/ftc-dashboard)
    whose references close over the JDK, the SDK above and SandBot's own implementation, with the
    same clock and collection-order redirection; the public and protected API of the remaining
-   Dashboard classes (method bodies replaced); and com.acmerobotics.dashboard.FtcDashboard,
-   re-implemented for the simulator from the FTC Dashboard sources (the source file keeps the
+   Dashboard classes (method bodies replaced); and com.acmerobotics.dashboard.FtcDashboard and
+   com.acmerobotics.dashboard.config.reflection.{ReflectionConfig, FieldProvider, ArrayProvider},
+   re-implemented for the simulator from the FTC Dashboard sources (the source files keep the
    license below). No web client, image or other asset of FTC Dashboard is included. FTC Dashboard
    is licensed under the MIT License:
 

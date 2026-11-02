@@ -2,6 +2,8 @@
 // git에 넣지 않는다. 해시는 이 파일에 고정했고, 이미 있고 해시가 맞으면 다시 받지 않는다.
 // - Maven Central의 org.firstinspires.ftc:{RobotCore,Hardware,FtcCommon,Vision}:12.0.0 AAR → 안의 classes.jar를
 //   sidecar/build/ftc-sdk/12.0.0/<이름>.jar로(AAR의 libs/*.jar는 libs/로)
+// - 같은 곳의 RobotServer 12.0.0 AAR → classes.jar만 RobotServer.jar로. 들여오기·stub에는 쓰지 않고, 그 패키지의 손 구현
+//   (Road Runner 웹 처리기가 링크하는 MimeTypesUtil 등)의 API 대조 기준으로만 쓴다
 // - com.google.android:android:4.1.1.4 jar(안드로이드 API 껍데기, stub 생성기가 형식 이름·종류를 읽는다)
 // - 호환 테스트용 FtcRobotController v12.0 샘플(고정 커밋, 파일마다 SHA-256) → sidecar/build/ftc-samples/12.0/
 // - FTC Dashboard 0.6.0(MIT, maven.brott.dev): dashboard AAR(안의 classes.jar → dashboard.jar)과 core jar →
@@ -31,6 +33,12 @@ const AARS = [
   ['Hardware', 'aac18059bb25bcd839c2ecd58b1cd3a320a9deec7515ab1182fc0b02b9b19613'],
   ['FtcCommon', '9a59782b3c1e25d627134b65314a8f5ed1b97e8cc3a711269e86a0d5fbc7da2a'],
   ['Vision', '96a2a8d0c1071612d1656dcf6e90dafc3863ec1f31a5017152e2f66725a536f4']
+]
+
+// API 대조 기준으로만 쓰는 AAR의 SHA-256(Maven Central 12.0.0). TeamCode 템플릿의 컴파일 클래스패스에 있지만(build.dependencies.gradle)
+// 대부분 웹 서버라 가짜 SDK는 그 형식을 이름만 둔다(불투명 껍데기). 손 구현한 것만 이 jar와 API가 같아야 한다.
+const API_AARS = [
+  ['RobotServer', '3db66b7977c949f134a7c5e1cd62cd2321ee0684ea3db02d5a4f24b13a60ae26']
 ]
 
 const ANDROID_JAR = {
@@ -336,58 +344,68 @@ export function readZip(bytes) {
 
 /**
  * SDK jar들을 받아 둔다(있고 맞으면 그대로).
- * @returns {Promise<{ version: string, jars: string[], libs: string[], androidJar: string }>}
+ * @returns {Promise<{ version: string, jars: string[], libs: string[], apiJars: string[], androidJar: string }>}
+ *   apiJars: API 대조 기준으로만 쓰는 jar(API_AARS의 classes.jar)
  */
 export async function ensureFtcSdk({ log = console.log } = {}) {
   const versionDir = join(ftcSdkDir, SDK_VERSION)
   const jars = []
   const libs = []
   for (const [name, hash] of AARS) {
-    const aar = join(versionDir, 'aar', `${name}-${SDK_VERSION}.aar`)
-    const jar = join(versionDir, `${name}.jar`)
-    const stamp = join(versionDir, `${name}.extracted`)
-    let bytes = null
-    if (fileHash(aar) !== hash) {
-      log(`downloading ${name}-${SDK_VERSION}.aar`)
-      const url = `${MAVEN}/org/firstinspires/ftc/${name}/${SDK_VERSION}/${name}-${SDK_VERSION}.aar`
-      bytes = await download(url, hash, log)
-      writeAtomic(aar, bytes)
-    }
-    // classes.jar(와 libs/*.jar)는 이 AAR에서 꺼낸 것일 때만 쓴다
-    let extracted = null
-    try {
-      extracted = JSON.parse(readFileSync(stamp, 'utf8'))
-    } catch {
-      // 다시 꺼낸다
-    }
-    const valid =
-      extracted?.aar === hash &&
-      fileHash(jar) === extracted.jar &&
-      (extracted.libs ?? []).every(([lib, h]) => fileHash(join(versionDir, 'libs', lib)) === h)
-    if (!valid) {
-      const zip = readZip(bytes ?? readFileSync(aar))
-      const classes = zip.read('classes.jar')
-      if (!classes) throw new FetchError(`${name}-${SDK_VERSION}.aar has no classes.jar`)
-      writeAtomic(jar, classes)
-      const libHashes = []
-      for (const entry of zip.names().filter((n) => /^libs\/[^/]+\.jar$/.test(n))) {
-        const lib = entry.slice('libs/'.length)
-        const libBytes = zip.read(entry)
-        writeAtomic(join(versionDir, 'libs', lib), libBytes)
-        libHashes.push([lib, sha256(libBytes)])
-      }
-      extracted = { aar: hash, jar: sha256(classes), libs: libHashes }
-      writeAtomic(stamp, `${JSON.stringify(extracted, null, 2)}\n`)
-    }
-    jars.push(jar)
-    for (const [lib] of extracted.libs) libs.push(join(versionDir, 'libs', lib))
+    const extracted = await ensureAar(versionDir, name, hash, true, log)
+    jars.push(extracted.jar)
+    libs.push(...extracted.libs)
   }
+  const apiJars = []
+  for (const [name, hash] of API_AARS)
+    apiJars.push((await ensureAar(versionDir, name, hash, false, log)).jar)
   const androidJar = join(ftcSdkDir, ANDROID_JAR.file)
   if (fileHash(androidJar) !== ANDROID_JAR.sha256) {
     log(`downloading ${ANDROID_JAR.file}`)
     writeAtomic(androidJar, await download(ANDROID_JAR.url, ANDROID_JAR.sha256, log))
   }
-  return { version: SDK_VERSION, jars, libs, androidJar }
+  return { version: SDK_VERSION, jars, libs, apiJars, androidJar }
+}
+
+// SDK AAR 하나를 받고(있고 맞으면 그대로) classes.jar를 <이름>.jar로 꺼낸다. withLibs면 libs/*.jar도 libs/로 꺼낸다.
+async function ensureAar(versionDir, name, hash, withLibs, log) {
+  const aar = join(versionDir, 'aar', `${name}-${SDK_VERSION}.aar`)
+  const jar = join(versionDir, `${name}.jar`)
+  const stamp = join(versionDir, `${name}.extracted`)
+  let bytes = null
+  if (fileHash(aar) !== hash) {
+    log(`downloading ${name}-${SDK_VERSION}.aar`)
+    const url = `${MAVEN}/org/firstinspires/ftc/${name}/${SDK_VERSION}/${name}-${SDK_VERSION}.aar`
+    bytes = await download(url, hash, log)
+    writeAtomic(aar, bytes)
+  }
+  // classes.jar(와 libs/*.jar)는 이 AAR에서 꺼낸 것일 때만 쓴다
+  let extracted = null
+  try {
+    extracted = JSON.parse(readFileSync(stamp, 'utf8'))
+  } catch {
+    // 다시 꺼낸다
+  }
+  const valid =
+    extracted?.aar === hash &&
+    fileHash(jar) === extracted.jar &&
+    (extracted.libs ?? []).every(([lib, h]) => fileHash(join(versionDir, 'libs', lib)) === h)
+  if (!valid) {
+    const zip = readZip(bytes ?? readFileSync(aar))
+    const classes = zip.read('classes.jar')
+    if (!classes) throw new FetchError(`${name}-${SDK_VERSION}.aar has no classes.jar`)
+    writeAtomic(jar, classes)
+    const libHashes = []
+    for (const entry of zip.names().filter((n) => withLibs && /^libs\/[^/]+\.jar$/.test(n))) {
+      const lib = entry.slice('libs/'.length)
+      const libBytes = zip.read(entry)
+      writeAtomic(join(versionDir, 'libs', lib), libBytes)
+      libHashes.push([lib, sha256(libBytes)])
+    }
+    extracted = { aar: hash, jar: sha256(classes), libs: libHashes }
+    writeAtomic(stamp, `${JSON.stringify(extracted, null, 2)}\n`)
+  }
+  return { jar, libs: extracted.libs.map(([lib]) => join(versionDir, 'libs', lib)) }
 }
 
 // ---- FTC Dashboard

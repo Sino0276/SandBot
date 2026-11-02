@@ -40,7 +40,8 @@ import javax.tools.ToolProvider;
  *   <li>sim + 손 구현 + stub을 들여온 클래스에 대고 컴파일(--release 8).
  *   <li>runtime 컴파일(--release 17).
  *   <li>들여온 클래스 패치(R의 org.sandbot.runtime.patch.PatchTool, 따로 JVM) → 링크 확인.
- *   <li>API 대조(손 구현, 그리고 stub이 실제와 같은지), 반드시 있어야 할 클래스 확인.
+ *   <li>API 대조(손 구현 — 들여오지 않는 SDK 묶음의 손 구현은 --api-reference의 jar와 —, 그리고 stub이 실제와 같은지), 반드시
+ *       있어야 할 클래스 확인.
  *   <li>FTC Dashboard 층(--dashboard-real이 있으면, 라이브러리 L2): 실제 Dashboard 0.6.0 jar를 또 하나의 SDK처럼 같은 순서로
  *       다룬다(손 구현 sidecar/libs/dashboard → 들여오기 → stub → 컴파일 → 패치 → 링크 확인 → API 대조). 세계는 위의 최종 SDK에서
  *       stub을 뺀 것이고, 스레드·서버를 띄우는 클래스(DashboardCore·hardware·limelight)는 닫혀도 stub으로 둔다.
@@ -93,6 +94,19 @@ public final class SdkBuild {
         String value = options.get(option);
         if (value == null) throw new IllegalArgumentException("missing option " + option);
         return Paths.get(value).toAbsolutePath();
+    }
+
+    /**
+     * 손 구현의 API 대조 기준: 실제 SDK jar와 --api-reference의 jar(RobotServer처럼 들여오기·stub에는 쓰지 않는 SDK 묶음,
+     * scripts/fetch-ftc-sdk.mjs의 API_AARS). 그 묶음의 손 구현만 실제와 같은 API인지 본다.
+     */
+    private ClassSource apiReference(ClassSource real) {
+        String value = options.get("--api-reference");
+        if (value == null || value.isEmpty()) return real;
+        List<ClassSource> sources = new ArrayList<>();
+        sources.add(real);
+        for (String p : value.split(File.pathSeparator)) sources.add(ClassSource.jar(Paths.get(p).toAbsolutePath()));
+        return ClassSource.chain(sources);
     }
 
     private void step(String what) {
@@ -253,7 +267,7 @@ public final class SdkBuild {
         // 가짜 SDK에 없는 형식(Gson 등)의 애너테이션은 손 구현이 쓸 수 없다
         ClassSource finalWorld = ClassSource.chain(Arrays.asList(sdkClasses, liftedSource, jdk));
         handCheck.annotationFilter = finalWorld::has;
-        handCheck.checkHand(sdkClasses, handNames, real, android, lifter);
+        handCheck.checkHand(sdkClasses, handNames, apiReference(real), android, lifter);
         for (String e : handCheck.errors) errors.add("api: " + e);
         for (String w : handCheck.warnings) warnings.add("api: " + w);
         ApiCheck stubCheck = new ApiCheck();

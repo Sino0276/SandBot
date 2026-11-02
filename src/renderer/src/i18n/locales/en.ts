@@ -936,6 +936,8 @@ const en: Messages = {
       'Run an OpMode to see the FTC Dashboard @Config values here and edit them while it runs (like the Dashboard Configuration panel).',
     empty:
       'This run has no Dashboard configuration variables (no @Config classes or addConfigVariable).',
+    waiting:
+      'Waiting for the Dashboard configuration variables (none arrive if the OpMode does not use FTC Dashboard).',
     tree: 'Dashboard configuration variables',
     revertHint:
       'Values changed during a run revert on STOP (the next run uses the file values). To keep one, press [Apply to file] and then save (Ctrl+S).',

@@ -941,6 +941,8 @@ const ko = {
     noRun:
       'OpMode를 실행하면 FTC Dashboard의 @Config 값이 여기에 보이고, 실행 중에 고칠 수 있습니다(Dashboard 설정 패널처럼).',
     empty: '이 실행에는 Dashboard 설정 변수가 없습니다(@Config 클래스나 addConfigVariable이 없음).',
+    waiting:
+      'Dashboard 설정 변수를 기다리는 중입니다(OpMode가 FTC Dashboard를 쓰지 않으면 오지 않습니다).',
     tree: 'Dashboard 설정 변수',
     revertHint:
       '실행 중 바꾼 값은 STOP하면 되돌아갑니다(다음 실행은 파일 값). 파일에 남기려면 [파일에 반영]을 누른 뒤 저장(Ctrl+S)하세요.',

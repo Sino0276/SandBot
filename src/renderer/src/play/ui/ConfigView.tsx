@@ -25,7 +25,7 @@ import {
   type ConfigRow
 } from '../dashConfigModel'
 import { canEditDashConfig, sendDashConfig } from '../playActions'
-import { usePlayStore, type DashConfigState } from '../playStore'
+import { isRunActive, usePlayStore, type DashConfigState } from '../playStore'
 
 // Config 탭(FTC Dashboard 설정 패널처럼): @Config 클래스와 addConfigVariable 변수의 트리. 묶음은 접고 펼치고, 값은
 // 형식별 입력(boolean 체크, enum 선택, 수·글자 입력)으로 실행 중에 고친다(Enter·포커스 이동에 보냄). 실행이 아니면
@@ -317,6 +317,10 @@ function ConfigView(): React.JSX.Element {
   )
 
   if (!config) {
+    // 실행 중 아직 트리가 오지 않았다: 사이드카가 INIT 전 스캔 뒤 첫 틱 경계에 보낸다(Dashboard를 쓰지 않으면 오지 않는다).
+    // 변수가 없다고 말하지 않는다.
+    if (isRunActive(run) && !run.detached)
+      return <p className="panel-empty">{t('config.waiting')}</p>
     const ran = run !== null && run.phase !== 'preparing' && run.phase !== 'compiling'
     return <p className="panel-empty">{ran ? t('config.empty') : t('config.noRun')}</p>
   }

@@ -27,7 +27,8 @@ import java.util.TreeSet;
  *       (실제 addConfigClasses, 정적 초기화는 그때 돈다).
  *   <li>OpMode 수명 알림({@link #preInit}·{@link #preStart}·{@link #postStop}): 실제 OpModeManagerImpl이 리스너에게 하듯
  *       OpModeManagerNotifier.Notifications로 부른다.
- *   <li>틱 경계({@link #tickBoundary}): tickReply.configSet을 적용하고, 보낼 때가 된 패킷 묶음과 바뀐 설정 트리를 보낸다.
+ *   <li>틱 경계: tick을 보내기 전({@link #beforeTick}) 보낼 때가 된 패킷 묶음과 바뀐 설정 트리를 보내고(호스트가 일시 정지로
+ *       답을 미뤄도 이미 가 있게), 답을 받은 뒤({@link #tickBoundary}) tickReply.configSet을 적용해 바뀐 트리를 보낸다.
  *   <li>끝({@link #flush}): 남은 것을 보낸다.
  * </ol>
  * Dashboard가 만든 JSON 글자는 Protocol의 dash·dashConfig·notice로 내보낸다. 실제(Android) FtcDashboard가 클래스패스에 있으면
@@ -155,8 +156,13 @@ final class DashboardBridge implements SimDashboardHost {
         if (listener != null) listener.onOpModePostStop(opMode);
     }
 
+    /** 틱 경계(OpModeRunner.onTick, tick을 보내기 전): 보낼 때가 된 패킷 묶음과 바뀐 설정 트리를 보낸다 */
+    void beforeTick(long tNanos) {
+        if (hooks != null) hooks.beforeTick(tNanos);
+    }
+
     /**
-     * 틱 경계(OpModeRunner.onTick, 답을 받은 뒤): configSet(tickReply의 {path, value} 배열)을 Dashboard에 넘기고 패킷·설정 트리를
+     * 틱 경계(OpModeRunner.onTick, 답을 받은 뒤): configSet(tickReply의 {path, value} 배열)을 Dashboard에 넘기고 바뀐 설정 트리를
      * 보내게 한다. 모양이 틀린 항목은 버린다(호스트가 이미 확인했다).
      */
     void tickBoundary(long tNanos, Object configSet) {

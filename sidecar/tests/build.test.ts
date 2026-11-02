@@ -112,11 +112,17 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
           'com.acmerobotics.dashboard.limelight.LimelightProxyManager'
         ])
       )
+      // 실제 Dashboard 클래스를 옮긴 손 구현(FtcDashboard, ART의 리플렉션 접근 규칙으로 필드를 읽는 config.reflection) 밖에
       // SDK 패키지에 더한 손 구현은 Sandbot으로 시작한다
-      for (const name of dashboard.hand.filter(
-        (n) => n !== 'com.acmerobotics.dashboard.FtcDashboard'
-      ))
+      const ported = new Set([
+        'com.acmerobotics.dashboard.FtcDashboard',
+        'com.acmerobotics.dashboard.config.reflection.ArrayProvider',
+        'com.acmerobotics.dashboard.config.reflection.FieldProvider',
+        'com.acmerobotics.dashboard.config.reflection.ReflectionConfig'
+      ])
+      for (const name of dashboard.hand.filter((n) => !ported.has(n)))
         expect(name.split('.').at(-1)).toMatch(/^Sandbot/)
+      for (const name of ported) expect(dashboard.mustProvide[name], name).toBe('hand')
       const entries = new Set(jarEntries(build.dashboardJar))
       for (const name of Object.keys(dashboard.mustProvide))
         expect(entries.has(`${name.replace(/\./g, '/')}.class`), name).toBe(true)

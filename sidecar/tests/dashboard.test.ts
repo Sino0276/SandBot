@@ -4,7 +4,7 @@
 // START, 정한 틱에 configSet)다.
 //  - Actions.runBlocking이 dash 패킷(data·log·ops)을 전송 간격(가상 100 ms)마다 보내고, 두 번 돌리면 바이트가 같다
 //  - @Config 트리(이름순, 형식·enum 상수·source, final·@Disabled 제외, @Config 이름, addConfigVariable·autoRemove)와 configSet이
-//    다음 루프에 보이고 dashConfig가 다시 온다(받지 않는 값은 경고 로그)
+//    다음 루프에 보이고 dashConfig가 다시 온다(받지 않는 값은 경고 로그). public이 아닌 @Config 클래스도 로봇(ART)처럼 읽고 고친다
 //  - MultipleTelemetry(DS + Dashboard)의 실제 예외·null, clear의 cleared, 카메라·이미지 안내 한 번, 한도
 // JDK가 없으면 모두 건너뛴다. 라이브러리를 받지 못하면(오프라인) 이유를 출력하고 건너뛴다(SANDBOT_TEST_LIBRARIES_REQUIRED=1이면 실패).
 import { spawn } from 'node:child_process'
@@ -119,9 +119,12 @@ type Host = {
   maxTicks?: number
   // 실행 클래스패스에 더할 라이브러리 jar
   extraLibraries?: string[]
+  // 일시 정지처럼 이 틱의 답을 벽시계로 미룬다(session.ts가 일시 정지 중 답을 보류하듯)
+  hold?: { tick: number; millis: number }
 }
 
-type Run = { messages: SidecarMessage[]; raw: string[]; stderr: string }
+// held: 미룬 틱을 받은 때까지 온 메시지 종류(호스트가 일시 정지 중 가진 것)
+type Run = { messages: SidecarMessage[]; raw: string[]; stderr: string; held?: string[] }
 
 function runRequest(b: SidecarBuild, host: Host): RunRequest {
   return {
@@ -194,14 +197,20 @@ function runSidecar(b: SidecarBuild, host: Host): Promise<Run> {
         send({ type: 'shutdown' })
         return
       }
-      send({
+      const reply: HostMessage = {
         type: 'tickReply',
         tick: message.tick,
         events: host.events?.[message.tick] ?? (message.tick === START_TICK ? ['start'] : []),
         gamepads: [null, null],
         inputs: {},
         configSet: host.configSet?.[message.tick] ?? []
-      })
+      }
+      if (host.hold?.tick === message.tick) {
+        run.held = run.messages.map((m) => m.type)
+        setTimeout(() => send(reply), host.hold.millis)
+      } else {
+        send(reply)
+      }
     }
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
@@ -301,12 +310,12 @@ describe.skipIf(build === null)('FTC Dashboard 대체: Road Runner Actions.runBl
       expect(errors(first), explain(first)).toEqual([])
       expect(finishedReason(first)).toBe('returned')
       expect(results(first)).toEqual([{ loops: '60', instance: 'true' }])
-      // 링크 검사: Road Runner가 쓰는 Dashboard 클래스·멤버는 모두 대체에 있다(남는 경고는 Road Runner의 웹 처리기·AppUtil 쪽)
+      // 링크 검사: Road Runner(ftc·actions·core)와 Dashboard 대체가 쓰는 클래스·멤버는 가짜 SDK와 대체에 모두 있다(웹 처리기가
+      // 쓰는 Android 자원·MIME API도 실제 서명으로 있다)
       const link = first.messages.find((m) => m.type === 'linkReport')
       expect(link?.type).toBe('linkReport')
       const warnings = link?.type === 'linkReport' ? link.warnings : []
-      expect(warnings.filter((w) => w.target.startsWith('com.acmerobotics.dashboard.'))).toEqual([])
-      expect(warnings.filter((w) => w.jar === b.dashboardJar)).toEqual([])
+      expect(warnings).toEqual([])
 
       const packets = dashes(first)
       // 루프 60번 × 20 ms ≈ 1.2 s, 전송 간격 100 ms → 묶음 10여 개(루프마다가 아니다)
@@ -515,6 +524,132 @@ describe.skipIf(build === null)('FTC Dashboard 대체: @Config와 Config 탭', (
       expect(names(nodeAt(final.root, ['Runtime']))).toEqual(['scale'])
 
       // 같은 입력이면 dash·dashConfig를 포함해 바이트가 같다(설정 트리는 이름순, HashMap 순서가 들어가지 않는다)
+      const again = await runSidecar(b, host)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    'INIT에서 일시 정지해도(tick 0의 답을 미룸) 설정 트리가 이미 호스트에 있고, 그동안 고친 값은 OpMode를 만들기 전에 들어간다',
+    async () => {
+      const host: Host = {
+        opMode: 'DashConfigLoop',
+        events: { [START_TICK]: ['start'], [STOP_TICK]: ['stop'] },
+        hold: { tick: 0, millis: 300 },
+        // 일시 정지 중에 고친 값은 미룬 답(tick 0)에 실린다
+        configSet: { 0: [{ path: loop('SPEED'), value: '0.9' }] }
+      }
+      const run = await runSidecar(b, host)
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      // tick 0을 받았을 때(호스트가 답을 미루는 동안) INIT 전 스캔의 트리가 이미 와 있다
+      expect(run.held).toContain('dashConfig')
+      const first = configs(run)[0]
+      expect(first.tNanos).toBe(0)
+      expect(nodeAt(first.root, loop('SPEED'))).toMatchObject({ value: '0.5' })
+      // 미룬 답의 configSet은 tick 0 경계에서 적용되고 트리를 다시 보낸다(OpMode를 만들기 전, 첫 루프부터 새 값)
+      const applied = configs(run)[1]
+      expect(applied.tNanos).toBe(0)
+      expect(nodeAt(applied.root, loop('SPEED'))).toMatchObject({ value: '0.9' })
+      expect(results(run)[0]).toMatchObject({ speed: '0.9' })
+      // 틱 경계의 패킷 묶음과 바뀐 트리는 그 경계의 tick보다 먼저, configSet을 적용한 뒤의 트리는 그 tick 뒤에 온다
+      const tickIndex = new Map<number, number>()
+      run.messages.forEach((m, i) => {
+        if (m.type === 'tick') tickIndex.set(m.tNanos, i)
+      })
+      run.messages.forEach((m, i) => {
+        if (m.type !== 'dash' && m.type !== 'dashConfig') return
+        const tick = tickIndex.get(m.tNanos)
+        if (tick === undefined) return
+        if (m.type === 'dashConfig' && m === applied) expect(i).toBeGreaterThan(tick)
+        else expect(i, JSON.stringify(m).slice(0, 120)).toBeLessThan(tick)
+      })
+      // 같은 입력이면 바이트가 같다(답을 미룬 벽시계 시간은 메시지에 들어가지 않는다)
+      const again = await runSidecar(b, { ...host, hold: undefined })
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    'public이 아닌 @Config 클래스(패키지 전용 최상위·중첩, 패키지 전용 상위 클래스의 필드)도 로봇(ART)처럼 읽고 고친다(final만 거부)',
+    async () => {
+      const at = (...path: string[]): string[] => path
+      const host: Host = {
+        opMode: 'DashNonPublicConfig',
+        events: { [START_TICK]: ['start'], [STOP_TICK]: ['stop'] },
+        configSet: {
+          [SET_TICK]: [
+            { path: at('PkgConstants', 'KP'), value: '0.5' },
+            { path: at('Nested', 'TICKS'), value: '7' },
+            { path: at('PkgConstants', 'POSITIONS', '1'), value: '3.5' },
+            { path: at('PkgConstants', 'GAINS', 'kP'), value: '0.2' },
+            { path: at('Derived', 'BASE'), value: '2.5' },
+            { path: at('PkgConstants', 'GAINS', 'kI'), value: '1' }
+          ]
+        }
+      }
+      const run = await runSidecar(b, host)
+      // 객체·배열 필드가 있는 패키지 전용 클래스도 INIT 전 스캔에서 실패하지 않는다
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+
+      const trees = configs(run)
+      const initial = trees[0].root
+      expect(names(initial)).toEqual(['Derived', 'Nested', 'PkgConstants'])
+      const source = (cls: string, field: string): { declaringClass: string; field: string } => ({
+        declaringClass: `${PACKAGE}.${cls}`,
+        field
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'KP'))).toEqual({
+        kind: 'value',
+        type: 'double',
+        value: '0.25',
+        enumValues: [],
+        source: source('PkgConstants', 'KP')
+      })
+      expect(nodeAt(initial, at('Nested', 'TICKS'))).toEqual({
+        kind: 'value',
+        type: 'int',
+        value: '42',
+        enumValues: [],
+        source: source('DashNonPublicConfig$Nested', 'TICKS')
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'POSITIONS', '1'))).toMatchObject({
+        type: 'double',
+        value: '2.0',
+        source: null
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'GAINS', 'kP'))).toMatchObject({
+        type: 'double',
+        value: '0.1',
+        source: source('PkgGains', 'kP')
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'GAINS', 'kI'))).toMatchObject({ value: '0.0' })
+      expect(nodeAt(initial, at('Derived', 'BASE'))).toMatchObject({
+        type: 'double',
+        value: '1.5',
+        source: source('PkgBase', 'BASE')
+      })
+
+      // configSet 다음 루프(final 필드는 로봇처럼 쓰지 못한다)
+      expect(results(run)).toEqual([
+        { kp: '0.25', ticks: '42', pos1: '2.0', gainP: '0.1', base: '1.5', fixedI: '0.0' },
+        { kp: '0.5', ticks: '7', pos1: '3.5', gainP: '0.2', base: '2.5', fixedI: '0.0' }
+      ])
+      const after = trees.find((t) => t.tNanos >= SET_TICK * DEFAULT_TICK_NANOS)!
+      expect(nodeAt(after.root, at('PkgConstants', 'KP'))).toMatchObject({ value: '0.5' })
+      expect(nodeAt(after.root, at('Nested', 'TICKS'))).toMatchObject({ value: '7' })
+      expect(nodeAt(after.root, at('PkgConstants', 'GAINS', 'kI'))).toMatchObject({ value: '0.0' })
+      const log = robotLog(run).filter((line) => line.includes('Dashboard config'))
+      expect(log).toEqual([
+        expect.stringMatching(
+          /PkgConstants\/GAINS\/kI could not be set: java\.lang\.RuntimeException: java\.lang\.IllegalAccessException: Cannot set public final field/
+        )
+      ])
+      expect(robotLog(run).filter((line) => line.includes('could not be read'))).toEqual([])
+
       const again = await runSidecar(b, host)
       expect(normalized(again)).toEqual(normalized(run))
     },

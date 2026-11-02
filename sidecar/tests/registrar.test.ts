@@ -1,11 +1,12 @@
 // 등록기 OpMode 시험(진짜 JVM, 라이브러리 L2 갈래 A): @OpModeRegistrar 목록(ListRequest → registered → finished listed)과 등록한
 // OpMode 실행(RunRequest.registeredName: 클래스면 새 인스턴스, 인스턴스면 그 인스턴스), 던지는 등록기(error registrar, 다음으로),
-// OpMode 수명 알림(OpModeManagerImpl.registerListener, 등록 순서), AppUtil 폴더(모의 저장소 RunRequest.firstFolder), 그리고 실제
+// OpMode 수명 알림(OpModeManagerImpl.registerListener, 등록 순서), AppUtil 폴더(모의 저장소 RunRequest.firstFolder)와 그 안의
+// ReadWriteFile 읽기·쓰기, 그리고 실제
 // Road Runner jar(scripts/fetch-test-libraries.mjs)로 튜닝 OpMode 인스턴스 목록과 TuningFiles 폴더·notice rrTuningSaved.
 // 시험 OpMode는 sidecar/tests/opmodes-rr/(package org.firstinspires.ftc.teamcode). JDK가 없으면 모두 건너뛰고, 라이브러리를 받지
 // 못하면 Road Runner 시험만 건너뛴다(SANDBOT_TEST_LIBRARIES_REQUIRED=1이면 실패).
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -560,6 +561,45 @@ describe.skipIf(build === null)('등록기 OpMode', () => {
       expect(existsSync(join(first, 'settings'))).toBe(true)
       // Road Runner가 클래스패스에 없으면 튜닝 폴더를 만들지 않는다
       expect(existsSync(join(first, 'RoadRunner'))).toBe(false)
+      expect(finishedReason(run)).toBe('returned')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'SDK의 ReadWriteFile로 AppUtil 폴더(모의 저장소)에 쓰고 읽는다(실제 동작 그대로, APK 자원만 지원하지 않음)',
+    async () => {
+      const first = testTempDir('first')
+      const run = await runSidecar(
+        b,
+        runRequest(b, {
+          opModeSource: source('ReadWriteFileOpMode'),
+          opModeClass: `${PACKAGE}.ReadWriteFileOpMode`,
+          firstFolder: first
+        }),
+        { 5: ['start'] }
+      )
+      expect(errors(run)).toEqual([])
+      expect(results(run)).toEqual({
+        read: '1.5,2.5,0.3',
+        handoff: 'héading=90',
+        bytes: '1000',
+        missing: '[]',
+        missingThrow: 'FileNotFoundException',
+        updated: '3,4,0.5',
+        oldLeft: 'false',
+        recovered: 'complete',
+        asset: 'SimUnsupportedException'
+      })
+      expect(readFileSync(join(first, 'settings', 'pose.txt'), 'utf8')).toBe('3,4,0.5')
+      expect(readFileSync(join(first, 'data', 'auto', 'handoff.txt'), 'utf8')).toBe('héading=90')
+      expect(readdirSync(join(first, 'settings')).sort()).toEqual(['crashed.txt', 'pose.txt'])
+      // 실제처럼 읽기 실패는 RobotLog 오류(E/ReadWriteFile)이고 OpMode는 계속한다
+      expect(
+        robotLog(run).filter(
+          (line) => line.includes('error reading file:') && line.includes('missing.txt')
+        )
+      ).toHaveLength(1)
       expect(finishedReason(run)).toBe('returned')
     },
     SIDECAR_TEST_TIMEOUT
