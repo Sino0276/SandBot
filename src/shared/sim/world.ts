@@ -9,6 +9,7 @@ import {
   wrapAngle,
   type Twist
 } from './drivetrain'
+import { HubVelocityWindow } from './encoderVelocity'
 import { WALL_INNER_HALF } from './field'
 import { isEncoderMode, MotorModel, readMotorOutputs, type MotorCommand } from './motorModel'
 import { rotationSign } from './motorTypes'
@@ -36,6 +37,10 @@ import type {
 // "+power면 바퀴가 앞으로 구른다"는 뜻이므로, 바퀴 앞 굴림 = 허브 각 × 형식 회전 부호 × 인스펙터 방향 부호다.
 // 그래서 팀 코드가 인스펙터와 같은 setDirection을 쓰면 getCurrentPosition은 앞으로 갈 때 는다.
 //
+// 엔코더 속도(모터 포트의 velocity, 데드휠 포함): 허브 펌웨어처럼 지난 50 ms 동안의 원시 틱 변화 × 20이다(encoderVelocity.ts:
+// 늘 20 틱/s의 배수, 약 25 ms 늦음, 처음 50 ms는 시작 position부터 셈). 원시 틱은 하위 단계마다 기록한다. 모터 모델의
+// RUN_USING_ENCODER 제어는 자기 연속 상태(ω)를 쓴다.
+//
 // 벽: 외곽 다각형의 꼭짓점이 벽 안쪽 면(±WALL_INNER_HALF)을 넘으면 평행 이동으로만 밀어낸다(회전은 그대로). 이번
 // 하위 단계의 이동이 침투를 늘린 만큼만 되돌리므로 시작부터 벽에 걸쳐 있어도 튀지 않는다. 막혀도 모터 축(엔코더)은
 // 계속 돌고, 실제로 움직인 만큼만 데드휠·Pinpoint 포드·OTOS가 잰다.
@@ -50,9 +55,9 @@ type Notice = { code: SimNoticeCode; params: Record<string, string> }
 
 type DeadWheel = {
   spec: SimDeadWheelSpec
-  // 원시 허브 틱(소수)과 앞 틱의 값(속도)
+  // 원시 허브 틱(소수)과 허브 속도 측정
   raw: number
-  rawAtTick: number
+  hubVelocity: HubVelocityWindow
 }
 
 type Motor = {
@@ -62,6 +67,8 @@ type Motor = {
   forwardSign: number
   // 같은 장치 이름의 데드휠(실제 배선: 그 포트의 엔코더는 포드다)
   pod: DeadWheel | null
+  // 축 엔코더의 허브 속도 측정(포드와 포트를 함께 쓰면 포드의 것을 보내므로 없다)
+  hubVelocity: HubVelocityWindow | null
   // RUN_TO_POSITION의 원시 목표를 만드는 기준(축 틱). 포드와 포트를 함께 쓰지 않으면 encoderOffset 그대로다.
   shaftOffset: number
   // 지난 구간에 본 사이드카의 리셋 횟수(encoderResets)
@@ -125,16 +132,22 @@ export class KinematicWorld {
     this.spec = spec
     this.poseNow = { ...spec.robot.start }
     this.drivetrain = new Drivetrain(spec.wheels)
-    this.deadWheels = spec.deadWheels.map((d) => ({ spec: d, raw: 0, rawAtTick: 0 }))
+    this.deadWheels = spec.deadWheels.map((d) => ({
+      spec: d,
+      raw: 0,
+      hubVelocity: new HubVelocityWindow()
+    }))
     const podByName = new Map<string, DeadWheel>()
     for (const pod of this.deadWheels) podByName.set(pod.spec.device, pod)
     this.motors = spec.motors.map((m) => {
       const model = new MotorModel(m.modelTag, m.gearbox)
+      const pod = podByName.get(m.device) ?? null
       return {
         spec: m,
         model,
         forwardSign: rotationSign(model.type) * m.directionSign,
-        pod: podByName.get(m.device) ?? null,
+        pod,
+        hubVelocity: pod ? null : new HubVelocityWindow(),
         shaftOffset: 0,
         lastEncoderResets: 0
       }
@@ -169,7 +182,8 @@ export class KinematicWorld {
     const dtNanos = first ? 0 : tNanos - (this.tPrev as number)
     this.blocked = false
     const yawBefore = this.poseNow.yaw
-    if (dtNanos > 0) this.integrate(dtNanos)
+    if (dtNanos > 0) this.integrate(this.tPrev as number, dtNanos)
+    if (first) this.recordEncoders(tNanos)
     if (dtNanos > 0 || first) this.tPrev = tNanos
     this.checkSharedPorts(outputs)
     this.outputsPrev = outputs
@@ -186,7 +200,8 @@ export class KinematicWorld {
 
   // ---- 적분 ----
 
-  private integrate(dtNanos: number): void {
+  // [tStart, tStart + dtNanos] 구간
+  private integrate(tStart: number, dtNanos: number): void {
     const steps = Math.max(1, Math.min(MAX_SUBSTEPS, Math.ceil(dtNanos / SUBSTEP_NANOS)))
     const h = dtNanos / 1e9 / steps
     const voltage = this.spec.batteryVoltage
@@ -218,7 +233,14 @@ export class KinematicWorld {
             : ((angles[index] * this.motors[index].forwardSign) / wheel.gearRatio) * wheel.radius
       })
       this.moveRobot(this.drivetrain.twist(rolls))
+      this.recordEncoders(s + 1 === steps ? tStart + dtNanos : tStart + (dtNanos * (s + 1)) / steps)
     }
+  }
+
+  // 하위 단계 끝(과 첫 틱)의 원시 엔코더 틱을 허브 속도 측정에 기록한다
+  private recordEncoders(tNanos: number): void {
+    for (const motor of this.motors) motor.hubVelocity?.record(tNanos, motor.model.raw)
+    for (const pod of this.deadWheels) pod.hubVelocity.record(tNanos, pod.raw)
   }
 
   // 로봇을 변위만큼 움직이고(벽에 막히면 평행 이동만 줄인다) 실제로 움직인 만큼 오도메트리를 센다
@@ -329,14 +351,14 @@ export class KinematicWorld {
     for (const hub of this.spec.hubs) put(hub, 'voltage', this.spec.batteryVoltage)
 
     for (const motor of this.motors) {
-      if (motor.pod) continue
+      // 포드와 포트를 함께 쓰면 그 포트의 엔코더는 포드다(아래)
+      if (!motor.hubVelocity) continue
       put(motor.spec.device, 'position', Math.floor(motor.model.raw))
-      put(motor.spec.device, 'velocity', Math.round(motor.model.ticksPerSecond))
+      put(motor.spec.device, 'velocity', motor.hubVelocity.ticksPerSecond())
     }
     for (const pod of this.deadWheels) {
       put(pod.spec.device, 'position', Math.floor(pod.raw))
-      put(pod.spec.device, 'velocity', Math.round(rate(pod.raw, pod.rawAtTick)))
-      pod.rawAtTick = pod.raw
+      put(pod.spec.device, 'velocity', pod.hubVelocity.ticksPerSecond())
     }
 
     const start = this.spec.robot.start.yaw
