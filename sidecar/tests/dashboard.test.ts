@@ -119,9 +119,12 @@ type Host = {
   maxTicks?: number
   // 실행 클래스패스에 더할 라이브러리 jar
   extraLibraries?: string[]
+  // 일시 정지처럼 이 틱의 답을 벽시계로 미룬다(session.ts가 일시 정지 중 답을 보류하듯)
+  hold?: { tick: number; millis: number }
 }
 
-type Run = { messages: SidecarMessage[]; raw: string[]; stderr: string }
+// held: 미룬 틱을 받은 때까지 온 메시지 종류(호스트가 일시 정지 중 가진 것)
+type Run = { messages: SidecarMessage[]; raw: string[]; stderr: string; held?: string[] }
 
 function runRequest(b: SidecarBuild, host: Host): RunRequest {
   return {
@@ -194,14 +197,20 @@ function runSidecar(b: SidecarBuild, host: Host): Promise<Run> {
         send({ type: 'shutdown' })
         return
       }
-      send({
+      const reply: HostMessage = {
         type: 'tickReply',
         tick: message.tick,
         events: host.events?.[message.tick] ?? (message.tick === START_TICK ? ['start'] : []),
         gamepads: [null, null],
         inputs: {},
         configSet: host.configSet?.[message.tick] ?? []
-      })
+      }
+      if (host.hold?.tick === message.tick) {
+        run.held = run.messages.map((m) => m.type)
+        setTimeout(() => send(reply), host.hold.millis)
+      } else {
+        send(reply)
+      }
     }
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
@@ -516,6 +525,48 @@ describe.skipIf(build === null)('FTC Dashboard 대체: @Config와 Config 탭', (
 
       // 같은 입력이면 dash·dashConfig를 포함해 바이트가 같다(설정 트리는 이름순, HashMap 순서가 들어가지 않는다)
       const again = await runSidecar(b, host)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    'INIT에서 일시 정지해도(tick 0의 답을 미룸) 설정 트리가 이미 호스트에 있고, 그동안 고친 값은 OpMode를 만들기 전에 들어간다',
+    async () => {
+      const host: Host = {
+        opMode: 'DashConfigLoop',
+        events: { [START_TICK]: ['start'], [STOP_TICK]: ['stop'] },
+        hold: { tick: 0, millis: 300 },
+        // 일시 정지 중에 고친 값은 미룬 답(tick 0)에 실린다
+        configSet: { 0: [{ path: loop('SPEED'), value: '0.9' }] }
+      }
+      const run = await runSidecar(b, host)
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      // tick 0을 받았을 때(호스트가 답을 미루는 동안) INIT 전 스캔의 트리가 이미 와 있다
+      expect(run.held).toContain('dashConfig')
+      const first = configs(run)[0]
+      expect(first.tNanos).toBe(0)
+      expect(nodeAt(first.root, loop('SPEED'))).toMatchObject({ value: '0.5' })
+      // 미룬 답의 configSet은 tick 0 경계에서 적용되고 트리를 다시 보낸다(OpMode를 만들기 전, 첫 루프부터 새 값)
+      const applied = configs(run)[1]
+      expect(applied.tNanos).toBe(0)
+      expect(nodeAt(applied.root, loop('SPEED'))).toMatchObject({ value: '0.9' })
+      expect(results(run)[0]).toMatchObject({ speed: '0.9' })
+      // 틱 경계의 패킷 묶음과 바뀐 트리는 그 경계의 tick보다 먼저, configSet을 적용한 뒤의 트리는 그 tick 뒤에 온다
+      const tickIndex = new Map<number, number>()
+      run.messages.forEach((m, i) => {
+        if (m.type === 'tick') tickIndex.set(m.tNanos, i)
+      })
+      run.messages.forEach((m, i) => {
+        if (m.type !== 'dash' && m.type !== 'dashConfig') return
+        const tick = tickIndex.get(m.tNanos)
+        if (tick === undefined) return
+        if (m.type === 'dashConfig' && m === applied) expect(i).toBeGreaterThan(tick)
+        else expect(i, JSON.stringify(m).slice(0, 120)).toBeLessThan(tick)
+      })
+      // 같은 입력이면 바이트가 같다(답을 미룬 벽시계 시간은 메시지에 들어가지 않는다)
+      const again = await runSidecar(b, { ...host, hold: undefined })
       expect(normalized(again)).toEqual(normalized(run))
     },
     SIDECAR_TEST_TIMEOUT

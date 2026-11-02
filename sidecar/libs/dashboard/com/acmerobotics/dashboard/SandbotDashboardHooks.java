@@ -23,7 +23,9 @@ import org.sandbot.sim.SimDashboardHost;
  *       묶음에 data와 로그를 지우므로 cleared 묶음의 로그는 null이 아니다(뒤에 로그가 없으면 빈 배열).
  *   <li>설정 트리: 실제는 updateConfig마다 트리 전체를 보낸다. 바뀐 표시를 두고 다음 경계에 트리 전체를 보낸다
  *       (SandbotDashboardConfig, 이름순). withConfigRoot 안에서 시계를 써 경계가 오면 그 경계에서는 트리를 읽지 않는다.
- *   <li>Config 탭의 값 바꾸기(tickReply.configSet)는 경계에서 차례로 ValueProvider.set하고 트리를 다시 보낸다.
+ *   <li>경계에서 패킷 묶음과 바뀐 트리는 tick을 보내기 전에 보낸다({@link #beforeTick}). 실제는 그때그때 보내므로, 호스트가
+ *       일시 정지로 답을 미루는 동안(INIT의 tick 0 등)에도 화면에 트리가 있고 값을 고칠 수 있어야 한다.
+ *   <li>Config 탭의 값 바꾸기(tickReply.configSet)는 답을 받은 뒤 경계에서 차례로 ValueProvider.set하고 트리를 다시 보낸다.
  *   <li>안내(카메라·이미지)는 실행마다 한 번.
  *   <li>@Config 스캔은 트리에 넣은 클래스를 그 자리에서 초기화한다(정적 초기화의 오류가 첫 경계가 아니라 시작에서 나오게).
  * </ul>
@@ -155,6 +157,12 @@ final class SandbotDashboardHooks implements SimDashboard {
                 throw new IllegalStateException(e);
             }
         }
+    }
+
+    @Override
+    public void beforeTick(long tNanos) {
+        sendTelemetry(tNanos, false);
+        sendConfig(tNanos);
     }
 
     @Override

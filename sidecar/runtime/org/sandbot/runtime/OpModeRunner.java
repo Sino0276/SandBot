@@ -37,9 +37,9 @@ import java.util.Objects;
  *       tick 0 교환
  *   <li>OpMode 만들기(정적 초기화·생성자도 이 스레드, 인스턴스 등록이면 그 인스턴스) → beforeInit → resetRuntime →
  *       수명 알림 preInit → internalInit → OpMode 본문(init/init_loop/start/loop/stop 또는 runOpMode)
- *   <li>틱 경계마다({@link #onTick}, 시계 호출 안): tick 보내기 → tickReply 받기 → 센서 입력 → FTC Dashboard(Config 탭의 값,
- *       패킷·설정 트리 보내기) → DS 사건(start: 수명 알림 preStart → internalStart, stop) → 게임패드 → 이벤트 루프 한 바퀴
- *       (LinearOpMode의 time·waitForStart·텔레메트리) → STOP 뒤 정지 대기 감시
+ *   <li>틱 경계마다({@link #onTick}, 시계 호출 안): FTC Dashboard 패킷·설정 트리 보내기 → tick 보내기 → tickReply 받기 → 센서
+ *       입력 → FTC Dashboard(Config 탭의 값, 바뀐 트리 보내기) → DS 사건(start: 수명 알림 preStart → internalStart, stop) →
+ *       게임패드 → 이벤트 루프 한 바퀴(LinearOpMode의 time·waitForStart·텔레메트리) → STOP 뒤 정지 대기 감시
  *   <li>끝: error(있으면) → state stopping → 수명 알림 postStop → afterStop → 마지막 tick(답을 기다리지 않음) → Road Runner
  *       튜닝 결과 안내(notice) → finished → halt
  * </ol>
@@ -485,6 +485,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     @Override
     public void onTick(long k) {
         long tNanos = k * clock.tickNanos();
+        // FTC Dashboard: 보낼 때가 된 패킷 묶음과 바뀐 설정 트리는 tick보다 먼저(호스트가 일시 정지로 답을 미뤄도 이미 가 있게)
+        if (dashboard != null) dashboard.beforeTick(tNanos);
         protocol.tick(k, tNanos, phase, loops, outputs());
         clock.setWaitingHost(true);
         HostInput.Message reply = input.take();
@@ -524,7 +526,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             lastState1 = state1;
             lastState2 = state2;
         }
-        // FTC Dashboard: Config 탭의 값을 적용하고 패킷 묶음·설정 트리를 보낸다(INIT 전 경계에서도)
+        // FTC Dashboard: Config 탭의 값을 적용하고 바뀐 설정 트리를 보낸다(INIT 전 경계에서도)
         if (dashboard != null) dashboard.tickBoundary(tNanos, reply.body.get("configSet"));
         if (!opModeReady || !userCodeRunning) return;
 

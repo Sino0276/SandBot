@@ -20,7 +20,16 @@ public interface SimDashboard {
     void addConfigClasses(ClassLoader loader, List<String> names);
 
     /**
-     * 틱 경계: Config 탭의 값 바꾸기(paths[i]에 values[i])를 차례로 적용하고, 보낼 때가 된 패킷 묶음과 바뀐 설정 트리를 보낸다.
+     * 틱 경계에서 tick을 보내기 전: 보낼 때가 된 패킷 묶음과 바뀐 설정 트리를 보낸다. 호스트가 일시 정지로 그 틱의 답을 미뤄도
+     * (INIT의 tick 0 등) 그때까지의 패킷과 트리가 이미 호스트에 있게 한다.
+     *
+     * @param tNanos 경계의 가상 시각(보내는 메시지의 tNanos)
+     */
+    void beforeTick(long tNanos);
+
+    /**
+     * 틱 경계에서 답을 받은 뒤: Config 탭의 값 바꾸기(paths[i]에 values[i])를 차례로 적용하고, 그래서 바뀐 설정 트리(와 보낼 때가
+     * 된 패킷 묶음)를 보낸다.
      *
      * @param tNanos 경계의 가상 시각(보내는 메시지의 tNanos)
      */
