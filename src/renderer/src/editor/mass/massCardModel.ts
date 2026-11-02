@@ -1,5 +1,8 @@
 import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
+import { cotsEntry } from '../../mass/cotsTable'
+import { DEFAULT_MATERIAL, MATERIALS } from '../../mass/materials'
+import { nameRuleMaterial } from '../../mass/nameRules'
 import {
   DEFAULT_ROBOT_MASS,
   MATERIAL_KEYS,
@@ -21,19 +24,11 @@ import {
   type SceneObjects,
   type Vec3
 } from '../../scene/model'
+import { canHaveMass, MAX_CENTER_OF_MASS } from '../../scene/massSettings'
 import { formatMass, formatNumber, type LengthUnit } from '../../units/units'
 
 // 인스펙터 질량 카드·Rigidbody 카드·추정 한 줄의 보기 계산(그리기와 나눠 시험한다). 계산 자체는 mass/massModel.ts의
 // computeMassModel이 하고, 여기서는 그 결과(MassModel)를 문구로 바꾸고 입력을 설정으로 바꾸기만 한다.
-
-// 로봇에 기본 재질이 없을 때의 재질(mass/types.ts RigidbodySettings.defaultMaterial의 "없으면 aluminum6061")
-export const ROBOT_DEFAULT_MATERIAL: MaterialKey = 'aluminum6061'
-// 채움률을 쓰는 3D 출력 재질(spec-3a §4.1의 printed: true)
-export const PRINTED_MATERIALS: readonly MaterialKey[] = ['pla', 'petg', 'abs', 'tpu']
-// 입력 범위(spec-3a §2. scene/massSettings.ts의 정리와 같은 범위라, 넘는 입력은 버리고 이전 값을 둔다)
-export const MAX_OVERRIDE_MASS = 100
-export const MAX_WEIGHED_MASS = 200
-export const MAX_CENTER_OF_MASS = 10
 
 // 질량 기호 글자(i18n units.massSymbols). units.ts의 formatMass는 기호 글자를 쓰는 쪽에게서 받는다(UI 문자열을
 // 하드코딩하지 않게). 계약의 빈 구현은 이 인자를 받지 않으므로 받는 형식으로 맞춰 부른다(인자가 적은 함수는 이 형식에 맞는다).
@@ -54,8 +49,9 @@ export function massText(t: TFunction, kg: number, unit: LengthUnit): string {
   return formatMassWith(kg, unit, massSymbols(t))
 }
 
+// 채움률을 쓰는 3D 출력 재질인지(mass/materials.ts의 printed)
 export function isPrintedMaterial(key: MaterialKey | undefined): boolean {
-  return key !== undefined && PRINTED_MATERIALS.includes(key)
+  return key !== undefined && MATERIALS[key].printed
 }
 
 // 재질 고르기의 묶음(재료, 3D 출력). 순서는 MATERIAL_KEYS 그대로다.
@@ -64,9 +60,10 @@ export const MATERIAL_GROUPS: readonly { key: 'stock' | 'printed'; materials: Ma
   { key: 'printed', materials: MATERIAL_KEYS.filter((key) => isPrintedMaterial(key)) }
 ]
 
-// Add Component의 "질량"을 고를 수 있는지: assembly·part·group·CAD 루트(로봇은 Rigidbody 카드), 이미 있으면 비활성
+// Add Component의 "질량"을 고를 수 있는지: scene/massSettings.ts의 canHaveMass(assembly·part·group·CAD 루트, 로봇은
+// Rigidbody 카드)이고 아직 없을 때
 export function canAddMass(object: SceneObject): boolean {
-  return object.kind !== 'robot' && !object.mass
+  return canHaveMass(object) && !object.mass
 }
 
 // 정의하지 않은 키를 빼고 늘 같은 순서(material, infill, mass, centerOfMass)로 둔다. 빈 설정 {}은 "카드만 붙임"이다.
@@ -129,7 +126,7 @@ export function inheritedMaterial(objects: SceneObjects, objectId: string): Inhe
     if (current.kind === 'robot') {
       const set = current.rigidbody?.defaultMaterial
       return {
-        material: set ?? ROBOT_DEFAULT_MATERIAL,
+        material: set ?? DEFAULT_MATERIAL,
         origin: { kind: 'robot', robotId: current.id, set: set !== undefined }
       }
     }
@@ -138,7 +135,7 @@ export function inheritedMaterial(objects: SceneObjects, objectId: string): Inhe
     visited.add(current.id)
     current = current.parentId ? objects[current.parentId] : undefined
   }
-  return { material: ROBOT_DEFAULT_MATERIAL, origin: { kind: 'none' } }
+  return { material: DEFAULT_MATERIAL, origin: { kind: 'none' } }
 }
 
 // 자기 자신을 빼고 위로 가장 가까운 채움률(질량 모델처럼 채움률도 하위로 물려준다). 없으면 undefined(기본값)
@@ -153,8 +150,8 @@ export function inheritedInfill(objects: SceneObjects, objectId: string): number
   return undefined
 }
 
-// 출처를 사람이 읽는 이름으로 바꾸는 표(갈래 B의 mass/cotsTable.ts cotsEntry·mass/nameRules.ts nameRuleMaterial).
-// 표를 모르면 키를 그대로 보인다.
+// 출처를 사람이 읽는 이름으로 바꾸는 표(mass/cotsTable.ts cotsEntry·mass/nameRules.ts nameRuleMaterial). 시험은 바꿔
+// 넣을 수 있다. 표를 모르면 키를 그대로 보인다.
 export type CotsLabel = { product: string; ratio?: number; cartridges?: number }
 export type MassDescribers = {
   cots: (key: string) => CotsLabel | undefined
@@ -162,8 +159,8 @@ export type MassDescribers = {
 }
 
 export const DEFAULT_DESCRIBERS: MassDescribers = {
-  cots: () => undefined,
-  nameRuleMaterial: () => undefined
+  cots: cotsEntry,
+  nameRuleMaterial
 }
 
 const isMaterialKey = (value: string): value is MaterialKey =>

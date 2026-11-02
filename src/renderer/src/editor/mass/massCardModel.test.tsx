@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { initReactI18next } from 'react-i18next'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import ko from '../../i18n/locales/ko'
-import type { MassModel, ObjectMass, RobotMass } from '../../mass/types'
+import { MATERIALS } from '../../mass/materials'
+import { MATERIAL_KEYS, type MassModel, type ObjectMass, type RobotMass } from '../../mass/types'
+import { canHaveMass } from '../../scene/massSettings'
 import type { SceneObject, SceneObjects, Transform } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -17,12 +19,15 @@ import {
   cleanMass,
   cleanRigidbody,
   cotsText,
+  DEFAULT_DESCRIBERS,
   estimateLine,
   formatInertia,
   inheritedInfill,
   inheritedMaterial,
   infillReachesPrinted,
   inheritedOptionText,
+  isPrintedMaterial,
+  MATERIAL_GROUPS,
   localCenterOfMass,
   massCardView,
   massText,
@@ -234,7 +239,10 @@ describe('질량 카드 보기 계산', () => {
     const pla = objectMass({ source: 'nameRule', detail: 'pla' })
     // 'PLA bracket' 같은 파트: 자기 결과가 이름 규칙 PLA
     expect(massCardView(objects, 'plate', { plate: pla }, describers).showInfill).toBe(true)
-    expect(massCardView(objects, 'plate', { plate: pla }).showInfill).toBe(false)
+    // 기본 설명 표(nameRules.ts)도 'pla' 규칙을 PLA로 안다. 재질을 모르는 규칙이면 칸이 없다
+    expect(massCardView(objects, 'plate', { plate: pla }).showInfill).toBe(true)
+    const unknown: MassDescribers = { ...DESCRIBERS, nameRuleMaterial: () => undefined }
+    expect(massCardView(objects, 'plate', { plate: pla }, unknown).showInfill).toBe(false)
     // 그룹: 하위 파트가 이름 규칙 PLA면 그룹의 채움률이 닿는다(그룹 결과의 출처가 다른 것이어도)
     const results = { lift: objectMass({}), bolt: pla }
     expect(massCardView(objects, 'lift', results, describers).showInfill).toBe(true)
@@ -355,6 +363,31 @@ describe('질량 카드 보기 계산', () => {
 })
 
 describe('질량 출처 문구', () => {
+  it('기본 설명 표는 질량 모델의 COTS 표·이름 규칙이고, 출력 재질·Add Component 규칙도 모델 쪽을 따른다', () => {
+    // mass/cotsTable.ts·mass/nameRules.ts의 실제 값
+    expect(cotsText(t, 'motor:goBilda5203:19.2', DEFAULT_DESCRIBERS)).toBe('goBILDA 5203 19.2:1')
+    expect(cotsText(t, 'battery:gobilda', DEFAULT_DESCRIBERS)).toBe('goBILDA 12V NiMH 3000mAh')
+    expect(DEFAULT_DESCRIBERS.nameRuleMaterial('screw')).toBe('steel')
+    expect(DEFAULT_DESCRIBERS.nameRuleMaterial('label')).toBeNull()
+    expect(DEFAULT_DESCRIBERS.nameRuleMaterial('no such rule')).toBeUndefined()
+    const objects = scene()
+    expect(
+      sourceText(
+        t,
+        objects,
+        objectMass({ source: 'nameRule', detail: 'screw', inheritedFrom: null })
+      )
+    ).toBe('이름 규칙: ‘screw’ → 강철')
+    // 출력 재질은 materials.ts의 printed
+    for (const key of MATERIAL_KEYS) expect(isPrintedMaterial(key)).toBe(MATERIALS[key].printed)
+    expect(MATERIAL_GROUPS[1].materials).toEqual(
+      MATERIAL_KEYS.filter((key) => MATERIALS[key].printed)
+    )
+    // canHaveMass(scene/massSettings.ts)가 받지 않는 것은 Add Component도 막는다
+    for (const id of Object.keys(objects))
+      if (!canHaveMass(objects[id])) expect(canAddMass(objects[id])).toBe(false)
+  })
+
   it('데이터시트: 표의 제품명·감속비·카트리지 수, 여럿이면 +로 잇고, 표를 모르면 키 그대로', () => {
     expect(cotsText(t, 'motor:goBilda5203:19.2', DESCRIBERS)).toBe('goBILDA 5203 19.2:1')
     expect(cotsText(t, 'motor:revHdHex:1', DESCRIBERS)).toBe('REV HD Hex')

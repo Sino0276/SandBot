@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_INFILL, type MassSettings, type MaterialKey } from '../../mass/types'
+import { MAX_CENTER_OF_MASS, MAX_OVERRIDE_MASS } from '../../scene/massSettings'
 import type { SceneObject, Vec3 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -23,8 +24,6 @@ import {
   massText,
   materialLabel,
   MATERIAL_GROUPS,
-  MAX_CENTER_OF_MASS,
-  MAX_OVERRIDE_MASS,
   parseInfillPercent,
   sameMassSettings,
   sourceText

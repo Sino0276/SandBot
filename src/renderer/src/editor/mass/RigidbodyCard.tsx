@@ -1,6 +1,8 @@
 import { useTranslation } from 'react-i18next'
+import { DEFAULT_MATERIAL } from '../../mass/materials'
 import type { MaterialKey, RigidbodySettings } from '../../mass/types'
 import { cadMassSummary } from '../../scene/geometryRegistry'
+import { MAX_WEIGHED_MASS } from '../../scene/massSettings'
 import type { SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -13,10 +15,8 @@ import {
   formatInertia,
   materialLabel,
   MATERIAL_GROUPS,
-  MAX_WEIGHED_MASS,
   massText,
   robotMassBreakdown,
-  ROBOT_DEFAULT_MATERIAL,
   warningText
 } from './massCardModel'
 import { ReadonlyVector } from './MassVector'
@@ -100,7 +100,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
         >
           <option value="">
             {t('mass.rigidbody.defaultMaterialBuiltIn', {
-              material: materialLabel(t, ROBOT_DEFAULT_MATERIAL)
+              material: materialLabel(t, DEFAULT_MATERIAL)
             })}
           </option>
           {MATERIAL_GROUPS.map((group) => (
