@@ -11,7 +11,12 @@ import {
 } from '../editor/noticeStore'
 import i18n from 'i18next'
 import { useProjectStore } from '../project/projectStore'
-import { disposeGeometry, geometryIds, registerGeometry } from '../scene/geometryRegistry'
+import {
+  beginCadLoad,
+  disposeGeometry,
+  geometryIds,
+  registerGeometry
+} from '../scene/geometryRegistry'
 import type { MeshIndexing } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { loadAlignmentPreference } from './alignmentPreference'
@@ -22,6 +27,7 @@ import {
   isImportedModel,
   MESH_CACHE_TAG,
   meshGeometryIds,
+  meshSourceNames,
   type ImportedMesh,
   type ImportedModel
 } from './stepImport'
@@ -213,14 +219,21 @@ function createGeometry(mesh: ImportedMesh): BufferGeometry {
   return geometry
 }
 
-// 모델의 메시를 CAD 루트 기준 id(cadGeometryId)로 등록하고 씬을 다시 그리게 한다.
+// 모델의 메시를 CAD 루트 기준 id(cadGeometryId)로 등록하고 씬을 다시 그리게 한다. 질량 성질과 원래 CAD 이름도
+// 같은 id로 둔다(형상과 같이 등록·해제).
 export function registerModelGeometries(
   cadRootId: string,
   model: ImportedModel,
   indexing: MeshIndexing
 ): void {
   const ids = meshGeometryIds(cadRootId, model, indexing)
-  model.meshes.forEach((mesh, index) => registerGeometry(ids[index], createGeometry(mesh)))
+  const names = meshSourceNames(model)
+  model.meshes.forEach((mesh, index) =>
+    registerGeometry(ids[index], createGeometry(mesh), {
+      mass: mesh.mass,
+      sourceName: names[index]
+    })
+  )
   // 이 CAD의 이전 형상 중 새 결과에 없는 id(다시 찾기로 바꾼 파일에 없는 파트 등)는 지운다.
   // 남겨 두면 그 파트가 이전 파일의 모양으로 보인다.
   const current = new Set(ids)
@@ -426,6 +439,37 @@ export async function loadCadGeometry(
   // 형상 id 방식은 읽기 시작할 때의 CAD 정보로 정한다. 읽는 동안 CAD를 지웠다가 실행 취소로 되살려도 맞게 연결되도록,
   // 지워졌어도 형상은 등록한다(기록이 그 id를 쓴다).
   const cad = useSceneStore.getState().objects[cadRootId]?.cad
+  // 읽는 동안 질량 요약(cadMassSummary)이 아직 없는 메시를 센다. 요약이 바뀔 때마다 다시 계산하게 형상 revision을 올린다.
+  const endLoad = beginCadLoad(cadRootId, cad?.meshCount ?? 0)
+  useSceneStore.getState().bumpGeometryRevision()
+  let result: LoadedStep | Exclude<CadLoadStatus, 'loaded'>
+  try {
+    result = await readCadModel(path, fileName, options)
+  } finally {
+    // 등록하기 전에 끝낸다(등록이 올리는 revision의 요약에 읽는 중이 남지 않게)
+    endLoad()
+  }
+  if (typeof result === 'string') {
+    useSceneStore.getState().bumpGeometryRevision()
+    return result
+  }
+  const { model } = result
+  const indexing = cad ? reloadIndexing(cad, model) : 'source'
+  registerModelGeometries(cadRootId, model, indexing)
+  if (cad && cadStructureChanged(cad, model, indexing)) {
+    showNotice('warning', 'cadChanged', { fileName })
+  } else {
+    notifyIncomplete(result, fileName)
+  }
+  return 'loaded'
+}
+
+// 디스크의 STEP을 등록할 수 있는 변환 결과로 읽는다. 등록할 수 없으면 그 이유(상태)를 돌려준다.
+async function readCadModel(
+  path: string,
+  fileName: string,
+  options: LoadStepOptions
+): Promise<LoadedStep | Exclude<CadLoadStatus, 'loaded'>> {
   let loaded: LoadedStep | null
   try {
     loaded = await loadStepModel(path, fileName, options)
@@ -443,15 +487,7 @@ export async function loadCadGeometry(
     showNotice('error', 'cadLoadIncomplete', { fileName })
     return 'failed'
   }
-  const { model } = loaded
-  const indexing = cad ? reloadIndexing(cad, model) : 'source'
-  registerModelGeometries(cadRootId, model, indexing)
-  if (cad && cadStructureChanged(cad, model, indexing)) {
-    showNotice('warning', 'cadChanged', { fileName })
-  } else {
-    notifyIncomplete(loaded, fileName)
-  }
-  return 'loaded'
+  return loaded
 }
 
 // CAD 하나의 형상을 진행 알림(경과 시간·[취소])과 함께 읽는다
