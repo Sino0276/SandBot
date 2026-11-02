@@ -98,3 +98,16 @@ export function loadLengthUnit(storage: Pick<Storage, 'getItem'>): LengthUnit | 
 export function saveLengthUnit(storage: Pick<Storage, 'setItem'>, unit: LengthUnit): void {
   storage.setItem(STORAGE_KEY, unit)
 }
+
+// 질량 표시·입력(spec-3a §5). 길이 표시 단위를 따른다: mm·cm·m는 g·kg, in은 lb·oz. 계약 단계의 빈 구현이다(갈래 B가 채운다).
+export function formatMass(kg: number, unit: LengthUnit): string {
+  void unit
+  return String(kg)
+}
+
+// kg·g·lb·oz를 붙인 값과 단위 없는 값(표시 단위)을 받는다. 읽지 못하면 null
+export function parseMass(text: string, unit: LengthUnit): number | null {
+  void unit
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
+}

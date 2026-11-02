@@ -23,6 +23,7 @@ import {
   type Transform,
   type WheelSettings
 } from './model'
+import type { MassSettings, RigidbodySettings } from '../mass/types'
 import { canHaveWheel, sameWheel, sanitizeWheel } from './wheel'
 
 // CAD를 불러오기 전까지 보여 주는 임시 씬: 18 in 상자 로봇과 앞쪽에 달린 웹캠
@@ -170,6 +171,11 @@ type SceneState = {
   // 바퀴(시뮬레이터 설정, scene/wheel.ts)를 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
   // robot·CAD 루트에는 붙이지 않는다. 범위 밖 수는 기본값으로 바꾼다(sanitizeWheel). 바뀐 것이 없으면 그대로 둔다.
   setWheel: (id: string, settings: WheelSettings | null) => void
+  // 질량 설정(시뮬레이터 설정, mass/types.ts)을 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
+  // robot에는 붙이지 않는다(로봇은 setRobotRigidbody). 범위 밖 수는 버린다(갈래 B의 sanitizeMass).
+  setObjectMass: (id: string, settings: MassSettings | null) => void
+  // 로봇의 Rigidbody(저울 무게·기본 재질). robot에만, null이면 뗀다.
+  setRobotRigidbody: (id: string, settings: RigidbodySettings | null) => void
   // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
   // (없는 오브젝트, 이미 있는 경로, 없는 연결, 연결할 수 없는 경로) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   // 같은 경로를 이미 연결했으면 더하지 않는다. 경로는 NFC로 바꿔 둔다(프로젝트 파일 읽기와 같은 규칙).
@@ -319,6 +325,22 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       if (sameWheel(object.wheel, wheel)) return state
       const next: SceneObject = { ...object, wheel }
       if (!wheel) delete next.wheel
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setObjectMass: (id, settings) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object || object.kind === 'robot') return state
+      const next: SceneObject = { ...object, mass: settings ?? undefined }
+      if (!settings) delete next.mass
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setRobotRigidbody: (id, settings) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object || object.kind !== 'robot') return state
+      const next: SceneObject = { ...object, rigidbody: settings ?? undefined }
+      if (!settings) delete next.rigidbody
       return { objects: { ...state.objects, [id]: next } }
     }),
   addScriptLink: (objectId, input) =>

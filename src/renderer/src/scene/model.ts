@@ -1,3 +1,4 @@
+import type { MassSettings, RigidbodySettings } from '../mass/types'
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 
 export type Vec3 = [number, number, number]
@@ -103,6 +104,10 @@ export type SceneObject = {
   scripts?: ScriptLink[]
   // 바퀴(assembly·part·group에만, robot·CAD 루트에는 두지 않는다)
   wheel?: WheelSettings
+  // 질량 설정(assembly·part·group·CAD 루트에, robot에는 두지 않는다, mass/types.ts, PROJECT_VERSION 7)
+  mass?: MassSettings
+  // 로봇 전체 질량 설정(robot에만, Unity Rigidbody)
+  rigidbody?: RigidbodySettings
 }
 
 // 스크립트 연결. path는 TeamCode 기준 상대 경로('/' 구분, src/shared/teamCodePaths.ts의 isLinkableJavaPath),

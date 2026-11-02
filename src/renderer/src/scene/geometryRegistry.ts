@@ -1,4 +1,5 @@
 import type { BufferGeometry } from 'three'
+import type { CadMassSummary, MeshMassProps } from '../mass/types'
 import { forgetAllBvh, forgetBvh, prepareBvh } from './meshBvh'
 
 // CAD 메시 형상 보관소. 씬 스토어에는 직렬화할 수 있는 데이터만 두고, 큰 형상은 id로 여기서 찾는다.
@@ -35,4 +36,22 @@ export function disposeAllGeometry(): void {
 
 export function geometryIds(): string[] {
   return [...geometries.keys()]
+}
+
+// 메시의 질량 성질(spec-3a §1). 형상과 같은 id·수명이다. 계약 단계의 빈 구현이다(갈래 A가 채운다).
+export function meshMassProps(id: string): MeshMassProps | undefined {
+  void id
+  return undefined
+}
+
+// 원래 CAD 메시 이름(이름 규칙용)
+export function meshSourceName(id: string): string | undefined {
+  void id
+  return undefined
+}
+
+// CAD 루트의 메시 상태 요약(열린·표면·읽는 중)
+export function cadMassSummary(cadRootId: string): CadMassSummary | undefined {
+  void cadRootId
+  return undefined
 }
