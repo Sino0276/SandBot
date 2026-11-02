@@ -184,6 +184,12 @@ const en: Messages = {
       m: 'm',
       in: 'in'
     },
+    massSymbols: {
+      g: 'g',
+      kg: 'kg',
+      lb: 'lb',
+      oz: 'oz'
+    },
     names: {
       mm: 'mm (millimeters)',
       cm: 'cm (centimeters)',
@@ -1333,6 +1339,124 @@ const en: Messages = {
         '{{names}}: the Java class name {{className}} clashes. Groups in the same class must differ by more than letter case, and a group cannot share its name with a class that contains it (including the robot class).',
       reservedFileName:
         'The class name {{className}} is a Windows device name, so it cannot be a file name ({{className}}.java). Choose another name.'
+    }
+  },
+  mass: {
+    addOption: 'Mass',
+    title: 'Mass',
+    orphan: 'This object is not part of a robot, so it does not count toward a robot mass.',
+    material: 'Material',
+    materialHint:
+      'Material of this object and the parts under it. A child that sets its own material uses that. When empty, the material comes from the object above, then name rules (screws, bearings, …), then the robot default material.',
+    materialGroups: {
+      stock: 'Stock',
+      printed: '3D printed'
+    },
+    materials: {
+      aluminum6061: 'Aluminum 6061',
+      aluminum7075: 'Aluminum 7075',
+      steel: 'Steel',
+      stainless: 'Stainless steel',
+      brass: 'Brass',
+      polycarbonate: 'Polycarbonate',
+      acetal: 'Acetal (POM)',
+      hdpe: 'HDPE',
+      nylon: 'Nylon',
+      carbonFiber: 'Carbon fiber',
+      plywood: 'Plywood',
+      rubber: 'Rubber',
+      foam: 'Foam',
+      pla: 'PLA',
+      petg: 'PETG',
+      abs: 'ABS',
+      tpu: 'TPU'
+    },
+    inheritObject: 'Inherited: {{material}} ({{owner}})',
+    inheritRobot: 'Inherited: {{material}} (robot default)',
+    inheritBuiltIn: 'Inherited: {{material}} (default)',
+    inheritNameRule: 'Inherited: name rule ‘{{rule}}’',
+    infill: 'Infill (%)',
+    infillHint:
+      'The slicer infill. Walls and top/bottom layers (about 1.1 mm) count as solid; the infill applies inside them. Children inherit it.',
+    infillInherited: 'Inherited {{percent}}',
+    infillDefault: 'Default {{percent}}',
+    override: 'Mass override',
+    overrideHint:
+      'Mass of everything under this object (a weighed subassembly, a datasheet value). It is spread over the shapes under it by volume. Leave empty to estimate.',
+    overridePlaceholder: 'Estimated {{mass}}',
+    massInputHint: 'You can type a unit (e.g. 437g, 1.2kg, 3lb, 8oz).',
+    centerOfMass: 'Center of mass',
+    centerOfMassAuto: 'Automatic',
+    centerOfMassUnused:
+      'This center of mass is not used now. It only applies when the mass is entered directly or this object has a datasheet mass.',
+    centerOfMassHint:
+      'Center of mass of the overridden (or datasheet) mass, in this object’s local frame. Automatic uses the center of the shapes under it.',
+    result: 'Result: {{mass}} · {{source}}',
+    resultNone: 'No mass computed yet.',
+    scaledTag: '(scaled to the weighed mass)',
+    resultCenterRobot: 'Center of mass (robot)',
+    resultCenterField: 'Center of mass (field)',
+    resultCenterHint: 'Center of mass of everything under this object. Computed; read-only.',
+    hint: 'Mass is a simulator setting. It does not affect generated code or the configuration XML. The scene view shows this object’s center of mass (small white dot) and the robot’s (teal cross).',
+    estimateLine: 'Mass (estimated) {{mass}} · {{source}}',
+    estimateHint: 'Click to add a Mass card and set the material or mass.',
+    source: {
+      from: '{{text}} ({{owner}})',
+      override: 'Override',
+      cots: 'Datasheet: {{product}}',
+      ratio: '{{product}} {{ratio}}:1',
+      cartridges: '{{product}} ({{count}} cartridge(s))',
+      material: 'Material: {{material}}',
+      nameRule: 'Name rule: ‘{{rule}}’',
+      nameRuleMaterial: 'Name rule: ‘{{rule}}’ → {{material}}',
+      nameRuleZero: 'Name rule: ‘{{rule}}’ (no mass)',
+      robotDefault: 'Robot default material: {{material}}',
+      defaultMass: 'Default (no mass information)',
+      none: 'No mass (no shape or a surface mesh)'
+    },
+    warnings: {
+      scaleUnusual:
+        'Matching the weighed mass needs the estimated mass × {{scale}}. That is more than the wires, screws and hubs missing from CAD (usually 5–15% of the total); check materials, infill and missing parts.',
+      scaleImpossible:
+        'Not scaled to the weighed mass: the override and datasheet mass ({{fixed}}) is at least the weighed mass ({{weighed}}), or there is no shape to estimate.',
+      defaultMass:
+        'No mass information, so the default {{mass}} (typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
+      defaultMassWeighed:
+        'No shape information, so the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
+      pending: '{{count}} mesh(es) still loading are not counted yet.'
+    },
+    rigidbody: {
+      title: 'Rigidbody',
+      simulationOnly: 'Simulator',
+      mass: 'Mass',
+      massNone: '—',
+      breakdown: 'Override/datasheet {{fixed}} + estimated {{estimated}}',
+      breakdownDefault: 'Default (no mass information)',
+      breakdownWeighedBox: 'Weighed mass (no shapes, approximated by the bounding box)',
+      scaled: '· estimate ×{{scale}} (scaled to the weighed mass)',
+      weighed: 'Weighed mass',
+      weighedHint:
+        'The whole robot on a scale. When set, the estimated parts are scaled by one ratio so that they add up to the rest after the override and datasheet masses.',
+      weighedPlaceholder: 'Empty: use the estimate',
+      defaultMaterial: 'Default material',
+      defaultMaterialHint:
+        'Material of parts that set none and match no name rule. FTC robot structure is usually aluminum.',
+      defaultMaterialBuiltIn: '{{material}} (default)',
+      centerOfMass: 'Center of mass',
+      centerOfMassHint:
+        'Center of mass from the robot origin (center, floor). X forward · Y left · Z up. Computed; read-only.',
+      principalMoments: 'Principal inertia',
+      principal1: 'I₁',
+      principal2: 'I₂',
+      principal3: 'I₃',
+      inertiaUnit: 'kg·m²',
+      principalMomentsHint:
+        'Principal values of the inertia tensor about the center of mass (kg·m²). Computed.',
+      openMeshes: '{{count}} open mesh(es) ({{percent}}% of the volume, approximate)',
+      surfaceMeshes: '{{count}} surface mesh(es) (no mass)',
+      pendingMeshes: '{{count}} loading',
+      cadSummary: '{{name}}: {{parts}}',
+      hint: 'For heavy parts missing from CAD (battery, hubs, …), create an empty group in that place (Create Empty) and enter its mass: it becomes a point mass there. Scaling to the weighed mass spreads over all shapes, so it does not move the center of mass toward them.'
     }
   }
 }
