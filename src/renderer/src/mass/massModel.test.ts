@@ -735,6 +735,59 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(model.objects.PodCad.mass).toBeCloseTo(0.084, 15)
     })
 
+    it('실제 goBILDA 포드 STEP 이름("<SKU>-V1.0 …" 낱개, 포드 SKU 어셈블리)이어도 포드 CAD 루트는 포드다', () => {
+      const cad = {
+        fileName: '3110-0001-0002.step',
+        absolutePath: '/3110-0001-0002.step',
+        upAxis: '+Z' as const,
+        forwardAxis: '+X' as const,
+        bounds: { min: [0, 0, 0] as Vec3, max: [0.05, 0.05, 0.05] as Vec3 },
+        meshCount: 4
+      }
+      // 실제 3110-0001-0002 STEP의 최상위 이름들(낱개 부품, 나사, 포드 SKU 그대로인 어셈블리)
+      const names: Record<string, string> = {
+        'g:Body': '3110-0001-0002-V1.0 main body v2',
+        'g:Ctl': '3110-0001-0002-V1.0 control arm v2',
+        'g:Screw': '1601-0408-0003 v1',
+        'g:Inner': ''
+      }
+      const scenePod = (xPod: string): SceneObjects => ({
+        ...base(xPod),
+        // 실제 파일의 CAD 루트 이름(STEP 최상위 PRODUCT)
+        PodCad: node('PodCad', 'R', { name: '(Unsaved)', cad }),
+        Body: part('Body', 'PodCad', [0, 0, 0], { name: names['g:Body'] }),
+        Ctl: part('Ctl', 'PodCad', [0, 0, 0], { name: names['g:Ctl'] }),
+        Screw: part('Screw', 'PodCad', [0, 0, 0], { name: names['g:Screw'] }),
+        Asm: node('Asm', 'PodCad', { name: '3110-0001-0002 (0°)' }),
+        Inner: part('Inner', 'Asm', [0, 0, 0], { name: '3110-0001-0002 (0°) 1' })
+      })
+      const podProps = {
+        ...props,
+        'g:Body': box(0.02, 0.02, 0.02),
+        'g:Ctl': box(0.03, 0.01, 0.005),
+        'g:Screw': box(0.003, 0.003, 0.01),
+        'g:Inner': box(0.01, 0.01, 0.01)
+      }
+      const model = computeMassModel(scenePod('PodCad'), lookupOf(podProps, names))
+      expect(model.robots.R.notices).toEqual([])
+      expect(model.objects.PodCad).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+      expect(model.objects.PodCad.mass).toBeCloseTo(0.084, 15)
+      // 포드로 가리키지 않으면 낱개 부품은 포드 질량을 하나씩 받지 않고 추정한다(포드 SKU 어셈블리 하나만 포드)
+      const loose = computeMassModel(scenePod(''), lookupOf(podProps, names))
+      expect(loose.objects.Body.source).not.toBe('cots')
+      expect(loose.objects.Ctl.source).not.toBe('cots')
+      expect(loose.objects.Asm).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+      expect(loose.objects.Asm.mass).toBeCloseTo(0.084, 15)
+      // 다른 포드 SKU(Swingarm)를 품으면 포드 둘이라 containsCots
+      const twoPods = {
+        ...scenePod('PodCad'),
+        Asm: node('Asm', 'PodCad', { name: '3110-0001-0001 Swingarm' })
+      }
+      expect(computeMassModel(twoPods, lookupOf(podProps, names)).robots.R.notices).toEqual([
+        ignored('PodCad', 'containsCots')
+      ])
+    })
+
     it('xPod·yPod가 같은 오브젝트면 한 번만 알리고, 같은 포드는 한 번만 센다', () => {
       expect(run('C', 'C').robots.R.notices).toEqual([ignored('C', 'containsPinpoint')])
       const model = run('Pod', 'Pod')

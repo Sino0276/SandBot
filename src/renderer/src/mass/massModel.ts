@@ -255,11 +255,14 @@ function podRejection(
   let volume = 0
   for (const id of subtreeIds(objects, request.target)) {
     const object = objects[id]
-    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys).
+    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys). 하위의
+    // 같은 포드 SKU(그룹 아래 불러온 포드 STEP의 "3110-0001-0002 …" 어셈블리)는 그 포드 자신이라 다른 COTS가 아니다.
+    const sku = id === request.target ? null : skuKeyOf(object, lookup, caches)
     const hasCots =
       (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
       (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
-      (id !== request.target && (targets.has(id) || skuKeyOf(object, lookup, caches) !== null))
+      (id !== request.target && targets.has(id)) ||
+      (sku !== null && sku !== request.key)
     if (hasCots) return 'containsCots'
     if (object.visual?.type === 'mesh') {
       const props = lookup.props(object.visual.geometryId)

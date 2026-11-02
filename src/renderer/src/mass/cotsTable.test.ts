@@ -127,5 +127,13 @@ describe('COTS 질량 표', () => {
     expect(skuCotsKey('13100-0012-0020')).toBeNull()
     expect(skuCotsKey('XREV-41-1300')).toBeNull()
     expect(skuCotsKey('Bracket')).toBeNull()
+    // 제품 STEP 안의 낱개 부품 이름("<SKU>-V1.0 …")은 그 제품이 아니다(실제 goBILDA 포드·Pinpoint STEP의 이름)
+    expect(skuCotsKey('3110-0001-0002-V1.0 main body v2')).toBeNull()
+    expect(skuCotsKey('3110-0001-0001-V1.1 Magnet v1')).toBeNull()
+    expect(skuCotsKey('3110-0001-0001-PSYCHO')).toBeNull()
+    expect(skuCotsKey('3110-0002-0001-V1.0 PCB')).toBeNull()
+    // 뒤에 공백·괄호·밑줄이 오거나 '-' 뒤에 글자가 없으면 그대로 SKU다
+    expect(grams(skuCotsKey('3110-0001-0002_step'))).toBe(84)
+    expect(grams(skuCotsKey('3110-0001-0002 - pod'))).toBe(84)
   })
 })
