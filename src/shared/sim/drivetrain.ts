@@ -127,7 +127,8 @@ function pseudoInverse3(m: readonly number[][]): number[][] {
 }
 
 // 순환 Jacobi 고유 분해: values[k]와 vectors의 k열이 짝이다. 사칙연산과 제곱근만 써서 결정적이다(실행·기계마다 같은 값).
-function symmetricEigen3(m: readonly number[][]): { values: number[]; vectors: number[][] } {
+// 질량 모델(렌더러 mass/massModel.ts)의 주관성 값도 이것으로 구한다.
+export function symmetricEigen3(m: readonly number[][]): { values: number[]; vectors: number[][] } {
   const a = m.map((row) => row.slice())
   const v = [
     [1, 0, 0],

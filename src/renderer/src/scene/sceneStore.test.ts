@@ -369,3 +369,84 @@ describe('바퀴', () => {
     expect(isPlaceholderScene(state().objects)).toBe(false)
   })
 })
+
+describe('질량 설정', () => {
+  beforeEach(() => {
+    initHistory()
+    state().replaceObjects(objects)
+    clearHistory()
+  })
+
+  it('파트·그룹·CAD 루트에 붙이고 바꾸고 떼며, 각 변경은 실행 취소 한 단계다', () => {
+    const before = state().objects
+    state().setObjectMass('P1', {})
+    // 빈 설정은 "질량 카드만 붙임"이라 남긴다
+    expect(state().objects.P1.mass).toEqual({})
+    expect(state().objects.P2).toBe(before.P2)
+    expect(before.P1.mass).toBeUndefined()
+    state().setObjectMass('P1', { material: 'steel', mass: 0.4 })
+    state().setObjectMass('C', { material: 'pla', infill: 0.3 })
+    state().setObjectMass('G', { mass: 1, centerOfMass: [0, 0, 0.1] })
+    state().setObjectMass('P1', null)
+    expect(state().objects.P1).not.toHaveProperty('mass')
+
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.mass).toEqual({ material: 'steel', mass: 0.4 })
+    expect(undo()).toBe(true)
+    expect(state().objects.G.mass).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(state().objects.C.mass).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.mass).toEqual({})
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('모르는 재질·범위 밖 수는 그 필드만 버리고, 로봇·없는 오브젝트·바뀐 것 없음은 씬을 그대로 둔다', () => {
+    state().setObjectMass('P1', {
+      material: 'unobtainium' as never,
+      infill: 1.5,
+      mass: 0,
+      centerOfMass: [0, 0, 11]
+    })
+    expect(state().objects.P1.mass).toEqual({})
+    state().setObjectMass('P1', { mass: 100, infill: 0, centerOfMass: [-10, 0, 10] })
+    expect(state().objects.P1.mass).toEqual({ infill: 0, mass: 100, centerOfMass: [-10, 0, 10] })
+    const after = state().objects
+    state().setObjectMass('P1', { centerOfMass: [-10, 0, 10], mass: 100, infill: 0 })
+    state().setObjectMass('R', { mass: 1 })
+    state().setObjectMass('nope', { mass: 1 })
+    expect(state().objects).toBe(after)
+  })
+
+  it('Rigidbody는 로봇에만 붙고, 정한 것이 없으면 뗀다', () => {
+    const before = state().objects
+    state().setRobotRigidbody('P1', { weighedMass: 12 })
+    state().setRobotRigidbody('R', {})
+    state().setRobotRigidbody('R', { weighedMass: 250 })
+    state().setRobotRigidbody('R', null)
+    expect(state().objects).toBe(before)
+    state().setRobotRigidbody('R', { weighedMass: 12.5, defaultMaterial: 'pla' })
+    expect(state().objects.R.rigidbody).toEqual({ weighedMass: 12.5, defaultMaterial: 'pla' })
+    const withBody = state().objects
+    state().setRobotRigidbody('R', { defaultMaterial: 'pla', weighedMass: 12.5 })
+    expect(state().objects).toBe(withBody)
+    state().setRobotRigidbody('R', { weighedMass: -1 })
+    expect(state().objects.R).not.toHaveProperty('rigidbody')
+    expect(undo()).toBe(true)
+    expect(state().objects.R.rigidbody?.weighedMass).toBe(12.5)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(false)
+  })
+
+  it('질량 설정이나 Rigidbody가 있는 씬은 임시 씬이 아니다', () => {
+    const placeholder = useSceneStore.getInitialState().objects
+    state().replaceObjects(placeholder)
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().setRobotRigidbody('robot', { weighedMass: 14 })
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+    state().replaceObjects(placeholder)
+    state().setObjectMass('webcam', {})
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+  })
+})

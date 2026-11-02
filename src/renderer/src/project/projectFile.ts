@@ -6,6 +6,7 @@ import {
 import { AXIS_DIRECTIONS } from '../cad/alignment'
 import { componentDef, isComponentType } from '../hardware/catalog'
 import { cadOriginOf } from '../scene/hierarchy'
+import type { MassSettings, RigidbodySettings } from '../mass/types'
 import {
   isCodeGroup,
   isInSubtree,
@@ -18,6 +19,12 @@ import {
   type Vec3,
   type WheelSettings
 } from '../scene/model'
+import {
+  canHaveMass,
+  canHaveRigidbody,
+  sanitizeMass,
+  sanitizeRigidbody
+} from '../scene/massSettings'
 import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
@@ -26,9 +33,12 @@ export const PROJECT_FORMAT = 'sandbot-project'
 // 3: CAD의 meshIndexing('source': 형상 id가 occt-import-js의 원래 메시 순번, meshCount는 빈 메시 포함 전체 수),
 // 4: group 종류(Create Empty), CAD 밖으로 옮긴 노드의 cadOrigin, 그룹의 Java 클래스 이름 codeClassName,
 // 5: 오브젝트에 연결한 TeamCode Java 파일 scripts([{ path, className }]),
-// 6: 바퀴 wheel({ kind, diameter, motor, gearRatio, angle, rollers }, 시뮬레이터 설정, assembly·part·group에만).
-// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음). objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 6
+// 6: 바퀴 wheel({ kind, diameter, motor, gearRatio, angle, rollers }, 시뮬레이터 설정, assembly·part·group에만),
+// 7: 질량 mass({ material?, infill?, mass?, centerOfMass? }, robot이 아닌 오브젝트)와 로봇 rigidbody
+//    ({ weighedMass?, defaultMaterial? }). 둘 다 시뮬레이터 설정이다(scene/massSettings.ts).
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음).
+// objects 배열의 순서가 형제 순서다.
+export const PROJECT_VERSION = 7
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -176,6 +186,19 @@ function parseWheel(value: unknown, index: number): WheelSettings {
   })
 }
 
+// 질량 설정(v7). 객체가 아니면 다른 필드처럼 파일 오류이고, 모르는 재질 키·범위 밖 수·형식이 틀린 값은 그 필드만
+// 버린다(sanitizeMass, 재질 목록이 줄거나 범위가 좁아져도 예전 파일이 열린다). 빈 {}은 질량 카드만 붙인 상태라 남긴다.
+function parseMass(value: unknown, index: number): MassSettings {
+  if (!isRecord(value)) invalid(index, 'mass')
+  return sanitizeMass(value)
+}
+
+// 로봇 Rigidbody(v7). 정리한 결과가 비면 필드를 두지 않는다(스토어 setRobotRigidbody와 같음).
+function parseRigidbody(value: unknown, index: number): RigidbodySettings | null {
+  if (!isRecord(value)) invalid(index, 'rigidbody')
+  return sanitizeRigidbody(value)
+}
+
 // 패키지까지 붙인 클래스 이름(점으로 이은 Java 식별자)
 const QUALIFIED_CLASS =
   /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*(\.[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*)*$/u
@@ -228,7 +251,9 @@ function parseObject(
     cadOrigin,
     codeClassName,
     scripts,
-    wheel
+    wheel,
+    mass,
+    rigidbody
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -317,6 +342,16 @@ function parseObject(
   if (wheel !== undefined) {
     if (kind === 'robot' || object.cad) invalid(index, 'wheel')
     object.wheel = parseWheel(wheel, index)
+  }
+  // 질량 설정은 robot이 아닌 오브젝트에, Rigidbody는 robot에만 둔다(scene/massSettings.ts)
+  if (mass !== undefined) {
+    if (!canHaveMass(object)) invalid(index, 'mass')
+    object.mass = parseMass(mass, index)
+  }
+  if (rigidbody !== undefined) {
+    if (!canHaveRigidbody(object)) invalid(index, 'rigidbody')
+    const settings = parseRigidbody(rigidbody, index)
+    if (settings) object.rigidbody = settings
   }
   return object
 }

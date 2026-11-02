@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatLength,
+  formatMass,
   formatNumber,
   fromDisplayLength,
+  KG_PER_LB,
   loadLengthUnit,
+  MASS_SYMBOLS,
+  massDisplay,
   parseAngle,
+  parseMass,
   parseLength,
   saveLengthUnit,
-  toDisplayLength
+  toDisplayLength,
+  type LengthUnit
 } from './units'
 
 function createStorage(): Pick<Storage, 'getItem' | 'setItem'> {
@@ -63,5 +69,55 @@ describe('길이 단위', () => {
     expect(loadLengthUnit(storage)).toBe('cm')
     storage.setItem('sandbot:lengthUnit', 'km')
     expect(loadLengthUnit(storage)).toBeNull()
+  })
+})
+
+const fmt = (kg: number, unit: LengthUnit): string => formatMass(kg, unit)
+
+describe('질량 단위', () => {
+  it('기호 글자는 받은 것을 쓰고, 없으면 국제 단위 기호다(계약의 두 인자 호출)', () => {
+    expect(formatMass(0.437, 'mm', { ...MASS_SYMBOLS, g: 'G' })).toBe('437 G')
+    expect(formatMass(13.6, 'in', { ...MASS_SYMBOLS, lb: 'LB' })).toBe('29.98 LB')
+    expect(formatMass(0.437, 'mm')).toBe(formatMass(0.437, 'mm', MASS_SYMBOLS))
+    expect(MASS_SYMBOLS).toEqual({ g: 'g', kg: 'kg', lb: 'lb', oz: 'oz' })
+  })
+
+  it('미터법 표시 단위는 1 kg 미만이면 g(정수), 그 위는 kg(소수 셋)', () => {
+    for (const unit of ['mm', 'cm', 'm'] as const) {
+      expect(fmt(0.437, unit)).toBe('437 g')
+      expect(fmt(13.6, unit)).toBe('13.600 kg')
+    }
+    expect(fmt(0, 'mm')).toBe('0 g')
+    expect(fmt(0.0004, 'mm')).toBe('0 g')
+    // 반올림하면 1000 g이 되는 값은 kg로
+    expect(fmt(0.9996, 'cm')).toBe('1.000 kg')
+    expect(fmt(0.9994, 'cm')).toBe('999 g')
+    expect(massDisplay(1.2346, 'm')).toEqual({ value: '1.235', symbol: 'kg' })
+  })
+
+  it('in 표시 단위는 lb(소수 둘), 0.1 lb 미만이면 oz(소수 하나)', () => {
+    expect(fmt(13.6, 'in')).toBe('29.98 lb')
+    expect(fmt(KG_PER_LB * 30, 'in')).toBe('30.00 lb')
+    expect(fmt(0.06, 'in')).toBe('0.13 lb')
+    expect(fmt(0.04, 'in')).toBe('1.4 oz')
+    // 반올림해 0.10 lb가 되는 값은 lb, 0은 0.00 lb
+    expect(fmt(KG_PER_LB * 0.0996, 'in')).toBe('0.10 lb')
+    expect(fmt(0, 'in')).toBe('0.00 lb')
+  })
+
+  it('kg·g·lb·oz를 붙인 값과 단위 없는 값(미터법은 kg, in은 lb)을 받는다', () => {
+    expect(parseMass('437g', 'mm')).toBeCloseTo(0.437, 15)
+    expect(parseMass('1.2 kg', 'in')).toBeCloseTo(1.2, 15)
+    expect(parseMass('30lb', 'mm')).toBeCloseTo(13.6077711, 7)
+    expect(parseMass('30 LBS', 'mm')).toBeCloseTo(13.6077711, 7)
+    expect(parseMass('8 oz', 'cm')).toBeCloseTo(0.226796185, 9)
+    expect(parseMass('12.5', 'm')).toBe(12.5)
+    expect(parseMass('30', 'in')).toBeCloseTo(13.6077711, 7)
+    expect(parseMass(' .5 kg ', 'mm')).toBe(0.5)
+  })
+
+  it('읽을 수 없는 입력은 null', () => {
+    for (const text of ['', 'kg', '12 stone', '1,5 kg', '3 m', 'abc'])
+      expect(parseMass(text, 'mm')).toBeNull()
   })
 })
