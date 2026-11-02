@@ -4,7 +4,7 @@
 // START, 정한 틱에 configSet)다.
 //  - Actions.runBlocking이 dash 패킷(data·log·ops)을 전송 간격(가상 100 ms)마다 보내고, 두 번 돌리면 바이트가 같다
 //  - @Config 트리(이름순, 형식·enum 상수·source, final·@Disabled 제외, @Config 이름, addConfigVariable·autoRemove)와 configSet이
-//    다음 루프에 보이고 dashConfig가 다시 온다(받지 않는 값은 경고 로그)
+//    다음 루프에 보이고 dashConfig가 다시 온다(받지 않는 값은 경고 로그). public이 아닌 @Config 클래스도 로봇(ART)처럼 읽고 고친다
 //  - MultipleTelemetry(DS + Dashboard)의 실제 예외·null, clear의 cleared, 카메라·이미지 안내 한 번, 한도
 // JDK가 없으면 모두 건너뛴다. 라이브러리를 받지 못하면(오프라인) 이유를 출력하고 건너뛴다(SANDBOT_TEST_LIBRARIES_REQUIRED=1이면 실패).
 import { spawn } from 'node:child_process'
@@ -515,6 +515,90 @@ describe.skipIf(build === null)('FTC Dashboard 대체: @Config와 Config 탭', (
       expect(names(nodeAt(final.root, ['Runtime']))).toEqual(['scale'])
 
       // 같은 입력이면 dash·dashConfig를 포함해 바이트가 같다(설정 트리는 이름순, HashMap 순서가 들어가지 않는다)
+      const again = await runSidecar(b, host)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it.skipIf(libraries === null)(
+    'public이 아닌 @Config 클래스(패키지 전용 최상위·중첩, 패키지 전용 상위 클래스의 필드)도 로봇(ART)처럼 읽고 고친다(final만 거부)',
+    async () => {
+      const at = (...path: string[]): string[] => path
+      const host: Host = {
+        opMode: 'DashNonPublicConfig',
+        events: { [START_TICK]: ['start'], [STOP_TICK]: ['stop'] },
+        configSet: {
+          [SET_TICK]: [
+            { path: at('PkgConstants', 'KP'), value: '0.5' },
+            { path: at('Nested', 'TICKS'), value: '7' },
+            { path: at('PkgConstants', 'POSITIONS', '1'), value: '3.5' },
+            { path: at('PkgConstants', 'GAINS', 'kP'), value: '0.2' },
+            { path: at('Derived', 'BASE'), value: '2.5' },
+            { path: at('PkgConstants', 'GAINS', 'kI'), value: '1' }
+          ]
+        }
+      }
+      const run = await runSidecar(b, host)
+      // 객체·배열 필드가 있는 패키지 전용 클래스도 INIT 전 스캔에서 실패하지 않는다
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+
+      const trees = configs(run)
+      const initial = trees[0].root
+      expect(names(initial)).toEqual(['Derived', 'Nested', 'PkgConstants'])
+      const source = (cls: string, field: string): { declaringClass: string; field: string } => ({
+        declaringClass: `${PACKAGE}.${cls}`,
+        field
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'KP'))).toEqual({
+        kind: 'value',
+        type: 'double',
+        value: '0.25',
+        enumValues: [],
+        source: source('PkgConstants', 'KP')
+      })
+      expect(nodeAt(initial, at('Nested', 'TICKS'))).toEqual({
+        kind: 'value',
+        type: 'int',
+        value: '42',
+        enumValues: [],
+        source: source('DashNonPublicConfig$Nested', 'TICKS')
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'POSITIONS', '1'))).toMatchObject({
+        type: 'double',
+        value: '2.0',
+        source: null
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'GAINS', 'kP'))).toMatchObject({
+        type: 'double',
+        value: '0.1',
+        source: source('PkgGains', 'kP')
+      })
+      expect(nodeAt(initial, at('PkgConstants', 'GAINS', 'kI'))).toMatchObject({ value: '0.0' })
+      expect(nodeAt(initial, at('Derived', 'BASE'))).toMatchObject({
+        type: 'double',
+        value: '1.5',
+        source: source('PkgBase', 'BASE')
+      })
+
+      // configSet 다음 루프(final 필드는 로봇처럼 쓰지 못한다)
+      expect(results(run)).toEqual([
+        { kp: '0.25', ticks: '42', pos1: '2.0', gainP: '0.1', base: '1.5', fixedI: '0.0' },
+        { kp: '0.5', ticks: '7', pos1: '3.5', gainP: '0.2', base: '2.5', fixedI: '0.0' }
+      ])
+      const after = trees.find((t) => t.tNanos >= SET_TICK * DEFAULT_TICK_NANOS)!
+      expect(nodeAt(after.root, at('PkgConstants', 'KP'))).toMatchObject({ value: '0.5' })
+      expect(nodeAt(after.root, at('Nested', 'TICKS'))).toMatchObject({ value: '7' })
+      expect(nodeAt(after.root, at('PkgConstants', 'GAINS', 'kI'))).toMatchObject({ value: '0.0' })
+      const log = robotLog(run).filter((line) => line.includes('Dashboard config'))
+      expect(log).toEqual([
+        expect.stringMatching(
+          /PkgConstants\/GAINS\/kI could not be set: java\.lang\.RuntimeException: java\.lang\.IllegalAccessException: Cannot set public final field/
+        )
+      ])
+      expect(robotLog(run).filter((line) => line.includes('could not be read'))).toEqual([])
+
       const again = await runSidecar(b, host)
       expect(normalized(again)).toEqual(normalized(run))
     },
