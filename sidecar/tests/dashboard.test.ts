@@ -310,12 +310,12 @@ describe.skipIf(build === null)('FTC Dashboard 대체: Road Runner Actions.runBl
       expect(errors(first), explain(first)).toEqual([])
       expect(finishedReason(first)).toBe('returned')
       expect(results(first)).toEqual([{ loops: '60', instance: 'true' }])
-      // 링크 검사: Road Runner가 쓰는 Dashboard 클래스·멤버는 모두 대체에 있다(남는 경고는 Road Runner의 웹 처리기·AppUtil 쪽)
+      // 링크 검사: Road Runner(ftc·actions·core)와 Dashboard 대체가 쓰는 클래스·멤버는 가짜 SDK와 대체에 모두 있다(웹 처리기가
+      // 쓰는 Android 자원·MIME API도 실제 서명으로 있다)
       const link = first.messages.find((m) => m.type === 'linkReport')
       expect(link?.type).toBe('linkReport')
       const warnings = link?.type === 'linkReport' ? link.warnings : []
-      expect(warnings.filter((w) => w.target.startsWith('com.acmerobotics.dashboard.'))).toEqual([])
-      expect(warnings.filter((w) => w.jar === b.dashboardJar)).toEqual([])
+      expect(warnings).toEqual([])
 
       const packets = dashes(first)
       // 루프 60번 × 20 ms ≈ 1.2 s, 전송 간격 100 ms → 묶음 10여 개(루프마다가 아니다)
