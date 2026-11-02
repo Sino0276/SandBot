@@ -13,6 +13,7 @@ import {
   meshMassProps,
   meshSourceName
 } from '../scene/geometryRegistry'
+import type { SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import {
   cadStructureChanged,
@@ -139,6 +140,36 @@ const cubes = convertOcctResult(
 )!
 
 describe('형상 등록과 질량 성질', () => {
+  // CAD 루트 'cad'와 형상 cad:0..2를 쓰는 파트 셋
+  const scene: SceneObjects = {
+    cad: {
+      id: 'cad',
+      name: 'bot',
+      kind: 'assembly',
+      parentId: null,
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      cad: {
+        fileName: 'bot.step',
+        absolutePath: '/cad/bot.step',
+        upAxis: '+Z',
+        forwardAxis: '-Y',
+        bounds: cubes.root.bounds,
+        meshCount: 3,
+        meshIndexing: 'source'
+      }
+    }
+  }
+  for (const i of [0, 1, 2]) {
+    scene[`part-${i}`] = {
+      id: `part-${i}`,
+      name: `part-${i}`,
+      kind: 'part',
+      parentId: 'cad',
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      visual: { type: 'mesh', geometryId: `cad:${i}`, color: [0.5, 0.5, 0.5] }
+    }
+  }
+
   afterEach(() => {
     disposeAllGeometry()
     vi.unstubAllGlobals()
@@ -154,30 +185,15 @@ describe('형상 등록과 질량 성질', () => {
       '',
       'Gearbox'
     ])
-    expect(cadMassSummary('cad')).toMatchObject({ meshes: 3, openMeshes: 0, pendingMeshes: 0 })
+    expect(cadMassSummary('cad', scene)).toMatchObject({
+      meshes: 3,
+      openMeshes: 0,
+      pendingMeshes: 0
+    })
   })
 
-  it('CAD를 읽는 동안 질량 요약이 빠진 메시를 세고, 끝나면 형상 revision을 올린다', async () => {
-    useSceneStore.setState({
-      objects: {
-        cad: {
-          id: 'cad',
-          name: 'bot',
-          kind: 'assembly',
-          parentId: null,
-          transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
-          cad: {
-            fileName: 'bot.step',
-            absolutePath: '/cad/bot.step',
-            upAxis: '+Z',
-            forwardAxis: '-Y',
-            bounds: cubes.root.bounds,
-            meshCount: 3,
-            meshIndexing: 'source'
-          }
-        }
-      }
-    })
+  it('CAD를 읽는 동안 질량 요약이 아직 등록하지 않은 메시를 세고, 끝나면 형상 revision을 올린다', async () => {
+    useSceneStore.setState({ objects: scene })
     let finish: (result: unknown) => void = () => {}
     const readStepCached = vi.fn(() => new Promise((resolve) => (finish = resolve)))
     vi.stubGlobal('window', {
@@ -203,7 +219,8 @@ describe('형상 등록과 질량 성질', () => {
     const beforeEnd = revision()
     finish(null)
     expect(await missing).toBe('missing')
-    expect(cadMassSummary('cad')).toBeUndefined()
+    // 형상 없이 끝났다(못 찾은 상태는 projectStore.cadStatus가 알린다)
+    expect(cadMassSummary('cad')).toMatchObject({ meshes: 0, pendingMeshes: 0 })
     expect(revision()).toBe(beforeEnd + 1)
   })
 })
