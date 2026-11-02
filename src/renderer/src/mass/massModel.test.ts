@@ -219,11 +219,15 @@ describe('질량 추정: 이름 규칙', () => {
       part('P3', 'B', [0, 0, 0], { name: 'IR' }),
       // CAD 루트 이름까지 본다(로봇 이름은 보지 않는다)
       part('P4', 'C', [0, 0, 0], { name: 'Thing' }),
-      node('G', 'R', { kind: 'group', name: 'Lift' }),
-      part('P5', 'G', [0, 0, 0], { name: 'Thing' })
+      // 그룹 이름(팀이 지은 메커니즘 이름)은 보지 않는다: CAD 밖으로 옮긴 파트는 기본 재질이고,
+      node('G', 'R', { kind: 'group', name: 'IntakeRoller' }),
+      part('P5', 'G', [0, 0, 0], { name: 'Part 12', cadOrigin: 'C' }),
+      // CAD 안의 그룹은 건너뛰고 그 위 CAD 이름을 본다
+      node('H', 'C', { kind: 'group', name: 'Belt Tensioner' }),
+      part('P6', 'H', [0, 0, 0], { name: 'Thing' })
     )
     const props = Object.fromEntries(
-      ['P1', 'P2', 'P3', 'P4', 'P5'].map((id) => [`g:${id}`, solid(LITER)])
+      ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].map((id) => [`g:${id}`, solid(LITER)])
     )
     const model = computeMassModel(
       objects,
@@ -251,6 +255,22 @@ describe('질량 추정: 이름 규칙', () => {
       inheritedFrom: 'C'
     })
     expect(model.objects.P5).toMatchObject({ source: 'default', detail: 'aluminum6061' })
+    expect(model.objects.P5.mass).toBeCloseTo(2.7, 12)
+    expect(model.objects.P6).toMatchObject({
+      source: 'nameRule',
+      detail: 'screw',
+      inheritedFrom: 'C'
+    })
+  })
+
+  it('그룹 이름의 SKU는 COTS로 보지 않는다', () => {
+    const objects = scene(
+      robot(),
+      node('G', 'R', { kind: 'group', name: '3100-0012-0020' }),
+      part('P', 'G')
+    )
+    const model = computeMassModel(objects, lookupOf({ 'g:P': solid(LITER) }))
+    expect(model.objects.P).toMatchObject({ source: 'default', detail: 'aluminum6061' })
   })
 
   it('명시한 재질이 이름 규칙보다 먼저이고, 라벨 규칙은 질량 0이다', () => {
@@ -265,8 +285,9 @@ describe('질량 추정: 이름 규칙', () => {
     expect(model.objects.L).toMatchObject({ mass: 0, source: 'nameRule', detail: 'label' })
   })
 
-  it('goBILDA U-channel 5종: CAD 부피 × 2.70이 공시 무게와 1.5 % 안(비평 §1.4, 키트 STEP 부피를 고정값으로)', () => {
-    // [SKU, 키트 CAD 부피 cm³, goBILDA 공시 무게 g]
+  it('goBILDA U-channel 5종: CAD 부피 × 2.70이 공시 무게와 0–1.4 % 안(예제 STEP 부피를 고정값으로)', () => {
+    // [SKU, goBILDA 예제 STEP(3200-2627-0004)을 occt-import-js로 읽은 CAD 부피 cm³, goBILDA 공시 무게 g]
+    // 공시 무게: https://www.gobilda.com/1120-series-u-channel-<N>-hole-<L>mm-length/ (1-48, 2-72, 8-216, 10-264, 15-384)
     const channels: [string, number, number][] = [
       ['1120-0001-0048', 13.142, 35],
       ['1120-0002-0072', 18.907, 51],
@@ -286,7 +307,7 @@ describe('질량 추정: 이름 규칙', () => {
     for (const [sku, , published] of channels) {
       expect(model.objects[sku]).toMatchObject({ source: 'nameRule', detail: 'gobilda-1120' })
       const grams = model.objects[sku].mass * 1000
-      expect(Math.abs(grams - published) / published, sku).toBeLessThanOrEqual(0.015)
+      expect(Math.abs(grams - published) / published, sku).toBeLessThanOrEqual(0.014)
     }
   })
 })
@@ -377,10 +398,34 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(model.objects.P1.mass).toBeCloseTo(0.3, 15)
     expect(model.objects.P2.mass).toBeCloseTo(0.7, 15)
     expect(model.objects.A.mass).toBeCloseTo(1, 15)
-    // 안쪽이 바깥보다 크면 바깥의 나머지는 0이다
+    // 안쪽이 바깥보다 크면 안쪽 값을 쓰고 바깥의 나머지는 0이며, 바깥 값을 쓰지 못한 것을 알린다
     expect(model.objects.Q1.mass).toBeCloseTo(0.5, 15)
     expect(model.objects.Q2.mass).toBe(0)
     expect(model.objects.X.mass).toBeCloseTo(0.5, 15)
+    expect(model.robots.R.warnings).toEqual([
+      { kind: 'innerMassExceeds', objectId: 'X', mass: 0.2, inner: 0.5 }
+    ])
+    expect(model.robots.R.mass).toBeCloseTo(1.5, 15)
+  })
+
+  it('안쪽 덮어쓰기 합이 바깥 값과 같으면 알리지 않고, COTS 덩어리 안의 덮어쓰기도 같은 규칙이다', () => {
+    const objects = scene(
+      robot(),
+      node('A', 'R', { mass: { mass: 1 } }),
+      part('P1', 'A', [0, 0, 0], { mass: { mass: 0.6 } }),
+      part('P2', 'A', [0, 0, 0], { mass: { mass: 0.4 } }),
+      part('P3', 'A'),
+      // 모터(goBILDA 5203 19.2:1, 437 g) 안의 1 kg 덮어쓰기
+      node('M', 'R', { components: [motor(19.2)] }),
+      part('Q', 'M', [0, 0, 0], { mass: { mass: 1 } })
+    )
+    const props = Object.fromEntries(['P1', 'P2', 'P3', 'Q'].map((id) => [`g:${id}`, solid(LITER)]))
+    const model = computeMassModel(objects, lookupOf(props))
+    expect(model.objects.P3.mass).toBe(0)
+    expect(model.objects.A.mass).toBeCloseTo(1, 15)
+    expect(model.robots.R.warnings).toEqual([
+      { kind: 'innerMassExceeds', objectId: 'M', mass: 0.437, inner: 1 }
+    ])
   })
 
   it('컴포넌트 COTS는 붙은 오브젝트 하위 전체를 덮고, 안쪽 COTS는 쓰지 않는다', () => {
@@ -606,6 +651,36 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     const model = computeMassModel(objects, lookupOf({ 'g:P1': solid(LITER) }))
     expect(model.robots.R.mass).toBeCloseTo(2.7, 12)
     expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 2 }])
+  })
+
+  it('모든 메시를 읽는 중이면 기본값(13.6 kg)이 아니라 읽은 만큼(0 kg)이다', () => {
+    const objects = scene(
+      robot({ rigidbody: { weighedMass: 10 } }),
+      part('P1', 'R'),
+      part('P2', 'R')
+    )
+    const r = computeMassModel(objects, lookupOf({})).robots.R
+    expect(r).toMatchObject({
+      mass: 0,
+      centerOfMass: [0, 0, 0],
+      inertia: [0, 0, 0, 0, 0, 0],
+      fixedMass: 0,
+      estimatedMass: 0,
+      scale: 1,
+      warnings: [{ kind: 'pending', meshes: 2 }]
+    })
+    // 읽는 중인 메시와 덮어쓴 그룹만 있으면 그 덮어쓰기만 센다
+    const withOverride = {
+      ...objects,
+      G: { ...node('G', 'R', { kind: 'group', mass: { mass: 0.6 } }) }
+    }
+    expect(computeMassModel(withOverride, lookupOf({})).robots.R).toMatchObject({
+      mass: 0.6,
+      warnings: [
+        { kind: 'scaleImpossible', fixed: 0.6, weighed: 10 },
+        { kind: 'pending', meshes: 2 }
+      ]
+    })
   })
 
   it('같은 입력이면 같은 결과이고, 결과 키는 objects 키 순서다', () => {

@@ -79,6 +79,9 @@ export type MassWarning =
   | { kind: 'scaleUnusual'; scale: number }
   // 고정 질량(덮어쓰기·COTS) ≥ 저울 무게이거나 추정 질량이 0이라 맞추지 않음
   | { kind: 'scaleImpossible'; fixed: number; weighed: number }
+  // 덩어리(덮어쓰기·COTS를 정한 objectId) 안의 덮어쓰기 합 inner가 그 질량 mass보다 커서 안쪽 값을 그대로 씀
+  // (objectId 하위 합계가 inner가 된다)
+  | { kind: 'innerMassExceeds'; objectId: string; mass: number; inner: number }
   // 질량 정보가 없어 기본값을 씀
   | { kind: 'defaultMass' }
   // 형상을 읽는 중인 메시가 있어 그 부분이 빠짐

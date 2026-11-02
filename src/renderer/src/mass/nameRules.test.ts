@@ -32,8 +32,22 @@ describe('이름 규칙', () => {
     // 낱말 안의 글자는 맞추지 않는다(Spinner의 pin, Gearbox의 gear, plate의 pla)
     expect(rule('Spinner')).toBeNull()
     expect(rule('5103 Gearbox Base')).toBeNull()
-    expect(rule('Side Plates')).toBe('channel')
+    expect(rule('Side Plates')).toBe('plate')
     expect(material('Side Plates')).toBe('aluminum6061')
+  })
+
+  it('규칙 이름은 맞은 낱말열이다(규칙의 첫 낱말이 아니라)', () => {
+    expect(rule('tires')).toBe('tire')
+    expect(rule('RollerCore')).toBe('roller')
+    expect(rule('PLATE')).toBe('plate')
+    expect(rule('Axles')).toBe('axle')
+    expect(rule('M4 Bolt')).toBe('bolt')
+    expect(rule('Snap Ring')).toBe('snap ring')
+    expect(rule('Carbon Fiber Plate')).toBe('carbon fiber')
+    // 같은 규칙의 낱말이 여럿 맞으면 규칙에 적은 순서로 첫 것
+    expect(rule('Tire Belt')).toBe('belt')
+    expect(nameRuleMaterial('tire')).toBe('rubber')
+    expect(nameRuleMaterial('snap ring')).toBe('steel')
   })
 
   it('위에서 첫 맞는 규칙을 쓴다(재질 이름이 먼저, 긴 낱말열이 짧은 것보다 먼저)', () => {
@@ -45,7 +59,7 @@ describe('이름 규칙', () => {
     expect(material('Carbon Steel Pin')).toBe('steel')
     expect(material('Carbon Fiber Plate')).toBe('carbonFiber')
     // servo shaft(알루미늄)가 shaft(강철)보다 먼저
-    expect(rule('8mm REX Servo Shaft')).toBe('servo-shaft')
+    expect(rule('8mm REX Servo Shaft')).toBe('servo shaft')
     expect(material('8mm REX Servo Shaft')).toBe('aluminum6061')
     expect(material('REX Shaft')).toBe('steel')
     // 세트 스크루 칼라는 screw(강철), 클램핑 칼라는 알루미늄
@@ -65,14 +79,14 @@ describe('이름 규칙', () => {
     expect(material('Top Sticker')).toBeNull()
   })
 
-  it('오인하기 쉬운 짧은 낱말은 쓰지 않는다(비평 E12)', () => {
+  it('오인하기 쉬운 짧은 낱말은 쓰지 않는다(키트 이름의 치수 약어 OR·IR·OD·ID 등)', () => {
     for (const name of ['OR', 'IR', 'OD', 'ID', 'PC', 'SS', 'CF', 'Ply', 'Alu', 'POM', 'EVA'])
       expect(rule(name)).toBeNull()
     expect(rule('Pin')).toBe('pin')
     expect(rule('Lock Nut')).toBe('nut')
   })
 
-  it('낱말이 없으면 goBILDA SKU 시리즈로 재질을 정한다(비평 정정 포함)', () => {
+  it('낱말이 없으면 goBILDA SKU 시리즈로 재질을 정한다(바퀴·롤러는 고무, COTS 시리즈는 없음)', () => {
     expect(matchNameRule(['1120-0015-0384'])).toEqual({
       name: 'gobilda-1120',
       material: 'aluminum6061'
@@ -99,12 +113,16 @@ describe('이름 규칙', () => {
     expect(material('1120-0001-0048', 'Left Arm')).toBe('aluminum6061')
   })
 
-  it('규칙 이름은 서로 다르고 재질은 재질 목록에 있다', () => {
-    const names = WORD_RULES.map((wordRule) => wordRule.name)
-    expect(new Set(names).size).toBe(names.length)
+  it('낱말열은 규칙 사이에 겹치지 않고 재질은 재질 목록에 있다', () => {
+    const phrases = WORD_RULES.flatMap((wordRule) => wordRule.phrases)
+    expect(new Set(phrases).size).toBe(phrases.length)
     for (const wordRule of WORD_RULES) {
       if (wordRule.material !== null) expect(MATERIAL_KEYS).toContain(wordRule.material)
-      expect(nameRuleMaterial(wordRule.name)).toBe(wordRule.material)
+      for (const phrase of wordRule.phrases) {
+        expect(nameRuleMaterial(phrase)).toBe(wordRule.material)
+        // 규칙 낱말열 그대로인 이름은 그 낱말열로 맞는다(앞 규칙이 가로채지 않는다)
+        expect(matchNameRule([phrase])?.name, phrase).toBe(phrase)
+      }
     }
     expect(nameRuleMaterial('gobilda-2800')).toBe('steel')
     expect(nameRuleMaterial('nope')).toBeUndefined()

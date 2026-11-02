@@ -33,27 +33,31 @@ import {
   type SymMatrix3
 } from './types'
 
-// 질량 추정(spec-3a §3). 순수 함수: 같은 문서와 같은 메시 성질이면 같은 결과다(objects 키 순서로 센다).
+// 질량 추정. 순수 함수: 같은 문서와 같은 메시 성질이면 같은 결과다(objects 키 순서로 센다).
 //
 // 파트(메시 하나) 질량의 출처는 위가 먼저다.
 // 1. 덮어쓰기(mass.mass): 그 오브젝트 하위 전체가 한 덩어리다. 하위 형상의 부피 비율로 나누고, 형상이 없으면
-//    점질량(원점)이다. 덮어쓰기 안의 덮어쓰기는 안쪽 값을 고정하고 남은 질량(음수면 0)을 나머지에 나눈다.
+//    점질량(원점)이다. 덮어쓰기 안의 덮어쓰기는 안쪽 값을 고정하고 남은 질량을 나머지에 나눈다. 안쪽 합이 바깥 값보다
+//    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) innerMassExceeds로 알린다.
 // 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드, 없으면 원래 CAD 이름의 SKU. 덮는 범위와
 //    나누는 방법은 1과 같고, 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
-// 3. 재질 × 부피: 위로 가장 가까운 mass.material, 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질.
+// 3. 재질 × 부피: 위로 가장 가까운 mass.material, 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질. 이름 규칙은
+//    원래 CAD 메시 이름과 상위 CAD 오브젝트 이름(CAD 루트까지)만 본다. 그룹 이름은 팀이 지은 메커니즘 이름(생성 Java
+//    클래스)이라 재질을 말하지 않으므로 건너뛴다(IntakeRoller 그룹에 옮긴 파트가 roller → 고무가 되지 않게).
 // 무게중심 덮어쓰기(mass.centerOfMass)는 질량을 정한 오브젝트(1·2)에서만 쓰고, 덩어리 전체의 무게중심을 그 점에 둔다
 // (관성의 모양은 형상 그대로 옮긴다).
 //
 // 저울 무게(rigidbody.weighedMass)가 있으면 고정 질량(1·2)을 뺀 나머지로 3의 파트만 같은 비율로 늘이거나 줄인다.
 // 위치는 로봇 좌표(로봇 밖은 필드 좌표)이고, 관성은 무게중심 기준 R·I·Rᵀ와 평행축 정리로 합친다(transform에 척도 없음).
 
-// 이 부피(m³) 아래는 표면으로 본다(spec-3a §1)
+// 이 부피(m³, 1 mm³의 1/1000) 아래는 표면으로 본다(부피 0인 판·선 메시의 반올림 오차)
 const MIN_SOLID_VOLUME = 1e-12
-// 저울 맞추기 비율이 이 범위 밖이면 scaleUnusual(spec-3a §3.2: CAD에 없는 전선·나사·허브는 보통 전체의 5–15 %라
-// 그보다 큰 차이는 재질·채움률·빠진 부품을 확인하라는 뜻이다)
+// 저울 맞추기 비율이 이 범위 밖이면 scaleUnusual. 판단값이다: CAD에 없는 전선·나사·허브는 보통 전체의 5–15 %이고
+// 알루미늄 구조재는 부피 × 밀도가 공시 무게와 1.4 % 안에서 맞으므로(goBILDA U-channel), 그보다 큰 차이는
+// 재질·채움률·빠진 부품을 확인하라는 뜻이다.
 export const SCALE_USUAL_MIN = 0.6
 export const SCALE_USUAL_MAX = 1.6
-// 정보 없는 로봇의 무게중심 높이(외곽 높이에 대한 비율, spec-3a §3.3)
+// 정보 없는 로봇의 무게중심 높이(외곽 높이에 대한 비율). 구동계·배터리·허브가 아래에 몰린 FTC 로봇을 가정한 판단값이다.
 const DEFAULT_COM_HEIGHT = 0.35
 
 type Block = {
@@ -72,6 +76,8 @@ type Block = {
   // 풀고 난 뒤의 질량·무게중심(안쪽 덩어리 포함)
   resolvedMass: number
   resolvedCom: Vec3
+  // 안쪽 덮어쓰기 합이 이 덩어리 질량보다 컸는지(그 합, 아니면 null)
+  exceededBy: number | null
 }
 
 type Part = {
@@ -207,8 +213,8 @@ function cotsKeys(
   return []
 }
 
-// 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 키트의 PRODUCT 이름 374개 중 고유한 것 144개,
-// research/materials.md §4.1) 한 번 계산 안에서 이름마다 한 번만 한다
+// 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)
+// 한 번 계산 안에서 이름마다 한 번만 한다
 type NameCaches = {
   rule: (names: readonly string[]) => NameRule | null
   sku: (name: string) => string | null
@@ -332,7 +338,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     members: [],
     children: [],
     resolvedMass: 0,
-    resolvedCom: origin
+    resolvedCom: origin,
+    exceededBy: null
   })
 
   // 추정 파트의 재질·출처
@@ -372,7 +379,10 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     // 로봇은 자기 좌표가 기준이라 단위 행렬, 로봇 밖 최상위는 필드 좌표
     const matrix = isRobot ? new Matrix4() : parent ? parent.matrix.clone().multiply(local) : local
     matrices.set(object.id, matrix)
-    const names = isRobot ? [] : ownNames(object, lookup)
+    // 이름 규칙·SKU에 쓰는 이름은 CAD 오브젝트(어셈블리·파트·CAD 루트)의 것뿐이다. 로봇 이름은 파일 이름이고, 그룹
+    // 이름은 팀이 지은 메커니즘 이름이다.
+    const cadNamed = !isRobot && object.kind !== 'group'
+    const names = cadNamed ? ownNames(object, lookup) : []
     const settings = object.mass
 
     const context: Context = {
@@ -383,8 +393,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         : (parent?.material ?? null),
       infill: settings?.infill ?? parent?.infill,
       block: parent?.block ?? null,
-      // CAD 루트 위(로봇)의 이름은 보지 않는다. 로봇 이름은 파일 이름이라 재질을 말하지 않는다.
-      names: isRobot ? [] : object.cad ? [] : (parent?.names ?? [])
+      // CAD 루트 위의 이름은 보지 않는다(CAD 루트에서 다시 시작한다). 그룹은 건너뛰어 위 CAD 이름을 그대로 넘긴다.
+      names: isRobot || object.cad ? [] : (parent?.names ?? [])
     }
 
     // 질량을 정하는 덩어리
@@ -444,7 +454,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       }
     }
 
-    if (!isRobot) context.names = [{ id: object.id, names }, ...context.names]
+    if (cadNamed) context.names = [{ id: object.id, names }, ...context.names]
     for (const child of childrenInDocument(objects, object.id)) visit(child, context)
   }
 
@@ -465,6 +475,16 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   for (const robotId of robotIds) {
     const list = robotParts.get(robotId) ?? []
     const warnings: MassWarning[] = []
+    for (const block of blocks) {
+      if (block.robotId === robotId && block.exceededBy !== null)
+        warnings.push({
+          kind: 'innerMassExceeds',
+          objectId: block.ownerId,
+          mass: block.mass,
+          inner: block.exceededBy
+        })
+    }
+    const meshes = pending.get(robotId) ?? 0
     let fixed = 0
     let estimated = 0
     for (const part of list) {
@@ -493,11 +513,13 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let mass: number
     let centerOfMass: Vec3
     let inertia: SymMatrix3
-    if (total > 0) {
+    if (total > 0 || meshes > 0) {
+      // 읽는 중인 메시는 빼고 계산한다(모두 읽는 중이면 0 kg). 기본값으로 바꾸지 않는다: 그러면 CAD를 다 읽을 때
+      // 질량이 13.6 kg에서 실제 값으로 뛰고, 읽지 못한 CAD가 기본값으로 굳는다.
       mass = fixed + estimated
       const moment: Vec3 = [0, 0, 0]
       for (const part of list) for (let k = 0; k < 3; k++) moment[k] += part.mass * part.com[k]
-      centerOfMass = [moment[0] / mass, moment[1] / mass, moment[2] / mass]
+      centerOfMass = mass > 0 ? [moment[0] / mass, moment[1] / mass, moment[2] / mass] : [0, 0, 0]
       inertia = [0, 0, 0, 0, 0, 0]
       for (const part of list) {
         if (part.mass === 0) continue
@@ -507,7 +529,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         addParallelAxis(inertia, own, part.mass, d)
       }
     } else {
-      // 질량 정보 없음: 외곽 상자의 균일 직육면체. 저울 무게가 있으면 그 질량을 쓴다(분포는 그래도 기본값이다).
+      // 질량 정보 없음(형상이 없거나 모두 질량 0, 덮어쓰기·COTS 없음, 읽는 중인 메시 없음): 외곽 상자의 균일 직육면체. 저울 무게가 있으면 그 질량을 쓴다(분포는 그래도 기본값이다).
       mass = weighed ?? DEFAULT_ROBOT_MASS
       const { min, max } = robotBox(objects, robotId, matrices)
       const [a, b, c] = [0, 1, 2].map((k) => max[k] - min[k])
@@ -525,7 +547,6 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       warnings.push({ kind: 'defaultMass' })
       defaultRobots.set(robotId, { mass, com: centerOfMass })
     }
-    const meshes = pending.get(robotId) ?? 0
     if (meshes > 0) warnings.push({ kind: 'pending', meshes })
     robots[robotId] = {
       robotId,
@@ -556,6 +577,7 @@ function resolveBlock(block: Block, parts: Part[], partsByObject: Map<string, Pa
   }
   const rest = Math.max(0, block.mass - inner)
   const total = inner + rest
+  if (inner > block.mass) block.exceededBy = inner
   const volume = block.members.reduce((sum, part) => sum + part.volume, 0)
   const own: Part[] = block.members.slice()
   if (rest > 0 && volume === 0) {
