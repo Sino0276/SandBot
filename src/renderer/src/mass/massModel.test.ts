@@ -343,6 +343,44 @@ describe('질량 추정: 이름 규칙', () => {
     expect(after.robots.R.mass).toBeCloseTo(before.robots.R.mass, 12)
   })
 
+  it('이름 규칙의 상속 출처는 옮긴 뒤에도 그 원래 노드의 오브젝트다(옮긴 그룹·로봇이 아니다)', () => {
+    const cad = {
+      fileName: 'kit.step',
+      absolutePath: '/kit.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 },
+      meshCount: 3
+    }
+    const imported = scene(
+      robot(),
+      node('C', 'R', { name: 'Kit', cad }),
+      node('B', 'C', { name: 'Bearing Kit' }),
+      part('P1', 'B', [0, 0, 0], { name: 'Thing' }),
+      part('P2', 'B', [0, 0, 0], { name: 'Thing 2' }),
+      part('P3', 'B', [0, 0, 0], { name: 'Thing 3' })
+    )
+    const props = Object.fromEntries(['P1', 'P2', 'P3'].map((id) => [`g:${id}`, solid(LITER)]))
+    const paths = Object.fromEntries(
+      ['P1', 'P2', 'P3'].map((id) => [
+        `g:${id}`,
+        sceneLookup(imported, lookupOf(props)).sourcePath(`g:${id}`) as SourceNode[]
+      ])
+    )
+    const moved: SceneObjects = {
+      ...imported,
+      G: node('G', 'R', { kind: 'group', name: 'Intake' }),
+      P3: { ...imported.P3, parentId: 'G', cadOrigin: 'C' }
+    }
+    const model = computeMassModel(moved, lookupOf(props, {}, paths))
+    for (const id of ['P1', 'P2', 'P3'])
+      expect(model.objects[id], id).toMatchObject({
+        source: 'nameRule',
+        detail: 'bearing',
+        inheritedFrom: 'B'
+      })
+  })
+
   it('그룹 이름의 SKU는 COTS로 보지 않는다', () => {
     const objects = scene(
       robot(),
@@ -714,8 +752,50 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(model.objects.M3).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
       expect(model.objects.M3.mass).toBeCloseTo(0.437 / 3, 12)
       expect(model.objects.M.mass).toBeCloseTo((2 * 0.437) / 3, 12)
-      // 제품의 메시를 모두 품은 오브젝트(지금 계층)가 출처의 주인이다
-      expect(model.objects.M3.inheritedFrom).toBe('R')
+      // 출처의 주인은 제품 메시만 품은 오브젝트 중 가장 많이 품은 것(원래 모터 어셈블리)이다. 옮긴 그룹·로봇이 아니다
+      expect(model.objects.M3.inheritedFrom).toBe('M')
+      expect(model.objects.M2.inheritedFrom).toBe('M')
+    })
+
+    it('제품 솔리드를 옮겨도 다른 것을 품은 상위의 무게중심 덮어쓰기를 제품이 가져가지 않는다', () => {
+      // CAD 루트에 질량 없이 무게중심만 둔다(쓰이지 않아 알린다)
+      const centered: SceneObjects = {
+        ...imported,
+        C: { ...imported.C, mass: { centerOfMass: [0, 0, 0.3] } }
+      }
+      // 모터 솔리드 하나를 같은 CAD 루트 안 배터리 어셈블리로 옮긴다(모터 메시를 모두 품은 것은 CAD 루트가 된다)
+      const moved: SceneObjects = { ...centered, M1: { ...centered.M1, parentId: 'B' } }
+      const before = computeMassModel(centered, lookup)
+      const after = computeMassModel(moved, lookup)
+      expect(before.robots.R.notices).toEqual([{ kind: 'centerOfMassIgnored', objectId: 'C' }])
+      expect(after.robots.R.notices).toEqual(before.robots.R.notices)
+      expect(after.robots.R.mass).toBeCloseTo(before.robots.R.mass, 12)
+      for (let k = 0; k < 3; k++)
+        expect(after.robots.R.centerOfMass[k], `com ${k}`).toBeCloseTo(
+          before.robots.R.centerOfMass[k],
+          12
+        )
+    })
+
+    it('제품 솔리드 하나를 옮겨도 원래 제품 어셈블리의 무게중심 덮어쓰기를 계속 쓴다', () => {
+      const centered: SceneObjects = {
+        ...imported,
+        M: { ...imported.M, mass: { centerOfMass: [0, 0, 0.3] } }
+      }
+      const moved: SceneObjects = {
+        ...centered,
+        G: node('G', 'R', { kind: 'group', name: 'Lift' }),
+        M3: { ...centered.M3, parentId: 'G', cadOrigin: 'C' }
+      }
+      const before = computeMassModel(centered, lookup)
+      const after = computeMassModel(moved, lookup)
+      expect(before.robots.R.notices).toEqual([])
+      expect(after.robots.R.notices).toEqual([])
+      for (let k = 0; k < 3; k++)
+        expect(after.robots.R.centerOfMass[k], `com ${k}`).toBeCloseTo(
+          before.robots.R.centerOfMass[k],
+          12
+        )
     })
 
     it('같은 부품의 컴포넌트 COTS가 제품 일부를 덮으면 나머지 제품 메시도 그 덩어리에 든다', () => {

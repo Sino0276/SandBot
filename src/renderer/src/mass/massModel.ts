@@ -247,17 +247,52 @@ function sourceIndex(objects: SceneObjects, lookup: MassLookup, caches: NameCach
   return index
 }
 
-// 메시들을 모두 품은 가장 아래 오브젝트(지금 계층). 서로 다른 최상위 아래에 있으면 null.
-function lowestCommonAncestor(objects: SceneObjects, ids: readonly string[]): string | null {
-  if (ids.length === 0) return null
-  let chain = [ids[0], ...ancestorIds(objects, ids[0])]
-  for (const id of ids.slice(1)) {
-    const line = new Set([id, ...ancestorIds(objects, id)])
-    const at = chain.findIndex((candidate) => line.has(candidate))
-    if (at < 0) return null
-    chain = chain.slice(at)
+// 원래 노드 → 지금 계층에서 그 노드를 대표하는 오브젝트. 그 노드의 메시(source.nodeMeshes)마다 위로 그 노드의 메시만 품은
+// (다른 메시가 없는) 오브젝트를 따라 올라가며, 노드 메시를 더 많이 품게 되는 가장 아래 오브젝트를 고른다(더 품지 않는
+// 상위는 감싼 그룹이나, 나머지를 옮겨 낸 CAD 루트다). 메시마다 고른 것 중 노드 메시를 가장 많이 품은 것(같으면 문서 순서로
+// 앞 메시의 것)이다. 불러온 그대로면 노드에서 만든 오브젝트이고, 메시 일부를 다른 어셈블리·그룹으로 옮겨도 남은 쪽(원래
+// 어셈블리)이며, 노드를 그룹으로 감싸도 그 그룹이 아니다. 로봇은 고르지 않는다. 메시가 없는 노드는 null.
+function nodeHomes(objects: SceneObjects, source: SourceIndex): (key: string) => string | null {
+  // 오브젝트마다 하위(자신 포함)의 메시 수. 처음 쓸 때 한 번 센다.
+  let meshCounts: Map<string, number> | null = null
+  const countUp = (counts: Map<string, number>, id: string): void => {
+    for (const at of [id, ...ancestorIds(objects, id)]) counts.set(at, (counts.get(at) ?? 0) + 1)
   }
-  return chain[0]
+  const homes = new Map<string, string | null>()
+  return (key) => {
+    const cached = homes.get(key)
+    if (cached !== undefined) return cached
+    if (!meshCounts) {
+      meshCounts = new Map()
+      for (const object of Object.values(objects))
+        if (object.visual?.type === 'mesh') countUp(meshCounts, object.id)
+    }
+    const totals = meshCounts
+    const nodeCounts = new Map<string, number>()
+    const meshes = source.nodeMeshes.get(key) ?? []
+    for (const id of meshes) countUp(nodeCounts, id)
+    let home: string | null = null
+    let best = 0
+    for (const id of meshes) {
+      let candidate = id
+      let count = nodeCounts.get(id) ?? 0
+      for (const at of ancestorIds(objects, id)) {
+        if (objects[at].kind === 'robot') break
+        const inside = nodeCounts.get(at) ?? 0
+        if (inside !== totals.get(at)) break
+        if (inside > count) {
+          candidate = at
+          count = inside
+        }
+      }
+      if (count > best) {
+        best = count
+        home = candidate
+      }
+    }
+    homes.set(key, home)
+    return home
+  }
 }
 
 // 같은 부품으로 볼 COTS 키: 키가 같거나, 둘 다 모터이거나 둘 다 서보(컴포넌트의 모델·감속비와 CAD SKU가 조금 달라도 그
@@ -501,16 +536,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   const uncounted = new Map<string, number>()
   // 덩어리 밖의 SKU 제품 파트(지금 계층을 다 본 뒤 제품 덩어리로 묶는다)
   const productParts = new Map<Product, Part[]>()
-  // 원래 노드 → 지금 계층에서 그 노드의 메시를 모두 품은 오브젝트(출처 표시의 상속 오브젝트, 제품 덩어리의 주인)
-  const nodeOwners = new Map<string, string | null>()
-  const nodeOwner = (key: string): string | null => {
-    let owner = nodeOwners.get(key)
-    if (owner === undefined) {
-      owner = lowestCommonAncestor(objects, source.nodeMeshes.get(key) ?? [])
-      nodeOwners.set(key, owner)
-    }
-    return owner
-  }
+  // 원래 노드 → 지금 계층에서 그 노드를 대표하는 오브젝트(출처 표시의 상속 오브젝트, 제품 덩어리의 주인)
+  const nodeHome = nodeHomes(objects, source)
 
   const addPart = (part: Part): void => {
     parts.push(part)
@@ -563,7 +590,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       if (node.generated) continue
       const matched = caches.rule(node.name)
       if (!matched) continue
-      const owner = i === path.length - 1 ? null : nodeOwner(node.key)
+      const owner = i === path.length - 1 ? null : nodeHome(node.key)
       return {
         material: matched.material,
         source: 'nameRule',
@@ -722,15 +749,17 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     const freeVolume = free.reduce((sum, part) => sum + part.volume, 0)
     const allVolume = all.reduce((sum, part) => sum + part.volume, 0)
     const share = allVolume > 0 ? freeVolume / allVolume : free.length / all.length
-    const ownerId =
-      lowestCommonAncestor(
-        objects,
-        free.map((part) => part.objectId)
-      ) ?? free[0].objectId
+    // 주인은 제품 메시만 품은 오브젝트(nodeHomes)라, 제품 솔리드를 옮겨도 다른 것을 품은 상위(CAD 루트·그룹)의 무게중심
+    // 덮어쓰기를 가져가지 않고 원래 제품 어셈블리의 것을 계속 쓴다
+    const ownerId = nodeHome(product.nodeKey) ?? free[0].objectId
     const owner = objects[ownerId]
     const matrix = matrices.get(ownerId) ?? new Matrix4()
-    // 주인이 덩어리를 정하지 않아 쓰이지 않던 무게중심 덮어쓰기는 제품 덩어리가 쓴다
-    const center = owner.kind !== 'robot' ? owner.mass?.centerOfMass : undefined
+    // 주인이 덩어리를 정하지 않아 쓰이지 않던 무게중심 덮어쓰기는 제품 덩어리가 쓴다(주인 하위의 제품 메시가 모두 다른
+    // 덩어리 안이면 그 덮어쓰기는 이 덩어리의 것이 아니다)
+    const center =
+      owner.kind !== 'robot' && free.some((part) => isInSubtree(objects, part.objectId, ownerId))
+        ? owner.mass?.centerOfMass
+        : undefined
     const unused = center
       ? noticeOrder.findIndex((entry) => 'unusedCenter' in entry && entry.unusedCenter === ownerId)
       : -1
