@@ -209,7 +209,7 @@ describe('질량 카드 보기 계산', () => {
     })
   })
 
-  it('채움률 칸은 출력 재질(자기·상속·로봇 기본)이거나 이미 정했을 때, 채움률도 위에서 물려받는다', () => {
+  it('채움률 칸은 직접 정한 출력 재질(자기·상속)이거나 이미 정했을 때, 채움률도 위에서 물려받는다', () => {
     let objects = scene()
     expect(massCardView(objects, 'lift', {}).showInfill).toBe(false)
     objects = { ...objects, lift: { ...objects.lift, mass: { material: 'petg', infill: 0.4 } } }
@@ -249,6 +249,29 @@ describe('질량 카드 보기 계산', () => {
       })
     ).toBe(true)
     expect(infillReachesPrinted(objects, 'cad', { plate: objectMass({}) })).toBe(false)
+  })
+
+  it('로봇 기본 재질이 출력 재질이어도 이름 규칙이 강철로 정한 파트에는 채움률 칸이 없다(이름 규칙이 먼저)', () => {
+    let objects = scene()
+    objects = {
+      ...objects,
+      R: { ...objects.R, rigidbody: { defaultMaterial: 'pla' } },
+      plate: { ...objects.plate, name: 'screw M3', mass: {} }
+    }
+    const describers: MassDescribers = {
+      ...DESCRIBERS,
+      nameRuleMaterial: (rule) => (rule === 'screw' ? 'steel' : undefined)
+    }
+    const screw = objectMass({ source: 'nameRule', detail: 'screw' })
+    const view = massCardView(objects, 'plate', { plate: screw }, describers)
+    expect(view.material).toBe('pla')
+    expect(view.showInfill).toBe(false)
+    // 같은 파트가 로봇 기본(PLA)으로 추정됐으면 채움률이 쓰인다
+    const byDefault = objectMass({ source: 'default', detail: 'pla', inheritedFrom: 'R' })
+    expect(massCardView(objects, 'plate', { plate: byDefault }, describers).showInfill).toBe(true)
+    // 위 오브젝트가 직접 정한 출력 재질은 이름 규칙보다 먼저라 결과 없이도 보인다
+    objects = { ...objects, cad: { ...objects.cad, mass: { material: 'petg' } } }
+    expect(massCardView(objects, 'plate', {}, describers).showInfill).toBe(true)
   })
 
   it('무게중심 칸은 질량을 덮어썼거나 이 오브젝트가 데이터시트 질량을 정했거나 이미 정했을 때', () => {

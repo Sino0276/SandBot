@@ -157,7 +157,8 @@ export type MassCardView = {
   inherited: InheritedMaterial
   // 이 오브젝트가 쓰는 재질(자기 것 또는 물려받은 것, 이름 규칙은 빼고)
   material: MaterialKey
-  // 채움률 칸을 보일지: 이 채움률이 닿는 파트가 출력 재질이거나(자기·상속·이름 규칙) 이미 채움률을 정했을 때
+  // 채움률 칸을 보일지: 직접 정한 재질(자기·위 오브젝트)이 출력 재질이거나, 이 채움률이 닿는 파트를 모델이 출력 재질로
+  // 추정했거나(로봇 기본·이름 규칙), 이미 채움률을 정했을 때
   showInfill: boolean
   // 위에서 물려받은 채움률(없으면 undefined = 기본값)
   inheritedInfill: number | undefined
@@ -230,8 +231,11 @@ export function massCardView(
     settings,
     inherited,
     material,
+    // 직접 정한 재질(자기·위 오브젝트)만 그대로 본다. 로봇 기본 재질은 이름 규칙보다 뒤라(spec-3a §3.1) 이름 규칙이 강철로
+    // 정한 파트에는 닿지 않으므로, 모델 결과로 보는 infillReachesPrinted에 맡긴다.
     showInfill:
-      isPrintedMaterial(material) ||
+      (isPrintedMaterial(material) &&
+        (settings.material !== undefined || inherited.origin.kind === 'object')) ||
       settings.infill !== undefined ||
       infillReachesPrinted(objects, objectId, results, describers),
     inheritedInfill: inheritedInfill(objects, objectId),
