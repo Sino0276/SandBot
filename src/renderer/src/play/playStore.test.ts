@@ -9,11 +9,13 @@ import {
   dashTelemetryRows,
   displayRootOverride,
   EMPTY_OPMODE_LIST,
+  EMPTY_REGISTERED_LIST,
   isRunActive,
   listedOpModes,
   MAX_DASH_KEYS,
   newRun,
   runningRobotId,
+  showsRegisteredConsent,
   simPoseOf,
   withEntries,
   withPendingConfig,
@@ -685,7 +687,13 @@ describe('고를 수 있는 OpMode 목록', () => {
     const list = {
       ...EMPTY_OPMODE_LIST,
       opModes: [TELEOP],
-      registered: { status: 'ready' as const, opModes: [registered], replaced: [], problem: null }
+      registered: {
+        status: 'ready' as const,
+        opModes: [registered],
+        replaced: [],
+        problem: null,
+        needsConsent: false
+      }
     }
     expect(listedOpModes(list)).toEqual([TELEOP, registered])
     expect(listedOpModes(list)).toBe(listedOpModes(list))
@@ -707,9 +715,33 @@ describe('고를 수 있는 OpMode 목록', () => {
         status: 'ready' as const,
         opModes: [renamed],
         replaced: [TELEOP.className],
-        problem: null
+        problem: null,
+        needsConsent: false
       }
     }
     expect(listedOpModes(list)).toEqual([renamed])
+  })
+
+  it("'등록기 OpMode 읽기…' 줄은 등록기가 있고 동의를 기다리며 읽는 중이 아닐 때만", () => {
+    const registrars = [{ className: 'org.firstinspires.ftc.teamcode.Tuning', path: 'x', line: 3 }]
+    const waiting = {
+      ...EMPTY_OPMODE_LIST,
+      registrars,
+      registered: { ...EMPTY_REGISTERED_LIST, status: 'ready' as const, needsConsent: true }
+    }
+    expect(showsRegisteredConsent(waiting)).toBe(true)
+    expect(showsRegisteredConsent({ ...waiting, registrars: [] })).toBe(false)
+    expect(
+      showsRegisteredConsent({
+        ...waiting,
+        registered: { ...waiting.registered, status: 'loading' }
+      })
+    ).toBe(false)
+    expect(
+      showsRegisteredConsent({
+        ...waiting,
+        registered: { ...waiting.registered, needsConsent: false }
+      })
+    ).toBe(false)
   })
 })

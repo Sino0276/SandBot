@@ -6,7 +6,9 @@ import {
   opModeKey,
   opModeSections,
   orderedOpModes,
-  preselectedTeleOp
+  pickerKeys,
+  preselectedTeleOp,
+  REGISTERED_CONSENT_KEY
 } from './opModeList'
 
 function opMode(
@@ -109,5 +111,18 @@ describe('OpMode 목록 묶음(DS처럼)', () => {
     // 이름·클래스가 같아도 키로 순서를 정한다
     const twin: OpModeInfo = { ...registered, registered: undefined }
     expect([registered, twin].sort(compareOpModes)).toEqual([twin, registered])
+  })
+
+  it("키보드 줄: 보이는 순서 뒤에 '등록기 OpMode 읽기…' 줄, 그 키는 어떤 OpMode 키와도 겹치지 않는다", () => {
+    const ordered = orderedOpModes(opModeSections(LIST))
+    const registered: OpModeInfo = {
+      ...opMode('t.X', 'TeleOp', REGISTERED_CONSENT_KEY),
+      registered: { registrar: 't.R' }
+    }
+    expect(pickerKeys(ordered, false)).toEqual(ordered.map(opModeKey))
+    const keys = pickerKeys([...ordered, registered], true)
+    expect(keys.at(-1)).toBe(REGISTERED_CONSENT_KEY)
+    expect(keys.filter((key) => key === REGISTERED_CONSENT_KEY)).toHaveLength(1)
+    expect(pickerKeys([], true)).toEqual([REGISTERED_CONSENT_KEY])
   })
 })

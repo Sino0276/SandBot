@@ -1,5 +1,6 @@
 import i18n from 'i18next'
 import type {
+  GrantCodeTrustResult,
   ListOpModesResult,
   ListRegisteredResult,
   PlayEvent,
@@ -41,6 +42,7 @@ import {
   isRunActive,
   listedOpModes,
   newRun,
+  showsRegisteredConsent,
   usePlayStore,
   withEntries,
   withPendingConfig,
@@ -59,7 +61,8 @@ import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
 let opModeRequest = 0
 
 // TeamCode의 OpMode를 다시 읽는다(프로젝트를 열 때, 선택 목록을 열 때, 창 포커스 때). 늦게 온 이전 결과는 버린다.
-// 등록기(@OpModeRegistrar)가 있으면 그것이 등록하는 OpMode도 읽는다(refreshRegisteredOpModes).
+// 등록기(@OpModeRegistrar)가 있으면 그것이 등록하는 OpMode도 읽는다(refreshRegisteredOpModes, 메인은 이 프로젝트의 코드 실행을
+// 믿은 뒤에만 등록기를 실행하고 그 전에는 needsConsent로 답한다 — confirmRegisteredConsent).
 export async function refreshOpModes(): Promise<void> {
   const root = useProjectStore.getState().root
   const request = ++opModeRequest
@@ -155,7 +158,11 @@ export function refreshRegisteredOpModes(root: string): Promise<void> {
 
 async function readRegistered(root: string): Promise<void> {
   const { session } = useProjectStore.getState()
-  setRegistered(root, { status: 'loading' })
+  // 동의를 기다리는 동안은 '등록기 OpMode 읽기…' 줄을 그대로 둔다(목록을 열거나 창에 포커스가 올 때마다 '읽는 중'으로
+  // 깜박이지 않게. 메인은 믿지 않은 프로젝트면 아무것도 하지 않고 바로 답한다)
+  const { opModeList } = usePlayStore.getState()
+  if (!(opModeList.root === root && opModeList.registered.needsConsent))
+    setRegistered(root, { status: 'loading' })
   let result: ListRegisteredResult
   try {
     result = await window.api.listRegisteredOpModes(root)
@@ -165,9 +172,22 @@ async function readRegistered(root: string): Promise<void> {
   const project = useProjectStore.getState()
   if (project.root !== root || project.session !== session) return
   if (!result.ok) {
+    if (result.code === 'needsConsent') {
+      // 이 프로젝트의 코드 실행을 아직 믿지 않았다: 오류가 아니라 고르기 목록의 '등록기 OpMode 읽기…' 줄(Console에도 남기지
+      // 않는다)
+      setRegistered(root, {
+        status: 'ready',
+        opModes: [],
+        replaced: [],
+        problem: null,
+        needsConsent: true
+      })
+      logRegisteredProblem(root, null, result)
+      return
+    }
     // 읽지 못하면 이전 등록 OpMode는 그대로 둔다(annotated 목록과 같음)
     const problem: RegisteredProblem = { kind: 'failed', code: result.code, detail: result.detail }
-    setRegistered(root, { status: 'failed', problem })
+    setRegistered(root, { status: 'failed', problem, needsConsent: false })
     logRegisteredProblem(root, problem, result)
     return
   }
@@ -182,9 +202,52 @@ async function readRegistered(root: string): Promise<void> {
     status: 'ready',
     opModes: [...result.opModes].sort(compareOpModes),
     replaced: result.replaced,
-    problem
+    problem,
+    needsConsent: false
   })
   logRegisteredProblem(root, problem, result)
+}
+
+// 고르기 목록의 '등록기 OpMode 읽기…': 등록기를 읽으려면 이 프로젝트의 Java 코드를 이 PC에서 실행해야 하므로 앱 안 대화상자로
+// 묻고, [실행하고 기억]이면 메인에 이 프로젝트를 믿는다고 기억시킨 뒤(userData, 다음부터는 묻지 않는다) 다시 읽는다. 프로젝트를
+// 열 때는 묻지 않는다(목록에서 고를 때만).
+export async function confirmRegisteredConsent(): Promise<void> {
+  const { root, session, name } = useProjectStore.getState()
+  const list = usePlayStore.getState().opModeList
+  if (!root || list.root !== root || !showsRegisteredConsent(list)) return
+  const answer = await showDialog({
+    message: i18n.t('play.codeTrust.message', { project: name ?? root }),
+    buttons: [
+      { id: 'run', label: i18n.t('play.codeTrust.confirm'), primary: true },
+      { id: 'cancel', label: i18n.t('dialog.cancel') }
+    ],
+    cancelId: 'cancel'
+  })
+  const sameProject = (): boolean => {
+    const project = useProjectStore.getState()
+    return project.root === root && project.session === session
+  }
+  if (answer !== 'run' || !sameProject()) return
+  let granted: GrantCodeTrustResult
+  try {
+    granted = await window.api.grantCodeTrust(root)
+  } catch (error) {
+    granted = { ok: false, code: 'failed', detail: ipcErrorDetail(error) }
+  }
+  if (!sameProject()) return
+  if (!granted.ok) {
+    // 기억하지 못했다(열린 프로젝트가 아님, 폴더가 없음): 줄은 두고(다시 고를 수 있다) 이유를 목록 아래와 Console에 알린다
+    const problem: RegisteredProblem = {
+      kind: 'failed',
+      code: granted.code,
+      detail: granted.detail
+    }
+    setRegistered(root, { status: 'failed', problem })
+    logRegisteredProblem(root, problem, granted)
+    return
+  }
+  setRegistered(root, { status: 'loading', needsConsent: false })
+  await refreshRegisteredOpModes(root)
 }
 
 // 문제를 Console에도 남긴다(컴파일 진단은 더블클릭하면 그 줄을 연다). 같은 결과는 한 번만 남긴다.
@@ -428,6 +491,12 @@ async function runInit(): Promise<void> {
     return
   }
   updateRun(runId, () => ({ accepted: true }))
+  // INIT은 이 프로젝트의 코드를 실행한다: 메인이 그 프로젝트를 믿는다고 기억했으므로 동의를 기다리던 등록기 목록을 읽는다
+  const listed = usePlayStore.getState().opModeList
+  if (listed.root === root && listed.registered.needsConsent) {
+    setRegistered(root, { status: 'loading', needsConsent: false })
+    void refreshRegisteredOpModes(root)
+  }
   if (result.configMissing && run.configPath)
     usePlayStore
       .getState()

@@ -1,6 +1,8 @@
+import i18n from 'i18next'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import type {
+  GrantCodeTrustResult,
   ListOpModesResult,
   ListRegisteredResult,
   OpModeInfo,
@@ -19,6 +21,7 @@ import type { SceneObject, SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { defaultWheel } from '../scene/wheel'
 import {
+  confirmRegisteredConsent,
   handlePlayEvent,
   initBlock,
   initPlay,
@@ -40,7 +43,13 @@ import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
 import { opModeKey } from './opModeList'
-import { EMPTY_OPMODE_LIST, initialPlayData, listedOpModes, usePlayStore } from './playStore'
+import {
+  EMPTY_OPMODE_LIST,
+  initialPlayData,
+  listedOpModes,
+  showsRegisteredConsent,
+  usePlayStore
+} from './playStore'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
@@ -122,12 +131,14 @@ let registeredResult: () => Promise<ListRegisteredResult> = async () => ({
   diagnostics: [],
   errors: []
 })
+let grantResult: () => Promise<GrantCodeTrustResult> = async () => ({ ok: true })
 
 const api = {
   listOpModes: vi.fn<(root: string) => Promise<ListOpModesResult>>(() => listResult()),
   listRegisteredOpModes: vi.fn<(root: string) => Promise<ListRegisteredResult>>(() =>
     registeredResult()
   ),
+  grantCodeTrust: vi.fn<(root: string) => Promise<GrantCodeTrustResult>>(() => grantResult()),
   playInit: vi.fn<(request: PlayInitRequest) => Promise<PlayInitResult>>(() => initResult()),
   playCommand: (command: PlayCommand) => void commands.push(command),
   playGamepads: (pair: unknown) => void gamepads.push(pair),
@@ -173,6 +184,8 @@ beforeEach(async () => {
   api.playInit.mockClear()
   api.listOpModes.mockClear()
   api.listRegisteredOpModes.mockClear()
+  api.grantCodeTrust.mockClear()
+  grantResult = async () => ({ ok: true })
   vi.mocked(saveProject).mockClear()
   vi.mocked(saveProject).mockImplementation(async () => true)
   resetPlayActionsState()
@@ -957,7 +970,8 @@ describe('등록기(@OpModeRegistrar) OpMode', () => {
       status: 'ready',
       opModes: [RAMP],
       replaced: [],
-      problem: null
+      problem: null,
+      needsConsent: false
     })
     expect(listedOpModes(list)).toEqual([DRIVE, RAMP, AUTO])
   })
@@ -1023,7 +1037,8 @@ describe('등록기(@OpModeRegistrar) OpMode', () => {
       status: 'failed',
       opModes: [RAMP],
       replaced: [],
-      problem: { kind: 'failed', code: 'noJdk', detail: 'no java' }
+      problem: { kind: 'failed', code: 'noJdk', detail: 'no java' },
+      needsConsent: false
     })
     const notices = usePlayStore
       .getState()
@@ -1077,6 +1092,159 @@ describe('등록기(@OpModeRegistrar) OpMode', () => {
       type: 'error',
       kind: 'registrar',
       message: `${TUNING}: java.lang.IllegalStateException: boom`
+    })
+  })
+
+  describe('코드 실행 동의(needsConsent)', () => {
+    const NEEDS_CONSENT: ListRegisteredResult = { ok: false, code: 'needsConsent', detail: '' }
+    const answerDialog = async (id: string): Promise<void> => {
+      await settle()
+      const request = useDialogStore.getState().request
+      expect(request).not.toBeNull()
+      useDialogStore.getState().answer(id)
+      await settle()
+    }
+
+    beforeEach(() => {
+      registeredResult = async () => NEEDS_CONSENT
+      useProjectStore.setState({ name: 'FtcRobotController' })
+    })
+
+    it('믿기 전에는 오류·Console 없이 읽기 줄만 보이고, 다시 읽어도 읽는 중으로 깜박이지 않는다', async () => {
+      await refreshOpModes()
+      let list = usePlayStore.getState().opModeList
+      expect(list.registered).toEqual({
+        status: 'ready',
+        opModes: [],
+        replaced: [],
+        problem: null,
+        needsConsent: true
+      })
+      expect(showsRegisteredConsent(list)).toBe(true)
+      expect(usePlayStore.getState().entries).toEqual([])
+      // annotated OpMode는 그대로 고를 수 있다
+      expect(listedOpModes(list)).toEqual([DRIVE, AUTO])
+
+      const slow = deferred<ListRegisteredResult>()
+      registeredResult = () => slow.promise
+      const again = refreshOpModes()
+      await settle()
+      list = usePlayStore.getState().opModeList
+      expect(list.registered.status).toBe('ready')
+      expect(showsRegisteredConsent(list)).toBe(true)
+      slow.resolve(NEEDS_CONSENT)
+      await again
+      expect(showsRegisteredConsent(usePlayStore.getState().opModeList)).toBe(true)
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+      expect(useDialogStore.getState().request).toBeNull()
+    })
+
+    it('읽기 줄을 고르면 앱 안 대화상자로 묻고, [실행하고 기억]이면 메인에 기억시킨 뒤 다시 읽는다', async () => {
+      await refreshOpModes()
+      api.listRegisteredOpModes.mockClear()
+      const t = vi.spyOn(i18n, 't')
+      const done = confirmRegisteredConsent()
+      await settle()
+      const request = useDialogStore.getState().request!
+      // 문구(번역)에 프로젝트 이름을 넣고, [실행하고 기억]이 주 버튼, Esc는 취소
+      expect(t).toHaveBeenCalledWith('play.codeTrust.message', { project: 'FtcRobotController' })
+      expect(t).toHaveBeenCalledWith('play.codeTrust.confirm')
+      t.mockRestore()
+      expect(request.buttons.map((button) => [button.id, button.primary === true])).toEqual([
+        ['run', true],
+        ['cancel', false]
+      ])
+      expect(request.cancelId).toBe('cancel')
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+
+      registeredResult = async () => ({
+        ok: true,
+        opModes: [RAMP],
+        replaced: [],
+        diagnostics: [],
+        errors: []
+      })
+      await answerDialog('run')
+      await done
+      expect(api.grantCodeTrust).toHaveBeenCalledWith('/p')
+      expect(api.listRegisteredOpModes).toHaveBeenCalledTimes(1)
+      const list = usePlayStore.getState().opModeList
+      expect(list.registered).toMatchObject({ status: 'ready', needsConsent: false })
+      expect(listedOpModes(list)).toEqual([DRIVE, RAMP, AUTO])
+      expect(showsRegisteredConsent(list)).toBe(false)
+    })
+
+    it('[취소]면 기억하지도 읽지도 않고 줄을 둔다', async () => {
+      await refreshOpModes()
+      api.listRegisteredOpModes.mockClear()
+      const done = confirmRegisteredConsent()
+      await answerDialog('cancel')
+      await done
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+      expect(api.listRegisteredOpModes).not.toHaveBeenCalled()
+      expect(showsRegisteredConsent(usePlayStore.getState().opModeList)).toBe(true)
+    })
+
+    it('묻는 사이 다른 프로젝트를 열었으면 기억하지 않는다', async () => {
+      await refreshOpModes()
+      const done = confirmRegisteredConsent()
+      await settle()
+      useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+      await answerDialog('run')
+      await done
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+    })
+
+    it('기억하지 못하면 줄을 두고 이유를 목록 아래와 Console에 알린다', async () => {
+      await refreshOpModes()
+      grantResult = async () => ({ ok: false, code: 'failed', detail: 'gone' })
+      const done = confirmRegisteredConsent()
+      await answerDialog('run')
+      await done
+      const list = usePlayStore.getState().opModeList
+      expect(list.registered).toMatchObject({
+        status: 'failed',
+        needsConsent: true,
+        problem: { kind: 'failed', code: 'failed', detail: 'gone' }
+      })
+      expect(showsRegisteredConsent(list)).toBe(true)
+      expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+        type: 'registeredFailed',
+        code: 'failed',
+        detail: 'gone'
+      })
+    })
+
+    it('기다리는 줄이 없으면(믿은 프로젝트·등록기 없음) 묻지 않는다', async () => {
+      registeredResult = async () => ({
+        ok: true,
+        opModes: [RAMP],
+        replaced: [],
+        diagnostics: [],
+        errors: []
+      })
+      await refreshOpModes()
+      await confirmRegisteredConsent()
+      expect(useDialogStore.getState().request).toBeNull()
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+    })
+
+    it('INIT을 받으면(메인이 그 프로젝트를 믿는다) 기다리던 등록기 목록을 다시 읽는다', async () => {
+      await refreshOpModes()
+      selectOpMode(DRIVE.className)
+      api.listRegisteredOpModes.mockClear()
+      registeredResult = async () => ({
+        ok: true,
+        opModes: [RAMP],
+        replaced: [],
+        diagnostics: [],
+        errors: []
+      })
+      await initPlay()
+      await settle()
+      expect(api.grantCodeTrust).not.toHaveBeenCalled()
+      expect(api.listRegisteredOpModes).toHaveBeenCalledTimes(1)
+      expect(listedOpModes(usePlayStore.getState().opModeList)).toEqual([DRIVE, RAMP, AUTO])
     })
   })
 

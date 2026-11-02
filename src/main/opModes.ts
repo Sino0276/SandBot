@@ -18,7 +18,8 @@ import { listJavaFiles, readJavaSources } from './teamCodeJava'
 // 목록(같은 경로 규칙·5000개 한도)과 읽기(readJavaSources: 경로·링크 확인, 256 KB 넘는 파일은 tooLarge, 동시 2개)를 그대로
 // 쓰고, 파일마다 src/shared/java/opModes.ts로 애너테이션을 읽는다. 렌더러는 프로젝트를 열 때·드롭다운을 열 때·창 포커스 때
 // 묻는다. 크기·수정 시각이 그대로인 파일은 다시 읽지 않는다(파싱 결과를 기억한다). 등록기가 등록하는 OpMode는 사이드카가
-// 등록기를 실행해야 알 수 있어 따로 묻는다(registeredOpModes.ts, 이 목록의 registrars가 있을 때).
+// 등록기를 실행해야 알 수 있어 따로 묻는다(registeredOpModes.ts, 이 목록의 registrars가 있을 때, 사용자가 이 프로젝트의 코드
+// 실행을 믿은 뒤에만 — codeTrust.ts). 이 목록은 파일을 글자로 읽기만 한다.
 
 type CachedFile = {
   size: number

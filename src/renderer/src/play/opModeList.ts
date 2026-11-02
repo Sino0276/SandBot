@@ -66,6 +66,17 @@ export function orderedOpModes(sections: readonly OpModeSection[]): OpModeInfo[]
   return sections.flatMap((section) => section.groups.flatMap((group) => group.opModes))
 }
 
+// 고르기 목록의 '등록기 OpMode 읽기…' 줄(동의를 묻는다)의 키. 클래스 이름에는 ':'가 없고 등록기 OpMode 키는
+// 'registered:'로 시작하므로 opModeKey와 겹치지 않는다.
+export const REGISTERED_CONSENT_KEY = 'action:readRegistered'
+
+// 키보드로 움직이는 목록 줄의 키: 보이는 OpMode 순서 그대로, 그 뒤에 '등록기 OpMode 읽기…' 줄(있으면)
+export function pickerKeys(ordered: readonly OpModeInfo[], consent: boolean): string[] {
+  const keys = ordered.map(opModeKey)
+  if (consent) keys.push(REGISTERED_CONSENT_KEY)
+  return keys
+}
+
 // 고르는 키(opModeKey)로 찾는다
 export function findOpMode(opModes: readonly OpModeInfo[], key: string | null): OpModeInfo | null {
   if (key === null) return null

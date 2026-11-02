@@ -644,6 +644,9 @@ const ko = {
         noAndroidSdk: 'Android SDK를 찾지 못함(환경 설정 > 외부 도구)',
         noAndroidPlatform: '프로젝트의 Android 플랫폼이 설치되지 않음'
       },
+      // 이 프로젝트의 코드 실행을 아직 믿지 않았을 때(등록기를 실행하지 않았다). 고르면 묻는다(play.codeTrust).
+      registeredConsent: '등록기 OpMode 읽기…',
+      registeredConsentHint: '이 PC에서 프로젝트의 Java 코드(@OpModeRegistrar)를 실행합니다',
       registeredTag: '등록기',
       registeredTooltip: '{{className}} · 등록기 {{registrar}}\n{{file}}',
       open: '열기',
@@ -691,6 +694,12 @@ const ko = {
       noOpMode: '실행할 OpMode를 고르세요.',
       busy: '프로젝트를 열거나 저장하는 중입니다.',
       running: '실행 중입니다.'
+    },
+    // 등록기 OpMode 목록을 읽기 전에 한 번 묻는다(Android Studio의 Trust Project처럼). 프로젝트마다 기억한다.
+    codeTrust: {
+      message:
+        '등록기 OpMode 목록을 읽으려고 {{project}} 프로젝트의 @OpModeRegistrar 코드(와 그 코드가 건드리는 클래스의 정적 초기화)를 이 PC에서 컴파일·실행합니다. INIT이 실행하는 것과 같은 코드이고, 이 PC의 파일과 네트워크에 접근할 수 있습니다. 믿을 수 있는 프로젝트에서만 실행하세요. 이 프로젝트에 대한 선택은 기억합니다.',
+      confirm: '실행하고 기억'
     },
     saveBeforeRun:
       '저장하지 않은 변경 사항이 있습니다. 실행은 디스크의 TeamCode와 생성한 로봇 구성을 쓰므로 먼저 저장해야 합니다. 저장하고 실행할까요?',

@@ -208,7 +208,11 @@ describe('listOpModes', () => {
         'package org.firstinspires.ftc.teamcode;',
         'import com.qualcomm.robotcore.eventloop.opmode.*;',
         'final class Quiet {',
+        '  @OpModeRegistrar public static void top(OpModeManager m) {}',
         '  public static class Reg {',
+        '    @OpModeRegistrar public static void register(OpModeManager m) {}',
+        '  }',
+        '  private static class Hidden {',
         '    @OpModeRegistrar public static void register(OpModeManager m) {}',
         '  }',
         '}',
@@ -220,6 +224,9 @@ describe('listOpModes', () => {
       ok: true,
       opModes: [],
       registrars: [
+        // 실제 SDK처럼 public이 아닌 최상위·중첩 형식의 public static 등록기도(ART는 public 멤버를 부른다)
+        { className: 'org.firstinspires.ftc.teamcode.Quiet', path: `${PKG}/Quiet.java`, line: 4 },
+        { className: 'org.firstinspires.ftc.teamcode.Quiet$Hidden', path: `${PKG}/Quiet.java` },
         { className: 'org.firstinspires.ftc.teamcode.Quiet$Reg', path: `${PKG}/Quiet.java` },
         { className: 'org.firstinspires.ftc.teamcode.Tuning', path: `${PKG}/Tuning.java`, line: 4 }
       ]

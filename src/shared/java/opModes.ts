@@ -14,8 +14,10 @@
 // 클래스는 public일 수 없으므로 보지 않는다.
 //
 // 등록기(@OpModeRegistrar): 실제 SDK(filterOpModeRegistrarMethods)는 앱의 모든 클래스에서 public static이고 이 애너테이션이
-// 있는 메서드를 부른다. 여기서는 public 최상위 형식이나 public static 중첩 형식(클래스·인터페이스·enum)의 public static
-// 메서드까지만 본다(매개변수 수·형식은 사이드카가 실제 규칙으로 거른다). 메서드 하나마다 애너테이션 줄을 준다.
+// 있는 메서드를 부른다. 메서드만 보고 클래스의 접근·static은 보지 않으며(checkOpModeClassConstraints는 OpMode 클래스에만),
+// Method.invoke도 ART가 public 멤버면 클래스 접근을 따지지 않으므로 public이 아닌 클래스·중첩 형식의 등록기도 불린다. 여기서도
+// 이 파일의 모든 형식(클래스·인터페이스·enum, 지역·익명 클래스는 Java 8에서 static 메서드를 가질 수 없어 보지 않는다)의
+// public static 메서드를 본다(매개변수 수·형식은 사이드카가 실제 규칙으로 거른다). 메서드 하나마다 애너테이션 줄을 준다.
 //
 // 애너테이션 이름은 javac처럼 푼다: 전체 이름(com.qualcomm.robotcore.eventloop.opmode.TeleOp), 또는 단순 이름을 단일
 // import·패키지 import(.*)로 들여왔거나 같은 패키지일 때. 이 파일의 형식이 같은 단순 이름으로 가리면 그 형식이다.
@@ -508,20 +510,6 @@ function enclosedByInterface(decl: TypeDecl): boolean {
   )
 }
 
-// 바깥에서 보이는 형식인가(등록기를 부를 수 있는가): public이고, 중첩이면 static(인터페이스·enum·record는 늘 static,
-// 인터페이스·어노테이션 안의 형식은 늘 public static). 감싸는 형식은 보지 않는다(리플렉션은 중첩 클래스 자신의 접근을 본다).
-function reachableType(decl: TypeDecl): boolean {
-  const { keywords } = decl.modifiers
-  const isPublic = keywords.has('public') || enclosedByInterface(decl)
-  const isStatic =
-    keywords.has('static') ||
-    enclosedByInterface(decl) ||
-    decl.kind === 'interface' ||
-    decl.kind === 'enum' ||
-    decl.kind === 'record'
-  return isPublic && (decl.parent === null || isStatic)
-}
-
 export function parseOpModes(text: string): ParsedOpMode[] {
   return parseOpModeSource(text).opModes
 }
@@ -547,7 +535,8 @@ export function parseOpModeSource(text: string): {
   const found: ParsedOpMode[] = []
   const registrars: ParsedRegistrar[] = []
   for (const decl of allTypes(parser.types)) {
-    if (decl.methods.length > 0 && decl.kind !== 'annotation' && reachableType(decl)) {
+    // 형식의 접근·static은 보지 않는다(머리 주석). static 메서드가 있는 inner 클래스는 javac -source 8이 오류로 알린다.
+    if (decl.methods.length > 0 && decl.kind !== 'annotation') {
       const memberShadowed = (simple: string): boolean => shadowedAt(decl, simple, parser.types)
       const inInterface = decl.kind === 'interface'
       for (const method of decl.methods) {
@@ -602,9 +591,9 @@ export function parseOpModeSource(text: string): {
 }
 
 // 바이너리 이름의 최상위 형식이 그 파일(경로의 마지막 이름, .java 뺀 것)의 이름과 같은가. javac는 public 최상위 형식을 같은
-// 이름의 파일에만 두게 한다. 다른 이름의 최상위 형식(public일 수 없다) 안의 public static 중첩 클래스는 실제 SDK에서는 OpMode·
-// 등록기가 될 수 있지만, SandBot은 실행 요청의 className·path를 이 규칙으로 맞추므로(launch.ts isBinaryNameOf) 목록에도
-// 넣지 않는다(src/main/opModes.ts).
+// 이름의 파일에만 두게 한다. 다른 이름의 최상위 형식(public일 수 없다)의 등록기와 그 안의 public static 중첩 클래스는 실제
+// SDK에서는 등록기·OpMode가 될 수 있지만, SandBot은 실행 요청의 className·path를 이 규칙으로 맞추므로(launch.ts
+// isBinaryNameOf) 목록에도 넣지 않는다(src/main/opModes.ts).
 export function isTopLevelOfFile(className: string, path: string): boolean {
   const topLevel = className.slice(className.lastIndexOf('.') + 1).split('$')[0]
   const stem = path.slice(path.lastIndexOf('/') + 1).replace(/\.java$/, '')

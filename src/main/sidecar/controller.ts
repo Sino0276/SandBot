@@ -27,11 +27,12 @@ import type { SidecarProcess, SpawnSidecar } from './process'
 import { isValidSpeed, SidecarSession, type HostClock, type SessionTimeouts } from './session'
 import type { WorldFactory } from './world'
 
-// 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성 → 사이드카 → JDK → 바쁨) 뒤
-// 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를 정하고(그동안 STOP으로 취소), TeamCode의 등록기
-// (@OpModeRegistrar, 실제 SDK처럼 실행마다 모두 돈다)와 프로젝트의 모의 저장소(AppUtil.ROOT_FOLDER)를 정한 뒤
-// JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만 받는다. 아직 끝나지 않은 실행이
-// 있으면 busy. 끝났지만(finished) 프로세스가 남아 있으면 새 실행 전에 정리한다(shutdown → 잠깐 기다림 → kill).
+// 실행(Play) 관리: 한 번에 사이드카 하나. playInit은 확인(루트 → OpMode 소스 → 로봇 구성, 여기까지 맞으면 그 프로젝트의 코드
+// 실행을 믿는다고 기억한다 → 사이드카 → JDK → 바쁨) 뒤 팀 Gradle 파일을 읽어 컴파일 기준(Android 플랫폼 API)과 라이브러리를
+// 정하고(그동안 STOP으로 취소), TeamCode의 등록기(@OpModeRegistrar, 실제 SDK처럼 실행마다 모두 돈다)와 프로젝트의 모의
+// 저장소(AppUtil.ROOT_FOLDER)를 정한 뒤 JVM을 띄우고 SidecarSession을 만든다. 명령·게임패드는 그 실행을 시작한 창의 것만
+// 받는다. 아직 끝나지 않은 실행이 있으면 busy. 끝났지만(finished) 프로세스가 남아 있으면 새 실행 전에 정리한다(shutdown →
+// 잠깐 기다림 → kill).
 
 // 이벤트를 받을 창(Electron은 WebContents, 테스트는 가짜). 같은 창은 같은 객체여야 한다.
 export type PlayOwner = { send: (event: PlayEvent) => void }
@@ -67,6 +68,8 @@ export type ControllerDeps = {
   registeredPreselect?: (root: string, name: string) => string
   // 프로젝트의 모의 저장소(AppUtil.ROOT_FOLDER)를 만들고 그 경로를 준다. 없으면 실행 작업 폴더.
   makeFirstFolder?: (projectRoot: string) => Promise<string>
+  // INIT은 팀 코드를 실행하므로 그 프로젝트(절대 경로)의 코드를 믿는다고 기억한다(codeTrust.ts, 등록기 OpMode 목록이 본다)
+  grantCodeTrust?: (projectRoot: string) => Promise<void>
 }
 
 export const EMPTY_GRADLE: GradleProject = {
@@ -197,6 +200,8 @@ export class PlayController {
     if (isFailure(request)) return request
     const prepared = await prepareRun(request)
     if (isFailure(prepared)) return prepared
+    // 사용자가 INIT을 눌러 이 프로젝트의 코드를 실행하기로 했다(등록기 목록도 같은 코드를 실행한다). 기억하지 못해도 실행은 한다.
+    await this.deps.grantCodeTrust?.(prepared.projectRoot).catch(() => undefined)
     const files = await this.deps.locateSidecar()
     if (isFailure(files)) return files
     const jdk = await this.deps.resolveJdk()

@@ -279,15 +279,13 @@ public final class TuningOpModes {
     expect(registrars(shadowed)).toEqual([])
   })
 
-  it('static·public이 아닌 메서드, public이 아니거나 static이 아닌 중첩 형식, 필드, 지역 클래스는 보지 않는다', () => {
+  it('static·public이 아닌 메서드, 필드, 지역 클래스는 보지 않는다', () => {
     const text = `${HEADER}${REGISTRAR_IMPORTS}
 public class Outer {
   @OpModeRegistrar public void notStatic(OpModeManager m) {}
   @OpModeRegistrar static void notPublic(OpModeManager m) {}
   @OpModeRegistrar public static <T> void generic(OpModeManager m) {}
   @OpModeRegistrar public static int field = 0;
-  public class Inner { @OpModeRegistrar public static void inner(OpModeManager m) {} }
-  static class Hidden { @OpModeRegistrar public static void hidden(OpModeManager m) {} }
   public static class Nested {
     @OpModeRegistrar public static void one(OpModeManager m) {}
     @OpModeRegistrar
@@ -297,14 +295,43 @@ public class Outer {
   public enum Kind { A; @OpModeRegistrar public static void fromEnum(OpModeManager m) {} }
   void method() { class Local { @OpModeRegistrar public static void local(OpModeManager m) {} } }
 }
-class PackagePrivate { @OpModeRegistrar public static void r(OpModeManager m) {} }
 `
     expect(registrars(text)).toEqual([
       { className: 'org.firstinspires.ftc.teamcode.Outer', line: 8 },
-      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 13 },
-      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 14 },
-      { className: 'org.firstinspires.ftc.teamcode.Outer$Api', line: 17 },
-      { className: 'org.firstinspires.ftc.teamcode.Outer$Kind', line: 18 }
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 11 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Nested', line: 12 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Api', line: 15 },
+      { className: 'org.firstinspires.ftc.teamcode.Outer$Kind', line: 16 }
+    ])
+  })
+
+  it('형식의 접근·static은 보지 않는다(실제 SDK filterOpModeRegistrarMethods는 메서드만 보고, ART는 public 멤버를 부른다)', () => {
+    const text = `${HEADER}${REGISTRAR_IMPORTS}
+class Registry {
+  @OpModeRegistrar public static void top(OpModeManager m) {}
+  private static class Hidden { @OpModeRegistrar public static void hidden(OpModeManager m) {} }
+  protected static class Guarded { @OpModeRegistrar public static void guarded(OpModeManager m) {} }
+  static class Plain {
+    public static class Deeper { @OpModeRegistrar public static void deeper(OpModeManager m) {} }
+  }
+  // static 메서드가 있는 inner 클래스는 Java 8 javac 오류다(목록이 컴파일 오류로 알린다)
+  public class Inner { @OpModeRegistrar public static void inner(OpModeManager m) {} }
+  private interface Api { @OpModeRegistrar static void fromInterface(OpModeManager m) {} }
+  private enum Kind { A; @OpModeRegistrar public static void fromEnum(OpModeManager m) {} }
+}
+final class Second { @OpModeRegistrar public static void r(OpModeManager m) {} }
+`
+    const pkg = 'org.firstinspires.ftc.teamcode'
+    expect(registrars(text)).toEqual([
+      { className: `${pkg}.Registry`, line: 6 },
+      { className: `${pkg}.Registry$Hidden`, line: 7 },
+      { className: `${pkg}.Registry$Guarded`, line: 8 },
+      { className: `${pkg}.Registry$Plain$Deeper`, line: 10 },
+      { className: `${pkg}.Registry$Inner`, line: 13 },
+      { className: `${pkg}.Registry$Api`, line: 14 },
+      { className: `${pkg}.Registry$Kind`, line: 15 },
+      // 다른 이름의 최상위 형식은 찾지만 TeamCode 목록이 뺀다(isTopLevelOfFile)
+      { className: `${pkg}.Second`, line: 17 }
     ])
   })
 

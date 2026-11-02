@@ -26,7 +26,7 @@ import {
 import { runListSidecar, type ListOutcome, type ListTimeouts } from './sidecar/listSession'
 import type { SidecarProcess } from './sidecar/process'
 import type { HostClock } from './sidecar/session'
-import { locateJavaFile } from './teamCodeJava'
+import { listGeneratedJavaFiles, locateJavaFile } from './teamCodeJava'
 import { javaTool } from './jdk'
 
 // 등록기(@OpModeRegistrar)가 등록하는 OpMode 목록(IPC listRegisteredOpModes). 등록기는 실행해야 무엇을 등록하는지 알 수
@@ -34,9 +34,13 @@ import { javaTool } from './jdk'
 // 준비와 같은 것(열린 루트 확인, 사이드카·JDK, 팀 Gradle → Android 플랫폼 → 라이브러리, 진행은 보내지 않고 취소 없음)을 한 뒤
 // JVM을 띄워 list를 보낸다(sidecar/listSession.ts). 실행(INIT)과는 별개의 JVM이다.
 //
-// - 캐시: 등록기 목록 + TeamCode 전체 Java 파일의 크기·수정 시각 + 클래스패스 jar(사이드카 jar 포함)의 내용 해시 + JDK가
-//   같으면 JVM을 띄우지 않고 마지막 결과를 준다. 컴파일 오류도 같은 입력이면 같은 결과라 캐시한다. 실패(시간 초과·JVM 오류
-//   등)는 캐시하지 않는다. FtcRobotController 쪽 소스(-sourcepath)의 변경은 보지 않는다(팀이 고치지 않는 곳).
+// - 동의: 등록기 실행은 팀 코드(등록기 메서드와 그것이 건드리는 정적 초기화)를 이 PC에서 실행하는 것이라, 사용자가 이 프로젝트를
+//   믿는다고 하기 전에는(codeTrust.ts: 고르기 목록의 확인이나 INIT) 다른 일 없이 needsConsent로 답한다(캐시하지 않는다).
+//
+// - 캐시: 등록기 목록 + TeamCode 전체 Java 파일(목록이 빼는 생성 패키지 폴더도)의 크기·수정 시각 + 클래스패스 jar(사이드카
+//   jar 포함)의 내용 해시 + JDK가 같으면 JVM을 띄우지 않고 마지막 결과를 준다. 컴파일 오류도 같은 입력이면 같은 결과라
+//   캐시한다. 실패(시간 초과·JVM 오류 등)는 캐시하지 않는다. FtcRobotController 쪽 소스(-sourcepath)의 변경은 보지
+//   않는다(팀이 고치지 않는 곳).
 // - 같은 루트는 한 번에 하나만 돈다(겹친 요청은 같은 결과를 기다린다).
 // - 결과의 OpModeInfo: className은 등록한 OpMode 클래스(라이브러리 클래스일 수 있다), path·line은 등록기 소스와 그 클래스의
 //   첫 등록기 메서드 줄, flavor는 TELEOP·AUTONOMOUS만(UTILITY·SYSTEM은 SandBot이 실행하지 않아 뺀다), group은 OpModeMeta의
@@ -67,6 +71,8 @@ export type RegisteredOpModesDeps = Pick<
 > & {
   // TeamCode의 OpMode·등록기와 Java 파일 목록(src/main/opModes.ts의 scanOpModes)
   scan: (root: unknown) => Promise<{ result: ListOpModesResult; files: JavaFileEntry[] }>
+  // 사용자가 이 프로젝트(절대 경로)의 코드를 실행해도 된다고 했는가(codeTrust.ts). 아니면 needsConsent.
+  isCodeTrusted: (projectRoot: string) => Promise<boolean>
   // 프로젝트의 모의 저장소(launch.ts simFirstFolder). 등록기도 로봇처럼 그 저장소를 본다.
   makeFirstFolder: (projectRoot: string) => Promise<string>
   clock?: HostClock
@@ -185,10 +191,13 @@ export class RegisteredOpModes {
 
   constructor(private readonly deps: RegisteredOpModesDeps) {}
 
-  list(root: unknown): Promise<ListRegisteredResult> {
+  async list(root: unknown): Promise<ListRegisteredResult> {
     if (!isTrustedRoot(root))
-      return Promise.resolve({ ok: false, code: 'notAllowed', detail: 'not an opened project' })
+      return { ok: false, code: 'notAllowed', detail: 'not an opened project' }
     const key = resolve(root)
+    // 등록기는 이 프로젝트의 코드다: 사용자가 믿는다고 하기 전에는 읽지도 받지도 띄우지도 않는다(codeTrust.ts)
+    if (!(await this.deps.isCodeTrusted(key).catch(() => false)))
+      return { ok: false, code: 'needsConsent', detail: '' }
     const running = this.running.get(key)
     if (running) return running
     const promise = this.listOnce(root, key)
@@ -294,7 +303,10 @@ export class RegisteredOpModes {
       compileClasspath: [files.sdkJar, ...libraries.compileClasspath],
       libraryClasspath: libraries.libraryClasspath
     }
-    const key = await this.cacheKey(jdk, files, sourceRoots, refs, scanned.files, classpaths)
+    // 목록(scanned.files)은 생성 패키지 폴더를 빼지만 javac는 -sourcepath로 그 파일도 컴파일한다(저장이 생성 하드웨어
+    // 클래스만 다시 쓰는 경우)
+    const javaFiles = [...scanned.files, ...(await listGeneratedJavaFiles(projectRoot))]
+    const key = await this.cacheKey(jdk, files, sourceRoots, refs, javaFiles, classpaths)
     const cached = this.cache.get(rootKey)
     if (cached && cached.key === key) return cached.result
 

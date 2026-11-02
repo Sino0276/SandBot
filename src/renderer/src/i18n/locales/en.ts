@@ -632,6 +632,9 @@ const en: Messages = {
         noAndroidSdk: 'no Android SDK was found (Preferences > External Tools)',
         noAndroidPlatform: "the project's Android platform is not installed"
       },
+      // The project's code is not trusted yet (the registrars did not run). Choosing it asks (play.codeTrust).
+      registeredConsent: 'Read registrar OpModes…',
+      registeredConsentHint: "Runs the project's Java code (@OpModeRegistrar) on this PC",
       registeredTag: 'Registrar',
       registeredTooltip: '{{className}} · registrar {{registrar}}\n{{file}}',
       open: 'Open',
@@ -678,6 +681,12 @@ const en: Messages = {
       noOpMode: 'Choose an OpMode to run.',
       busy: 'A project is being opened or saved.',
       running: 'Running.'
+    },
+    // Asked once before reading the registrar OpModes (like Android Studio's Trust Project). Remembered per project.
+    codeTrust: {
+      message:
+        'To list the registrar OpModes, SandBot compiles and runs the @OpModeRegistrar code of the project {{project}} (and the static initializers of the classes it touches) on this PC. INIT runs the same code, and it can access the files and network of this PC. Only do this for projects you trust. SandBot remembers this choice for this project.',
+      confirm: 'Run and remember'
     },
     saveBeforeRun:
       'You have unsaved changes. Running uses the TeamCode and the generated robot configuration on disk, so they must be saved first. Save and run?',

@@ -187,6 +187,7 @@ describe.skipIf(!existsSync(SUPPORT))('진짜 사이드카', () => {
     const lister = new RegisteredOpModes({
       ...deps,
       scan: scanOpModes,
+      isCodeTrusted: async () => true,
       makeFirstFolder: (projectRoot) => simFirstFolder(simRoot, projectRoot)
     })
     const listed = await lister.list(root)

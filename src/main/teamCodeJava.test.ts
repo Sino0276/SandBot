@@ -32,6 +32,7 @@ import { clearTrustedRoots, trustRoot } from './projectRoots'
 import {
   classifyEntry,
   containedIn,
+  listGeneratedJavaFiles,
   listJavaFiles,
   listTrustedJavaFiles,
   mapLimit,
@@ -176,6 +177,27 @@ describe('TeamCode Java', () => {
         `${PKG}/C.java`
       ])
       expect((await listJavaFiles(root, 5)).truncated).toBe(false)
+    })
+
+    it('생성 패키지 폴더의 Java(목록이 빼는 것, 대소문자 무시·하위 패키지 포함)는 따로 준다(링크는 건너뜀)', async () => {
+      await put(java('Lift.java'))
+      await put(java('sandbot', 'RobotHardware.java'), 'public class RobotHardware {}')
+      await put(java('sandbot', 'sub', 'Deep.java'))
+      await put(java('sandbot', 'Notes.txt'))
+      await put(java('SandBot', 'Copy.java'))
+      await put(join(outside, 'Evil.java'))
+      await symlink(join(outside, 'Evil.java'), java('sandbot', 'Linked.java'))
+      const files = await listGeneratedJavaFiles(root)
+      expect(files.map((file) => file.path)).toEqual([
+        `${PKG}/SandBot/Copy.java`,
+        `${PKG}/sandbot/RobotHardware.java`,
+        `${PKG}/sandbot/sub/Deep.java`
+      ])
+      expect(files[1].size).toBe('public class RobotHardware {}'.length)
+      expect(files[1].mtimeMs).toBeGreaterThan(0)
+      expect((await listGeneratedJavaFiles(root, 1)).map((file) => file.path)).toHaveLength(1)
+      await rm(join(root, 'TeamCode'), { recursive: true })
+      expect(await listGeneratedJavaFiles(root)).toEqual([])
     })
   })
 

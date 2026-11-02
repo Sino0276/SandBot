@@ -9,7 +9,7 @@ import {
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
 import type {
   DiagnosticHint,
-  ListRegisteredResult,
+  ListRegisteredFailureCode,
   PlayDiagnostic,
   PlayLinkWarning,
   PlayStackFrame
@@ -57,7 +57,7 @@ export type ConsoleBody =
   // 등록기 OpMode 목록을 읽지 못했다(이유는 play.list.registeredFailure.<code>)
   | {
       type: 'registeredFailed'
-      code: Extract<ListRegisteredResult, { ok: false }>['code']
+      code: ListRegisteredFailureCode
       detail: string
     }
   // 의존성 보고의 좌표 하나(불러오지 않음·받지 못함, 처음 받은 해시 기록)

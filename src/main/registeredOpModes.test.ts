@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { GENERATED_JAVA_DIR } from '../shared/generatedFiles'
 import type { JdkInfo, ListOpModesResult, OpModeInfo } from '../shared/play'
 import type {
   ErrorMessage,
@@ -10,6 +11,7 @@ import type {
   RegisteredOpMode,
   SidecarMessage
 } from '../shared/sidecarProtocol'
+import { CodeTrustStore } from './codeTrust'
 import { clearOpModeCache, scanOpModes } from './opModes'
 import { clearTrustedRoots, trustRoot } from './projectRoots'
 import {
@@ -125,6 +127,7 @@ describe('RegisteredOpModes', () => {
     script = listed([])
     deps = {
       scan: scanOpModes,
+      isCodeTrusted: async () => true,
       resolveJdk: async () => JDK,
       locateSidecar: async () => FILES,
       spawn: async (command, args, options) => {
@@ -325,6 +328,48 @@ describe('RegisteredOpModes', () => {
     })
   })
 
+  it('생성 패키지의 Java(목록에는 없지만 javac가 -sourcepath로 찾는다)가 바뀌어도 다시 읽는다', async () => {
+    // 인스펙터에서 장치를 더하고 Ctrl+S: 생성 하드웨어 클래스만 다시 쓰인다(팀 Java 파일은 그대로)
+    const generated = await write(
+      `${GENERATED_JAVA_DIR}/RobotHardware.java`,
+      'package org.firstinspires.ftc.teamcode.sandbot;\npublic class RobotHardware {}\n'
+    )
+    // 대소문자만 다른 생성 폴더도 목록이 빼므로(teamCodePaths.ts) 키에 넣는다
+    const other = await write(
+      'src/main/java/org/firstinspires/ftc/teamcode/SandBot/Extra.java',
+      'package org.firstinspires.ftc.teamcode.SandBot;\npublic class Extra {}\n'
+    )
+    script = listed([op({ name: 'A' })])
+    const lister = new RegisteredOpModes(deps)
+    await lister.list(root)
+    expect(spawned).toHaveLength(1)
+    expect((await scanOpModes(root)).files.map((file) => file.path)).not.toContain(
+      `${GENERATED_JAVA_DIR}/RobotHardware.java`
+    )
+
+    await writeFile(
+      generated,
+      'package org.firstinspires.ftc.teamcode.sandbot;\npublic class RobotHardware { public static final double LIFT_MAX_MM = 700; }\n'
+    )
+    script = listed([op({ name: 'B' })])
+    expect(await lister.list(root)).toMatchObject({ opModes: [{ name: 'B' }] })
+    expect(spawned).toHaveLength(2)
+    await lister.list(root)
+    expect(spawned).toHaveLength(2)
+
+    // 시각만 바뀌어도(크기가 같은 다시 쓰기) 다시
+    await utimes(generated, new Date(), new Date(Date.now() + 5000))
+    await lister.list(root)
+    expect(spawned).toHaveLength(3)
+    // 생성 파일이 사라져도
+    await rm(generated)
+    await lister.list(root)
+    expect(spawned).toHaveLength(4)
+    await utimes(other, new Date(), new Date(Date.now() + 7000))
+    await lister.list(root)
+    expect(spawned).toHaveLength(5)
+  })
+
   it('같은 루트의 겹친 요청은 하나만 돌고 같은 결과를 기다린다', async () => {
     script = listed([op({ name: 'A' })])
     const lister = new RegisteredOpModes(deps)
@@ -430,6 +475,72 @@ describe('RegisteredOpModes', () => {
       errors: []
     })
     expect(spawned).toHaveLength(0)
+  })
+
+  it('이 프로젝트의 코드 실행을 믿지 않았으면 needsConsent: 라이브러리·사이드카·JDK·JVM을 건드리지 않는다', async () => {
+    const touched: string[] = []
+    const untrusted: RegisteredOpModesDeps = {
+      ...deps,
+      isCodeTrusted: async (projectRoot) => {
+        touched.push(`trust ${projectRoot}`)
+        return false
+      },
+      locateSidecar: async () => {
+        touched.push('sidecar')
+        return FILES
+      },
+      resolveJdk: async () => {
+        touched.push('jdk')
+        return JDK
+      },
+      readGradle: async () => {
+        touched.push('gradle')
+        throw new Error('read gradle')
+      },
+      resolveLibraries: async () => {
+        touched.push('libraries')
+        throw new Error('resolve libraries')
+      },
+      makeFirstFolder: async () => {
+        touched.push('first folder')
+        return dir
+      },
+      spawn: async () => {
+        throw new Error('spawned')
+      }
+    }
+    const lister = new RegisteredOpModes(untrusted)
+    expect(await lister.list(root)).toEqual({ ok: false, code: 'needsConsent', detail: '' })
+    expect(await lister.list(`${root}/`)).toEqual({ ok: false, code: 'needsConsent', detail: '' })
+    expect(touched).toEqual([`trust ${root}`, `trust ${root}`])
+    expect(spawned).toHaveLength(0)
+    // 열지 않은 루트는 묻지도 않는다
+    clearTrustedRoots()
+    expect(await lister.list(root)).toMatchObject({ ok: false, code: 'notAllowed' })
+    expect(touched).toHaveLength(2)
+  })
+
+  it('믿는다고 기억하면(CodeTrustStore) 다음 목록부터 등록기를 실행한다', async () => {
+    const store = new CodeTrustStore({ file: join(dir, 'code-trust.json'), platform: 'linux' })
+    script = listed([op({ name: 'A' })])
+    const lister = new RegisteredOpModes({
+      ...deps,
+      isCodeTrusted: (projectRoot) => store.isTrusted(projectRoot)
+    })
+    expect(await lister.list(root)).toMatchObject({ ok: false, code: 'needsConsent' })
+    expect(spawned).toHaveLength(0)
+    expect(await store.grant(root)).toBe(true)
+    expect(await lister.list(root)).toMatchObject({ ok: true, opModes: [{ name: 'A' }] })
+    expect(spawned).toHaveLength(1)
+    // 기억은 파일에 남는다(앱을 다시 켜도)
+    const again = new RegisteredOpModes({
+      ...deps,
+      isCodeTrusted: (projectRoot) =>
+        new CodeTrustStore({ file: join(dir, 'code-trust.json'), platform: 'linux' }).isTrusted(
+          projectRoot
+        )
+    })
+    expect(await again.list(root)).toMatchObject({ ok: true, opModes: [{ name: 'A' }] })
   })
 
   it('INIT의 등록기: 클래스마다 하나(이름 순), 소스는 절대 경로', async () => {
