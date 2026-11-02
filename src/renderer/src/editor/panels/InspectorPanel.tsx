@@ -20,6 +20,7 @@ import { useEditorStore } from '../editorStore'
 import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import RobotHardwareSection from '../hardware/RobotHardwareSection'
 import { movedOutCadRoot, parentCadAxes } from '../inspectorInfo'
+import RigidbodyCard from '../mass/RigidbodyCard'
 import NumberField from '../NumberField'
 import PanelFrame from '../PanelFrame'
 import TextField from '../TextField'
@@ -298,6 +299,8 @@ function InspectorPanel(): React.JSX.Element {
         {originId && <CadOriginSection cadObject={objects[originId]} />}
         {isCodeGroup(object) && <CodeGroupSection group={object} />}
         {isRobotRoot && <RobotHardwareSection robot={object} />}
+        {/* Unity Rigidbody처럼 로봇이면 늘 보인다(로봇 카드 아래) */}
+        {isRobotRoot && <RigidbodyCard robot={object} />}
         <HardwareComponentsSection object={object} />
       </Fragment>
     </PanelFrame>

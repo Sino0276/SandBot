@@ -784,6 +784,48 @@ body {
   background: rgb(224 179 65 / 12%);
 }
 
+.hw-issue.is-info {
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* 질량 카드·Rigidbody 카드(editor/mass)의 읽기 전용 세 축 값: 이름 칸은 .hw-row와 같은 열 */
+.mass-vector {
+  display: grid;
+  grid-template-columns: minmax(72px, 38%) 1fr;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.mass-center > .vector-row-fields {
+  margin-bottom: 4px;
+}
+
+/* 질량 카드가 없는 오브젝트의 추정 질량 한 줄(누르면 카드를 붙인다) */
+.mass-estimate {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 2px 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mass-estimate:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
 .hw-issue-link {
   padding: 0;
   color: inherit;
