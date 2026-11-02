@@ -544,20 +544,17 @@ export function usesDefaultMass(robot: RobotMass): boolean {
   return robot.warnings.some((warning) => warning.kind === 'defaultMass')
 }
 
-// 형상을 읽는 중인 메시가 있는지(질량 모델의 pending 경고)
-export function hasPendingMeshes(robot: RobotMass): boolean {
-  return robot.warnings.some((warning) => warning.kind === 'pending')
-}
-
 // 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3). 형상을 모두
-// 읽는 중이어도(pending) 저울 무게가 있으면 그렇고, 이미 정한 질량(덮어쓰기·데이터시트, fixed kg)이 있으면 그것은 제자리에
-// 두고 나머지만 상자에 둔다.
+// 읽는 중이어도 저울 무게가 있으면 그렇고, 이미 정한 질량(덮어쓰기·데이터시트, fixed kg)이 있으면 그것은 제자리에 두고
+// 나머지만 상자에 둔다. loading은 로봇의 CAD를 지금 읽는 중인지(loadingCad, 등록부의 읽기 상태)다. 질량 모델의 pending
+// 경고는 형상 정보가 없는 메시를 세므로 읽기가 실패·취소됐거나 STEP을 못 찾은 것도 들어가는데, 그때 "다 읽으면"이라고
+// 하지 않는다.
 export function warningText(
   t: TFunction,
   warning: MassWarning,
   unit: LengthUnit,
   weighedMass?: number,
-  pending = false,
+  loading = false,
   fixed = 0
 ): string {
   switch (warning.kind) {
@@ -571,10 +568,10 @@ export function warningText(
     case 'defaultMass':
       if (weighedMass === undefined)
         return t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
-      // 고정 질량을 두고 나머지만 상자에 두는 것(질량 모델의 boxRest)은 형상을 읽는 중이거나 CAD가 없을 때다
+      // 고정 질량을 두고 나머지만 상자에 두는 것(질량 모델의 boxRest)은 형상을 읽는 중이거나 형상 정보가 없을 때다
       if (fixed > 0)
         return t(
-          pending
+          loading
             ? 'mass.warnings.defaultMassLoadingFixed'
             : 'mass.warnings.defaultMassWeighedFixed',
           {
@@ -583,27 +580,31 @@ export function warningText(
             rest: massText(t, Math.max(0, weighedMass - fixed), unit)
           }
         )
-      return t(pending ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
+      return t(loading ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
         mass: massText(t, weighedMass, unit)
       })
     case 'pending':
-      return t('mass.warnings.pending', { count: warning.meshes })
+      return t(loading ? 'mass.warnings.pending' : 'mass.warnings.missing', {
+        count: warning.meshes
+      })
   }
 }
 
 // Rigidbody 카드의 질량 줄: "직접 입력·데이터시트 2.100 kg + 추정 10.200 kg". 질량 정보 없음 대체값이면 출처별 합계가
 // 아니라 기본값(또는 저울 무게)이라고 보인다. 저울 무게의 나머지만 상자에 둔 것이면(고정 질량이 있음) 두 몫을 함께 보인다.
+// loading은 warningText와 같다(카드는 loadingCad를 넘긴다).
 export function robotMassBreakdown(
   t: TFunction,
   robot: RobotMass,
   unit: LengthUnit,
-  weighedMass?: number
+  weighedMass?: number,
+  loading = false
 ): string {
   if (usesDefaultMass(robot)) {
     if (weighedMass === undefined) return t('mass.rigidbody.breakdownDefault')
     if (robot.fixedMass > 0)
       return t(
-        hasPendingMeshes(robot)
+        loading
           ? 'mass.rigidbody.breakdownWeighedFixed'
           : 'mass.rigidbody.breakdownWeighedBoxFixed',
         {
@@ -611,7 +612,7 @@ export function robotMassBreakdown(
           rest: massText(t, robot.estimatedMass, unit)
         }
       )
-    return hasPendingMeshes(robot)
+    return loading
       ? t('mass.rigidbody.breakdownWeighedLoading')
       : t('mass.rigidbody.breakdownWeighedBox')
   }

@@ -11,7 +11,7 @@ import {
   cadSummaryText,
   cleanRigidbody,
   formatInertia,
-  hasPendingMeshes,
+  loadingCad,
   materialLabel,
   MATERIAL_GROUPS,
   massInputTitles,
@@ -23,7 +23,7 @@ import {
 } from './massCardModel'
 import { ReadonlyVector } from './MassVector'
 import OptionalField from './OptionalField'
-import { useCadMassSummary, useMassModel } from './useMassModel'
+import { hasMassProps, useCadMassSummary, useMassModel } from './useMassModel'
 
 // 로봇 전체의 질량(Unity Rigidbody처럼 로봇이면 늘 보인다, spec-3a §6). 추정 질량과 출처별 합계, 저울 무게(넣으면 추정
 // 파트에 비율을 곱해 맞춘다), 기본 재질, 계산한 무게중심·주관성, 경고와 CAD 메시 상태를 보인다. 시뮬레이터 설정이라
@@ -39,6 +39,8 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
   const settings = robot.rigidbody ?? {}
   const unit = t(`units.symbols.${lengthUnit}`)
   const cadRows = cadSummaryRows(objects, robot.id, summaryOf)
+  // 지금 읽는 중인지는 등록부가 안다(질량 모델의 pending은 읽지 못한 CAD의 메시도 센다)
+  const loading = loadingCad(objects, robot.id, summaryOf, hasMassProps)
   const principalNames: [string, string, string] = [
     t('mass.rigidbody.principal1'),
     t('mass.rigidbody.principal2'),
@@ -68,7 +70,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
       </div>
       {mass && (
         <p className="hw-derived">
-          {robotMassBreakdown(t, mass, lengthUnit, settings.weighedMass)}
+          {robotMassBreakdown(t, mass, lengthUnit, settings.weighedMass, loading)}
           {mass.scale !== 1 &&
             ` ${t('mass.rigidbody.scaled', { scale: formatNumber(mass.scale, 3) })}`}
         </p>
@@ -144,16 +146,11 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
           {mass.warnings.map((warning, index) => (
             <li
               key={index}
-              className={warning.kind === 'pending' ? 'hw-issue is-info' : 'hw-issue is-warning'}
+              className={
+                warning.kind === 'pending' && loading ? 'hw-issue is-info' : 'hw-issue is-warning'
+              }
             >
-              {warningText(
-                t,
-                warning,
-                lengthUnit,
-                settings.weighedMass,
-                hasPendingMeshes(mass),
-                mass.fixedMass
-              )}
+              {warningText(t, warning, lengthUnit, settings.weighedMass, loading, mass.fixedMass)}
             </li>
           ))}
         </ul>

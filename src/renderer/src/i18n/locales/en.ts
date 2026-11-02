@@ -1437,7 +1437,9 @@ const en: Messages = {
         'While the shapes load, the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       defaultMassWeighedFixed:
         'No shape information, so the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
-      pending: '{{count}} mesh(es) still loading are not counted yet.'
+      pending: '{{count}} mesh(es) still loading are not counted yet.',
+      missing:
+        '{{count}} mesh(es) without shape information are not counted. If the CAD failed to load or was cancelled, reload it or locate the file again from its CAD root.'
     },
     notices: {
       innerMassExceeds:
