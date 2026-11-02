@@ -41,6 +41,7 @@ import {
   massCardView,
   loadingCad,
   massInputTitles,
+  overrideField,
   massText,
   noticeText,
   resultLine,
@@ -667,6 +668,30 @@ describe('질량 입력', () => {
     expect(parseMassInput('250', 'mm', undefined, 'robot', 200)).toBeNull()
   })
 
+  it('빈 덮어쓰기 칸은 흐린 추정값을 보이고 단위 없는 숫자를 그 추정값의 단위로 읽는다', () => {
+    const estimate = objectMass({ mass: 2.3 })
+    const field = overrideField(t, undefined, estimate, false, 'mm')
+    expect(field.placeholder).toBe(`추정 ${massText(t, 2.3, 'mm')}`)
+    expect(field.placeholder).toContain('kg')
+    // "추정 2.300 kg"를 보고 친 2.5는 2.5 kg(g가 아니다)
+    expect(parseMassInput('2.5', 'mm', field.shown, 'part', 100)).toBe(2.5)
+    expect(massInputTitles(t, field.shown, 'mm', 'part', 100).title).toContain(
+      '단위가 없으면 kg입니다.'
+    )
+    // in: 0.1 lb 아래 추정은 oz로 보이므로 oz로 읽는다
+    const small = overrideField(t, undefined, objectMass({ mass: 0.03 }), false, 'in')
+    expect(small.placeholder).toContain('oz')
+    expect(parseMassInput('1.2', 'in', small.shown, 'part', 100)).toBeCloseTo(1.2 * KG_PER_OZ, 15)
+    // 값이 있으면 흐린 글자 없이 그 값의 단위
+    expect(overrideField(t, 0.437, estimate, false, 'mm')).toEqual({ shown: 0.437 })
+    // 읽는 중이라 아직 셈한 질량이 없으면 "추정 0 g"가 아니라 읽는 중이고, 단위는 빈 칸 규칙
+    const loading = overrideField(t, undefined, objectMass({ mass: 0, source: 'none' }), true, 'mm')
+    expect(loading.placeholder).toBe('형상을 읽는 중')
+    expect(loading.shown).toBeUndefined()
+    // 계산이 없으면 흐린 글자도 없다
+    expect(overrideField(t, undefined, undefined, false, 'mm')).toEqual({})
+  })
+
   it('도움말은 단위 없는 숫자의 단위를, 받지 않은 입력의 설명은 범위를 말한다', () => {
     const part = massInputTitles(t, undefined, 'mm', 'part', 100)
     expect(part.title).toContain('단위가 없으면 g입니다.')
@@ -1001,6 +1026,9 @@ describe('질량 카드 그리기', () => {
       const card = render({ ...objects, plate }, () => <MassCard object={plate} />)
       expect(card).toContain('결과: — · 형상을 읽는 중')
       expect(card).not.toContain('형상 없음 또는 표면 메시')
+      // 덮어쓰기 칸의 흐린 글자도 "추정 0 g"가 아니다
+      expect(card).toContain('placeholder="형상을 읽는 중"')
+      expect(card).not.toContain('추정 0')
     } finally {
       end()
     }

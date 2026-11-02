@@ -115,8 +115,8 @@ export function acceptMass(kg: number, max: number): boolean {
 // 질량 입력칸 종류: 파트·그룹의 질량 덮어쓰기(작은 값), 로봇의 저울 무게(큰 값)
 export type MassInputKind = 'part' | 'robot'
 
-// 단위 없는 숫자를 읽을 질량 단위: 칸에 값이 있으면 그 값이 보이는 기호("437 g" 칸의 450은 450 g), 비었으면 파트는
-// g(in이면 lb), 로봇은 kg(in이면 lb)
+// 단위 없는 숫자를 읽을 질량 단위: 칸에 보이는 값이 있으면 그 값이 보이는 기호("437 g" 칸의 450은 450 g, 덮어쓰기 칸의
+// 흐린 추정값도 보이는 값이다, overrideField), 없으면 파트는 g(in이면 lb), 로봇은 kg(in이면 lb)
 export function bareMassSymbol(
   current: number | undefined,
   unit: LengthUnit,
@@ -151,6 +151,24 @@ export function massInputTitles(
   return {
     title: t('mass.massInputHint', { unit: bare }),
     invalidTitle: t('mass.massInputRejected', { max: massText(t, max, unit), unit: bare })
+  }
+}
+
+// 질량 덮어쓰기 칸: 값이 없으면 계산한 추정값을 흐리게 보이고(아직 셈한 질량 없이 CAD를 읽는 중이면 읽는 중), 단위 없는
+// 숫자는 칸에 보이는 값(정한 값, 없으면 흐린 추정값, shown)의 단위로 읽는다("추정 2.300 kg"를 보고 친 2.5는 2.5 kg).
+export function overrideField(
+  t: TFunction,
+  current: number | undefined,
+  result: ObjectMass | undefined,
+  loading: boolean,
+  unit: LengthUnit
+): { placeholder?: string; shown?: number } {
+  if (current !== undefined) return { shown: current }
+  if (!result) return {}
+  if (loading && !(result.mass > 0)) return { placeholder: t('mass.source.loading') }
+  return {
+    placeholder: t('mass.overridePlaceholder', { mass: massText(t, result.mass, unit) }),
+    shown: result.mass
   }
 }
 

@@ -25,6 +25,7 @@ import {
   materialLabel,
   MATERIAL_GROUPS,
   noticeText,
+  overrideField,
   parseInfillPercent,
   parseMassInput,
   loadingCad,
@@ -61,6 +62,8 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
     return meters === null ? null : toDisplayLength(meters, lengthUnit)
   }
   const centerOfMass = settings.centerOfMass
+  const loading = loadingCad(objects, object.id, summaryOf, hasMassProps)
+  const override = overrideField(t, settings.mass, result, loading, lengthUnit)
 
   return (
     <li className="hw-card" data-component-type="mass">
@@ -117,14 +120,10 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
         <OptionalField
           ariaLabel={t('mass.override')}
           value={settings.mass === undefined ? '' : massText(t, settings.mass, lengthUnit)}
-          placeholder={
-            result && settings.mass === undefined
-              ? t('mass.overridePlaceholder', { mass: massText(t, result.mass, lengthUnit) })
-              : undefined
-          }
-          {...massInputTitles(t, settings.mass, lengthUnit, 'part', MAX_OVERRIDE_MASS)}
+          placeholder={override.placeholder}
+          {...massInputTitles(t, override.shown, lengthUnit, 'part', MAX_OVERRIDE_MASS)}
           parse={(text) =>
-            parseMassInput(text, lengthUnit, settings.mass, 'part', MAX_OVERRIDE_MASS)
+            parseMassInput(text, lengthUnit, override.shown, 'part', MAX_OVERRIDE_MASS)
           }
           onCommit={(mass) => update({ mass: mass ?? undefined })}
         />
@@ -173,14 +172,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
       {result ? (
         <>
           <p className="hw-derived">
-            {resultLine(
-              t,
-              objects,
-              result,
-              lengthUnit,
-              DEFAULT_DESCRIBERS,
-              loadingCad(objects, object.id, summaryOf, hasMassProps)
-            )}
+            {resultLine(t, objects, result, lengthUnit, DEFAULT_DESCRIBERS, loading)}
           </p>
           {result.mass > 0 && (
             <ReadonlyVector
