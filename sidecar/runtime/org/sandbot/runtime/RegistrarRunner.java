@@ -29,7 +29,8 @@ import java.util.TreeSet;
  *
  * <ul>
  *   <li>메서드: 선언 메서드 중 public static이고 abstract가 아니며 {@code @OpModeRegistrar}가 있고 매개변수가 1개(관리자) 또는
- *       2개(Context, 관리자)인 것. Context는 null이다(Android 앱이 없다).
+ *       2개(Context, 관리자)인 것. 클래스의 접근은 보지 않는다(ART처럼 public이 아닌 클래스의 것도 부른다). Context는 null이다
+ *       (Android 앱이 없다).
  *   <li>순서: 등록기 클래스 이름 순, 한 클래스 안은 메서드 이름 순(실제는 HashSet 순서). 시계는 돌지만 hardwareMap은 아직 없다.
  *   <li>던지면 실제는 조용히 무시하지만 사이드카는 {@link Errors}로 알리고(error kind registrar) 다음으로 간다. 던지기 전에 한
  *       등록은 남는다(실제와 같다). System.exit(SimExit)·다른 스레드(SimThreadError)는 실행을 끝내므로 그대로 나간다. 등록기가
@@ -182,6 +183,10 @@ final class RegistrarRunner implements AnnotatedOpModeManager {
     private void call(Method method, Errors errors) {
         String where = method.getDeclaringClass().getName() + "." + method.getName();
         try {
+            // 실제는 public이 아닌 클래스(패키지 전용 최상위·private 중첩)의 public static 등록기도 부른다: ART의 Method.invoke는
+            // public 멤버면 선언 클래스의 접근을 따지지 않는다(reflection.cc VerifyAccess). HotSpot은 클래스 접근도 보므로 연다.
+            // 팀 클래스는 이름 없는 모듈이라 늘 열린다.
+            method.setAccessible(true);
             if (method.getParameterCount() == 1) method.invoke(null, this);
             else method.invoke(null, null, this);
         } catch (InvocationTargetException e) {

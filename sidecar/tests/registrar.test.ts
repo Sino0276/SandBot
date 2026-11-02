@@ -340,6 +340,33 @@ describe.skipIf(build === null)('등록기 OpMode', () => {
   )
 
   it(
+    'public이 아닌 클래스·중첩 클래스의 public static 등록기도 실제 SDK(ART)처럼 부르고, 그 등록 OpMode를 실행한다',
+    async () => {
+      const hidden = [
+        registrar('HiddenRegistrar'),
+        { className: `${PACKAGE}.HiddenRegistrar$Inner`, source: source('HiddenRegistrar') }
+      ]
+      const run = await runSidecar(b, { ...listRequest(b, []), registrars: hidden })
+      expect(errors(run)).toEqual([])
+      expect(registered(run).map((op) => [op.name, op.registrar])).toEqual([
+        ['HiddenTop', `${PACKAGE}.HiddenRegistrar`],
+        ['HiddenInner', `${PACKAGE}.HiddenRegistrar$Inner`]
+      ])
+      expect(finishedReason(run)).toBe('listed')
+
+      const played = await runSidecar(
+        b,
+        runRequest(b, { registeredName: 'HiddenInner', registrars: hidden }),
+        { 5: ['start'] }
+      )
+      expect(errors(played)).toEqual([])
+      expect(results(played)).toMatchObject({ label: 'hidden-inner', started: 'hidden-inner' })
+      expect(finishedReason(played)).toBe('returned')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
     '등록기가 띄운 스레드가 시계를 쓰면 error thread 하나로 끝난다(목록은 exception, 실행은 구성 오류로 바꾸지 않는다)',
     async () => {
       const list = await runSidecar(b, listRequest(b, ['ThreadRegistrar', 'TuningLike']))
