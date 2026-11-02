@@ -187,6 +187,13 @@ const ko = {
       m: 'm',
       in: 'in'
     },
+    // 질량 기호(units.ts formatMass가 받는 글자. 질량 단위는 길이 표시 단위를 따른다)
+    massSymbols: {
+      g: 'g',
+      kg: 'kg',
+      lb: 'lb',
+      oz: 'oz'
+    },
     names: {
       mm: 'mm (밀리미터)',
       cm: 'cm (센티미터)',

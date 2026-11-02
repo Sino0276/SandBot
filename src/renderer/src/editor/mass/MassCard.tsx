@@ -5,7 +5,6 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import {
   formatLength,
-  formatMass,
   fromDisplayLength,
   LENGTH_DIGITS,
   parseLength,
@@ -21,6 +20,7 @@ import {
   inheritedOptionText,
   localCenterOfMass,
   massCardView,
+  massText,
   materialLabel,
   MATERIAL_GROUPS,
   MAX_CENTER_OF_MASS,
@@ -111,10 +111,10 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
         <span className="hw-row-label">{t('mass.override')}</span>
         <OptionalField
           ariaLabel={t('mass.override')}
-          value={settings.mass === undefined ? '' : formatMass(settings.mass, lengthUnit)}
+          value={settings.mass === undefined ? '' : massText(t, settings.mass, lengthUnit)}
           placeholder={
             result && settings.mass === undefined
-              ? t('mass.overridePlaceholder', { mass: formatMass(result.mass, lengthUnit) })
+              ? t('mass.overridePlaceholder', { mass: massText(t, result.mass, lengthUnit) })
               : undefined
           }
           title={t('mass.massInputHint')}
@@ -170,7 +170,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
         <>
           <p className="hw-derived">
             {t('mass.result', {
-              mass: formatMass(result.mass, lengthUnit),
+              mass: massText(t, result.mass, lengthUnit),
               source: sourceText(t, objects, result)
             })}
             {result.scaled && ` ${t('mass.scaledTag')}`}

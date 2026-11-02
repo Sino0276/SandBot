@@ -4,7 +4,7 @@ import { cadMassSummary } from '../../scene/geometryRegistry'
 import type { SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
-import { formatLength, formatMass, formatNumber, parseMass } from '../../units/units'
+import { formatLength, formatNumber, parseMass } from '../../units/units'
 import {
   acceptMass,
   cadSummaryRows,
@@ -14,6 +14,7 @@ import {
   materialLabel,
   MATERIAL_GROUPS,
   MAX_WEIGHED_MASS,
+  massText,
   robotMassBreakdown,
   ROBOT_DEFAULT_MATERIAL,
   warningText
@@ -59,7 +60,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
       <div className="hw-row">
         <span className="hw-row-label">{t('mass.rigidbody.mass')}</span>
         <span className="hw-static">
-          {mass ? formatMass(mass.mass, lengthUnit) : t('mass.rigidbody.massNone')}
+          {mass ? massText(t, mass.mass, lengthUnit) : t('mass.rigidbody.massNone')}
         </span>
       </div>
       {mass && (
@@ -74,7 +75,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
         <OptionalField
           ariaLabel={t('mass.rigidbody.weighed')}
           value={
-            settings.weighedMass === undefined ? '' : formatMass(settings.weighedMass, lengthUnit)
+            settings.weighedMass === undefined ? '' : massText(t, settings.weighedMass, lengthUnit)
           }
           placeholder={t('mass.rigidbody.weighedPlaceholder')}
           title={t('mass.massInputHint')}

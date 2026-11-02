@@ -184,6 +184,12 @@ const en: Messages = {
       m: 'm',
       in: 'in'
     },
+    massSymbols: {
+      g: 'g',
+      kg: 'kg',
+      lb: 'lb',
+      oz: 'oz'
+    },
     names: {
       mm: 'mm (millimeters)',
       cm: 'cm (centimeters)',

@@ -7,7 +7,6 @@ import type { MassModel, ObjectMass, RobotMass } from '../../mass/types'
 import type { SceneObject, SceneObjects, Transform } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
-import { formatMass } from '../../units/units'
 import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import MassCard from './MassCard'
 import {
@@ -26,6 +25,7 @@ import {
   inheritedOptionText,
   localCenterOfMass,
   massCardView,
+  massText,
   ownsDatasheetMass,
   parseInfillPercent,
   robotMassBreakdown,
@@ -398,10 +398,10 @@ describe('질량 출처 문구', () => {
     const objects = scene()
     const mass = objectMass({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
     expect(estimateLine(t, objects, mass, 'mm', DESCRIBERS)).toBe(
-      `질량(추정) ${formatMass(0.437, 'mm')} · 데이터시트: goBILDA 5203 19.2:1`
+      `질량(추정) ${massText(t, 0.437, 'mm')} · 데이터시트: goBILDA 5203 19.2:1`
     )
     expect(estimateLine(t, objects, { ...mass, scaled: true }, 'in', DESCRIBERS)).toBe(
-      `질량(추정) ${formatMass(0.437, 'in')} · 데이터시트: goBILDA 5203 19.2:1 (저울 무게에 맞춤)`
+      `질량(추정) ${massText(t, 0.437, 'in')} · 데이터시트: goBILDA 5203 19.2:1 (저울 무게에 맞춤)`
     )
   })
 
@@ -430,21 +430,21 @@ describe('질량 출처 문구', () => {
   it('로봇 경고·합계·관성 형식', () => {
     expect(warningText(t, { kind: 'scaleUnusual', scale: 1.734 }, 'mm')).toContain('1.73배')
     expect(warningText(t, { kind: 'scaleImpossible', fixed: 15, weighed: 12 }, 'mm')).toContain(
-      `(${formatMass(15, 'mm')})이 저울 무게(${formatMass(12, 'mm')})`
+      `(${massText(t, 15, 'mm')})이 저울 무게(${massText(t, 12, 'mm')})`
     )
     expect(warningText(t, { kind: 'defaultMass' }, 'mm')).toContain(
-      `기본값 ${formatMass(13.6, 'mm')}(FTC 대회 로봇에 흔한 무게)`
+      `기본값 ${massText(t, 13.6, 'mm')}(FTC 대회 로봇에 흔한 무게)`
     )
     // 저울 무게가 있으면 기본값이 아니라 그 무게를 외곽 상자에 둔다고 알린다
     const weighed = warningText(t, { kind: 'defaultMass' }, 'in', 20)
-    expect(weighed).toContain(`저울 무게 ${formatMass(20, 'in')}를 로봇 외곽 상자에`)
-    expect(weighed).not.toContain(formatMass(13.6, 'in'))
+    expect(weighed).toContain(`저울 무게 ${massText(t, 20, 'in')}를 로봇 외곽 상자에`)
+    expect(weighed).not.toContain(massText(t, 13.6, 'in'))
     expect(weighed).not.toContain('저울 무게를 넣거나')
     expect(warningText(t, { kind: 'pending', meshes: 3 }, 'mm')).toBe(
       '형상을 읽는 중인 메시 3개는 아직 계산에 들어가지 않았습니다.'
     )
     expect(robotMassBreakdown(t, robotMass(), 'cm')).toBe(
-      `직접 입력·데이터시트 ${formatMass(2.1, 'cm')} + 추정 ${formatMass(10.2, 'cm')}`
+      `직접 입력·데이터시트 ${massText(t, 2.1, 'cm')} + 추정 ${massText(t, 10.2, 'cm')}`
     )
     // 질량 정보 없음 대체값은 출처별 합계("추정")가 아니다
     const fallback = robotMass({
@@ -553,8 +553,8 @@ describe('질량 카드 그리기', () => {
     expect(html).toContain('<option value="" selected="">상속: 강철 (Lift)</option>')
     expect(html).toContain('<optgroup label="3D 출력">')
     expect(html).not.toContain('채움률')
-    expect(html).toContain(`placeholder="추정 ${formatMass(0.437, 'mm')}"`)
-    expect(html).toContain(`결과: ${formatMass(0.437, 'mm')} · 재질: 강철 (Lift)`)
+    expect(html).toContain(`placeholder="추정 ${massText(t, 0.437, 'mm')}"`)
+    expect(html).toContain(`결과: ${massText(t, 0.437, 'mm')} · 재질: 강철 (Lift)`)
     expect(html).toContain('무게중심 (로봇 기준)')
     expect(html).toContain('<output>100.0</output><')
     expect(html).toContain('<output>20.0</output>')
@@ -573,7 +573,7 @@ describe('질량 카드 그리기', () => {
     expect(html).toContain('<option value="pla" selected="">PLA</option>')
     expect(html).toContain('채움률 (%)')
     expect(html).toContain('value="25"')
-    expect(html).toContain(`value="${formatMass(0.597, 'mm')}"`)
+    expect(html).toContain(`value="${massText(t, 0.597, 'mm')}"`)
     expect(html).toContain('무게중심')
     expect(html).toMatch(/<input type="checkbox"\/>자동/)
     expect(html).toContain('value="10.0"')
@@ -606,7 +606,7 @@ describe('질량 카드 그리기', () => {
     const plate = render(objects, () => <HardwareComponentsSection object={objects.plate} />)
     expect(plate).toMatch(/<optgroup label="시뮬레이션">.*<option value="#mass">질량<\/option>/)
     expect(plate).toContain(
-      `질량(추정) ${formatMass(0.437, 'mm')} · 로봇 기본 재질: 알루미늄 6061</button>`
+      `질량(추정) ${massText(t, 0.437, 'mm')} · 로봇 기본 재질: 알루미늄 6061</button>`
     )
     expect(plate).toContain('컴포넌트가 없습니다')
     // 로봇에는 질량 카드가 없다(Rigidbody 카드), 추정 한 줄도 없다
@@ -641,12 +641,12 @@ describe('질량 카드 그리기', () => {
     }
     const html = render({ ...objects, R }, () => <RigidbodyCard robot={R} />)
     expect(html).toContain('Rigidbody')
-    expect(html).toContain(formatMass(12.3, 'mm'))
+    expect(html).toContain(massText(t, 12.3, 'mm'))
     expect(html).toContain(
-      `직접 입력·데이터시트 ${formatMass(2.1, 'mm')} + 추정 ${formatMass(10.2, 'mm')}`
+      `직접 입력·데이터시트 ${massText(t, 2.1, 'mm')} + 추정 ${massText(t, 10.2, 'mm')}`
     )
     expect(html).toContain('추정에 ×1.250 (저울 무게에 맞춤)')
-    expect(html).toContain(`value="${formatMass(14, 'mm')}"`)
+    expect(html).toContain(`value="${massText(t, 14, 'mm')}"`)
     expect(html).toContain('<option value="pla" selected="">PLA</option>')
     expect(html).toContain('<option value="">알루미늄 6061 (기본)</option>')
     expect(html).toContain('<output>-20.0</output>')
@@ -669,7 +669,7 @@ describe('질량 카드 그리기', () => {
       robots: { R: robotMass({ warnings: [{ kind: 'defaultMass' }] }) }
     }
     const fallback = render(scene(), () => <RigidbodyCard robot={objects.R} />)
-    expect(fallback).toContain(`질량 정보가 없어 기본값 ${formatMass(13.6, 'mm')}(FTC`)
+    expect(fallback).toContain(`질량 정보가 없어 기본값 ${massText(t, 13.6, 'mm')}(FTC`)
     expect(fallback).toContain('기본값 (질량 정보 없음)')
     expect(fallback).not.toContain('+ 추정')
     // 형상 없는 로봇에 저울 무게를 넣으면 그 무게를 쓴다고 알린다(질량 모델은 defaultMass 경고를 그대로 낸다)
@@ -686,9 +686,9 @@ describe('질량 카드 그리기', () => {
       }
     }
     const weighed = render({ ...scene(), R }, () => <RigidbodyCard robot={R} />)
-    expect(weighed).toContain(formatMass(20, 'mm'))
+    expect(weighed).toContain(massText(t, 20, 'mm'))
     expect(weighed).toContain('저울 무게 (형상 없음, 외곽 상자로 근사)')
-    expect(weighed).toContain(`저울 무게 ${formatMass(20, 'mm')}를 로봇 외곽 상자에`)
-    expect(weighed).not.toContain(formatMass(13.6, 'mm'))
+    expect(weighed).toContain(`저울 무게 ${massText(t, 20, 'mm')}를 로봇 외곽 상자에`)
+    expect(weighed).not.toContain(massText(t, 13.6, 'mm'))
   })
 })

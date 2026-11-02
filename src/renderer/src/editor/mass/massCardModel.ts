@@ -35,6 +35,25 @@ export const MAX_OVERRIDE_MASS = 100
 export const MAX_WEIGHED_MASS = 200
 export const MAX_CENTER_OF_MASS = 10
 
+// 질량 기호 글자(i18n units.massSymbols). units.ts의 formatMass는 기호 글자를 쓰는 쪽에게서 받는다(UI 문자열을
+// 하드코딩하지 않게). 계약의 빈 구현은 이 인자를 받지 않으므로 받는 형식으로 맞춰 부른다(인자가 적은 함수는 이 형식에 맞는다).
+export type MassSymbols = Readonly<Record<'g' | 'kg' | 'lb' | 'oz', string>>
+const formatMassWith: (kg: number, unit: LengthUnit, symbols: MassSymbols) => string = formatMass
+
+export function massSymbols(t: TFunction): MassSymbols {
+  return {
+    g: t('units.massSymbols.g'),
+    kg: t('units.massSymbols.kg'),
+    lb: t('units.massSymbols.lb'),
+    oz: t('units.massSymbols.oz')
+  }
+}
+
+// 표시 단위의 질량 글자("437 g", "1.32 lb"). 카드·경고·입력칸이 모두 이것을 쓴다.
+export function massText(t: TFunction, kg: number, unit: LengthUnit): string {
+  return formatMassWith(kg, unit, massSymbols(t))
+}
+
 export function isPrintedMaterial(key: MaterialKey | undefined): boolean {
   return key !== undefined && PRINTED_MATERIALS.includes(key)
 }
@@ -342,7 +361,7 @@ export function estimateLine(
   describers: MassDescribers = DEFAULT_DESCRIBERS
 ): string {
   const text = t('mass.estimateLine', {
-    mass: formatMass(mass.mass, unit),
+    mass: massText(t, mass.mass, unit),
     source: sourceText(t, objects, mass, describers)
   })
   return mass.scaled ? `${text} ${t('mass.scaledTag')}` : text
@@ -409,13 +428,13 @@ export function warningText(
       return t('mass.warnings.scaleUnusual', { scale: formatNumber(warning.scale, 2) })
     case 'scaleImpossible':
       return t('mass.warnings.scaleImpossible', {
-        fixed: formatMass(warning.fixed, unit),
-        weighed: formatMass(warning.weighed, unit)
+        fixed: massText(t, warning.fixed, unit),
+        weighed: massText(t, warning.weighed, unit)
       })
     case 'defaultMass':
       return weighedMass !== undefined
-        ? t('mass.warnings.defaultMassWeighed', { mass: formatMass(weighedMass, unit) })
-        : t('mass.warnings.defaultMass', { mass: formatMass(DEFAULT_ROBOT_MASS, unit) })
+        ? t('mass.warnings.defaultMassWeighed', { mass: massText(t, weighedMass, unit) })
+        : t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
     case 'pending':
       return t('mass.warnings.pending', { count: warning.meshes })
   }
@@ -434,8 +453,8 @@ export function robotMassBreakdown(
       ? t('mass.rigidbody.breakdownWeighedBox')
       : t('mass.rigidbody.breakdownDefault')
   return t('mass.rigidbody.breakdown', {
-    fixed: formatMass(robot.fixedMass, unit),
-    estimated: formatMass(robot.estimatedMass, unit)
+    fixed: massText(t, robot.fixedMass, unit),
+    estimated: massText(t, robot.estimatedMass, unit)
   })
 }
 

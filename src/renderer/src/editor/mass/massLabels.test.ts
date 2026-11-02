@@ -4,7 +4,13 @@ import en from '../../i18n/locales/en'
 import ko, { type Messages } from '../../i18n/locales/ko'
 import { MATERIAL_KEYS, type MassSource, type MassWarning } from '../../mass/types'
 import type { SceneObjects } from '../../scene/model'
-import { MATERIAL_GROUPS, robotMassBreakdown, sourceText, warningText } from './massCardModel'
+import {
+  massSymbols,
+  MATERIAL_GROUPS,
+  robotMassBreakdown,
+  sourceText,
+  warningText
+} from './massCardModel'
 
 function lookup(messages: Messages, key: string): unknown {
   return key.split('.').reduce<unknown>((node, part) => {
@@ -43,6 +49,9 @@ describe('질량 카드 번역', () => {
 
   it('en의 질량 키 구조가 ko와 같다', () => {
     expect(leafKeys(en.mass, 'mass')).toEqual(leafKeys(ko.mass, 'mass'))
+    expect(leafKeys(en.units.massSymbols, 'massSymbols')).toEqual(
+      leafKeys(ko.units.massSymbols, 'massSymbols')
+    )
   })
 
   it('재질 묶음은 모든 재질을 한 번씩 담는다', () => {
@@ -99,6 +108,8 @@ describe('질량 카드 번역', () => {
           )
         )
       ]
+      // 질량 기호도 리소스에서 온다(formatMass에 넘기는 글자)
+      expect(Object.values(massSymbols(t)).filter((text) => text.startsWith('units.'))).toEqual([])
       for (const text of texts) {
         expect(text).not.toMatch(/^mass\./)
         expect(text).not.toContain('{{')
