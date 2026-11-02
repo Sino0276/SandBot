@@ -1,8 +1,9 @@
 import { isMotorModel, motorGearbox } from '../hardware/catalog'
 import type { HardwareComponent, WheelSettings } from '../scene/model'
 
-// 상용 부품(COTS) 질량 표(spec-3a §4.3, research/cots.md §1). 모터·서보·배터리·카메라는 CAD 부피 × 재질로 풀면 크게
-// 틀리므로(겉보기 밀도 1.9–7.4 g/cm³, research/cots.md §2) 제조사가 공개한 질량을 쓴다. 값은 kg이고 줄마다 출처가 있다
+// 상용 부품(COTS) 질량 표. 모터·서보·배터리·카메라는 CAD 부피 × 재질로 풀면 크게 틀리므로 제조사가 공개한 질량을
+// 쓴다(제조사 STEP을 occt-import-js로 읽어 잰 겉보기 밀도가 1.9–7.4 g/cm³로 4배 차이 났다. 단순화한 CAD라 모두
+// 알루미늄으로 보면 goBILDA 5203은 161 g(실제 437 g), Limelight 3A는 48 g(실제 93 g)이 된다). 값은 kg이고 줄마다 출처가 있다
 // (조사일 2026-11-02, goBILDA·REV 페이지는 "Specs › Weight"). 출처를 찾지 못한 것(OTOS, 컬러·거리 센서, 웹캠, 허브 IMU)은
 // 넣지 않는다(재질 추정으로 간다). 질량 표는 SDK 값이 아니라 시뮬레이터 값이라 생성 코드와 관계없다.
 //
@@ -25,8 +26,10 @@ const G = 0.001
 const OZ = 0.028349523125
 const LB = 0.45359237
 
-// goBILDA Yellow Jacket 감속비별 질량(g). 열마다 goBILDA 상품 페이지 https://www.gobilda.com/<slug>/의 Weight다
-// (slug는 research/cots.md §5 [a1]–[c21]). SKU 끝 네 자리는 감속비 코드다(상품 페이지의 SKU와 감속비를 맞춰 확인함).
+// goBILDA Yellow Jacket 감속비별 질량(g). 칸마다 goBILDA 상품 페이지의 "Specs › Weight"다. 주소는 계열별 틀에
+// <비>(감속비의 점을 '-'로 바꾸고 '-1'을 붙인 것: 3-7-1, 19-2-1, 139-1)와 <rpm>(아래)을 넣은 것이다
+// (goBILDA 상품 사이트맵 https://www.gobilda.com/xmlsitemap.php?type=products&page=1 …5 에 있다). SKU 끝 네 자리는
+// 감속비 코드다(상품 페이지의 SKU와 감속비를 맞춰 확인함).
 const GOBILDA_RATIOS = [1, 3.7, 5.2, 13.7, 19.2, 26.9, 50.9, 71.2, 99.5, 139, 188] as const
 const GOBILDA_RATIO_CODES = [
   '0001',
@@ -41,15 +44,23 @@ const GOBILDA_RATIO_CODES = [
   '0139',
   '0188'
 ] as const
+// 주소의 <rpm>(출력축 무부하 RPM)은 위 감속비 순서로 6000·1620·1150·435·312·223·117·84·60·43·30이다
 type GoBildaFamily = 'goBilda5203' | 'goBilda5204' | 'goBilda5202' | 'goBilda5202Plate'
 const GOBILDA_MOTOR_GRAMS: Readonly<Record<GoBildaFamily, readonly (number | null)[]>> = {
-  // 5203 24 mm 8 mm REX 축(SKU 5203-2402-*), [a1]–[a11] 5203-series-yellow-jacket-…-24mm-length-8mm-rex-shaft-…
+  // 5203 24 mm 8 mm REX 축(SKU 5203-2402-*)
+  // https://www.gobilda.com/5203-series-yellow-jacket-planetary-gear-motor-<비>-ratio-24mm-length-8mm-rex-shaft-<rpm>-rpm-3-3-5v-encoder/
+  // 3.7:1만 https://www.gobilda.com/5203-series-yellow-jacket-planetary-gear-motor-3-7-1-ratio-1620-rpm-3-3-5v-encoder/ ,
+  // 1:1은 https://www.gobilda.com/5203-series-yellow-jacket-motor-1-1-ratio-24mm-length-8mm-rex-shaft-6000-rpm-3-3-5v-encoder/
   goBilda5203: [391, 396, 399, 438, 437, 437, 481, 486, 486, 485, 524],
-  // 5204 80 mm 축(SKU 5204-8002-*), [b1]–[b10]. 1:1은 없다. 99.5:1 페이지는 "Weight 501"로 단위가 빠져 g로 읽었다
+  // 5204 80 mm 축(SKU 5204-8002-*). 1:1은 없다. 99.5:1 페이지는 "Weight 501"로 단위가 빠져 g로 읽었다(옆 감속비가 501 g)
+  // https://www.gobilda.com/5204-series-yellow-jacket-planetary-gear-motor-<비>-ratio-80mm-length-8mm-rex-shaft-<rpm>-rpm-3-3-5v-encoder/
   goBilda5204: [null, 411, 412, 435, 458, 458, 465, 501, 501, 501, 543],
-  // 5202 24 mm 6 mm D 축(SKU 5202-2402-*, 1:1은 5202-0002-0001), [c1]·[c3]–[c21]의 24 mm 열
+  // 5202 24 mm 6 mm D 축(SKU 5202-2402-*, 1:1은 5202-0002-0001)
+  // https://www.gobilda.com/5202-series-yellow-jacket-planetary-gear-motor-<비>-ratio-24mm-length-6mm-d-shaft-<rpm>-rpm-36mm-gearbox-3-3-5v-encoder/
+  // 1:1은 https://www.gobilda.com/5202-series-yellow-jacket-motor-1-1-ratio-24mm-length-6mm-d-shaft-6000-rpm-3-3-5v-encoder/
   goBilda5202: [383, 394, 398, 435, 435, 435, 479, 484, 486, 483, 522],
-  // 5202 36 mm 기어박스 판(SKU 5202-0002-*), [c2]–[c20]의 판 열. 1:1은 24 mm 축 하나뿐이다
+  // 5202 36 mm 기어박스 판(SKU 5202-0002-*). 1:1은 24 mm 축 하나뿐이다
+  // https://www.gobilda.com/5202-series-yellow-jacket-planetary-gear-motor-<비>-ratio-<rpm>-rpm-3-3-5v-encoder/
   goBilda5202Plate: [null, 387, 387, 420, 420, 420, 450, 456, 456, 456, 495]
 }
 const GOBILDA_PRODUCTS: Readonly<Record<GoBildaFamily, string>> = {
@@ -71,8 +82,8 @@ const REV_HD_HEX: readonly { ratio: number; mass: number }[] = [
 
 // REV UltraPlanetary + HD Hex = 모터 234 g + 장착판 33.5 g + 출력 카트리지 66.5 g + 감속 카트리지마다 35 g
 // (3:1 35.5 g, 4:1 34.0 g, 5:1 36.0 g의 가운데). https://www.revrobotics.com/rev-41-1600/ ,
-// https://www.revrobotics.com/rev-41-1601/ , …/rev-41-1602/ , …/rev-41-1603/ . REV 표(카트리지 1·2·3개: 371·405·441.5 g)와
-// 2 g 안에서 맞는다(research/cots.md §1.2).
+// https://www.revrobotics.com/rev-41-1601/ , …/rev-41-1602/ , …/rev-41-1603/ . REV 문서의 조합 표(카트리지 1·2·3개:
+// 371·405·441.5 g, https://docs.revrobotics.com/duo-build/motion/motors/hd-hex-motor)와 2 g 안에서 맞는다.
 const ULTRA_PLANETARY_BASE = (234 + 33.5 + 66.5) * G
 const ULTRA_PLANETARY_CARTRIDGE = 35 * G
 // 가장 큰 카트리지 5.23:1. 카트리지 수는 감속비가 5.23의 몇 제곱 안인지로 정한다(1개: ≤ 5.23, 2개: ≤ 27.4, 3개: 그 위,
@@ -96,7 +107,7 @@ const entries: Record<string, CotsEntry> = {
   'servo:gobilda5TurnTorque': { mass: 64 * G, product: 'goBILDA 2000 5-Turn Torque' },
   'servo:gobilda5TurnSpeed': { mass: 60 * G, product: 'goBILDA 2000 5-Turn Speed' },
   'servo:gobilda5TurnSuperSpeed': { mass: 58 * G, product: 'goBILDA 2000 5-Turn Super Speed' },
-  // Axon MAX MK2 78 g, MINI MK2 67 g(goBILDA 판매 페이지. Axon 문서는 MAX 85 g이라 엇갈린다, 비평 E10)
+  // Axon MAX MK2 78 g, MINI MK2 67 g(goBILDA 판매 페이지. Axon 문서는 MAX 85 g이라 엇갈린다)
   // https://www.gobilda.com/axon-max-servo-mk2/ , https://www.gobilda.com/axon-mini-servo-mk2/
   'servo:axonMaxMk2': { mass: 78 * G, product: 'Axon MAX MK2' },
   'servo:axonMiniMk2': { mass: 67 * G, product: 'Axon MINI MK2' },
@@ -165,8 +176,8 @@ function nearestRatio(ratios: readonly number[], gearbox: number): number {
 
 // 모터 컴포넌트(motorModel + gearbox)의 표 키. 표에 없는 모델(goBILDA 5201, NeveRest 20·60, TETRIX, Matrix, Studica,
 // 모델 모름)은 null(재질 추정). 모르는 감속비는 그 계열의 가장 가까운 감속비다. goBILDA 5202 모델(5202/5203/5204가
-// 같은 구성 태그)은 계열을 알 수 없어 지금 FTC 기본 계열인 5203 열을 쓴다(research/cots.md §1.1, 같은 감속비에서 계열
-// 차이는 최대 38 g).
+// 같은 구성 태그)은 계열을 알 수 없어 지금 goBILDA가 FTC에 파는 기본 계열인 5203 열을 쓴다(같은 감속비에서 계열 차이는
+// 위 표에서 최대 38 g).
 function motorCotsKey(props: Record<string, string | number>): string | null {
   const model = isMotorModel(props.motorModel) ? props.motorModel : 'unspecified'
   const gearbox = motorGearbox(props)
@@ -267,7 +278,7 @@ const GOBILDA_SKUS: readonly { pattern: RegExp; key: string }[] = [
   { pattern: /^2004-0025-0002$/, key: 'servo:axonMaxMk2' }
 ]
 
-// REV 부품 번호 REV-NN-NNNN(research/cots.md §3.2)
+// REV 부품 번호 REV-NN-NNNN(REV 상품 주소 https://www.revrobotics.com/rev-41-1300/ 의 그 번호). 질량은 위 표의 출처다.
 const REV_SKUS: Readonly<Record<string, string>> = {
   'REV-41-1300': 'motor:revCoreHex',
   'REV-41-1291': ratioKey('revHdHex', 1),
