@@ -516,6 +516,52 @@ describe('PlayController + 가짜 사이드카', () => {
     }
   })
 
+  it('INIT은 확인을 지난 프로젝트의 코드 실행을 믿는다고 기억한다(등록기 목록이 본다), 확인 실패면 기억하지 않는다', async () => {
+    const granted: string[] = []
+    const trusting = make({
+      grantCodeTrust: async (projectRoot) => void granted.push(projectRoot)
+    })
+    try {
+      const outside = await mkdtemp(join(tmpdir(), 'sandbot-controller-outside-'))
+      try {
+        expect(
+          await trusting.init(opModeRequest('Normal', { root: outside }), owner)
+        ).toMatchObject({ ok: false, code: 'notAllowed' })
+      } finally {
+        await rm(outside, { recursive: true, force: true })
+      }
+      expect(await trusting.init({ runId: 'bad' }, owner)).toMatchObject({ code: 'notAllowed' })
+      expect(await trusting.init(opModeRequest('Missing'), owner)).toMatchObject({
+        code: 'missing'
+      })
+      expect(granted).toEqual([])
+
+      // JDK가 없어 실행하지 못해도 사용자는 INIT으로 이 프로젝트의 코드를 실행하기로 했다
+      const noJdk = make({
+        resolveJdk: async () => null,
+        grantCodeTrust: async (projectRoot) => void granted.push(projectRoot)
+      })
+      expect(await noJdk.init(opModeRequest('Normal', { root: `${root}/` }), owner)).toMatchObject({
+        code: 'noJdk'
+      })
+      expect(granted).toEqual([root])
+
+      // 기억하지 못해도(던짐) 실행은 한다
+      const failing = make({
+        grantCodeTrust: async () => {
+          throw new Error('read-only userData')
+        }
+      })
+      const request = opModeRequest('Normal')
+      expect(await failing.init(request, owner)).toEqual({ ok: true })
+      failing.command({ type: 'stop' }, owner)
+      await waitFor(() => finished(request.runId) !== undefined)
+      await failing.disposeAll()
+    } finally {
+      await trusting.disposeAll()
+    }
+  })
+
   it('컴파일 기준·라이브러리를 RunRequest에 싣고, 받는 중 STOP이면 cancelled', async () => {
     const report = { entries: [], gradle: [], compileSdk: 36, compileSdkMinor: 1, platform: null }
     const seen: string[] = []

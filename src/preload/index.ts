@@ -45,6 +45,7 @@ const api: SandbotApi = {
   setAndroidSdk: (choice, root) => ipcRenderer.invoke(IPC.setAndroidSdk, choice, root),
   listOpModes: (root) => ipcRenderer.invoke(IPC.listOpModes, root),
   listRegisteredOpModes: (root) => ipcRenderer.invoke(IPC.listRegisteredOpModes, root),
+  grantCodeTrust: (root) => ipcRenderer.invoke(IPC.grantCodeTrust, root),
   readTeamCodeAsset: (root, path) => ipcRenderer.invoke(IPC.readTeamCodeAsset, root, path),
   playInit: (request) => ipcRenderer.invoke(IPC.playInit, request),
   playCommand: (command) => ipcRenderer.send(IPC.playCommand, command),

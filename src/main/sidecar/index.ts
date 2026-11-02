@@ -4,6 +4,7 @@ import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { PlayEvent } from '../../shared/play'
 import { resolveAndroidPlatform } from '../androidSdk'
+import { defaultCodeTrustStore, registerCodeTrustIpc } from '../codeTrust'
 import { readProjectGradle } from '../gradleSource'
 import { resolveActiveJdk } from '../jdk'
 import { electronHttpGet } from '../libraries/electronHttp'
@@ -19,7 +20,8 @@ import { kinematicWorld } from './world'
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
 // 쓴다)이고, SANDBOT_SIDECAR_DIR로 다른 빌드를 가리킬 수 있다(stepConverter.ts와 같은 방식). 등록기 OpMode 목록
-// (registeredOpModes.ts, IPC는 opModes.ts)도 같은 준비(사이드카·JDK·Gradle·플랫폼·라이브러리)와 모의 저장소를 쓴다.
+// (registeredOpModes.ts, IPC는 opModes.ts)도 같은 준비(사이드카·JDK·Gradle·플랫폼·라이브러리)와 모의 저장소를 쓰고, 코드 실행
+// 동의(codeTrust.ts, IPC grantCodeTrust)를 함께 본다.
 
 export function sidecarDir(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'sidecar')
@@ -77,14 +79,23 @@ export function registerPlayIpc(): void {
       dashboardJar: dashboardJarPath(sidecarDir())
     })
   }
-  const registered = new RegisteredOpModes({ ...deps, scan: scanOpModes, makeFirstFolder })
+  // 프로젝트 코드 실행 동의: 등록기 목록은 믿은 프로젝트만 읽고, INIT(같은 코드를 실행한다)은 그 프로젝트를 믿는다고 기억한다
+  const codeTrust = defaultCodeTrustStore()
+  registerCodeTrustIpc(codeTrust)
+  const registered = new RegisteredOpModes({
+    ...deps,
+    scan: scanOpModes,
+    makeFirstFolder,
+    isCodeTrusted: (projectRoot) => codeTrust.isTrusted(projectRoot)
+  })
   setRegisteredOpModes(registered)
   const controller = new PlayController({
     ...deps,
     world: kinematicWorld,
     makeFirstFolder,
     registrars: (root) => registered.registrarsFor(root),
-    registeredPreselect: (root, name) => registered.preselectTeleOp(root, name)
+    registeredPreselect: (root, name) => registered.preselectTeleOp(root, name),
+    grantCodeTrust: async (projectRoot) => void (await codeTrust.grant(projectRoot))
   })
 
   // 창마다 같은 owner 객체(명령이 실행을 시작한 창의 것인지 본다)

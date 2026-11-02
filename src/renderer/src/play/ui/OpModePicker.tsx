@@ -5,11 +5,19 @@ import type { OpModeInfo } from '../../../../shared/play'
 import { displayJavaPath } from '../../java/javaIndex'
 import { openScriptFile } from '../../java/openScript'
 import { useProjectStore } from '../../project/projectStore'
-import { findOpMode, opModeKey, opModeSections, orderedOpModes } from '../opModeList'
-import { refreshOpModes, selectOpMode } from '../playActions'
+import {
+  findOpMode,
+  opModeKey,
+  opModeSections,
+  orderedOpModes,
+  pickerKeys,
+  REGISTERED_CONSENT_KEY
+} from '../opModeList'
+import { confirmRegisteredConsent, refreshOpModes, selectOpMode } from '../playActions'
 import {
   isRunActive,
   listedOpModes,
+  showsRegisteredConsent,
   usePlayStore,
   type OpModeListState,
   type RegisteredProblem
@@ -58,8 +66,10 @@ function RegisteredStatus({ list }: { list: OpModeListState }): React.JSX.Elemen
 
 // Driver Station처럼 TeleOp·Autonomous를 나누고 group 머리를 단 선택 목록(role="listbox"). 목록이 포커스를 갖고
 // 위/아래·Home/End·PageUp/PageDown으로 움직이며 Enter·Space로 고른다. 열려 있는 동안의 키는 창 단축키로 넘기지 않는다.
-// 바깥을 누르거나 창이 포커스를 잃으면 닫는다(우클릭 메뉴와 같음).
-function OpModePopup({
+// 바깥을 누르거나 창이 포커스를 잃으면 닫는다(우클릭 메뉴와 같음). 등록기가 있는데 이 프로젝트의 코드 실행을 아직 믿지
+// 않았으면 맨 끝에 '등록기 OpMode 읽기…' 줄을 두고(다른 줄처럼 키보드로 간다), 고르면 목록을 닫고 묻는다
+// (confirmRegisteredConsent).
+export function OpModePopup({
   anchor,
   onClose
 }: {
@@ -77,12 +87,12 @@ function OpModePopup({
     [current, list]
   )
   const ordered = useMemo(() => orderedOpModes(sections), [sections])
+  const consent = current && showsRegisteredConsent(list)
+  // 키보드로 움직이는 줄(OpMode들, 그 뒤에 '등록기 OpMode 읽기…')
+  const keys = useMemo(() => pickerKeys(ordered, consent), [ordered, consent])
   // 키보드로 가리킨 항목(고르는 키, opModeKey). 목록이 다시 읽혀도 같은 항목을 가리킨다.
   const [activeKey, setActiveKey] = useState<string | null>(selectedClass)
-  const activeIndex = Math.max(
-    0,
-    ordered.findIndex((opMode) => opModeKey(opMode) === activeKey)
-  )
+  const activeIndex = Math.max(0, activeKey === null ? -1 : keys.indexOf(activeKey))
 
   useLayoutEffect(() => {
     const element = ref.current
@@ -98,7 +108,7 @@ function OpModePopup({
     const actualWidth = element.getBoundingClientRect().width
     element.style.left = `${Math.max(EDGE, Math.min(anchor.left, window.innerWidth - actualWidth - EDGE))}px`
     element.style.top = `${Math.max(EDGE, Math.min(top, window.innerHeight - height - EDGE))}px`
-  }, [anchor, ordered.length, list.status, list.registered.status, list.registered.problem])
+  }, [anchor, keys.length, list.status, list.registered.status, list.registered.problem])
 
   useEffect(() => {
     ref.current?.focus({ preventScroll: true })
@@ -143,9 +153,15 @@ function OpModePopup({
     onClose(false)
   }
 
+  // '등록기 OpMode 읽기…': 목록을 닫고(포커스는 OpMode 버튼으로) 앱 안 대화상자로 묻는다
+  const readRegistered = (): void => {
+    onClose(true)
+    void confirmRegisteredConsent()
+  }
+
   const move = (index: number): void => {
-    if (ordered.length === 0) return
-    setActiveKey(opModeKey(ordered[Math.max(0, Math.min(ordered.length - 1, index))]))
+    if (keys.length === 0) return
+    setActiveKey(keys[Math.max(0, Math.min(keys.length - 1, index))])
   }
 
   const onKeyDown = (event: React.KeyboardEvent): void => {
@@ -168,15 +184,21 @@ function OpModePopup({
         move(0)
         break
       case 'End':
-        move(ordered.length - 1)
+        move(keys.length - 1)
         break
       case 'Enter':
-      case ' ':
+      case ' ': {
+        const opMode = ordered[activeIndex]
         // Alt+Enter는 소스를 연다(행의 [열기]와 같다)
-        if (ordered[activeIndex])
-          if (event.key === 'Enter' && event.altKey) open(ordered[activeIndex])
-          else choose(ordered[activeIndex])
+        if (opMode) {
+          if (event.key === 'Enter' && event.altKey) open(opMode)
+          else choose(opMode)
+        } else if (keys[activeIndex] === REGISTERED_CONSENT_KEY && !event.repeat) {
+          // 누르고 있던 키의 반복으로 묻지 않는다
+          readRegistered()
+        }
         break
+      }
       case 'Escape':
       case 'Tab':
         onClose(true)
@@ -195,7 +217,7 @@ function OpModePopup({
         ? t('play.list.failed', { detail: list.detail })
         : !list.hasTeamCode
           ? t('play.list.noTeamCode')
-          : ordered.length === 0 && list.registered.status !== 'loading'
+          : ordered.length === 0 && list.registered.status !== 'loading' && !consent
             ? t('play.list.empty')
             : null
 
@@ -207,7 +229,7 @@ function OpModePopup({
       role="listbox"
       tabIndex={-1}
       aria-label={t('play.opModeList')}
-      aria-activedescendant={ordered.length > 0 ? `opmode-option-${activeIndex}` : undefined}
+      aria-activedescendant={keys.length > 0 ? `opmode-option-${activeIndex}` : undefined}
       onKeyDown={onKeyDown}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -291,6 +313,27 @@ function OpModePopup({
           ))}
         </div>
       ))}
+      {consent && (
+        <div
+          id={`opmode-option-${ordered.length}`}
+          data-opmode-index={ordered.length}
+          role="option"
+          aria-selected={false}
+          className={
+            activeIndex === ordered.length
+              ? 'opmode-option opmode-action is-active'
+              : 'opmode-option opmode-action'
+          }
+          onPointerMove={() => setActiveKey(REGISTERED_CONSENT_KEY)}
+          onClick={readRegistered}
+        >
+          <span className="opmode-check" aria-hidden="true" />
+          <span className="opmode-action-text">
+            <span className="opmode-name">{t('play.list.registeredConsent')}</span>
+            <span className="opmode-action-hint">{t('play.list.registeredConsentHint')}</span>
+          </span>
+        </div>
+      )}
       {current && <RegisteredStatus list={list} />}
       {current && list.truncated && <p className="opmode-message">{t('play.list.truncated')}</p>}
     </div>
@@ -318,7 +361,8 @@ function OpModePicker(): React.JSX.Element {
       : list.root === root &&
           list.status === 'ready' &&
           listedOpModes(list).length === 0 &&
-          list.registered.status !== 'loading'
+          list.registered.status !== 'loading' &&
+          !showsRegisteredConsent(list)
         ? t('play.noOpModes')
         : t('play.chooseOpMode')
 

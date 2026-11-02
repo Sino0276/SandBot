@@ -34,6 +34,9 @@ import { javaTool } from './jdk'
 // 준비와 같은 것(열린 루트 확인, 사이드카·JDK, 팀 Gradle → Android 플랫폼 → 라이브러리, 진행은 보내지 않고 취소 없음)을 한 뒤
 // JVM을 띄워 list를 보낸다(sidecar/listSession.ts). 실행(INIT)과는 별개의 JVM이다.
 //
+// - 동의: 등록기 실행은 팀 코드(등록기 메서드와 그것이 건드리는 정적 초기화)를 이 PC에서 실행하는 것이라, 사용자가 이 프로젝트를
+//   믿는다고 하기 전에는(codeTrust.ts: 고르기 목록의 확인이나 INIT) 다른 일 없이 needsConsent로 답한다(캐시하지 않는다).
+//
 // - 캐시: 등록기 목록 + TeamCode 전체 Java 파일(목록이 빼는 생성 패키지 폴더도)의 크기·수정 시각 + 클래스패스 jar(사이드카
 //   jar 포함)의 내용 해시 + JDK가 같으면 JVM을 띄우지 않고 마지막 결과를 준다. 컴파일 오류도 같은 입력이면 같은 결과라
 //   캐시한다. 실패(시간 초과·JVM 오류 등)는 캐시하지 않는다. FtcRobotController 쪽 소스(-sourcepath)의 변경은 보지
@@ -68,6 +71,8 @@ export type RegisteredOpModesDeps = Pick<
 > & {
   // TeamCode의 OpMode·등록기와 Java 파일 목록(src/main/opModes.ts의 scanOpModes)
   scan: (root: unknown) => Promise<{ result: ListOpModesResult; files: JavaFileEntry[] }>
+  // 사용자가 이 프로젝트(절대 경로)의 코드를 실행해도 된다고 했는가(codeTrust.ts). 아니면 needsConsent.
+  isCodeTrusted: (projectRoot: string) => Promise<boolean>
   // 프로젝트의 모의 저장소(launch.ts simFirstFolder). 등록기도 로봇처럼 그 저장소를 본다.
   makeFirstFolder: (projectRoot: string) => Promise<string>
   clock?: HostClock
@@ -186,10 +191,13 @@ export class RegisteredOpModes {
 
   constructor(private readonly deps: RegisteredOpModesDeps) {}
 
-  list(root: unknown): Promise<ListRegisteredResult> {
+  async list(root: unknown): Promise<ListRegisteredResult> {
     if (!isTrustedRoot(root))
-      return Promise.resolve({ ok: false, code: 'notAllowed', detail: 'not an opened project' })
+      return { ok: false, code: 'notAllowed', detail: 'not an opened project' }
     const key = resolve(root)
+    // 등록기는 이 프로젝트의 코드다: 사용자가 믿는다고 하기 전에는 읽지도 받지도 띄우지도 않는다(codeTrust.ts)
+    if (!(await this.deps.isCodeTrusted(key).catch(() => false)))
+      return { ok: false, code: 'needsConsent', detail: '' }
     const running = this.running.get(key)
     if (running) return running
     const promise = this.listOnce(root, key)

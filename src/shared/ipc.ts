@@ -4,6 +4,7 @@ import type {
   AndroidSdkChoice,
   AndroidSdkState,
   GamepadState,
+  GrantCodeTrustResult,
   JdkChoice,
   JdkState,
   ListOpModesResult,
@@ -40,6 +41,7 @@ export const IPC = {
   setAndroidSdk: 'android-sdk:set',
   listOpModes: 'play:list-opmodes',
   listRegisteredOpModes: 'play:list-registered-opmodes',
+  grantCodeTrust: 'play:grant-code-trust',
   readTeamCodeAsset: 'teamcode:read-asset',
   playInit: 'play:init',
   playCommand: 'play:command',
@@ -260,7 +262,10 @@ export type SandbotApi = {
   // 실행(Play). root는 열거나 저장한 프로젝트여야 한다(메인이 확인한다).
   listOpModes: (root: string) => Promise<ListOpModesResult>
   // TeamCode의 @OpModeRegistrar가 등록하는 OpMode(JVM에서 등록기를 실행, 결과는 캐시). listOpModes의 registrars가 있을 때.
+  // 이 프로젝트의 코드 실행을 아직 믿지 않았으면 needsConsent(아무것도 실행하지 않음).
   listRegisteredOpModes: (root: string) => Promise<ListRegisteredResult>
+  // 이 프로젝트의 코드(등록기)를 실행해도 된다고 기억한다(userData/code-trust.json). root는 열거나 저장한 프로젝트여야 한다.
+  grantCodeTrust: (root: string) => Promise<GrantCodeTrustResult>
   // Dashboard 오버레이 그림('/images/…'를 TeamCode/src/main/assets 기준 경로로 바꾼 'images/…')
   readTeamCodeAsset: (root: string, path: string) => Promise<ReadTeamCodeAssetResult>
   // JDK·사이드카를 확인하고 JVM을 띄워 컴파일·INIT까지 시작한다. 진행은 onPlayEvent로 온다.

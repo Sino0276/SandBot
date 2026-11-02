@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { LibraryProgress } from '../../../shared/libraries'
 import type {
-  ListRegisteredResult,
+  ListRegisteredFailureCode,
   OpModeInfo,
   PlayEvent,
   PlayPhase,
@@ -43,9 +43,10 @@ import {
 
 export type OpModeListStatus = 'none' | 'loading' | 'ready' | 'failed'
 
-// 등록기 OpMode 목록을 읽지 못했거나 일부만 읽은 이유(목록 아래 한 줄, Console에도 남긴다)
+// 등록기 OpMode 목록을 읽지 못했거나 일부만 읽은 이유(목록 아래 한 줄, Console에도 남긴다). 아직 동의하지 않은 것
+// (needsConsent)은 문제가 아니라 RegisteredListState.needsConsent다.
 export type RegisteredProblem =
-  | { kind: 'failed'; code: Extract<ListRegisteredResult, { ok: false }>['code']; detail: string }
+  | { kind: 'failed'; code: ListRegisteredFailureCode; detail: string }
   // 컴파일 오류(등록기 OpMode가 없다)
   | { kind: 'compile'; errors: number }
   // 던진 등록기(그 등록기의 OpMode만 빠진다)
@@ -58,13 +59,26 @@ export type RegisteredListState = {
   // 등록기가 클래스로 다시 등록한 annotated OpMode(실제 SDK처럼 등록 이름으로만 보인다, annotated 목록에서 뺀다)
   replaced: string[]
   problem: RegisteredProblem | null
+  // 사용자가 이 프로젝트의 코드 실행을 아직 믿지 않아(메인 codeTrust.ts) 등록기를 실행하지 않았다. 고르기 목록이 오류 대신
+  // '등록기 OpMode 읽기…' 줄을 보인다(누르면 묻고 기억한 뒤 읽는다).
+  needsConsent: boolean
 }
 
 export const EMPTY_REGISTERED_LIST: RegisteredListState = {
   status: 'none',
   opModes: [],
   replaced: [],
-  problem: null
+  problem: null,
+  needsConsent: false
+}
+
+// 고르기 목록에 '등록기 OpMode 읽기…' 줄을 보이는가(등록기가 있고, 동의를 기다리고, 읽는 중이 아님)
+export function showsRegisteredConsent(list: OpModeListState): boolean {
+  return (
+    list.registrars.length > 0 &&
+    list.registered.needsConsent &&
+    list.registered.status !== 'loading'
+  )
 }
 
 export type OpModeListState = {

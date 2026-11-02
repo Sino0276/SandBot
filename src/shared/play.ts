@@ -74,9 +74,19 @@ export type ListRegisteredResult =
     }
   | {
       ok: false
-      code: Exclude<PlayInitFailureCode, 'busy' | 'cancelled'>
+      // needsConsent: 사용자가 이 프로젝트의 코드를 실행해도 된다고 아직 하지 않았다(src/main/codeTrust.ts). 등록기를 실행하지
+      // 않았고 라이브러리·JVM도 건드리지 않았다. 렌더러는 오류가 아니라 '등록기 OpMode 읽기…' 줄로 보인다.
+      code: ListRegisteredFailureCode | 'needsConsent'
       detail: string
     }
+
+// 등록기 OpMode 목록을 읽지 못한 이유(목록에는 바쁨·취소가 없다)
+export type ListRegisteredFailureCode = Exclude<PlayInitFailureCode, 'busy' | 'cancelled'>
+
+// 이 프로젝트의 코드 실행을 믿는다고 기억한 결과(IPC grantCodeTrust). notAllowed: 열거나 저장한 프로젝트가 아님, failed:
+// 프로젝트 폴더를 찾지 못함.
+export type GrantCodeTrustResult =
+  { ok: true } | { ok: false; code: 'notAllowed' | 'failed'; detail: string }
 
 // ---- JDK ----
 

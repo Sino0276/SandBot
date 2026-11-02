@@ -11,6 +11,7 @@ import type {
   RegisteredOpMode,
   SidecarMessage
 } from '../shared/sidecarProtocol'
+import { CodeTrustStore } from './codeTrust'
 import { clearOpModeCache, scanOpModes } from './opModes'
 import { clearTrustedRoots, trustRoot } from './projectRoots'
 import {
@@ -126,6 +127,7 @@ describe('RegisteredOpModes', () => {
     script = listed([])
     deps = {
       scan: scanOpModes,
+      isCodeTrusted: async () => true,
       resolveJdk: async () => JDK,
       locateSidecar: async () => FILES,
       spawn: async (command, args, options) => {
@@ -473,6 +475,72 @@ describe('RegisteredOpModes', () => {
       errors: []
     })
     expect(spawned).toHaveLength(0)
+  })
+
+  it('이 프로젝트의 코드 실행을 믿지 않았으면 needsConsent: 라이브러리·사이드카·JDK·JVM을 건드리지 않는다', async () => {
+    const touched: string[] = []
+    const untrusted: RegisteredOpModesDeps = {
+      ...deps,
+      isCodeTrusted: async (projectRoot) => {
+        touched.push(`trust ${projectRoot}`)
+        return false
+      },
+      locateSidecar: async () => {
+        touched.push('sidecar')
+        return FILES
+      },
+      resolveJdk: async () => {
+        touched.push('jdk')
+        return JDK
+      },
+      readGradle: async () => {
+        touched.push('gradle')
+        throw new Error('read gradle')
+      },
+      resolveLibraries: async () => {
+        touched.push('libraries')
+        throw new Error('resolve libraries')
+      },
+      makeFirstFolder: async () => {
+        touched.push('first folder')
+        return dir
+      },
+      spawn: async () => {
+        throw new Error('spawned')
+      }
+    }
+    const lister = new RegisteredOpModes(untrusted)
+    expect(await lister.list(root)).toEqual({ ok: false, code: 'needsConsent', detail: '' })
+    expect(await lister.list(`${root}/`)).toEqual({ ok: false, code: 'needsConsent', detail: '' })
+    expect(touched).toEqual([`trust ${root}`, `trust ${root}`])
+    expect(spawned).toHaveLength(0)
+    // 열지 않은 루트는 묻지도 않는다
+    clearTrustedRoots()
+    expect(await lister.list(root)).toMatchObject({ ok: false, code: 'notAllowed' })
+    expect(touched).toHaveLength(2)
+  })
+
+  it('믿는다고 기억하면(CodeTrustStore) 다음 목록부터 등록기를 실행한다', async () => {
+    const store = new CodeTrustStore({ file: join(dir, 'code-trust.json'), platform: 'linux' })
+    script = listed([op({ name: 'A' })])
+    const lister = new RegisteredOpModes({
+      ...deps,
+      isCodeTrusted: (projectRoot) => store.isTrusted(projectRoot)
+    })
+    expect(await lister.list(root)).toMatchObject({ ok: false, code: 'needsConsent' })
+    expect(spawned).toHaveLength(0)
+    expect(await store.grant(root)).toBe(true)
+    expect(await lister.list(root)).toMatchObject({ ok: true, opModes: [{ name: 'A' }] })
+    expect(spawned).toHaveLength(1)
+    // 기억은 파일에 남는다(앱을 다시 켜도)
+    const again = new RegisteredOpModes({
+      ...deps,
+      isCodeTrusted: (projectRoot) =>
+        new CodeTrustStore({ file: join(dir, 'code-trust.json'), platform: 'linux' }).isTrusted(
+          projectRoot
+        )
+    })
+    expect(await again.list(root)).toMatchObject({ ok: true, opModes: [{ name: 'A' }] })
   })
 
   it('INIT의 등록기: 클래스마다 하나(이름 순), 소스는 절대 경로', async () => {

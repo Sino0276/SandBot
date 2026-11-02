@@ -23,6 +23,12 @@ function DialogHost(): React.JSX.Element | null {
         answer(request.cancelId)
         return
       }
+      // 누르고 있던 Enter·Space의 반복이 방금 뜬 대화상자의 버튼을 누르지 않게 한다(목록에서 Enter로 연 확인 등. 버튼은
+      // 키를 다시 눌러야 누른다)
+      if (event.repeat && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault()
+        return
+      }
       // 포커스 가두기: Tab·Shift+Tab은 대화상자 버튼 사이만 돈다
       if (event.key !== 'Tab') return
       const focusable = buttons()
