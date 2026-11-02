@@ -122,6 +122,17 @@ export function endChange(): void {
   const start = changeStart
   changeStart = null
   if (start && !sameDoc(start, current())) record(start)
+  for (const listener of [...changeClosedListeners]) listener()
+}
+
+// 묶음이 닫힐 때마다 부른다(드래그 동안 미룬 계산을 다시 하게, editor/mass/useMassModel.ts). 돌려준 함수로 뗀다.
+const changeClosedListeners = new Set<() => void>()
+
+export function onChangeClosed(listener: () => void): () => void {
+  changeClosedListeners.add(listener)
+  return () => {
+    changeClosedListeners.delete(listener)
+  }
 }
 
 // 끝나지 않은 묶음이 있으면(마우스를 놓친 드래그 등) 닫는다

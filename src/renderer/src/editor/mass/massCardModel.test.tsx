@@ -58,7 +58,7 @@ import {
 } from './massCardModel'
 import RigidbodyCard from './RigidbodyCard'
 import { beginChange, endChange } from '../history'
-import { cadSummaryFor, DRAG_REFRESH_MS, massModelFor } from './useMassModel'
+import { cadSummaryFor, massModelFor } from './useMassModel'
 import { beginCadLoad } from '../../scene/geometryRegistry'
 
 // 질량 모델 계산은 갈래 B가 채운다. 여기서는 정해 둔 가짜 결과로 카드의 문구와 입력만 본다.
@@ -833,39 +833,26 @@ describe('질량 모델 기억', () => {
     expect(fake.calls).toBe(before + 3)
   })
 
-  it('핸들 드래그(묶는 중인 변경) 동안에는 간격마다만 다시 계산하고, 끝나면 마지막 문서로 계산한다', () => {
-    vi.useFakeTimers()
+  it('핸들 드래그(묶는 중인 변경) 동안에는 다시 계산하지 않고, 끝나면 마지막 문서로 한 번 계산한다', () => {
+    massModelFor(scene(), 1)
+    const before = fake.calls
+    const stale = fake.model
+    fake.model = { objects: { x: objectMass({}) }, robots: {} }
+    beginChange()
     try {
-      const start = 10_000
-      massModelFor(scene(), 1, start)
-      const before = fake.calls
-      beginChange()
-      // 첫 프레임은 바로 계산한다(마지막 계산이 간격보다 오래전)
-      massModelFor(scene(), 1, start + DRAG_REFRESH_MS)
-      expect(fake.calls).toBe(before + 1)
-      // 간격 안의 프레임은 이전 결과
-      const stale = fake.model
-      fake.model = { objects: { x: objectMass({}) }, robots: {} }
-      expect(massModelFor(scene(), 1, start + DRAG_REFRESH_MS + 16)).toBe(stale)
-      expect(massModelFor(scene(), 2, start + DRAG_REFRESH_MS + 32)).toBe(stale)
-      expect(fake.calls).toBe(before + 1)
-      // 간격이 지나면 다시 계산한다
-      expect(massModelFor(scene(), 2, start + 2 * DRAG_REFRESH_MS)).toBe(fake.model)
-      expect(fake.calls).toBe(before + 2)
-      massModelFor(scene(), 2, start + 2 * DRAG_REFRESH_MS + 16)
-      expect(fake.calls).toBe(before + 2)
-      endChange()
-      // 묶음이 닫히면 간격 안이어도 바로 계산하고, 같은 문서는 다시 계산하지 않는다
-      const last = scene()
-      expect(massModelFor(last, 2, start + 2 * DRAG_REFRESH_MS + 20)).toBe(fake.model)
-      expect(fake.calls).toBe(before + 3)
-      massModelFor(last, 2, start + 2 * DRAG_REFRESH_MS + 30)
-      expect(fake.calls).toBe(before + 3)
+      // 끄는 동안 문서·형상 판이 바뀌어도 이전 결과다(시간과 관계없다)
+      for (let frame = 0; frame < 20; frame++)
+        expect(massModelFor(scene(), 1 + (frame % 2))).toBe(stale)
+      expect(fake.calls).toBe(before)
     } finally {
       endChange()
-      vi.runAllTimers()
-      vi.useRealTimers()
     }
+    // 묶음이 닫히면 바로 계산하고, 같은 문서는 다시 계산하지 않는다
+    const last = scene()
+    expect(massModelFor(last, 2)).toBe(fake.model)
+    expect(fake.calls).toBe(before + 1)
+    massModelFor(last, 2)
+    expect(fake.calls).toBe(before + 1)
   })
 })
 
