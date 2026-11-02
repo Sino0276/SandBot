@@ -1399,6 +1399,8 @@ const en: Messages = {
     result: 'Result: {{mass}} · {{source}}',
     resultNone: 'No mass computed yet.',
     scaledTag: '(scaled to the weighed mass)',
+    loadingTag: '(shapes loading, partly counted)',
+    massLoading: '—',
     resultCenterRobot: 'Center of mass (robot)',
     resultCenterField: 'Center of mass (field)',
     resultCenterHint: 'Center of mass of everything under this object. Computed; read-only.',
@@ -1417,7 +1419,8 @@ const en: Messages = {
       nameRuleZero: 'Name rule: ‘{{rule}}’ (no mass)',
       robotDefault: 'Robot default material: {{material}}',
       defaultMass: 'Default (no mass information)',
-      none: 'No mass (no shape or a surface mesh)'
+      none: 'No mass (no shape or a surface mesh)',
+      loading: 'Shapes loading'
     },
     warnings: {
       scaleUnusual:

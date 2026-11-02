@@ -1398,6 +1398,8 @@ const ko = {
     result: '결과: {{mass}} · {{source}}',
     resultNone: '아직 계산한 질량이 없습니다.',
     scaledTag: '(저울 무게에 맞춤)',
+    loadingTag: '(형상을 읽는 중, 일부만 셈)',
+    massLoading: '—',
     resultCenterRobot: '무게중심 (로봇 기준)',
     resultCenterField: '무게중심 (필드 기준)',
     resultCenterHint: '이 오브젝트 하위 전체의 무게중심입니다. 계산한 값이라 고칠 수 없습니다.',
@@ -1416,7 +1418,8 @@ const ko = {
       nameRuleZero: '이름 규칙: ‘{{rule}}’ (질량 없음)',
       robotDefault: '로봇 기본 재질: {{material}}',
       defaultMass: '기본값 (질량 정보 없음)',
-      none: '질량 없음 (형상 없음 또는 표면 메시)'
+      none: '질량 없음 (형상 없음 또는 표면 메시)',
+      loading: '형상을 읽는 중'
     },
     warnings: {
       scaleUnusual:

@@ -27,12 +27,13 @@ import {
   noticeText,
   parseInfillPercent,
   parseMassInput,
-  sameMassSettings,
-  sourceText
+  loadingCad,
+  resultLine,
+  sameMassSettings
 } from './massCardModel'
 import { EditableVector, ReadonlyVector } from './MassVector'
 import OptionalField from './OptionalField'
-import { useMassModel } from './useMassModel'
+import { useCadMassSummary, useMassModel } from './useMassModel'
 
 // 질량 카드(시뮬레이터 설정, spec-3a §6). 재질은 하위로 물려주고, 질량 덮어쓰기는 이 오브젝트 하위 전체를 한 덩어리로
 // 정한다. 바퀴 카드처럼 생성 코드·구성 XML과 관계없고, 실행 중에도 고칠 수 있다(3b·3c에서 INIT 때 굳는다).
@@ -42,6 +43,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
   const setObjectMass = useSceneStore((state) => state.setObjectMass)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const model = useMassModel()
+  const summaryOf = useCadMassSummary()
   if (!object.mass) return null
 
   const result = model.objects[object.id]
@@ -171,11 +173,14 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
       {result ? (
         <>
           <p className="hw-derived">
-            {t('mass.result', {
-              mass: massText(t, result.mass, lengthUnit),
-              source: sourceText(t, objects, result)
-            })}
-            {result.scaled && ` ${t('mass.scaledTag')}`}
+            {resultLine(
+              t,
+              objects,
+              result,
+              lengthUnit,
+              DEFAULT_DESCRIBERS,
+              loadingCad(objects, object.id, summaryOf)
+            )}
           </p>
           {result.mass > 0 && (
             <ReadonlyVector

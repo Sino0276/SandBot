@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { computeMassModel } from '../../mass/massModel'
-import type { MassLookup, MassModel } from '../../mass/types'
-import { meshMassProps, meshSourceName } from '../../scene/geometryRegistry'
+import type { CadMassSummary, MassLookup, MassModel } from '../../mass/types'
+import { cadMassSummary, meshMassProps, meshSourceName } from '../../scene/geometryRegistry'
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { isChangeOpen } from '../history'
@@ -22,7 +22,14 @@ export const REGISTRY_MASS_LOOKUP: MassLookup = {
 // 드래그 중 다시 계산하는 간격(ms). 무게중심 표시가 따라오는 것이 보일 만큼 짧고, 계산이 드래그 시간의 일부만 쓰게 길다.
 export const DRAG_REFRESH_MS = 250
 
-let cache: { objects: SceneObjects; revision: number; model: MassModel; at: number } | null = null
+// 마지막 계산. CAD 루트 요약(cadMassSummary)도 그 계산과 같은 문서(objects)로 구해 모델이 바뀔 때까지 기억한다.
+let cache: {
+  objects: SceneObjects
+  revision: number
+  model: MassModel
+  at: number
+  summaries: Map<string, CadMassSummary | undefined>
+} | null = null
 
 // 미뤄 둔 계산을 다시 하라고 구독자(useMassModel)에게 알린다
 let refreshVersion = 0
@@ -60,8 +67,30 @@ export function massModelFor(
     scheduleRefresh(DRAG_REFRESH_MS - (now - cache.at))
     return cache.model
   }
-  cache = { objects, revision, model: computeMassModel(objects, REGISTRY_MASS_LOOKUP), at: now }
+  cache = {
+    objects,
+    revision,
+    model: computeMassModel(objects, REGISTRY_MASS_LOOKUP),
+    at: now,
+    summaries: new Map()
+  }
   return cache.model
+}
+
+// CAD 루트마다 메시 상태 요약(열린·표면·읽는 중). 질량 모델을 계산한 문서를 cadMassSummary에 넘겨(그 문서가 쓰는 형상만
+// 센다) 카드·추정 한 줄이 모델과 같은 문서의 요약을 본다. 드래그 중 미룬 계산이면 요약도 그 계산의 문서다.
+export function cadSummaryFor(
+  objects: SceneObjects,
+  revision: number,
+  now: number = performance.now()
+): (cadRootId: string) => CadMassSummary | undefined {
+  massModelFor(objects, revision, now)
+  const entry = cache!
+  return (cadRootId) => {
+    if (!entry.summaries.has(cadRootId))
+      entry.summaries.set(cadRootId, cadMassSummary(cadRootId, entry.objects))
+    return entry.summaries.get(cadRootId)
+  }
 }
 
 export function useMassModel(): MassModel {
@@ -70,4 +99,11 @@ export function useMassModel(): MassModel {
   // 드래그 중 미룬 계산을 새로 고칠 때 다시 그린다(값은 쓰지 않는다)
   useSyncExternalStore(subscribeRefresh, refreshSnapshot, refreshSnapshot)
   return massModelFor(objects, revision)
+}
+
+export function useCadMassSummary(): (cadRootId: string) => CadMassSummary | undefined {
+  const objects = useSceneStore((state) => state.objects)
+  const revision = useSceneStore((state) => state.geometryRevision)
+  useSyncExternalStore(subscribeRefresh, refreshSnapshot, refreshSnapshot)
+  return cadSummaryFor(objects, revision)
 }

@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_MATERIAL } from '../../mass/materials'
 import type { MaterialKey, RigidbodySettings } from '../../mass/types'
-import { cadMassSummary } from '../../scene/geometryRegistry'
 import { MAX_WEIGHED_MASS } from '../../scene/massSettings'
 import type { SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
@@ -24,7 +23,7 @@ import {
 } from './massCardModel'
 import { ReadonlyVector } from './MassVector'
 import OptionalField from './OptionalField'
-import { useMassModel } from './useMassModel'
+import { useCadMassSummary, useMassModel } from './useMassModel'
 
 // 로봇 전체의 질량(Unity Rigidbody처럼 로봇이면 늘 보인다, spec-3a §6). 추정 질량과 출처별 합계, 저울 무게(넣으면 추정
 // 파트에 비율을 곱해 맞춘다), 기본 재질, 계산한 무게중심·주관성, 경고와 CAD 메시 상태를 보인다. 시뮬레이터 설정이라
@@ -35,10 +34,11 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
   const setRobotRigidbody = useSceneStore((state) => state.setRobotRigidbody)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const model = useMassModel()
+  const summaryOf = useCadMassSummary()
   const mass = model.robots[robot.id]
   const settings = robot.rigidbody ?? {}
   const unit = t(`units.symbols.${lengthUnit}`)
-  const cadRows = cadSummaryRows(objects, robot.id, cadMassSummary)
+  const cadRows = cadSummaryRows(objects, robot.id, summaryOf)
   const principalNames: [string, string, string] = [
     t('mass.rigidbody.principal1'),
     t('mass.rigidbody.principal2'),

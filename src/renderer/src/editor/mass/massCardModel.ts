@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
+import { cadRootIdOf } from '../../cad/stepImport'
 import { cotsEntry } from '../../mass/cotsTable'
 import { DEFAULT_MATERIAL, MATERIALS } from '../../mass/materials'
 import { nameRuleMaterial } from '../../mass/nameRules'
@@ -375,13 +376,35 @@ export function cotsText(t: TFunction, detail: string, describers: MassDescriber
 const ownerName = (objects: SceneObjects, id: string | null): string | null =>
   id !== null && objects[id] ? objects[id].name : null
 
-// 질량이 어디서 왔는지 한 마디(결과 칸·추정 한 줄). 위 오브젝트에서 온 것이면 그 이름을 붙인다.
+// 이 오브젝트(와 하위)의 형상 중 CAD를 읽는 중인 것이 있는지(그 CAD 루트 요약의 pendingMeshes). 형상 id의 접두어가
+// CAD 루트라 다른 그룹으로 옮긴 파트도 그 CAD를 본다.
+export function loadingCad(
+  objects: SceneObjects,
+  objectId: string,
+  summaryOf: (cadRootId: string) => CadMassSummary | undefined
+): boolean {
+  if (!objects[objectId]) return false
+  const roots = new Set<string>()
+  for (const id of subtreeIds(objects, objectId)) {
+    const visual = objects[id].visual
+    if (visual?.type !== 'mesh') continue
+    const root = cadRootIdOf(visual.geometryId)
+    if (root !== null) roots.add(root)
+  }
+  for (const root of roots) if ((summaryOf(root)?.pendingMeshes ?? 0) > 0) return true
+  return false
+}
+
+// 질량이 어디서 왔는지 한 마디(결과 칸·추정 한 줄). 위 오브젝트에서 온 것이면 그 이름을 붙인다. CAD를 읽는 중이고 아직
+// 질량이 없으면(형상 정보가 없어 none) "형상 없음"이 아니라 읽는 중이라고 한다.
 export function sourceText(
   t: TFunction,
   objects: SceneObjects,
   mass: ObjectMass,
-  describers: MassDescribers = DEFAULT_DESCRIBERS
+  describers: MassDescribers = DEFAULT_DESCRIBERS,
+  loading = false
 ): string {
+  if (loading && mass.source === 'none') return t('mass.source.loading')
   const owner = ownerName(objects, mass.inheritedFrom)
   const withOwner = (text: string): string =>
     owner === null ? text : t('mass.source.from', { text, owner })
@@ -419,19 +442,54 @@ export function sourceText(
   }
 }
 
+// 질량 값 글자. CAD를 읽는 중이라 아직 질량이 없으면 0 대신 '—'
+function resultMassText(
+  t: TFunction,
+  mass: ObjectMass,
+  unit: LengthUnit,
+  loading: boolean
+): string {
+  return loading && mass.source === 'none' ? t('mass.massLoading') : massText(t, mass.mass, unit)
+}
+
+// 결과 뒤에 붙는 표시: 저울 무게에 맞춤, 읽는 중인 형상이 있어 일부만 셈
+function resultTags(t: TFunction, mass: ObjectMass, loading: boolean): string {
+  const tags: string[] = []
+  if (mass.scaled) tags.push(t('mass.scaledTag'))
+  if (loading && mass.source !== 'none') tags.push(t('mass.loadingTag'))
+  return tags.map((tag) => ` ${tag}`).join('')
+}
+
 // 카드가 없는 오브젝트의 한 줄: "질량(추정) 437 g · 데이터시트: goBILDA 5203 19.2:1"
 export function estimateLine(
   t: TFunction,
   objects: SceneObjects,
   mass: ObjectMass,
   unit: LengthUnit,
-  describers: MassDescribers = DEFAULT_DESCRIBERS
+  describers: MassDescribers = DEFAULT_DESCRIBERS,
+  loading = false
 ): string {
   const text = t('mass.estimateLine', {
-    mass: massText(t, mass.mass, unit),
-    source: sourceText(t, objects, mass, describers)
+    mass: resultMassText(t, mass, unit, loading),
+    source: sourceText(t, objects, mass, describers, loading)
   })
-  return mass.scaled ? `${text} ${t('mass.scaledTag')}` : text
+  return text + resultTags(t, mass, loading)
+}
+
+// 질량 카드의 결과 줄: "결과: 437 g · 재질: 강철"
+export function resultLine(
+  t: TFunction,
+  objects: SceneObjects,
+  mass: ObjectMass,
+  unit: LengthUnit,
+  describers: MassDescribers = DEFAULT_DESCRIBERS,
+  loading = false
+): string {
+  const text = t('mass.result', {
+    mass: resultMassText(t, mass, unit, loading),
+    source: sourceText(t, objects, mass, describers, loading)
+  })
+  return text + resultTags(t, mass, loading)
 }
 
 // 재질 고르기의 빈 값(자기 재질 없음) 이름: 어디서 물려받는지. 위 오브젝트가 정하지 않았고 모델이 이 파트에 이름 규칙을

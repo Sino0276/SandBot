@@ -7,6 +7,7 @@ import { MATERIALS } from '../../mass/materials'
 import {
   MATERIAL_KEYS,
   type MassModel,
+  type CadMassSummary,
   type MassNotice,
   type ObjectMass,
   type RobotMass
@@ -38,9 +39,11 @@ import {
   MATERIAL_GROUPS,
   localCenterOfMass,
   massCardView,
+  loadingCad,
   massInputTitles,
   massText,
   noticeText,
+  resultLine,
   optionalCommit,
   parseMassInput,
   objectNotices,
@@ -54,7 +57,8 @@ import {
 } from './massCardModel'
 import RigidbodyCard from './RigidbodyCard'
 import { beginChange, endChange } from '../history'
-import { DRAG_REFRESH_MS, massModelFor } from './useMassModel'
+import { cadSummaryFor, DRAG_REFRESH_MS, massModelFor } from './useMassModel'
+import { beginCadLoad } from '../../scene/geometryRegistry'
 
 // 질량 모델 계산은 갈래 B가 채운다. 여기서는 정해 둔 가짜 결과로 카드의 문구와 입력만 본다.
 const fake = vi.hoisted(() => ({
@@ -452,6 +456,52 @@ describe('질량 출처 문구', () => {
     )
   })
 
+  it('CAD를 읽는 중: 아직 질량이 없으면 "형상 없음"이 아니라 읽는 중, 일부를 셌으면 표시를 붙인다', () => {
+    const objects = scene()
+    const none = objectMass({ mass: 0, source: 'none', detail: '' })
+    expect(estimateLine(t, objects, none, 'mm', DESCRIBERS, true)).toBe(
+      '질량(추정) — · 형상을 읽는 중'
+    )
+    expect(estimateLine(t, objects, none, 'mm', DESCRIBERS)).toBe(
+      `질량(추정) ${massText(t, 0, 'mm')} · 질량 없음 (형상 없음 또는 표면 메시)`
+    )
+    expect(resultLine(t, objects, none, 'mm', DESCRIBERS, true)).toBe('결과: — · 형상을 읽는 중')
+    const partial = objectMass({ scaled: true })
+    expect(resultLine(t, objects, partial, 'mm', DESCRIBERS, true)).toBe(
+      `결과: ${massText(t, 0.437, 'mm')} · 재질: 강철 (저울 무게에 맞춤) (형상을 읽는 중, 일부만 셈)`
+    )
+    expect(resultLine(t, objects, partial, 'mm', DESCRIBERS)).toBe(
+      `결과: ${massText(t, 0.437, 'mm')} · 재질: 강철 (저울 무게에 맞춤)`
+    )
+  })
+
+  it('읽는 중인 CAD: 이 오브젝트와 하위 형상의 CAD 루트(형상 id 접두어) 요약에 읽는 중인 메시가 있으면', () => {
+    const objects = scene()
+    const summary = (pendingMeshes: number): CadMassSummary => ({
+      meshes: 2,
+      openMeshes: 0,
+      openVolumeFraction: 0,
+      surfaceMeshes: 0,
+      pendingMeshes
+    })
+    const asked: string[] = []
+    const loading = (id: string): CadMassSummary | undefined => {
+      asked.push(id)
+      return id === 'cad' ? summary(2) : undefined
+    }
+    expect(loadingCad(objects, 'bolt', loading)).toBe(true)
+    expect(loadingCad(objects, 'lift', loading)).toBe(true)
+    expect(loadingCad(objects, 'cad', loading)).toBe(true)
+    // 형상이 없는 그룹·지운 오브젝트는 아니다
+    expect(loadingCad(objects, 'battery', loading)).toBe(false)
+    expect(loadingCad(objects, 'gone', loading)).toBe(false)
+    expect(loadingCad(objects, 'bolt', () => summary(0))).toBe(false)
+    // 다른 그룹(로봇 바로 아래)으로 옮긴 파트도 형상 id의 CAD 루트를 본다
+    const moved = { ...objects, bolt: { ...objects.bolt, parentId: 'R' } }
+    expect(loadingCad(moved, 'bolt', loading)).toBe(true)
+    expect(new Set(asked)).toEqual(new Set(['cad']))
+  })
+
   it('재질 고르기의 빈 값: 위 오브젝트 → 이름 규칙(모델 결과) → 로봇 기본 → 기본', () => {
     let objects = scene()
     const option = (id: string, result?: ObjectMass): string =>
@@ -638,6 +688,27 @@ describe('쓰지 못한 질량 설정 알림', () => {
 })
 
 describe('질량 모델 기억', () => {
+  it('CAD 루트 요약은 모델을 계산한 문서로 구하고(스토어의 지금 문서가 아니라) 같은 계산 동안 기억한다', () => {
+    const objects = scene()
+    // 스토어에는 이 CAD를 쓰지 않는 문서가 있다
+    setStore(useSceneStore, { objects: { R: objects.R } })
+    const end = beginCadLoad('cad')
+    try {
+      const summaryOf = cadSummaryFor(objects, 1)
+      const first = summaryOf('cad')
+      // 이 문서가 쓰는 형상 2개(bolt·plate)가 읽는 중
+      expect(first).toMatchObject({ pendingMeshes: 2 })
+      expect(summaryOf('cad')).toBe(first)
+      expect(cadSummaryFor(objects, 1)('cad')).toBe(first)
+      expect(summaryOf('other')).toBeUndefined()
+      // 형상 판이 바뀌면 다시 구한다
+      end()
+      expect(cadSummaryFor(objects, 2)('cad')).toMatchObject({ pendingMeshes: 0 })
+    } finally {
+      end()
+    }
+  })
+
   it('같은 문서·형상 판이면 다시 계산하지 않고, 어느 하나가 바뀌면 다시 계산한다', () => {
     const objects = scene()
     const before = fake.calls
@@ -808,6 +879,27 @@ describe('질량 카드 그리기', () => {
     expect(html).toContain('1.70배')
     expect(html).toContain('형상을 읽는 중인 메시 2개')
     expect(html).toContain('빈 그룹을 만들고(Create Empty)')
+  })
+
+  it('CAD를 읽는 중이면 추정 한 줄·질량 카드가 "형상 없음" 대신 읽는 중이라고 한다', () => {
+    const objects = scene()
+    fake.model = {
+      objects: { plate: objectMass({ mass: 0, source: 'none', detail: '' }) },
+      robots: {}
+    }
+    const end = beginCadLoad('cad')
+    try {
+      const line = render(objects, () => <HardwareComponentsSection object={objects.plate} />)
+      expect(line).toContain('질량(추정) — · 형상을 읽는 중</button>')
+      const plate: SceneObject = { ...objects.plate, mass: {} }
+      const card = render({ ...objects, plate }, () => <MassCard object={plate} />)
+      expect(card).toContain('결과: — · 형상을 읽는 중')
+      expect(card).not.toContain('형상 없음 또는 표면 메시')
+    } finally {
+      end()
+    }
+    const done = render({ ...objects }, () => <HardwareComponentsSection object={objects.plate} />)
+    expect(done).toContain('질량 없음 (형상 없음 또는 표면 메시)')
   })
 
   it('쓰지 못한 설정 알림: Rigidbody 카드에 모두, 질량 카드·추정 한 줄에는 그 오브젝트의 것', () => {
