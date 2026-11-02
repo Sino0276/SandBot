@@ -50,7 +50,7 @@ describe('이름 규칙', () => {
     expect(nameRuleMaterial('snap ring')).toBe('steel')
   })
 
-  it('위에서 첫 맞는 규칙을 쓴다(재질 이름이 먼저, 긴 낱말열이 짧은 것보다 먼저)', () => {
+  it('재질 이름이 먼저이고, 긴 낱말열이 짧은 것보다 먼저다', () => {
     // 재질 이름이 부품 종류보다 먼저
     expect(material('Aluminum Shaft')).toBe('aluminum6061')
     expect(material('PLA Bracket')).toBe('pla')
@@ -62,7 +62,7 @@ describe('이름 규칙', () => {
     expect(rule('8mm REX Servo Shaft')).toBe('servo shaft')
     expect(material('8mm REX Servo Shaft')).toBe('aluminum6061')
     expect(material('REX Shaft')).toBe('steel')
-    // 세트 스크루 칼라는 screw(강철), 클램핑 칼라는 알루미늄
+    // 세트 스크루 칼라는 set screw collar(강철), 클램핑 칼라는 알루미늄
     expect(material('Set Screw Collar')).toBe('steel')
     expect(material('Clamping Collar')).toBe('aluminum6061')
     expect(material('Threaded Plate')).toBe('stainless')
@@ -72,6 +72,35 @@ describe('이름 규칙', () => {
     expect(material('RollerTire')).toBe('rubber')
     expect(material('Zip Tie')).toBe('nylon')
     expect(material('Bearing')).toBe('steel')
+  })
+
+  it('부품 종류 낱말이 여럿이면 가장 오른쪽 낱말(영어 이름의 중심 명사)의 규칙이다', () => {
+    // 수식어(bearing·shaft·belt·roller)보다 뒤의 부품 종류가 재질을 정한다
+    expect(rule('Bearing Plate')).toBe('plate')
+    expect(material('Bearing Plate')).toBe('aluminum6061')
+    expect(rule('Shaft Collar')).toBe('collar')
+    expect(material('Shaft Collar')).toBe('aluminum6061')
+    expect(rule('Belt Pulley')).toBe('pulley')
+    expect(material('Belt Pulley')).toBe('aluminum6061')
+    expect(rule('Roller Bracket')).toBe('bracket')
+    expect(rule('Shaft Spacer')).toBe('spacer')
+    expect(rule('Axle Plate')).toBe('plate')
+    expect(rule('Bearing Block')).toBe('block')
+    expect(rule('Motor Mount')).toBe('mount')
+    expect(rule('Tire Hub')).toBe('hub')
+    expect(material('Tire Hub')).toBe('aluminum6061')
+    // 뒤에 규칙 없는 낱말이 와도 규칙 있는 가장 오른쪽 낱말이다
+    expect(rule('Screw M4x10')).toBe('screw')
+    expect(rule('Bearing 8mm ID')).toBe('bearing')
+    // 같은 자리에서 끝나는 낱말열은 긴 것이 먼저다(set screw collar는 강철, pinion gear는 강철)
+    expect(material('Set Screw Collar')).toBe('steel')
+    expect(material('Pinion Gear')).toBe('steel')
+    expect(material('Control Hub')).toBe('polycarbonate')
+    // 재질 이름은 자리와 관계없이 먼저다
+    expect(material('Steel Bearing Plate')).toBe('steel')
+    expect(material('Plate Aluminum')).toBe('aluminum6061')
+    expect(material('Plastic Belt Pulley')).toBe('polycarbonate')
+    expect(material('Bracket Label')).toBeNull()
   })
 
   it('라벨은 질량 0(재질 null)이다', () => {
