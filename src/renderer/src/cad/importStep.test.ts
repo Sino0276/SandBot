@@ -2,18 +2,30 @@ import i18n from 'i18next'
 import { readFileSync } from 'fs'
 import { createRequire } from 'module'
 import { join } from 'path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import type { OcctResult } from 'occt-import-js'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import converterVersion from '../../../../native/step-converter/version.json'
 import ko from '../i18n/locales/ko'
+import {
+  cadMassSummary,
+  disposeAllGeometry,
+  getGeometry,
+  meshMassProps,
+  meshSourceName
+} from '../scene/geometryRegistry'
+import type { SceneObjects } from '../scene/model'
+import { useSceneStore } from '../scene/sceneStore'
 import {
   cadStructureChanged,
   formatFileSize,
   importErrorNotice,
   largeImportMessage,
+  loadCadGeometry,
+  registerModelGeometries,
   reloadIndexing,
   StepImportError
 } from './importStep'
-import type { ImportedModel } from './stepImport'
+import { convertOcctResult, type ImportedModel } from './stepImport'
 
 // 빈 메시 하나가 빠진 모델(occt-import-js 메시 4개 중 3개만 삼각형이 있음)
 const model = {
@@ -81,5 +93,135 @@ describe('네이티브 변환기 버전', () => {
       readFileSync(join(require.resolve('occt-import-js'), '..', '..', 'package.json'), 'utf8')
     )
     expect(pkg.version).toBe(converterVersion.occtImportJs.tag)
+  })
+})
+
+// 닫힌 정육면체(변 0.1 m) 메시 하나와 이름 없는 메시 둘을 가진 어셈블리
+function cube(name: string, offset: number): OcctResult['meshes'][number] {
+  const p = (x: number, y: number, z: number): number[] => [offset + x * 0.1, y * 0.1, z * 0.1]
+  const quads = [
+    [p(0, 0, 0), p(0, 0, 1), p(0, 1, 1), p(0, 1, 0)],
+    [p(1, 0, 0), p(1, 1, 0), p(1, 1, 1), p(1, 0, 1)],
+    [p(0, 0, 0), p(1, 0, 0), p(1, 0, 1), p(0, 0, 1)],
+    [p(0, 1, 0), p(0, 1, 1), p(1, 1, 1), p(1, 1, 0)],
+    [p(0, 0, 0), p(0, 1, 0), p(1, 1, 0), p(1, 0, 0)],
+    [p(0, 0, 1), p(1, 0, 1), p(1, 1, 1), p(0, 1, 1)]
+  ]
+  return {
+    name,
+    brep_faces: [{ first: 0, last: 11, color: null }],
+    attributes: { position: { array: quads.flat(2) } },
+    index: {
+      array: quads.flatMap((_, q) => [0, 1, 2, 0, 2, 3].map((corner) => q * 4 + corner))
+    }
+  }
+}
+
+const cubes = convertOcctResult(
+  {
+    success: true,
+    root: {
+      name: '',
+      meshes: [],
+      children: [
+        {
+          name: 'bot',
+          meshes: [],
+          children: [
+            { name: '1120-0001-0048', meshes: [0], children: [] },
+            { name: 'motor', meshes: [1, 2], children: [] }
+          ]
+        }
+      ]
+    },
+    meshes: [cube('', 0), cube('', 0.2), cube('Gearbox', 0.4)]
+  },
+  'bot.step'
+)!
+
+describe('형상 등록과 질량 성질', () => {
+  // CAD 루트 'cad'와 형상 cad:0..2를 쓰는 파트 셋
+  const scene: SceneObjects = {
+    cad: {
+      id: 'cad',
+      name: 'bot',
+      kind: 'assembly',
+      parentId: null,
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      cad: {
+        fileName: 'bot.step',
+        absolutePath: '/cad/bot.step',
+        upAxis: '+Z',
+        forwardAxis: '-Y',
+        bounds: cubes.root.bounds,
+        meshCount: 3,
+        meshIndexing: 'source'
+      }
+    }
+  }
+  for (const i of [0, 1, 2]) {
+    scene[`part-${i}`] = {
+      id: `part-${i}`,
+      name: `part-${i}`,
+      kind: 'part',
+      parentId: 'cad',
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      visual: { type: 'mesh', geometryId: `cad:${i}`, color: [0.5, 0.5, 0.5] }
+    }
+  }
+
+  afterEach(() => {
+    disposeAllGeometry()
+    vi.unstubAllGlobals()
+  })
+
+  it('형상과 같은 id로 질량 성질과 원래 CAD 이름을 둔다', () => {
+    registerModelGeometries('cad', cubes, 'source')
+    expect(getGeometry('cad:0')).toBeDefined()
+    expect(meshMassProps('cad:0')?.volume).toBeCloseTo(1e-3, 15)
+    expect(meshMassProps('cad:2')).toBe(cubes.meshes[2].mass)
+    expect([0, 1, 2].map((i) => meshSourceName(`cad:${i}`))).toEqual([
+      '1120-0001-0048',
+      '',
+      'Gearbox'
+    ])
+    expect(cadMassSummary('cad', scene)).toMatchObject({
+      meshes: 3,
+      openMeshes: 0,
+      pendingMeshes: 0
+    })
+  })
+
+  it('CAD를 읽는 동안 질량 요약이 그 CAD의 메시를 읽는 중으로 세고, 끝나면 형상 revision을 올린다', async () => {
+    useSceneStore.setState({ objects: scene })
+    let finish: (result: unknown) => void = () => {}
+    const readStepCached = vi.fn(() => new Promise((resolve) => (finish = resolve)))
+    vi.stubGlobal('window', {
+      api: { hasStepConverter: () => Promise.resolve(false), readStepCached }
+    })
+    const revision = (): number => useSceneStore.getState().geometryRevision
+
+    const before = revision()
+    const loading = loadCadGeometry('cad', '/cad/bot.step')
+    expect(revision()).toBe(before + 1)
+    expect(cadMassSummary('cad')?.pendingMeshes).toBe(3)
+    await vi.waitFor(() => expect(readStepCached).toHaveBeenCalled())
+    finish({ key: 'k', model: cubes, bytes: null, size: 1 })
+    expect(await loading).toBe('loaded')
+    expect(cadMassSummary('cad')).toMatchObject({ meshes: 3, pendingMeshes: 0 })
+    // 읽기 끝 + 등록
+    expect(revision()).toBe(before + 3)
+
+    // 파일이 없으면 등록하지 않고 끝나도 요약이 바뀌었으므로 다시 계산하게 한다
+    disposeAllGeometry()
+    const missing = loadCadGeometry('cad', '/cad/bot.step')
+    expect(cadMassSummary('cad')?.pendingMeshes).toBe(3)
+    await vi.waitFor(() => expect(readStepCached).toHaveBeenCalledTimes(2))
+    const beforeEnd = revision()
+    finish(null)
+    expect(await missing).toBe('missing')
+    // 형상 없이 끝났다(못 찾은 상태는 projectStore.cadStatus가 알린다)
+    expect(cadMassSummary('cad')).toMatchObject({ meshes: 0, pendingMeshes: 0 })
+    expect(revision()).toBe(beforeEnd + 1)
   })
 })

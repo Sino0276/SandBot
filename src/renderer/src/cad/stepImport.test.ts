@@ -5,14 +5,20 @@ import { Vector3 } from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { worldMatrix, type SceneObjects } from '../scene/model'
 import { ALIGNMENT_PRESETS, alignmentRotation, boundsCenter } from './alignment'
+import { computeMeshMass } from './meshMass'
 import {
   buildSceneObjects,
   cadGeometryId,
+  cadRootIdOf,
   convertOcctResult,
   droppedMeshCount,
   emptyResultReason,
+  isImportedModel,
+  MESH_CACHE_TAG,
   meshGeometryIds,
-  type ImportedModel
+  meshSourceNames,
+  type ImportedModel,
+  type ImportedNode
 } from './stepImport'
 
 function counterIds(): () => string {
@@ -78,6 +84,141 @@ describe('convertOcctResult', () => {
     expect(Array.from(plate.positions.slice(0, 3))).toEqual([-1, -0.5, -0.05].map(Math.fround))
     expect(plate.color).toEqual([1, 0, 0])
     expect(model.root.bounds).toEqual({ min: [0, 0, 0], max: [2, 1.2, 1.2] })
+  })
+})
+
+describe('메시 질량 성질', () => {
+  it('변환할 때 피벗(경계 상자 중심) 기준으로 계산해 메시에 붙인다', () => {
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    synthetic.meshes.forEach((source, index) => {
+      const mesh = model.meshes.find((m) => m.sourceIndex === index)!
+      // 변환 전 double 좌표 그대로 적분한다(Float32로 줄인 positions가 아니라)
+      expect(mesh.mass).toEqual(
+        computeMeshMass(source.attributes.position.array, source.index.array, mesh.bounds)
+      )
+    })
+    // 삼각형 하나짜리 시험 메시는 부피가 없어 표면이다
+    expect(model.meshes[0].mass).toMatchObject({ volume: 0, closure: Infinity })
+  })
+
+  it('네이티브 결과(parseNativeResult의 Float32·Uint32 배열)도 같은 경로라 같은 값이다', () => {
+    // 닫힌 사면체 하나(좌표가 Float32로 정확한 값이라 두 경로가 같은 수를 본다)
+    const positions = [0, 0, 0, 0.5, 0, 0, 0, 0.25, 0, 0, 0, 0.125]
+    const indices = [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]
+    const wasm: OcctResult = {
+      success: true,
+      root: { name: '', meshes: [0], children: [] },
+      meshes: [
+        {
+          name: 'tet',
+          brep_faces: [{ first: 0, last: 3, color: null }],
+          attributes: { position: { array: positions } },
+          index: { array: indices }
+        }
+      ]
+    }
+    const native: OcctResult = {
+      ...wasm,
+      meshes: [
+        {
+          ...wasm.meshes[0],
+          attributes: { position: { array: Float32Array.from(positions) } },
+          index: { array: Uint32Array.from(indices) }
+        }
+      ]
+    }
+    const a = convertOcctResult(wasm, 'tet.step')!.meshes[0].mass
+    const b = convertOcctResult(native, 'tet.step')!.meshes[0].mass
+    expect(a).toEqual(b)
+    expect(a.volume).toBeCloseTo((0.5 * 0.25 * 0.125) / 6, 15)
+    expect(a.closure).toBeLessThan(1e-12)
+  })
+})
+
+describe('메시 캐시 형식', () => {
+  it('질량 성질을 더해 형식 태그를 v3으로 올렸다(이전 캐시는 다시 변환한다)', () => {
+    expect(MESH_CACHE_TAG).toBe('model-v3')
+  })
+
+  it('isImportedModel은 메시마다 질량 성질의 모양을 확인한다', () => {
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    expect(isImportedModel(model)).toBe(true)
+    const withMesh = (patch: Record<string, unknown>): unknown => ({
+      ...model,
+      meshes: [{ ...model.meshes[0], ...patch }, ...model.meshes.slice(1)]
+    })
+    // v2 캐시 모양(질량 없음)과 깨진 값은 받지 않는다
+    expect(isImportedModel(withMesh({ mass: undefined }))).toBe(false)
+    expect(isImportedModel(withMesh({ mass: { ...model.meshes[0].mass, volume: -1 } }))).toBe(false)
+    expect(
+      isImportedModel(withMesh({ mass: { ...model.meshes[0].mass, inertia: [0, 0, 0, 0, 0] } }))
+    ).toBe(false)
+    expect(isImportedModel(withMesh({ mass: { ...model.meshes[0].mass, area: NaN } }))).toBe(false)
+  })
+})
+
+describe('형상 id와 원래 CAD 이름', () => {
+  it('cadRootIdOf는 cadGeometryId의 거꾸로다', () => {
+    const root = '0b6c1d2e-3f40-4a5b-8c7d-9e0f1a2b3c4d'
+    expect(cadRootIdOf(cadGeometryId(root, 12))).toBe(root)
+    expect(cadRootIdOf('cad:0')).toBe('cad')
+    expect(cadRootIdOf('a:b:3')).toBe('a:b')
+    expect(cadRootIdOf('g-arm')).toBeNull()
+    expect(cadRootIdOf(':3')).toBeNull()
+    expect(cadRootIdOf('cad:x')).toBeNull()
+  })
+
+  it('불러올 때 파트가 받은 이름이고, 이름 없는 메시에 붙인 "노드 + 순번"은 빈 글자다', () => {
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    const names = meshSourceNames(model)
+    const bySource = Object.fromEntries(model.meshes.map((m, i) => [m.sourceIndex, names[i]]))
+    // 메시 하나뿐인 잎 노드는 노드(컴포넌트) 이름, 이름 있는 메시는 그 이름, 'WHEEL_ASM 1'은 CAD 이름이 아니다
+    expect(bySource).toEqual({ 0: 'PLATE', 1: '', 2: 'Hub' })
+  })
+
+  it('하나만 남아 노드 자체가 파트가 되면 노드 이름이다', () => {
+    const partial: OcctResult = {
+      ...synthetic,
+      meshes: [
+        synthetic.meshes[0],
+        { ...synthetic.meshes[1], attributes: { position: { array: [] } }, index: { array: [] } },
+        synthetic.meshes[2]
+      ]
+    }
+    const model = convertOcctResult(partial, 'robot.step')!
+    expect(meshSourceNames(model)).toEqual(['PLATE', 'WHEEL_ASM'])
+  })
+
+  it('"부모 이름 + 숫자"인 진짜 CAD 이름은 남긴다(붙인 이름인지는 변환할 때 기록한다)', () => {
+    const named: OcctResult = {
+      success: true,
+      root: {
+        name: '',
+        meshes: [],
+        children: [
+          {
+            name: 'Bracket',
+            meshes: [],
+            children: [
+              // 메시 이름이 없는 잎 컴포넌트의 이름이 우연히 부모 이름 + 숫자
+              { name: 'Bracket 2', meshes: [0], children: [] },
+              // 이름 없는 노드의 이름 없는 메시 둘: 붙인 이름 ' 1'·' 2'
+              { name: '', meshes: [1, 2], children: [] }
+            ]
+          }
+        ]
+      },
+      meshes: [
+        mesh('', [0, 0, 0], [1, 1, 1]),
+        mesh('', [0, 0, 0], [1, 1, 1]),
+        mesh('', [0, 0, 0], [1, 1, 1])
+      ]
+    }
+    const model = convertOcctResult(named, 'bracket.step')!
+    expect(meshSourceNames(model)).toEqual(['Bracket 2', '', ''])
+    // 오브젝트 이름은 전과 같다
+    const names = (node: ImportedNode): string[] => [node.name, ...node.children.flatMap(names)]
+    expect(names(model.root)).toEqual(['Bracket', 'Bracket 2', '', ' 1', ' 2'])
   })
 })
 

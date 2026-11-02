@@ -17,7 +17,8 @@ export type MeshMassProps = {
   inertia: SymMatrix3
   // m²
   area: number
-  // |Σ n·dA| × 경계 상자 반대각선 / (3|V|). 닫히면 0, 부피가 0이면 Infinity. MASS_CLOSURE_LIMIT를 넘으면 표면(질량 0)이다.
+  // |Σ n·dA| × 경계 상자 반대각선 / (3|V|)와 축별 부피의 퍼짐 max_k |V_k − V| / V 가운데 큰 값(cad/meshMass.ts).
+  // 닫히면 0, 부피가 0이면 Infinity. MASS_CLOSURE_LIMIT를 넘으면 표면(질량 0)이다.
   closure: number
 }
 

@@ -103,6 +103,29 @@ describe.skipIf(!existsSync(converter))('네이티브 변환기와 WASM 결과 �
       b?.meshes.map((mesh) => mesh.sourceIndex)
     )
     expect(a?.sourceMeshCount).toBe(b?.sourceMeshCount)
+
+    // 질량 성질도 같은 convertOcctResult에서 나온다. 네이티브는 좌표를 먼저 Float32로 자르므로, 원점에서 파트 크기의
+    // 몇 배 떨어졌는지에 비례해 다르다(실측: 상대 오차 ≤ 3.1e-7 × 그 배수, 최악 as1-tu-203 너트 2.0e-6).
+    // 삼각형 수가 다르면 분할 차이라 1 %까지 본다.
+    a?.meshes.forEach((mesh, index) => {
+      const other = b!.meshes[index]
+      const size = Math.max(...[0, 1, 2].map((i) => mesh.bounds.max[i] - mesh.bounds.min[i]))
+      const offset = Math.max(
+        ...[...mesh.bounds.min, ...mesh.bounds.max].map((value) => Math.abs(value))
+      )
+      const ratio =
+        mesh.indices.length === other.indices.length ? 1e-6 * Math.max(1, offset / size) : 0.01
+      expect(Math.abs(mesh.mass.volume - other.mass.volume)).toBeLessThanOrEqual(
+        other.mass.volume * ratio
+      )
+      mesh.mass.centroid.forEach((value, i) =>
+        expect(Math.abs(value - other.mass.centroid[i])).toBeLessThanOrEqual(size * ratio)
+      )
+      const scale = Math.max(...other.mass.inertia.map(Math.abs))
+      mesh.mass.inertia.forEach((value, i) =>
+        expect(Math.abs(value - other.mass.inertia[i])).toBeLessThanOrEqual(scale * ratio)
+      )
+    })
   })
 
   it('--version은 version.json과 같은 식별 정보를 낸다', () => {
