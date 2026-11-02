@@ -6,7 +6,7 @@ import type { SceneObject, WheelKind, WheelRollers, WheelSettings } from './mode
 export const WHEEL_KINDS: readonly WheelKind[] = ['mecanum', 'omni', 'traction']
 export const WHEEL_ROLLERS: readonly WheelRollers[] = ['auto', 'flbr', 'frbl']
 
-// 종류별 기본 지름(m): goBILDA 104 mm 메카넘(3613-0001-0104), 96 mm 옴니·그립 바퀴
+// 종류별 기본 지름(m): goBILDA GripForce 104 mm 메카넘(3625-0202-0104), 96 mm 옴니·그립 바퀴
 export const DEFAULT_WHEEL_DIAMETERS: Record<WheelKind, number> = {
   mecanum: 0.104,
   omni: 0.096,
