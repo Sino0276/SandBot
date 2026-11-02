@@ -547,13 +547,15 @@ export function hasPendingMeshes(robot: RobotMass): boolean {
 }
 
 // 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3). 형상을 모두
-// 읽는 중이어도(pending) 저울 무게가 있으면 그렇다.
+// 읽는 중이어도(pending) 저울 무게가 있으면 그렇고, 이미 정한 질량(덮어쓰기·데이터시트, fixed kg)이 있으면 그것은 제자리에
+// 두고 나머지만 상자에 둔다.
 export function warningText(
   t: TFunction,
   warning: MassWarning,
   unit: LengthUnit,
   weighedMass?: number,
-  pending = false
+  pending = false,
+  fixed = 0
 ): string {
   switch (warning.kind) {
     case 'scaleUnusual':
@@ -566,6 +568,13 @@ export function warningText(
     case 'defaultMass':
       if (weighedMass === undefined)
         return t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
+      // 고정 질량을 두고 나머지만 상자에 두는 것은 형상을 읽는 중일 때뿐이다(질량 모델의 boxRest)
+      if (fixed > 0)
+        return t('mass.warnings.defaultMassLoadingFixed', {
+          mass: massText(t, weighedMass, unit),
+          fixed: massText(t, fixed, unit),
+          rest: massText(t, Math.max(0, weighedMass - fixed), unit)
+        })
       return t(pending ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
         mass: massText(t, weighedMass, unit)
       })
@@ -575,7 +584,7 @@ export function warningText(
 }
 
 // Rigidbody 카드의 질량 줄: "직접 입력·데이터시트 2.100 kg + 추정 10.200 kg". 질량 정보 없음 대체값이면 출처별 합계가
-// 아니라 기본값(또는 저울 무게)이라고 보인다.
+// 아니라 기본값(또는 저울 무게)이라고 보인다. 저울 무게의 나머지만 상자에 둔 것이면(고정 질량이 있음) 두 몫을 함께 보인다.
 export function robotMassBreakdown(
   t: TFunction,
   robot: RobotMass,
@@ -584,6 +593,11 @@ export function robotMassBreakdown(
 ): string {
   if (usesDefaultMass(robot)) {
     if (weighedMass === undefined) return t('mass.rigidbody.breakdownDefault')
+    if (robot.fixedMass > 0)
+      return t('mass.rigidbody.breakdownWeighedFixed', {
+        fixed: massText(t, robot.fixedMass, unit),
+        rest: massText(t, robot.estimatedMass, unit)
+      })
     return hasPendingMeshes(robot)
       ? t('mass.rigidbody.breakdownWeighedLoading')
       : t('mass.rigidbody.breakdownWeighedBox')

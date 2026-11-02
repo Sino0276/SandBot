@@ -611,7 +611,13 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let scale = 1
     const weighed = objects[robotId].rigidbody?.weighedMass
     const total = fixed + estimated
-    if (weighed !== undefined && total > 0) {
+    // 저울 무게가 있는데 추정할 질량이 아직 없으면(형상을 모두 읽는 중이거나 형상이 없음) 고정 질량(덮어쓰기·COTS)은
+    // 그대로 두고 나머지(저울 무게 − 고정)를 외곽 상자에 고르게 둔다(질량 모델 §3.3의 대체값). 고정 질량이 이미 저울
+    // 무게 이상이면 나머지가 없으므로 scaleImpossible이다. 형상이 있는데 모두 질량 0이면(라벨 규칙 등) 맞출 것이
+    // 없다는 뜻이라 이것도 scaleImpossible이다.
+    const boxRest =
+      weighed !== undefined && estimated === 0 && fixed < weighed && (meshes > 0 || total === 0)
+    if (weighed !== undefined && total > 0 && !boxRest) {
       if (fixed >= weighed || estimated === 0) {
         warnings.push({ kind: 'scaleImpossible', fixed, weighed })
       } else {
@@ -630,7 +636,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let mass: number
     let centerOfMass: Vec3
     let inertia: SymMatrix3
-    if (total > 0 || (meshes > 0 && weighed === undefined)) {
+    if (!boxRest && (total > 0 || (meshes > 0 && weighed === undefined))) {
       // 읽는 중인 메시는 빼고 계산한다(모두 읽는 중이면 0 kg). 기본값으로 바꾸지 않는다: 그러면 CAD를 다 읽을 때
       // 질량이 13.6 kg에서 실제 값으로 뛰고, 읽지 못한 CAD가 기본값으로 굳는다. 저울 무게가 있으면 그 질량은 알므로
       // 아래 상자 대체값을 쓴다(pending 경고도 함께).
@@ -648,21 +654,44 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       }
     } else {
       // 질량 정보 없음(형상이 없거나 모두 질량 0이거나 모두 읽는 중, 덮어쓰기·COTS 없음): 외곽 상자의 균일 직육면체.
-      // 저울 무게가 있으면 그 질량을 쓴다(분포는 그래도 기본값이다). 저울 무게 없이 읽는 중이면 위 갈래(0 kg)다.
+      // 저울 무게가 있으면 그 질량을 쓰고(분포는 그래도 기본값이다), 고정 질량이 있으면(boxRest) 그것은 제자리에 두고
+      // 나머지만 상자에 둔다. 저울 무게 없이 읽는 중이면 위 갈래(0 kg)다.
       mass = weighed ?? DEFAULT_ROBOT_MASS
+      const rest = mass - fixed
       const { min, max } = robotBox(objects, robotId, matrices)
       const [a, b, c] = [0, 1, 2].map((k) => max[k] - min[k])
-      centerOfMass = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, min[2] + DEFAULT_COM_HEIGHT * c]
-      inertia = [
-        (mass * (b * b + c * c)) / 12,
-        (mass * (a * a + c * c)) / 12,
-        (mass * (a * a + b * b)) / 12,
+      const boxCenter: Vec3 = [
+        (min[0] + max[0]) / 2,
+        (min[1] + max[1]) / 2,
+        min[2] + DEFAULT_COM_HEIGHT * c
+      ]
+      const boxInertia: SymMatrix3 = [
+        (rest * (b * b + c * c)) / 12,
+        (rest * (a * a + c * c)) / 12,
+        (rest * (a * a + b * b)) / 12,
         0,
         0,
         0
       ]
-      fixed = 0
-      estimated = mass
+      if (fixed > 0) {
+        const moment: Vec3 = [0, 1, 2].map((k) => rest * boxCenter[k]) as Vec3
+        for (const part of list) for (let k = 0; k < 3; k++) moment[k] += part.mass * part.com[k]
+        centerOfMass = [moment[0] / mass, moment[1] / mass, moment[2] / mass]
+        inertia = [0, 0, 0, 0, 0, 0]
+        const toCenter = (point: Vec3): Vec3 =>
+          [0, 1, 2].map((k) => point[k] - centerOfMass[k]) as Vec3
+        addParallelAxis(inertia, boxInertia, rest, toCenter(boxCenter))
+        for (const part of list) {
+          if (part.mass === 0) continue
+          const own =
+            part.volume > 0 ? scaled3(part.unitInertia, part.mass / part.volume) : ZERO_INERTIA
+          addParallelAxis(inertia, own, part.mass, toCenter(part.com))
+        }
+      } else {
+        centerOfMass = boxCenter
+        inertia = boxInertia
+      }
+      estimated = rest
       warnings.push({ kind: 'defaultMass' })
       defaultRobots.set(robotId, { mass, com: centerOfMass })
     }

@@ -146,7 +146,14 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
               key={index}
               className={warning.kind === 'pending' ? 'hw-issue is-info' : 'hw-issue is-warning'}
             >
-              {warningText(t, warning, lengthUnit, settings.weighedMass, hasPendingMeshes(mass))}
+              {warningText(
+                t,
+                warning,
+                lengthUnit,
+                settings.weighedMass,
+                hasPendingMeshes(mass),
+                mass.fixedMass
+              )}
             </li>
           ))}
         </ul>

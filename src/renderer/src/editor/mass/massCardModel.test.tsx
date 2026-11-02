@@ -565,6 +565,18 @@ describe('질량 출처 문구', () => {
     expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true)).toContain(
       `형상을 읽는 동안 저울 무게 ${massText(t, 20, 'cm')}를`
     )
+    // 데이터시트·직접 입력 질량은 제자리에 두고 나머지만 상자에 둔다(모터가 붙은 파트를 읽는 중)
+    const mixed = robotMass({
+      fixedMass: 0.5,
+      estimatedMass: 19.5,
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 4 }]
+    })
+    expect(robotMassBreakdown(t, mixed, 'cm', 20)).toBe(
+      `저울 무게: 직접 입력·데이터시트 ${massText(t, 0.5, 'cm')} + 형상을 읽는 중인 나머지 ${massText(t, 19.5, 'cm')} (외곽 상자로 근사)`
+    )
+    expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true, 0.5)).toContain(
+      `직접 입력·데이터시트 질량 ${massText(t, 0.5, 'cm')}은 제자리에 두고, 나머지 ${massText(t, 19.5, 'cm')}를`
+    )
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
     expect(formatInertia(12.345)).toBe('12.3')

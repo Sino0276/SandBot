@@ -943,17 +943,79 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
       { kind: 'scaleUnusual', scale: expect.closeTo(10 / 2.7, 12) },
       { kind: 'pending', meshes: 1 }
     ])
-    // 읽는 중인 메시와 덮어쓴 그룹만 있으면 그 덮어쓰기만 센다
+    // 읽는 중인 메시와 덮어쓴 그룹(형상 없음, 원점의 점질량)만 있으면 덮어쓰기는 제자리에 두고 나머지를 상자에 둔다
     const withOverride = {
       ...objects,
-      G: { ...node('G', 'R', { kind: 'group', mass: { mass: 0.6 } }) }
+      G: { ...node('G', 'R', { kind: 'group', mass: { mass: 0.6 } }, [0.1, 0, 0]) }
     }
-    expect(computeMassModel(withOverride, lookupOf({})).robots.R).toMatchObject({
+    const mixed = computeMassModel(withOverride, lookupOf({}))
+    expect(mixed.robots.R).toMatchObject({
+      mass: 10,
+      fixedMass: 0.6,
+      estimatedMass: expect.closeTo(9.4, 12),
+      scale: 1,
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2 }]
+    })
+    const boxZ = 0.35 * ROBOT_SIZE
+    const com = mixed.robots.R.centerOfMass
+    expect(com[0]).toBeCloseTo((0.6 * 0.1) / 10, 12)
+    expect(com[2]).toBeCloseTo((9.4 * boxZ) / 10, 12)
+    // 관성: 상자(나머지 질량)와 점질량을 합친 무게중심 기준
+    const sideRest = (9.4 * 2 * ROBOT_SIZE * ROBOT_SIZE) / 12
+    const dBox: Vec3 = [0 - com[0], 0 - com[1], boxZ - com[2]]
+    const dPoint: Vec3 = [0.1 - com[0], 0 - com[1], 0 - com[2]]
+    const ixx =
+      sideRest + 9.4 * (dBox[1] ** 2 + dBox[2] ** 2) + 0.6 * (dPoint[1] ** 2 + dPoint[2] ** 2)
+    const izz =
+      sideRest + 9.4 * (dBox[0] ** 2 + dBox[1] ** 2) + 0.6 * (dPoint[0] ** 2 + dPoint[1] ** 2)
+    const ixz = -9.4 * dBox[0] * dBox[2] - 0.6 * dPoint[0] * dPoint[2]
+    expect(mixed.robots.R.inertia[0]).toBeCloseTo(ixx, 12)
+    expect(mixed.robots.R.inertia[2]).toBeCloseTo(izz, 12)
+    expect(mixed.robots.R.inertia[4]).toBeCloseTo(ixz, 12)
+    expect(mixed.objects.R).toMatchObject({ mass: 10, source: 'default' })
+    expect(mixed.objects.G).toMatchObject({ mass: 0.6, source: 'override' })
+    // 고정 질량이 저울 무게 이상이면 나머지가 없어 맞추지 않는다(읽는 중이어도)
+    const heavy = {
+      ...withOverride,
+      R: robot({ rigidbody: { weighedMass: 0.5 } })
+    }
+    expect(computeMassModel(heavy, lookupOf({})).robots.R).toMatchObject({
       mass: 0.6,
       warnings: [
-        { kind: 'scaleImpossible', fixed: 0.6, weighed: 10 },
+        { kind: 'scaleImpossible', fixed: 0.6, weighed: 0.5 },
         { kind: 'pending', meshes: 2 }
       ]
+    })
+  })
+
+  it('하드웨어 컴포넌트(데이터시트 질량)가 붙은 파트를 읽는 중이어도 저울 무게를 쓴다', () => {
+    // 모터의 COTS 질량은 형상과 관계없이 정해지므로, 형상을 모두 읽는 중이면 그것만 있는 로봇이 된다
+    const objects = scene(
+      robot({ rigidbody: { weighedMass: 15 } }),
+      part('P1', 'R', [0.1, 0, 0.05], { components: [motor(19.2)] }),
+      part('P2', 'R'),
+      part('P3', 'R')
+    )
+    const loading = computeMassModel(objects, lookupOf({}))
+    const fixed = loading.robots.R.fixedMass
+    expect(fixed).toBeGreaterThan(0)
+    expect(loading.robots.R).toMatchObject({
+      mass: 15,
+      estimatedMass: expect.closeTo(15 - fixed, 12),
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 3 }]
+    })
+    expect(loading.robots.R.warnings.some((w) => w.kind === 'scaleImpossible')).toBe(false)
+    // 다 읽으면 형상으로 나누고 맞춘다(기본값 경고 없음)
+    const props = { 'g:P1': solid(LITER), 'g:P2': solid(LITER), 'g:P3': solid(LITER) }
+    const loaded = computeMassModel(objects, lookupOf(props)).robots.R
+    expect(loaded.mass).toBeCloseTo(15, 12)
+    expect(loaded.fixedMass).toBe(fixed)
+    expect(loaded.warnings.map((w) => w.kind)).toEqual(['scaleUnusual'])
+    // 저울 무게가 없으면 읽은 만큼(모터 질량)만이다
+    const unweighed = { ...objects, R: robot() }
+    expect(computeMassModel(unweighed, lookupOf({})).robots.R).toMatchObject({
+      mass: fixed,
+      warnings: [{ kind: 'pending', meshes: 3 }]
     })
   })
 
