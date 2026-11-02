@@ -4,7 +4,13 @@ import { initReactI18next } from 'react-i18next'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import ko from '../../i18n/locales/ko'
 import { MATERIALS } from '../../mass/materials'
-import { MATERIAL_KEYS, type MassModel, type ObjectMass, type RobotMass } from '../../mass/types'
+import {
+  MATERIAL_KEYS,
+  type MassModel,
+  type MassNotice,
+  type ObjectMass,
+  type RobotMass
+} from '../../mass/types'
 import { canHaveMass } from '../../scene/massSettings'
 import type { SceneObject, SceneObjects, Transform } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
@@ -31,6 +37,9 @@ import {
   localCenterOfMass,
   massCardView,
   massText,
+  noticeText,
+  objectNotices,
+  cardNotices,
   ownsDatasheetMass,
   parseInfillPercent,
   robotMassBreakdown,
@@ -529,6 +538,53 @@ describe('질량 출처 문구', () => {
   })
 })
 
+describe('쓰지 못한 질량 설정 알림', () => {
+  const pod: Extract<MassNotice, { kind: 'podIgnored' }> = {
+    kind: 'podIgnored',
+    objectId: 'plate',
+    pinpointId: 'bolt',
+    reason: 'tooLarge'
+  }
+  const notices: MassNotice[] = [
+    { kind: 'innerMassExceeds', objectId: 'battery', mass: 0.2, inner: 0.5 },
+    { kind: 'centerOfMassIgnored', objectId: 'lift' },
+    pod
+  ]
+
+  it('문구: 오브젝트 이름·표시 단위 질량·포드 이유, 지운 오브젝트는 id', () => {
+    const objects = scene()
+    expect(noticeText(t, objects, notices[0], 'mm')).toBe(
+      `Battery 안의 질량 직접 입력 합(${massText(t, 0.5, 'mm')})이 Battery의 질량(${massText(t, 0.2, 'mm')})보다 커서 안쪽 값을 그대로 씁니다.`
+    )
+    expect(noticeText(t, objects, notices[1], 'mm')).toMatch(/^Lift의 무게중심 덮어쓰기는 쓰이지/)
+    expect(noticeText(t, objects, notices[2], 'mm')).toBe(
+      'Plate을(를) Bolt의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다(형상이 포드 하나로 보기에 너무 큼).'
+    )
+    for (const reason of ['otherRobot', 'containsPinpoint', 'containsCots', 'tooLarge'] as const) {
+      const text = noticeText(t, objects, { ...pod, reason, objectId: 'gone' }, 'in')
+      expect(text.startsWith('gone을(를) ')).toBe(true)
+      expect(text).toContain(`(${ko.mass.notices.podReasons[reason]})`)
+    }
+  })
+
+  it('오브젝트의 알림은 모든 로봇에서 모으고, 질량 카드는 칸 아래에 이미 알린 무게중심은 빼고 보인다', () => {
+    const model: MassModel = {
+      objects: {},
+      robots: {
+        R: robotMass({ notices }),
+        S: robotMass({ robotId: 'S', notices: [notices[1]] }),
+        T: robotMass({ robotId: 'T' })
+      }
+    }
+    expect(objectNotices(model, 'lift')).toEqual([notices[1], notices[1]])
+    expect(objectNotices(model, 'plate')).toEqual([notices[2]])
+    expect(objectNotices(model, 'box')).toEqual([])
+    expect(cardNotices(model, 'lift', { centerOfMassUnused: true })).toEqual([])
+    expect(cardNotices(model, 'lift', { centerOfMassUnused: false })).toHaveLength(2)
+    expect(cardNotices(model, 'battery', { centerOfMassUnused: true })).toEqual([notices[0]])
+  })
+})
+
 describe('질량 모델 기억', () => {
   it('같은 문서·형상 판이면 다시 계산하지 않고, 어느 하나가 바뀌면 다시 계산한다', () => {
     const objects = scene()
@@ -700,6 +756,30 @@ describe('질량 카드 그리기', () => {
     expect(html).toContain('1.70배')
     expect(html).toContain('형상을 읽는 중인 메시 2개')
     expect(html).toContain('빈 그룹을 만들고(Create Empty)')
+  })
+
+  it('쓰지 못한 설정 알림: Rigidbody 카드에 모두, 질량 카드·추정 한 줄에는 그 오브젝트의 것', () => {
+    const objects = scene()
+    const notices: MassNotice[] = [
+      { kind: 'podIgnored', objectId: 'plate', pinpointId: 'bolt', reason: 'containsCots' },
+      { kind: 'innerMassExceeds', objectId: 'battery', mass: 0.597, inner: 0.7 }
+    ]
+    fake.model = {
+      objects: { plate: objectMass({}), battery: objectMass({ mass: 0.7 }) },
+      robots: { R: robotMass({ notices }) }
+    }
+    const rigidbody = render(objects, () => <RigidbodyCard robot={objects.R} />)
+    expect(rigidbody).toContain('aria-label="쓰지 못한 질량 설정"')
+    expect(rigidbody).toContain('Plate을(를) Bolt의 Pinpoint 포드로 볼 수 없어')
+    expect(rigidbody).toContain('Battery 안의 질량 직접 입력 합')
+    const battery = render(objects, () => <MassCard object={objects.battery} />)
+    expect(battery).toContain('Battery 안의 질량 직접 입력 합')
+    expect(battery).not.toContain('Pinpoint 포드')
+    // 카드가 없는 파트는 추정 한 줄 아래에 보인다
+    const plate = render(objects, () => <HardwareComponentsSection object={objects.plate} />)
+    expect(plate).toContain('mass-estimate')
+    expect(plate).toContain('Plate을(를) Bolt의 Pinpoint 포드로 볼 수 없어')
+    expect(plate).not.toContain('Battery 안의')
   })
 
   it('Rigidbody 카드: 계산이 없거나 기본값이면 그것을 알리고 저울 무게 칸은 비어 있다', () => {

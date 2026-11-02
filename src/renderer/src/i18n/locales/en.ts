@@ -1427,6 +1427,21 @@ const en: Messages = {
         'While the shapes load, the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       pending: '{{count}} mesh(es) still loading are not counted yet.'
     },
+    notices: {
+      innerMassExceeds:
+        'The mass overrides inside {{object}} add up to {{inner}}, more than its own mass ({{mass}}), so the inner values are used as they are.',
+      centerOfMassIgnored:
+        'The center of mass override on {{object}} is not used. It applies only to an object with a mass override or a datasheet mass, and only when inner overrides leave some of that mass to move.',
+      podIgnored:
+        '{{object}} cannot be the Pinpoint pod of {{pinpoint}}, so it is estimated without the pod mass ({{reason}}).',
+      podReasons: {
+        otherRobot: 'it is in a different robot from the Pinpoint',
+        containsPinpoint: 'it is the Pinpoint itself or contains it',
+        containsCots:
+          'it contains other off-the-shelf parts (motors, servos, wheels, another pod, SKU names)',
+        tooLarge: 'its shape is too large for a single pod'
+      }
+    },
     rigidbody: {
       title: 'Rigidbody',
       simulationOnly: 'Simulator',
@@ -1459,6 +1474,7 @@ const en: Messages = {
       surfaceMeshes: '{{count}} surface mesh(es) (no mass)',
       pendingMeshes: '{{count}} loading',
       cadSummary: '{{name}}: {{parts}}',
+      notices: 'Mass settings not used',
       hint: 'For heavy parts missing from CAD (battery, hubs, …), create an empty group in that place (Create Empty) and enter its mass: it becomes a point mass there. Scaling to the weighed mass spreads over all shapes, so it does not move the center of mass toward them.'
     }
   }

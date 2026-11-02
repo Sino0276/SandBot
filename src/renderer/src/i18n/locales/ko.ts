@@ -1426,6 +1426,20 @@ const ko = {
         '형상을 읽는 동안 저울 무게 {{mass}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 다 읽으면 형상으로 나눕니다.',
       pending: '형상을 읽는 중인 메시 {{count}}개는 아직 계산에 들어가지 않았습니다.'
     },
+    notices: {
+      innerMassExceeds:
+        '{{object}} 안의 질량 직접 입력 합({{inner}})이 {{object}}의 질량({{mass}})보다 커서 안쪽 값을 그대로 씁니다.',
+      centerOfMassIgnored:
+        '{{object}}의 무게중심 덮어쓰기는 쓰이지 않습니다. 질량을 직접 입력했거나 데이터시트 질량을 정한 오브젝트에서만 쓰고, 안쪽 직접 입력이 질량을 다 쓰면 옮길 몫이 없습니다.',
+      podIgnored:
+        '{{object}}을(를) {{pinpoint}}의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다({{reason}}).',
+      podReasons: {
+        otherRobot: 'Pinpoint와 다른 로봇에 있음',
+        containsPinpoint: 'Pinpoint 자신이거나 그 상위',
+        containsCots: '하위에 다른 상용 부품(모터·서보·바퀴·다른 포드·SKU 이름)이 있음',
+        tooLarge: '형상이 포드 하나로 보기에 너무 큼'
+      }
+    },
     rigidbody: {
       title: 'Rigidbody',
       simulationOnly: '시뮬레이터',
@@ -1457,6 +1471,7 @@ const ko = {
       surfaceMeshes: '표면 메시 {{count}}개 (질량 0)',
       pendingMeshes: '읽는 중 {{count}}개',
       cadSummary: '{{name}}: {{parts}}',
+      notices: '쓰지 못한 질량 설정',
       hint: 'CAD에 없는 무거운 부품(배터리·허브 등)은 그 자리에 빈 그룹을 만들고(Create Empty) 질량을 직접 넣으면 그 위치의 점질량이 됩니다. 저울 무게 맞추기는 형상 전체에 비율로 퍼뜨리므로 무게중심을 그쪽으로 옮기지 않습니다.'
     }
   }

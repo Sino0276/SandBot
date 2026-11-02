@@ -14,6 +14,7 @@ import {
 } from '../../units/units'
 import {
   acceptMass,
+  cardNotices,
   cleanMass,
   DEFAULT_DESCRIBERS,
   formatInfill,
@@ -24,6 +25,7 @@ import {
   massText,
   materialLabel,
   MATERIAL_GROUPS,
+  noticeText,
   parseInfillPercent,
   sameMassSettings,
   sourceText
@@ -45,6 +47,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
   const result = model.objects[object.id]
   const view = massCardView(objects, object.id, model.objects, DEFAULT_DESCRIBERS)
   const settings = view.settings
+  const notices = cardNotices(model, object.id, view)
   const update = (patch: Partial<MassSettings>): void => {
     const next = cleanMass({ ...settings, ...patch })
     if (!sameMassSettings(next, settings)) setObjectMass(object.id, next)
@@ -191,6 +194,15 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
         </>
       ) : (
         <p className="hw-derived">{t('mass.resultNone')}</p>
+      )}
+      {notices.length > 0 && (
+        <ul className="hw-issues">
+          {notices.map((notice, index) => (
+            <li key={index} className="hw-issue is-info">
+              {noticeText(t, objects, notice, lengthUnit)}
+            </li>
+          ))}
+        </ul>
       )}
       <p className="inspector-note">{t('mass.hint')}</p>
     </li>

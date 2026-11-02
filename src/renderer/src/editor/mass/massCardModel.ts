@@ -7,6 +7,8 @@ import {
   DEFAULT_ROBOT_MASS,
   MATERIAL_KEYS,
   type CadMassSummary,
+  type MassModel,
+  type MassNotice,
   type MassSettings,
   type MassWarning,
   type MaterialKey,
@@ -464,6 +466,51 @@ export function robotMassBreakdown(
     fixed: massText(t, robot.fixedMass, unit),
     estimated: massText(t, robot.estimatedMass, unit)
   })
+}
+
+// 설정 일부를 추정에 쓰지 못한 곳(RobotMass.notices)의 문구. 오브젝트는 이름으로 부른다(지운 오브젝트면 id).
+export function noticeText(
+  t: TFunction,
+  objects: SceneObjects,
+  notice: MassNotice,
+  unit: LengthUnit
+): string {
+  const name = (id: string): string => ownerName(objects, id) ?? id
+  switch (notice.kind) {
+    case 'innerMassExceeds':
+      return t('mass.notices.innerMassExceeds', {
+        object: name(notice.objectId),
+        inner: massText(t, notice.inner, unit),
+        mass: massText(t, notice.mass, unit)
+      })
+    case 'centerOfMassIgnored':
+      return t('mass.notices.centerOfMassIgnored', { object: name(notice.objectId) })
+    case 'podIgnored':
+      return t('mass.notices.podIgnored', {
+        object: name(notice.objectId),
+        pinpoint: name(notice.pinpointId),
+        reason: t(`mass.notices.podReasons.${notice.reason}`)
+      })
+  }
+}
+
+// 한 오브젝트를 가리키는 알림(모든 로봇에서, 로봇 순서·문서 순서). 질량 카드와 추정 한 줄이 그 오브젝트의 것을 보인다.
+export function objectNotices(model: MassModel, objectId: string): MassNotice[] {
+  return Object.values(model.robots).flatMap((robot) =>
+    (robot.notices ?? []).filter((notice) => notice.objectId === objectId)
+  )
+}
+
+// 질량 카드에 보일 이 오브젝트의 알림. 덩어리를 정하지 않아 쓰이지 않는 무게중심은 카드가 이미 그 칸 아래에 알린다
+// (MassCardView.centerOfMassUnused).
+export function cardNotices(
+  model: MassModel,
+  objectId: string,
+  view: Pick<MassCardView, 'centerOfMassUnused'>
+): MassNotice[] {
+  return objectNotices(model, objectId).filter(
+    (notice) => !(notice.kind === 'centerOfMassIgnored' && view.centerOfMassUnused)
+  )
 }
 
 export type CadSummaryRow = { id: string; name: string; summary: CadMassSummary }

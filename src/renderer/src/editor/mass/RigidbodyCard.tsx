@@ -17,6 +17,7 @@ import {
   materialLabel,
   MATERIAL_GROUPS,
   massText,
+  noticeText,
   robotMassBreakdown,
   warningText
 } from './massCardModel'
@@ -146,6 +147,15 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
               className={warning.kind === 'pending' ? 'hw-issue is-info' : 'hw-issue is-warning'}
             >
               {warningText(t, warning, lengthUnit, settings.weighedMass, hasPendingMeshes(mass))}
+            </li>
+          ))}
+        </ul>
+      )}
+      {mass?.notices && mass.notices.length > 0 && (
+        <ul className="hw-issues" aria-label={t('mass.rigidbody.notices')}>
+          {mass.notices.map((notice, index) => (
+            <li key={index} className="hw-issue is-info">
+              {noticeText(t, objects, notice, lengthUnit)}
             </li>
           ))}
         </ul>
