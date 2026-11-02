@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../../shared/dashboard'
+import { localDraftProps } from '../../editor/useDraft'
 import { currentJavaSource, useJavaSourcesStore } from '../../java/javaSources'
 import { tunableFieldLabel } from '../../java/tunableEdits'
 import { useProjectStore } from '../../project/projectStore'
@@ -44,7 +45,8 @@ function toggleExpanded(key: string): void {
 
 const fileNameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 
-// 수·글자 입력칸: 확정하지 않은 글자는 이 칸에만 있고(씬 문서의 초안이 아니다), Enter·포커스 이동에 보낸다. Esc는 취소.
+// 수·글자 입력칸: 확정하지 않은 글자는 이 칸에만 있고(씬 문서의 초안이 아니라 창 닫기 확인은 하지 않는다), Enter·포커스
+// 이동에 보낸다. Esc는 취소.
 // 형식에 맞지 않거나 너무 긴(메인이 받지 않는) 글자는 보내지 않고 테두리와 도움말로 알린다(포커스를 잃으면 버린다).
 function ValueInput({
   row,
@@ -82,6 +84,8 @@ function ValueInput({
             : undefined
       }
       spellCheck={false}
+      // 글자를 바꾼 동안 Ctrl+Z는 이 칸의 실행 취소다(씬을 되돌리지 않는다)
+      {...localDraftProps(draft)}
       value={draft ?? shown}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
