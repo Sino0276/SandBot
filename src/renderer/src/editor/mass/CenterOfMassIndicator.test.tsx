@@ -9,8 +9,10 @@ import { newRun, usePlayStore, type PlayData, type PlayRun } from '../../play/pl
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
+import { beginChange, endChange } from '../history'
 import CenterOfMassIndicator from './CenterOfMassIndicator'
 import { comMarkers } from './comMarkers'
+import { DRAG_REFRESH_MS } from './useMassModel'
 
 // 씬 뷰 무게중심 표시(R3F를 WebGL 없이 그린다: render가 아무것도 하지 않는 가짜 렌더러, SceneObjectsView.test.tsx와
 // 같은 방법). 질량 모델은 정해 둔 가짜 결과다(계산은 갈래 B).
@@ -306,6 +308,50 @@ describe('씬 뷰 무게중심 표시', () => {
       useSceneStore.setState((state) => ({ geometryRevision: state.geometryRevision + 1 }))
     })
     expect(worldOf(robotMarker()!).x).toBeCloseTo(0.9)
+  })
+
+  it('핸들을 끄는 동안에는 간격마다만 다시 계산하고, 놓으면 마지막 문서의 자리로 옮긴다', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      vi.advanceTimersByTime(10 * DRAG_REFRESH_MS)
+      await select('arm')
+      const moved = (x: number): MassModel => ({
+        ...MODEL,
+        robots: { bot: robotMass([x, 0, 0.08]) }
+      })
+      const drag = async (x: number): Promise<void> => {
+        fake.model = moved(x)
+        await act(async () => {
+          useSceneStore.setState((state) => ({ objects: { ...state.objects } }))
+        })
+      }
+      beginChange()
+      vi.advanceTimersByTime(DRAG_REFRESH_MS)
+      // 첫 프레임은 계산한다
+      await drag(-0.1)
+      expect(worldOf(robotMarker()!).x).toBeCloseTo(0.9)
+      // 간격 안의 프레임은 이전 결과
+      vi.advanceTimersByTime(16)
+      await drag(-0.2)
+      expect(worldOf(robotMarker()!).x).toBeCloseTo(0.9)
+      // 간격이 지나면 미룬 계산을 새로 고친다(문서가 더 바뀌지 않아도)
+      await act(async () => {
+        vi.advanceTimersByTime(DRAG_REFRESH_MS)
+      })
+      expect(worldOf(robotMarker()!).x).toBeCloseTo(0.8)
+      vi.advanceTimersByTime(16)
+      await drag(-0.3)
+      expect(worldOf(robotMarker()!).x).toBeCloseTo(0.8)
+      // 놓으면 묶음이 닫힌 뒤 새로 고침에서 마지막 문서로 계산한다
+      endChange()
+      await act(async () => {
+        vi.advanceTimersByTime(DRAG_REFRESH_MS)
+      })
+      expect(worldOf(robotMarker()!).x).toBeCloseTo(0.7)
+    } finally {
+      endChange()
+      vi.useRealTimers()
+    }
   })
 })
 

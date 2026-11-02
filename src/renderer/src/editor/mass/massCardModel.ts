@@ -12,6 +12,7 @@ import {
   type RobotMass
 } from '../../mass/types'
 import {
+  childrenInDocument,
   findRobotId,
   frameMatrix,
   subtreeIds,
@@ -133,6 +134,22 @@ export function inheritedInfill(objects: SceneObjects, objectId: string): number
   return undefined
 }
 
+// 출처를 사람이 읽는 이름으로 바꾸는 표(갈래 B의 mass/cotsTable.ts cotsEntry·mass/nameRules.ts nameRuleMaterial).
+// 표를 모르면 키를 그대로 보인다.
+export type CotsLabel = { product: string; ratio?: number; cartridges?: number }
+export type MassDescribers = {
+  cots: (key: string) => CotsLabel | undefined
+  nameRuleMaterial: (rule: string) => MaterialKey | null | undefined
+}
+
+export const DEFAULT_DESCRIBERS: MassDescribers = {
+  cots: () => undefined,
+  nameRuleMaterial: () => undefined
+}
+
+const isMaterialKey = (value: string): value is MaterialKey =>
+  (MATERIAL_KEYS as readonly string[]).includes(value)
+
 // 질량 카드 하나의 보기 값
 export type MassCardView = {
   inRobot: boolean
@@ -140,34 +157,88 @@ export type MassCardView = {
   inherited: InheritedMaterial
   // 이 오브젝트가 쓰는 재질(자기 것 또는 물려받은 것, 이름 규칙은 빼고)
   material: MaterialKey
-  // 채움률 칸을 보일지: 출력 재질이거나 이미 채움률을 정했을 때
+  // 채움률 칸을 보일지: 이 채움률이 닿는 파트가 출력 재질이거나(자기·상속·이름 규칙) 이미 채움률을 정했을 때
   showInfill: boolean
   // 위에서 물려받은 채움률(없으면 undefined = 기본값)
   inheritedInfill: number | undefined
-  // 무게중심 칸을 보일지: 질량을 덮어썼거나(덩어리), 이 오브젝트의 데이터시트 질량이거나, 이미 정했을 때.
+  // 무게중심 칸을 보일지: 질량을 덮어썼거나(덩어리), 이 오브젝트가 데이터시트 질량을 정했거나, 이미 정했을 때.
   // 그 밖의 무게중심은 형상에서 나오므로 덮어쓰기가 쓰이지 않는다(spec-3a §2 MassSettings.centerOfMass).
   showCenterOfMass: boolean
+  // 정해 둔 무게중심이 쓰이지 않는지(덮어쓴 질량도 이 오브젝트의 데이터시트 질량도 없음). 지울 수 있게 칸은 보인다.
+  centerOfMassUnused: boolean
+  // 재질 고르기의 빈 값에 이름 규칙을 보일지: 하위가 없는 오브젝트만(하위가 있으면 이름 규칙은 파트마다 다르다)
+  leaf: boolean
   result: ObjectMass | undefined
+}
+
+// 결과의 재질이 3D 출력 재질인지(재질 상속·로봇 기본은 detail이 재질 키, 이름 규칙은 표로 재질을 찾는다)
+function printedResult(result: ObjectMass | undefined, describers: MassDescribers): boolean {
+  if (!result) return false
+  if (result.source === 'material' || result.source === 'default')
+    return isMaterialKey(result.detail) && isPrintedMaterial(result.detail)
+  if (result.source === 'nameRule')
+    return isPrintedMaterial(describers.nameRuleMaterial(result.detail) ?? undefined)
+  return false
+}
+
+// 이 오브젝트의 채움률이 닿는 오브젝트(자기와 하위, 채움률을 다시 정한 하위와 그 아래는 뺀다) 중 출력 재질로 추정한
+// 것이 있는지. 질량 모델은 채움률을 재질처럼 위에서 물려받아 출력 재질 파트에 쓴다(이름 규칙이 정한 PLA 등도).
+export function infillReachesPrinted(
+  objects: SceneObjects,
+  objectId: string,
+  results: Readonly<Record<string, ObjectMass>>,
+  describers: MassDescribers = DEFAULT_DESCRIBERS
+): boolean {
+  const visit = (id: string): boolean =>
+    printedResult(results[id], describers) ||
+    childrenInDocument(objects, id).some(
+      (child) => child.mass?.infill === undefined && visit(child.id)
+    )
+  return !!objects[objectId] && visit(objectId)
+}
+
+// 이 오브젝트가 데이터시트(COTS) 질량 덩어리를 정했는지(그래야 무게중심 덮어쓰기가 쓰인다). 그룹·어셈블리의 결과는
+// 하위 중 가장 큰 출처라, 하위 파트가 정한 데이터시트 질량과 구별해야 한다(질량 모델의 inheritedFrom 규칙):
+// - 하위가 이 오브젝트에게서 데이터시트 질량을 받았으면 이 오브젝트가 정한 것이다.
+// - 자기 결과가 상속 아닌 데이터시트이고 그것을 정한 하위(상속 아닌 데이터시트)가 없으면 자기 형상이나 점질량에 정한 것이다.
+export function ownsDatasheetMass(
+  objects: SceneObjects,
+  objectId: string,
+  results: Readonly<Record<string, ObjectMass>>
+): boolean {
+  const own = results[objectId]
+  if (!objects[objectId]) return false
+  const below = subtreeIds(objects, objectId).slice(1)
+  const cots = (id: string, from: string | null): boolean =>
+    results[id]?.source === 'cots' && results[id].inheritedFrom === from
+  if (below.some((id) => cots(id, objectId))) return true
+  return own?.source === 'cots' && own.inheritedFrom === null && !below.some((id) => cots(id, null))
 }
 
 export function massCardView(
   objects: SceneObjects,
   objectId: string,
-  result: ObjectMass | undefined
+  results: Readonly<Record<string, ObjectMass>>,
+  describers: MassDescribers = DEFAULT_DESCRIBERS
 ): MassCardView {
   const settings = objects[objectId]?.mass ?? {}
   const inherited = inheritedMaterial(objects, objectId)
   const material = settings.material ?? inherited.material
-  const ownCots = result?.source === 'cots' && result.inheritedFrom === null
+  const massBlock = settings.mass !== undefined || ownsDatasheetMass(objects, objectId, results)
   return {
     inRobot: findRobotId(objects, objectId) !== null,
     settings,
     inherited,
     material,
-    showInfill: isPrintedMaterial(material) || settings.infill !== undefined,
+    showInfill:
+      isPrintedMaterial(material) ||
+      settings.infill !== undefined ||
+      infillReachesPrinted(objects, objectId, results, describers),
     inheritedInfill: inheritedInfill(objects, objectId),
-    showCenterOfMass: settings.mass !== undefined || ownCots || settings.centerOfMass !== undefined,
-    result
+    showCenterOfMass: massBlock || settings.centerOfMass !== undefined,
+    centerOfMassUnused: !massBlock && settings.centerOfMass !== undefined,
+    leaf: childrenInDocument(objects, objectId).length === 0,
+    result: results[objectId]
   }
 }
 
@@ -189,22 +260,6 @@ export function localCenterOfMass(
 }
 
 // ---- 문구 ----
-
-// 출처를 사람이 읽는 이름으로 바꾸는 표(갈래 B의 mass/cotsTable.ts cotsEntry·mass/nameRules.ts nameRuleMaterial).
-// 표를 모르면 키를 그대로 보인다.
-export type CotsLabel = { product: string; ratio?: number; cartridges?: number }
-export type MassDescribers = {
-  cots: (key: string) => CotsLabel | undefined
-  nameRuleMaterial: (rule: string) => MaterialKey | null | undefined
-}
-
-export const DEFAULT_DESCRIBERS: MassDescribers = {
-  cots: () => undefined,
-  nameRuleMaterial: () => undefined
-}
-
-const isMaterialKey = (value: string): value is MaterialKey =>
-  (MATERIAL_KEYS as readonly string[]).includes(value)
 
 export function materialLabel(t: TFunction, key: MaterialKey): string {
   return t(`mass.materials.${key}`)
@@ -289,12 +344,12 @@ export function estimateLine(
   return mass.scaled ? `${text} ${t('mass.scaledTag')}` : text
 }
 
-// 재질 고르기의 빈 값(자기 재질 없음) 이름: 어디서 물려받는지. 위 오브젝트가 정하지 않았고 모델이 이름 규칙을 썼으면
-// 이름 규칙을 보인다(질량 모델의 순서: 위 재질 → 이름 규칙 → 로봇 기본).
+// 재질 고르기의 빈 값(자기 재질 없음) 이름: 어디서 물려받는지. 위 오브젝트가 정하지 않았고 모델이 이 파트에 이름 규칙을
+// 썼으면 이름 규칙을 보인다(질량 모델의 순서: 위 재질 → 이름 규칙 → 로봇 기본).
 export function inheritedOptionText(
   t: TFunction,
   objects: SceneObjects,
-  view: Pick<MassCardView, 'inherited' | 'result'>
+  view: Pick<MassCardView, 'inherited' | 'result' | 'leaf'>
 ): string {
   const { inherited, result } = view
   const material = materialLabel(t, inherited.material)
@@ -303,7 +358,9 @@ export function inheritedOptionText(
       material,
       owner: ownerName(objects, inherited.origin.objectId) ?? ''
     })
-  if (result?.source === 'nameRule') return t('mass.inheritNameRule', { rule: result.detail })
+  // 그룹·어셈블리의 결과 출처는 하위 중 가장 큰 것이라 이 오브젝트가 물려받는 것이 아니다(파트마다 다르다)
+  if (view.leaf && result?.source === 'nameRule')
+    return t('mass.inheritNameRule', { rule: result.detail })
   return inherited.origin.kind === 'robot'
     ? t('mass.inheritRobot', { material })
     : t('mass.inheritBuiltIn', { material })
@@ -331,8 +388,18 @@ export function formatInertia(value: number): string {
   return formatNumber(value, Math.min(digits, 8))
 }
 
-// 로봇 경고 문구
-export function warningText(t: TFunction, warning: MassWarning, unit: LengthUnit): string {
+// 질량 정보 없음 대체값을 쓰는지(형상·덮어쓰기·데이터시트 질량이 없음, 질량 모델의 defaultMass 경고)
+export function usesDefaultMass(robot: RobotMass): boolean {
+  return robot.warnings.some((warning) => warning.kind === 'defaultMass')
+}
+
+// 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3)
+export function warningText(
+  t: TFunction,
+  warning: MassWarning,
+  unit: LengthUnit,
+  weighedMass?: number
+): string {
   switch (warning.kind) {
     case 'scaleUnusual':
       return t('mass.warnings.scaleUnusual', { scale: formatNumber(warning.scale, 2) })
@@ -342,14 +409,26 @@ export function warningText(t: TFunction, warning: MassWarning, unit: LengthUnit
         weighed: formatMass(warning.weighed, unit)
       })
     case 'defaultMass':
-      return t('mass.warnings.defaultMass', { mass: formatMass(DEFAULT_ROBOT_MASS, unit) })
+      return weighedMass !== undefined
+        ? t('mass.warnings.defaultMassWeighed', { mass: formatMass(weighedMass, unit) })
+        : t('mass.warnings.defaultMass', { mass: formatMass(DEFAULT_ROBOT_MASS, unit) })
     case 'pending':
       return t('mass.warnings.pending', { count: warning.meshes })
   }
 }
 
-// Rigidbody 카드의 질량 줄: "12.300 kg (직접 입력·데이터시트 2.100 kg + 추정 10.200 kg)"
-export function robotMassBreakdown(t: TFunction, robot: RobotMass, unit: LengthUnit): string {
+// Rigidbody 카드의 질량 줄: "직접 입력·데이터시트 2.100 kg + 추정 10.200 kg". 질량 정보 없음 대체값이면 출처별 합계가
+// 아니라 기본값(또는 저울 무게)이라고 보인다.
+export function robotMassBreakdown(
+  t: TFunction,
+  robot: RobotMass,
+  unit: LengthUnit,
+  weighedMass?: number
+): string {
+  if (usesDefaultMass(robot))
+    return weighedMass !== undefined
+      ? t('mass.rigidbody.breakdownWeighedBox')
+      : t('mass.rigidbody.breakdownDefault')
   return t('mass.rigidbody.breakdown', {
     fixed: formatMass(robot.fixedMass, unit),
     estimated: formatMass(robot.estimatedMass, unit)

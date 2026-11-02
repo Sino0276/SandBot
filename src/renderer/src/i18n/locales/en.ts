@@ -1381,6 +1381,8 @@ const en: Messages = {
     massInputHint: 'You can type a unit (e.g. 437g, 1.2kg, 3lb, 8oz).',
     centerOfMass: 'Center of mass',
     centerOfMassAuto: 'Automatic',
+    centerOfMassUnused:
+      'This center of mass is not used now. It only applies when the mass is entered directly or this object has a datasheet mass.',
     centerOfMassHint:
       'Center of mass of the overridden (or datasheet) mass, in this object’s local frame. Automatic uses the center of the shapes under it.',
     result: 'Result: {{mass}} · {{source}}',
@@ -1412,14 +1414,19 @@ const en: Messages = {
       scaleImpossible:
         'Not scaled to the weighed mass: the override and datasheet mass ({{fixed}}) is at least the weighed mass ({{weighed}}), or there is no shape to estimate.',
       defaultMass:
-        'No mass information, so the default {{mass}} (30 lb, typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
+        'No mass information, so the default {{mass}} (typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
+      defaultMassWeighed:
+        'No shape information, so the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
       pending: '{{count}} mesh(es) still loading are not counted yet.'
     },
     rigidbody: {
       title: 'Rigidbody',
       simulationOnly: 'Simulator',
       mass: 'Mass',
+      massNone: '—',
       breakdown: 'Override/datasheet {{fixed}} + estimated {{estimated}}',
+      breakdownDefault: 'Default (no mass information)',
+      breakdownWeighedBox: 'Weighed mass (no shapes, approximated by the bounding box)',
       scaled: '· estimate ×{{scale}} (scaled to the weighed mass)',
       weighed: 'Weighed mass',
       weighedHint:
@@ -1433,6 +1440,10 @@ const en: Messages = {
       centerOfMassHint:
         'Center of mass from the robot origin (center, floor). X forward · Y left · Z up. Computed; read-only.',
       principalMoments: 'Principal inertia',
+      principal1: 'I₁',
+      principal2: 'I₂',
+      principal3: 'I₃',
+      inertiaUnit: 'kg·m²',
       principalMomentsHint:
         'Principal values of the inertia tensor about the center of mass (kg·m²). Computed.',
       openMeshes: '{{count}} open mesh(es) ({{percent}}% of the volume, approximate)',

@@ -15,6 +15,7 @@ import {
 import {
   acceptMass,
   cleanMass,
+  DEFAULT_DESCRIBERS,
   formatInfill,
   infillPlaceholder,
   inheritedOptionText,
@@ -43,7 +44,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
   if (!object.mass) return null
 
   const result = model.objects[object.id]
-  const view = massCardView(objects, object.id, result)
+  const view = massCardView(objects, object.id, model.objects, DEFAULT_DESCRIBERS)
   const settings = view.settings
   const update = (patch: Partial<MassSettings>): void => {
     const next = cleanMass({ ...settings, ...patch })
@@ -145,6 +146,9 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
               {t('mass.centerOfMassAuto')}
             </label>
           </div>
+          {view.centerOfMassUnused && (
+            <p className="inspector-note">{t('mass.centerOfMassUnused')}</p>
+          )}
           {centerOfMass && (
             <EditableVector
               values={centerOfMass.map((meters) => toDisplayLength(meters, lengthUnit)) as Vec3}

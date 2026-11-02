@@ -4,7 +4,7 @@ import en from '../../i18n/locales/en'
 import ko, { type Messages } from '../../i18n/locales/ko'
 import { MATERIAL_KEYS, type MassSource, type MassWarning } from '../../mass/types'
 import type { SceneObjects } from '../../scene/model'
-import { MATERIAL_GROUPS, sourceText, warningText } from './massCardModel'
+import { MATERIAL_GROUPS, robotMassBreakdown, sourceText, warningText } from './massCardModel'
 
 function lookup(messages: Messages, key: string): unknown {
   return key.split('.').reduce<unknown>((node, part) => {
@@ -77,7 +77,27 @@ describe('질량 카드 번역', () => {
             scaled: false
           })
         ),
-        ...WARNINGS.map((warning) => warningText(t, warning, 'mm'))
+        ...WARNINGS.map((warning) => warningText(t, warning, 'mm')),
+        // 저울 무게가 있으면 다른 문구
+        ...WARNINGS.map((warning) => warningText(t, warning, 'in', 14)),
+        ...[undefined, 14].map((weighed) =>
+          robotMassBreakdown(
+            t,
+            {
+              robotId: 'R',
+              mass: 1,
+              centerOfMass: [0, 0, 0],
+              inertia: [0, 0, 0, 0, 0, 0],
+              principalMoments: [0, 0, 0],
+              fixedMass: 0,
+              estimatedMass: 1,
+              scale: 1,
+              warnings: [{ kind: 'defaultMass' }]
+            },
+            'mm',
+            weighed
+          )
+        )
       ]
       for (const text of texts) {
         expect(text).not.toMatch(/^mass\./)

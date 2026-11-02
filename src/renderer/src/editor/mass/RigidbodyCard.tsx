@@ -22,9 +22,6 @@ import { ReadonlyVector } from './MassVector'
 import OptionalField from './OptionalField'
 import { useMassModel } from './useMassModel'
 
-// 주관성 칸 이름(수학 기호라 번역하지 않는다, 축 이름 X·Y·Z처럼)
-const PRINCIPAL_NAMES: [string, string, string] = ['I₁', 'I₂', 'I₃']
-
 // 로봇 전체의 질량(Unity Rigidbody처럼 로봇이면 늘 보인다, spec-3a §6). 추정 질량과 출처별 합계, 저울 무게(넣으면 추정
 // 파트에 비율을 곱해 맞춘다), 기본 재질, 계산한 무게중심·주관성, 경고와 CAD 메시 상태를 보인다. 시뮬레이터 설정이라
 // 생성 코드와 관계없다.
@@ -38,6 +35,11 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
   const settings = robot.rigidbody ?? {}
   const unit = t(`units.symbols.${lengthUnit}`)
   const cadRows = cadSummaryRows(objects, robot.id, cadMassSummary)
+  const principalNames: [string, string, string] = [
+    t('mass.rigidbody.principal1'),
+    t('mass.rigidbody.principal2'),
+    t('mass.rigidbody.principal3')
+  ]
 
   const update = (patch: Partial<RigidbodySettings>): void => {
     const next = cleanRigidbody({ ...settings, ...patch })
@@ -56,11 +58,13 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
       </header>
       <div className="hw-row">
         <span className="hw-row-label">{t('mass.rigidbody.mass')}</span>
-        <span className="hw-static">{mass ? formatMass(mass.mass, lengthUnit) : '—'}</span>
+        <span className="hw-static">
+          {mass ? formatMass(mass.mass, lengthUnit) : t('mass.rigidbody.massNone')}
+        </span>
       </div>
       {mass && (
         <p className="hw-derived">
-          {robotMassBreakdown(t, mass, lengthUnit)}
+          {robotMassBreakdown(t, mass, lengthUnit, settings.weighedMass)}
           {mass.scale !== 1 &&
             ` ${t('mass.rigidbody.scaled', { scale: formatNumber(mass.scale, 3) })}`}
         </p>
@@ -125,9 +129,9 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
           />
           <ReadonlyVector
             label={t('mass.rigidbody.principalMoments')}
-            unit="kg·m²"
+            unit={t('mass.rigidbody.inertiaUnit')}
             values={mass.principalMoments.map(formatInertia) as [string, string, string]}
-            names={PRINCIPAL_NAMES}
+            names={principalNames}
             title={t('mass.rigidbody.principalMomentsHint')}
           />
         </>
@@ -139,7 +143,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
               key={index}
               className={warning.kind === 'pending' ? 'hw-issue is-info' : 'hw-issue is-warning'}
             >
-              {warningText(t, warning, lengthUnit)}
+              {warningText(t, warning, lengthUnit, settings.weighedMass)}
             </li>
           ))}
         </ul>

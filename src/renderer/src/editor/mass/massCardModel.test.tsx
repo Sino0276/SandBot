@@ -22,9 +22,11 @@ import {
   formatInertia,
   inheritedInfill,
   inheritedMaterial,
+  infillReachesPrinted,
   inheritedOptionText,
   localCenterOfMass,
   massCardView,
+  ownsDatasheetMass,
   parseInfillPercent,
   robotMassBreakdown,
   sourceText,
@@ -32,7 +34,8 @@ import {
   type MassDescribers
 } from './massCardModel'
 import RigidbodyCard from './RigidbodyCard'
-import { massModelFor } from './useMassModel'
+import { beginChange, endChange } from '../history'
+import { DRAG_REFRESH_MS, massModelFor } from './useMassModel'
 
 // 질량 모델 계산은 갈래 B가 채운다. 여기서는 정해 둔 가짜 결과로 카드의 문구와 입력만 본다.
 const fake = vi.hoisted(() => ({
@@ -208,30 +211,83 @@ describe('질량 카드 보기 계산', () => {
 
   it('채움률 칸은 출력 재질(자기·상속·로봇 기본)이거나 이미 정했을 때, 채움률도 위에서 물려받는다', () => {
     let objects = scene()
-    expect(massCardView(objects, 'lift', undefined).showInfill).toBe(false)
+    expect(massCardView(objects, 'lift', {}).showInfill).toBe(false)
     objects = { ...objects, lift: { ...objects.lift, mass: { material: 'petg', infill: 0.4 } } }
-    expect(massCardView(objects, 'lift', undefined).showInfill).toBe(true)
+    expect(massCardView(objects, 'lift', {}).showInfill).toBe(true)
     objects = { ...objects, bolt: { ...objects.bolt, mass: {} } }
-    const bolt = massCardView(objects, 'bolt', undefined)
+    const bolt = massCardView(objects, 'bolt', {})
     expect(bolt.material).toBe('petg')
     expect(bolt.showInfill).toBe(true)
     expect(bolt.inheritedInfill).toBe(0.4)
     expect(inheritedInfill(objects, 'plate')).toBeUndefined()
     // 출력 재질이 아니어도 정해 둔 채움률은 지울 수 있게 보인다
     objects = { ...objects, plate: { ...objects.plate, mass: { infill: 0.2 } } }
-    expect(massCardView(objects, 'plate', undefined).showInfill).toBe(true)
+    expect(massCardView(objects, 'plate', {}).showInfill).toBe(true)
   })
 
-  it('무게중심 칸은 질량을 덮어썼거나 이 오브젝트의 데이터시트 질량이거나 이미 정했을 때', () => {
+  it('이름 규칙이 출력 재질로 정한 파트(자기·하위)에도 채움률 칸, 채움률을 다시 정한 하위는 빼고', () => {
     const objects = scene()
-    expect(massCardView(objects, 'battery', undefined).showCenterOfMass).toBe(true)
-    expect(massCardView(objects, 'lift', objectMass({})).showCenterOfMass).toBe(false)
+    const describers: MassDescribers = {
+      ...DESCRIBERS,
+      nameRuleMaterial: (rule) => (rule === 'pla' ? 'pla' : undefined)
+    }
+    const pla = objectMass({ source: 'nameRule', detail: 'pla' })
+    // 'PLA bracket' 같은 파트: 자기 결과가 이름 규칙 PLA
+    expect(massCardView(objects, 'plate', { plate: pla }, describers).showInfill).toBe(true)
+    expect(massCardView(objects, 'plate', { plate: pla }).showInfill).toBe(false)
+    // 그룹: 하위 파트가 이름 규칙 PLA면 그룹의 채움률이 닿는다(그룹 결과의 출처가 다른 것이어도)
+    const results = { lift: objectMass({}), bolt: pla }
+    expect(massCardView(objects, 'lift', results, describers).showInfill).toBe(true)
+    expect(infillReachesPrinted(objects, 'cad', results, describers)).toBe(true)
+    // 하위가 자기 채움률을 정했으면 위 채움률은 닿지 않는다
+    const own = { ...objects, bolt: { ...objects.bolt, mass: { infill: 0.3 } } }
+    expect(infillReachesPrinted(own, 'lift', results, describers)).toBe(false)
+    // 재질 상속·로봇 기본의 출력 재질도 결과로 본다
+    expect(
+      infillReachesPrinted(objects, 'cad', {
+        plate: objectMass({ source: 'default', detail: 'petg', inheritedFrom: 'R' })
+      })
+    ).toBe(true)
+    expect(infillReachesPrinted(objects, 'cad', { plate: objectMass({}) })).toBe(false)
+  })
+
+  it('무게중심 칸은 질량을 덮어썼거나 이 오브젝트가 데이터시트 질량을 정했거나 이미 정했을 때', () => {
+    const objects = scene()
+    expect(massCardView(objects, 'battery', {}).showCenterOfMass).toBe(true)
+    expect(massCardView(objects, 'lift', { lift: objectMass({}) }).showCenterOfMass).toBe(false)
     const cots = objectMass({ source: 'cots', detail: 'pinpoint' })
-    expect(massCardView(objects, 'lift', cots).showCenterOfMass).toBe(true)
+    // 형상 없이(점질량) 또는 자기 형상에 정한 데이터시트 질량
+    expect(massCardView(objects, 'bolt', { bolt: cots }).showCenterOfMass).toBe(true)
+    expect(massCardView(objects, 'battery', { battery: cots }).showCenterOfMass).toBe(true)
     // 위 오브젝트의 데이터시트 질량에 덮인 파트에는 쓰이지 않는다
-    expect(massCardView(objects, 'lift', { ...cots, inheritedFrom: 'cad' }).showCenterOfMass).toBe(
-      false
-    )
+    expect(
+      massCardView(objects, 'bolt', { bolt: { ...cots, inheritedFrom: 'cad' } }).showCenterOfMass
+    ).toBe(false)
+  })
+
+  it('그룹의 결과가 데이터시트여도 그것을 하위 파트가 정했으면 무게중심 칸이 없다', () => {
+    let objects = scene()
+    objects = { ...objects, lift: { ...objects.lift, mass: {} } }
+    const motor = objectMass({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+    // 하위(bolt)가 정한 모터 질량: 질량 모델은 그룹 결과의 inheritedFrom도 null로 둔다(하위가 정한 것)
+    const childOwned = { lift: motor, bolt: motor }
+    expect(ownsDatasheetMass(objects, 'lift', childOwned)).toBe(false)
+    expect(massCardView(objects, 'lift', childOwned).showCenterOfMass).toBe(false)
+    expect(ownsDatasheetMass(objects, 'bolt', childOwned)).toBe(true)
+    // 그룹이 정한 데이터시트 질량은 하위 파트가 그룹에게서 받는다
+    const groupOwned = { lift: motor, bolt: { ...motor, inheritedFrom: 'lift' } }
+    expect(ownsDatasheetMass(objects, 'lift', groupOwned)).toBe(true)
+    expect(massCardView(objects, 'lift', groupOwned).showCenterOfMass).toBe(true)
+    // 하위 출처가 더 무거워 그룹 결과가 다른 출처여도 그룹이 정한 것은 안다
+    const heavier = { lift: objectMass({ source: 'override', detail: '' }), bolt: groupOwned.bolt }
+    expect(ownsDatasheetMass(objects, 'lift', heavier)).toBe(true)
+    // 이미 정했지만 쓰이지 않는 무게중심은 지울 수 있게 칸을 보이고 알린다
+    objects = { ...objects, lift: { ...objects.lift, mass: { centerOfMass: [0.5, 0, 0] } } }
+    const unused = massCardView(objects, 'lift', childOwned)
+    expect(unused.showCenterOfMass).toBe(true)
+    expect(unused.centerOfMassUnused).toBe(true)
+    expect(massCardView(objects, 'lift', groupOwned).centerOfMassUnused).toBe(false)
+    expect(massCardView(scene(), 'battery', {}).centerOfMassUnused).toBe(false)
   })
 
   it('무게중심 [자동]을 끄면 계산한 무게중심(로봇 좌표)을 이 오브젝트 로컬로 옮겨 처음 값으로 쓴다', () => {
@@ -329,7 +385,7 @@ describe('질량 출처 문구', () => {
   it('재질 고르기의 빈 값: 위 오브젝트 → 이름 규칙(모델 결과) → 로봇 기본 → 기본', () => {
     let objects = scene()
     const option = (id: string, result?: ObjectMass): string =>
-      inheritedOptionText(t, objects, massCardView(objects, id, result))
+      inheritedOptionText(t, objects, massCardView(objects, id, result ? { [id]: result } : {}))
     expect(option('bolt')).toBe('상속: 강철 (Lift)')
     expect(option('plate')).toBe('상속: 알루미늄 6061 (로봇 기본)')
     expect(option('plate', objectMass({ source: 'nameRule', detail: 'screw' }))).toBe(
@@ -338,6 +394,10 @@ describe('질량 출처 문구', () => {
     // 위 오브젝트가 정한 재질은 이름 규칙보다 먼저다
     expect(option('bolt', objectMass({ source: 'nameRule', detail: 'screw' }))).toBe(
       '상속: 강철 (Lift)'
+    )
+    // 하위가 있는 오브젝트의 결과 출처는 하위 중 가장 큰 것이라 이름 규칙을 물려받는다고 하지 않는다
+    expect(option('cad', objectMass({ source: 'nameRule', detail: 'screw' }))).toBe(
+      '상속: 알루미늄 6061 (로봇 기본)'
     )
     expect(option('box')).toBe('상속: 알루미늄 6061 (기본)')
     objects = { ...objects, R: { ...objects.R, rigidbody: { defaultMaterial: 'carbonFiber' } } }
@@ -350,13 +410,28 @@ describe('질량 출처 문구', () => {
       `(${formatMass(15, 'mm')})이 저울 무게(${formatMass(12, 'mm')})`
     )
     expect(warningText(t, { kind: 'defaultMass' }, 'mm')).toContain(
-      `기본값 ${formatMass(13.6, 'mm')}(30 lb`
+      `기본값 ${formatMass(13.6, 'mm')}(FTC 대회 로봇에 흔한 무게)`
     )
+    // 저울 무게가 있으면 기본값이 아니라 그 무게를 외곽 상자에 둔다고 알린다
+    const weighed = warningText(t, { kind: 'defaultMass' }, 'in', 20)
+    expect(weighed).toContain(`저울 무게 ${formatMass(20, 'in')}를 로봇 외곽 상자에`)
+    expect(weighed).not.toContain(formatMass(13.6, 'in'))
+    expect(weighed).not.toContain('저울 무게를 넣거나')
     expect(warningText(t, { kind: 'pending', meshes: 3 }, 'mm')).toBe(
       '형상을 읽는 중인 메시 3개는 아직 계산에 들어가지 않았습니다.'
     )
     expect(robotMassBreakdown(t, robotMass(), 'cm')).toBe(
       `직접 입력·데이터시트 ${formatMass(2.1, 'cm')} + 추정 ${formatMass(10.2, 'cm')}`
+    )
+    // 질량 정보 없음 대체값은 출처별 합계("추정")가 아니다
+    const fallback = robotMass({
+      fixedMass: 0,
+      estimatedMass: 20,
+      warnings: [{ kind: 'defaultMass' }]
+    })
+    expect(robotMassBreakdown(t, fallback, 'cm')).toBe('기본값 (질량 정보 없음)')
+    expect(robotMassBreakdown(t, fallback, 'cm', 20)).toBe(
+      '저울 무게 (형상 없음, 외곽 상자로 근사)'
     )
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
@@ -397,6 +472,41 @@ describe('질량 모델 기억', () => {
     expect(fake.calls).toBe(before + 2)
     massModelFor(scene(), 8)
     expect(fake.calls).toBe(before + 3)
+  })
+
+  it('핸들 드래그(묶는 중인 변경) 동안에는 간격마다만 다시 계산하고, 끝나면 마지막 문서로 계산한다', () => {
+    vi.useFakeTimers()
+    try {
+      const start = 10_000
+      massModelFor(scene(), 1, start)
+      const before = fake.calls
+      beginChange()
+      // 첫 프레임은 바로 계산한다(마지막 계산이 간격보다 오래전)
+      massModelFor(scene(), 1, start + DRAG_REFRESH_MS)
+      expect(fake.calls).toBe(before + 1)
+      // 간격 안의 프레임은 이전 결과
+      const stale = fake.model
+      fake.model = { objects: { x: objectMass({}) }, robots: {} }
+      expect(massModelFor(scene(), 1, start + DRAG_REFRESH_MS + 16)).toBe(stale)
+      expect(massModelFor(scene(), 2, start + DRAG_REFRESH_MS + 32)).toBe(stale)
+      expect(fake.calls).toBe(before + 1)
+      // 간격이 지나면 다시 계산한다
+      expect(massModelFor(scene(), 2, start + 2 * DRAG_REFRESH_MS)).toBe(fake.model)
+      expect(fake.calls).toBe(before + 2)
+      massModelFor(scene(), 2, start + 2 * DRAG_REFRESH_MS + 16)
+      expect(fake.calls).toBe(before + 2)
+      endChange()
+      // 묶음이 닫히면 간격 안이어도 바로 계산하고, 같은 문서는 다시 계산하지 않는다
+      const last = scene()
+      expect(massModelFor(last, 2, start + 2 * DRAG_REFRESH_MS + 20)).toBe(fake.model)
+      expect(fake.calls).toBe(before + 3)
+      massModelFor(last, 2, start + 2 * DRAG_REFRESH_MS + 30)
+      expect(fake.calls).toBe(before + 3)
+    } finally {
+      endChange()
+      vi.runAllTimers()
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -445,6 +555,19 @@ describe('질량 카드 그리기', () => {
     expect(html).toMatch(/<input type="checkbox"\/>자동/)
     expect(html).toContain('value="10.0"')
     expect(html).toContain('아직 계산한 질량이 없습니다.')
+  })
+
+  it('하위 파트가 정한 데이터시트 질량은 그룹 카드에 무게중심 칸이 없고, 정해 둔 것은 쓰이지 않는다고 알린다', () => {
+    const objects = scene()
+    const motor = objectMass({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+    fake.model = { objects: { lift: motor, bolt: motor }, robots: {} }
+    const lift: SceneObject = { ...objects.lift, mass: {} }
+    const html = render({ ...objects, lift }, () => <MassCard object={lift} />)
+    expect(html).not.toContain('자동')
+    const set: SceneObject = { ...objects.lift, mass: { centerOfMass: [0.5, 0, 0] } }
+    const unused = render({ ...objects, lift: set }, () => <MassCard object={set} />)
+    expect(unused).toMatch(/<input type="checkbox"\/>자동/)
+    expect(unused).toContain('이 무게중심은 지금 쓰이지 않습니다.')
   })
 
   it('Add Component에 "시뮬레이션 › 질량", 로봇·이미 있는 오브젝트는 비활성, 카드가 없으면 추정 한 줄', () => {
@@ -523,6 +646,26 @@ describe('질량 카드 그리기', () => {
       robots: { R: robotMass({ warnings: [{ kind: 'defaultMass' }] }) }
     }
     const fallback = render(scene(), () => <RigidbodyCard robot={objects.R} />)
-    expect(fallback).toContain(`질량 정보가 없어 기본값 ${formatMass(13.6, 'mm')}(30 lb`)
+    expect(fallback).toContain(`질량 정보가 없어 기본값 ${formatMass(13.6, 'mm')}(FTC`)
+    expect(fallback).toContain('기본값 (질량 정보 없음)')
+    expect(fallback).not.toContain('+ 추정')
+    // 형상 없는 로봇에 저울 무게를 넣으면 그 무게를 쓴다고 알린다(질량 모델은 defaultMass 경고를 그대로 낸다)
+    const R: SceneObject = { ...objects.R, rigidbody: { weighedMass: 20 } }
+    fake.model = {
+      objects: {},
+      robots: {
+        R: robotMass({
+          mass: 20,
+          fixedMass: 0,
+          estimatedMass: 20,
+          warnings: [{ kind: 'defaultMass' }]
+        })
+      }
+    }
+    const weighed = render({ ...scene(), R }, () => <RigidbodyCard robot={R} />)
+    expect(weighed).toContain(formatMass(20, 'mm'))
+    expect(weighed).toContain('저울 무게 (형상 없음, 외곽 상자로 근사)')
+    expect(weighed).toContain(`저울 무게 ${formatMass(20, 'mm')}를 로봇 외곽 상자에`)
+    expect(weighed).not.toContain(formatMass(13.6, 'mm'))
   })
 })

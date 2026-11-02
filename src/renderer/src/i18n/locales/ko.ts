@@ -1379,6 +1379,8 @@ const ko = {
     massInputHint: '단위를 붙여 입력할 수 있습니다 (예: 437g, 1.2kg, 3lb, 8oz).',
     centerOfMass: '무게중심',
     centerOfMassAuto: '자동',
+    centerOfMassUnused:
+      '이 무게중심은 지금 쓰이지 않습니다. 질량을 직접 입력했거나 이 오브젝트에 데이터시트 질량이 있을 때만 씁니다.',
     centerOfMassHint:
       '직접 입력한 질량(또는 데이터시트 질량)의 무게중심입니다. 이 오브젝트 기준(로컬) 값이고, 자동이면 하위 형상의 무게중심입니다.',
     result: '결과: {{mass}} · {{source}}',
@@ -1410,14 +1412,19 @@ const ko = {
       scaleImpossible:
         '직접 입력·데이터시트 질량({{fixed}})이 저울 무게({{weighed}}) 이상이거나 추정할 형상이 없어 저울 무게에 맞추지 않았습니다.',
       defaultMass:
-        '질량 정보가 없어 기본값 {{mass}}(30 lb, FTC 대회 로봇에 흔한 무게)을 씁니다. 저울 무게를 넣거나 CAD를 불러오세요.',
+        '질량 정보가 없어 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게)을 씁니다. 저울 무게를 넣거나 CAD를 불러오세요.',
+      defaultMassWeighed:
+        '형상 정보가 없어 저울 무게 {{mass}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). CAD를 불러오면 형상으로 나눕니다.',
       pending: '형상을 읽는 중인 메시 {{count}}개는 아직 계산에 들어가지 않았습니다.'
     },
     rigidbody: {
       title: 'Rigidbody',
       simulationOnly: '시뮬레이터',
       mass: '질량',
+      massNone: '—',
       breakdown: '직접 입력·데이터시트 {{fixed}} + 추정 {{estimated}}',
+      breakdownDefault: '기본값 (질량 정보 없음)',
+      breakdownWeighedBox: '저울 무게 (형상 없음, 외곽 상자로 근사)',
       scaled: '· 추정에 ×{{scale}} (저울 무게에 맞춤)',
       weighed: '저울 무게',
       weighedHint:
@@ -1431,6 +1438,10 @@ const ko = {
       centerOfMassHint:
         '로봇 원점(중심 바닥)에서 본 무게중심입니다. X 앞 · Y 왼쪽 · Z 위. 계산한 값이라 고칠 수 없습니다.',
       principalMoments: '주관성',
+      principal1: 'I₁',
+      principal2: 'I₂',
+      principal3: 'I₃',
+      inertiaUnit: 'kg·m²',
       principalMomentsHint: '무게중심 기준 관성 행렬의 주값(kg·m²)입니다. 계산한 값입니다.',
       openMeshes: '열린 메시 {{count}}개 (부피의 {{percent}}%, 근사)',
       surfaceMeshes: '표면 메시 {{count}}개 (질량 0)',
