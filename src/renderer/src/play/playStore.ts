@@ -506,6 +506,20 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         linkWarningLines(event.warnings).map((line) => consoleEntry(line.body, null, line.level))
       )
     case 'simNotice': {
+      // Road Runner 튜닝 결과는 성공 안내이고 파일 관리자에서 보일 수 있다(그 실행의 프로젝트에서만)
+      if (event.code === 'rrTuningSaved')
+        return withEntries(data, [
+          consoleEntry(
+            {
+              type: 'rrTuning',
+              path: event.params.path ?? '',
+              file: event.params.file ?? null
+            },
+            event.tNanos,
+            'info',
+            run.root
+          )
+        ])
       // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다)
       const key: ConsoleNoticeKey = `sim.${event.code}`
       return withEntries(data, [

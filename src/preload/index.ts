@@ -47,6 +47,7 @@ const api: SandbotApi = {
   listRegisteredOpModes: (root) => ipcRenderer.invoke(IPC.listRegisteredOpModes, root),
   grantCodeTrust: (root) => ipcRenderer.invoke(IPC.grantCodeTrust, root),
   readTeamCodeAsset: (root, path) => ipcRenderer.invoke(IPC.readTeamCodeAsset, root, path),
+  revealSimFile: (root, file) => ipcRenderer.invoke(IPC.revealSimFile, root, file),
   playInit: (request) => ipcRenderer.invoke(IPC.playInit, request),
   playCommand: (command) => ipcRenderer.send(IPC.playCommand, command),
   playGamepads: (gamepads) => ipcRenderer.send(IPC.playGamepads, gamepads),

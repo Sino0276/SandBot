@@ -352,7 +352,8 @@ export type PlayEvent =
 // - sharedEncoderMode: 데드휠과 포트를 함께 쓰는 모터를 엔코더 모드로 돌린다(실제로는 포드 엔코더로 제어되지만
 //   시뮬레이터는 축 엔코더로 제어한다고 가정), params.device
 // - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
-// - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path)
+// - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path, 호스트가 더한
+//   params.file: 모의 저장소 안의 절대 경로. 모의 저장소 밖을 가리키는 path면 없다)
 export type SimNoticeCode = 'sharedEncoderMode' | 'worldError' | SidecarNoticeCode
 
 export type { GamepadState }

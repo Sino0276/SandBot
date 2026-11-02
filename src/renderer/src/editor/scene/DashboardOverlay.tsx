@@ -11,6 +11,10 @@ import {
   type Group,
   type Object3D
 } from 'three'
+import type { ReadTeamCodeAssetResult } from '../../../../shared/ipc'
+import { MAX_TEAMCODE_ASSET_BYTES } from '../../../../shared/teamCodeAssets'
+import { ipcErrorDetail } from '../../java/ipcError'
+import type { ConsoleNoticeKey } from '../../play/consoleModel'
 import {
   apply,
   interpretDashOps,
@@ -147,49 +151,126 @@ function textEntry(run: TextRun): TextEntry | null {
 
 type ImageEntry = { status: 'loading' | 'ready' | 'failed'; texture: Texture | null }
 
-// 프로젝트·세션마다의 그림 텍스처(패킷마다 다시 읽지 않는다). 다른 프로젝트를 열면 지운다.
-const images = new Map<string, ImageEntry>()
-let imageScope = ''
-
-function clearImages(): void {
-  for (const entry of images.values()) entry.texture?.dispose()
-  images.clear()
+type ImageFailure = {
+  code: Extract<ReadTeamCodeAssetResult, { ok: false }>['code']
+  detail: string
 }
 
-function imageTexture(root: string, scope: string, path: string, onLoaded: () => void): ImageEntry {
-  if (imageScope !== scope) {
-    clearImages()
-    imageScope = scope
+const FAILURE_NOTICES = {
+  missing: 'dashImageMissing',
+  notAllowed: 'dashImageNotAllowed',
+  tooLarge: 'dashImageTooLarge',
+  failed: 'dashImageFailed'
+} as const satisfies Record<ImageFailure['code'], ConsoleNoticeKey>
+
+// 그림 텍스처는 프로젝트 세션·실행(INIT)마다 한 번 읽는다(패킷마다 다시 읽지 않는다). 범위가 바뀌면 지우고 다시 읽어,
+// 팀이 그림을 더하거나 고친 뒤 다시 INIT하면 보인다. 읽지 못한 그림은 창 포커스 때도 다시 읽고(다른 앱에서 고치고
+// 돌아옴), 이유는 범위마다 그림 하나에 한 번 Console 경고로 알린다.
+const images = new Map<string, ImageEntry>()
+// 이 범위에서 읽지 못했다고 알린 그림
+const reported = new Set<string>()
+let imageScope = ''
+
+const imageScopeOf = (root: string | null, session: number, runId: string | null): string =>
+  `${root}\u0000${session}\u0000${runId ?? ''}`
+
+function enterImageScope(scope: string): void {
+  if (imageScope === scope) return
+  for (const entry of images.values()) entry.texture?.dispose()
+  images.clear()
+  reported.clear()
+  imageScope = scope
+}
+
+// 읽지 못한 그림을 잊어 다음 그리기에서 다시 읽게 한다(알림은 범위마다 한 번이라 다시 하지 않는다). 잊은 것이 있으면 true.
+function forgetFailedImages(): boolean {
+  let forgot = false
+  for (const [path, entry] of images)
+    if (entry.status === 'failed') {
+      images.delete(path)
+      forgot = true
+    }
+  return forgot
+}
+
+function reportImageFailure(path: string, failure: ImageFailure, tNanos: number): void {
+  if (reported.has(path)) return
+  reported.add(path)
+  usePlayStore.getState().addConsole(
+    {
+      type: 'notice',
+      key: FAILURE_NOTICES[failure.code],
+      params: {
+        path,
+        detail: failure.detail,
+        max: MAX_TEAMCODE_ASSET_BYTES / (1024 * 1024)
+      }
+    },
+    tNanos
+  )
+}
+
+// 그림 하나를 읽어 entry를 채운다. 읽지 못하면 그 이유를 돌려준다.
+async function loadImage(
+  root: string,
+  path: string,
+  entry: ImageEntry
+): Promise<ImageFailure | null> {
+  let result: ReadTeamCodeAssetResult
+  try {
+    result = await window.api.readTeamCodeAsset(root, path)
+  } catch (error) {
+    result = { ok: false, code: 'failed', detail: ipcErrorDetail(error) }
   }
+  if (!result.ok) return { code: result.code, detail: result.detail }
+  let bitmap: ImageBitmap
+  try {
+    // Blob → ImageBitmap은 URL을 쓰지 않아 CSP(img-src)와 관계없다
+    // BlobPart 형식은 ArrayBuffer 바탕만 받으므로 복사한다(그림 하나라 비용이 작다)
+    const bytes = new Uint8Array(result.bytes)
+    // 곱하지 않은 alpha로 읽는다(three ImageBitmapLoader의 기본과 같다). 기본(premultiply)은 RGB에 alpha를 곱해 두는데
+    // WebGL은 ImageBitmap에 UNPACK_PREMULTIPLY_ALPHA를 적용하지 않고 재질은 곱하지 않은 alpha로 섞으므로, 반투명
+    // 픽셀이 Dashboard 캔버스보다 어두워진다.
+    bitmap = await createImageBitmap(new Blob([bytes], { type: result.mime }), {
+      premultiplyAlpha: 'none'
+    })
+  } catch (error) {
+    // 머리는 그림이지만 풀 수 없다(깨진 파일 등)
+    return { code: 'failed', detail: error instanceof Error ? error.message : String(error) }
+  }
+  if (images.get(path) !== entry) {
+    bitmap.close()
+    return null
+  }
+  const texture = new Texture(bitmap)
+  texture.colorSpace = SRGBColorSpace
+  // ImageBitmap은 flipY를 받지 않는다(UV가 왼쪽 위 원점이다)
+  texture.flipY = false
+  texture.needsUpdate = true
+  entry.texture = texture
+  return null
+}
+
+// 범위의 그림 텍스처(처음이면 읽기 시작한다). 다 읽으면(읽지 못해도) onLoaded. tNanos는 알림에 붙는 가상 시간이다.
+function imageTexture(
+  root: string,
+  scope: string,
+  path: string,
+  tNanos: number,
+  onLoaded: () => void
+): ImageEntry {
+  enterImageScope(scope)
   const existing = images.get(path)
   if (existing) return existing
   const entry: ImageEntry = { status: 'loading', texture: null }
   images.set(path, entry)
-  void (async () => {
-    try {
-      const result = await window.api.readTeamCodeAsset(root, path)
-      if (!result.ok) throw new Error(result.detail)
-      // Blob → ImageBitmap은 URL을 쓰지 않아 CSP(img-src)와 관계없다
-      // BlobPart 형식은 ArrayBuffer 바탕만 받으므로 복사한다(그림 하나라 비용이 작다)
-      const bytes = new Uint8Array(result.bytes)
-      const bitmap = await createImageBitmap(new Blob([bytes], { type: result.mime }))
-      if (images.get(path) !== entry) {
-        bitmap.close()
-        return
-      }
-      const texture = new Texture(bitmap)
-      texture.colorSpace = SRGBColorSpace
-      // ImageBitmap은 flipY를 받지 않는다(UV가 왼쪽 위 원점이다)
-      texture.flipY = false
-      texture.needsUpdate = true
-      entry.texture = texture
-      entry.status = 'ready'
-    } catch (error) {
-      console.warn('Dashboard 그림을 읽지 못했다', path, error)
-      entry.status = 'failed'
-    }
-    if (images.get(path) === entry) onLoaded()
-  })()
+  void loadImage(root, path, entry).then((failure) => {
+    // 그사이 범위가 바뀌었거나 다시 읽기로 잊은 그림이다
+    if (images.get(path) !== entry) return
+    entry.status = failure ? 'failed' : 'ready'
+    if (failure) reportImageFailure(path, failure, tNanos)
+    onLoaded()
+  })
   return entry
 }
 
@@ -208,14 +289,22 @@ function DashboardOverlay(): React.JSX.Element | null {
     [overlay]
   )
 
-  // 다른 프로젝트를 열면 그림 텍스처를 버린다
+  const scope = imageScopeOf(root, session, overlay?.runId ?? null)
+  const tNanos = overlay?.tNanos ?? 0
+
+  // 다른 프로젝트를 열거나 INIT으로 오버레이가 지워지면 그림 텍스처를 버린다(새 실행은 다시 읽는다)
+  useEffect(() => enterImageScope(scope), [scope])
+
+  // 창으로 돌아오면 읽지 못한 그림을 다시 읽는다(Android Studio·그림 편집기에서 넣거나 고치고 돌아옴)
   useEffect(() => {
-    const scope = `${root}\u0000${session}`
-    if (imageScope !== scope) {
-      clearImages()
-      imageScope = scope
+    if (typeof window === 'undefined') return
+    const target = window
+    const onFocus = (): void => {
+      if (forgetFailedImages()) setImageRevision((revision) => revision + 1)
     }
-  }, [root, session])
+    target.addEventListener('focus', onFocus)
+    return () => target.removeEventListener('focus', onFocus)
+  }, [])
 
   // 글자 텍스처는 오버레이가 바뀌어도 같은 글자면 다시 쓰고, 내려갈 때 해제한다(StrictMode가 다시 붙이면 새로 만든다)
   useEffect(() => {
@@ -282,7 +371,7 @@ function DashboardOverlay(): React.JSX.Element | null {
         }
         case 'image': {
           if (!root) break
-          const entry = imageTexture(root, `${root}\u0000${session}`, run.path, () =>
+          const entry = imageTexture(root, scope, run.path, tNanos, () =>
             setImageRevision((revision) => revision + 1)
           )
           if (!entry.texture) break
@@ -307,7 +396,7 @@ function DashboardOverlay(): React.JSX.Element | null {
       for (const geometry of geometries) geometry.dispose()
       invalidate()
     }
-  }, [runs, root, session, imageRevision, invalidate])
+  }, [runs, root, scope, tNanos, imageRevision, invalidate])
 
   return <group ref={group} />
 }

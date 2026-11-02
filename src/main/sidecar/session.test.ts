@@ -1,3 +1,4 @@
+import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { DashConfigNode } from '../../shared/dashboard'
 import type { PlayEvent, SimNoticeCode } from '../../shared/play'
@@ -1140,13 +1141,55 @@ describe('SidecarSession FTC Dashboard', () => {
     proc.line({ type: 'notice', tNanos: 8, code: 'rrTuningSaved', params: { path: 'b.json' } })
     expect(of('simNotice').map((n) => [n.tNanos, n.code, n.params])).toEqual([
       [5, 'dashCamera', {}],
-      [7, 'rrTuningSaved', { path: 'a.json' }],
-      [8, 'rrTuningSaved', { path: 'b.json' }]
+      // Road Runner 튜닝 결과는 모의 저장소(RunRequest.firstFolder)의 절대 경로를 더한다(Console이 보이고 연다)
+      [7, 'rrTuningSaved', { path: 'a.json', file: join(REQUEST.firstFolder, 'a.json') }],
+      [8, 'rrTuningSaved', { path: 'b.json', file: join(REQUEST.firstFolder, 'b.json') }]
     ])
     const kinds = events
       .filter((e) => e.type === 'log' || e.type === 'simNotice')
       .map((e) => e.type)
     expect(kinds[0]).toBe('log')
+  })
+
+  it('모의 저장소 밖을 가리키는 Road Runner 튜닝 결과 경로에는 절대 경로를 더하지 않는다', () => {
+    const { proc, of } = setup()
+    boot(proc)
+    const tuning = 'RoadRunner/tuning/forward-ramp/1.json'
+    for (const path of [tuning, '../x.json', '/etc/passwd', 'a/../../b.json', 'C:\\x.json', ''])
+      proc.line({ type: 'notice', tNanos: 1, code: 'rrTuningSaved', params: { path } })
+    expect(of('simNotice').map((n) => n.params)).toEqual([
+      {
+        path: tuning,
+        file: join(REQUEST.firstFolder, 'RoadRunner', 'tuning', 'forward-ramp', '1.json')
+      },
+      { path: '../x.json' },
+      { path: '/etc/passwd' },
+      { path: 'a/../../b.json' },
+      { path: 'C:\\x.json' },
+      { path: '' }
+    ])
+  })
+
+  it('사이드카가 보낸 file은 믿지 않는다(받지 않는 경로면 file 없이, 받는 경로면 메인이 만든 것)', () => {
+    const { proc, of } = setup()
+    boot(proc)
+    const tuning = 'RoadRunner/tuning/accel/2.json'
+    proc.line({
+      type: 'notice',
+      tNanos: 1,
+      code: 'rrTuningSaved',
+      params: { path: '../x.json', file: '/home/user/.ssh/id_rsa' }
+    })
+    proc.line({
+      type: 'notice',
+      tNanos: 2,
+      code: 'rrTuningSaved',
+      params: { path: tuning, file: '/elsewhere/2.json' }
+    })
+    expect(of('simNotice').map((n) => n.params)).toEqual([
+      { path: '../x.json' },
+      { path: tuning, file: join(REQUEST.firstFolder, 'RoadRunner', 'tuning', 'accel', '2.json') }
+    ])
   })
 
   it('Config 탭의 값은 다음 틱 답의 configSet에 차례로 싣고, 일시 정지 중이면 답할 때 싣는다', () => {

@@ -100,6 +100,9 @@ const ko = {
     scriptLaunchFailed:
       '외부 스크립트 편집기로 {{fileName}}을(를) 열지 못했습니다 ({{detail}}). 툴바의 [환경 설정] > 외부 도구에서 편집기를 확인하세요.',
     scriptMissing: '{{fileName}}이(가) TeamCode에 없습니다. 인스펙터에서 연결을 확인하세요.',
+    // Console의 Road Runner 튜닝 결과 줄을 파일 관리자에서 보이지 못했다(모의 저장소의 파일)
+    simFileMissing: '{{fileName}}을(를) 찾지 못했습니다. 지웠거나 옮겼을 수 있습니다.',
+    simFileRevealFailed: '{{fileName}}을(를) 파일 관리자에서 보이지 못했습니다 ({{detail}}).',
     scriptNotAllowed:
       '{{fileName}}은(는) 열 수 없는 경로입니다. TeamCode/src/main/java 안의 Java 파일만 엽니다.',
     // 줄로 열기(사용처·튜닝 값)를 편집기가 받지 못함. 앱을 켠 동안 한 번만 띄운다.
@@ -764,6 +767,11 @@ const ko = {
     noSelection: '항목을 고르면 전체 내용과 스택이 보입니다.',
     openHint: '더블클릭하거나 Enter를 누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
     openLink: '누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
+    // Road Runner 튜닝 결과 줄(simNotice rrTuningSaved): 파일 관리자에서 보이기
+    revealFile: '폴더에서 보기',
+    revealHint: '더블클릭하거나 Enter를 누르면 파일 관리자에서 이 파일을 보입니다.',
+    rrTuningHint:
+      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 운동학 모델에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
     diagnosticKind: {
       error: '오류',
       warning: '경고',
@@ -817,6 +825,16 @@ const ko = {
       registeredFailed: '등록기 OpMode 목록을 읽지 못했습니다: {{reason}} ({{detail}})',
       registeredCompileFailed:
         '등록기(@OpModeRegistrar) 파일을 컴파일하지 못해 등록기 OpMode를 읽지 못했습니다(오류 {{count}}개). 진단을 더블클릭하면 그 줄을 엽니다.',
+      // 씬 뷰 Dashboard 오버레이 그림(drawImage '/images/…')을 읽지 못했다(실행마다 그림 하나에 한 번). 고치고 SandBot
+      // 창으로 돌아오거나 다시 INIT하면 다시 읽는다.
+      dashImageMissing:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 없어 그리지 않습니다. 파일을 넣고 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
+      dashImageNotAllowed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}은(는) 보통 파일이 아니거나 assets 밖을 가리켜 읽지 않습니다 ({{detail}}).',
+      dashImageTooLarge:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 크기 한도({{max}} MB)를 넘어 그리지 않습니다 ({{detail}}).',
+      dashImageFailed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}을(를) 읽지 못해 그리지 않습니다 ({{detail}}). 고친 뒤 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
       // 시뮬레이터 안내(simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
@@ -825,8 +843,8 @@ const ko = {
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
-        rrTuningSaved:
-          'Road Runner 튜닝 결과를 모의 저장소의 {{path}}에 저장했습니다. 회귀 웹 페이지는 SandBot에서 지원하지 않으니 그 파일을 Road Runner 튜닝 페이지에서 [Browse]로 여세요.'
+        // file은 모의 저장소(userData/sim-files/<프로젝트>/FIRST, 로봇의 /sdcard/FIRST) 안의 절대 경로
+        rrTuningSaved: 'Road Runner 튜닝 결과를 저장했습니다: {{file}}'
       },
       // 라이브러리 의존성 보고(INIT, src/main/libraries). 좌표마다 이유(LibraryReason)로 한 줄.
       library: {
@@ -842,7 +860,7 @@ const ko = {
           '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
         // FTC Dashboard(status replaced): 컴파일은 팀 버전의 실제 jar, 실행은 SandBot 구현
         replaced:
-          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 Config 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
+          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 설정값 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
         // Sloth용 FTC Dashboard(com.acmerobotics.slothboard)
         slothboard:
           '{{coordinate}}: Sloth용 FTC Dashboard는 지원하지 않아 불러오지 않습니다. 원래 FTC Dashboard(com.acmerobotics.dashboard:dashboard)를 쓰세요.',

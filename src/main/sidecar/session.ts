@@ -22,6 +22,7 @@ import {
   type DsEvent,
   type FinishReason,
   type LogMessage,
+  type NoticeMessage,
   type RunRequest,
   type SidecarMessage,
   type TelemetryMessage,
@@ -30,6 +31,7 @@ import {
 import type { SimPose } from '../../shared/sim/worldSpec'
 import type { ProcessExit, SidecarProcess } from './process'
 import { LineSplitter, parseSidecarLine, ProtocolError } from './protocol'
+import { simFilePath } from './simFiles'
 import { EMPTY_WORLD, type SimWorld } from './world'
 
 // 사이드카 실행 하나(호스트 쪽). 사이드카는 가상 시계로 돌고, 가상 시간이 틱 경계를 넘을 때마다 tick을 보내고
@@ -264,6 +266,8 @@ export class SidecarSession {
   private readonly world: SimWorld
   private readonly timeouts: SessionTimeouts
   private readonly splitter = new LineSplitter()
+  // 이 실행의 모의 저장소(RunRequest.firstFolder). 사이드카가 알린 그 안의 상대 경로를 절대 경로로 바꾼다.
+  private readonly firstFolder: string
 
   private phase: PlayPhase = 'preparing'
   private helloSeen = false
@@ -331,6 +335,7 @@ export class SidecarSession {
     private readonly options: SessionOptions
   ) {
     this.runId = options.runId
+    this.firstFolder = request.firstFolder
     this.clock = options.clock ?? systemClock
     this.world = options.world ?? EMPTY_WORLD
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts }
@@ -624,6 +629,18 @@ export class SidecarSession {
     for (const notice of notices) this.simNotice(tick.tNanos, notice.code, notice.params)
   }
 
+  // 사이드카 안내의 매개변수. rrTuningSaved는 모의 저장소 기준 경로(path)에 절대 경로(file)를 더한다: 렌더러는 모의
+  // 저장소가 어디인지 모르고, Console이 그 경로를 보이고 파일 관리자로 연다(revealSimFile이 다시 확인한다). 모의 저장소 밖을
+  // 가리키는 경로면 더하지 않는다.
+  private sidecarNoticeParams(message: NoticeMessage): Record<string, string> {
+    if (message.code !== 'rrTuningSaved') return message.params
+    // file은 메인만 채운다(사이드카가 보낸 file은 믿지 않고 버린다)
+    const { file: _untrusted, ...params } = message.params
+    void _untrusted
+    const file = simFilePath(this.firstFolder, params.path ?? '')
+    return file === null ? params : { ...params, file }
+  }
+
   private simNotice(tNanos: number, code: SimNoticeCode, params: Record<string, string>): void {
     const key = JSON.stringify([code, params])
     if (this.noticeKeys.has(key) || this.noticeKeys.size >= MAX_SIM_NOTICES) return
@@ -790,7 +807,7 @@ export class SidecarSession {
         break
       case 'notice':
         this.observe(message.tNanos)
-        this.simNotice(message.tNanos, message.code, message.params)
+        this.simNotice(message.tNanos, message.code, this.sidecarNoticeParams(message))
         break
       case 'log':
         this.observe(message.tNanos)

@@ -443,6 +443,34 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
       })
     ).toEqual({})
   })
+
+  it('Road Runner 튜닝 결과는 정보 줄이고 메인이 더한 절대 경로와 실행의 프로젝트를 둔다', () => {
+    const file = '/u/sim-files/abc/FIRST/RoadRunner/tuning/forward-ramp/1.json'
+    const next = apply(withRobot(), {
+      type: 'simNotice',
+      runId: 'r1',
+      tNanos: 9,
+      code: 'rrTuningSaved',
+      params: { path: 'RoadRunner/tuning/forward-ramp/1.json', file }
+    })
+    expect(next.entries).toHaveLength(1)
+    expect(next.entries[0]).toMatchObject({
+      type: 'rrTuning',
+      path: 'RoadRunner/tuning/forward-ramp/1.json',
+      file,
+      level: 'info',
+      tNanos: 9,
+      root: withRobot().run!.root
+    })
+    const unknown = apply(withRobot(), {
+      type: 'simNotice',
+      runId: 'r1',
+      tNanos: 9,
+      code: 'rrTuningSaved',
+      params: { path: '../x.json' }
+    })
+    expect(unknown.entries[0]).toMatchObject({ type: 'rrTuning', path: '../x.json', file: null })
+  })
 })
 
 describe('라이브러리 진행·보고·링크 검사', () => {

@@ -10,6 +10,7 @@ import {
   consoleCounts,
   entryDetailLines,
   entryInProject,
+  entryRevealFile,
   entrySummary,
   entryTarget,
   formatCount,
@@ -20,6 +21,7 @@ import {
 import { formatVirtualTime } from '../playFormat'
 import { browserStorage, type ConsoleLevel } from '../playSettings'
 import { usePlayStore } from '../playStore'
+import { revealSimFile } from '../simFiles'
 import { LevelIcon } from './PlayIcons'
 
 const LEVELS: readonly ConsoleLevel[] = ['info', 'warning', 'error']
@@ -28,10 +30,17 @@ const DETAIL_LAYOUT_ID = 'play-console'
 const STICK_PX = 8
 const PAGE = 10
 
-// 지금 프로젝트의 항목만 연다(다른 프로젝트를 연 뒤 남은 항목은 열 곳이 없다)
+// 지금 프로젝트의 항목만 연다(다른 프로젝트를 연 뒤 남은 항목은 열 곳이 없다): 팀 코드 줄은 외부 스크립트 편집기로,
+// 모의 저장소에 남긴 파일(Road Runner 튜닝 결과)은 파일 관리자에서
 const openTarget = (entry: ConsoleEntry): void => {
-  const target = entryTarget(entry, useProjectStore.getState().root)
-  if (target) void openScriptFile(target.path, target.line)
+  const { root } = useProjectStore.getState()
+  const target = entryTarget(entry, root)
+  if (target) {
+    void openScriptFile(target.path, target.line)
+    return
+  }
+  const file = entryRevealFile(entry, root)
+  if (file && root) void revealSimFile(root, file)
 }
 
 type RowProps = {
@@ -40,6 +49,7 @@ type RowProps = {
   selected: boolean
   t: TFunction
   openHint: string
+  revealHint: string
   root: string | null
 }
 
@@ -50,9 +60,11 @@ const ConsoleRow = memo(function ConsoleRow({
   selected,
   t,
   openHint,
+  revealHint,
   root
 }: RowProps): React.JSX.Element {
   const target = entryTarget(entry, root)
+  const reveal = entryRevealFile(entry, root)
   return (
     <div
       id={`console-entry-${entry.id}`}
@@ -67,7 +79,13 @@ const ConsoleRow = memo(function ConsoleRow({
       ]
         .filter(Boolean)
         .join(' ')}
-      title={target ? `${displayJavaPath(target.path)}:${target.line}\n${openHint}` : undefined}
+      title={
+        target
+          ? `${displayJavaPath(target.path)}:${target.line}\n${openHint}`
+          : reveal
+            ? `${reveal}\n${revealHint}`
+            : undefined
+      }
     >
       <LevelIcon level={entry.level} />
       <span className="console-time">
@@ -115,6 +133,7 @@ function ConsoleDetail({ entry }: { entry: ConsoleEntry | null }): React.JSX.Ele
       ? `${t('console.openLink')}\n${t('usages.noLineHint')}`
       : t('console.openLink')
   const target = entryTarget(entry, root)
+  const reveal = entryRevealFile(entry, root)
   const openable = entryInProject(entry, root)
   return (
     <div className="console-detail-text">
@@ -139,13 +158,26 @@ function ConsoleDetail({ entry }: { entry: ConsoleEntry | null }): React.JSX.Ele
           </button>
         </div>
       )}
+      {reveal && (
+        <div className="console-frame">
+          <button
+            type="button"
+            className="panel-button"
+            title={reveal}
+            onClick={() => openTarget(entry)}
+          >
+            {t('console.revealFile')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 // Console(Unity Console): 머리줄(지우기, 실행할 때 지우기, 검색, 로그·경고·오류 개수 토글), 항목 목록, 고른 항목의 전체.
 // 목록은 하나의 탭 멈춤(role="listbox", aria-activedescendant)이고 위/아래·Home/End·PageUp/PageDown으로 고르며,
-// 더블클릭·Enter로 컴파일 진단·오류의 팀 코드 줄을 외부 스크립트 편집기로 연다.
+// 더블클릭·Enter로 컴파일 진단·오류의 팀 코드 줄을 외부 스크립트 편집기로 열고, 실행이 모의 저장소에 남긴 파일(Road
+// Runner 튜닝 결과)은 파일 관리자에서 보인다.
 function ConsoleView(): React.JSX.Element {
   const { t } = useTranslation()
   const entries = usePlayStore((state) => state.entries)
@@ -323,6 +355,7 @@ function ConsoleView(): React.JSX.Element {
                 selected={entry.id === selectedId}
                 t={t}
                 openHint={openHint}
+                revealHint={t('console.revealHint')}
                 root={root}
               />
             ))}

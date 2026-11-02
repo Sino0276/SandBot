@@ -1,4 +1,4 @@
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, shell, type WebContents } from 'electron'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'fs/promises'
 import { join } from 'path'
 import { IPC } from '../../shared/ipc'
@@ -15,6 +15,7 @@ import { RegisteredOpModes, setRegisteredOpModes } from '../registeredOpModes'
 import { PlayController, type ControllerDeps, type PlayOwner } from './controller'
 import { dashboardJarPath, readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
 import { spawnSidecar } from './process'
+import { revealSimFile } from './simFiles'
 import { kinematicWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
@@ -127,6 +128,10 @@ export function registerPlayIpc(): void {
   )
   ipcMain.on(IPC.playGamepads, (event, gamepads: unknown) =>
     controller.gamepads(gamepads, ownerOf(event.sender))
+  )
+  // Console의 Road Runner 튜닝 결과 줄: 그 프로젝트의 모의 저장소 안 파일만 파일 관리자에서 보인다
+  ipcMain.handle(IPC.revealSimFile, (_event, root: unknown, file: unknown) =>
+    revealSimFile(simRoot, root, file, (path) => shell.showItemInFolder(path))
   )
 
   // 앱을 끝내기 전에 사이드카를 정리한다(shutdown → 잠깐 기다림 → kill). 남은 JVM이 없으면 바로 끝난다.

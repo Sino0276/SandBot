@@ -37,7 +37,7 @@ import {
 } from './sceneCommands'
 import { shortcutCommand, type ShortcutCommand } from './shortcuts'
 import Toolbar from './Toolbar'
-import { commitFocusedInput } from './useDraft'
+import { commitFocusedInput, hasPendingTextEdit } from './useDraft'
 
 const LAYOUT_ID = 'editor-main'
 // 씬 뷰와 그 아래 패널(Console·텔레메트리·장치)
@@ -47,15 +47,6 @@ const TOOLS: Partial<Record<ShortcutCommand, EditorTool>> = {
   toolView: 'view',
   toolTranslate: 'translate',
   toolRotate: 'rotate'
-}
-
-function isTextInput(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable ||
-      target.tagName === 'TEXTAREA' ||
-      (target instanceof HTMLInputElement && target.type === 'text'))
-  )
 }
 
 // 입력칸이나 인스펙터처럼 키를 직접 쓰는 곳에 포커스가 있으면 씬 단축키를 쓰지 않는다
@@ -155,7 +146,8 @@ function useEditorShortcuts(): void {
         // 대화상자·우클릭 메뉴가 떠 있거나 씬 뷰에서 비행 중(우클릭+WASD/QE)이면 편집기 단축키를 쓰지 않는다
         blocked: isModalOpen() || isFlying(),
         handlesOwnKeys: handlesOwnKeys(event.target),
-        pendingTextEdit: isTextInput(event.target) && useProjectStore.getState().pendingEdit,
+        // 인스펙터 입력칸의 문서 초안이나 Config 탭 값처럼 문서 밖 값의 초안이 있는 입력칸이면 Ctrl+Z는 입력칸의 것이다
+        pendingTextEdit: hasPendingTextEdit(event.target, useProjectStore.getState().pendingEdit),
         // 핸들을 드래그하는 중에는 실행 취소·삭제·도구 전환·만들기를 하지 않는다(드래그가 어긋난다)
         dragging: isChangeOpen(),
         // 실행 중 씬 뷰에 포커스가 있으면 키보드가 게임패드다(키보드 패드 리스너도 같은 판단을 쓴다). 게임패드로 누른

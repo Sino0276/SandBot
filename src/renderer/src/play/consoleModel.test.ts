@@ -10,6 +10,7 @@ import {
   entryDetailLines,
   entrySummary,
   finishDetail,
+  entryRevealFile,
   entryTarget,
   formatCount,
   frameText,
@@ -272,6 +273,51 @@ describe('시뮬레이터 안내(console.notices.sim.*)', () => {
       t('console.notices.sim.worldError', { detail: 'NaN pose' })
     ])
     expect(entryDetailLines(failed, t)[0]).toContain('NaN pose')
+  })
+})
+
+describe('Road Runner 튜닝 결과(rrTuningSaved)', () => {
+  const FILE = '/u/sim-files/abc/FIRST/RoadRunner/tuning/forward-ramp/1793363559542.json'
+  const saved = (file: string | null, root = '/p'): ConsoleEntry =>
+    consoleEntry(
+      { type: 'rrTuning', path: 'RoadRunner/tuning/forward-ramp/1793363559542.json', file },
+      9,
+      undefined,
+      root
+    )
+
+  it('성공 안내(정보)이고, 파일의 절대 경로와 그 파일로 할 수 있는 일을 보인다', () => {
+    const entry = saved(FILE)
+    expect(entry.level).toBe('info')
+    for (const translate of [t, tEn]) {
+      expect(entrySummary(entry, translate)).toContain(FILE)
+      const lines = entryDetailLines(entry, translate)
+      expect(lines[0]).toBe(entrySummary(entry, translate))
+      // SandBot은 회귀 페이지를 제공하지 않고, 로봇이 내주는 튜닝 페이지의 [Browse]로 연다
+      expect(lines[1]).toContain('Browse')
+      expect(lines[1]).toContain('/tuning/')
+      expect(lines.join('\n')).not.toContain('console.')
+    }
+  })
+
+  it('더블클릭·Enter로 지금 프로젝트의 파일만 파일 관리자에서 보인다(외부 편집기로 열 곳은 아니다)', () => {
+    expect(entryRevealFile(saved(FILE), '/p')).toBe(FILE)
+    expect(entryTarget(saved(FILE), '/p')).toBeNull()
+    // 다른 프로젝트의 실행이 남긴 항목, 프로젝트가 없을 때, 절대 경로를 모를 때는 없다
+    expect(entryRevealFile(saved(FILE), '/other')).toBeNull()
+    expect(entryRevealFile(saved(FILE), null)).toBeNull()
+    expect(entryRevealFile(saved(null), '/p')).toBeNull()
+    // 절대 경로를 모르면 모의 저장소 기준 경로를 보인다
+    expect(entrySummary(saved(null), t)).toContain(
+      'RoadRunner/tuning/forward-ramp/1793363559542.json'
+    )
+    const notice = consoleEntry(
+      { type: 'notice', key: 'sim.dashCamera', params: {} },
+      1,
+      'warning',
+      '/p'
+    )
+    expect(entryRevealFile(notice, '/p')).toBeNull()
   })
 })
 
