@@ -266,9 +266,12 @@ describe('의존성 보고 → Console', () => {
       /^팀 Gradle의 라이브러리 3개: 사용 2 · 제공 0 · 불러오지 않음 1/
     )
     expect(entrySummary(entries[1], t)).toBe(
-      'TeamCode/build.gradle:30: com.acmerobotics.dashboard:dashboard:0.5.1: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 Config 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.'
+      'TeamCode/build.gradle:30: com.acmerobotics.dashboard:dashboard:0.5.1: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 설정값 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.'
     )
     expect(entrySummary(entries[1], tEn)).toContain('runs on the SandBot implementation')
+    // 문장이 가리키는 탭 이름은 아래 패널의 탭 글자와 같다
+    expect(entrySummary(entries[1], t)).toContain(`${ko.panels.config} 탭`)
+    expect(entrySummary(entries[1], tEn)).toContain(`${en.panels.config} tab`)
     // 처음 받은 해시를 기록하지 못한 것은 대체여도 그 경고
     expect(entrySummary(entries[2], tEn)).toContain('could not be saved')
     for (const translate of [t, tEn]) {

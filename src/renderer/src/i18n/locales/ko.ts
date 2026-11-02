@@ -843,7 +843,7 @@ const ko = {
           '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
         // FTC Dashboard(status replaced): 컴파일은 팀 버전의 실제 jar, 실행은 SandBot 구현
         replaced:
-          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 Config 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
+          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 설정값 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
         // Sloth용 FTC Dashboard(com.acmerobotics.slothboard)
         slothboard:
           '{{coordinate}}: Sloth용 FTC Dashboard는 지원하지 않아 불러오지 않습니다. 원래 FTC Dashboard(com.acmerobotics.dashboard:dashboard)를 쓰세요.',
