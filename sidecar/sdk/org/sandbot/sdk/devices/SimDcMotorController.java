@@ -136,8 +136,13 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             return (int) (rawPosition() - encoderOffset);
         }
 
+        /**
+         * 허브가 보고하는 속도(틱/s). 실제 LynxGetBulkInputDataResponse의 속도는 int16_t(short[] velocities)이고
+         * getVelocity가 부호 확장해 돌려주므로, 시뮬레이터의 측정값(감기 전)을 short로 감는다. 속도는 캐시가 꺼져 있어도
+         * bulk read로만 읽으므로(LynxDcMotorController.internalGetMotorTicksPerSecond) 모든 읽기가 이 값이다.
+         */
         int encoderVelocity() {
-            return device == null ? 0 : (int) device.inputLong("velocity", 0);
+            return device == null ? 0 : (short) device.inputLong("velocity", 0);
         }
 
         double currentMilliamps() {

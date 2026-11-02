@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { WALL_INNER_HALF } from './field'
+import { TAU_DRIVE } from './motorModel'
 import { motorType, noLoadOutputRadPerSec, rotationSign, ticksPerOutputRev } from './motorTypes'
 import { KinematicWorld } from './world'
 import {
@@ -149,8 +150,10 @@ describe('KinematicWorld 메카넘', () => {
     const still = new KinematicWorld(spec)
     still.step(0, driveOutputs(spec, {}))
     expect(still.step(TICK, driveOutputs(spec, {}))).toEqual({})
-    // 앞 틱의 출력(앞으로)으로 적분했으므로 엔코더·속도만 바뀐다(허브·IMU 값은 그대로)
-    const next = world.step(TICK, driveOutputs(spec, {}))
+    // 앞 틱의 출력(앞으로)으로 적분했으므로 엔코더·속도만 바뀐다(허브·IMU 값은 그대로). 첫 5 ms는 0.3틱쯤이라 정수
+    // 엔코더가 아직 그대로인 모터가 있으므로 한 틱 더 간다.
+    world.step(TICK, driveOutputs(spec, mecanum(1, 0, 0)))
+    const next = world.step(2 * TICK, driveOutputs(spec, {}))
     expect(Object.keys(next)).toEqual(['fl', 'fr', 'bl', 'br'])
     for (const values of Object.values(next))
       for (const value of Object.values(values)) expect(Number.isInteger(value)).toBe(true)
@@ -209,7 +212,8 @@ describe('KinematicWorld 메카넘', () => {
     const type = motorType(GOBILDA)
     const omega = noLoadOutputRadPerSec(type, GEARBOX) * (12.5 / 12)
     const perRad = ticksPerOutputRev(type, GEARBOX) / (2 * Math.PI)
-    expect(Math.abs(num(state.fr.velocity))).toBeCloseTo(omega * perRad, -1)
+    // 허브 속도는 50 ms 창의 틱 수 × 20이라 정상 상태에서 진짜 속도와 한 단계(20 틱/s) 안이다
+    expect(Math.abs(Math.abs(num(state.fr.velocity)) - omega * perRad)).toBeLessThan(20)
     const x0 = r.world.pose().x
     const stateAtX0 = latest(r.inputs)
     const more = run(spec, 0.1, () => driveOutputs(spec, mecanum(1, 0, 0)), r)
@@ -226,9 +230,14 @@ describe('KinematicWorld 메카넘', () => {
     const slow = mecanumSpec({ batteryVoltage: 10 })
     const a = run(fast, 2, () => driveOutputs(fast, mecanum(0.3, 0, 0)))
     const b = run(slow, 2, () => driveOutputs(slow, mecanum(0.3, 0, 0)))
-    const va = num(latest(a.inputs).fr.velocity)
-    const vb = num(latest(b.inputs).fr.velocity)
-    expect(vb / va).toBeCloseTo(10 / 13, 2)
+    // 허브 속도는 20 틱/s 단위라 각각 정상 상태 속도와 한 단계 안이다
+    const type = motorType(GOBILDA)
+    const perRad = ticksPerOutputRev(type, GEARBOX) / (2 * Math.PI)
+    const full = noLoadOutputRadPerSec(type, GEARBOX) * perRad * 0.3
+    const va = Math.abs(num(latest(a.inputs).fr.velocity))
+    const vb = Math.abs(num(latest(b.inputs).fr.velocity))
+    expect(Math.abs(va - (full * 13) / 12)).toBeLessThan(20)
+    expect(Math.abs(vb - (full * 10) / 12)).toBeLessThan(20)
     expect(latest(a.inputs)['Control Hub'].voltage).toBe(13)
   })
 
@@ -533,6 +542,155 @@ describe('KinematicWorld 오도메트리', () => {
       expect(Math.abs(pose.yaw)).toBeLessThan(5e-3)
       x = pose.x
     }
+  })
+})
+
+describe('KinematicWorld 허브 엔코더 속도', () => {
+  // 50 ms 창 = 5 ms 틱 10개
+  const WINDOW_TICKS = 10
+
+  // 틱마다 장치의 누적 입력(사이드카가 그 틱부터 보는 값)
+  function perTick(r: Run, device: string): { position: number; velocity: number }[] {
+    const out: { position: number; velocity: number }[] = []
+    let state: DeviceValues = {}
+    for (const step of r.inputs) {
+      state = { ...state, ...step[device] }
+      out.push({ position: num(state.position), velocity: num(state.velocity) })
+    }
+    return out
+  }
+
+  // 사이드카가 받은 속도가 허브 규칙(지난 50 ms의 원시 틱 변화 × 20, 시작 전은 멈춰 있었으므로 처음 50 ms는 시작 position
+  // 기준)과 같다
+  function expectHubRule(ticks: { position: number; velocity: number }[]): void {
+    ticks.forEach((tick, k) => {
+      const before = k >= WINDOW_TICKS ? ticks[k - WINDOW_TICKS].position : ticks[0].position
+      expect(tick.velocity, `tick ${k}`).toBe((tick.position - before) * 20)
+      expect(Math.abs(tick.velocity % 20), `tick ${k}`).toBe(0)
+    })
+  }
+
+  it('모터: 지난 50 ms 원시 틱 변화 × 20이라 늘 20의 배수이고, 창 가운데(약 25 ms 전)의 속도다', () => {
+    const spec = mecanumSpec()
+    const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.6, 0, 0)))
+    const fl = perTick(r, 'fl')
+    expectHubRule(fl)
+    for (const device of ['fr', 'bl', 'br']) expectHubRule(perTick(r, device))
+    // 정지에서 출발한 1차 응답(power는 t = 0부터): 원시 틱 = r∞·(t − τ(1 − e^(−t/τ))), 속도 = r∞·(1 − e^(−t/τ))
+    const type = motorType(GOBILDA)
+    const rInf =
+      (0.6 * noLoadOutputRadPerSec(type, GEARBOX) * ticksPerOutputRev(type, GEARBOX)) /
+      (2 * Math.PI)
+    const raw = (t: number): number => rInf * (t - TAU_DRIVE * -Math.expm1(-t / TAU_DRIVE))
+    const rate = (t: number): number => rInf * -Math.expm1(-t / TAU_DRIVE)
+    // 틱 k(시각 5k ms)의 값은 그 창의 평균 속도와 20 틱/s 안에서 같고, 가속하는 동안은 25 ms 전의 속도에 가깝다
+    for (const k of [10, 20, 40]) {
+      const t = k * 0.005
+      const mean = (raw(t) - raw(t - 0.05)) / 0.05
+      expect(Math.abs(fl[k].velocity - mean), `tick ${k}`).toBeLessThan(20)
+      expect(Math.abs(fl[k].velocity - rate(t - 0.025))).toBeLessThan(
+        Math.abs(fl[k].velocity - rate(t))
+      )
+    }
+    // 처음 50 ms: 시작 전에는 멈춰 있었으므로 시작 position부터 센다(아직 작은 값)
+    expect(fl[5].velocity).toBe(fl[5].position * 20)
+    expect(fl[5].velocity).toBeLessThan(rate(0.025))
+    // 정상 상태: 진짜 속도(정수가 아니다)와 한 단계(20 틱/s) 안
+    expect(Math.abs(fl[fl.length - 1].velocity - rInf)).toBeLessThan(20)
+  })
+
+  it('데드휠(따로 꽂은 것·모터 포트를 함께 쓰는 것): 같은 규칙, int16을 넘어도 감지 않는다(감기는 가짜 SDK의 short)', () => {
+    // REV Through Bore 8192 CPR, 35 mm 바퀴: 1 m/s에 약 74,500 틱/s
+    const ticksPerMeter = 8192 / (Math.PI * 0.035)
+    const spec = mecanumSpec({
+      deadWheels: [
+        {
+          device: 'par',
+          position: { x: 0, y: 0.1 },
+          measures: 'forward',
+          reversed: false,
+          ticksPerMeter
+        },
+        {
+          device: 'fr',
+          position: { x: -0.1, y: 0 },
+          measures: 'strafe',
+          reversed: true,
+          ticksPerMeter
+        }
+      ]
+    })
+    // 앞으로 1초, 그다음 왼쪽으로 1초(회전 없음: 포드 이동 = 로봇 이동)
+    const world = new KinematicWorld(spec)
+    const inputs: Record<string, DeviceValues>[] = []
+    const poses: { x: number; y: number }[] = []
+    for (let k = 0; k < 400; k++) {
+      inputs.push(
+        world.step(k * TICK, driveOutputs(spec, k < 200 ? mecanum(0.6, 0, 0) : mecanum(0, -0.6, 0)))
+      )
+      poses.push(world.pose())
+    }
+    const r: Run = { world, inputs, t: 399 * TICK }
+    const par = perTick(r, 'par')
+    const fr = perTick(r, 'fr')
+    expectHubRule(par)
+    expectHubRule(fr)
+    // 값은 그 창(지난 50 ms)의 평균 속도와 한 단계(20 틱/s) 안이다
+    const mean = (k: number, axis: 'x' | 'y', sign: number): number =>
+      (sign * (poses[k][axis] - poses[k - WINDOW_TICKS][axis]) * ticksPerMeter) / 0.05
+    for (const k of [20, 100, 199]) {
+      expect(Math.abs(par[k].velocity - mean(k, 'x', 1)), `par ${k}`).toBeLessThan(20)
+      expect(fr[k].velocity).toBe(0)
+    }
+    for (const k of [220, 300, 399])
+      expect(Math.abs(fr[k].velocity - mean(k, 'y', -1)), `fr ${k}`).toBeLessThan(20)
+    // 앞으로 갈 때 par는 int16(32767)을 훨씬 넘고, 옆으로 갈 때 fr 포트의 strafe 포드(reversed)가 −로 넘는다
+    expect(par[199].velocity).toBeGreaterThan(60_000)
+    expect(fr[399].velocity).toBeLessThan(-40_000)
+  })
+
+  it('막힌 동안 데드휠 속도는 0이고 모터 엔코더 속도는 돈다', () => {
+    const start = { x: WALL_INNER_HALF - HALF, y: 0, yaw: 0 }
+    const spec = mecanumSpec({
+      robot: { ...mecanumSpec().robot, start },
+      deadWheels: [
+        {
+          device: 'par',
+          position: { x: 0, y: 0.1 },
+          measures: 'forward',
+          reversed: false,
+          ticksPerMeter: 2000
+        }
+      ]
+    })
+    const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.5, 0, 0)))
+    const state = latest(r.inputs)
+    expect(state.par.velocity).toBe(0)
+    expect(Math.abs(num(state.fr.velocity))).toBeGreaterThan(1000)
+    expect(Math.abs(num(state.fr.velocity) % 20)).toBe(0)
+  })
+
+  it('결정적: 틱 간격이 달라도 같은 시각의 속도는 같고, 같은 출력열이면 같은 값', () => {
+    const spec = mecanumSpec()
+    const a = new KinematicWorld(spec)
+    const b = new KinematicWorld(spec)
+    const drive = (k: number): Record<string, DeviceValues> =>
+      driveOutputs(spec, mecanum(Math.sin(k / 30), 0.3 * Math.cos(k / 50), 0.2))
+    const velocityA: number[] = []
+    const velocityB: number[] = []
+    let stateA: DeviceValues = {}
+    let stateB: DeviceValues = {}
+    // b의 틱은 a의 두 틱마다이고, a의 홀수 틱 출력은 앞 짝수 틱의 것이다(두 세계가 같은 명령·1 ms 하위 단계로 적분한다)
+    for (let k = 0; k <= 400; k++) {
+      stateA = { ...stateA, ...a.step(k * TICK, drive(k & ~1))['bl'] }
+      if (k % 2 === 0) {
+        stateB = { ...stateB, ...b.step(k * TICK, drive(k))['bl'] }
+        velocityA.push(num(stateA.velocity))
+        velocityB.push(num(stateB.velocity))
+      }
+    }
+    expect(velocityB).toEqual(velocityA)
+    expect(new Set(velocityA).size).toBeGreaterThan(50)
   })
 })
 
