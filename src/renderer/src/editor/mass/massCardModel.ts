@@ -413,12 +413,19 @@ export function usesDefaultMass(robot: RobotMass): boolean {
   return robot.warnings.some((warning) => warning.kind === 'defaultMass')
 }
 
-// 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3)
+// 형상을 읽는 중인 메시가 있는지(질량 모델의 pending 경고)
+export function hasPendingMeshes(robot: RobotMass): boolean {
+  return robot.warnings.some((warning) => warning.kind === 'pending')
+}
+
+// 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3). 형상을 모두
+// 읽는 중이어도(pending) 저울 무게가 있으면 그렇다.
 export function warningText(
   t: TFunction,
   warning: MassWarning,
   unit: LengthUnit,
-  weighedMass?: number
+  weighedMass?: number,
+  pending = false
 ): string {
   switch (warning.kind) {
     case 'scaleUnusual':
@@ -429,9 +436,11 @@ export function warningText(
         weighed: massText(t, warning.weighed, unit)
       })
     case 'defaultMass':
-      return weighedMass !== undefined
-        ? t('mass.warnings.defaultMassWeighed', { mass: massText(t, weighedMass, unit) })
-        : t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
+      if (weighedMass === undefined)
+        return t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
+      return t(pending ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
+        mass: massText(t, weighedMass, unit)
+      })
     case 'pending':
       return t('mass.warnings.pending', { count: warning.meshes })
   }
@@ -445,10 +454,12 @@ export function robotMassBreakdown(
   unit: LengthUnit,
   weighedMass?: number
 ): string {
-  if (usesDefaultMass(robot))
-    return weighedMass !== undefined
-      ? t('mass.rigidbody.breakdownWeighedBox')
-      : t('mass.rigidbody.breakdownDefault')
+  if (usesDefaultMass(robot)) {
+    if (weighedMass === undefined) return t('mass.rigidbody.breakdownDefault')
+    return hasPendingMeshes(robot)
+      ? t('mass.rigidbody.breakdownWeighedLoading')
+      : t('mass.rigidbody.breakdownWeighedBox')
+  }
   return t('mass.rigidbody.breakdown', {
     fixed: massText(t, robot.fixedMass, unit),
     estimated: massText(t, robot.estimatedMass, unit)

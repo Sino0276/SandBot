@@ -902,12 +902,8 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
   })
 
   it('모든 메시를 읽는 중이면 기본값(13.6 kg)이 아니라 읽은 만큼(0 kg)이다', () => {
-    const objects = scene(
-      robot({ rigidbody: { weighedMass: 10 } }),
-      part('P1', 'R'),
-      part('P2', 'R')
-    )
-    const r = computeMassModel(objects, lookupOf({})).robots.R
+    const plain = scene(robot(), part('P1', 'R'), part('P2', 'R'))
+    const r = computeMassModel(plain, lookupOf({})).robots.R
     expect(r).toMatchObject({
       mass: 0,
       centerOfMass: [0, 0, 0],
@@ -917,6 +913,36 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
       scale: 1,
       warnings: [{ kind: 'pending', meshes: 2 }]
     })
+  })
+
+  it('저울 무게가 있으면 모두 읽는 중이어도 그 무게를 기본 상자로 두고 읽는 중 경고를 함께 낸다', () => {
+    const objects = scene(
+      robot({ rigidbody: { weighedMass: 10 } }),
+      part('P1', 'R'),
+      part('P2', 'R')
+    )
+    const model = computeMassModel(objects, lookupOf({}))
+    const r = model.robots.R
+    expect(r).toMatchObject({
+      mass: 10,
+      fixedMass: 0,
+      estimatedMass: 10,
+      scale: 1,
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2 }]
+    })
+    // CAD가 없으면 18 in 상자(정보 없음 대체값과 같은 분포)
+    expect(r.centerOfMass[0]).toBeCloseTo(0, 15)
+    expect(r.centerOfMass[2]).toBeCloseTo(0.35 * ROBOT_SIZE, 15)
+    const side = (10 * 2 * ROBOT_SIZE * ROBOT_SIZE) / 12
+    expect(r.inertia).toEqual([side, side, side, 0, 0, 0].map((v) => expect.closeTo(v, 12)))
+    expect(model.objects.R).toMatchObject({ mass: 10, source: 'default' })
+    // 하나라도 읽으면 형상으로 나누고 맞춘다(기본값 경고 없음)
+    const loaded = computeMassModel(objects, lookupOf({ 'g:P1': solid(LITER) })).robots.R
+    expect(loaded.mass).toBeCloseTo(10, 12)
+    expect(loaded.warnings).toEqual([
+      { kind: 'scaleUnusual', scale: expect.closeTo(10 / 2.7, 12) },
+      { kind: 'pending', meshes: 1 }
+    ])
     // 읽는 중인 메시와 덮어쓴 그룹만 있으면 그 덮어쓰기만 센다
     const withOverride = {
       ...objects,

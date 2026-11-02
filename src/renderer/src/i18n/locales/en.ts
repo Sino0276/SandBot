@@ -1423,6 +1423,8 @@ const en: Messages = {
         'No mass information, so the default {{mass}} (typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
       defaultMassWeighed:
         'No shape information, so the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
+      defaultMassLoading:
+        'While the shapes load, the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       pending: '{{count}} mesh(es) still loading are not counted yet.'
     },
     rigidbody: {
@@ -1433,6 +1435,7 @@ const en: Messages = {
       breakdown: 'Override/datasheet {{fixed}} + estimated {{estimated}}',
       breakdownDefault: 'Default (no mass information)',
       breakdownWeighedBox: 'Weighed mass (no shapes, approximated by the bounding box)',
+      breakdownWeighedLoading: 'Weighed mass (shapes loading, approximated by the bounding box)',
       scaled: '· estimate ×{{scale}} (scaled to the weighed mass)',
       weighed: 'Weighed mass',
       weighedHint:

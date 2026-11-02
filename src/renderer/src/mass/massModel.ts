@@ -630,9 +630,10 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let mass: number
     let centerOfMass: Vec3
     let inertia: SymMatrix3
-    if (total > 0 || meshes > 0) {
+    if (total > 0 || (meshes > 0 && weighed === undefined)) {
       // 읽는 중인 메시는 빼고 계산한다(모두 읽는 중이면 0 kg). 기본값으로 바꾸지 않는다: 그러면 CAD를 다 읽을 때
-      // 질량이 13.6 kg에서 실제 값으로 뛰고, 읽지 못한 CAD가 기본값으로 굳는다.
+      // 질량이 13.6 kg에서 실제 값으로 뛰고, 읽지 못한 CAD가 기본값으로 굳는다. 저울 무게가 있으면 그 질량은 알므로
+      // 아래 상자 대체값을 쓴다(pending 경고도 함께).
       mass = fixed + estimated
       const moment: Vec3 = [0, 0, 0]
       for (const part of list) for (let k = 0; k < 3; k++) moment[k] += part.mass * part.com[k]
@@ -646,7 +647,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         addParallelAxis(inertia, own, part.mass, d)
       }
     } else {
-      // 질량 정보 없음(형상이 없거나 모두 질량 0, 덮어쓰기·COTS 없음, 읽는 중인 메시 없음): 외곽 상자의 균일 직육면체. 저울 무게가 있으면 그 질량을 쓴다(분포는 그래도 기본값이다).
+      // 질량 정보 없음(형상이 없거나 모두 질량 0이거나 모두 읽는 중, 덮어쓰기·COTS 없음): 외곽 상자의 균일 직육면체.
+      // 저울 무게가 있으면 그 질량을 쓴다(분포는 그래도 기본값이다). 저울 무게 없이 읽는 중이면 위 갈래(0 kg)다.
       mass = weighed ?? DEFAULT_ROBOT_MASS
       const { min, max } = robotBox(objects, robotId, matrices)
       const [a, b, c] = [0, 1, 2].map((k) => max[k] - min[k])

@@ -489,6 +489,18 @@ describe('질량 출처 문구', () => {
     expect(robotMassBreakdown(t, fallback, 'cm', 20)).toBe(
       '저울 무게 (형상 없음, 외곽 상자로 근사)'
     )
+    // 저울 무게가 있고 형상을 모두 읽는 중이면(질량 모델이 저울 무게를 상자로 둔다) 읽는 중이라고 알린다
+    const loading = robotMass({
+      fixedMass: 0,
+      estimatedMass: 20,
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 4 }]
+    })
+    expect(robotMassBreakdown(t, loading, 'cm', 20)).toBe(
+      '저울 무게 (형상을 읽는 중, 외곽 상자로 근사)'
+    )
+    expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true)).toContain(
+      `형상을 읽는 동안 저울 무게 ${massText(t, 20, 'cm')}를`
+    )
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
     expect(formatInertia(12.345)).toBe('12.3')

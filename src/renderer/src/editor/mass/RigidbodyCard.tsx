@@ -13,6 +13,7 @@ import {
   cadSummaryText,
   cleanRigidbody,
   formatInertia,
+  hasPendingMeshes,
   materialLabel,
   MATERIAL_GROUPS,
   massText,
@@ -144,7 +145,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
               key={index}
               className={warning.kind === 'pending' ? 'hw-issue is-info' : 'hw-issue is-warning'}
             >
-              {warningText(t, warning, lengthUnit, settings.weighedMass)}
+              {warningText(t, warning, lengthUnit, settings.weighedMass, hasPendingMeshes(mass))}
             </li>
           ))}
         </ul>
