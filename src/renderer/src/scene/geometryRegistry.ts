@@ -12,15 +12,14 @@ const geometries = new Map<string, BufferGeometry>()
 // 형상과 같은 id·수명으로 두는 메시 정보(spec-3a §1): 질량 성질과 원래 CAD 이름
 export type MeshInfo = { mass?: MeshMassProps; sourceName?: string }
 const meshInfo = new Map<string, MeshInfo>()
-// 형상을 읽는 중인 CAD 루트 → 이번 읽기에서 등록한 형상 id. 읽기마다 다른 객체라 늦게 끝난 읽기가 지우지 않는다.
-const loadingCads = new Map<string, { registered: Set<string> }>()
+// 형상을 읽는 중이거나 읽을 차례를 기다리는 CAD 루트 → 그 읽기의 표식. 읽기마다 다른 객체라 늦게 끝난 읽기가 새
+// 읽기의 상태를 지우지 않는다.
+const loadingCads = new Map<string, object>()
 
 export function registerGeometry(id: string, geometry: BufferGeometry, info: MeshInfo = {}): void {
   release(geometries.get(id))
   geometries.set(id, geometry)
   meshInfo.set(id, info)
-  const cadRootId = cadRootIdOf(id)
-  if (cadRootId !== null) loadingCads.get(cadRootId)?.registered.add(id)
   // 클릭 선택용 BVH를 쉬는 시간에 만든다(scene/meshBvh.ts)
   prepareBvh(geometry)
 }
@@ -65,13 +64,18 @@ export function meshSourceName(id: string): string | undefined {
   return meshInfo.get(id)?.sourceName
 }
 
-// CAD 루트의 형상을 읽기 시작한다(cadMassSummary의 pendingMeshes). 돌려준 함수로 끝낸다. 그사이 같은 CAD를 다시
-// 읽기 시작했거나 프로젝트를 새로 열었으면(disposeAllGeometry) 끝내기는 아무것도 하지 않는다.
+// CAD 루트를 읽는 중으로 둔다(cadMassSummary의 pendingMeshes). 형상을 읽는 동안과, 프로젝트를 열 때 차례를 기다리는
+// 동안(projectActions) 부른다. 돌려준 함수로 끝낸다. 그사이 같은 CAD를 다시 읽기 시작했거나 프로젝트를 새로
+// 열었으면(disposeAllGeometry) 끝내기는 아무것도 하지 않는다. 요약이 바뀌므로 시작·끝마다 형상 revision을 올린다
+// (useMassModel이 다시 계산한다).
 export function beginCadLoad(cadRootId: string): () => void {
-  const entry = { registered: new Set<string>() }
-  loadingCads.set(cadRootId, entry)
+  const token = {}
+  loadingCads.set(cadRootId, token)
+  useSceneStore.getState().bumpGeometryRevision()
   return () => {
-    if (loadingCads.get(cadRootId) === entry) loadingCads.delete(cadRootId)
+    if (loadingCads.get(cadRootId) !== token) return
+    loadingCads.delete(cadRootId)
+    useSceneStore.getState().bumpGeometryRevision()
   }
 }
 
@@ -100,22 +104,22 @@ function cadMeshesInScene(objects: SceneObjects): Map<string, Set<string>> {
 // 씬이 그 CAD의 형상을 하나도 쓰지 않으면 undefined.
 // - meshes: 형상이 등록된 메시 수(다시 읽는 동안에는 이전 형상)
 // - openVolumeFraction: 질량에 쓰는 메시(닫힘·열림) 부피 가운데 열린 메시의 비율
-// - pendingMeshes: 읽는 동안 이번 읽기에서 아직 등록하지 않은 메시 수. 읽기가 끝나면(실패·취소 포함) 0이다.
+// - pendingMeshes: 그 CAD를 읽는 중이거나 읽을 차례를 기다리면 씬이 쓰는 그 CAD의 메시 수, 아니면 0. 형상은 읽기가
+//   끝난 뒤 한꺼번에 등록하므로 다시 읽는 동안에는 이전 형상(meshes)과 겹쳐 센다. 읽기가 끝나면(실패·취소 포함) 0이고,
+//   실패·못 찾음은 projectStore.cadStatus·missingCad가 알린다.
 export function cadMassSummary(
   cadRootId: string,
   objects: SceneObjects = useSceneStore.getState().objects
 ): CadMassSummary | undefined {
   const ids = cadMeshesInScene(objects).get(cadRootId)
   if (!ids) return undefined
-  const loading = loadingCads.get(cadRootId)
+  const pendingMeshes = loadingCads.has(cadRootId) ? ids.size : 0
   let meshes = 0
-  let pendingMeshes = 0
   let openMeshes = 0
   let surfaceMeshes = 0
   let openVolume = 0
   let usedVolume = 0
   for (const id of ids) {
-    if (loading && !loading.registered.has(id)) pendingMeshes++
     if (!geometries.has(id)) continue
     meshes++
     const mass = meshInfo.get(id)?.mass

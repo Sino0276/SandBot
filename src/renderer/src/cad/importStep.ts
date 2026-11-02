@@ -439,21 +439,16 @@ export async function loadCadGeometry(
   // 형상 id 방식은 읽기 시작할 때의 CAD 정보로 정한다. 읽는 동안 CAD를 지웠다가 실행 취소로 되살려도 맞게 연결되도록,
   // 지워졌어도 형상은 등록한다(기록이 그 id를 쓴다).
   const cad = useSceneStore.getState().objects[cadRootId]?.cad
-  // 읽는 동안 질량 요약(cadMassSummary)이 이번 읽기에서 아직 등록하지 않은 메시를 센다. 요약이 바뀔 때마다 다시
-  // 계산하게 형상 revision을 올린다.
+  // 읽는 동안 질량 요약(cadMassSummary)이 이 CAD의 메시를 읽는 중으로 센다
   const endLoad = beginCadLoad(cadRootId)
-  useSceneStore.getState().bumpGeometryRevision()
   let result: LoadedStep | Exclude<CadLoadStatus, 'loaded'>
   try {
     result = await readCadModel(path, fileName, options)
   } finally {
-    // 등록하기 전에 끝낸다(등록이 올리는 revision의 요약에 읽는 중이 남지 않게)
+    // 읽지 못했거나 취소해도 끝낸다
     endLoad()
   }
-  if (typeof result === 'string') {
-    useSceneStore.getState().bumpGeometryRevision()
-    return result
-  }
+  if (typeof result === 'string') return result
   const { model } = result
   const indexing = cad ? reloadIndexing(cad, model) : 'source'
   registerModelGeometries(cadRootId, model, indexing)

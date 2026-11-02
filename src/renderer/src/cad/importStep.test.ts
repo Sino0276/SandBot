@@ -192,7 +192,7 @@ describe('형상 등록과 질량 성질', () => {
     })
   })
 
-  it('CAD를 읽는 동안 질량 요약이 아직 등록하지 않은 메시를 세고, 끝나면 형상 revision을 올린다', async () => {
+  it('CAD를 읽는 동안 질량 요약이 그 CAD의 메시를 읽는 중으로 세고, 끝나면 형상 revision을 올린다', async () => {
     useSceneStore.setState({ objects: scene })
     let finish: (result: unknown) => void = () => {}
     const readStepCached = vi.fn(() => new Promise((resolve) => (finish = resolve)))
@@ -209,7 +209,8 @@ describe('형상 등록과 질량 성질', () => {
     finish({ key: 'k', model: cubes, bytes: null, size: 1 })
     expect(await loading).toBe('loaded')
     expect(cadMassSummary('cad')).toMatchObject({ meshes: 3, pendingMeshes: 0 })
-    expect(revision()).toBe(before + 2)
+    // 읽기 끝 + 등록
+    expect(revision()).toBe(before + 3)
 
     // 파일이 없으면 등록하지 않고 끝나도 요약이 바뀌었으므로 다시 계산하게 한다
     disposeAllGeometry()

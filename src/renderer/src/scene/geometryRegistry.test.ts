@@ -151,9 +151,13 @@ describe('cadMassSummary', () => {
     })
   })
 
-  it('읽는 동안 이번 읽기에서 아직 등록하지 않은 메시를 pendingMeshes로 센다', () => {
-    const objects = partsUsing(['cad:0', 'cad:1', 'cad:2'])
+  it('읽는 중이거나 차례를 기다리는 CAD는 씬이 쓰는 그 CAD의 메시를 모두 pendingMeshes로 센다', () => {
+    const objects = partsUsing(['cad:0', 'cad:1', 'cad:2', 'other:0'])
+    const revision = (): number => useSceneStore.getState().geometryRevision
+    const before = revision()
     const end = beginCadLoad('cad')
+    // 요약이 바뀌므로 다시 계산하게 한다
+    expect(revision()).toBe(before + 1)
     expect(cadMassSummary('cad', objects)).toEqual({
       meshes: 0,
       openMeshes: 0,
@@ -161,16 +165,17 @@ describe('cadMassSummary', () => {
       surfaceMeshes: 0,
       pendingMeshes: 3
     })
-    registerGeometry('cad:0', new BufferGeometry(), { mass: mass(1e-6, 0) })
-    expect(cadMassSummary('cad', objects)).toMatchObject({ meshes: 1, pendingMeshes: 2 })
-    // 이번 읽기가 만들지 않은 다른 CAD의 형상은 이 CAD의 읽기와 관계없다
-    registerGeometry('other:0', new BufferGeometry())
+    // 다른 CAD는 이 CAD의 읽기와 관계없다
+    expect(cadMassSummary('other', objects)?.pendingMeshes).toBe(0)
     end()
-    expect(cadMassSummary('cad', objects)).toMatchObject({ meshes: 1, pendingMeshes: 0 })
+    expect(revision()).toBe(before + 2)
+    expect(cadMassSummary('cad', objects)?.pendingMeshes).toBe(0)
+    // 두 번 끝내도 다시 올리지 않는다
+    end()
+    expect(revision()).toBe(before + 2)
 
-    // 다시 읽는 동안에는 이전 형상이 남아 있지만(meshes) 이번 읽기에서 등록할 때까지 읽는 중으로 센다
-    registerGeometry('cad:1', new BufferGeometry())
-    registerGeometry('cad:2', new BufferGeometry())
+    // 다시 읽는 동안에는 이전 형상(meshes)이 남아 있고 모든 메시를 읽는 중으로 센다(형상은 끝난 뒤 한꺼번에 등록)
+    for (const i of [0, 1, 2]) registerGeometry(`cad:${i}`, new BufferGeometry())
     const reload = beginCadLoad('cad')
     expect(cadMassSummary('cad', objects)).toMatchObject({ meshes: 3, pendingMeshes: 3 })
     reload()

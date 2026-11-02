@@ -15,6 +15,7 @@ import {
 } from '../java/usageIndex'
 import type { FromWorker, ToWorker } from '../java/usages/usageTypes'
 import { createUsageWorkerState, handleMessage } from '../java/usages/usageWorkerCore'
+import { cadMassSummary, disposeAllGeometry } from '../scene/geometryRegistry'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { openProjectAt, saveProject } from './projectActions'
@@ -407,5 +408,134 @@ public class Constants {
     }
     expect(usage().status).toBe('ready')
     expect(usageNotices()).toEqual(['usagesBrokenByName'])
+  })
+})
+
+describe('프로젝트를 열 때 CAD 형상 읽기와 질량 요약', () => {
+  // 로봇 하나에 CAD 둘(A: 메시 2개, B: 메시 3개). 열면 A부터 하나씩 읽는다.
+  function cadScene(): SceneObjects {
+    const objects: SceneObjects = {
+      bot: { id: 'bot', name: 'Bot', kind: 'robot', parentId: null, transform: T0 }
+    }
+    for (const [root, count] of [
+      ['A', 2],
+      ['B', 3]
+    ] as const) {
+      objects[root] = {
+        id: root,
+        name: root,
+        kind: 'assembly',
+        parentId: 'bot',
+        transform: T0,
+        cad: {
+          fileName: `${root}.step`,
+          absolutePath: `/cad/${root}.step`,
+          upAxis: '+Z',
+          forwardAxis: '+X',
+          bounds: { min: [0, 0, 0], max: [0.1, 0.1, 0.1] },
+          meshCount: count,
+          meshIndexing: 'source'
+        }
+      }
+      for (let i = 0; i < count; i++) {
+        objects[`${root}-${i}`] = {
+          id: `${root}-${i}`,
+          name: `${root}-${i}`,
+          kind: 'part',
+          parentId: root,
+          transform: T0,
+          visual: { type: 'mesh', geometryId: `${root}:${i}`, color: [0.5, 0.5, 0.5] }
+        }
+      }
+    }
+    return objects
+  }
+
+  // STEP 읽기를 붙잡아 두고 차례로 끝낸다(null이면 파일이 사라진 것으로 끝난다)
+  const reads: { path: string; finish: (result: null) => void }[] = []
+  const readStepCached = vi.fn(
+    (path: string) => new Promise((resolve) => reads.push({ path, finish: resolve }))
+  )
+  const pending = (root: string): number | undefined => cadMassSummary(root)?.pendingMeshes
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.stubGlobal('window', {
+      api: {
+        ...api,
+        statStepFile: async () => ({ size: 1 }),
+        hasStepConverter: async () => false,
+        readStepCached
+      },
+      addEventListener: () => {}
+    })
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {}
+    })
+    reads.length = 0
+    readStepCached.mockClear()
+    useNoticeStore.setState({ notices: [] })
+    resetUsageIndexState()
+    setUsageWorkerFactory(() => new InThreadWorker())
+  })
+
+  afterEach(() => {
+    disposeAllGeometry()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('차례를 기다리는 CAD도 읽는 중으로 센다', async () => {
+    projectJson = serializeProject(cadScene(), (path) => path)
+    await openProjectAt('/p')
+    await settle()
+    expect(reads.map((read) => read.path)).toEqual(['/cad/A.step'])
+    expect(useProjectStore.getState().cadStatus).toEqual({ A: 'loading', B: 'loading' })
+    // A를 읽는 동안 B는 차례를 기다리지만 그 형상도 아직 질량에 없다
+    expect(pending('A')).toBe(2)
+    expect(cadMassSummary('B')).toEqual({
+      meshes: 0,
+      openMeshes: 0,
+      openVolumeFraction: 0,
+      surfaceMeshes: 0,
+      pendingMeshes: 3
+    })
+
+    reads[0].finish(null)
+    await settle()
+    expect(reads.map((read) => read.path)).toEqual(['/cad/A.step', '/cad/B.step'])
+    expect(pending('A')).toBe(0)
+    expect(pending('B')).toBe(3)
+
+    reads[1].finish(null)
+    await settle()
+    expect(pending('A')).toBe(0)
+    expect(pending('B')).toBe(0)
+  })
+
+  it('읽는 중에 프로젝트를 다시 열면 이전 열기가 새 열기의 읽는 중 표시를 지우지 않는다', async () => {
+    projectJson = serializeProject(cadScene(), (path) => path)
+    await openProjectAt('/p')
+    await settle()
+    expect(reads).toHaveLength(1)
+
+    // 같은 프로젝트(같은 CAD id)를 다시 연다. 이전 A 읽기는 취소되어 끝나고 이전 열기는 B를 읽지 않고 멈춘다.
+    await openProjectAt('/p')
+    await settle()
+    reads[0].finish(null)
+    await settle()
+    expect(reads.map((read) => read.path)).toEqual(['/cad/A.step', '/cad/A.step'])
+    expect(pending('A')).toBe(2)
+    expect(pending('B')).toBe(3)
+
+    reads[1].finish(null)
+    await settle()
+    reads[2].finish(null)
+    await settle()
+    expect(reads.map((read) => read.path)).toEqual(['/cad/A.step', '/cad/A.step', '/cad/B.step'])
+    expect(pending('A')).toBe(0)
+    expect(pending('B')).toBe(0)
   })
 })

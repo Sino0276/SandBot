@@ -32,7 +32,7 @@ import {
   setUsageBaseline
 } from '../java/usageIndex'
 import type { SceneObjects } from '../scene/model'
-import { disposeAllGeometry } from '../scene/geometryRegistry'
+import { beginCadLoad, disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
 import { parseProject, ProjectFileError, serializeProject } from './projectFile'
 import { setCadStatus, useProjectStore, type GenerationResult } from './projectStore'
@@ -232,7 +232,8 @@ export async function openProjectFolder(): Promise<void> {
 }
 
 export function openProjectAt(root: string, options: { quiet?: boolean } = {}): Promise<void> {
-  let cads: { id: string; path: string }[] = []
+  // 형상을 읽을 CAD. endQueued는 차례를 기다리는 동안의 읽는 중 표시(beginCadLoad)를 끝낸다.
+  let cads: QueuedCad[] = []
   let session = 0
   let opened = false
   return withBusy(async () => {
@@ -298,7 +299,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         if (found) {
           useSceneStore.getState().setCadFile(id, found, fileNameOf(found))
           setCadStatus(id, 'loading')
-          cads.push({ id, path: found })
+          // 차례를 기다리는 동안에도 질량 요약이 읽는 중으로 센다(형상이 아직 질량에 없다)
+          cads.push({ id, path: found, endQueued: beginCadLoad(id) })
         } else {
           missing.push(id)
         }
@@ -312,6 +314,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       setDirty(false)
       opened = true
     } catch (error) {
+      for (const cad of cads) cad.endQueued()
       cads = []
       if (options.quiet) {
         localStorage.removeItem(LAST_PROJECT_KEY)
@@ -335,15 +338,19 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
   })
 }
 
-async function loadProjectCads(
-  cads: { id: string; path: string }[],
-  session: number
-): Promise<void> {
-  for (const { id, path } of cads) {
-    if (useProjectStore.getState().session !== session) return
-    const status = await loadCadWithProgress(id, path)
-    if (useProjectStore.getState().session !== session) return
-    applyCadStatus(id, path, status)
+type QueuedCad = { id: string; path: string; endQueued: () => void }
+
+async function loadProjectCads(cads: QueuedCad[], session: number): Promise<void> {
+  try {
+    for (const { id, path } of cads) {
+      if (useProjectStore.getState().session !== session) return
+      const status = await loadCadWithProgress(id, path)
+      if (useProjectStore.getState().session !== session) return
+      applyCadStatus(id, path, status)
+    }
+  } finally {
+    // 읽은 CAD는 읽기가 표시를 이어받아 이미 끝냈다. 멈춰서 읽지 않은 CAD의 표시를 끝낸다.
+    for (const cad of cads) cad.endQueued()
   }
 }
 
