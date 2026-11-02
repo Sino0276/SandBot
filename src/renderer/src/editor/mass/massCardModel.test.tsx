@@ -593,6 +593,19 @@ describe('질량 출처 문구', () => {
     expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true, 0.5)).toContain(
       `직접 입력·데이터시트 질량 ${massText(t, 0.5, 'cm')}은 제자리에 두고, 나머지 ${massText(t, 19.5, 'cm')}를`
     )
+    // CAD가 없는 로봇(읽는 중 아님)도 같지만 읽는 중이라고 하지 않는다
+    const noCad = robotMass({
+      fixedMass: 0.5,
+      estimatedMass: 19.5,
+      warnings: [{ kind: 'defaultMass' }]
+    })
+    expect(robotMassBreakdown(t, noCad, 'cm', 20)).toBe(
+      `저울 무게: 직접 입력·데이터시트 ${massText(t, 0.5, 'cm')} + 나머지 ${massText(t, 19.5, 'cm')} (형상 없음, 외곽 상자로 근사)`
+    )
+    const noCadWarning = warningText(t, { kind: 'defaultMass' }, 'cm', 20, false, 0.5)
+    expect(noCadWarning).toContain('형상 정보가 없어')
+    expect(noCadWarning).toContain(`나머지 ${massText(t, 19.5, 'cm')}를`)
+    expect(noCadWarning).not.toContain('읽는')
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
     expect(formatInertia(12.345)).toBe('12.3')

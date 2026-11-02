@@ -1435,6 +1435,8 @@ const en: Messages = {
         'While the shapes load, the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       defaultMassLoadingFixed:
         'While the shapes load, the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
+      defaultMassWeighedFixed:
+        'No shape information, so the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
       pending: '{{count}} mesh(es) still loading are not counted yet.'
     },
     notices: {
@@ -1462,6 +1464,8 @@ const en: Messages = {
       breakdownWeighedBox: 'Weighed mass (no shapes, approximated by the bounding box)',
       breakdownWeighedFixed:
         'Weighed mass: override and datasheet {{fixed}} + remaining {{rest}} while shapes load (approximated by the bounding box)',
+      breakdownWeighedBoxFixed:
+        'Weighed mass: override and datasheet {{fixed}} + remaining {{rest}} (no shapes, approximated by the bounding box)',
       breakdownWeighedLoading: 'Weighed mass (shapes loading, approximated by the bounding box)',
       scaled: '· estimate ×{{scale}} (scaled to the weighed mass)',
       weighed: 'Weighed mass',

@@ -1093,6 +1093,49 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     })
   })
 
+  it('CAD가 없는 로봇(메시 형상 없음)도 고정 질량은 제자리에 두고 저울 무게의 나머지를 상자에 둔다', () => {
+    // 임시 씬처럼 형상이 없고(웹캠 자리 표시 오브젝트에 모터), 배터리 점질량(덮어쓴 그룹)이 있다
+    const placeholder = (id: string, extra: Partial<SceneObject>): SceneObject => ({
+      ...node(id, 'R', {}, [0.1, 0, 0.05]),
+      kind: 'part',
+      visual: { type: 'placeholder', shape: 'webcam' },
+      ...extra
+    })
+    const objects = scene(
+      robot({ rigidbody: { weighedMass: 15 } }),
+      placeholder('Cam', { components: [motor(19.2)] }),
+      node('Bat', 'R', { kind: 'group', mass: { mass: 0.6 } }, [-0.1, 0, 0.03])
+    )
+    const model = computeMassModel(objects, lookupOf({}))
+    const fixed = model.robots.R.fixedMass
+    expect(fixed).toBeGreaterThan(0.6)
+    expect(model.robots.R).toMatchObject({
+      mass: 15,
+      estimatedMass: expect.closeTo(15 - fixed, 12),
+      scale: 1,
+      warnings: [{ kind: 'defaultMass' }]
+    })
+    expect(model.objects.R).toMatchObject({ mass: 15, source: 'default', pendingMeshes: 0 })
+    expect(model.objects.Cam.source).toBe('cots')
+    expect(model.objects.Bat).toMatchObject({ mass: 0.6, source: 'override' })
+    // 무게중심은 상자 중심(높이 0.35배)과 고정 질량의 가중 평균
+    const com = model.robots.R.centerOfMass
+    const motorX = (fixed - 0.6) * 0.1
+    expect(com[0]).toBeCloseTo((motorX - 0.6 * 0.1) / 15, 12)
+    // 고정 질량이 저울 무게 이상이면 나머지가 없어 scaleImpossible(형상이 없어도)
+    const heavy = { ...objects, R: robot({ rigidbody: { weighedMass: 0.5 } }) }
+    expect(computeMassModel(heavy, lookupOf({})).robots.R).toMatchObject({
+      mass: fixed,
+      warnings: [{ kind: 'scaleImpossible', fixed, weighed: 0.5 }]
+    })
+    // 저울 무게가 없으면 정해진 질량 그대로다(질량 정보가 있으므로 13.6 kg 대체값이 아니다)
+    const unweighed = { ...objects, R: robot() }
+    expect(computeMassModel(unweighed, lookupOf({})).robots.R).toMatchObject({
+      mass: expect.closeTo(fixed, 12),
+      warnings: []
+    })
+  })
+
   it('같은 입력이면 같은 결과이고, 결과 키는 objects 키 순서다', () => {
     const objects = scene(
       robot(),

@@ -571,13 +571,18 @@ export function warningText(
     case 'defaultMass':
       if (weighedMass === undefined)
         return t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
-      // 고정 질량을 두고 나머지만 상자에 두는 것은 형상을 읽는 중일 때뿐이다(질량 모델의 boxRest)
+      // 고정 질량을 두고 나머지만 상자에 두는 것(질량 모델의 boxRest)은 형상을 읽는 중이거나 CAD가 없을 때다
       if (fixed > 0)
-        return t('mass.warnings.defaultMassLoadingFixed', {
-          mass: massText(t, weighedMass, unit),
-          fixed: massText(t, fixed, unit),
-          rest: massText(t, Math.max(0, weighedMass - fixed), unit)
-        })
+        return t(
+          pending
+            ? 'mass.warnings.defaultMassLoadingFixed'
+            : 'mass.warnings.defaultMassWeighedFixed',
+          {
+            mass: massText(t, weighedMass, unit),
+            fixed: massText(t, fixed, unit),
+            rest: massText(t, Math.max(0, weighedMass - fixed), unit)
+          }
+        )
       return t(pending ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
         mass: massText(t, weighedMass, unit)
       })
@@ -597,10 +602,15 @@ export function robotMassBreakdown(
   if (usesDefaultMass(robot)) {
     if (weighedMass === undefined) return t('mass.rigidbody.breakdownDefault')
     if (robot.fixedMass > 0)
-      return t('mass.rigidbody.breakdownWeighedFixed', {
-        fixed: massText(t, robot.fixedMass, unit),
-        rest: massText(t, robot.estimatedMass, unit)
-      })
+      return t(
+        hasPendingMeshes(robot)
+          ? 'mass.rigidbody.breakdownWeighedFixed'
+          : 'mass.rigidbody.breakdownWeighedBoxFixed',
+        {
+          fixed: massText(t, robot.fixedMass, unit),
+          rest: massText(t, robot.estimatedMass, unit)
+        }
+      )
     return hasPendingMeshes(robot)
       ? t('mass.rigidbody.breakdownWeighedLoading')
       : t('mass.rigidbody.breakdownWeighedBox')

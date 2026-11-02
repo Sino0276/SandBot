@@ -416,6 +416,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   const noticeOrder: ({ block: Block } | { unusedCenter: string; robotId: string | null })[] = []
   const matrices = new Map<string, Matrix4>()
   const pending = new Map<string, number>()
+  // 로봇마다 메시 형상 수(읽었든 읽는 중이든, 덩어리 안이든). 0이면 CAD가 없는 로봇이다(저울 무게 대체값, boxRest).
+  const shapes = new Map<string, number>()
   // 오브젝트마다 질량에 들어가지 않은 읽는 중 메시(덩어리 밖, ObjectMass.pendingMeshes)
   const uncounted = new Map<string, number>()
 
@@ -532,6 +534,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
 
     if (object.visual?.type === 'mesh') {
       const props = lookup.props(object.visual.geometryId)
+      const shapeRobot = context.robot?.id
+      if (shapeRobot) shapes.set(shapeRobot, (shapes.get(shapeRobot) ?? 0) + 1)
       if (!props) {
         const robotId = context.robot?.id
         if (robotId) pending.set(robotId, (pending.get(robotId) ?? 0) + 1)
@@ -618,12 +622,16 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let scale = 1
     const weighed = objects[robotId].rigidbody?.weighedMass
     const total = fixed + estimated
-    // 저울 무게가 있는데 추정할 질량이 아직 없으면(형상을 모두 읽는 중이거나 형상이 없음) 고정 질량(덮어쓰기·COTS)은
-    // 그대로 두고 나머지(저울 무게 − 고정)를 외곽 상자에 고르게 둔다(질량 모델 §3.3의 대체값). 고정 질량이 이미 저울
-    // 무게 이상이면 나머지가 없으므로 scaleImpossible이다. 형상이 있는데 모두 질량 0이면(라벨 규칙 등) 맞출 것이
-    // 없다는 뜻이라 이것도 scaleImpossible이다.
+    // 저울 무게가 있는데 추정할 질량이 아직 없으면(형상을 모두 읽는 중이거나 CAD가 없음: 메시 형상이 하나도 없는 로봇,
+    // 질량 모델 §3.3 "형상이 없고") 고정 질량(덮어쓰기·COTS)은 그대로 두고 나머지(저울 무게 − 고정)를 외곽 상자에 고르게
+    // 둔다(§3.3의 대체값). 고정 질량이 이미 저울 무게 이상이면 나머지가 없으므로 scaleImpossible이다. 형상을 다 읽었는데
+    // 추정이 0이면(형상이 모두 덩어리 안이거나 표면 메시·라벨 규칙) §3.2대로 맞출 것이 없어 scaleImpossible이다.
+    const noShapes = (shapes.get(robotId) ?? 0) === 0
     const boxRest =
-      weighed !== undefined && estimated === 0 && fixed < weighed && (meshes > 0 || total === 0)
+      weighed !== undefined &&
+      estimated === 0 &&
+      fixed < weighed &&
+      (meshes > 0 || total === 0 || noShapes)
     if (weighed !== undefined && total > 0 && !boxRest) {
       if (fixed >= weighed || estimated === 0) {
         warnings.push({ kind: 'scaleImpossible', fixed, weighed })
