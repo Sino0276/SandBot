@@ -253,10 +253,11 @@ function podRejection(
   if (robotId === null || findRobotId(objects, request.target) !== robotId) return 'otherRobot'
   if (isInSubtree(objects, request.pinpointId, request.target)) return 'containsPinpoint'
   let volume = 0
+  // 하위의 같은 포드 SKU 오브젝트(그룹 아래 불러온 포드 STEP의 "3110-0001-0002 …" 어셈블리)
+  const samePod = new Set<string>()
   for (const id of subtreeIds(objects, request.target)) {
     const object = objects[id]
-    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys). 하위의
-    // 같은 포드 SKU(그룹 아래 불러온 포드 STEP의 "3110-0001-0002 …" 어셈블리)는 그 포드 자신이라 다른 COTS가 아니다.
+    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys).
     const sku = id === request.target ? null : skuKeyOf(object, lookup, caches)
     const hasCots =
       (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
@@ -264,10 +265,26 @@ function podRejection(
       (id !== request.target && targets.has(id)) ||
       (sku !== null && sku !== request.key)
     if (hasCots) return 'containsCots'
+    if (sku !== null) samePod.add(id)
     if (object.visual?.type === 'mesh') {
       const props = lookup.props(object.visual.geometryId)
       if (props) volume += usableVolume(props)
     }
+  }
+  // 같은 포드 SKU는 하나(서로 품은 것은 하나로 센다)까지만 그 포드 자신이다. 둘 이상이면 포드 여럿을 품은 상위
+  // 어셈블리("Odometry")라 포드 하나의 질량으로 덮으면 나머지 포드가 빠진다.
+  let podCount = 0
+  for (const id of samePod) {
+    let parentId = objects[id].parentId
+    let nested = false
+    while (parentId !== null && parentId !== request.target && objects[parentId]) {
+      if (samePod.has(parentId)) {
+        nested = true
+        break
+      }
+      parentId = objects[parentId].parentId
+    }
+    if (!nested && ++podCount > 1) return 'containsCots'
   }
   const podMass = cotsEntry(request.key)?.mass ?? 0
   return volume * MATERIALS.aluminum6061.density > POD_GEOMETRY_FACTOR * podMass ? 'tooLarge' : null

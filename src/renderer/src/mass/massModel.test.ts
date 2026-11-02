@@ -786,6 +786,35 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(computeMassModel(twoPods, lookupOf(podProps, names)).robots.R.notices).toEqual([
         ignored('PodCad', 'containsCots')
       ])
+      // 같은 포드 SKU를 서로 품은 것(포드 어셈블리 안의 같은 SKU 어셈블리)은 포드 하나다
+      const nested = {
+        ...scenePod('PodCad'),
+        Sub: node('Sub', 'Asm', { name: '3110-0001-0002 (0°) inner' }),
+        Inner: part('Inner', 'Sub', [0, 0, 0], { name: '3110-0001-0002 (0°) 1' })
+      }
+      const nestedModel = computeMassModel(nested, lookupOf(podProps, names))
+      expect(nestedModel.robots.R.notices).toEqual([])
+      expect(nestedModel.objects.PodCad).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+    })
+
+    it('같은 포드 SKU를 둘 이상 품은 상위 어셈블리는 포드 하나로 보지 않는다(containsCots)', () => {
+      // CAD 루트 C 안에 Pinpoint와, 포드 둘을 품은 "Odometry" 어셈블리
+      const odometry: SceneObjects = {
+        Odo: node('Odo', 'C', { name: 'Odometry' }),
+        Pod1: node('Pod1', 'Odo', { name: '3110-0001-0002 (0°)' }),
+        P1: part('P1', 'Pod1'),
+        Pod2: node('Pod2', 'Odo', { name: '3110-0001-0002 (0°) (1)' }),
+        P2: part('P2', 'Pod2')
+      }
+      const lookup = lookupOf({ ...props, 'g:P1': solid(15e-6), 'g:P2': solid(15e-6) })
+      for (const yPod of ['Odo', '']) {
+        const model = computeMassModel({ ...base('Odo', yPod), ...odometry }, lookup)
+        expect(model.robots.R.notices).toEqual([ignored('Odo', 'containsCots')])
+        // 포드 질량으로 덮지 않으므로 두 포드 어셈블리가 각자 포드 질량을 받는다
+        expect(model.objects.Pod1).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+        expect(model.objects.Pod2).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+        expect(model.objects.Odo.mass).toBeCloseTo(2 * 0.084, 12)
+      }
     })
 
     it('xPod·yPod가 같은 오브젝트면 한 번만 알리고, 같은 포드는 한 번만 센다', () => {
