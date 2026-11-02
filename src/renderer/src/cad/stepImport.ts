@@ -30,6 +30,8 @@ export type ImportedNode = {
   kind: 'assembly' | 'part'
   // part일 때 meshes의 인덱스
   meshIndex?: number
+  // 이름 없는 메시에 불러올 때 붙인 "노드 이름 + 순번" 이름이면 true(CAD 이름이 아니다, meshSourceNames)
+  generatedName?: true
   bounds: Bounds
   children: ImportedNode[]
 }
@@ -38,7 +40,8 @@ export type ImportedNode = {
 export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[]; sourceMeshCount: number }
 
 // 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
-// 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가. v3: 메시 질량 성질(mass) 추가.
+// 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가. v3: 메시 질량 성질(mass)과
+// 붙인 이름 표시(ImportedNode.generatedName) 추가.
 export const MESH_CACHE_TAG = 'model-v3'
 
 function isFloat32OrNull(value: unknown): boolean {
@@ -148,11 +151,12 @@ function convertNode(node: OcctNode, meshes: (ImportedMesh | null)[]): ImportedN
   node.meshes.forEach((meshIndex, order) => {
     const mesh = meshes[meshIndex]
     if (!mesh) return
-    const fallback = node.meshes.length > 1 ? `${node.name} ${order + 1}` : node.name
+    const numbered = mesh.name === '' && node.meshes.length > 1
     children.push({
-      name: mesh.name || fallback,
+      name: mesh.name || (numbered ? `${node.name} ${order + 1}` : node.name),
       kind: 'part',
       meshIndex,
+      ...(numbered ? { generatedName: true as const } : {}),
       bounds: mesh.bounds,
       children: []
     })
@@ -161,7 +165,10 @@ function convertNode(node: OcctNode, meshes: (ImportedMesh | null)[]): ImportedN
   if (children.length === 0) return null
   // 메시 하나만 가진 노드는 그 자체로 파트다. 이름은 노드(컴포넌트) 이름을 쓴다.
   if (node.children.length === 0 && children.length === 1) {
-    return { ...children[0], name: node.name || children[0].name }
+    if (!node.name) return children[0]
+    const part: ImportedNode = { ...children[0], name: node.name }
+    delete part.generatedName
+    return part
   }
   return {
     name: node.name,
@@ -229,22 +236,16 @@ export function meshGeometryIds(
 }
 
 // 메시마다 원래 CAD 이름(이름 규칙용, geometryRegistry의 meshSourceName). 사용자가 오브젝트 이름을 바꿔도 남는다.
-// 불러올 때 파트 오브젝트가 받은 이름이라, 메시 하나뿐인 잎 노드는 노드(컴포넌트) 이름이다. 이름 없는 메시에 붙인
-// "노드 이름 + 순번"은 CAD 이름이 아니므로 빈 글자로 둔다(부모 이름을 바꿨을 때 자식마다 부모 품번으로 맞지 않게).
+// 불러올 때 파트 오브젝트가 받은 이름이라 ImportedMesh.name과 다를 수 있다: 메시 하나뿐인 잎 노드는 노드(컴포넌트)
+// 이름이고(메시 이름은 빈 글자나 'SOLID'일 때가 많다), 이름 없는 메시에 붙인 "노드 이름 + 순번"(generatedName)은
+// CAD 이름이 아니므로 빈 글자다(부모 이름을 바꿨을 때 자식마다 부모 품번으로 맞지 않게).
 export function meshSourceNames(model: ImportedModel): string[] {
   const names = model.meshes.map((mesh) => mesh.name)
-  const visit = (node: ImportedNode, parent: ImportedNode | null): void => {
-    if (node.meshIndex !== undefined) {
-      const numbered =
-        model.meshes[node.meshIndex].name === '' &&
-        parent !== null &&
-        node.name.startsWith(`${parent.name} `) &&
-        /^\d+$/.test(node.name.slice(parent.name.length + 1))
-      names[node.meshIndex] = numbered ? '' : node.name
-    }
-    for (const child of node.children) visit(child, node)
+  const visit = (node: ImportedNode): void => {
+    if (node.meshIndex !== undefined) names[node.meshIndex] = node.generatedName ? '' : node.name
+    node.children.forEach(visit)
   }
-  visit(model.root, null)
+  visit(model.root)
   return names
 }
 

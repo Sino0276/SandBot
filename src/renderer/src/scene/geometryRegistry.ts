@@ -59,7 +59,8 @@ export function meshMassProps(id: string): MeshMassProps | undefined {
   return meshInfo.get(id)?.mass
 }
 
-// 원래 CAD 이름(이름 규칙용, cad/stepImport.ts의 meshSourceNames). 오브젝트 이름을 바꿔도 남는다.
+// 원래 CAD 이름(이름 규칙용). 불러올 때 파트가 받은 이름이고 붙인 "노드 + 순번" 이름은 빈 글자다(ImportedMesh.name과
+// 다를 수 있다, cad/stepImport.ts의 meshSourceNames). 오브젝트 이름을 바꿔도 남는다.
 export function meshSourceName(id: string): string | undefined {
   return meshInfo.get(id)?.sourceName
 }

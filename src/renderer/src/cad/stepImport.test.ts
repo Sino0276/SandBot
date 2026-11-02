@@ -17,7 +17,8 @@ import {
   MESH_CACHE_TAG,
   meshGeometryIds,
   meshSourceNames,
-  type ImportedModel
+  type ImportedModel,
+  type ImportedNode
 } from './stepImport'
 
 function counterIds(): () => string {
@@ -186,6 +187,38 @@ describe('형상 id와 원래 CAD 이름', () => {
     }
     const model = convertOcctResult(partial, 'robot.step')!
     expect(meshSourceNames(model)).toEqual(['PLATE', 'WHEEL_ASM'])
+  })
+
+  it('"부모 이름 + 숫자"인 진짜 CAD 이름은 남긴다(붙인 이름인지는 변환할 때 기록한다)', () => {
+    const named: OcctResult = {
+      success: true,
+      root: {
+        name: '',
+        meshes: [],
+        children: [
+          {
+            name: 'Bracket',
+            meshes: [],
+            children: [
+              // 메시 이름이 없는 잎 컴포넌트의 이름이 우연히 부모 이름 + 숫자
+              { name: 'Bracket 2', meshes: [0], children: [] },
+              // 이름 없는 노드의 이름 없는 메시 둘: 붙인 이름 ' 1'·' 2'
+              { name: '', meshes: [1, 2], children: [] }
+            ]
+          }
+        ]
+      },
+      meshes: [
+        mesh('', [0, 0, 0], [1, 1, 1]),
+        mesh('', [0, 0, 0], [1, 1, 1]),
+        mesh('', [0, 0, 0], [1, 1, 1])
+      ]
+    }
+    const model = convertOcctResult(named, 'bracket.step')!
+    expect(meshSourceNames(model)).toEqual(['Bracket 2', '', ''])
+    // 오브젝트 이름은 전과 같다
+    const names = (node: ImportedNode): string[] => [node.name, ...node.children.flatMap(names)]
+    expect(names(model.root)).toEqual(['Bracket', 'Bracket 2', '', ' 1', ' 2'])
   })
 })
 
