@@ -181,6 +181,9 @@ describe('실행 화면의 값 글자', () => {
     )
     expect(htmlToText('<script>alert(1)</script>ok')).toBe('alert(1)ok')
     expect(htmlToText('&unknown; &#0;')).toBe('&unknown; &#0;')
+    // 브라우저처럼 글자로 시작하는 것(과 </…, <!…, <?…)만 태그다: 비교식은 그대로 남는다
+    expect(htmlToText('x < 5 && y > 3, 1 <= 2')).toBe('x < 5 && y > 3, 1 <= 2')
+    expect(htmlToText('a <!-- note --> b <?x?> c </b> d')).toBe('a  b  c  d')
     const frame = { lines: ['<i>a</i>'], log: ['<b>b</b>'], format: 'html' as const }
     expect(telemetryLines(frame)).toEqual({ lines: ['a'], log: ['b'] })
     const classic = { ...frame, format: 'classic' as const }
