@@ -1,5 +1,7 @@
 import type { OcctMesh, OcctNode, OcctResult } from 'occt-import-js'
+import type { MeshMassProps } from '../mass/types'
 import { boundsCenter, cadRootTransform, type CadAlignment } from './alignment'
+import { computeMeshMass, isMeshMassProps } from './meshMass'
 import type { MeshIndexing, SceneObject, SceneObjects, Transform, Vec3 } from '../scene/model'
 
 export type Bounds = { min: Vec3; max: Vec3 }
@@ -19,6 +21,8 @@ export type ImportedMesh = {
   color: Vec3
   // CAD 좌표 경계 상자
   bounds: Bounds
+  // 단위 밀도 질량 성질(피벗 기준, cad/meshMass.ts). 변환할 때 double 좌표로 한 번 계산한다.
+  mass: MeshMassProps
 }
 
 export type ImportedNode = {
@@ -34,8 +38,8 @@ export type ImportedNode = {
 export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[]; sourceMeshCount: number }
 
 // 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
-// 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가.
-export const MESH_CACHE_TAG = 'model-v2'
+// 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가. v3: 메시 질량 성질(mass) 추가.
+export const MESH_CACHE_TAG = 'model-v3'
 
 function isFloat32OrNull(value: unknown): boolean {
   return value === null || value instanceof Float32Array
@@ -60,7 +64,8 @@ export function isImportedModel(value: unknown): value is ImportedModel {
         mesh.positions instanceof Float32Array &&
         mesh.indices instanceof Uint32Array &&
         isFloat32OrNull(mesh.normals) &&
-        isFloat32OrNull(mesh.colors)
+        isFloat32OrNull(mesh.colors) &&
+        isMeshMassProps(mesh.mass)
     )
   )
 }
@@ -128,7 +133,9 @@ function convertMesh(mesh: OcctMesh, sourceIndex: number): ImportedMesh | null {
     indices,
     colors,
     color,
-    bounds
+    bounds,
+    // 피벗을 뺀 double 좌표로 적분한다(Float32로 줄인 positions가 아니라 원래 값). WASM과 네이티브가 같은 경로다.
+    mass: computeMeshMass(source, mesh.index.array, bounds)
   }
 }
 
@@ -221,6 +228,26 @@ export function meshGeometryIds(
   )
 }
 
+// 메시마다 원래 CAD 이름(이름 규칙용, geometryRegistry의 meshSourceName). 사용자가 오브젝트 이름을 바꿔도 남는다.
+// 불러올 때 파트 오브젝트가 받은 이름이라, 메시 하나뿐인 잎 노드는 노드(컴포넌트) 이름이다. 이름 없는 메시에 붙인
+// "노드 이름 + 순번"은 CAD 이름이 아니므로 빈 글자로 둔다(부모 이름을 바꿨을 때 자식마다 부모 품번으로 맞지 않게).
+export function meshSourceNames(model: ImportedModel): string[] {
+  const names = model.meshes.map((mesh) => mesh.name)
+  const visit = (node: ImportedNode, parent: ImportedNode | null): void => {
+    if (node.meshIndex !== undefined) {
+      const numbered =
+        model.meshes[node.meshIndex].name === '' &&
+        parent !== null &&
+        node.name.startsWith(`${parent.name} `) &&
+        /^\d+$/.test(node.name.slice(parent.name.length + 1))
+      names[node.meshIndex] = numbered ? '' : node.name
+    }
+    for (const child of node.children) visit(child, node)
+  }
+  visit(model.root, null)
+  return names
+}
+
 export function transferablesOf(model: ImportedModel): ArrayBuffer[] {
   return model.meshes.flatMap((mesh) =>
     [mesh.positions, mesh.normals, mesh.indices, mesh.colors]
@@ -238,6 +265,12 @@ const IDENTITY_ROTATION: Vec3 = [0, 0, 0]
 // CAD 메시 형상 id. 프로젝트를 다시 열 때 같은 파일을 읽으면 같은 id로 다시 등록된다.
 export function cadGeometryId(cadRootId: string, meshIndex: number): string {
   return `${cadRootId}:${meshIndex}`
+}
+
+// cadGeometryId의 거꾸로: 형상 id가 속한 CAD 루트 id. CAD 형상 id 모양(…:순번)이 아니면 null.
+export function cadRootIdOf(geometryId: string): string | null {
+  const match = /^(.+):\d+$/.exec(geometryId)
+  return match ? match[1] : null
 }
 
 // 불러온 모델을 씬 오브젝트로 만든다: 로봇(필드 중앙) → CAD 루트(정렬) → 어셈블리·파트.
