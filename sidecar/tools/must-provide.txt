@@ -19,7 +19,8 @@ com.qualcomm.robotcore.hardware.HardwareMap
 com.qualcomm.robotcore.hardware.HardwareDevice
 com.qualcomm.robotcore.util.RobotLog
 
-# 등록기 OpMode(@OpModeRegistrar, Road Runner quickstart의 튜닝 OpMode), OpMode 수명 알림, 모의 저장소(AppUtil 폴더)
+# 등록기 OpMode(@OpModeRegistrar, Road Runner quickstart의 튜닝 OpMode), OpMode 수명 알림, 모의 저장소(AppUtil 폴더와 그 파일을
+# 읽고 쓰는 ReadWriteFile — SDK 샘플 SensorBNO055IMUCalibration, Autonomous → TeleOp 자세 넘기기)
 com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar
 com.qualcomm.robotcore.eventloop.opmode.OpModeManager
 com.qualcomm.robotcore.eventloop.opmode.AnnotatedOpModeManager
@@ -33,6 +34,7 @@ org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta$Source
 org.firstinspires.ftc.robotcore.internal.opmode.OpModeMetaAndClass
 org.firstinspires.ftc.robotcore.internal.opmode.OpModeMetaAndInstance
 org.firstinspires.ftc.robotcore.internal.system.AppUtil
+com.qualcomm.robotcore.util.ReadWriteFile
 
 # 유틸리티(실제 동작 그대로 들여온다)
 com.qualcomm.robotcore.util.ElapsedTime
