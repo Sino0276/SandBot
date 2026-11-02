@@ -456,6 +456,38 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(model.robots.R.warnings).toEqual([])
   })
 
+  it('덩어리를 정하지 않은 오브젝트(질량·COTS 없음, 다른 덩어리 안의 COTS)의 무게중심 덮어쓰기도 알린다', () => {
+    const objects = scene(
+      robot(),
+      // 재질만 정하고 무게중심을 넣은 어셈블리: 질량을 정하지 않아 쓰이지 않는다
+      node('A', 'R', { mass: { material: 'steel', centerOfMass: [0.5, 0, 0] } }),
+      part('A1', 'A'),
+      // 덮어쓴 덩어리 안의 모터: 위 덩어리가 먼저라 모터 COTS가 덩어리를 만들지 않는다
+      node('O', 'R', { mass: { mass: 2 } }),
+      part('M', 'O', [0, 0, 0], {
+        components: [motor(19.2)],
+        mass: { centerOfMass: [0, 0.5, 0] }
+      }),
+      // 쓰이는 무게중심(COTS를 정한 오브젝트)은 알리지 않는다
+      part('N', 'R', [0, 0, 0], { components: [motor(19.2)], mass: { centerOfMass: [0, 0, 0.1] } })
+    )
+    const props = Object.fromEntries(['A1', 'M', 'N'].map((id) => [`g:${id}`, solid(LITER)]))
+    const model = computeMassModel(objects, lookupOf(props))
+    expect(model.objects.A.centerOfMass).toEqual(model.objects.A1.centerOfMass)
+    expect(model.objects.N.centerOfMass[2]).toBeCloseTo(0.1, 14)
+    // 문서 순서: A(덩어리 없음) → O(덩어리, 알릴 것 없음) → M(덩어리 없음)
+    expect(model.robots.R.notices).toEqual([
+      { kind: 'centerOfMassIgnored', objectId: 'A' },
+      { kind: 'centerOfMassIgnored', objectId: 'M' }
+    ])
+    // 로봇 밖 오브젝트는 알릴 로봇이 없다
+    const loose = {
+      ...objects,
+      L: { ...node('L', 'R', { mass: { centerOfMass: [0, 0, 0] } }), parentId: null }
+    }
+    expect(computeMassModel(loose, lookupOf(props)).robots.R.notices).toHaveLength(2)
+  })
+
   it('컴포넌트 COTS는 붙은 오브젝트 하위 전체를 덮고, 안쪽 COTS는 쓰지 않는다', () => {
     const objects = scene(
       robot(),
@@ -596,7 +628,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       }
     })
 
-    it('다른 COTS를 품은 것은 containsCots, 큰 형상은 tooLarge, 다른 CAD 루트·로봇 밖은 cadRoot·otherRobot', () => {
+    it('다른 COTS를 품은 것은 containsCots, 큰 형상은 tooLarge, 로봇 밖은 otherRobot', () => {
       expect(run('Drive').robots.R.notices).toEqual([ignored('Drive', 'containsCots')])
       expect(run('Drive').objects.Mot).toMatchObject({
         source: 'cots',
@@ -616,7 +648,8 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       )
       expect(both.robots.R.notices).toEqual([ignored('Arm', 'containsCots')])
       expect(both.objects.Pod2).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
-      // CAD 루트를 품은 그룹은 cadRoot(Pinpoint는 그 밖의 그룹 Other로 옮김)
+      // 로봇 CAD 루트를 품은 그룹(Pinpoint는 그 밖의 그룹 Other로 옮김)은 안의 모터로 containsCots, 모터가 없어도
+      // 형상이 커서 tooLarge다(CAD 루트를 따로 거르지 않는다)
       const wrapped = base('G')
       const withGroup: SceneObjects = {
         ...scene(robot(), node('G', 'R', { kind: 'group' })),
@@ -625,7 +658,13 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
         Pin: { ...wrapped.Pin, parentId: 'Other' }
       }
       expect(computeMassModel(withGroup, lookupOf(props)).robots.R.notices).toEqual([
-        ignored('G', 'cadRoot')
+        ignored('G', 'containsCots')
+      ])
+      const withoutMotor = Object.fromEntries(
+        Object.entries(withGroup).filter(([id]) => id !== 'Mot')
+      )
+      expect(computeMassModel(withoutMotor, lookupOf(props)).robots.R.notices).toEqual([
+        ignored('G', 'tooLarge')
       ])
       // 로봇 밖 오브젝트
       const outside = {
@@ -635,6 +674,65 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(computeMassModel(outside, lookupOf(props)).robots.R.notices).toEqual([
         ignored('Loose', 'otherRobot')
       ])
+    })
+
+    it('하위의 이름 SKU(배터리 등)도 containsCots, 포드 어셈블리의 붙인 이름 솔리드는 아니다', () => {
+      const withBattery = {
+        ...base('Arm'),
+        Bat: part('Bat', 'Arm', [0, 0, 0], { name: '3100-0012-0020 Battery' })
+      }
+      const small = { ...props, 'g:Arm1': box(0.01, 0.01, 0.01), 'g:Bat': box(0.01, 0.01, 0.01) }
+      // 원래 CAD 이름이 SKU
+      const named = computeMassModel(
+        withBattery,
+        lookupOf(small, { 'g:Bat': '3100-0012-0020 Battery' })
+      )
+      expect(named.robots.R.notices).toEqual([ignored('Arm', 'containsCots')])
+      expect(named.objects.Bat).toMatchObject({ source: 'cots', detail: 'battery:gobilda' })
+      // 어셈블리 이름 SKU도 센다
+      const assembly = {
+        ...base('Arm'),
+        Sub: node('Sub', 'Arm', { name: 'REV-31-1302 Slim Battery' })
+      }
+      expect(computeMassModel(assembly, lookupOf(small)).robots.R.notices).toEqual([
+        ignored('Arm', 'containsCots')
+      ])
+      // 불러올 때 붙인 이름(원래 이름 '')은 위 노드 이름을 되풀이할 뿐이라 세지 않는다
+      const generated = {
+        ...base('PodAsm'),
+        PodAsm: node('PodAsm', 'C', { name: '3110-0001-0002 4-Bar Pod' }),
+        PodA: part('PodA', 'PodAsm', [0, 0, 0], { name: '3110-0001-0002 4-Bar Pod 1' })
+      }
+      const model = computeMassModel(
+        generated,
+        lookupOf({ ...props, 'g:PodA': box(0.02, 0.02, 0.02) }, { 'g:PodA': '' })
+      )
+      expect(model.robots.R.notices).toEqual([])
+      expect(model.objects.PodAsm).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+    })
+
+    it('포드만 따로 불러온 작은 CAD 루트는 포드다', () => {
+      const podCad = {
+        ...base('PodCad'),
+        PodCad: node('PodCad', 'R', {
+          name: 'Pod CAD',
+          cad: {
+            fileName: 'pod.step',
+            absolutePath: '/pod.step',
+            upAxis: '+Z',
+            forwardAxis: '+X',
+            bounds: { min: [0, 0, 0], max: [0.03, 0.03, 0.03] },
+            meshCount: 1
+          }
+        }),
+        PodPart: part('PodPart', 'PodCad', [0, 0, 0], { name: 'Pod body' })
+      }
+      const model = computeMassModel(
+        podCad,
+        lookupOf({ ...props, 'g:PodPart': box(0.02, 0.02, 0.02) })
+      )
+      expect(model.robots.R.notices).toEqual([])
+      expect(model.objects.PodCad.mass).toBeCloseTo(0.084, 15)
     })
 
     it('xPod·yPod가 같은 오브젝트면 한 번만 알리고, 같은 포드는 한 번만 센다', () => {

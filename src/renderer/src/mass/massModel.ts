@@ -45,14 +45,15 @@ import {
 //    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) notices의 innerMassExceeds로 알린다.
 // 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드, 없으면 원래 CAD 이름의 SKU. 덮는 범위와
 //    나누는 방법은 1과 같고, 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
-//    Pinpoint 포드는 하위 전체를 포드 질량으로 바꾸므로, 포드일 수 없는 오브젝트(Pinpoint의 상위, CAD 루트, 다른 COTS를
+//    Pinpoint 포드는 하위 전체를 포드 질량으로 바꾸므로, 포드일 수 없는 오브젝트(Pinpoint 자신과 상위, 다른 COTS를
 //    품은 것, 너무 큰 형상)는 포드로 보지 않고 notices의 podIgnored로 알린다(podRejection).
 // 3. 재질 × 부피: 위로 가장 가까운 mass.material, 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질. 이름 규칙은
 //    원래 CAD 메시 이름과 상위 CAD 오브젝트 이름(CAD 루트까지)만 본다. 그룹 이름은 팀이 지은 메커니즘 이름(생성 Java
 //    클래스)이라 재질을 말하지 않으므로 건너뛴다(IntakeRoller 그룹에 옮긴 파트가 roller → 고무가 되지 않게).
 // 무게중심 덮어쓰기(mass.centerOfMass)는 질량을 정한 오브젝트(1·2)에서만 쓰고, 덩어리 전체의 무게중심을 그 점에 둔다
-// (관성의 모양은 형상 그대로 옮긴다). 안쪽 덮어쓰기는 옮기지 않으므로, 안쪽이 질량을 다 쓰면 옮길 몫이 없어 쓰지 못하고
-// notices의 centerOfMassIgnored로 알린다.
+// (관성의 모양은 형상 그대로 옮긴다). 안쪽 덮어쓰기는 옮기지 않으므로, 안쪽이 질량을 다 쓰면 옮길 몫이 없어 쓰지 못한다.
+// 이것과, 덩어리를 정하지 않은 오브젝트(덮어쓰기·COTS가 없거나 COTS가 다른 덩어리 안)의 무게중심 덮어쓰기는 notices의
+// centerOfMassIgnored로 알린다.
 //
 // 저울 무게(rigidbody.weighedMass)가 있으면 고정 질량(1·2)을 뺀 나머지로 3의 파트만 같은 비율로 늘이거나 줄인다.
 // 위치는 로봇 좌표(로봇 밖은 필드 좌표)이고, 관성은 무게중심 기준 R·I·Rᵀ와 평행축 정리로 합친다(transform에 척도 없음).
@@ -190,7 +191,8 @@ type PodRequest = { pinpointId: string; target: string; key: string }
 // 없는 오브젝트는 건너뛰고(하드웨어 검증이 알린다), 포드일 수 없는 오브젝트는 그 Pinpoint의 로봇에 podIgnored로 알린다.
 function pinpointPods(
   objects: SceneObjects,
-  lookup: MassLookup
+  lookup: MassLookup,
+  caches: NameCaches
 ): { pods: Map<string, string>; notices: { robotId: string; notice: MassNotice }[] } {
   const requests: PodRequest[] = []
   for (const object of Object.values(objects)) {
@@ -213,7 +215,7 @@ function pinpointPods(
   const reported = new Set<string>()
   for (const request of requests) {
     if (pods.has(request.target)) continue
-    const reason = podRejection(objects, lookup, request, targets)
+    const reason = podRejection(objects, lookup, caches, request, targets)
     if (reason === null) {
       pods.set(request.target, request.key)
       continue
@@ -237,10 +239,13 @@ function pinpointPods(
 }
 
 // 포드로 볼 수 없는 이유(볼 수 있으면 null). 포드 질량은 하위 전체를 덮으므로(인스펙터는 로봇 안 아무 오브젝트나 고르게
-// 한다) 상위·CAD 루트·큰 어셈블리를 고르면 그 형상과 안의 모터·Pinpoint 질량이 포드 질량으로 바뀐다.
+// 한다) 상위·큰 어셈블리를 고르면 그 형상과 안의 모터·Pinpoint 질량이 포드 질량으로 바뀐다. CAD 루트는 따로 거르지
+// 않는다: 로봇 전체 CAD는 Pinpoint를 품거나(containsPinpoint) 너무 커서(tooLarge) 걸리고, 포드만 따로 불러온 작은
+// STEP은 포드다.
 function podRejection(
   objects: SceneObjects,
   lookup: MassLookup,
+  caches: NameCaches,
   request: PodRequest,
   targets: ReadonlySet<string>
 ): PodIgnoredReason | null {
@@ -250,11 +255,11 @@ function podRejection(
   let volume = 0
   for (const id of subtreeIds(objects, request.target)) {
     const object = objects[id]
-    if (object.cad) return 'cadRoot'
+    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys).
     const hasCots =
       (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
       (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
-      (id !== request.target && targets.has(id))
+      (id !== request.target && (targets.has(id) || skuKeyOf(object, lookup, caches) !== null))
     if (hasCots) return 'containsCots'
     if (object.visual?.type === 'mesh') {
       const props = lookup.props(object.visual.geometryId)
@@ -263,6 +268,25 @@ function podRejection(
   }
   const podMass = cotsEntry(request.key)?.mass ?? 0
   return volume * MATERIALS.aluminum6061.density > POD_GEOMETRY_FACTOR * podMass ? 'tooLarge' : null
+}
+
+// 포드 대상 하위의 이름 SKU 키(라벨 이름은 빼고, 그룹·로봇은 CAD 이름이 아니라 없음). 메시 파트는 원래 CAD 이름만 본다:
+// 불러올 때 붙인 "노드 + 순번" 이름(원래 이름 '')과 아직 읽지 않은 형상의 이름은 위 노드의 SKU를 되풀이하므로
+// ("3110-0001-0002 Pod 1") 포드 어셈블리 자신의 솔리드를 다른 COTS로 보지 않게 한다.
+function skuKeyOf(object: SceneObject, lookup: MassLookup, caches: NameCaches): string | null {
+  if (object.kind === 'robot' || object.kind === 'group') return null
+  if (object.visual?.type !== 'mesh') return skuFromNames([object.name], caches)
+  const source = lookup.sourceName(object.visual.geometryId)
+  return source ? skuFromNames([source], caches) : null
+}
+
+function skuFromNames(names: string[], caches: NameCaches): string | null {
+  for (const name of names) {
+    if (caches.rule([name])?.material === null) continue
+    const key = caches.sku(name)
+    if (key) return key
+  }
+  return null
 }
 
 // 오브젝트에 맞는 COTS 표 키들(컴포넌트·포드·바퀴는 모두 더하고, 없을 때만 이름의 SKU). 라벨 이름의 SKU는 쓰지 않는다
@@ -283,12 +307,8 @@ function cotsKeys(
   const wheel = object.wheel ? wheelCotsKey(object.wheel) : null
   if (wheel) keys.push(wheel)
   if (keys.length > 0) return keys
-  for (const name of names) {
-    if (caches.rule([name])?.material === null) continue
-    const key = caches.sku(name)
-    if (key) return [key]
-  }
-  return []
+  const sku = skuFromNames(names, caches)
+  return sku ? [sku] : []
 }
 
 // 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)
@@ -382,11 +402,14 @@ function principalMoments(inertia: SymMatrix3): Vec3 {
 }
 
 export function computeMassModel(objects: SceneObjects, lookup: MassLookup): MassModel {
-  const { pods, notices: podNotices } = pinpointPods(objects, lookup)
   const caches = nameCaches()
+  const { pods, notices: podNotices } = pinpointPods(objects, lookup, caches)
   const parts: Part[] = []
   const partsByObject = new Map<string, Part[]>()
   const blocks: Block[] = []
+  // 오브젝트마다 알릴 것의 차례(문서 순서): 덩어리(푼 뒤 innerMassExceeds·centerOfMassIgnored)와, 덩어리를 정하지 않아
+  // 무게중심 덮어쓰기를 쓰지 못한 오브젝트
+  const noticeOrder: ({ block: Block } | { unusedCenter: string; robotId: string | null })[] = []
   const matrices = new Map<string, Matrix4>()
   const pending = new Map<string, number>()
 
@@ -493,7 +516,11 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       if (block) {
         context.block?.children.push(block)
         blocks.push(block)
+        noticeOrder.push({ block })
         context.block = block
+      } else if (settings?.centerOfMass) {
+        // 질량을 정하지 않았거나(덮어쓰기·COTS 없음) COTS가 다른 덩어리 안이라 쓰이지 않아, 무게중심을 옮길 덩어리가 없다
+        noticeOrder.push({ unusedCenter: object.id, robotId: context.robot?.id ?? null })
       }
     }
 
@@ -556,7 +583,13 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     const warnings: MassWarning[] = []
     const notices: MassNotice[] = []
     for (const entry of podNotices) if (entry.robotId === robotId) notices.push(entry.notice)
-    for (const block of blocks) {
+    for (const entry of noticeOrder) {
+      if (!('block' in entry)) {
+        if (entry.robotId === robotId)
+          notices.push({ kind: 'centerOfMassIgnored', objectId: entry.unusedCenter })
+        continue
+      }
+      const { block } = entry
       if (block.robotId !== robotId) continue
       if (block.exceededBy !== null)
         notices.push({
