@@ -9,11 +9,9 @@ import {
   fromDisplayLength,
   LENGTH_DIGITS,
   parseLength,
-  parseMass,
   toDisplayLength
 } from '../../units/units'
 import {
-  acceptMass,
   cardNotices,
   cleanMass,
   DEFAULT_DESCRIBERS,
@@ -22,11 +20,13 @@ import {
   inheritedOptionText,
   localCenterOfMass,
   massCardView,
+  massInputTitles,
   massText,
   materialLabel,
   MATERIAL_GROUPS,
   noticeText,
   parseInfillPercent,
+  parseMassInput,
   sameMassSettings,
   sourceText
 } from './massCardModel'
@@ -104,6 +104,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
             ariaLabel={t('mass.infill')}
             value={settings.infill === undefined ? '' : formatInfill(settings.infill)}
             placeholder={infillPlaceholder(t, view.inheritedInfill, DEFAULT_INFILL)}
+            invalidTitle={t('mass.infillRejected')}
             parse={parseInfillPercent}
             onCommit={(infill) => update({ infill: infill ?? undefined })}
           />
@@ -119,11 +120,10 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
               ? t('mass.overridePlaceholder', { mass: massText(t, result.mass, lengthUnit) })
               : undefined
           }
-          title={t('mass.massInputHint')}
-          parse={(text) => {
-            const kg = parseMass(text, lengthUnit)
-            return kg !== null && acceptMass(kg, MAX_OVERRIDE_MASS) ? kg : null
-          }}
+          {...massInputTitles(t, settings.mass, lengthUnit, 'part', MAX_OVERRIDE_MASS)}
+          parse={(text) =>
+            parseMassInput(text, lengthUnit, settings.mass, 'part', MAX_OVERRIDE_MASS)
+          }
           onCommit={(mass) => update({ mass: mass ?? undefined })}
         />
       </div>

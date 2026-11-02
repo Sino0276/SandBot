@@ -158,8 +158,21 @@ const MASS_SUFFIXES: Record<string, number> = {
   ounces: KG_PER_OZ
 }
 
-// "437g", "1.2 kg", "3lb", "8 oz" → kg. 단위가 없으면 표시 단위의 큰 단위로 읽는다(mm·cm·m는 kg, in은 lb).
+// 질량 기호 → kg
+export const KG_PER_MASS_SYMBOL: Readonly<Record<MassSymbol, number>> = {
+  g: 0.001,
+  kg: 1,
+  lb: KG_PER_LB,
+  oz: KG_PER_OZ
+}
+
+// "437g", "1.2 kg", "3lb", "8 oz" → kg. 단위가 없으면 bare 단위로 읽는다. 입력칸은 지금 보이는 값의 기호를 넘긴다
+// ("437 g" 칸에 친 450은 450 g). 넘기지 않으면 표시 단위의 큰 단위(mm·cm·m는 kg, in은 lb)다.
 // 읽을 수 없으면 null. 범위(0 초과 등)는 쓰는 쪽이 본다.
-export function parseMass(text: string, unit: LengthUnit): number | null {
-  return parseWithSuffix(text, MASS_SUFFIXES, unit === 'in' ? KG_PER_LB : 1)
+export function parseMass(
+  text: string,
+  unit: LengthUnit,
+  bare: MassSymbol = unit === 'in' ? 'lb' : 'kg'
+): number | null {
+  return parseWithSuffix(text, MASS_SUFFIXES, KG_PER_MASS_SYMBOL[bare])
 }

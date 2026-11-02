@@ -1383,7 +1383,12 @@ const ko = {
     overrideHint:
       '이 오브젝트 하위 전체의 질량입니다(저울에 단 서브어셈블리, 데이터시트 값). 하위 형상의 부피 비율로 나눠 놓습니다. 비우면 추정합니다.',
     overridePlaceholder: '추정 {{mass}}',
-    massInputHint: '단위를 붙여 입력할 수 있습니다 (예: 437g, 1.2kg, 3lb, 8oz).',
+    massInputHint:
+      '단위를 붙여 입력할 수 있습니다 (예: 437g, 1.2kg, 3lb, 8oz). 단위가 없으면 {{unit}}입니다.',
+    massInputRejected:
+      '받지 않은 값이라 바꾸지 않았습니다. 0보다 크고 {{max}} 이하인 질량을 넣으세요(단위가 없으면 {{unit}}). Esc로 되돌립니다.',
+    infillRejected:
+      '받지 않은 값이라 바꾸지 않았습니다. 0–100 사이의 채움률(%)을 넣으세요. Esc로 되돌립니다.',
     centerOfMass: '무게중심',
     centerOfMassAuto: '자동',
     centerOfMassUnused:

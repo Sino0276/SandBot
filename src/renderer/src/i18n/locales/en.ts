@@ -1384,7 +1384,12 @@ const en: Messages = {
     overrideHint:
       'Mass of everything under this object (a weighed subassembly, a datasheet value). It is spread over the shapes under it by volume. Leave empty to estimate.',
     overridePlaceholder: 'Estimated {{mass}}',
-    massInputHint: 'You can type a unit (e.g. 437g, 1.2kg, 3lb, 8oz).',
+    massInputHint:
+      'You can type a unit (e.g. 437g, 1.2kg, 3lb, 8oz). Without a unit it is {{unit}}.',
+    massInputRejected:
+      'Not accepted, so nothing changed. Enter a mass above 0 and at most {{max}} ({{unit}} without a unit). Press Esc to revert.',
+    infillRejected:
+      'Not accepted, so nothing changed. Enter an infill between 0 and 100 (%). Press Esc to revert.',
     centerOfMass: 'Center of mass',
     centerOfMassAuto: 'Automatic',
     centerOfMassUnused:

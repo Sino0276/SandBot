@@ -5,6 +5,7 @@ import {
   formatNumber,
   fromDisplayLength,
   KG_PER_LB,
+  KG_PER_OZ,
   loadLengthUnit,
   MASS_SYMBOLS,
   massDisplay,
@@ -114,6 +115,13 @@ describe('질량 단위', () => {
     expect(parseMass('12.5', 'm')).toBe(12.5)
     expect(parseMass('30', 'in')).toBeCloseTo(13.6077711, 7)
     expect(parseMass(' .5 kg ', 'mm')).toBe(0.5)
+    // 단위 없는 숫자는 넘긴 기호로 읽는다(입력칸이 보이는 값의 기호)
+    expect(parseMass('450', 'mm', 'g')).toBeCloseTo(0.45, 15)
+    expect(parseMass('450', 'in', 'oz')).toBeCloseTo(450 * KG_PER_OZ, 12)
+    expect(parseMass('1.5', 'mm', 'lb')).toBeCloseTo(1.5 * KG_PER_LB, 15)
+    // 단위를 붙이면 그 단위가 먼저다
+    expect(parseMass('2kg', 'mm', 'g')).toBe(2)
+    expect(parseMass('2 lb', 'mm', 'g')).toBeCloseTo(2 * KG_PER_LB, 15)
   })
 
   it('읽을 수 없는 입력은 null', () => {

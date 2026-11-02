@@ -313,6 +313,11 @@ body {
   border-color: var(--color-accent);
 }
 
+/* 받지 않은 입력(OptionalField: 범위 밖·읽지 못함)을 남겨 둔 칸. TextField의 is-invalid와 같은 색 */
+.number-field.is-invalid {
+  border-color: #ff6b6b;
+}
+
 .number-field-label {
   flex: none;
   width: 16px;

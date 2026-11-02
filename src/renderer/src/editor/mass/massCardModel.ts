@@ -27,7 +27,14 @@ import {
   type Vec3
 } from '../../scene/model'
 import { canHaveMass, MAX_CENTER_OF_MASS } from '../../scene/massSettings'
-import { formatMass, formatNumber, type LengthUnit } from '../../units/units'
+import {
+  formatMass,
+  formatNumber,
+  massDisplay,
+  parseMass,
+  type LengthUnit,
+  type MassSymbol
+} from '../../units/units'
 
 // 인스펙터 질량 카드·Rigidbody 카드·추정 한 줄의 보기 계산(그리기와 나눠 시험한다). 계산 자체는 mass/massModel.ts의
 // computeMassModel이 하고, 여기서는 그 결과(MassModel)를 문구로 바꾸고 입력을 설정으로 바꾸기만 한다.
@@ -102,6 +109,67 @@ export function sameMassSettings(a: MassSettings, b: MassSettings): boolean {
 // 질량 입력(kg)이 범위 안인지(0 < m ≤ max)
 export function acceptMass(kg: number, max: number): boolean {
   return Number.isFinite(kg) && kg > 0 && kg <= max
+}
+
+// 질량 입력칸 종류: 파트·그룹의 질량 덮어쓰기(작은 값), 로봇의 저울 무게(큰 값)
+export type MassInputKind = 'part' | 'robot'
+
+// 단위 없는 숫자를 읽을 질량 단위: 칸에 값이 있으면 그 값이 보이는 기호("437 g" 칸의 450은 450 g), 비었으면 파트는
+// g(in이면 lb), 로봇은 kg(in이면 lb)
+export function bareMassSymbol(
+  current: number | undefined,
+  unit: LengthUnit,
+  kind: MassInputKind
+): MassSymbol {
+  if (current !== undefined) return massDisplay(current, unit).symbol
+  if (unit === 'in') return 'lb'
+  return kind === 'part' ? 'g' : 'kg'
+}
+
+// 질량 입력칸의 글자 → kg. 읽지 못하거나 범위(0 < m ≤ max) 밖이면 null(입력칸이 틀렸다고 보이고 이전 값을 둔다)
+export function parseMassInput(
+  text: string,
+  unit: LengthUnit,
+  current: number | undefined,
+  kind: MassInputKind,
+  max: number
+): number | null {
+  const kg = parseMass(text, unit, bareMassSymbol(current, unit, kind))
+  return kg !== null && acceptMass(kg, max) ? kg : null
+}
+
+// 질량 입력칸의 도움말(단위 없는 숫자의 단위)과 받지 않은 입력의 설명(범위)
+export function massInputTitles(
+  t: TFunction,
+  current: number | undefined,
+  unit: LengthUnit,
+  kind: MassInputKind,
+  max: number
+): { title: string; invalidTitle: string } {
+  const bare = massSymbols(t)[bareMassSymbol(current, unit, kind)]
+  return {
+    title: t('mass.massInputHint', { unit: bare }),
+    invalidTitle: t('mass.massInputRejected', { max: massText(t, max, unit), unit: bare })
+  }
+}
+
+// 비울 수 있는 입력칸(OptionalField)의 확정: 빈 글자는 값 떼기, 지금 글자와 같으면 그대로, 읽은 값은 그 값,
+// 읽지 못하거나 범위 밖이면 rejected(값을 바꾸지 않고 입력칸이 틀렸다고 보인다)
+export type OptionalCommit =
+  { kind: 'unchanged' } | { kind: 'clear' } | { kind: 'set'; value: number } | { kind: 'rejected' }
+
+export function optionalCommit(
+  draft: string,
+  value: string,
+  parse: (text: string) => number | null
+): OptionalCommit {
+  const text = draft.trim()
+  if (text === '') return value === '' ? { kind: 'unchanged' } : { kind: 'clear' }
+  if (text === value) return { kind: 'unchanged' }
+  const parsed = parse(text)
+  return parsed !== null && Number.isFinite(parsed)
+    ? { kind: 'set', value: parsed }
+    : { kind: 'rejected' }
 }
 
 // "15", "15%", "15 %" → 0.15. 0–100 밖이거나 읽지 못하면 null

@@ -6,9 +6,8 @@ import { MAX_WEIGHED_MASS } from '../../scene/massSettings'
 import type { SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
-import { formatLength, formatNumber, parseMass } from '../../units/units'
+import { formatLength, formatNumber } from '../../units/units'
 import {
-  acceptMass,
   cadSummaryRows,
   cadSummaryText,
   cleanRigidbody,
@@ -16,8 +15,10 @@ import {
   hasPendingMeshes,
   materialLabel,
   MATERIAL_GROUPS,
+  massInputTitles,
   massText,
   noticeText,
+  parseMassInput,
   robotMassBreakdown,
   warningText
 } from './massCardModel'
@@ -80,11 +81,10 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
             settings.weighedMass === undefined ? '' : massText(t, settings.weighedMass, lengthUnit)
           }
           placeholder={t('mass.rigidbody.weighedPlaceholder')}
-          title={t('mass.massInputHint')}
-          parse={(text) => {
-            const kg = parseMass(text, lengthUnit)
-            return kg !== null && acceptMass(kg, MAX_WEIGHED_MASS) ? kg : null
-          }}
+          {...massInputTitles(t, settings.weighedMass, lengthUnit, 'robot', MAX_WEIGHED_MASS)}
+          parse={(text) =>
+            parseMassInput(text, lengthUnit, settings.weighedMass, 'robot', MAX_WEIGHED_MASS)
+          }
           onCommit={(weighedMass) => update({ weighedMass: weighedMass ?? undefined })}
         />
       </div>

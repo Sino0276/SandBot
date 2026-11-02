@@ -15,10 +15,12 @@ import { canHaveMass } from '../../scene/massSettings'
 import type { SceneObject, SceneObjects, Transform } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
+import { KG_PER_LB, KG_PER_OZ } from '../../units/units'
 import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import MassCard from './MassCard'
 import {
   acceptMass,
+  bareMassSymbol,
   canAddMass,
   cadSummaryRows,
   cadSummaryText,
@@ -36,8 +38,11 @@ import {
   MATERIAL_GROUPS,
   localCenterOfMass,
   massCardView,
+  massInputTitles,
   massText,
   noticeText,
+  optionalCommit,
+  parseMassInput,
   objectNotices,
   cardNotices,
   ownsDatasheetMass,
@@ -535,6 +540,53 @@ describe('질량 출처 문구', () => {
     const clean = { ...summaries.cad, openMeshes: 0, surfaceMeshes: 0 }
     expect(cadSummaryRows(objects, 'R', () => clean)).toEqual([])
     expect(cadSummaryRows(objects, 'R', () => undefined)).toEqual([])
+  })
+})
+
+describe('질량 입력', () => {
+  it('단위 없는 숫자는 칸에 보이는 값의 단위, 빈 칸은 파트 g·로봇 kg(in이면 lb)', () => {
+    // "437 g"을 보이는 칸에 친 450은 450 g(이전에는 450 kg로 읽고 범위 밖이라 버렸다)
+    expect(massText(t, 0.437, 'mm')).toBe('437 g')
+    expect(bareMassSymbol(0.437, 'mm', 'part')).toBe('g')
+    expect(parseMassInput('450', 'mm', 0.437, 'part', 100)).toBeCloseTo(0.45, 15)
+    expect(bareMassSymbol(2.5, 'cm', 'part')).toBe('kg')
+    expect(parseMassInput('3', 'cm', 2.5, 'part', 100)).toBe(3)
+    expect(bareMassSymbol(0.02, 'in', 'part')).toBe('oz')
+    expect(parseMassInput('1.5', 'in', 0.02, 'part', 100)).toBeCloseTo(1.5 * KG_PER_OZ, 15)
+    expect(bareMassSymbol(14, 'in', 'robot')).toBe('lb')
+    // 빈 칸
+    expect(bareMassSymbol(undefined, 'mm', 'part')).toBe('g')
+    expect(parseMassInput('450', 'mm', undefined, 'part', 100)).toBeCloseTo(0.45, 15)
+    expect(bareMassSymbol(undefined, 'm', 'robot')).toBe('kg')
+    expect(parseMassInput('14', 'm', undefined, 'robot', 200)).toBe(14)
+    expect(bareMassSymbol(undefined, 'in', 'part')).toBe('lb')
+    expect(bareMassSymbol(undefined, 'in', 'robot')).toBe('lb')
+    expect(parseMassInput('30', 'in', undefined, 'robot', 200)).toBeCloseTo(30 * KG_PER_LB, 12)
+    // 단위를 붙이면 그 단위, 범위 밖·읽지 못함은 null
+    expect(parseMassInput('1.2kg', 'mm', 0.437, 'part', 100)).toBe(1.2)
+    expect(parseMassInput('101 kg', 'mm', 0.437, 'part', 100)).toBeNull()
+    expect(parseMassInput('0', 'mm', 0.437, 'part', 100)).toBeNull()
+    expect(parseMassInput('abc', 'mm', 0.437, 'part', 100)).toBeNull()
+    expect(parseMassInput('250', 'mm', undefined, 'robot', 200)).toBeNull()
+  })
+
+  it('도움말은 단위 없는 숫자의 단위를, 받지 않은 입력의 설명은 범위를 말한다', () => {
+    const part = massInputTitles(t, undefined, 'mm', 'part', 100)
+    expect(part.title).toContain('단위가 없으면 g입니다.')
+    expect(part.invalidTitle).toContain(`0보다 크고 ${massText(t, 100, 'mm')} 이하`)
+    expect(massInputTitles(t, 14, 'in', 'robot', 200).title).toContain('단위가 없으면 lb입니다.')
+  })
+
+  it('비울 수 있는 칸의 확정: 빈 글자는 떼기, 같은 글자는 그대로, 받지 않은 입력은 값을 바꾸지 않는다', () => {
+    const parse = (text: string): number | null => parseMassInput(text, 'mm', 0.437, 'part', 100)
+    expect(optionalCommit('450', '437 g', parse)).toEqual({ kind: 'set', value: 0.45 })
+    expect(optionalCommit(' 437 g ', '437 g', parse)).toEqual({ kind: 'unchanged' })
+    expect(optionalCommit('  ', '437 g', parse)).toEqual({ kind: 'clear' })
+    expect(optionalCommit('', '', parse)).toEqual({ kind: 'unchanged' })
+    // 범위 밖은 지우지 않고 rejected(입력칸이 틀렸다고 보인다)
+    expect(optionalCommit('450 kg', '437 g', parse)).toEqual({ kind: 'rejected' })
+    expect(optionalCommit('heavy', '', parse)).toEqual({ kind: 'rejected' })
+    expect(optionalCommit('101', '15', parseInfillPercent)).toEqual({ kind: 'rejected' })
   })
 })
 
