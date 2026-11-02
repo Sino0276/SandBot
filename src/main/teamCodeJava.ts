@@ -13,7 +13,7 @@ import {
   type FileHandle
 } from 'fs/promises'
 import path, { basename, dirname, extname, join, relative, resolve, sep } from 'path'
-import { generatedState } from '../shared/generatedFiles'
+import { GENERATED_JAVA_DIR, generatedState } from '../shared/generatedFiles'
 import {
   IPC,
   MAX_SOURCE_BATCH_BYTES,
@@ -32,6 +32,7 @@ import { isLiteralSpanText, isWritableLiteral, literalFitsType } from '../shared
 import { parseTunables } from '../shared/java/tunables'
 import type { TunableNode, TunableValueType } from '../shared/java/tunableTypes'
 import {
+  foldCase,
   isLinkableJavaFolder,
   isLinkableJavaPath,
   JAVA_SOURCE_PREFIX,
@@ -192,6 +193,56 @@ export async function listJavaFiles(
   await walk(join(teamCode, ...JAVA_DIR_SEGMENTS), JAVA_SOURCE_PREFIX.slice(0, -1), 0)
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
   return { files, truncated, hasTeamCode }
+}
+
+// 목록(listJavaFiles)이 빼는 생성 패키지 폴더(대소문자 무시, 하위 패키지 포함)의 .java 파일 크기·수정 시각. javac는
+// -sourcepath로 이 파일들(생성 하드웨어 클래스)도 찾으므로 등록기 OpMode 목록의 캐시 키에 넣는다(registeredOpModes.ts).
+// 경로는 TeamCode 기준(NFC, 디스크 이름의 대소문자 그대로, 이름순). 링크는 따라가지 않는다. 읽을 수 없는 폴더는 건너뛴다.
+export async function listGeneratedJavaFiles(
+  root: string,
+  limit: number = MAX_JAVA_FILES
+): Promise<JavaFileEntry[]> {
+  const files: JavaFileEntry[] = []
+  const entriesOf = async (dir: string): Promise<Classified[]> => {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return (await mapLimit(entries, (entry) => classifyEntry(dir, entry)))
+      .filter((item): item is Classified => item !== null)
+      .sort(byName)
+  }
+  // 생성 폴더 안: 모든 .java와 하위 폴더
+  const collect = async (dir: string, rel: string, depth: number): Promise<void> => {
+    for (const item of await entriesOf(dir)) {
+      if (files.length >= limit) return
+      const childRel = `${rel}/${normalizeLinkPath(item.name)}`
+      if (item.kind === 'dir') {
+        if (depth < MAX_DEPTH) await collect(join(dir, item.name), childRel, depth + 1)
+        continue
+      }
+      if (!item.name.toLowerCase().endsWith('.java')) continue
+      const info = item.stats ?? (await lstat(join(dir, item.name)).catch(() => null))
+      if (info?.isFile()) files.push({ path: childRel, size: info.size, mtimeMs: info.mtimeMs })
+    }
+  }
+  // src/main/java에서 생성 폴더까지 세그먼트마다 대소문자를 무시하고 내려간다(대소문자를 구분하는 파일 시스템에는 여럿일 수 있다)
+  const segments = GENERATED_JAVA_DIR.slice(JAVA_SOURCE_PREFIX.length).split('/')
+  const descend = async (dir: string, rel: string, index: number): Promise<void> => {
+    if (index === segments.length) return collect(dir, rel, 0)
+    const wanted = foldCase(segments[index])
+    for (const item of await entriesOf(dir))
+      if (item.kind === 'dir' && foldCase(normalizeLinkPath(item.name)) === wanted)
+        await descend(join(dir, item.name), `${rel}/${normalizeLinkPath(item.name)}`, index + 1)
+  }
+  await descend(
+    join(resolve(root), TEAMCODE_DIR, ...JAVA_DIR_SEGMENTS),
+    JAVA_SOURCE_PREFIX.slice(0, -1),
+    0
+  )
+  return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }
 
 export type EditorOpener = (

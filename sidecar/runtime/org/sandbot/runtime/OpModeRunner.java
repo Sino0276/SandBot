@@ -20,6 +20,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,15 +31,24 @@ import java.util.Objects;
  * OpMode 스레드 하나에서 한다:
  *
  * <ol>
- *   <li>구성 읽기(SandbotHardware.create) → OpMode 클래스 확인 → {@code state init} → tick 0 교환
- *   <li>OpMode 만들기(정적 초기화·생성자도 이 스레드) → beforeInit → resetRuntime → internalInit → OpMode 본문
- *       (init/init_loop/start/loop/stop 또는 runOpMode)
- *   <li>틱 경계마다({@link #onTick}, 시계 호출 안): tick 보내기 → tickReply 받기 → 센서 입력 → DS 사건(start·stop) →
+ *   <li>FTC Dashboard 대체(있으면, 등록기보다 먼저 만들어 getInstance가 null이 아니게, @Config 클래스 정적 초기화) → 등록기
+ *       (@OpModeRegistrar, 실제 SDK처럼 OpMode를 고르기 전에 모두, 하드웨어 없음) → Road Runner 튜닝 폴더(있으면)
+ *   <li>구성 읽기(SandbotHardware.create) → OpMode 클래스 확인(또는 등록기가 등록한 클래스·인스턴스) → {@code state init} →
+ *       tick 0 교환
+ *   <li>OpMode 만들기(정적 초기화·생성자도 이 스레드, 인스턴스 등록이면 그 인스턴스) → beforeInit → resetRuntime →
+ *       수명 알림 preInit → internalInit → OpMode 본문(init/init_loop/start/loop/stop 또는 runOpMode)
+ *   <li>틱 경계마다({@link #onTick}, 시계 호출 안): FTC Dashboard 패킷·설정 트리 보내기 → tick 보내기 → tickReply 받기 → 센서
+ *       입력 → FTC Dashboard(Config 탭의 값, 바뀐 트리 보내기) → DS 사건(start: 수명 알림 preStart → internalStart, stop) →
  *       게임패드 → 이벤트 루프 한 바퀴(LinearOpMode의 time·waitForStart·텔레메트리) → STOP 뒤 정지 대기 감시
- *   <li>끝: error(있으면) → state stopping → afterStop → 마지막 tick(답을 기다리지 않음) → finished → halt
+ *   <li>끝: error(있으면) → state stopping → 수명 알림 postStop → afterStop → 마지막 tick(답을 기다리지 않음) → Road Runner
+ *       튜닝 결과 안내(notice) → finished → halt
  * </ol>
+ *
+ * <p>수명 알림(실제 OpModeManagerImpl.callActiveOpModeInit·Start·Stop): OpModeManagerImpl.registerListener로 등록한 리스너(등록
+ * 순서) → hardwareMap의 Notifications 장치(HardwareMap 자신의 리스너, BNO055 드라이버 등). preInit의 예외는 init의 예외와 같고,
+ * preStart·postStop의 예외는 error exception으로 알리고 계속한다.
  */
-final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServices {
+final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServices, Watchdog.Stall {
     /** 실제 OpModeInternal.MS_BEFORE_FORCE_STOP_AFTER_STOP_REQUESTED(가상 시간) */
     static final long STUCK_IN_STOP_NANOS = OpMode.MS_BEFORE_FORCE_STOP_AFTER_STOP_REQUESTED * 1_000_000L;
 
@@ -50,9 +60,18 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     private final ClassLoader loader;
     private final Map<String, String> sources;
     private final HardwareHooks hooks;
+    /** FTC Dashboard 대체(실행 클래스패스에 없으면 null, 라이브러리 L2) */
+    private final DashboardBridge dashboard;
 
     // OpMode 스레드만 쓴다
     private String phase = "init";
+    /** 실행할 OpMode의 이름(오류 문장): 클래스 이름 또는 등록 이름 */
+    private String target;
+    /** Road Runner TuningFiles가 클래스패스에 있을 때의 결과 폴더(없으면 null) */
+    private RrTuning rrTuning;
+    /** preInit을 알렸다(끝에 postStop을 한 번 알린다) */
+    private boolean lifecycleStarted;
+    private boolean postStopNotified;
     private boolean ticksStarted;
     private HardwareMap hardwareMap;
     private OpMode opMode;
@@ -75,7 +94,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     private volatile boolean stopRequestedByOpMode;
 
     OpModeRunner(Main.Session session, VirtualClock clock, HostInput input, RunRequest request, ClassLoader loader,
-            Map<String, String> sources, HardwareHooks hooks) {
+            Map<String, String> sources, HardwareHooks hooks, DashboardBridge dashboard) {
         this.session = session;
         this.protocol = session.protocol;
         this.clock = clock;
@@ -84,6 +103,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         this.loader = loader;
         this.sources = sources;
         this.hooks = hooks;
+        this.dashboard = dashboard;
     }
 
     // ---- OpMode 스레드 ----
@@ -91,6 +111,11 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     void run() {
         try {
             runInner();
+        } catch (SimThreadError e) {
+            // OpMode를 만들기 전(tick 0 등)에 다른 스레드가 시계를 썼다: 등록기가 띄워 두고 기다리지 않은 스레드
+            if (!e.reported()) reportThrowable("thread", e);
+            endPhase();
+            finish("exception");
         } catch (Throwable t) {
             // 런타임 자체의 잘못(여기까지 오면 안 된다)
             internalError("sidecar runtime failure: " + StackFrames.describe(t), t);
@@ -102,6 +127,35 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     }
 
     private void runInner() {
+        // 0. FTC Dashboard 대체: 등록기보다 먼저 만들고(getInstance가 null이 아니게) @Config 클래스를 찾는다(정적 초기화가 돈다)
+        if (dashboard != null) {
+            try {
+                dashboard.start(loader);
+            } catch (Throwable t) {
+                Throwable cause = t instanceof ExceptionInInitializerError && t.getCause() != null ? t.getCause() : t;
+                reportThrowable(isUnsupported(cause) ? "unsupported" : "exception", cause);
+                finish("exception");
+                return;
+            }
+        }
+        target = request.registeredName != null ? "the OpMode registered as \"" + request.registeredName + "\""
+                : request.opModeClass;
+        // 등록기(실제 SDK는 앱이 시작할 때 모두 부른다: annotated OpMode를 실행할 때도) → Road Runner 튜닝 폴더
+        RegistrarRunner registrars = new RegistrarRunner(clock);
+        if (!request.registrars.isEmpty()) {
+            try {
+                registrars.runAll(RunRequest.registrarClasses(request.registrars), loader, this::registrarFailed);
+            } catch (SimExit e) {
+                finish("terminated");
+                return;
+            } catch (SimThreadError e) {
+                if (!e.reported()) reportThrowable("thread", e);
+                finish("exception");
+                return;
+            }
+        }
+        rrTuning = RrTuning.prepare(loader, Sim.firstFolder(), text -> log("robotLog", text));
+
         // 1. 로봇 구성
         try {
             hardwareMap = hooks.create(request.configXml);
@@ -112,15 +166,34 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                     Thread.currentThread().getName());
             finish("loadFailed");
             return;
+        } catch (SimThreadError e) {
+            // 등록기가 띄운 스레드가 시계를 썼다(구성 오류가 아니다)
+            if (!e.reported()) reportThrowable("thread", e);
+            finish("exception");
+            return;
         }
         if (!hooks.available() && request.configXml != null) {
             log("robotLog", "W/SandBot: device support (" + HardwareHooks.CLASS_NAME
                     + ") is not in this build; the OpMode runs with an empty hardwareMap");
         }
 
-        // 2. OpMode 클래스(아직 초기화하지 않는다)
-        Constructor<?> constructor = loadOpModeClass();
-        if (constructor == null) {
+        // 2. OpMode 클래스(아직 초기화하지 않는다). 등록기 OpMode면 등록한 클래스나 인스턴스.
+        OpMode instance = null;
+        Constructor<?> constructor = null;
+        if (request.registeredName != null) {
+            RegistrarRunner.Registration registration = registrars.find(request.registeredName);
+            if (registration == null) {
+                loadError("No OpMode is registered as \"" + request.registeredName
+                        + "\" (the @OpModeRegistrar methods did not register it)", null);
+            } else if (registration.instance != null) {
+                instance = registration.instance;
+            } else {
+                constructor = checkOpModeClass(registration.opModeClass, registration.opModeClass.getName());
+            }
+        } else {
+            constructor = loadOpModeClass();
+        }
+        if (constructor == null && instance == null) {
             finish("loadFailed");
             return;
         }
@@ -130,10 +203,10 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         ticksStarted = true;
         clock.beginTicks();
 
-        // 4. OpMode 만들기(정적 초기화·생성자는 팀 코드)
+        // 4. OpMode 만들기(정적 초기화·생성자는 팀 코드). 인스턴스 등록이면 등록기가 만든 것을 쓴다.
         OpMode created;
         try {
-            created = (OpMode) constructor.newInstance();
+            created = instance != null ? instance : (OpMode) constructor.newInstance();
         } catch (InvocationTargetException e) {
             endOpMode(e.getCause() == null ? e : e.getCause());
             return;
@@ -141,7 +214,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             endOpMode(e.getCause() == null ? e : e.getCause());
             return;
         } catch (ReflectiveOperationException e) {
-            protocol.error(clock.peekNanos(), "load", "Could not create the OpMode " + request.opModeClass + ": "
+            protocol.error(clock.peekNanos(), "load", "Could not create " + targetDescription() + ": "
                     + StackFrames.describe(e), e.getClass().getName(), new ArrayList<>(), Thread.currentThread().getName());
             endPhase();
             finish("loadFailed");
@@ -151,6 +224,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             return;
         }
         opMode = created;
+        SandbotOpModeBridge.setActiveOpMode(opMode);
 
         // 5. INIT(OpModeManagerImpl.runActiveOpMode의 callToInitNeeded)
         SandbotOpModeBridge.attach(opMode, gamepad1, gamepad2, hardwareMap, this);
@@ -169,6 +243,10 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         Throwable thrown = null;
         try {
             opMode.resetRuntime();
+            // callActiveOpModeInit: 수명 알림(리스너 — 앱이 시작할 때 등록한 Dashboard가 먼저 — → 장치) → internalInit
+            lifecycleStarted = true;
+            if (dashboard != null) dashboard.preInit(opMode);
+            notifyPreInit();
             SandbotOpModeBridge.init(opMode);
             opModeReady = true;
             userCodeRunning = true;
@@ -194,6 +272,11 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             loadError("The OpMode class " + name + " could not be loaded: " + StackFrames.describe(e), e);
             return null;
         }
+        return checkOpModeClass(type, name);
+    }
+
+    /** 만들 수 있는 OpMode 클래스인지(public, 인수 없는 public 생성자 등). 안 되면 error load를 보내고 null. */
+    private Constructor<?> checkOpModeClass(Class<?> type, String name) {
         if (!OpMode.class.isAssignableFrom(type)) {
             loadError(name + " is not an OpMode (it must extend OpMode or LinearOpMode)", null);
             return null;
@@ -222,6 +305,10 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         }
     }
 
+    private String targetDescription() {
+        return request.registeredName != null ? target : "the OpMode " + target;
+    }
+
     private void loadError(String message, Throwable cause) {
         protocol.error(clock.peekNanos(), "load", message, cause == null ? null : cause.getClass().getName(),
                 new ArrayList<>(), Thread.currentThread().getName());
@@ -246,6 +333,15 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         // 실제 SDK는 OpMode가 끝나면 정지 처리를 한다(requestOpModeStop → stopActiveOpMode → internalStop).
         // LinearOpMode가 waitForStart 없이 끝났을 때의 경고도 여기서 나온다.
         if (opMode != null && opModeReady && !stopApplied) applyStop(false);
+        // OpModeManagerImpl.callActiveOpModeStop: 끝난 뒤 리스너(Dashboard가 먼저)와 장치에 알린다
+        if (dashboard != null && opMode != null && opModeReady) {
+            try {
+                dashboard.postStop(opMode);
+            } catch (Throwable t) {
+                internalError("FTC Dashboard onOpModePostStop failed: " + StackFrames.describe(t), t);
+            }
+        }
+        notifyPostStop();
         endPhase();
         // 정지 처리의 끼어들기가 장치 정리(afterStop)에 남지 않게
         Thread.interrupted();
@@ -324,6 +420,14 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                 internalError("stopping the hardware failed: " + StackFrames.describe(t), t);
             }
         }
+        // 남은 Dashboard 패킷·설정 트리(실제 전송 스레드는 끝난 뒤에도 보낸다)
+        if (dashboard != null) {
+            try {
+                dashboard.flush(clock.peekNanos());
+            } catch (Throwable t) {
+                internalError("sending the last FTC Dashboard packets failed: " + StackFrames.describe(t), t);
+            }
+        }
         session.flushOutput();
         long tNanos = clock.peekNanos();
         if (ticksStarted) {
@@ -331,8 +435,49 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             tNanos = clock.peekNanos();
             protocol.tick(k, tNanos, phase, loops, outputs());
         }
+        if (rrTuning != null) {
+            for (String saved : rrTuning.savedSince())
+                protocol.notice(tNanos, "rrTuningSaved", Collections.singletonMap("path", saved));
+        }
         protocol.finished(tNanos, reason);
         Main.halt();
+    }
+
+    // ---- 등록기·수명 알림(OpMode 스레드) ----
+
+    /** 등록기가 던졌다(error registrar, 다음 등록기로 간다) */
+    private void registrarFailed(String registrar, String message, Throwable thrown) {
+        protocol.error(clock.peekNanos(), "registrar", message, thrown == null ? null : thrown.getClass().getName(),
+                thrown == null ? new ArrayList<>() : StackFrames.of(thrown.getStackTrace(), sources, false),
+                Thread.currentThread().getName());
+    }
+
+    /** 실제 callActiveOpModeInit의 앞부분. 던지면 init의 예외와 같다(호출한 쪽이 endOpMode). */
+    private void notifyPreInit() {
+        SandbotOpModeBridge.notifyPreInit(opMode, hardwareMap);
+    }
+
+    /** 실제 callActiveOpModeStart의 앞부분(틱 경계 안). 리스너의 예외는 알리고 계속한다. */
+    private void notifyPreStart() {
+        try {
+            SandbotOpModeBridge.notifyPreStart(opMode, hardwareMap);
+        } catch (SimExit | SimThreadError e) {
+            throw e;
+        } catch (Throwable t) {
+            reportThrowable(isUnsupported(t) ? "unsupported" : "exception", t);
+        }
+    }
+
+    /** 실제 callActiveOpModeStop의 끝(OpMode 본문이 끝난 뒤, 한 번). 리스너의 예외는 알리고 계속한다. */
+    private void notifyPostStop() {
+        if (!lifecycleStarted || postStopNotified || opMode == null) return;
+        postStopNotified = true;
+        try {
+            SandbotOpModeBridge.notifyPostStop(opMode, hardwareMap);
+        } catch (Throwable t) {
+            if (t instanceof SimThreadError && ((SimThreadError) t).reported()) return;
+            reportThrowable(isUnsupported(t) ? "unsupported" : "exception", t);
+        }
     }
 
     // ---- 틱 경계(OpMode 스레드, 시계 호출 안) ----
@@ -340,6 +485,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     @Override
     public void onTick(long k) {
         long tNanos = k * clock.tickNanos();
+        // FTC Dashboard: 보낼 때가 된 패킷 묶음과 바뀐 설정 트리는 tick보다 먼저(호스트가 일시 정지로 답을 미뤄도 이미 가 있게)
+        if (dashboard != null) dashboard.beforeTick(tNanos);
         protocol.tick(k, tNanos, phase, loops, outputs());
         clock.setWaitingHost(true);
         HostInput.Message reply = input.take();
@@ -379,6 +526,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             lastState1 = state1;
             lastState2 = state2;
         }
+        // FTC Dashboard: Config 탭의 값을 적용하고 바뀐 설정 트리를 보낸다(INIT 전 경계에서도)
+        if (dashboard != null) dashboard.tickBoundary(tNanos, reply.body.get("configSet"));
         if (!opModeReady || !userCodeRunning) return;
 
         // DS 사건(OpModeManagerImpl: startActiveOpMode → callActiveOpModeStart, stopActiveOpMode → callActiveOpModeStop)
@@ -386,6 +535,9 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             if (e.equals("start")) {
                 if (!stopApplied && phase.equals("init")) {
                     setPhase("running");
+                    // callActiveOpModeStart: 수명 알림(Dashboard → 리스너 → 장치) → internalStart
+                    if (dashboard != null) dashboard.preStart(opMode);
+                    notifyPreStart();
                     SandbotOpModeBridge.start(opMode);
                 }
             } else {
@@ -415,6 +567,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                         + " ms (virtual time) after STOP was requested",
                 null, StackFrames.of(Thread.currentThread().getStackTrace(), sources, true),
                 Thread.currentThread().getName());
+        // 실제는 멈추지 않는 OpMode를 강제로 멈춘 뒤에도 postStop을 알린다
+        notifyPostStop();
         finish("stuck");
     }
 
@@ -495,7 +649,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     }
 
     /** 감시: OpMode 스레드가 stallMillis 동안 시계를 쓰지 않았다 */
-    void reportStall(Thread thread, long stallMillis) {
+    @Override
+    public void reportStall(Thread thread, long stallMillis) {
         protocol.error(clock.peekNanos(), "stall",
                 "The OpMode thread has not used the simulator clock or hardware for " + stallMillis
                         + " ms of real time (an infinite loop that never calls the SDK?)",

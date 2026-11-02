@@ -2,13 +2,14 @@ import type { TFunction } from 'i18next'
 import type { GradleDiagnostic } from '../../../shared/gradle'
 import {
   coordinateOf,
-  DASHBOARD_GROUPS,
+  SLOTHBOARD_GROUP,
   type LibraryEntry,
   type LibraryReason
 } from '../../../shared/libraries'
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
 import type {
   DiagnosticHint,
+  ListRegisteredFailureCode,
   PlayDiagnostic,
   PlayLinkWarning,
   PlayStackFrame
@@ -53,12 +54,21 @@ export type ConsoleBody =
   | { type: 'notice'; key: ConsoleNoticeKey; params: Record<string, string | number> }
   // playInit이 실패했다(알림과 같은 문장, notice.play*)
   | { type: 'initFailed'; notice: NoticeKey; detail: string }
+  // 등록기 OpMode 목록을 읽지 못했다(이유는 play.list.registeredFailure.<code>)
+  | {
+      type: 'registeredFailed'
+      code: ListRegisteredFailureCode
+      detail: string
+    }
   // 의존성 보고의 좌표 하나(불러오지 않음·받지 못함, 처음 받은 해시 기록)
   | { type: 'library'; library: LibraryEntry }
   // 팀 Gradle 파일을 읽다 풀지 못한 것
   | { type: 'gradle'; diagnostic: GradleDiagnostic }
   // 라이브러리 하나의 링크 검사 경고(라이브러리별로 묶음)
   | { type: 'linkWarnings'; library: string; warnings: PlayLinkWarning[] }
+  // Road Runner 튜닝 OpMode가 결과 JSON을 모의 저장소에 썼다(simNotice rrTuningSaved). path는 모의 저장소 기준 경로,
+  // file은 메인이 더한 절대 경로(모르면 null). 더블클릭·Enter로 파일 관리자에서 보인다.
+  | { type: 'rrTuning'; path: string; file: string | null }
 
 export type ConsoleEntry = ConsoleBody & {
   id: number
@@ -76,6 +86,13 @@ const ERROR_FINISH: ReadonlySet<ConsoleFinishReason> = new Set([
   'stuck',
   'crashed'
 ])
+
+// 의존성 보고 좌표 하나의 수준: 불러오지 않았거나 받지 못한 것과 처음 받은 해시를 기록하지 못한 것은 경고, 나머지(쓰는 것,
+// SandBot 구현으로 실행하는 FTC Dashboard, SDK가 주는 것)는 정보(libraryConsole의 줄도 이것을 쓴다)
+export function libraryLevel(library: LibraryEntry): ConsoleLevel {
+  if (library.status === 'unsupported' || library.status === 'failed') return 'warning'
+  return library.integrity === 'firstUseUnrecorded' ? 'warning' : 'info'
+}
 
 // 항목의 수준(아이콘과 개수 토글). System.err는 Android logcat처럼 경고로 본다.
 export function consoleLevel(
@@ -97,14 +114,16 @@ export function consoleLevel(
     case 'compiled':
       return body.ok ? 'info' : 'error'
     case 'run':
+    case 'rrTuning':
       return 'info'
     case 'finished':
       return ERROR_FINISH.has(body.reason) ? 'error' : body.reason === 'killed' ? 'warning' : 'info'
     case 'notice':
     case 'initFailed':
+    case 'registeredFailed':
       return noticeLevel
     case 'library':
-      return body.library.status === 'used' ? 'info' : 'warning'
+      return libraryLevel(body.library)
     case 'gradle':
     case 'linkWarnings':
       return 'warning'
@@ -197,6 +216,11 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       return t(`console.notices.${entry.key}`, entry.params)
     case 'initFailed':
       return t(`notice.${entry.notice}`, { detail: entry.detail })
+    case 'registeredFailed':
+      return t('console.notices.registeredFailed', {
+        reason: t(`play.list.registeredFailure.${entry.code}`),
+        detail: entry.detail
+      })
     case 'library': {
       const { library } = entry
       const location = library.declaredAt
@@ -215,24 +239,31 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
         library: entry.library,
         count: entry.warnings.length
       })
+    case 'rrTuning':
+      return t('console.notices.sim.rrTuningSaved', { file: entry.file ?? entry.path })
   }
 }
 
-// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). FTC Dashboard는 SandBot 대체가 생길 때까지
-// 지원하지 않는다는 안내를 따로 보인다.
+// 좌표('g:a:v')를 쓰지 않은 이유 문장(console.notices.library.<이유>). Sloth용 FTC Dashboard는 원래 Dashboard를 쓰라는
+// 안내를 따로 보인다.
 function reasonText(coordinate: string, reason: LibraryReason, t: TFunction): string {
-  if (DASHBOARD_GROUPS.has(coordinate.split(':')[0]) && reason === 'notSupported')
-    return t('console.notices.library.dashboardLater', { coordinate })
+  if (coordinate.split(':')[0] === SLOTHBOARD_GROUP && reason === 'notSupported')
+    return t('console.notices.library.slothboard', { coordinate })
   return t(`console.notices.library.${reason}`, { coordinate })
 }
 
-// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록한 것(쓰는 좌표)은 firstUse, 기록하지 못한 것은 firstUseUnrecorded.
+// 의존성 보고 좌표 하나의 문장. 처음 받은 해시를 기록하지 못한 것(쓰는 좌표)은 firstUseUnrecorded, FTC Dashboard 대체는
+// replaced, 기록한 것은 firstUse.
 export function libraryText(library: LibraryEntry, t: TFunction): string {
   const coordinate = coordinateOf(library)
-  if (library.status === 'used')
-    return library.integrity === 'firstUse' || library.integrity === 'firstUseUnrecorded'
-      ? t(`console.notices.library.${library.integrity}`, { coordinate })
+  if (library.status === 'used' || library.status === 'replaced') {
+    if (library.integrity === 'firstUseUnrecorded')
+      return t('console.notices.library.firstUseUnrecorded', { coordinate })
+    if (library.status === 'replaced') return t('console.notices.library.replaced', { coordinate })
+    return library.integrity === 'firstUse'
+      ? t('console.notices.library.firstUse', { coordinate })
       : coordinate
+  }
   return reasonText(coordinate, library.reason, t)
 }
 
@@ -313,6 +344,8 @@ export function entryDetailLines(entry: ConsoleEntry, t: TFunction): string[] {
       return entry.detail
         ? [entryHeadline(entry, t), finishDetail(entry.reason, entry.detail, t)]
         : [entryHeadline(entry, t)]
+    case 'rrTuning':
+      return [entryHeadline(entry, t), t('console.rrTuningHint')]
     default:
       return [entryHeadline(entry, t)]
   }
@@ -358,4 +391,11 @@ export function entryTarget(entry: ConsoleEntry, root?: string | null): ConsoleT
     return frame?.path ? { path: frame.path, line: Math.max(1, frame.line) } : null
   }
   return null
+}
+
+// 더블클릭·Enter(와 [폴더에서 보기])로 파일 관리자에서 보일 파일: 지금 프로젝트의 실행이 남긴 Road Runner 튜닝 결과의
+// 절대 경로. 메인이 그 프로젝트의 모의 저장소 안인지 다시 확인한다(revealSimFile).
+export function entryRevealFile(entry: ConsoleEntry, root: string | null): string | null {
+  if (entry.type !== 'rrTuning' || entry.file === null || root === null) return null
+  return entry.root === root ? entry.file : null
 }

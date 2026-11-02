@@ -419,7 +419,8 @@ function runSidecar(
         tick: message.tick,
         events: message.tick === startTick ? ['start'] : [],
         gamepads: [gamepad, null],
-        inputs
+        inputs,
+        configSet: []
       })
     }
     child.stdout.setEncoding('utf8')
@@ -454,6 +455,9 @@ function runSidecar(
         'DevicesDrive.java'
       ),
       opModeClass: 'org.firstinspires.ftc.teamcode.DevicesDrive',
+      registeredName: null,
+      registrars: [],
+      firstFolder: testTempDir('first'),
       bootClasspath: [],
       compileClasspath: [b.sdkJar],
       libraryClasspath: [],

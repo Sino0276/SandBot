@@ -28,7 +28,7 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
-// SandBot: 사이드카에는 OpMode 관리자가 없다(런타임이 SandbotOpModeBridge로 OpMode를 돌린다). API 표면은 실제와 같게 두고, 실제 동작이 필요한 ForceStopException(terminateOpModeNow)·DefaultOpMode·정적 도움 함수만 실제 코드이며, 관리자 인스턴스 동작은 생성한 stub처럼 SimUnsupportedException을 던진다.
+// SandBot: 사이드카에는 이벤트 루프의 OpMode 관리자가 없다(런타임이 SandbotOpModeBridge로 OpMode를 돌린다). API 표면은 실제와 같게 두고, 실제 동작이 필요한 ForceStopException(terminateOpModeNow)·DefaultOpMode·정적 도움 함수와 OpMode 수명 알림(registerListener·unregisterListener, getOpModeManagerOfActivity가 주는 관리자 하나)만 실제 코드이며, 나머지 관리자 인스턴스 동작은 생성한 stub처럼 SimUnsupportedException을 던진다.
 
 package com.qualcomm.robotcore.eventloop.opmode;
 
@@ -51,9 +51,12 @@ import com.qualcomm.robotcore.util.WeakReferenceSet;
 
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeServices;
+import org.sandbot.sim.Sim;
 import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.sim.TimeRedirects;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -102,7 +105,9 @@ public class OpModeManagerImpl implements OpModeServices, OpModeManagerNotifier 
   protected OpModeMeta            queuedOpModeMetadata = null; // SandBot: 실제는 RegisteredOpModes.DEFAULT_OP_MODE_METADATA
   protected HardwareMap           hardwareMap          = null;
   protected EventLoopManager      eventLoopManager     = null;
-  protected final WeakReferenceSet<OpModeManagerNotifier.Notifications> listeners = null; // SandBot: 실제는 new WeakReferenceSet<>()
+  protected final WeakReferenceSet<OpModeManagerNotifier.Notifications> listeners = new WeakReferenceSet<OpModeManagerNotifier.Notifications>();
+  // SandBot: 알리는 순서는 등록 순서다(WeakReferenceSet은 WeakHashMap이라 순서가 실행마다 달라질 수 있다). 실행은 JVM 하나라 강한 참조로 둔다.
+  private final List<OpModeManagerNotifier.Notifications> orderedListeners = new ArrayList<OpModeManagerNotifier.Notifications>();
   protected OpModeStuckCodeMonitor stuckMonitor        = null;
   protected boolean               peerWasConnected     = false; // SandBot: 실제는 NetworkConnectionHandler의 연결 상태
 
@@ -124,10 +129,19 @@ public class OpModeManagerImpl implements OpModeServices, OpModeManagerNotifier 
     throw unsupported("<init>(android.app.Activity,com.qualcomm.robotcore.hardware.HardwareMap)");
   }
 
+  // SandBot: 사이드카의 관리자 하나(SandbotOpModeBridge.manager). 실제 생성자의 기본 OpMode 시작·Activity 등록은 없다.
+  OpModeManagerImpl() {
+  }
+
+  private static final OpModeManagerImpl SANDBOT_MANAGER = new OpModeManagerImpl();
+
+  static OpModeManagerImpl sandbotManager() {
+    return SANDBOT_MANAGER;
+  }
+
   public static OpModeManagerImpl getOpModeManagerOfActivity(Activity activity) {
-    synchronized (mapActivityToOpModeManager) {
-      return mapActivityToOpModeManager.get(activity);
-      }
+    // SandBot: Activity가 없다(AppUtil.getActivity()는 null). 어느 Activity로 물어도 사이드카의 관리자다.
+    return SANDBOT_MANAGER;
     }
 
   public void init(EventLoopManager eventLoopManager) {
@@ -144,12 +158,59 @@ public class OpModeManagerImpl implements OpModeServices, OpModeManagerNotifier 
 
   @Override
   public OpMode registerListener(OpModeManagerNotifier.Notifications listener) {
-    throw unsupported("registerListener(com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier$Notifications)");
+    checkThread();
+    synchronized (this.listeners) {
+      this.listeners.add(listener);
+      // SandBot: 같은 것(equals)은 한 번만(WeakReferenceSet과 같다)
+      if (!orderedListeners.contains(listener)) orderedListeners.add(listener);
+      return (OpMode) this.activeOpMode;
+    }
   }
 
   @Override
   public void unregisterListener(OpModeManagerNotifier.Notifications listener) {
-    throw unsupported("unregisterListener(com.qualcomm.robotcore.eventloop.opmode.OpModeManagerNotifier$Notifications)");
+    checkThread();
+    synchronized (this.listeners) {
+      this.listeners.remove(listener);
+      orderedListeners.remove(listener);
+    }
+  }
+
+  // SandBot: 1단계는 OpMode 스레드 하나만 SDK를 쓴다(다른 스레드면 가상 시계가 error thread로 알리고 SimThreadError를 던진다)
+  private static void checkThread() {
+    if (Sim.installed()) Sim.nanoTime();
+  }
+
+  // SandBot: 런타임(SandbotOpModeBridge)이 OpMode 수명마다 부른다. 실제 callActiveOpModeInit·Start·Stop처럼 등록한 리스너(등록 순서)
+  // 다음에 hardwareMap의 장치 중 Notifications인 것. activeOpMode는 실제 setActiveOpMode처럼 registerListener가 돌려주는 값이다.
+  void sandbotSetActiveOpMode(OpMode opMode) {
+    synchronized (this.listeners) {
+      this.activeOpMode = opMode;
+    }
+  }
+
+  void sandbotNotify(int which, OpMode opMode, HardwareMap map) {
+    List<OpModeManagerNotifier.Notifications> current;
+    synchronized (this.listeners) {
+      current = new ArrayList<OpModeManagerNotifier.Notifications>(orderedListeners);
+    }
+    for (OpModeManagerNotifier.Notifications listener : current) {
+      notifyOne(listener, which, opMode);
+    }
+    if (map == null) return;
+    for (HardwareDevice device : map.unsafeIterable()) {
+      if (device instanceof OpModeManagerNotifier.Notifications) {
+        notifyOne((OpModeManagerNotifier.Notifications) device, which, opMode);
+      }
+    }
+  }
+
+  private static void notifyOne(OpModeManagerNotifier.Notifications listener, int which, OpMode opMode) {
+    switch (which) {
+      case 0: listener.onOpModePreInit(opMode); break;
+      case 1: listener.onOpModePreStart(opMode); break;
+      default: listener.onOpModePostStop(opMode); break;
+    }
   }
 
   protected void setActiveOpMode(OpMode opMode, String activeOpModeName) {

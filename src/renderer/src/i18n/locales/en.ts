@@ -103,6 +103,9 @@ const en: Messages = {
     scriptLaunchFailed:
       'The external script editor could not open {{fileName}} ({{detail}}). Check the editor in the toolbar [Preferences] > External Tools.',
     scriptMissing: '{{fileName}} is not in TeamCode. Check the link in the Inspector.',
+    // The Console's Road Runner tuning result entry could not be shown in the file manager (a simulated storage file)
+    simFileMissing: 'Could not find {{fileName}}. It may have been deleted or moved.',
+    simFileRevealFailed: 'Could not show {{fileName}} in the file manager ({{detail}}).',
     scriptNotAllowed:
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
     lineIgnored:
@@ -196,10 +199,12 @@ const en: Messages = {
     scene: 'Scene',
     inspector: 'Inspector',
     // Tabs of the panel below the Scene view (Unity's Console spot)
-    dock: 'Console, Telemetry, Devices',
+    dock: 'Console, Telemetry, Devices, Config',
     console: 'Console',
     telemetry: 'Telemetry',
-    devices: 'Devices'
+    devices: 'Devices',
+    // Edit @Config values during a run, like the FTC Dashboard Configuration panel
+    config: 'Config'
   },
   objectKind: {
     robot: 'Robot',
@@ -612,7 +617,33 @@ const en: Messages = {
       failed: 'Could not read the OpMode list ({{detail}}).',
       noTeamCode: 'The project has no TeamCode folder.',
       empty: 'TeamCode has no @TeleOp or @Autonomous OpModes (@Disabled ones are not shown).',
-      truncated: 'TeamCode has too many files; only some OpModes are shown.'
+      truncated: 'TeamCode has too many files; only some OpModes are shown.',
+      // OpModes registered by @OpModeRegistrar (the sidecar runs the registrars to read them)
+      registeredLoading: 'Reading registrar (@OpModeRegistrar) OpModes…',
+      registeredFailed: 'Could not read the registrar OpModes: {{reason}}',
+      registeredCompile:
+        'The registrar files did not compile ({{count}} errors), so registrar OpModes are not shown. You can open the lines from the Console.',
+      registeredRegistrar:
+        'The registrar {{names}} threw an exception, so its OpModes are missing (see the Console).',
+      // Failure reasons of ListRegisteredResult
+      registeredFailure: {
+        notAllowed: 'this project cannot run',
+        missing: 'TeamCode or a registrar file was not found',
+        noJdk: 'no JDK 17 or newer was found (Preferences > External Tools)',
+        noSidecar: 'the runner (sidecar) is not built',
+        failed: 'runner error',
+        noAndroidSdk: 'no Android SDK was found (Preferences > External Tools)',
+        noAndroidPlatform: "the project's Android platform is not installed"
+      },
+      // The project's code is not trusted yet (the registrars did not run). Choosing it asks (play.codeTrust).
+      registeredConsent: 'Read registrar OpModes…',
+      registeredConsentHint: "Runs the project's Java code (@OpModeRegistrar) on this PC",
+      registeredTag: 'Registrar',
+      registeredTooltip: '{{className}} · registrar {{registrar}}\n{{file}}',
+      open: 'Open',
+      openTooltip: "Open this OpMode's source in the external script editor (Alt+Enter)",
+      openRegistrarTooltip:
+        'Open the registrar line that registers this OpMode in the external script editor (Alt+Enter)'
     },
     init: 'INIT',
     start: 'START',
@@ -654,6 +685,12 @@ const en: Messages = {
       busy: 'A project is being opened or saved.',
       running: 'Running.'
     },
+    // Asked once before reading the registrar OpModes (like Android Studio's Trust Project). Remembered per project.
+    codeTrust: {
+      message:
+        'To list the registrar OpModes, SandBot compiles and runs the @OpModeRegistrar code of the project {{project}} (and the static initializers of the classes it touches) on this PC. INIT runs the same code, and it can access the files and network of this PC. Only do this for projects you trust. SandBot remembers this choice for this project.',
+      confirm: 'Run and remember'
+    },
     saveBeforeRun:
       'You have unsaved changes. Running uses the TeamCode and the generated robot configuration on disk, so they must be saved first. Save and run?',
     saveAndRun: 'Save and run',
@@ -666,6 +703,7 @@ const en: Messages = {
       stuckInStop: 'Did not finish after STOP',
       load: 'Could not load the OpMode',
       config: 'Robot configuration error',
+      registrar: 'OpMode registrar error',
       internal: 'Sidecar internal error'
     },
     stallHint:
@@ -679,6 +717,7 @@ const en: Messages = {
       loadFailed: 'Could not load the OpMode or the robot configuration',
       stuck: 'Gave up: did not finish after STOP',
       shutdown: 'Shut down',
+      listed: 'Read the registered OpModes',
       killed: 'The JVM was killed',
       crashed: 'The runner exited unexpectedly'
     },
@@ -716,6 +755,11 @@ const en: Messages = {
     noSelection: 'Select an entry to see its full text and stack.',
     openHint: 'Double-click or press Enter to open this line in the external script editor.',
     openLink: 'Click to open this line in the external script editor.',
+    // The Road Runner tuning result entry (simNotice rrTuningSaved): show it in the file manager
+    revealFile: 'Show in folder',
+    revealHint: 'Double-click or press Enter to show this file in the file manager.',
+    rrTuningHint:
+      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (the page for this kind of result under http://192.168.43.1:8080/tuning/): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's kinematic model and do not replace tuning on the real robot.",
     diagnosticKind: {
       error: 'error',
       warning: 'warning',
@@ -769,12 +813,31 @@ const en: Messages = {
         '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
       configMissing:
         'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.',
+      // Reading the registrar (@OpModeRegistrar) OpMode list
+      registeredFailed: 'Could not read the registrar OpMode list: {{reason}} ({{detail}})',
+      registeredCompileFailed:
+        'The registrar (@OpModeRegistrar) files did not compile, so the registrar OpModes could not be read ({{count}} errors). Double-click a diagnostic to open its line.',
+      // A Scene view Dashboard overlay image (drawImage '/images/…') could not be read (once per image per run). It is
+      // read again when the user comes back to the SandBot window or INITs again.
+      dashImageMissing:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} does not exist, so it is not drawn. Add the file and come back to the SandBot window, or INIT again, to read it again.',
+      dashImageNotAllowed:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} is not read because it is not a regular file or points outside assets ({{detail}}).',
+      dashImageTooLarge:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} is over the size limit ({{max}} MB), so it is not drawn ({{detail}}).',
+      dashImageFailed:
+        'Could not read the Dashboard image TeamCode/src/main/assets/{{path}}, so it is not drawn ({{detail}}). Fix it and come back to the SandBot window, or INIT again, to read it again.',
       // Simulator notices (simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
           'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
         worldError:
-          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).'
+          'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).',
+        dashCamera:
+          'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
+        dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
+        // file: absolute path in the simulated storage (userData/sim-files/<project>/FIRST, the robot's /sdcard/FIRST)
+        rrTuningSaved: 'Saved the Road Runner tuning result: {{file}}'
       },
       // Library dependency report (INIT, src/main/libraries)
       library: {
@@ -788,8 +851,12 @@ const en: Messages = {
           '{{coordinate}}: the repository publishes no checksums, so the hash of the first download was recorded. If the content changes later, it will not be used.',
         firstUseUnrecorded:
           '{{coordinate}}: the repository publishes no checksums, and the hash of the first download could not be saved (first-use.json in the library cache is not writable). It is used this time, but a changed file is not caught yet. The next INIT checks it again and saves the hash.',
-        dashboardLater:
-          '{{coordinate}}: FTC Dashboard will be supported with the SandBot Dashboard replacement. It is not loaded yet, so code that uses Dashboard (including Road Runner) does not compile.',
+        // FTC Dashboard (status replaced): compiled against the team's real jar, run on SandBot's implementation
+        replaced:
+          '{{coordinate}}: FTC Dashboard compiles against the real jar of this version and runs on the SandBot implementation (no port or web server). Packets appear in Telemetry and the Scene view, @Config values in the Config tab; camera streams and images are not shown.',
+        // The Sloth build of FTC Dashboard (com.acmerobotics.slothboard)
+        slothboard:
+          '{{coordinate}}: the Sloth build of FTC Dashboard is not supported, so it is not loaded. Use the original FTC Dashboard (com.acmerobotics.dashboard:dashboard).',
         links:
           '{{library}}: {{count}} link problem(s) (missing classes or members, SDK features not supported yet). Reaching that code causes a runtime error.',
         none: '{{coordinate}}',
@@ -802,7 +869,7 @@ const en: Messages = {
           '{{coordinate}}: Sloth and Sinister (dev.frozenmilk) are Android app hooks and hot reload, which SandBot cannot use, so they are not loaded.',
         ftcLibVision: '{{coordinate}}: FTCLib vision uses native OpenCV, so it is not loaded.',
         notSupported:
-          '{{coordinate}}: not a library SandBot supports (Road Runner 1.0, Pedro Pathing 3.x, FTCLib core) or one of their dependencies, so it is not loaded.',
+          '{{coordinate}}: not a library SandBot supports (Road Runner 1.0, Pedro Pathing 3.x, FTCLib core, FTC Dashboard) or one of their dependencies, so it is not loaded.',
         dynamicVersion:
           '{{coordinate}}: the version is not fixed (+, latest, a range or SNAPSHOT), so it is not loaded. Use an exact version so every run is the same.',
         localModule: '{{coordinate}}: SandBot does not read local module or file dependencies.',
@@ -882,7 +949,61 @@ const en: Messages = {
     noRun: 'Run an OpMode to see telemetry like on the Driver Station.',
     empty: 'No telemetry received yet (it appears when telemetry.update() sends).',
     log: 'Telemetry log',
-    sentAt: 'Virtual time sent'
+    sentAt: 'Virtual time sent',
+    // FTC Dashboard telemetry (sendTelemetryPacket; last value per key, like the Dashboard Telemetry panel)
+    dashboard: 'FTC Dashboard',
+    dashboardHint:
+      'Packets sent to FTC Dashboard (TelemetryPacket.put and addLine). The last value of each key is shown, and clearTelemetry clears it. The field drawing (fieldOverlay) is drawn on the Scene view floor.',
+    dashboardEmpty: 'The packets received so far have no values.',
+    dashboardLog: 'Dashboard log'
+  },
+  // Config tab (@Config and addConfigVariable variables, like the FTC Dashboard Configuration panel)
+  config: {
+    noRun:
+      'Run an OpMode to see the FTC Dashboard @Config values here and edit them while it runs (like the Dashboard Configuration panel).',
+    empty:
+      'This run has no Dashboard configuration variables (no @Config classes or addConfigVariable).',
+    waiting:
+      'Waiting for the Dashboard configuration variables (none arrive if the OpMode does not use FTC Dashboard).',
+    tree: 'Dashboard configuration variables',
+    revertHint:
+      'Values changed during a run revert on STOP (the next run uses the file values). To keep one, press [Apply to file] and then save (Ctrl+S).',
+    readOnlyHint:
+      'Values can be edited only during INIT and while running. The last values stay until the next INIT.',
+    hardware: 'Hardware (withHardwareRoot)',
+    expand: 'Expand',
+    collapse: 'Collapse',
+    changed: 'Some values differ from the start of this run.',
+    startValue: '(start {{value}})',
+    startValueHint: 'The value when this run started.',
+    sentHint: 'Sent. It is applied at the next tick boundary (when the run continues, if paused).',
+    invalidHint: 'This value does not fit the type, so it is not sent.',
+    tooLongHint: 'Longer than {{max}} characters, so it is not sent.',
+    apply: 'Apply to file',
+    applyHint:
+      'Move this value to the {{field}} tunable value in {{file}} as an unsaved change. Saving (Ctrl+S) writes it to the Java file. You can undo it.',
+    applied: 'Applied (unsaved)',
+    // Why [Apply to file] is unavailable (play/dashConfigModel.ts ApplyBlock)
+    applyBlocked: {
+      noSource:
+        'This variable is not read from a field (addConfigVariable, an array element and so on), so it cannot be applied to a file.',
+      notTeamCode:
+        'This value belongs to a class outside the TeamCode Java files, so it cannot be applied to a file.',
+      loading: 'Reading {{file}}.',
+      missing:
+        '{{file}} was not found in TeamCode, so the value cannot be applied (it may be a library class).',
+      readFailed: 'Could not read {{file}}, so the value cannot be applied.',
+      file: '{{file}} cannot be edited (read-only, another encoding, a generated file, \\u escapes and so on), so the value cannot be applied.',
+      noField:
+        'The {{field}} tunable value was not found in {{file}} (a field of a superclass in another file, a removed field and so on).',
+      typeChanged:
+        'The type of {{field}} in the file differs from the code that ran, so the value cannot be applied.',
+      value:
+        'This value cannot be written as a Java literal of that type (NaN, infinity and so on).',
+      inFile: 'The file already has this value.',
+      applied: 'Already applied. Saving (Ctrl+S) writes it to the file.',
+      readOnly: '{{field}} in the file: {{reason}}'
+    }
   },
   // Devices tab (device output table)
   devices: {

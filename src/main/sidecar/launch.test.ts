@@ -1,16 +1,20 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises'
+import { createHash } from 'crypto'
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { PlayInitRequest } from '../../shared/play'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import {
+  buildListRequest,
   buildRunRequest,
   isBinaryNameOf,
   javaArgs,
   prepareRun,
   readSidecarFiles,
+  simFirstFolder,
   sourceMapper,
+  sourceRootsOf,
   validateRequest,
   type ValidRequest
 } from './launch'
@@ -42,7 +46,29 @@ function valid(input: PlayInitRequest): ValidRequest {
 
 describe('validateRequest', () => {
   it('맞는 요청은 그대로 받는다', () => {
-    expect(valid(request())).toEqual(request())
+    const base = request()
+    // registeredName이 없으면 null로 채운다(annotated OpMode)
+    expect(valid(base)).toEqual({ ...base, opMode: { ...base.opMode, registeredName: null } })
+    const registered = request({
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+        path: `${PKG}/TuningOpModes.java`,
+        flavor: 'TeleOp',
+        registeredName: 'AngularRampLogger'
+      }
+    })
+    expect(valid(registered)).toEqual(registered)
+    for (const registeredName of ['', 'a\nb', 'x'.repeat(201), 3])
+      expect(
+        validateRequest(
+          request({
+            opMode: {
+              ...registered.opMode,
+              registeredName: registeredName as unknown as string
+            }
+          })
+        )
+      ).toMatchObject({ ok: false, code: 'notAllowed' })
   })
 
   it('모양이 틀리면 notAllowed', () => {
@@ -232,6 +258,90 @@ describe('prepareRun', () => {
       )
     )
     expect(blue).toMatchObject({ preselectTeleOp: 'Other' })
+    // 등록기 OpMode는 그 파일(등록기)의 애너테이션을 읽지 않는다(controller가 등록 결과에서 찾는다)
+    const registered = await prepareRun(
+      valid(
+        request({
+          root,
+          opMode: {
+            className: 'org.firstinspires.ftc.teamcode.Red',
+            path: `${PKG}/Red.java`,
+            flavor: 'Autonomous',
+            registeredName: 'RedLike'
+          }
+        })
+      )
+    )
+    expect(registered).toMatchObject({ preselectTeleOp: '' })
+  })
+})
+
+describe('모의 저장소와 목록 요청', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'sandbot-simfiles-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('프로젝트마다 <sim-files>/<sha256(링크를 푼 루트) 앞 16자>/FIRST를 만든다(링크로 연 같은 루트는 같은 폴더)', async () => {
+    const project = join(dir, 'project')
+    await mkdir(project)
+    const simRoot = join(dir, 'sim-files')
+    const first = await simFirstFolder(simRoot, project)
+    const key = createHash('sha256')
+      .update(await realpath(project))
+      .digest('hex')
+      .slice(0, 16)
+    expect(first).toBe(join(simRoot, key, 'FIRST'))
+    expect((await stat(first)).isDirectory()).toBe(true)
+    // 다시 불러도(INIT마다) 그대로
+    expect(await simFirstFolder(simRoot, project)).toBe(first)
+    const link = join(dir, 'link')
+    await symlink(project, link)
+    expect(await simFirstFolder(simRoot, link)).toBe(first)
+    expect(await simFirstFolder(simRoot, join(dir, 'other'))).not.toBe(first)
+  })
+
+  it('소스 루트는 TeamCode와, 있으면 FtcRobotController', async () => {
+    const project = join(dir, 'p')
+    const teamCode = join(project, 'TeamCode', 'src', 'main', 'java')
+    expect(await sourceRootsOf(project)).toEqual([teamCode])
+    const controller = join(project, 'FtcRobotController', 'src', 'main', 'java')
+    await mkdir(controller, { recursive: true })
+    expect(await sourceRootsOf(project)).toEqual([teamCode, controller])
+  })
+
+  it('ListRequest', () => {
+    expect(
+      buildListRequest(
+        ['/proj/TeamCode/src/main/java'],
+        [{ className: 'a.R', source: '/proj/TeamCode/src/main/java/a/R.java' }],
+        {
+          bootClasspath: ['/p.jar'],
+          compileClasspath: ['/s/sdk.jar', '/l.jar'],
+          libraryClasspath: ['/l.jar']
+        },
+        '/u/sim-files/abc/FIRST',
+        77
+      )
+    ).toEqual({
+      type: 'list',
+      protocol: 3,
+      clock: 'virtual',
+      tickNanos: 5_000_000,
+      sourceRoots: ['/proj/TeamCode/src/main/java'],
+      registrars: [{ className: 'a.R', source: '/proj/TeamCode/src/main/java/a/R.java' }],
+      bootClasspath: ['/p.jar'],
+      compileClasspath: ['/s/sdk.jar', '/l.jar'],
+      libraryClasspath: ['/l.jar'],
+      firstFolder: '/u/sim-files/abc/FIRST',
+      startEpochMillis: 77,
+      stallMillis: 2000
+    })
   })
 })
 
@@ -252,21 +362,32 @@ describe('사이드카 빌드 결과와 명령', () => {
     expect(await readSidecarFiles(dir)).toMatchObject({
       ok: false,
       code: 'noSidecar',
-      detail: 'sidecar protocol 1, expected 2'
+      detail: 'sidecar protocol 1, expected 3'
     })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 2, sourceHash: 'x' }))
+    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 3, sourceHash: 'x' }))
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
+    // FTC Dashboard 대체 jar는 없어도 된다(그것을 쓰는 실행만 controller가 막는다)
     expect(await readSidecarFiles(dir)).toEqual({
       dir,
       runtimeJar: join(dir, 'sandbot-runtime.jar'),
-      sdkJar: join(dir, 'sandbot-sdk.jar')
+      sdkJar: join(dir, 'sandbot-sdk.jar'),
+      dashboardJar: null
+    })
+    await writeFile(join(dir, 'sandbot-dashboard.jar'), '')
+    expect(await readSidecarFiles(dir)).toMatchObject({
+      dashboardJar: join(dir, 'sandbot-dashboard.jar')
     })
   })
 
   it('JVM 인자와 RunRequest', () => {
-    const files = { dir: '/s', runtimeJar: '/s/sandbot-runtime.jar', sdkJar: '/s/sandbot-sdk.jar' }
+    const files = {
+      dir: '/s',
+      runtimeJar: '/s/sandbot-runtime.jar',
+      sdkJar: '/s/sandbot-sdk.jar',
+      dashboardJar: '/s/sandbot-dashboard.jar'
+    }
     expect(javaArgs(files, 'linux')).toEqual([
       '-Xlog:disable',
       '-Xlog:all=warning:stderr',
@@ -307,16 +428,20 @@ describe('사이드카 빌드 결과와 명령', () => {
         compileClasspath: [files.sdkJar],
         libraryClasspath: []
       },
+      { registrars: [], firstFolder: '/u/sim-files/abc/FIRST' },
       1234
     )
     expect(run).toEqual({
       type: 'run',
-      protocol: 2,
+      protocol: 3,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
       opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
       opModeClass: 'org.firstinspires.ftc.teamcode.Drive',
+      registeredName: null,
+      registrars: [],
+      firstFolder: '/u/sim-files/abc/FIRST',
       bootClasspath: ['/p/android-platform.jar'],
       compileClasspath: ['/s/sandbot-sdk.jar'],
       libraryClasspath: [],

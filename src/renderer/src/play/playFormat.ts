@@ -64,12 +64,13 @@ const ENTITIES: Record<string, string> = {
   nbsp: ' '
 }
 
-// DS의 HTML 텔레메트리(DisplayFormat.HTML)를 글자로 바꾼다. 태그를 해석해 그리지 않는다(팀 코드의 글자를 HTML로
-// 넣지 않는다). <br>은 줄바꿈, 나머지 태그는 빼고, 흔한 문자 참조만 푼다.
+// 팀 코드가 HTML로 보낸 텔레메트리(DS의 DisplayFormat.HTML, FTC Dashboard의 값·로그)를 글자로 바꾼다. 태그를 해석해
+// 그리지 않는다(팀 코드의 글자를 HTML로 넣지 않는다). <br>은 줄바꿈, 나머지 태그·주석은 빼고, 흔한 문자 참조만 푼다.
+// 태그는 브라우저처럼 '<' 뒤가 글자·'/글자'·'!'·'?'일 때만이다(x < 5 같은 비교식은 그대로 둔다).
 export function htmlToText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
+    .replace(/<!--[\s\S]*?-->|<\/?[a-z][^>]*>|<[!?][^>]*>/gi, '')
     .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (match, name: string) => {
       if (name[0] === '#') {
         const code =

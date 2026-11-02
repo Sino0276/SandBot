@@ -253,9 +253,28 @@ public final class Json {
         return out.toString();
     }
 
+    /** 이미 JSON인 글자(그대로 쓴다). Dashboard 대체가 만든 패킷·설정 트리처럼 이 클래스 밖에서 쓴 것. */
+    public static final class Raw {
+        final String json;
+
+        private Raw(String json) {
+            this.json = json;
+        }
+    }
+
+    /** JSON 글자를 그대로 쓸 값. null이면 JSON null. 줄바꿈 글자가 없어야 한다(한 줄 프로토콜). */
+    public static Object raw(String json) {
+        if (json == null) return null;
+        if (json.indexOf('\n') >= 0 || json.indexOf('\r') >= 0)
+            throw new IllegalArgumentException("raw JSON must not contain line breaks");
+        return new Raw(json);
+    }
+
     public static void write(StringBuilder out, Object value) {
         if (value == null) {
             out.append("null");
+        } else if (value instanceof Raw) {
+            out.append(((Raw) value).json);
         } else if (value instanceof String) {
             writeString(out, (String) value);
         } else if (value instanceof Boolean) {

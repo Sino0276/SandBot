@@ -322,6 +322,32 @@ public final class DeviceBehaviorTest {
         SandbotHardware.afterStop(bot.map);
     }
 
+    public static void testMeasuredVelocityIsBulkDataShort() {
+        // 실제 LynxGetBulkInputDataResponse의 속도는 int16_t(short[] velocities)이고 getVelocity가 부호 확장해 돌려준다.
+        // 캐시 없이(OFF) 읽어도 LynxGetBulkInputDataCommand라 같은 값이다(LynxDcMotorController.internalGetMotorTicksPerSecond).
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx hex = bot.get(DcMotorEx.class, "hex");
+        LynxModule hub = bot.get(LynxModule.class, "Control Hub");
+        // REV HD Hex는 CCW 형식이라 FORWARD에서 팀 코드의 값은 허브 값의 반대다
+        // 시뮬레이터 입력(감기 전) → 허브가 보고하는 short
+        long[][] cases = {
+            {32767, 32767}, {32768, -32768}, {40000, -25536}, {65560, 24}, {-40000, 25536}, {-32769, 32767}
+        };
+        for (long[] c : cases) {
+            bot.in("hex", "velocity", c[0]);
+            String label = "velocity input " + c[0];
+            Check.equal((double) -c[1], hex.getVelocity(), label + " (OFF)");
+            Check.near(Math.toDegrees(-c[1] / hex.getMotorType().getTicksPerRev() * 2 * Math.PI),
+                    hex.getVelocity(AngleUnit.DEGREES), 1e-6, label + " (degrees)");
+            hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
+            hub.clearBulkCache();
+            Check.equal((int) c[1], hub.getBulkData().getMotorVelocity(2), label + " (bulk data)");
+            Check.equal((double) -c[1], hex.getVelocity(), label + " (MANUAL)");
+            hub.setBulkCachingMode(LynxModule.BulkCachingMode.OFF);
+        }
+        SandbotHardware.afterStop(bot.map);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // 서보 포트
     // ---------------------------------------------------------------------------------------------

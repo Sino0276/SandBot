@@ -1,22 +1,28 @@
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, shell, type WebContents } from 'electron'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'fs/promises'
 import { join } from 'path'
 import { IPC } from '../../shared/ipc'
 import type { PlayEvent } from '../../shared/play'
 import { resolveAndroidPlatform } from '../androidSdk'
+import { defaultCodeTrustStore, registerCodeTrustIpc } from '../codeTrust'
 import { readProjectGradle } from '../gradleSource'
 import { resolveActiveJdk } from '../jdk'
 import { electronHttpGet } from '../libraries/electronHttp'
 import { gradleUserHome } from '../libraries/gradleCache'
 import { createLibraryResolver } from '../libraries'
-import { PlayController, type PlayOwner } from './controller'
-import { readSidecarFiles } from './launch'
+import { scanOpModes } from '../opModes'
+import { RegisteredOpModes, setRegisteredOpModes } from '../registeredOpModes'
+import { PlayController, type ControllerDeps, type PlayOwner } from './controller'
+import { dashboardJarPath, readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
 import { spawnSidecar } from './process'
+import { revealSimFile } from './simFiles'
 import { kinematicWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
-// 쓴다)이고, SANDBOT_SIDECAR_DIR로 다른 빌드를 가리킬 수 있다(stepConverter.ts와 같은 방식).
+// 쓴다)이고, SANDBOT_SIDECAR_DIR로 다른 빌드를 가리킬 수 있다(stepConverter.ts와 같은 방식). 등록기 OpMode 목록
+// (registeredOpModes.ts, IPC는 opModes.ts)도 같은 준비(사이드카·JDK·Gradle·플랫폼·라이브러리)와 모의 저장소를 쓰고, 코드 실행
+// 동의(codeTrust.ts, IPC grantCodeTrust)를 함께 본다.
 
 export function sidecarDir(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'sidecar')
@@ -47,7 +53,11 @@ export function registerPlayIpc(): void {
   const runRoot = join(app.getPath('userData'), RUN_DIR)
   void sweepRunDirs(runRoot)
 
-  const controller = new PlayController({
+  // 프로젝트마다의 모의 저장소(AppUtil.ROOT_FOLDER): 실행과 등록기 목록이 같은 폴더를 본다
+  const simRoot = join(app.getPath('userData'), SIM_FILES_DIR)
+  const makeFirstFolder = (projectRoot: string): Promise<string> =>
+    simFirstFolder(simRoot, projectRoot)
+  const deps: ControllerDeps = {
     resolveJdk: () => resolveActiveJdk(),
     locateSidecar: () => readSidecarFiles(sidecarDir()),
     spawn: spawnSidecar,
@@ -58,16 +68,35 @@ export function registerPlayIpc(): void {
     removeRunDir: (dir) => rm(dir, { recursive: true, force: true }),
     platform: process.platform,
     env: process.env,
-    world: kinematicWorld,
     readGradle: (projectRoot) => readProjectGradle(projectRoot),
     resolvePlatform: (projectRoot, compileSdk, compileSdkMinor) =>
       resolveAndroidPlatform(projectRoot, compileSdk, compileSdkMinor),
-    // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries)
+    // 팀 Gradle의 라이브러리: SandBot 라이브러리 캐시 → Android Studio의 Gradle 캐시 → 허용 저장소(src/main/libraries).
+    // FTC Dashboard는 실행 때 사이드카 폴더의 SandBot 구현으로 바꾼다.
     resolveLibraries: createLibraryResolver({
       cacheDir: join(app.getPath('userData'), 'library-cache'),
       gradleHome: gradleUserHome(process.env),
-      http: electronHttpGet
+      http: electronHttpGet,
+      dashboardJar: dashboardJarPath(sidecarDir())
     })
+  }
+  // 프로젝트 코드 실행 동의: 등록기 목록은 믿은 프로젝트만 읽고, INIT(같은 코드를 실행한다)은 그 프로젝트를 믿는다고 기억한다
+  const codeTrust = defaultCodeTrustStore()
+  registerCodeTrustIpc(codeTrust)
+  const registered = new RegisteredOpModes({
+    ...deps,
+    scan: scanOpModes,
+    makeFirstFolder,
+    isCodeTrusted: (projectRoot) => codeTrust.isTrusted(projectRoot)
+  })
+  setRegisteredOpModes(registered)
+  const controller = new PlayController({
+    ...deps,
+    world: kinematicWorld,
+    makeFirstFolder,
+    registrars: (root) => registered.registrarsFor(root),
+    registeredPreselect: (root, name) => registered.preselectTeleOp(root, name),
+    grantCodeTrust: async (projectRoot) => void (await codeTrust.grant(projectRoot))
   })
 
   // 창마다 같은 owner 객체(명령이 실행을 시작한 창의 것인지 본다)
@@ -99,6 +128,10 @@ export function registerPlayIpc(): void {
   )
   ipcMain.on(IPC.playGamepads, (event, gamepads: unknown) =>
     controller.gamepads(gamepads, ownerOf(event.sender))
+  )
+  // Console의 Road Runner 튜닝 결과 줄: 그 프로젝트의 모의 저장소 안 파일만 파일 관리자에서 보인다
+  ipcMain.handle(IPC.revealSimFile, (_event, root: unknown, file: unknown) =>
+    revealSimFile(simRoot, root, file, (path) => shell.showItemInFolder(path))
   )
 
   // 앱을 끝내기 전에 사이드카를 정리한다(shutdown → 잠깐 기다림 → kill). 남은 JVM이 없으면 바로 끝난다.

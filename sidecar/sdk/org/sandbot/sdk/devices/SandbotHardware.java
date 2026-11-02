@@ -10,6 +10,7 @@ import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.hardware.rev.RevTouchSensor;
 import com.qualcomm.hardware.sparkfun.SparkFunOTOS;
+import com.qualcomm.robotcore.eventloop.opmode.SandbotOpModeBridge;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.CRServoImplEx;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -125,10 +126,11 @@ public final class SandbotHardware {
 
     /**
      * 구성 XML로 hardwareMap을 만든다. null이면 장치가 없는 hardwareMap(구성 없는 로봇). 모르는 태그·형식 오류·
-     * 겹치는 이름이나 포트는 SandbotConfigException이다. 비용은 청구하지 않는다(로봇을 켤 때의 일).
+     * 겹치는 이름이나 포트는 SandbotConfigException이다. 비용은 청구하지 않는다(로봇을 켤 때의 일). 실제 로봇처럼 OpMode
+     * 관리자(SandbotOpModeBridge.manager)를 notifier로 받아 OpMode 수명 알림(onOpModePreInit의 장치 꺼내기 표시 초기화)을 받는다.
      */
     public static HardwareMap create(File configXmlOrNull) throws SandbotConfigException {
-        HardwareMap map = new HardwareMap(null, null);
+        HardwareMap map = new HardwareMap(null, SandbotOpModeBridge.manager());
         List<HardwareDevice> built = new ArrayList<>();
         synchronized (BUILT) {
             BUILT.put(map, built);

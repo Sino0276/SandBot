@@ -119,11 +119,29 @@ const RR = {
     ]
   },
   'com.fasterxml.jackson.core:jackson-annotations:2.12.7': {},
-  'com.fasterxml.jackson.core:jackson-core:2.12.7': {}
+  'com.fasterxml.jackson.core:jackson-core:2.12.7': {},
+  // FTC Dashboard(대체): 실제 POM처럼 core·FTC SDK·androidx.annotation·nanohttpd를 끌어온다
+  'com.acmerobotics.dashboard:dashboard:0.5.1': {
+    file: 'dashboard-0.5.1.aar',
+    deps: [
+      'com.acmerobotics.dashboard:core:0.5.1',
+      'org.firstinspires.ftc:RobotCore:10.0.0',
+      'androidx.annotation:annotation:1.1.0',
+      'org.nanohttpd:nanohttpd-websocket:2.3.1'
+    ]
+  },
+  'com.acmerobotics.dashboard:dashboard:0.4.10': {
+    file: 'dashboard-0.4.10.aar',
+    deps: ['com.acmerobotics.dashboard:core:0.4.10', 'org.firstinspires.ftc:RobotCore:9.0.0']
+  },
+  'com.acmerobotics.dashboard:core:0.5.1': {},
+  'com.acmerobotics.dashboard:core:0.4.10': {},
+  'com.acmerobotics.dashboard:core:0.4.7': {},
+  'androidx.annotation:annotation:1.1.0': {}
 }
 
 describe('의존성 그래프', () => {
-  it('Road Runner: 제공·지원 안 함은 펼치지 않고, jackson은 실행 범위만', async () => {
+  it('Road Runner: 제공·지원 안 함은 펼치지 않고, 대체(Dashboard)는 펼치고, jackson은 실행 범위만', async () => {
     const load = source(RR)
     const modules = await resolveGraph(
       [
@@ -137,17 +155,21 @@ describe('의존성 그래프', () => {
     )
     const s = summary(modules)
     expect(s['com.acmerobotics.roadrunner:ftc']).toBe('0.1.25 supported C R')
-    // 대시보드: 팀 0.5.1과 RR ftc의 0.4.10 중 높은 것, 지원 안 함이라 펼치지 않음
-    expect(s['com.acmerobotics.dashboard:dashboard']).toBe('0.5.1 unsupported C R')
+    // 대시보드: 팀 0.5.1과 RR ftc의 0.4.10 중 높은 것. 대체라 지원 계열처럼 펼친다(core는 actions의 0.4.7과 0.5.1 중 높은 것)
+    expect(s['com.acmerobotics.dashboard:dashboard']).toBe('0.5.1 replaced C R')
     expect(modules.find((m) => m.artifact === 'dashboard')?.requested).toEqual(['0.5.1', '0.4.10'])
+    expect(s['com.acmerobotics.dashboard:core']).toBe('0.5.1 replaced C R')
+    expect(s['androidx.annotation:annotation']).toBe('1.1.0 compileOnly C R')
+    expect(s['org.nanohttpd:nanohttpd-websocket']).toBe('2.3.1 provided C R')
     expect(s['org.firstinspires.ftc:RobotCore']).toBe('10.0.0 provided C R')
     expect(s['com.fasterxml.jackson.core:jackson-databind']).toBe('2.12.7 other R')
     expect(s['com.fasterxml.jackson.core:jackson-core']).toBe('2.12.7 other R')
     expect(s['org.jetbrains.kotlin:kotlin-stdlib']).toBe('1.9.0 other C R')
-    expect(s['com.acmerobotics.dashboard:core']).toBe('0.4.7 unsupported C R')
-    // 제공·지원 안 함의 메타데이터는 받지 않는다
+    // 제공의 메타데이터는 받지 않는다
     expect(
-      load.loads.some((key) => key.startsWith('org.firstinspires') || key.includes('dashboard'))
+      load.loads.some(
+        (key) => key.startsWith('org.firstinspires') || key.startsWith('org.nanohttpd')
+      )
     ).toBe(false)
     // 끌어온 쪽 사슬
     expect(modules.find((m) => m.artifact === 'jackson-core')?.requestedBy).toEqual([

@@ -1,4 +1,5 @@
 import path from 'path'
+import { MAX_DASH_DATA, type DashConfigSet, type DashOp } from '../../shared/dashboard'
 import {
   AUTONOMOUS_SECONDS,
   type DiagnosticHint,
@@ -15,10 +16,13 @@ import {
 import {
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
+  type DashConfigMessage,
+  type DashMessage,
   type DeviceValues,
   type DsEvent,
   type FinishReason,
   type LogMessage,
+  type NoticeMessage,
   type RunRequest,
   type SidecarMessage,
   type TelemetryMessage,
@@ -27,6 +31,7 @@ import {
 import type { SimPose } from '../../shared/sim/worldSpec'
 import type { ProcessExit, SidecarProcess } from './process'
 import { LineSplitter, parseSidecarLine, ProtocolError } from './protocol'
+import { simFilePath } from './simFiles'
 import { EMPTY_WORLD, type SimWorld } from './world'
 
 // 사이드카 실행 하나(호스트 쪽). 사이드카는 가상 시계로 돌고, 가상 시간이 틱 경계를 넘을 때마다 tick을 보내고
@@ -51,9 +56,14 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   그 틱의 답(tickReply)에 싣는다. 그래서 답을 늦추거나(속도·일시 정지) 답하지 못한 틱(끝)도 적분은 틱 순서대로 한 번씩
 //   결정적으로 하고, 일시 정지 중의 자세는 둔 틱의 것이다. 답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다(세계는 바뀐 키만
 //   주므로). 세계의 예외는 실행을 멈추지 않는다: simNotice worldError를 한 번 보내고 사이드카는 이전 입력을 계속 쓴다.
-// 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz,
-//   바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시 정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는
-//   한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
+// FTC Dashboard(라이브러리 L2): 사이드카가 전송 간격(가상)마다 보낸 패킷 묶음(dash)을 텔레메트리처럼 30 Hz 이하로 다시 묶어
+//   보낸다. 묶음 사이도 사이드카와 같은 규칙으로 합친다(cleared는 OR, data는 마지막 cleared 묶음부터 키마다 마지막 값, log는
+//   마지막 cleared 묶음부터의 마지막 null 아닌 것, ops는 마지막 null 아닌 것). 설정 트리(dashConfig)는 마지막 것만 보낸다. Config 탭의 값(PlayCommand config)은 다음 틱 답의
+//   configSet에 싣는다(일시 정지 중이면 답을 보낼 때). 사이드카 안내(notice)는 simNotice다.
+// 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·dash(합쳐서, 30 Hz 이하)·dashConfig(최신만,
+//   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시
+//   정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는 한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·
+//   finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
   // 단조 증가하는 밀리초
@@ -113,6 +123,8 @@ export type SessionOptions = {
 
 const STATUS_INTERVAL_MS = 100
 const TELEMETRY_INTERVAL_MS = 34
+// 다음 틱 답을 기다리는 Config 탭의 값 바꾸기 수(일시 정지 중에 계속 바꿔도 끝없이 쌓이지 않게, 넘으면 버린다)
+const MAX_PENDING_CONFIG = 256
 const DEVICES_INTERVAL_MS = 50
 const POSE_INTERVAL_MS = 16
 // 실행 하나에서 보내는 simNotice의 최대 수(세계가 안내를 끝없이 만들지 않게)
@@ -163,6 +175,42 @@ function inputsRecord(state: InputState): Record<string, DeviceValues> {
   return Object.fromEntries(
     [...state].map(([device, values]) => [device, Object.fromEntries(values)])
   )
+}
+
+// 아직 보내지 않은 Dashboard 패킷 묶음(사이드카 dash 여럿을 합친 것)
+type DashMerge = {
+  tNanos: number
+  cleared: boolean
+  // 키 → 마지막 값(마지막 cleared 묶음부터)
+  data: Map<string, string>
+  log: string[] | null
+  ops: DashOp[] | null
+}
+
+// 사이드카가 묶음 안에서 하는 것과 같다: cleared는 OR, data는 cleared 뒤부터, log·ops는 마지막 null 아닌 것.
+// clearTelemetry는 그 앞의 data와 로그를 지우고(실제 웹 화면도 둘 다 지운다) 그림은 남긴다(실제 FieldView는 빈 묶음에
+// 그림을 그대로 둔다). 지운 로그는 빈 배열이라 cleared 묶음의 log는 null이 아니다(사이드카도 그렇게 보낸다).
+function mergeDash(into: DashMerge | null, message: DashMessage): DashMerge {
+  const merged: DashMerge =
+    into === null || message.cleared
+      ? {
+          tNanos: message.tNanos,
+          cleared: message.cleared || (into?.cleared ?? false),
+          data: new Map(),
+          log: message.cleared ? [] : null,
+          ops: into?.ops ?? null
+        }
+      : into
+  merged.tNanos = message.tNanos
+  for (const [key, value] of message.data) merged.data.set(key, value)
+  if (message.log !== null) merged.log = message.log
+  if (message.ops !== null) merged.ops = message.ops
+  return merged
+}
+
+// 키 정렬(사이드카의 TreeMap과 같은 UTF-16 순서), 한 묶음의 키 한도까지
+function dashData(data: Map<string, string>): [string, string][] {
+  return [...data].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, MAX_DASH_DATA)
 }
 
 function errorMessage(error: unknown): string {
@@ -218,6 +266,8 @@ export class SidecarSession {
   private readonly world: SimWorld
   private readonly timeouts: SessionTimeouts
   private readonly splitter = new LineSplitter()
+  // 이 실행의 모의 저장소(RunRequest.firstFolder). 사이드카가 알린 그 안의 상대 경로를 절대 경로로 바꾼다.
+  private readonly firstFolder: string
 
   private phase: PlayPhase = 'preparing'
   private helloSeen = false
@@ -261,11 +311,17 @@ export class SidecarSession {
   private logTimer: unknown = null
   private telemetry: TelemetryMessage | null = null
   private readonly telemetryThrottle: Throttle
+  private dash: DashMerge | null = null
+  private readonly dashThrottle: Throttle
+  private dashConfig: DashConfigMessage | null = null
+  private readonly dashConfigThrottle: Throttle
   private outputs: { tNanos: number; outputs: Record<string, DeviceValues> } | null = null
   private lastDevicesKey = ''
   private readonly devicesThrottle: Throttle
   // 세계가 보낸 입력: 다음 답에 실을 것(답 없이 넘긴 틱의 것도 합친다)과 지금까지의 누적(devices 이벤트)
   private pendingInputs: InputState = new Map()
+  // Config 탭에서 바꾼 Dashboard 값(다음 tickReply.configSet)
+  private pendingConfig: DashConfigSet[] = []
   private readonly inputState: InputState = new Map()
   private latestPose: ({ tNanos: number } & SimPose) | null = null
   private lastPoseKey = ''
@@ -279,12 +335,17 @@ export class SidecarSession {
     private readonly options: SessionOptions
   ) {
     this.runId = options.runId
+    this.firstFolder = request.firstFolder
     this.clock = options.clock ?? systemClock
     this.world = options.world ?? EMPTY_WORLD
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts }
     this.speed = isValidSpeed(options.speed) ? options.speed : 1
     this.telemetryThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () =>
       this.sendTelemetry()
+    )
+    this.dashThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () => this.sendDash())
+    this.dashConfigThrottle = new Throttle(this.clock, TELEMETRY_INTERVAL_MS, () =>
+      this.sendDashConfig()
     )
     this.devicesThrottle = new Throttle(this.clock, DEVICES_INTERVAL_MS, () => this.sendDevices())
     this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => this.sendPose())
@@ -335,7 +396,18 @@ export class SidecarSession {
       case 'speed':
         this.setSpeed(command.speed)
         break
+      case 'config':
+        // 다음 틱 답에 싣는다(일시 정지 중이면 답을 보낼 때)
+        if (this.pendingConfig.length < MAX_PENDING_CONFIG)
+          this.pendingConfig.push({ path: [...command.path], value: command.value })
+        break
     }
+  }
+
+  private takeConfig(): DashConfigSet[] {
+    const config = this.pendingConfig
+    this.pendingConfig = []
+    return config
   }
 
   setGamepads(gamepads: [GamepadState | null, GamepadState | null]): void {
@@ -480,7 +552,8 @@ export class SidecarSession {
       tick: tick.tick,
       events,
       gamepads: this.gamepads,
-      inputs
+      inputs,
+      configSet: this.takeConfig()
     })
     this.lastRepliedNanos = tick.tNanos
     this.addSample(tick.tNanos)
@@ -554,6 +627,18 @@ export class SidecarSession {
       this.poseThrottle.request()
     }
     for (const notice of notices) this.simNotice(tick.tNanos, notice.code, notice.params)
+  }
+
+  // 사이드카 안내의 매개변수. rrTuningSaved는 모의 저장소 기준 경로(path)에 절대 경로(file)를 더한다: 렌더러는 모의
+  // 저장소가 어디인지 모르고, Console이 그 경로를 보이고 파일 관리자로 연다(revealSimFile이 다시 확인한다). 모의 저장소 밖을
+  // 가리키는 경로면 더하지 않는다.
+  private sidecarNoticeParams(message: NoticeMessage): Record<string, string> {
+    if (message.code !== 'rrTuningSaved') return message.params
+    // file은 메인만 채운다(사이드카가 보낸 file은 믿지 않고 버린다)
+    const { file: _untrusted, ...params } = message.params
+    void _untrusted
+    const file = simFilePath(this.firstFolder, params.path ?? '')
+    return file === null ? params : { ...params, file }
   }
 
   private simNotice(tNanos: number, code: SimNoticeCode, params: Record<string, string>): void {
@@ -710,6 +795,20 @@ export class SidecarSession {
         this.telemetry = message
         this.telemetryThrottle.request()
         break
+      case 'dash':
+        this.observe(message.tNanos)
+        this.dash = mergeDash(this.dash, message)
+        this.dashThrottle.request()
+        break
+      case 'dashConfig':
+        this.observe(message.tNanos)
+        this.dashConfig = message
+        this.dashConfigThrottle.request()
+        break
+      case 'notice':
+        this.observe(message.tNanos)
+        this.simNotice(message.tNanos, message.code, this.sidecarNoticeParams(message))
+        break
       case 'log':
         this.observe(message.tNanos)
         this.pushLog(message)
@@ -801,6 +900,8 @@ export class SidecarSession {
     this.clearKillTimer()
     this.flushLogs()
     this.telemetryThrottle.flush()
+    this.dashThrottle.flush()
+    this.dashConfigThrottle.flush()
     this.devicesThrottle.flush()
     this.poseThrottle.flush()
     this.emitStatus(true)
@@ -869,6 +970,28 @@ export class SidecarSession {
       tNanos: message.tNanos,
       frame: message.frame
     })
+  }
+
+  private sendDash(): void {
+    const merged = this.dash
+    if (!merged) return
+    this.dash = null
+    this.emit({
+      type: 'dash',
+      runId: this.runId,
+      tNanos: merged.tNanos,
+      cleared: merged.cleared,
+      data: dashData(merged.data),
+      log: merged.log,
+      ops: merged.ops
+    })
+  }
+
+  private sendDashConfig(): void {
+    const message = this.dashConfig
+    if (!message) return
+    this.dashConfig = null
+    this.emit({ type: 'dashConfig', runId: this.runId, tNanos: message.tNanos, root: message.root })
   }
 
   private sendDevices(): void {

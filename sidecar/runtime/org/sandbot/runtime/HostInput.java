@@ -99,7 +99,7 @@ final class HostInput {
                     handler.shutdown();
                     return;
                 }
-                if ("run".equals(type) || "tickReply".equals(type)) {
+                if ("run".equals(type) || "list".equals(type) || "tickReply".equals(type)) {
                     queue.add(new Message((String) type, body));
                 } else {
                     handler.protocolError("unknown host message type: " + type);

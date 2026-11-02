@@ -1,8 +1,8 @@
-import { lstat, readFile, realpath, stat } from 'fs/promises'
+import { lstat, mkdir, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
 import type { GradleProject } from '../../shared/gradle'
-import { parseOpModes } from '../../shared/java/opModes'
+import { isTopLevelOfFile, parseOpModes } from '../../shared/java/opModes'
 import type { LibraryProgress, LibraryReport } from '../../shared/libraries'
 import {
   MAX_BATTERY_VOLTAGE,
@@ -19,6 +19,8 @@ import {
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
+  type ListRequest,
+  type RegistrarRef,
   type RunRequest
 } from '../../shared/sidecarProtocol'
 import {
@@ -30,6 +32,7 @@ import {
 import { isTrustedRoot } from '../projectRoots'
 import { containedIn, locateJavaFile } from '../teamCodeJava'
 import { isValidSpeed, type SourceMapper } from './session'
+import { simFirstFolderPath } from './simFiles'
 
 // 실행 준비: 렌더러가 보낸 요청(믿지 않는 입력)을 확인하고, 사이드카 빌드 결과를 찾고, JVM 명령과 RunRequest를 만든다.
 // 경로 규칙은 다른 TeamCode IPC와 같다: 열거나 저장한 프로젝트만(projectRoots.ts), OpMode 소스는 teamCodePaths.ts 규칙과
@@ -44,11 +47,24 @@ function failure(code: Failure['code'], detail: string): Failure {
 
 // ---- 사이드카 위치 ----
 
-export type SidecarFiles = { dir: string; runtimeJar: string; sdkJar: string }
+// dashboardJar: FTC Dashboard 대체 jar(이 빌드에 없으면 null). Dashboard를 쓰는 실행에만 필요하다(controller가 확인한다).
+export type SidecarFiles = {
+  dir: string
+  runtimeJar: string
+  sdkJar: string
+  dashboardJar: string | null
+}
 
 export const RUNTIME_JAR = 'sandbot-runtime.jar'
 export const SDK_JAR = 'sandbot-sdk.jar'
+// FTC Dashboard 대체(라이브러리 L2). 팀 Gradle이 Dashboard를 선언하면 라이브러리 해석이 실제 jar 대신 실행 클래스패스에 넣는다.
+export const DASHBOARD_JAR = 'sandbot-dashboard.jar'
 export const SIDECAR_INFO = 'sidecar.json'
+
+// 사이드카 폴더의 FTC Dashboard 대체 jar(라이브러리 해석이 실행 클래스패스에 넣는 경로)
+export function dashboardJarPath(dir: string): string {
+  return path.join(dir, DASHBOARD_JAR)
+}
 
 async function isFile(target: string): Promise<boolean> {
   return (await stat(target).catch(() => null))?.isFile() ?? false
@@ -76,7 +92,13 @@ export async function readSidecarFiles(dir: string): Promise<SidecarFiles | Fail
   const sdkJar = path.join(dir, SDK_JAR)
   for (const jar of [runtimeJar, sdkJar])
     if (!(await isFile(jar))) return failure('noSidecar', `${path.basename(jar)} not found`)
-  return { dir, runtimeJar, sdkJar }
+  const dashboardJar = dashboardJarPath(dir)
+  return {
+    dir,
+    runtimeJar,
+    sdkJar,
+    dashboardJar: (await isFile(dashboardJar)) ? dashboardJar : null
+  }
 }
 
 // ---- 요청 확인 ----
@@ -88,21 +110,33 @@ const IDENTIFIER = /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*$/u
 export type ValidRequest = {
   runId: string
   root: string
-  opMode: { className: string; path: string; flavor: OpModeFlavor }
+  // registeredName: 등록기 OpMode의 DS 이름(className·path는 그 등록기). 없으면 null.
+  opMode: { className: string; path: string; flavor: OpModeFlavor; registeredName: string | null }
   configPath: string | null
   settings: PlaySettings
   world: WorldSpec | null
 }
 
+// 등록기 OpMode의 DS 이름: 1–200자, 제어 문자 없음(OpModeMeta는 이름을 그대로 쓴다)
+export function isRegisteredName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length >= 1 &&
+    name.length <= 200 &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(name)
+  )
+}
+
 // OpMode 바이너리 이름이 그 파일의 것인지: 최상위 클래스 이름은 파일 이름과 같다(public 최상위 클래스만 OpMode가
-// 될 수 있고, javac는 public 최상위 클래스의 파일 이름을 강제한다). 중첩 클래스는 Outer$Inner.
+// 될 수 있고, javac는 public 최상위 클래스의 파일 이름을 강제한다). 중첩 클래스는 Outer$Inner. OpMode 목록도 같은
+// 규칙으로 거른다(src/shared/java/opModes.ts isTopLevelOfFile).
 export function isBinaryNameOf(className: string, relPath: string): boolean {
   if (className.length > 1024) return false
   const segments = className.split('.')
   if (!segments.every((segment) => segment.split('$').every((part) => IDENTIFIER.test(part))))
     return false
-  const stem = relPath.slice(relPath.lastIndexOf('/') + 1).replace(/\.java$/, '')
-  return segments[segments.length - 1].split('$')[0] === stem
+  return isTopLevelOfFile(className, relPath)
 }
 
 // 모양 확인. 틀리면 notAllowed(렌더러 오류).
@@ -114,11 +148,13 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   if (typeof runId !== 'string' || !RUN_ID.test(runId)) return bad('runId')
   if (typeof root !== 'string' || root === '') return bad('root')
   if (typeof opMode !== 'object' || opMode === null) return bad('opMode')
-  const { className, path: relPath, flavor } = opMode as Record<string, unknown>
+  const { className, path: relPath, flavor, registeredName } = opMode as Record<string, unknown>
   if (typeof relPath !== 'string' || !isLinkableJavaPath(relPath)) return bad('opMode.path')
   if (typeof className !== 'string' || !isBinaryNameOf(className, relPath))
     return bad('opMode.className')
   if (flavor !== 'TeleOp' && flavor !== 'Autonomous') return bad('opMode.flavor')
+  if (registeredName !== undefined && !isRegisteredName(registeredName))
+    return bad('opMode.registeredName')
   if (
     configPath !== null &&
     (typeof configPath !== 'string' ||
@@ -146,7 +182,7 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   return {
     runId,
     root,
-    opMode: { className, path: relPath, flavor },
+    opMode: { className, path: relPath, flavor, registeredName: registeredName ?? null },
     configPath: configPath ?? null,
     settings: { speed, jitter, seed, autoStopAutonomous, batteryVoltage },
     world: parsedWorld
@@ -210,21 +246,44 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
     }
   }
 
-  const sourceRoots = [javaRoot]
-  const robotController = path.join(projectRoot, 'FtcRobotController', 'src', 'main', 'java')
-  if (await isDirectory(robotController)) sourceRoots.push(robotController)
-
   return {
     projectRoot,
-    sourceRoots,
+    sourceRoots: await sourceRootsOf(projectRoot),
     opModeSource: located.file,
     configXml,
     configMissing: request.configPath !== null && configXml === null,
+    // 등록기 OpMode의 preselectTeleOp은 등록 결과(OpModeMeta의 transitionTarget)다(controller가 목록 캐시에서 찾는다)
     preselectTeleOp:
-      request.opMode.flavor === 'Autonomous'
+      request.opMode.flavor === 'Autonomous' && request.opMode.registeredName === null
         ? await preselectOf(located.file, request.opMode.className)
         : ''
   }
+}
+
+// javac -sourcepath: TeamCode/src/main/java와, 있으면 FtcRobotController/src/main/java
+export async function sourceRootsOf(projectRoot: string): Promise<string[]> {
+  const javaRoot = path.join(
+    projectRoot,
+    TEAMCODE_DIR,
+    ...JAVA_SOURCE_PREFIX.split('/').filter(Boolean)
+  )
+  const sourceRoots = [javaRoot]
+  const robotController = path.join(projectRoot, 'FtcRobotController', 'src', 'main', 'java')
+  if (await isDirectory(robotController)) sourceRoots.push(robotController)
+  return sourceRoots
+}
+
+// ---- 모의 저장소(AppUtil.ROOT_FOLDER, 로봇의 /sdcard/FIRST) ----
+
+export const SIM_FILES_DIR = 'sim-files'
+
+// 프로젝트마다의 모의 저장소: <simRoot>/<sha256(링크를 푼 프로젝트 루트) 앞 16자>/FIRST(simFiles.ts). simRoot는
+// userData/sim-files라 TeamCode·프로젝트 밖이다. 실행마다(INIT·등록기 목록) 만든다(mkdir -p, 지우지 않는다: Road Runner
+// 튜닝 결과 등이 남는다).
+export async function simFirstFolder(simRoot: string, projectRoot: string): Promise<string> {
+  const dir = await simFirstFolderPath(simRoot, projectRoot)
+  await mkdir(dir, { recursive: true })
+  return dir
 }
 
 // ---- 컴파일 기준과 라이브러리(controller가 JVM을 띄우기 전에 정한다) ----
@@ -268,10 +327,17 @@ export type RunClasspaths = {
   libraryClasspath: string[]
 }
 
+// 등록기와 모의 저장소(라이브러리 L2). registrars: TeamCode의 모든 등록기(절대 경로 소스), firstFolder: AppUtil.ROOT_FOLDER.
+export type RunRegistrars = {
+  registrars: RegistrarRef[]
+  firstFolder: string
+}
+
 export function buildRunRequest(
   prepared: PreparedRun,
   request: ValidRequest,
   classpaths: RunClasspaths,
+  registrars: RunRegistrars,
   now: number = Date.now()
 ): RunRequest {
   return {
@@ -281,7 +347,11 @@ export function buildRunRequest(
     tickNanos: DEFAULT_TICK_NANOS,
     sourceRoots: prepared.sourceRoots,
     opModeSource: prepared.opModeSource,
-    opModeClass: request.opMode.className,
+    // 등록기 OpMode면 className은 등록기이고 실행할 것은 이름으로 고른다
+    opModeClass: request.opMode.registeredName === null ? request.opMode.className : null,
+    registeredName: request.opMode.registeredName,
+    registrars: registrars.registrars,
+    firstFolder: registrars.firstFolder,
     bootClasspath: classpaths.bootClasspath,
     compileClasspath: classpaths.compileClasspath,
     libraryClasspath: classpaths.libraryClasspath,
@@ -290,6 +360,30 @@ export function buildRunRequest(
     timing: {},
     jitter: request.settings.jitter,
     seed: request.settings.seed,
+    startEpochMillis: now,
+    stallMillis: DEFAULT_STALL_MILLIS
+  }
+}
+
+// 등록기 OpMode 목록 요청(registeredOpModes.ts). 클래스패스·플랫폼은 INIT과 같게 정한 것이다.
+export function buildListRequest(
+  sourceRoots: string[],
+  registrars: RegistrarRef[],
+  classpaths: RunClasspaths,
+  firstFolder: string,
+  now: number = Date.now()
+): ListRequest {
+  return {
+    type: 'list',
+    protocol: SIDECAR_PROTOCOL_VERSION,
+    clock: 'virtual',
+    tickNanos: DEFAULT_TICK_NANOS,
+    sourceRoots,
+    registrars,
+    bootClasspath: classpaths.bootClasspath,
+    compileClasspath: classpaths.compileClasspath,
+    libraryClasspath: classpaths.libraryClasspath,
+    firstFolder,
     startEpochMillis: now,
     stallMillis: DEFAULT_STALL_MILLIS
   }

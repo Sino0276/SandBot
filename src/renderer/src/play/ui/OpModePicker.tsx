@@ -3,10 +3,25 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { OpModeInfo } from '../../../../shared/play'
 import { displayJavaPath } from '../../java/javaIndex'
+import { openScriptFile } from '../../java/openScript'
 import { useProjectStore } from '../../project/projectStore'
-import { findOpMode, opModeSections, orderedOpModes } from '../opModeList'
-import { refreshOpModes, selectOpMode } from '../playActions'
-import { isRunActive, usePlayStore } from '../playStore'
+import {
+  findOpMode,
+  opModeKey,
+  opModeSections,
+  orderedOpModes,
+  pickerKeys,
+  REGISTERED_CONSENT_KEY
+} from '../opModeList'
+import { confirmRegisteredConsent, refreshOpModes, selectOpMode } from '../playActions'
+import {
+  isRunActive,
+  listedOpModes,
+  showsRegisteredConsent,
+  usePlayStore,
+  type OpModeListState,
+  type RegisteredProblem
+} from '../playStore'
 import { PlayIcon } from './PlayIcons'
 
 // 창 가장자리 간격·선택 목록 크기(px)
@@ -20,10 +35,41 @@ function simpleClassName(className: string): string {
   return className.slice(Math.max(className.lastIndexOf('.'), className.lastIndexOf('$')) + 1)
 }
 
+// 등록기 OpMode 목록의 상태 줄(읽는 중, 읽지 못함·컴파일 오류·던진 등록기). 없으면 null.
+function RegisteredStatus({ list }: { list: OpModeListState }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const { registered } = list
+  if (list.registrars.length === 0) return null
+  if (registered.status === 'loading')
+    return <p className="opmode-message">{t('play.list.registeredLoading')}</p>
+  const problem: RegisteredProblem | null = registered.problem
+  if (!problem) return null
+  const text =
+    problem.kind === 'failed'
+      ? t('play.list.registeredFailed', {
+          reason: t(`play.list.registeredFailure.${problem.code}`)
+        })
+      : problem.kind === 'compile'
+        ? t('play.list.registeredCompile', { count: problem.errors })
+        : t('play.list.registeredRegistrar', {
+            names: problem.registrars.map(simpleClassName).join(', ')
+          })
+  return (
+    <p
+      className="opmode-message opmode-problem"
+      title={problem.kind === 'failed' ? problem.detail : undefined}
+    >
+      {text}
+    </p>
+  )
+}
+
 // Driver Station처럼 TeleOp·Autonomous를 나누고 group 머리를 단 선택 목록(role="listbox"). 목록이 포커스를 갖고
 // 위/아래·Home/End·PageUp/PageDown으로 움직이며 Enter·Space로 고른다. 열려 있는 동안의 키는 창 단축키로 넘기지 않는다.
-// 바깥을 누르거나 창이 포커스를 잃으면 닫는다(우클릭 메뉴와 같음).
-function OpModePopup({
+// 바깥을 누르거나 창이 포커스를 잃으면 닫는다(우클릭 메뉴와 같음). 등록기가 있는데 이 프로젝트의 코드 실행을 아직 믿지
+// 않았으면 맨 끝에 '등록기 OpMode 읽기…' 줄을 두고(다른 줄처럼 키보드로 간다), 고르면 목록을 닫고 묻는다
+// (confirmRegisteredConsent).
+export function OpModePopup({
   anchor,
   onClose
 }: {
@@ -36,14 +82,17 @@ function OpModePopup({
   const selectedClass = usePlayStore((state) => state.selectedClass)
   const root = useProjectStore((state) => state.root)
   const current = list.root === root
-  const sections = useMemo(() => (current ? opModeSections(list.opModes) : []), [current, list])
-  const ordered = useMemo(() => orderedOpModes(sections), [sections])
-  // 키보드로 가리킨 항목(클래스 이름). 목록이 다시 읽혀도 같은 항목을 가리킨다.
-  const [activeClass, setActiveClass] = useState<string | null>(selectedClass)
-  const activeIndex = Math.max(
-    0,
-    ordered.findIndex((opMode) => opMode.className === activeClass)
+  const sections = useMemo(
+    () => (current ? opModeSections(listedOpModes(list)) : []),
+    [current, list]
   )
+  const ordered = useMemo(() => orderedOpModes(sections), [sections])
+  const consent = current && showsRegisteredConsent(list)
+  // 키보드로 움직이는 줄(OpMode들, 그 뒤에 '등록기 OpMode 읽기…')
+  const keys = useMemo(() => pickerKeys(ordered, consent), [ordered, consent])
+  // 키보드로 가리킨 항목(고르는 키, opModeKey). 목록이 다시 읽혀도 같은 항목을 가리킨다.
+  const [activeKey, setActiveKey] = useState<string | null>(selectedClass)
+  const activeIndex = Math.max(0, activeKey === null ? -1 : keys.indexOf(activeKey))
 
   useLayoutEffect(() => {
     const element = ref.current
@@ -59,7 +108,7 @@ function OpModePopup({
     const actualWidth = element.getBoundingClientRect().width
     element.style.left = `${Math.max(EDGE, Math.min(anchor.left, window.innerWidth - actualWidth - EDGE))}px`
     element.style.top = `${Math.max(EDGE, Math.min(top, window.innerHeight - height - EDGE))}px`
-  }, [anchor, ordered.length, list.status])
+  }, [anchor, keys.length, list.status, list.registered.status, list.registered.problem])
 
   useEffect(() => {
     ref.current?.focus({ preventScroll: true })
@@ -94,13 +143,25 @@ function OpModePopup({
   }, [onClose])
 
   const choose = (opMode: OpModeInfo): void => {
-    selectOpMode(opMode.className)
+    selectOpMode(opModeKey(opMode))
     onClose(true)
   }
 
+  // 소스를 연다(등록기 OpMode는 그것을 등록하는 등록기 줄)
+  const open = (opMode: OpModeInfo): void => {
+    void openScriptFile(opMode.path, opMode.line)
+    onClose(false)
+  }
+
+  // '등록기 OpMode 읽기…': 목록을 닫고(포커스는 OpMode 버튼으로) 앱 안 대화상자로 묻는다
+  const readRegistered = (): void => {
+    onClose(true)
+    void confirmRegisteredConsent()
+  }
+
   const move = (index: number): void => {
-    if (ordered.length === 0) return
-    setActiveClass(ordered[Math.max(0, Math.min(ordered.length - 1, index))].className)
+    if (keys.length === 0) return
+    setActiveKey(keys[Math.max(0, Math.min(keys.length - 1, index))])
   }
 
   const onKeyDown = (event: React.KeyboardEvent): void => {
@@ -123,12 +184,21 @@ function OpModePopup({
         move(0)
         break
       case 'End':
-        move(ordered.length - 1)
+        move(keys.length - 1)
         break
       case 'Enter':
-      case ' ':
-        if (ordered[activeIndex]) choose(ordered[activeIndex])
+      case ' ': {
+        const opMode = ordered[activeIndex]
+        // Alt+Enter는 소스를 연다(행의 [열기]와 같다)
+        if (opMode) {
+          if (event.key === 'Enter' && event.altKey) open(opMode)
+          else choose(opMode)
+        } else if (keys[activeIndex] === REGISTERED_CONSENT_KEY && !event.repeat) {
+          // 누르고 있던 키의 반복으로 묻지 않는다
+          readRegistered()
+        }
         break
+      }
       case 'Escape':
       case 'Tab':
         onClose(true)
@@ -147,7 +217,7 @@ function OpModePopup({
         ? t('play.list.failed', { detail: list.detail })
         : !list.hasTeamCode
           ? t('play.list.noTeamCode')
-          : ordered.length === 0
+          : ordered.length === 0 && list.registered.status !== 'loading' && !consent
             ? t('play.list.empty')
             : null
 
@@ -159,7 +229,7 @@ function OpModePopup({
       role="listbox"
       tabIndex={-1}
       aria-label={t('play.opModeList')}
-      aria-activedescendant={ordered.length > 0 ? `opmode-option-${activeIndex}` : undefined}
+      aria-activedescendant={keys.length > 0 ? `opmode-option-${activeIndex}` : undefined}
       onKeyDown={onKeyDown}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -186,26 +256,56 @@ function OpModePopup({
               )}
               {group.opModes.map((opMode) => {
                 const position = index++
+                const key = opModeKey(opMode)
                 const simple = simpleClassName(opMode.className)
+                const registrar = opMode.registered?.registrar
                 return (
                   <div
-                    key={opMode.className}
+                    key={key}
                     id={`opmode-option-${position}`}
                     data-opmode-index={position}
                     role="option"
-                    aria-selected={opMode.className === selectedClass}
+                    aria-selected={key === selectedClass}
                     className={
                       position === activeIndex ? 'opmode-option is-active' : 'opmode-option'
                     }
-                    title={`${opMode.className}\n${opMode.path}`}
-                    onPointerMove={() => setActiveClass(opMode.className)}
+                    title={
+                      registrar
+                        ? t('play.list.registeredTooltip', {
+                            className: opMode.className,
+                            registrar,
+                            file: opMode.path
+                          })
+                        : `${opMode.className}\n${opMode.path}`
+                    }
+                    onPointerMove={() => setActiveKey(key)}
                     onClick={() => choose(opMode)}
                   >
                     <span className="opmode-check" aria-hidden="true">
-                      {opMode.className === selectedClass ? '✓' : ''}
+                      {key === selectedClass ? '✓' : ''}
                     </span>
                     <span className="opmode-name">{opMode.name}</span>
                     {opMode.name !== simple && <span className="opmode-class">{simple}</span>}
+                    {registrar && (
+                      <span className="opmode-registered">{t('play.list.registeredTag')}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="opmode-open"
+                      // 목록은 활성 항목으로 움직인다(키보드는 Alt+Enter). 항목 이름에 섞이지 않게 숨긴다.
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      title={
+                        registrar ? t('play.list.openRegistrarTooltip') : t('play.list.openTooltip')
+                      }
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        open(opMode)
+                      }}
+                    >
+                      {t('play.list.open')}
+                    </button>
                   </div>
                 )
               })}
@@ -213,6 +313,28 @@ function OpModePopup({
           ))}
         </div>
       ))}
+      {consent && (
+        <div
+          id={`opmode-option-${ordered.length}`}
+          data-opmode-index={ordered.length}
+          role="option"
+          aria-selected={false}
+          className={
+            activeIndex === ordered.length
+              ? 'opmode-option opmode-action is-active'
+              : 'opmode-option opmode-action'
+          }
+          onPointerMove={() => setActiveKey(REGISTERED_CONSENT_KEY)}
+          onClick={readRegistered}
+        >
+          <span className="opmode-check" aria-hidden="true" />
+          <span className="opmode-action-text">
+            <span className="opmode-name">{t('play.list.registeredConsent')}</span>
+            <span className="opmode-action-hint">{t('play.list.registeredConsentHint')}</span>
+          </span>
+        </div>
+      )}
+      {current && <RegisteredStatus list={list} />}
       {current && list.truncated && <p className="opmode-message">{t('play.list.truncated')}</p>}
     </div>
   )
@@ -230,13 +352,17 @@ function OpModePicker(): React.JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
 
   const selected =
-    runOpMode ?? (list.root === root ? findOpMode(list.opModes, selectedClass) : null)
+    runOpMode ?? (list.root === root ? findOpMode(listedOpModes(list), selectedClass) : null)
   const disabled = !root || runActive
   const label = selected
     ? selected.name
     : !root
       ? t('play.noProjectShort')
-      : list.root === root && list.status === 'ready' && list.opModes.length === 0
+      : list.root === root &&
+          list.status === 'ready' &&
+          listedOpModes(list).length === 0 &&
+          list.registered.status !== 'loading' &&
+          !showsRegisteredConsent(list)
         ? t('play.noOpModes')
         : t('play.chooseOpMode')
 

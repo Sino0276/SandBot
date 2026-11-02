@@ -41,6 +41,11 @@ final class Lifter {
     Set<String> lifted;
     /** 들여오지 않는 묶음 → 첫 이유(사람이 읽는 글자) */
     final Map<String, String> blockedReason = new TreeMap<>();
+    /**
+     * 닫히더라도 들여오지 않을 묶음 → 이유(run 전에 넣는다). Dashboard 층의 DashboardCore처럼 스레드를 띄우는 클래스는 참조가
+     * 닫혀도 stub으로 둔다(사이드카는 OpMode 스레드 하나만 쓴다).
+     */
+    final Map<String, String> forcedStubs = new TreeMap<>();
 
     private final Map<String, String> nestOf = new HashMap<>();
 
@@ -81,6 +86,9 @@ final class Lifter {
             Map<String, String> failures = new TreeMap<>();
             Set<String> deps = new TreeSet<>();
             for (String name : e.getValue()) analyze(real.get(name), e.getKey(), failures, deps);
+            // '!'는 클래스 이름보다 앞에 정렬되어 첫 이유가 된다
+            String forced = forcedStubs.get(e.getKey());
+            if (forced != null) failures.put("!" + e.getKey(), forced);
             hardFailures.put(e.getKey(), failures);
             nestDeps.put(e.getKey(), deps);
         }
@@ -199,6 +207,13 @@ final class Lifter {
             Found sup = lookup(type);
             if (sup != null && !sup.file.isInterface())
                 failures.putIfAbsent(type, self + " implements class " + dotted(type));
+        }
+        // native 메서드는 링크할 라이브러리가 없다(Android .so, 보통 정적 초기화의 System.loadLibrary와 함께): 손 구현해야 한다
+        for (ClassFile.Member method : file.methods) {
+            if ((method.access & ClassFile.ACC_NATIVE) == 0) continue;
+            failures.putIfAbsent(file.name + "#" + method.name + method.descriptor,
+                    self + " has the native method " + method.name + " (no native libraries in the sidecar)");
+            break;
         }
         for (ClassFile.MemberRef ref : file.memberRefs) {
             String owner = ref.owner.startsWith("[") ? "java/lang/Object" : ref.owner;

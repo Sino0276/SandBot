@@ -34,7 +34,10 @@
  *         encoderResets(허브에 보낸 STOP_AND_RESET_ENCODER 횟수, 정수, 처음 0, 리셋마다 1씩, 늘 보냄, OpMode 사이에도 그대로:
  *         원시 position이 그대로여서 encoderOffset이 같아도, 한 루프에서 리셋 → RUN_TO_POSITION을 해 틱 경계의 mode가
  *         STOP_AND_RESET_ENCODER를 보이지 않아도 리셋을 알 수 있다. 데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)</td>
- *     <td>position(원시 허브 엔코더 틱: 리셋을 빼기 전 값, 정수), velocity(틱/s, 정수), current(A),
+ *     <td>position(원시 허브 엔코더 틱: 리셋을 빼기 전 값, 정수), velocity(틱/s, 정수: 허브 펌웨어처럼 지난 50 ms 동안의
+ *         원시 position 변화 × 20이라 늘 20의 배수이고 약 25 ms 늦다. 실행 시작 뒤 처음 50 ms는 시작 position부터 센다. int16으로
+ *         감기 전 값이고, 가짜 SDK가 실제 bulk read의 short처럼 감아 부호 확장한다: 32767을 넘는 빠른 데드휠은 실제처럼 감긴 값을
+ *         읽고, Road Runner OverflowEncoder는 20의 배수라는 성질로 되돌린다), current(A),
  *         overCurrent(boolean, 없으면 current &gt; 경보 값). 데드휠(엔코더 포트의 포드)은 같은 장치 이름의 position·velocity가
  *         포드 값이고, 그 부호는 포드 엔코더가 세는 원시 방향(인스펙터 reversed, DcMotor 방향을 적용하기 전)이다</td></tr>
  * <tr><td>servo(Servo, ServoFullRange)</td><td>position(0..1, 펄스로 바꾸기 전 컨트롤러 위치; PWM이 꺼져 있으면 null),
@@ -76,8 +79,9 @@
  * 쓰기·스칼라를 그 위에 얹는다({@link org.sandbot.sdk.devices.SimTrackedPose}).
  *
  * <p>입력을 만드는 쪽은 메인 프로세스의 운동학 시뮬레이터(src/shared/sim/world.ts)다. 틱마다 바뀐 키만 보내고(처음에는 전부),
- * 정수 키(position·velocity·encoderX·encoderY)는 정수로 보낸다. Pinpoint 자세는 시뮬레이터가 펌웨어처럼 포드 틱과 이 장치의
- * 출력(ticksPerMm·방향·오프셋)과 내장 IMU 요로 적분한 값이다(그래서 팀이 오프셋을 틀리게 쓰면 실제처럼 결과가 틀어진다).
+ * 정수 키(position·velocity·encoderX·encoderY)는 정수로 보낸다. 모터 포트의 velocity 측정 규칙은 src/shared/sim/encoderVelocity.ts다.
+ * Pinpoint 자세는 시뮬레이터가 펌웨어처럼 포드 틱과 이 장치의 출력(ticksPerMm·방향·오프셋)과 내장 IMU 요로 적분한 값이다(그래서
+ * 팀이 오프셋을 틀리게 쓰면 실제처럼 결과가 틀어진다).
  *
  * <h2>허브 비용(가상 시간, HubTiming)</h2>
  * Control Hub(구성에서 parentModuleAddress인 허브)는 HubKind.CONTROL, 나머지는 RS-485를 거치는 EXPANSION이다.

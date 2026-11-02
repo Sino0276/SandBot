@@ -8,7 +8,7 @@ import type { HostMessage } from '../../shared/sidecarProtocol'
 import { WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } from './controller'
-import { javaArgs, type SidecarFiles } from './launch'
+import { dashboardJarPath, javaArgs, type SidecarFiles } from './launch'
 import { spawnSidecar, type SidecarProcess, type SpawnSidecar } from './process'
 import { FAKE_SIDECAR_SCRIPT, FakeClock } from './testkit'
 import { kinematicWorld } from './world'
@@ -20,7 +20,8 @@ const JDK: JdkInfo = { home: '/fake/jdk', version: '21.0.4', major: 21, source: 
 const FILES: SidecarFiles = {
   dir: '/fake/sidecar',
   runtimeJar: '/fake/sidecar/sandbot-runtime.jar',
-  sdkJar: '/fake/sidecar/sandbot-sdk.jar'
+  sdkJar: '/fake/sidecar/sandbot-sdk.jar',
+  dashboardJar: '/fake/sidecar/sandbot-dashboard.jar'
 }
 
 type Recorded = { sent: HostMessage[]; ticksSeen: number }
@@ -179,9 +180,11 @@ describe('PlayController + 가짜 사이드카', () => {
     const run = JSON.parse(robotLog.find((text) => text.startsWith('request '))!.slice(8))
     expect(run).toMatchObject({
       type: 'run',
-      protocol: 2,
+      protocol: 3,
       clock: 'virtual',
       opModeClass: 'org.firstinspires.ftc.teamcode.Normal',
+      registeredName: null,
+      registrars: [],
       opModeSource: join(root, 'TeamCode', PKG, 'Normal.java'),
       sourceRoots: [join(root, 'TeamCode', 'src', 'main', 'java')],
       bootClasspath: [],
@@ -343,6 +346,92 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(finished(request.runId)).toMatchObject({ reason: 'returned', preselectTeleOp: 'Normal' })
   })
 
+  it('등록기와 모의 저장소를 실행마다 보내고, 등록기 OpMode는 이름으로·preselectTeleOp은 등록 결과에서', async () => {
+    const first = join(dir, 'sim', 'FIRST')
+    const registrars = [
+      {
+        className: 'org.firstinspires.ftc.teamcode.TuningOpModes',
+        source: join(root, 'TeamCode', PKG, 'TuningOpModes.java')
+      }
+    ]
+    const asked: string[] = []
+    controller = make({
+      registrars: async (projectRoot) => {
+        asked.push(projectRoot)
+        return registrars
+      },
+      makeFirstFolder: async (projectRoot) => {
+        asked.push(`first ${projectRoot}`)
+        return first
+      },
+      registeredPreselect: (_projectRoot, name) => (name === 'Returns' ? 'Normal' : '?')
+    })
+    const runRequest = (): Record<string, unknown> => {
+      const text = of('log')
+        .flatMap((event) => event.entries)
+        .map((entry) => entry.text)
+        .filter((line) => line.startsWith('request '))
+        .at(-1)!
+      return JSON.parse(text.slice(8))
+    }
+
+    const annotated = opModeRequest('Returns', {
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.Returns',
+        path: `${PKG}/Returns.java`,
+        flavor: 'TeleOp'
+      },
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+    })
+    expect(await controller.init(annotated, owner)).toEqual({ ok: true })
+    await waitFor(() => finished(annotated.runId) !== undefined)
+    expect(runRequest()).toMatchObject({
+      opModeClass: 'org.firstinspires.ftc.teamcode.Returns',
+      registeredName: null,
+      registrars,
+      firstFolder: first
+    })
+    expect(asked).toEqual([root, `first ${root}`])
+
+    // 등록기 OpMode: className·path는 등록기, 실행할 것은 이름(가짜 사이드카는 이름으로 동작을 고른다)
+    const registered = opModeRequest('Returns', {
+      opMode: {
+        className: 'org.firstinspires.ftc.teamcode.Returns',
+        path: `${PKG}/Returns.java`,
+        flavor: 'Autonomous',
+        registeredName: 'Returns'
+      },
+      settings: { speed: 'max', jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
+    })
+    expect(await controller.init(registered, owner)).toEqual({ ok: true })
+    await waitFor(() => finished(registered.runId) !== undefined)
+    expect(runRequest()).toMatchObject({
+      opModeClass: null,
+      registeredName: 'Returns',
+      opModeSource: join(root, 'TeamCode', PKG, 'Returns.java'),
+      registrars,
+      firstFolder: first
+    })
+    expect(finished(registered.runId)).toMatchObject({
+      reason: 'returned',
+      preselectTeleOp: 'Normal'
+    })
+  })
+
+  it('모의 저장소를 만들지 못하면 JVM을 띄우지 않고 failed', async () => {
+    controller = make({
+      makeFirstFolder: async () => {
+        throw new Error('EACCES')
+      }
+    })
+    expect(await controller.init(opModeRequest('Normal'), owner)).toEqual({
+      ok: false,
+      code: 'failed',
+      detail: 'sim files: EACCES'
+    })
+    expect(spawned).toHaveLength(0)
+  })
+
   it('창을 닫으면 shutdown, 답하지 않으면 kill', async () => {
     const polite = opModeRequest('Normal')
     await controller.init(polite, owner)
@@ -424,6 +513,52 @@ describe('PlayController + 가짜 사이드카', () => {
       expect(events.map((event) => event.type)).toEqual(['libraryReport'])
     } finally {
       await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('INIT은 확인을 지난 프로젝트의 코드 실행을 믿는다고 기억한다(등록기 목록이 본다), 확인 실패면 기억하지 않는다', async () => {
+    const granted: string[] = []
+    const trusting = make({
+      grantCodeTrust: async (projectRoot) => void granted.push(projectRoot)
+    })
+    try {
+      const outside = await mkdtemp(join(tmpdir(), 'sandbot-controller-outside-'))
+      try {
+        expect(
+          await trusting.init(opModeRequest('Normal', { root: outside }), owner)
+        ).toMatchObject({ ok: false, code: 'notAllowed' })
+      } finally {
+        await rm(outside, { recursive: true, force: true })
+      }
+      expect(await trusting.init({ runId: 'bad' }, owner)).toMatchObject({ code: 'notAllowed' })
+      expect(await trusting.init(opModeRequest('Missing'), owner)).toMatchObject({
+        code: 'missing'
+      })
+      expect(granted).toEqual([])
+
+      // JDK가 없어 실행하지 못해도 사용자는 INIT으로 이 프로젝트의 코드를 실행하기로 했다
+      const noJdk = make({
+        resolveJdk: async () => null,
+        grantCodeTrust: async (projectRoot) => void granted.push(projectRoot)
+      })
+      expect(await noJdk.init(opModeRequest('Normal', { root: `${root}/` }), owner)).toMatchObject({
+        code: 'noJdk'
+      })
+      expect(granted).toEqual([root])
+
+      // 기억하지 못해도(던짐) 실행은 한다
+      const failing = make({
+        grantCodeTrust: async () => {
+          throw new Error('read-only userData')
+        }
+      })
+      const request = opModeRequest('Normal')
+      expect(await failing.init(request, owner)).toEqual({ ok: true })
+      failing.command({ type: 'stop' }, owner)
+      await waitFor(() => finished(request.runId) !== undefined)
+      await failing.disposeAll()
+    } finally {
+      await trusting.disposeAll()
     }
   })
 
@@ -598,6 +733,49 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(librariesCalled).toBe(1)
     closing.command({ type: 'stop' }, other)
     await waitFor(() => !closing.hasProcess)
+  })
+
+  it('FTC Dashboard 대체를 쓰는데 사이드카 빌드에 그 jar가 없으면 noSidecar(JVM을 띄우지 않는다)', async () => {
+    const resolved =
+      (libraryClasspath: string[]): ControllerDeps['resolveLibraries'] =>
+      async () => ({
+        ok: true,
+        report: {
+          entries: [],
+          gradle: [],
+          compileSdk: null,
+          compileSdkMinor: null,
+          platform: null
+        },
+        compileClasspath: ['/cache/dashboard.jar'],
+        libraryClasspath,
+        jarCoordinates: {},
+        diagnosticHint: () => null
+      })
+    const withoutJar = { ...FILES, dashboardJar: null }
+    const missing = make({
+      locateSidecar: async () => withoutJar,
+      resolveLibraries: resolved(['/cache/rr.jar', dashboardJarPath(FILES.dir)])
+    })
+    const before = spawned.length
+    const request = opModeRequest('Normal')
+    expect(await missing.init(request, owner)).toEqual({
+      ok: false,
+      code: 'noSidecar',
+      detail: 'sandbot-dashboard.jar not found'
+    })
+    expect(spawned.length).toBe(before)
+    expect(of('libraryReport', request.runId)).toEqual([])
+
+    // Dashboard를 쓰지 않는 실행은 그 jar 없이도 돈다
+    const unused = make({
+      locateSidecar: async () => withoutJar,
+      resolveLibraries: resolved(['/cache/rr.jar'])
+    })
+    const other = opModeRequest('Normal')
+    expect(await unused.init(other, owner)).toEqual({ ok: true })
+    unused.command({ type: 'stop' }, owner)
+    await waitFor(() => finished(other.runId) !== undefined)
   })
 
   it('라이브러리 해석이 끝난 뒤에 온 진행(쓰지 않게 된 버전의 미리 받기)은 보내지 않는다', async () => {

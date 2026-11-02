@@ -1,3 +1,18 @@
+import {
+  MAX_DASH_CONFIG_DEPTH,
+  MAX_DASH_CONFIG_NODES,
+  MAX_DASH_DATA,
+  MAX_DASH_LOG_LINES,
+  MAX_DASH_OPS,
+  MAX_DASH_POINTS,
+  MAX_DASH_TEXT,
+  type DashConfigChild,
+  type DashConfigNode,
+  type DashFieldSource,
+  type DashOp,
+  type DashOpType,
+  type DashVariableType
+} from '../../shared/dashboard'
 import type {
   CompileDiagnostic,
   DeviceValues,
@@ -5,7 +20,9 @@ import type {
   LinkWarning,
   LinkWarningKind,
   OpModePhase,
+  RegisteredOpMode,
   SidecarMessage,
+  SidecarNoticeCode,
   SimErrorKind,
   StackFrame
 } from '../../shared/sidecarProtocol'
@@ -77,6 +94,12 @@ function strOrNull(data: Json, key: string): string | null {
   return value
 }
 
+function bool(data: Json, key: string): boolean {
+  const value = data[key]
+  if (typeof value !== 'boolean') fail(`${String(data.type)}.${key}`)
+  return value
+}
+
 function oneOf<T extends string>(data: Json, key: string, values: readonly T[]): T {
   const value = data[key]
   if (typeof value !== 'string' || !(values as readonly string[]).includes(value))
@@ -99,6 +122,7 @@ const ERROR_KINDS: readonly SimErrorKind[] = [
   'stuckInStop',
   'load',
   'config',
+  'registrar',
   'internal'
 ]
 const FINISH_REASONS: readonly FinishReason[] = [
@@ -109,7 +133,8 @@ const FINISH_REASONS: readonly FinishReason[] = [
   'compileFailed',
   'loadFailed',
   'stuck',
-  'shutdown'
+  'shutdown',
+  'listed'
 ]
 
 function diagnostic(value: unknown): CompileDiagnostic {
@@ -154,6 +179,41 @@ function frame(value: unknown): StackFrame {
   }
 }
 
+// 등록기 OpMode 목록의 한도(사이드카 ListRunner와 같다): 이름은 실행 요청의 registeredName 규칙(launch.ts
+// isRegisteredName: 1–200자, 제어 문자 없음), group·transitionTarget은 200자, 클래스 이름은 1024자, 1000개
+export const MAX_REGISTERED_OPMODES = 1000
+const MAX_REGISTERED_TEXT = 200
+const MAX_CLASS_NAME = 1024
+const REGISTERED_FLAVORS: readonly RegisteredOpMode['flavor'][] = [
+  'TeleOp',
+  'Autonomous',
+  'Utility',
+  'System'
+]
+
+function limited(data: Json, key: string, min: number, max: number): string {
+  const value = str(data, key)
+  if (value.length < min || value.length > max) fail(`${String(data.type)}.${key}`)
+  return value
+}
+
+function registeredOpMode(value: unknown): RegisteredOpMode {
+  if (!isObject(value)) fail('registered.opModes')
+  const data = { ...value, type: 'registered.opMode' }
+  const name = limited(data, 'name', 1, MAX_REGISTERED_TEXT)
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(name)) fail('registered.opMode.name')
+  return {
+    name,
+    group: limited(data, 'group', 0, MAX_REGISTERED_TEXT),
+    flavor: oneOf(data, 'flavor', REGISTERED_FLAVORS),
+    className: limited(data, 'className', 1, MAX_CLASS_NAME),
+    instance: bool(data, 'instance'),
+    registrar: limited(data, 'registrar', 1, MAX_CLASS_NAME),
+    transitionTarget: limited(data, 'transitionTarget', 0, MAX_REGISTERED_TEXT)
+  }
+}
+
 function deviceValues(value: unknown): DeviceValues {
   if (!isObject(value)) fail('tick.outputs')
   const out: DeviceValues = {}
@@ -181,6 +241,230 @@ function outputs(data: Json): Record<string, DeviceValues> {
 function strings(value: unknown): string {
   if (typeof value !== 'string') fail('telemetry.frame')
   return value
+}
+
+// ---- FTC Dashboard(dash·dashConfig, src/shared/dashboard.ts의 한도)와 사이드카 안내(notice) ----
+// 사이드카의 Dashboard 대체가 한도로 자르고 보낸다. 넘으면 사이드카의 잘못이라 프로토콜 오류다.
+
+function text(data: Json, key: string): string {
+  const value = str(data, key)
+  if (value.length > MAX_DASH_TEXT) fail(`${String(data.type)}.${key}`)
+  return value
+}
+
+function points(data: Json, key: string): number[] {
+  const value = data[key]
+  if (!Array.isArray(value) || value.length > MAX_DASH_POINTS) fail(`${String(data.type)}.${key}`)
+  for (const v of value)
+    if (typeof v !== 'number' || !Number.isFinite(v)) fail(`${String(data.type)}.${key}`)
+  return value as number[]
+}
+
+// op 하나의 필드(와이어 순서 그대로). num은 유한 수, int는 정수.
+type OpField = 'num' | 'int' | 'bool' | 'text' | 'points'
+const DASH_OP_FIELDS: Record<DashOpType, readonly [string, OpField][]> = {
+  circle: [
+    ['x', 'num'],
+    ['y', 'num'],
+    ['radius', 'num'],
+    ['stroke', 'bool']
+  ],
+  polygon: [
+    ['xPoints', 'points'],
+    ['yPoints', 'points'],
+    ['stroke', 'bool']
+  ],
+  polyline: [
+    ['xPoints', 'points'],
+    ['yPoints', 'points']
+  ],
+  spline: ['ax', 'bx', 'cx', 'dx', 'ex', 'fx', 'ay', 'by', 'cy', 'dy', 'ey', 'fy'].map(
+    (name) => [name, 'num'] as [string, OpField]
+  ),
+  text: [
+    ['text', 'text'],
+    ['x', 'num'],
+    ['y', 'num'],
+    ['font', 'text'],
+    ['theta', 'num'],
+    ['stroke', 'bool'],
+    ['usePageFrame', 'bool']
+  ],
+  image: [
+    ['path', 'text'],
+    ['x', 'num'],
+    ['y', 'num'],
+    ['width', 'num'],
+    ['height', 'num'],
+    ['theta', 'num'],
+    ['pivotX', 'num'],
+    ['pivotY', 'num'],
+    ['usePageFrame', 'bool']
+  ],
+  grid: [
+    ['x', 'num'],
+    ['y', 'num'],
+    ['width', 'num'],
+    ['height', 'num'],
+    ['numTicksX', 'int'],
+    ['numTicksY', 'int'],
+    ['theta', 'num'],
+    ['pivotX', 'num'],
+    ['pivotY', 'num'],
+    ['usePageFrame', 'bool']
+  ],
+  translate: [
+    ['x', 'num'],
+    ['y', 'num']
+  ],
+  rotation: [['rotation', 'num']],
+  scale: [
+    ['scaleX', 'num'],
+    ['scaleY', 'num']
+  ],
+  fill: [['color', 'text']],
+  stroke: [['color', 'text']],
+  strokeWidth: [['width', 'int']],
+  alpha: [['alpha', 'num']]
+}
+
+function dashOp(value: unknown): DashOp {
+  if (
+    !isObject(value) ||
+    typeof value.type !== 'string' ||
+    !Object.hasOwn(DASH_OP_FIELDS, value.type)
+  )
+    fail('dash.ops')
+  const type = value.type as DashOpType
+  const data: Json = { ...value, type: `dash.op.${type}` }
+  const op: Record<string, unknown> = { type }
+  for (const [name, field] of DASH_OP_FIELDS[type]) {
+    switch (field) {
+      case 'num':
+        op[name] = num(data, name)
+        break
+      case 'int':
+        op[name] = int(data, name)
+        break
+      case 'bool':
+        op[name] = bool(data, name)
+        break
+      case 'text':
+        op[name] = text(data, name)
+        break
+      case 'points':
+        op[name] = points(data, name)
+        break
+    }
+  }
+  return op as DashOp
+}
+
+// 다각형·선의 점 수(두 배열 중 긴 쪽, 사이드카와 같은 셈)
+function opPoints(op: DashOp): number {
+  return op.type === 'polygon' || op.type === 'polyline'
+    ? Math.max(op.xPoints.length, op.yPoints.length)
+    : 0
+}
+
+function dashOps(data: Json): DashOp[] | null {
+  if (data.ops === null) return null
+  if (!Array.isArray(data.ops) || data.ops.length > MAX_DASH_OPS) fail('dash.ops')
+  const ops = data.ops.map(dashOp)
+  if (ops.reduce((sum, op) => sum + opPoints(op), 0) > MAX_DASH_POINTS) fail('dash.ops')
+  return ops
+}
+
+function dashData(data: Json): [string, string][] {
+  if (!Array.isArray(data.data) || data.data.length > MAX_DASH_DATA) fail('dash.data')
+  return data.data.map((pair): [string, string] => {
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      typeof pair[0] !== 'string' ||
+      typeof pair[1] !== 'string' ||
+      pair[0].length > MAX_DASH_TEXT ||
+      pair[1].length > MAX_DASH_TEXT
+    )
+      fail('dash.data')
+    return [pair[0], pair[1]]
+  })
+}
+
+function dashLog(data: Json): string[] | null {
+  if (data.log === null) return null
+  if (!Array.isArray(data.log) || data.log.length > MAX_DASH_LOG_LINES) fail('dash.log')
+  for (const line of data.log)
+    if (typeof line !== 'string' || line.length > MAX_DASH_TEXT) fail('dash.log')
+  return data.log as string[]
+}
+
+const DASH_VARIABLE_TYPES: readonly DashVariableType[] = [
+  'boolean',
+  'int',
+  'long',
+  'float',
+  'double',
+  'string',
+  'readonlyString',
+  'enum'
+]
+
+function fieldSource(value: unknown): DashFieldSource | null {
+  if (value === null) return null
+  if (!isObject(value)) fail('dashConfig.source')
+  const data: Json = { ...value, type: 'dashConfig.source' }
+  return { declaringClass: text(data, 'declaringClass'), field: text(data, 'field') }
+}
+
+// 설정 트리. 루트의 깊이는 0, 자식은 깊이 MAX_DASH_CONFIG_DEPTH까지(사이드카는 그보다 깊은 묶음의 자식을 보내지 않는다).
+// budget.nodes: 지금까지 센 자식 수(트리 전체 MAX_DASH_CONFIG_NODES까지)
+function configNode(value: unknown, depth: number, budget: { nodes: number }): DashConfigNode {
+  if (!isObject(value) || depth > MAX_DASH_CONFIG_DEPTH) fail('dashConfig.root')
+  const data: Json = { ...value, type: 'dashConfig.node' }
+  if (data.kind === 'custom') {
+    if (!Array.isArray(data.children)) fail('dashConfig.node.children')
+    const children = data.children.map((child): DashConfigChild => {
+      if (!isObject(child) || ++budget.nodes > MAX_DASH_CONFIG_NODES) fail('dashConfig.root')
+      const entry: Json = { ...child, type: 'dashConfig.child' }
+      return { name: text(entry, 'name'), node: configNode(child.node, depth + 1, budget) }
+    })
+    return { kind: 'custom', children }
+  }
+  if (data.kind !== 'value') fail('dashConfig.node.kind')
+  // 이 노드의 type은 변수 형식이다(메시지 종류가 아니다)
+  if (
+    typeof value.type !== 'string' ||
+    !(DASH_VARIABLE_TYPES as readonly string[]).includes(value.type)
+  )
+    fail('dashConfig.node.type')
+  if (!Array.isArray(data.enumValues) || data.enumValues.length > MAX_DASH_CONFIG_NODES)
+    fail('dashConfig.node.enumValues')
+  for (const name of data.enumValues)
+    if (typeof name !== 'string' || name.length > MAX_DASH_TEXT) fail('dashConfig.node.enumValues')
+  return {
+    kind: 'value',
+    type: value.type as DashVariableType,
+    value: text(data, 'value'),
+    enumValues: data.enumValues as string[],
+    source: fieldSource(data.source)
+  }
+}
+
+const NOTICE_CODES: readonly SidecarNoticeCode[] = ['dashCamera', 'dashImage', 'rrTuningSaved']
+// 안내 매개변수(경로 등) 수와 글자 수
+const MAX_NOTICE_PARAMS = 16
+const MAX_NOTICE_TEXT = 4096
+
+function noticeParams(data: Json): Record<string, string> {
+  const value = data.params
+  if (!isObject(value)) fail('notice.params')
+  const entries = Object.entries(value)
+  if (entries.length > MAX_NOTICE_PARAMS) fail('notice.params')
+  for (const [key, param] of entries)
+    if (key.length > MAX_NOTICE_TEXT || typeof param !== 'string' || param.length > MAX_NOTICE_TEXT)
+      fail('notice.params')
+  return Object.fromEntries(entries) as Record<string, string>
 }
 
 // 한 줄 → 메시지. 모양이 틀리면 ProtocolError(무엇이 틀렸는지).
@@ -260,11 +544,38 @@ export function parseSidecarLine(line: string): SidecarMessage {
       }
     case 'linkReport':
       return { type: 'linkReport', warnings: list(data, 'warnings', linkWarning) }
+    case 'registered': {
+      if (Array.isArray(data.opModes) && data.opModes.length > MAX_REGISTERED_OPMODES)
+        fail('registered.opModes')
+      return { type: 'registered', opModes: list(data, 'opModes', registeredOpMode) }
+    }
     case 'finished':
       return {
         type: 'finished',
         tNanos: num(data, 'tNanos'),
         reason: oneOf(data, 'reason', FINISH_REASONS)
+      }
+    case 'dash':
+      return {
+        type: 'dash',
+        tNanos: num(data, 'tNanos'),
+        cleared: bool(data, 'cleared'),
+        data: dashData(data),
+        log: dashLog(data),
+        ops: dashOps(data)
+      }
+    case 'dashConfig':
+      return {
+        type: 'dashConfig',
+        tNanos: num(data, 'tNanos'),
+        root: configNode(data.root, 0, { nodes: 0 })
+      }
+    case 'notice':
+      return {
+        type: 'notice',
+        tNanos: num(data, 'tNanos'),
+        code: oneOf(data, 'code', NOTICE_CODES),
+        params: noticeParams(data)
       }
     default:
       return fail(`unknown message type ${JSON.stringify(data.type)?.slice(0, 40)}`)

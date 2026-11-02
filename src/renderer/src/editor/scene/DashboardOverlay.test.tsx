@@ -1,0 +1,386 @@
+import { act, createRoot, extend, type ReconcilerRoot, type RootStore } from '@react-three/fiber'
+import { StrictMode } from 'react'
+import * as THREE from 'three'
+import {
+  LineSegments,
+  Mesh,
+  Object3D,
+  Raycaster,
+  Vector3,
+  type BufferGeometry,
+  type Material
+} from 'three'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DashOp } from '../../../../shared/dashboard'
+import { INCH, OVERLAY_Z } from '../../play/dashOverlay'
+import { usePlayStore } from '../../play/playStore'
+import { useProjectStore } from '../../project/projectStore'
+import DashboardOverlay from './DashboardOverlay'
+
+// 씬 뷰의 FTC Dashboard 오버레이: op 묶음마다 메시·선을 그리기 순서대로 두고, 클릭되지 않으며, 오버레이가 바뀌거나
+// 지워지면 이전 것을 떼어 해제한다(StrictMode가 붙였다 떼어도). WebGL 없이 그린다(가짜 렌더러).
+
+function fakeRenderer(): object {
+  return {
+    render: () => {},
+    setPixelRatio: () => {},
+    setSize: () => {},
+    getPixelRatio: () => 1,
+    dispose: () => {},
+    domElement: { style: {} },
+    shadowMap: { enabled: false, type: 0 },
+    xr: {
+      enabled: false,
+      isPresenting: false,
+      setAnimationLoop: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    }
+  }
+}
+
+let root: ReconcilerRoot<HTMLCanvasElement>
+let store: RootStore
+
+const drawn = (): (Mesh | LineSegments)[] => {
+  const found: (Mesh | LineSegments)[] = []
+  ;(store.getState().scene as Object3D).traverse((object) => {
+    if (object instanceof Mesh || object instanceof LineSegments) found.push(object)
+  })
+  return found
+}
+
+const OPS: DashOp[] = [
+  { type: 'fill', color: '#ff0000' },
+  { type: 'polygon', xPoints: [0, 10, 10, 0], yPoints: [0, 0, 10, 10], stroke: false },
+  {
+    type: 'grid',
+    x: 0,
+    y: 0,
+    width: 24,
+    height: 24,
+    numTicksX: 2,
+    numTicksY: 2,
+    theta: 0,
+    pivotX: 0,
+    pivotY: 0,
+    usePageFrame: false
+  },
+  { type: 'stroke', color: 'blue' },
+  { type: 'polyline', xPoints: [0, 20], yPoints: [0, 0] }
+]
+
+beforeAll(() => {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  extend(THREE as never)
+  const warn = console.warn
+  vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+    if (!String(args[0]).includes('THREE.Clock')) warn(...args)
+  })
+})
+
+afterAll(() => {
+  vi.restoreAllMocks()
+})
+
+const fakeCanvas = (): HTMLCanvasElement =>
+  ({
+    style: {},
+    width: 800,
+    height: 600,
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  }) as unknown as HTMLCanvasElement
+
+beforeEach(async () => {
+  usePlayStore.setState({ dashOverlay: null })
+  root = createRoot(fakeCanvas())
+  await root.configure({
+    gl: fakeRenderer() as never,
+    frameloop: 'never',
+    size: { width: 800, height: 600, top: 0, left: 0 }
+  })
+  await act(async () => {
+    store = root.render(
+      <StrictMode>
+        <DashboardOverlay />
+      </StrictMode>
+    )
+  })
+})
+
+afterEach(async () => {
+  await act(async () => root.unmount())
+})
+
+describe('Dashboard 오버레이(씬 뷰)', () => {
+  it('op 묶음을 그리기 순서대로 두고, 필드 미터 바닥 바로 위에 놓는다', async () => {
+    expect(drawn()).toHaveLength(0)
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: OPS } })
+    })
+    const objects = drawn()
+    // 채움, 격자 선, 선 띠
+    expect(objects.map((object) => object.constructor.name)).toEqual([
+      'Mesh',
+      'LineSegments',
+      'Mesh'
+    ])
+    const orders = objects.map((object) => object.renderOrder)
+    expect([...orders].sort((a, b) => a - b)).toEqual(orders)
+    expect(new Set(orders).size).toBe(3)
+    const fill = objects[0].geometry.getAttribute('position')
+    const xs = Array.from({ length: fill.count }, (_, i) => fill.getX(i))
+    expect(Math.max(...xs)).toBeCloseTo(10 * INCH)
+    expect(fill.getZ(0)).toBeCloseTo(OVERLAY_Z, 6)
+    // 꼭짓점 색은 선형(빨강 = 1, 0, 0)과 alpha
+    const color = objects[0].geometry.getAttribute('color')
+    expect([color.getX(0), color.getY(0), color.getZ(0), color.getW(0)]).toEqual([1, 0, 0, 1])
+  })
+
+  it('클릭되지 않는다', async () => {
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: OPS } })
+    })
+    const raycaster = new Raycaster(new Vector3(0.05, 0.05, 1), new Vector3(0, 0, -1))
+    expect(raycaster.intersectObjects(drawn(), true)).toEqual([])
+  })
+
+  it('바뀌거나 지워지면 이전 것을 떼고 해제한다', async () => {
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: OPS } })
+    })
+    const before = drawn()
+    const disposed = vi.fn()
+    for (const object of before)
+      (object.geometry as BufferGeometry).addEventListener('dispose', disposed)
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 1, ops: OPS.slice(0, 2) } })
+    })
+    expect(disposed).toHaveBeenCalledTimes(3)
+    expect(drawn()).toHaveLength(1)
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: null })
+    })
+    expect(drawn()).toHaveLength(0)
+  })
+
+  describe('그림(drawImage)', () => {
+    const IMAGE: DashOp[] = [
+      {
+        type: 'image',
+        path: '/images/robot.png',
+        x: 0,
+        y: 0,
+        width: 18,
+        height: 18,
+        theta: 0,
+        pivotX: 9,
+        pivotY: 9,
+        usePageFrame: false
+      }
+    ]
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    let readAsset: ReturnType<typeof vi.fn>
+    let decode: ReturnType<typeof vi.fn>
+
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 5; i++)
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        })
+    }
+    const imageMeshes = (): Mesh[] =>
+      drawn().filter(
+        (object): object is Mesh =>
+          object instanceof Mesh && (object.material as THREE.MeshBasicMaterial).map !== null
+      )
+
+    // 그림 파일이 있는지(없으면 메인이 missing을 준다)
+    let fileExists: boolean
+    const focusListeners = new Set<() => void>()
+    const focusWindow = async (): Promise<void> => {
+      await act(async () => {
+        for (const listener of focusListeners) listener()
+      })
+      await settle()
+    }
+    const showRun = async (runId: string, tNanos = 0): Promise<void> => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: { runId, tNanos, ops: IMAGE } })
+      })
+      await settle()
+    }
+    // 다음 INIT: playActions가 오버레이를 지운 뒤 새 실행의 패킷이 온다
+    const nextInit = async (runId: string): Promise<void> => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: null })
+      })
+      await showRun(runId)
+    }
+    const imageWarnings = (): string[] =>
+      usePlayStore
+        .getState()
+        .entries.flatMap((entry) =>
+          entry.type === 'notice' && entry.key.startsWith('dashImage')
+            ? [`${entry.level} ${entry.key} ${entry.params.path}`]
+            : []
+        )
+
+    beforeEach(async () => {
+      fileExists = true
+      focusListeners.clear()
+      readAsset = vi.fn(async (_root: string, path: string) =>
+        fileExists
+          ? { ok: true, mime: 'image/png', bytes: PNG }
+          : { ok: false, code: 'missing', detail: path }
+      )
+      decode = vi.fn(async () => ({ width: 1, height: 1, close: () => {} }))
+      vi.stubGlobal('window', {
+        api: { readTeamCodeAsset: readAsset },
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === 'focus') focusListeners.add(listener)
+        },
+        removeEventListener: (type: string, listener: () => void) => {
+          if (type === 'focus') focusListeners.delete(listener)
+        }
+      })
+      vi.stubGlobal('createImageBitmap', decode)
+      // 창 포커스 구독을 위해 stub한 window로 다시 붙인다
+      await act(async () => root.unmount())
+      root = createRoot(fakeCanvas())
+      await root.configure({
+        gl: fakeRenderer() as never,
+        frameloop: 'never',
+        size: { width: 800, height: 600, top: 0, left: 0 }
+      })
+      await act(async () => {
+        usePlayStore.setState({ entries: [], selectedEntryId: null })
+        useProjectStore.setState({ root: '/team', session: 1 })
+        store = root.render(
+          <StrictMode>
+            <DashboardOverlay />
+          </StrictMode>
+        )
+      })
+    })
+
+    it('없던 그림을 넣고 다시 INIT하면 다시 읽어 그린다. 읽지 못한 이유는 실행마다 한 번 Console 경고로 알린다', async () => {
+      fileExists = false
+      await showRun('r1')
+      expect(imageMeshes()).toHaveLength(0)
+      // 같은 실행의 다음 패킷들은 다시 읽지도 다시 알리지도 않는다
+      await showRun('r1', 1)
+      await showRun('r1', 2)
+      expect(readAsset).toHaveBeenCalledTimes(1)
+      expect(imageWarnings()).toEqual(['warning dashImageMissing images/robot.png'])
+      fileExists = true
+      await nextInit('r2')
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(imageMeshes()).toHaveLength(1)
+      expect(imageWarnings()).toHaveLength(1)
+    })
+
+    it('다음 실행도 읽지 못하면 그 실행에서 다시 알린다', async () => {
+      fileExists = false
+      await showRun('r1')
+      await nextInit('r2')
+      expect(imageWarnings()).toEqual([
+        'warning dashImageMissing images/robot.png',
+        'warning dashImageMissing images/robot.png'
+      ])
+    })
+
+    it('실행 중에 그림을 고치고 창으로 돌아오면 읽지 못한 그림을 다시 읽는다(다시 알리지 않는다)', async () => {
+      fileExists = false
+      await showRun('r1')
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(imageMeshes()).toHaveLength(0)
+      fileExists = true
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(3)
+      expect(imageMeshes()).toHaveLength(1)
+      // 읽은 그림은 포커스로 다시 읽지 않는다
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(3)
+      expect(imageWarnings()).toEqual(['warning dashImageMissing images/robot.png'])
+    })
+
+    it('다시 INIT하면 읽은 그림도 다시 읽는다(팀이 고친 그림)', async () => {
+      await showRun('r1')
+      const before = imageMeshes()[0].material as THREE.MeshBasicMaterial
+      const oldTexture = before.map
+      const disposed = vi.fn()
+      oldTexture?.addEventListener('dispose', disposed)
+      await nextInit('r2')
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(disposed).toHaveBeenCalled()
+      expect((imageMeshes()[0].material as THREE.MeshBasicMaterial).map).not.toBe(oldTexture)
+    })
+
+    it('그림을 풀지 못하면 그 이유로 알린다', async () => {
+      decode.mockRejectedValue(new Error('The source image could not be decoded.'))
+      await showRun('r1')
+      const entries = usePlayStore.getState().entries
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({
+        type: 'notice',
+        key: 'dashImageFailed',
+        level: 'warning',
+        params: { path: 'images/robot.png', detail: 'The source image could not be decoded.' }
+      })
+    })
+
+    afterEach(async () => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: null })
+        useProjectStore.setState({ root: null, session: 0 })
+      })
+      vi.unstubAllGlobals()
+    })
+
+    it('반투명 그림을 브라우저 캔버스처럼 섞는다(곱하지 않은 alpha로 읽는다)', async () => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: IMAGE } })
+      })
+      await settle()
+      expect(readAsset).toHaveBeenCalledWith('/team', 'images/robot.png')
+      // 재질이 곱하지 않은 alpha로 섞으므로 그림도 곱하지 않은 채로 읽어야 한다(기본은 RGB에 alpha를 곱해 둔다)
+      expect(decode).toHaveBeenCalledTimes(1)
+      expect(decode.mock.calls[0][1]).toEqual({ premultiplyAlpha: 'none' })
+      const meshes = imageMeshes()
+      expect(meshes).toHaveLength(1)
+      const material = meshes[0].material as THREE.MeshBasicMaterial
+      expect(material.premultipliedAlpha).toBe(false)
+      expect(material.map?.premultiplyAlpha).toBe(false)
+    })
+  })
+
+  it('패킷이 바뀌어도 재질은 이어 쓰고(셰이더를 다시 컴파일하지 않게) 내려갈 때 해제한다', async () => {
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: OPS } })
+    })
+    const materials = new Set(drawn().map((object) => object.material as Material))
+    // 채움과 선 띠는 한 재질, 격자 선은 다른 재질
+    expect(materials.size).toBe(2)
+    const disposed = vi.fn()
+    for (const material of materials) material.addEventListener('dispose', disposed)
+    const moved = OPS.map((op) =>
+      op.type === 'polyline' ? { ...op, xPoints: [0, 30], yPoints: [5, 5] } : op
+    )
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 1, ops: moved } })
+    })
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: null })
+    })
+    await act(async () => {
+      usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 2, ops: OPS } })
+    })
+    expect(disposed).not.toHaveBeenCalled()
+    expect(new Set(drawn().map((object) => object.material as Material))).toEqual(materials)
+    await act(async () => root.unmount())
+    expect(disposed).toHaveBeenCalledTimes(2)
+  })
+})

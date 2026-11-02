@@ -7,6 +7,8 @@
 //  - FTCLib 2.1.1: CommandOpMode + ParallelCommandGroup·MotorEx(두 JVM에서 같은 메시지), RevIMU(BNO055 구성,
 //    BHI260AP면 실패와 SDK 안내 경고), command.old.CommandOpMode의 스레드 풀 오류 안내
 //  - Ivy 1.1.1: parallel(두 JVM에서 같은 메시지)
+//  - Road Runner 1.0 ftc 0.1.25: OverflowEncoder가 허브 속도(50 ms 창 × 20, bulk read의 int16)에서 드라이브 엔코더와 빠른
+//    데드휠의 진짜 속도를 되찾는다(실행은 SandBot Dashboard 대체, 컴파일은 실제 Dashboard도)
 //  - 라이브러리 클래스의 System.nanoTime이 가상 시계(패치), 링크 검사(linkReport: 일부러 없는 멤버를 참조하는 작은 jar, 실제 라이브러리)
 //  - List.of·Set.of·Map.of를 쓰는 OpMode가 시험 플랫폼 jar(bootClasspath)로 컴파일되고(없으면 --release 8로 컴파일 오류)
 // JDK가 없으면 모두 건너뛴다. 라이브러리를 받지 못하면(오프라인) 라이브러리 시험만 이유를 출력하고 건너뛴다
@@ -66,7 +68,19 @@ const SETS = {
     'ejmlDsparse',
     'ejmlFsparse',
     'jsr305'
-  ]
+  ],
+  // 실행 클래스패스(Dashboard는 SandBot 대체 jar를 따로 넣는다)
+  roadrunner: [
+    'rrFtc',
+    'rrActions',
+    'rrCore',
+    'kotlinStdlib',
+    'jacksonDatabind',
+    'jacksonCore',
+    'jacksonAnnotations'
+  ],
+  // 팀 코드 컴파일용 실제 Dashboard
+  dashboard: ['dashboard', 'dashboardCore']
 } as const
 
 async function fetchLibraries(): Promise<TestLibraries | null> {
@@ -100,6 +114,15 @@ function withLibraries(b: SidecarBuild, ...sets: (keyof typeof SETS)[]): Partial
   return {
     compileClasspath: [b.sdkJar, libraries!.jars.androidxAnnotation, ...libs],
     libraryClasspath: libs
+  }
+}
+
+/** Road Runner(메인의 라이브러리 해석처럼): 컴파일은 실제 Dashboard도, 실행은 SandBot Dashboard 대체(sandbot-dashboard.jar) */
+function withRoadRunner(b: SidecarBuild): Partial<RunRequest> {
+  const rr = jars('roadrunner')
+  return {
+    compileClasspath: [b.sdkJar, libraries!.jars.androidxAnnotation, ...rr, ...jars('dashboard')],
+    libraryClasspath: [...rr, b.dashboardJar]
   }
 }
 
@@ -191,6 +214,9 @@ function runRequest(b: SidecarBuild, host: Host): RunRequest {
     sourceRoots: [OPMODES],
     opModeSource: join(OPMODES, ...PACKAGE.split('.'), `${host.opMode}.java`),
     opModeClass: `${PACKAGE}.${host.opMode}`,
+    registeredName: null,
+    registrars: [],
+    firstFolder: testTempDir('first'),
     bootClasspath: [],
     compileClasspath: [b.sdkJar],
     libraryClasspath: [],
@@ -260,7 +286,8 @@ function runSidecar(b: SidecarBuild, host: Host): Promise<Run> {
         tick: message.tick,
         events: host.events?.[message.tick] ?? (message.tick === START_TICK ? ['start'] : []),
         gamepads: [null, null],
-        inputs
+        inputs,
+        configSet: []
       })
     }
     child.stdout.setEncoding('utf8')
@@ -505,7 +532,7 @@ describe.skipIf(build === null)('링크 검사(linkReport)', () => {
           jar,
           kind: 'unsupported',
           from: 'linkdemo.User',
-          target: 'org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta$Builder#<init>()V'
+          target: 'com.qualcomm.ftccommon.ClassManagerFactory#<init>()V'
         },
         {
           jar,
@@ -700,6 +727,80 @@ describe.skipIf(build === null || libraries === null)('실제 라이브러리', 
       expect(linkReport(run)?.warnings).toEqual([])
       const again = await runSidecar(b, host)
       expect(normalized(again)).toEqual(normalized(run))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'Road Runner 1.0 OverflowEncoder: 허브 속도(50 ms 창 × 20, int16으로 감김)에서 드라이브 엔코더와 빠른 데드휠의 진짜 속도를 20 틱/s 안에서 되찾는다',
+    async () => {
+      // backRight 포트에 REV Through Bore(8192 CPR) 35 mm 데드휠: 0.7 m/s면 약 52,000 틱/s라 int16을 넘는다
+      const podTicksPerMeter = 8192 / (Math.PI * 0.035)
+      const world: WorldSpec = {
+        ...SPEC,
+        deadWheels: [
+          {
+            device: 'backRight',
+            position: { x: 0, y: -0.1 },
+            measures: 'forward',
+            reversed: false,
+            ticksPerMeter: podTicksPerMeter
+          }
+        ]
+      }
+      const run = await runSidecar(b, {
+        opMode: 'RrOverflowVelocity',
+        world,
+        request: { ...withRoadRunner(b), configXml: LIB_BOT },
+        maxTicks: 4000
+      })
+      expect(compiled(run)?.ok, explain(run)).toBe(true)
+      expect(errors(run), explain(run)).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      expect(results(run).done).toBe('true')
+      const samples = run.messages.flatMap((m) => {
+        if (m.type !== 'log' || m.stream !== 'out' || !m.text.startsWith('SAMPLE ')) return []
+        const values = Object.fromEntries(
+          m.text
+            .slice('SAMPLE '.length)
+            .trim()
+            .split(' ')
+            .map((pair) => pair.split('='))
+            .map(([key, value]) => [key, Number(value)])
+        )
+        return [
+          { tNanos: m.tNanos, ...values } as Record<
+            'tNanos' | 'dv' | 'draw' | 'pv' | 'praw',
+            number
+          >
+        ]
+      })
+      expect(samples.length).toBeGreaterThan(50)
+      // 시뮬레이터의 진짜 속도: 정상 상태(출발 1초 뒤)의 로봇 속도(곧게 앞으로, 미끄럼 없음)
+      const from = poseAt(run, samples[0].tNanos)
+      const to = poseAt(run, samples.at(-1)!.tNanos)
+      const steady = run.poses.filter(
+        (p) => p.tNanos >= samples[0].tNanos && p.tNanos <= samples.at(-1)!.tNanos
+      )
+      const speed =
+        (steady.at(-1)!.pose.x - steady[0].pose.x) /
+        ((steady.at(-1)!.tNanos - steady[0].tNanos) / 1e9)
+      expect(speed).toBeGreaterThan(0.6)
+      // 모터가 차례로 출발해 처음에 아주 조금 돌지만 정상 상태에서는 곧게 간다
+      expect(Math.abs(to.yaw - from.yaw)).toBeLessThan(1e-6)
+      const driveRate = (speed / (2 * Math.PI * RADIUS)) * 537.6
+      const podRate = speed * podTicksPerMeter
+      expect(podRate).toBeGreaterThan(40_000)
+      for (const s of samples) {
+        const at = `t=${s.tNanos}`
+        // 허브가 보고한 값(getVelocity)은 20 틱/s의 배수이고, 데드휠은 int16(bulk read의 short)으로 감겼다
+        expect(Math.abs(s.draw % 20), at).toBe(0)
+        expect(Math.abs(s.praw), at).toBeLessThanOrEqual(32768)
+        expect(Math.abs((s.praw + s.pv) % 65536), at).toBe(0)
+        // OverflowEncoder(inverseOverflow)가 되찾은 값은 진짜 속도와 한 단계(20 틱/s) 안
+        expect(Math.abs(s.dv - driveRate), at).toBeLessThanOrEqual(20)
+        expect(Math.abs(s.pv - podRate), at).toBeLessThanOrEqual(20)
+      }
     },
     SIDECAR_TEST_TIMEOUT
   )

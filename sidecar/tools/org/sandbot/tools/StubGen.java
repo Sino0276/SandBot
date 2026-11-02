@@ -73,6 +73,8 @@ final class StubGen {
     /** 불투명 껍데기로 쓸 형식: 바이너리 내부 이름 → 정보 */
     private final Map<String, Opaque> opaque = new TreeMap<>();
     final List<String> warnings = new ArrayList<>();
+    /** 생성한 소스 머리줄에 적는 출처(Dashboard 층은 "FTC Dashboard 0.6.0") */
+    String origin = "FTC SDK 12.0.0";
 
     private static final class Opaque {
         /** 안드로이드 jar의 요소(없는 형식이면 null) */
@@ -325,7 +327,8 @@ final class StubGen {
         try {
             StringBuilder out = new StringBuilder();
             String pkg = elements.getPackageOf(top).getQualifiedName().toString();
-            out.append("// SandBot: 생성한 껍데기(stub). FTC SDK 12.0.0의 public·protected API, 본문은 SimUnsupportedException.\n");
+            out.append("// SandBot: 생성한 껍데기(stub). ").append(origin)
+                    .append("의 public·protected API, 본문은 SimUnsupportedException.\n");
             out.append("// 고치지 말 것(scripts/build-sidecar.mjs가 다시 만든다).\n");
             if (!pkg.isEmpty()) out.append("package ").append(pkg).append(";\n\n");
             typeDeclaration(top, out, "");

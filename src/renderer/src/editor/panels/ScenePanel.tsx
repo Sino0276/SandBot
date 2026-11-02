@@ -8,6 +8,7 @@ import { useFlyStore } from '../flyStore'
 import { exitIsolation, useSceneVisibilityStore } from '../sceneVisibility'
 import { shortcutLabel } from '../shortcuts'
 import PanelFrame from '../PanelFrame'
+import DashboardOverlay from '../scene/DashboardOverlay'
 import FieldFloor from '../scene/FieldFloor'
 import EditorCameraControls from '../scene/EditorCameraControls'
 import FocusController from '../scene/FocusController'
@@ -139,6 +140,8 @@ function ScenePanel(): React.JSX.Element {
         <ambientLight intensity={0.7} />
         <directionalLight position={[3, -2, 5]} intensity={1.2} />
         <FieldFloor />
+        {/* FTC Dashboard 필드 그림(fieldOverlay, 실행 중 받은 마지막 것) */}
+        <DashboardOverlay />
         <SceneObjectsView />
         <FrameAxes />
         <ImuIndicators />

@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,8 +38,9 @@ import javax.tools.StandardLocation;
 import javax.tools.ToolProvider;
 
 /**
- * 팀 코드를 사이드카 안에서 컴파일한다(javax.tools, 결과는 메모리에만). 시작 파일은 OpMode 소스 하나이고, 필요한 다른 파일은
- * -sourcepath(sourceRoots)로 javac가 찾는다(-implicit:class라 그것들도 클래스가 된다).
+ * 팀 코드를 사이드카 안에서 컴파일한다(javax.tools, 결과는 메모리에만). 시작 파일은 OpMode 소스와 등록기(@OpModeRegistrar)
+ * 소스들(같은 파일은 한 번)이고, 필요한 다른 파일은 -sourcepath(sourceRoots)로 javac가 찾는다(-implicit:class라 그것들도 클래스가
+ * 된다). 시작 파일 하나라도 깨지면 Android Studio처럼 컴파일 오류다.
  *
  * <p>옵션: -source 8 -target 8 -bootclasspath bootClasspath(팀 프로젝트 compileSdk의 Android 플랫폼 API — Android Studio와
  * 같은 문법·API) -g -proc:none -encoding UTF-8 -Xlint:-options -implicit:class -Xmaxerrs 100 -Xmaxwarns 100,
@@ -90,7 +92,8 @@ final class TeamCompiler {
         }
     }
 
-    static Result compile(List<String> sourceRoots, String opModeSource, List<String> bootClasspath,
+    /** @param startFiles 시작 파일(절대 경로, 앞의 것부터, 같은 경로는 한 번만) */
+    static Result compile(List<String> sourceRoots, List<String> startFiles, List<String> bootClasspath,
             List<String> compileClasspath) throws NoCompilerException, IOException {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new NoCompilerException();
@@ -131,7 +134,10 @@ final class TeamCompiler {
             options.add(String.join(File.pathSeparator, sourceRoots));
             options.add("-classpath");
             options.add(String.join(File.pathSeparator, compileClasspath));
-            Iterable<? extends JavaFileObject> units = standard.getJavaFileObjects(new File(opModeSource));
+            Set<String> unique = new LinkedHashSet<>(startFiles);
+            List<File> starts = new ArrayList<>();
+            for (String file : unique) starts.add(new File(file));
+            Iterable<? extends JavaFileObject> units = standard.getJavaFileObjectsFromFiles(starts);
             StringWriter javacOut = new StringWriter();
             JavaCompiler.CompilationTask task = compiler.getTask(javacOut, files, listener, options, null, units);
             task.setLocale(Locale.ENGLISH);

@@ -1,4 +1,4 @@
-import { DASHBOARD_GROUPS, type LibraryReason } from '../../shared/libraries'
+import { DASHBOARD_GROUPS, SLOTHBOARD_GROUP, type LibraryReason } from '../../shared/libraries'
 import { majorVersion } from './version'
 
 // 라이브러리 정책 표(한곳). 팀 Gradle의 좌표마다 받을지, 가짜 FTC SDK가 이미 제공하는지, 지원하지 않는지를 정한다.
@@ -8,15 +8,19 @@ import { majorVersion } from './version'
 // - 제공(provided): FTC SDK, Android(androidx·com.android·com.google.android), 가짜 SDK에 든 Gson·NanoHTTPD·
 //   threetenabp·OpenFTC·slf4j-api. 받지 않는다. 단 androidx.annotation은 Android Studio의 컴파일 클래스패스에 늘 있으므로
 //   (appcompat이 compile 범위로 끌어온다) 받아서 컴파일 클래스패스에만 넣는다.
-// - 지원하지 않음(안내): FTC Dashboard(L1: SandBot 대체가 생기기 전), Pedro AutoTune, Pedro 2.x, Panels, Sloth·Sinister,
-//   FTCLib vision, 그 밖에 직접 선언했지만 지원 계열도 그 전이 의존성도 아닌 것(notSupported). Sloth용 대체판
-//   (com.acmerobotics.slothboard:dashboard, com.bylazar.sloth:fullpanels)은 같은 패키지를 담으므로 원본과 같게 본다.
+// - 대체(replaced): FTC Dashboard(com.acmerobotics.dashboard:dashboard·core, 라이브러리 L2). 받아서 컴파일 클래스패스에는 팀
+//   버전의 실제 jar를, 실행 클래스패스에는 그 대신 SandBot 구현(사이드카 폴더의 sandbot-dashboard.jar, LibraryDeps.dashboardJar)을
+//   넣는다. 그 의존성(core·FTC SDK·androidx.annotation)은 지원 계열처럼 펼친다. 전이 의존성(Road Runner ftc → dashboard,
+//   actions → dashboard:core)도 같다.
+// - 지원하지 않음(안내): Pedro AutoTune, Pedro 2.x, Panels, Sloth·Sinister, FTCLib vision, Sloth용 Dashboard(slothboard, 원래 FTC
+//   Dashboard를 쓰라고 안내), 그 밖에 직접 선언했지만 지원 계열도 그 전이 의존성도 아닌 것(notSupported). Sloth용 Panels
+//   (com.bylazar.sloth:fullpanels)는 같은 패키지를 담으므로 원본과 같게 본다.
 // 정책을 바꾸면 POLICY_VERSION을 올린다(해석 잠금 resolutions/의 키에 들어간다).
 
-export const POLICY_VERSION = 2
+export const POLICY_VERSION = 3
 
-export const DASHBOARD_DETAIL =
-  'FTC Dashboard support arrives with the SandBot Dashboard replacement'
+export const SLOTHBOARD_DETAIL =
+  'the Sloth build of FTC Dashboard is not supported; use com.acmerobotics.dashboard'
 
 export type PolicyDecision =
   // 가짜 SDK·Android가 제공한다(받지 않음)
@@ -24,6 +28,8 @@ export type PolicyDecision =
   // 받아서 컴파일 클래스패스에만(androidx.annotation)
   | { kind: 'compileOnly' }
   | { kind: 'unsupported'; reason: LibraryReason; detail: string }
+  // FTC Dashboard: 받아서 컴파일은 실제 jar, 실행은 SandBot 구현(직접 선언하면 해석을 시작한다)
+  | { kind: 'replaced' }
   // 지원 계열: 직접 선언하면 해석을 시작한다
   | { kind: 'supported' }
   // 지원 계열의 전이 의존성이면 쓰고, 직접 선언만 했으면 notSupported
@@ -68,7 +74,8 @@ export function classifyModule(group: string, artifact: string, version: string)
     return { kind: 'provided' }
 
   // ---- 지원 계열과 그 안내 ----
-  if (DASHBOARD_GROUPS.has(group)) return unsupported('notSupported', DASHBOARD_DETAIL)
+  if (group === SLOTHBOARD_GROUP) return unsupported('notSupported', SLOTHBOARD_DETAIL)
+  if (DASHBOARD_GROUPS.has(group)) return { kind: 'replaced' }
   if (group === 'com.acmerobotics.roadrunner') {
     if (artifact === 'ftc') return { kind: 'supported' }
     if (artifact === 'core' || artifact === 'actions')

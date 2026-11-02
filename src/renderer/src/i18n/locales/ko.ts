@@ -100,6 +100,9 @@ const ko = {
     scriptLaunchFailed:
       '외부 스크립트 편집기로 {{fileName}}을(를) 열지 못했습니다 ({{detail}}). 툴바의 [환경 설정] > 외부 도구에서 편집기를 확인하세요.',
     scriptMissing: '{{fileName}}이(가) TeamCode에 없습니다. 인스펙터에서 연결을 확인하세요.',
+    // Console의 Road Runner 튜닝 결과 줄을 파일 관리자에서 보이지 못했다(모의 저장소의 파일)
+    simFileMissing: '{{fileName}}을(를) 찾지 못했습니다. 지웠거나 옮겼을 수 있습니다.',
+    simFileRevealFailed: '{{fileName}}을(를) 파일 관리자에서 보이지 못했습니다 ({{detail}}).',
     scriptNotAllowed:
       '{{fileName}}은(는) 열 수 없는 경로입니다. TeamCode/src/main/java 안의 Java 파일만 엽니다.',
     // 줄로 열기(사용처·튜닝 값)를 편집기가 받지 못함. 앱을 켠 동안 한 번만 띄운다.
@@ -199,10 +202,12 @@ const ko = {
     scene: '씬',
     inspector: '인스펙터',
     // 씬 뷰 아래 패널(Unity의 Console 자리)의 탭
-    dock: '콘솔·텔레메트리·장치',
+    dock: '콘솔·텔레메트리·장치·설정값',
     console: '콘솔',
     telemetry: '텔레메트리',
-    devices: '장치'
+    devices: '장치',
+    // FTC Dashboard 설정 패널(Configuration)처럼 @Config 값을 실행 중 고친다
+    config: '설정값'
   },
   objectKind: {
     robot: '로봇',
@@ -624,7 +629,33 @@ const ko = {
       failed: 'OpMode 목록을 읽지 못했습니다 ({{detail}}).',
       noTeamCode: '프로젝트에 TeamCode 폴더가 없습니다.',
       empty: 'TeamCode에 @TeleOp·@Autonomous OpMode가 없습니다(@Disabled는 보이지 않습니다).',
-      truncated: 'TeamCode 파일이 너무 많아 일부 OpMode만 보입니다.'
+      truncated: 'TeamCode 파일이 너무 많아 일부 OpMode만 보입니다.',
+      // @OpModeRegistrar가 등록하는 OpMode(사이드카가 등록기를 실행해 읽는다)
+      registeredLoading: '등록기(@OpModeRegistrar) OpMode 읽는 중…',
+      registeredFailed: '등록기 OpMode를 읽지 못했습니다: {{reason}}',
+      registeredCompile:
+        '등록기 파일을 컴파일하지 못해(오류 {{count}}개) 등록기 OpMode가 보이지 않습니다. Console에서 그 줄을 열 수 있습니다.',
+      registeredRegistrar:
+        '등록기 {{names}}이(가) 오류를 던져 그 등록기의 OpMode가 빠졌습니다(Console).',
+      // ListRegisteredResult의 실패 이유
+      registeredFailure: {
+        notAllowed: '이 프로젝트에서는 실행할 수 없음',
+        missing: 'TeamCode나 등록기 파일을 찾지 못함',
+        noJdk: 'JDK 17 이상을 찾지 못함(환경 설정 > 외부 도구)',
+        noSidecar: '실행기(사이드카)가 빌드되지 않음',
+        failed: '실행기 오류',
+        noAndroidSdk: 'Android SDK를 찾지 못함(환경 설정 > 외부 도구)',
+        noAndroidPlatform: '프로젝트의 Android 플랫폼이 설치되지 않음'
+      },
+      // 이 프로젝트의 코드 실행을 아직 믿지 않았을 때(등록기를 실행하지 않았다). 고르면 묻는다(play.codeTrust).
+      registeredConsent: '등록기 OpMode 읽기…',
+      registeredConsentHint: '이 PC에서 프로젝트의 Java 코드(@OpModeRegistrar)를 실행합니다',
+      registeredTag: '등록기',
+      registeredTooltip: '{{className}} · 등록기 {{registrar}}\n{{file}}',
+      open: '열기',
+      openTooltip: '외부 스크립트 편집기로 이 OpMode의 소스를 엽니다 (Alt+Enter)',
+      openRegistrarTooltip:
+        '외부 스크립트 편집기로 이 OpMode를 등록하는 등록기 줄을 엽니다 (Alt+Enter)'
     },
     init: 'INIT',
     start: 'START',
@@ -667,6 +698,12 @@ const ko = {
       busy: '프로젝트를 열거나 저장하는 중입니다.',
       running: '실행 중입니다.'
     },
+    // 등록기 OpMode 목록을 읽기 전에 한 번 묻는다(Android Studio의 Trust Project처럼). 프로젝트마다 기억한다.
+    codeTrust: {
+      message:
+        '등록기 OpMode 목록을 읽으려고 {{project}} 프로젝트의 @OpModeRegistrar 코드(와 그 코드가 건드리는 클래스의 정적 초기화)를 이 PC에서 컴파일·실행합니다. INIT이 실행하는 것과 같은 코드이고, 이 PC의 파일과 네트워크에 접근할 수 있습니다. 믿을 수 있는 프로젝트에서만 실행하세요. 이 프로젝트에 대한 선택은 기억합니다.',
+      confirm: '실행하고 기억'
+    },
     saveBeforeRun:
       '저장하지 않은 변경 사항이 있습니다. 실행은 디스크의 TeamCode와 생성한 로봇 구성을 쓰므로 먼저 저장해야 합니다. 저장하고 실행할까요?',
     saveAndRun: '저장하고 실행',
@@ -679,6 +716,7 @@ const ko = {
       stuckInStop: 'STOP 뒤 끝나지 않음',
       load: 'OpMode를 불러오지 못함',
       config: '로봇 구성 오류',
+      registrar: 'OpMode 등록기 오류',
       internal: '사이드카 내부 오류'
     },
     stallHint:
@@ -692,6 +730,7 @@ const ko = {
       loadFailed: 'OpMode나 로봇 구성을 불러오지 못함',
       stuck: 'STOP 뒤 끝나지 않아 포기함',
       shutdown: '정리하며 끝냄',
+      listed: '등록기 OpMode 목록을 읽음',
       killed: 'JVM을 강제로 끝냄',
       crashed: '실행기가 비정상 종료됨'
     },
@@ -728,6 +767,11 @@ const ko = {
     noSelection: '항목을 고르면 전체 내용과 스택이 보입니다.',
     openHint: '더블클릭하거나 Enter를 누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
     openLink: '누르면 외부 스크립트 편집기로 이 줄을 엽니다.',
+    // Road Runner 튜닝 결과 줄(simNotice rrTuningSaved): 파일 관리자에서 보이기
+    revealFile: '폴더에서 보기',
+    revealHint: '더블클릭하거나 Enter를 누르면 파일 관리자에서 이 파일을 보입니다.',
+    rrTuningHint:
+      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 운동학 모델에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
     diagnosticKind: {
       error: '오류',
       warning: '경고',
@@ -777,11 +821,30 @@ const ko = {
         '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
       configMissing:
         '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.',
+      // 등록기(@OpModeRegistrar) OpMode 목록을 읽을 때
+      registeredFailed: '등록기 OpMode 목록을 읽지 못했습니다: {{reason}} ({{detail}})',
+      registeredCompileFailed:
+        '등록기(@OpModeRegistrar) 파일을 컴파일하지 못해 등록기 OpMode를 읽지 못했습니다(오류 {{count}}개). 진단을 더블클릭하면 그 줄을 엽니다.',
+      // 씬 뷰 Dashboard 오버레이 그림(drawImage '/images/…')을 읽지 못했다(실행마다 그림 하나에 한 번). 고치고 SandBot
+      // 창으로 돌아오거나 다시 INIT하면 다시 읽는다.
+      dashImageMissing:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 없어 그리지 않습니다. 파일을 넣고 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
+      dashImageNotAllowed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}은(는) 보통 파일이 아니거나 assets 밖을 가리켜 읽지 않습니다 ({{detail}}).',
+      dashImageTooLarge:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 크기 한도({{max}} MB)를 넘어 그리지 않습니다 ({{detail}}).',
+      dashImageFailed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}을(를) 읽지 못해 그리지 않습니다 ({{detail}}). 고친 뒤 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
       // 시뮬레이터 안내(simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
           '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
-        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).'
+        worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).',
+        dashCamera:
+          'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
+        dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
+        // file은 모의 저장소(userData/sim-files/<프로젝트>/FIRST, 로봇의 /sdcard/FIRST) 안의 절대 경로
+        rrTuningSaved: 'Road Runner 튜닝 결과를 저장했습니다: {{file}}'
       },
       // 라이브러리 의존성 보고(INIT, src/main/libraries). 좌표마다 이유(LibraryReason)로 한 줄.
       library: {
@@ -795,8 +858,12 @@ const ko = {
           '{{coordinate}}: 저장소가 체크섬을 주지 않아 처음 받은 파일의 해시를 기록했습니다. 다음부터 내용이 바뀌면 쓰지 않습니다.',
         firstUseUnrecorded:
           '{{coordinate}}: 저장소가 체크섬을 주지 않는데 처음 받은 파일의 해시를 기록하지 못했습니다(라이브러리 캐시의 first-use.json에 쓸 수 없음). 이번에는 쓰지만 아직 내용이 바뀌는 것을 막지 못합니다. 다음 INIT에 다시 확인해 기록합니다.',
-        dashboardLater:
-          '{{coordinate}}: FTC Dashboard는 SandBot의 Dashboard 대체가 생길 때 지원합니다. 지금은 불러오지 않아 Dashboard를 쓰는 코드(Road Runner 포함)는 컴파일되지 않습니다.',
+        // FTC Dashboard(status replaced): 컴파일은 팀 버전의 실제 jar, 실행은 SandBot 구현
+        replaced:
+          '{{coordinate}}: FTC Dashboard는 이 버전의 실제 jar로 컴파일하고 SandBot 구현으로 실행합니다(포트·웹 서버 없음). 패킷은 텔레메트리와 씬 뷰에, @Config 값은 설정값 탭에 보이고, 카메라 스트림·이미지는 보이지 않습니다.',
+        // Sloth용 FTC Dashboard(com.acmerobotics.slothboard)
+        slothboard:
+          '{{coordinate}}: Sloth용 FTC Dashboard는 지원하지 않아 불러오지 않습니다. 원래 FTC Dashboard(com.acmerobotics.dashboard:dashboard)를 쓰세요.',
         links:
           '{{library}}: 링크 검사에서 문제 {{count}}개(없는 클래스·멤버, 아직 지원하지 않는 SDK 기능). 그 코드에 닿으면 실행 중 오류가 납니다.',
         none: '{{coordinate}}',
@@ -809,7 +876,7 @@ const ko = {
           '{{coordinate}}: Sloth·Sinister(dev.frozenmilk)는 Android 앱 훅·핫 리로드라 SandBot에서 쓸 수 없어 불러오지 않습니다.',
         ftcLibVision: '{{coordinate}}: FTCLib vision은 네이티브 OpenCV를 써서 불러오지 않습니다.',
         notSupported:
-          '{{coordinate}}: SandBot이 지원하는 라이브러리(Road Runner 1.0, Pedro Pathing 3.x, FTCLib core)도 그 의존성도 아니어서 불러오지 않습니다.',
+          '{{coordinate}}: SandBot이 지원하는 라이브러리(Road Runner 1.0, Pedro Pathing 3.x, FTCLib core, FTC Dashboard)도 그 의존성도 아니어서 불러오지 않습니다.',
         dynamicVersion:
           '{{coordinate}}: 버전이 고정되지 않아(+·latest·범위·SNAPSHOT) 불러오지 않습니다. 실행이 매번 같도록 정확한 버전을 쓰세요.',
         localModule: '{{coordinate}}: 로컬 모듈·파일 의존성은 SandBot이 읽지 않습니다.',
@@ -888,7 +955,56 @@ const ko = {
     noRun: 'OpMode를 실행하면 Driver Station처럼 텔레메트리가 보입니다.',
     empty: '아직 받은 텔레메트리가 없습니다(telemetry.update()가 보낼 때 보입니다).',
     log: '텔레메트리 로그',
-    sentAt: '보낸 가상 시간'
+    sentAt: '보낸 가상 시간',
+    // FTC Dashboard 텔레메트리(sendTelemetryPacket, Dashboard의 Telemetry 패널처럼 키마다 마지막 값)
+    dashboard: 'FTC Dashboard',
+    dashboardHint:
+      'FTC Dashboard로 보낸 패킷(TelemetryPacket.put·addLine)입니다. 키마다 마지막 값을 보이고, clearTelemetry가 지웁니다. 필드 그림(fieldOverlay)은 씬 뷰 바닥에 그립니다.',
+    dashboardEmpty: '받은 패킷에 값이 없습니다.',
+    dashboardLog: 'Dashboard 로그'
+  },
+  // Config 탭(FTC Dashboard 설정 패널처럼 @Config·addConfigVariable 변수)
+  config: {
+    noRun:
+      'OpMode를 실행하면 FTC Dashboard의 @Config 값이 여기에 보이고, 실행 중에 고칠 수 있습니다(Dashboard 설정 패널처럼).',
+    empty: '이 실행에는 Dashboard 설정 변수가 없습니다(@Config 클래스나 addConfigVariable이 없음).',
+    waiting:
+      'Dashboard 설정 변수를 기다리는 중입니다(OpMode가 FTC Dashboard를 쓰지 않으면 오지 않습니다).',
+    tree: 'Dashboard 설정 변수',
+    revertHint:
+      '실행 중 바꾼 값은 STOP하면 되돌아갑니다(다음 실행은 파일 값). 파일에 남기려면 [파일에 반영]을 누른 뒤 저장(Ctrl+S)하세요.',
+    readOnlyHint: 'INIT·실행 중에만 고칠 수 있습니다. 마지막 값은 다음 INIT까지 보입니다.',
+    hardware: '하드웨어(withHardwareRoot)',
+    expand: '펼치기',
+    collapse: '접기',
+    changed: '이 실행이 시작할 때와 다른 값이 있습니다.',
+    startValue: '(시작 {{value}})',
+    startValueHint: '이 실행이 시작할 때의 값입니다.',
+    sentHint: '보낸 값입니다. 다음 틱 경계에서 적용합니다(일시 정지 중이면 진행할 때).',
+    invalidHint: '이 형식으로 받을 수 없는 값이라 보내지 않습니다.',
+    tooLongHint: '글자가 {{max}}자를 넘어 보내지 않습니다.',
+    apply: '파일에 반영',
+    applyHint:
+      '이 값을 {{file}}의 {{field}} 튜닝 값(저장하지 않은 변경)으로 옮깁니다. 저장(Ctrl+S)하면 Java 파일에 씁니다. 실행 취소할 수 있습니다.',
+    applied: '반영함(저장하지 않음)',
+    // [파일에 반영]을 쓸 수 없는 이유(play/dashConfigModel.ts ApplyBlock)
+    applyBlocked: {
+      noSource:
+        '필드에서 읽는 변수가 아니라(addConfigVariable, 배열 원소 등) 파일에 반영할 수 없습니다.',
+      notTeamCode: 'TeamCode의 Java 파일이 아닌 클래스의 값이라 파일에 반영할 수 없습니다.',
+      loading: '{{file}}을(를) 읽는 중입니다.',
+      missing:
+        '{{file}}을(를) TeamCode에서 찾지 못해 반영할 수 없습니다(라이브러리 클래스일 수 있음).',
+      readFailed: '{{file}}을(를) 읽지 못해 반영할 수 없습니다.',
+      file: '{{file}}을(를) 고칠 수 없어(읽기 전용, 다른 인코딩, 생성 파일, \\u 이스케이프 등) 반영할 수 없습니다.',
+      noField:
+        '{{file}}에서 {{field}} 튜닝 값을 찾지 못했습니다(다른 파일의 상위 클래스 필드, 지운 필드 등).',
+      typeChanged: '파일의 {{field}} 형식이 실행한 코드와 달라 반영할 수 없습니다.',
+      value: '이 값은 그 형식의 Java 리터럴로 쓸 수 없습니다(NaN·무한대 등).',
+      inFile: '이미 파일의 값과 같습니다.',
+      applied: '이미 반영했습니다. 저장(Ctrl+S)하면 파일에 씁니다.',
+      readOnly: '파일의 {{field}}: {{reason}}'
+    }
   },
   // 장치 탭(장치 출력 표)
   devices: {

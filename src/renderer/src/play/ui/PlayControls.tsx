@@ -14,7 +14,7 @@ import {
 import { findOpMode } from '../opModeList'
 import { formatRatio, formatVirtualTime, isRunningSlow, toolbarClock } from '../playFormat'
 import { isPlaySpeed } from '../playSettings'
-import { isRunActive, usePlayStore } from '../playStore'
+import { isRunActive, listedOpModes, usePlayStore } from '../playStore'
 import OpModePicker from './OpModePicker'
 import { PlayIcon } from './PlayIcons'
 
@@ -63,7 +63,9 @@ function PlayControls(): React.JSX.Element {
   // (Autonomous는 DS처럼 30초)
   const flavor = run?.opMode.flavor ?? null
   const selectedFlavor =
-    opModeList.root === root ? findOpMode(opModeList.opModes, selectedClass)?.flavor : undefined
+    opModeList.root === root
+      ? findOpMode(listedOpModes(opModeList), selectedClass)?.flavor
+      : undefined
   const clock = run
     ? toolbarClock(run.opMode.flavor, run.status.tNanos, run.status.startedNanos)
     : toolbarClock(selectedFlavor ?? 'TeleOp', 0, null)

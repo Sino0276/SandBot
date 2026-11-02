@@ -186,7 +186,7 @@ export function saveConsolePrefs(
   writeJson(storage, CONSOLE_PREFS_KEY, prefs)
 }
 
-export const DOCK_TABS = ['console', 'telemetry', 'devices'] as const
+export const DOCK_TABS = ['console', 'telemetry', 'devices', 'config'] as const
 export type DockTab = (typeof DOCK_TABS)[number]
 
 export function loadDockTab(storage: ReadStorage | null = browserStorage()): DockTab {
