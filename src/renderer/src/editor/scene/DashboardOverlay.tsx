@@ -172,7 +172,12 @@ function imageTexture(root: string, scope: string, path: string, onLoaded: () =>
       // Blob → ImageBitmap은 URL을 쓰지 않아 CSP(img-src)와 관계없다
       // BlobPart 형식은 ArrayBuffer 바탕만 받으므로 복사한다(그림 하나라 비용이 작다)
       const bytes = new Uint8Array(result.bytes)
-      const bitmap = await createImageBitmap(new Blob([bytes], { type: result.mime }))
+      // 곱하지 않은 alpha로 읽는다(three ImageBitmapLoader의 기본과 같다). 기본(premultiply)은 RGB에 alpha를 곱해 두는데
+      // WebGL은 ImageBitmap에 UNPACK_PREMULTIPLY_ALPHA를 적용하지 않고 재질은 곱하지 않은 alpha로 섞으므로, 반투명
+      // 픽셀이 Dashboard 캔버스보다 어두워진다.
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: result.mime }), {
+        premultiplyAlpha: 'none'
+      })
       if (images.get(path) !== entry) {
         bitmap.close()
         return

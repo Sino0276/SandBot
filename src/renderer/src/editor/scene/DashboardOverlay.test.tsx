@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { DashOp } from '../../../../shared/dashboard'
 import { INCH, OVERLAY_Z } from '../../play/dashOverlay'
 import { usePlayStore } from '../../play/playStore'
+import { useProjectStore } from '../../project/projectStore'
 import DashboardOverlay from './DashboardOverlay'
 
 // 씬 뷰의 FTC Dashboard 오버레이: op 묶음마다 메시·선을 그리기 순서대로 두고, 클릭되지 않으며, 오버레이가 바뀌거나
@@ -162,6 +163,72 @@ describe('Dashboard 오버레이(씬 뷰)', () => {
       usePlayStore.setState({ dashOverlay: null })
     })
     expect(drawn()).toHaveLength(0)
+  })
+
+  describe('그림(drawImage)', () => {
+    const IMAGE: DashOp[] = [
+      {
+        type: 'image',
+        path: '/images/robot.png',
+        x: 0,
+        y: 0,
+        width: 18,
+        height: 18,
+        theta: 0,
+        pivotX: 9,
+        pivotY: 9,
+        usePageFrame: false
+      }
+    ]
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    let readAsset: ReturnType<typeof vi.fn>
+    let decode: ReturnType<typeof vi.fn>
+
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 5; i++)
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        })
+    }
+    const imageMeshes = (): Mesh[] =>
+      drawn().filter(
+        (object): object is Mesh =>
+          object instanceof Mesh && (object.material as THREE.MeshBasicMaterial).map !== null
+      )
+
+    beforeEach(async () => {
+      readAsset = vi.fn(async () => ({ ok: true, mime: 'image/png', bytes: PNG }))
+      decode = vi.fn(async () => ({ width: 1, height: 1, close: () => {} }))
+      vi.stubGlobal('window', { api: { readTeamCodeAsset: readAsset } })
+      vi.stubGlobal('createImageBitmap', decode)
+      await act(async () => {
+        useProjectStore.setState({ root: '/team', session: 1 })
+      })
+    })
+
+    afterEach(async () => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: null })
+        useProjectStore.setState({ root: null, session: 0 })
+      })
+      vi.unstubAllGlobals()
+    })
+
+    it('반투명 그림을 브라우저 캔버스처럼 섞는다(곱하지 않은 alpha로 읽는다)', async () => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: { runId: 'r', tNanos: 0, ops: IMAGE } })
+      })
+      await settle()
+      expect(readAsset).toHaveBeenCalledWith('/team', 'images/robot.png')
+      // 재질이 곱하지 않은 alpha로 섞으므로 그림도 곱하지 않은 채로 읽어야 한다(기본은 RGB에 alpha를 곱해 둔다)
+      expect(decode).toHaveBeenCalledTimes(1)
+      expect(decode.mock.calls[0][1]).toEqual({ premultiplyAlpha: 'none' })
+      const meshes = imageMeshes()
+      expect(meshes).toHaveLength(1)
+      const material = meshes[0].material as THREE.MeshBasicMaterial
+      expect(material.premultipliedAlpha).toBe(false)
+      expect(material.map?.premultiplyAlpha).toBe(false)
+    })
   })
 
   it('패킷이 바뀌어도 재질은 이어 쓰고(셰이더를 다시 컴파일하지 않게) 내려갈 때 해제한다', async () => {
