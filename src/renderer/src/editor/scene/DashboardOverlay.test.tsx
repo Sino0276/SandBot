@@ -196,13 +196,139 @@ describe('Dashboard 오버레이(씬 뷰)', () => {
           object instanceof Mesh && (object.material as THREE.MeshBasicMaterial).map !== null
       )
 
-    beforeEach(async () => {
-      readAsset = vi.fn(async () => ({ ok: true, mime: 'image/png', bytes: PNG }))
-      decode = vi.fn(async () => ({ width: 1, height: 1, close: () => {} }))
-      vi.stubGlobal('window', { api: { readTeamCodeAsset: readAsset } })
-      vi.stubGlobal('createImageBitmap', decode)
+    // 그림 파일이 있는지(없으면 메인이 missing을 준다)
+    let fileExists: boolean
+    const focusListeners = new Set<() => void>()
+    const focusWindow = async (): Promise<void> => {
       await act(async () => {
+        for (const listener of focusListeners) listener()
+      })
+      await settle()
+    }
+    const showRun = async (runId: string, tNanos = 0): Promise<void> => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: { runId, tNanos, ops: IMAGE } })
+      })
+      await settle()
+    }
+    // 다음 INIT: playActions가 오버레이를 지운 뒤 새 실행의 패킷이 온다
+    const nextInit = async (runId: string): Promise<void> => {
+      await act(async () => {
+        usePlayStore.setState({ dashOverlay: null })
+      })
+      await showRun(runId)
+    }
+    const imageWarnings = (): string[] =>
+      usePlayStore
+        .getState()
+        .entries.flatMap((entry) =>
+          entry.type === 'notice' && entry.key.startsWith('dashImage')
+            ? [`${entry.level} ${entry.key} ${entry.params.path}`]
+            : []
+        )
+
+    beforeEach(async () => {
+      fileExists = true
+      focusListeners.clear()
+      readAsset = vi.fn(async (_root: string, path: string) =>
+        fileExists
+          ? { ok: true, mime: 'image/png', bytes: PNG }
+          : { ok: false, code: 'missing', detail: path }
+      )
+      decode = vi.fn(async () => ({ width: 1, height: 1, close: () => {} }))
+      vi.stubGlobal('window', {
+        api: { readTeamCodeAsset: readAsset },
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === 'focus') focusListeners.add(listener)
+        },
+        removeEventListener: (type: string, listener: () => void) => {
+          if (type === 'focus') focusListeners.delete(listener)
+        }
+      })
+      vi.stubGlobal('createImageBitmap', decode)
+      // 창 포커스 구독을 위해 stub한 window로 다시 붙인다
+      await act(async () => root.unmount())
+      root = createRoot(fakeCanvas())
+      await root.configure({
+        gl: fakeRenderer() as never,
+        frameloop: 'never',
+        size: { width: 800, height: 600, top: 0, left: 0 }
+      })
+      await act(async () => {
+        usePlayStore.setState({ entries: [], selectedEntryId: null })
         useProjectStore.setState({ root: '/team', session: 1 })
+        store = root.render(
+          <StrictMode>
+            <DashboardOverlay />
+          </StrictMode>
+        )
+      })
+    })
+
+    it('없던 그림을 넣고 다시 INIT하면 다시 읽어 그린다. 읽지 못한 이유는 실행마다 한 번 Console 경고로 알린다', async () => {
+      fileExists = false
+      await showRun('r1')
+      expect(imageMeshes()).toHaveLength(0)
+      // 같은 실행의 다음 패킷들은 다시 읽지도 다시 알리지도 않는다
+      await showRun('r1', 1)
+      await showRun('r1', 2)
+      expect(readAsset).toHaveBeenCalledTimes(1)
+      expect(imageWarnings()).toEqual(['warning dashImageMissing images/robot.png'])
+      fileExists = true
+      await nextInit('r2')
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(imageMeshes()).toHaveLength(1)
+      expect(imageWarnings()).toHaveLength(1)
+    })
+
+    it('다음 실행도 읽지 못하면 그 실행에서 다시 알린다', async () => {
+      fileExists = false
+      await showRun('r1')
+      await nextInit('r2')
+      expect(imageWarnings()).toEqual([
+        'warning dashImageMissing images/robot.png',
+        'warning dashImageMissing images/robot.png'
+      ])
+    })
+
+    it('실행 중에 그림을 고치고 창으로 돌아오면 읽지 못한 그림을 다시 읽는다(다시 알리지 않는다)', async () => {
+      fileExists = false
+      await showRun('r1')
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(imageMeshes()).toHaveLength(0)
+      fileExists = true
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(3)
+      expect(imageMeshes()).toHaveLength(1)
+      // 읽은 그림은 포커스로 다시 읽지 않는다
+      await focusWindow()
+      expect(readAsset).toHaveBeenCalledTimes(3)
+      expect(imageWarnings()).toEqual(['warning dashImageMissing images/robot.png'])
+    })
+
+    it('다시 INIT하면 읽은 그림도 다시 읽는다(팀이 고친 그림)', async () => {
+      await showRun('r1')
+      const before = imageMeshes()[0].material as THREE.MeshBasicMaterial
+      const oldTexture = before.map
+      const disposed = vi.fn()
+      oldTexture?.addEventListener('dispose', disposed)
+      await nextInit('r2')
+      expect(readAsset).toHaveBeenCalledTimes(2)
+      expect(disposed).toHaveBeenCalled()
+      expect((imageMeshes()[0].material as THREE.MeshBasicMaterial).map).not.toBe(oldTexture)
+    })
+
+    it('그림을 풀지 못하면 그 이유로 알린다', async () => {
+      decode.mockRejectedValue(new Error('The source image could not be decoded.'))
+      await showRun('r1')
+      const entries = usePlayStore.getState().entries
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({
+        type: 'notice',
+        key: 'dashImageFailed',
+        level: 'warning',
+        params: { path: 'images/robot.png', detail: 'The source image could not be decoded.' }
       })
     })
 

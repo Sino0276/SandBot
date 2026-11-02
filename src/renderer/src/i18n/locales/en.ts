@@ -800,6 +800,16 @@ const en: Messages = {
       registeredFailed: 'Could not read the registrar OpMode list: {{reason}} ({{detail}})',
       registeredCompileFailed:
         'The registrar (@OpModeRegistrar) files did not compile, so the registrar OpModes could not be read ({{count}} errors). Double-click a diagnostic to open its line.',
+      // A Scene view Dashboard overlay image (drawImage '/images/…') could not be read (once per image per run). It is
+      // read again when the user comes back to the SandBot window or INITs again.
+      dashImageMissing:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} does not exist, so it is not drawn. Add the file and come back to the SandBot window, or INIT again, to read it again.',
+      dashImageNotAllowed:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} is not read because it is not a regular file or points outside assets ({{detail}}).',
+      dashImageTooLarge:
+        'The Dashboard image TeamCode/src/main/assets/{{path}} is over the size limit ({{max}} MB), so it is not drawn ({{detail}}).',
+      dashImageFailed:
+        'Could not read the Dashboard image TeamCode/src/main/assets/{{path}}, so it is not drawn ({{detail}}). Fix it and come back to the SandBot window, or INIT again, to read it again.',
       // Simulator notices (simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:

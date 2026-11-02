@@ -808,6 +808,16 @@ const ko = {
       registeredFailed: '등록기 OpMode 목록을 읽지 못했습니다: {{reason}} ({{detail}})',
       registeredCompileFailed:
         '등록기(@OpModeRegistrar) 파일을 컴파일하지 못해 등록기 OpMode를 읽지 못했습니다(오류 {{count}}개). 진단을 더블클릭하면 그 줄을 엽니다.',
+      // 씬 뷰 Dashboard 오버레이 그림(drawImage '/images/…')을 읽지 못했다(실행마다 그림 하나에 한 번). 고치고 SandBot
+      // 창으로 돌아오거나 다시 INIT하면 다시 읽는다.
+      dashImageMissing:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 없어 그리지 않습니다. 파일을 넣고 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
+      dashImageNotAllowed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}은(는) 보통 파일이 아니거나 assets 밖을 가리켜 읽지 않습니다 ({{detail}}).',
+      dashImageTooLarge:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}이(가) 크기 한도({{max}} MB)를 넘어 그리지 않습니다 ({{detail}}).',
+      dashImageFailed:
+        'Dashboard 그림 TeamCode/src/main/assets/{{path}}을(를) 읽지 못해 그리지 않습니다 ({{detail}}). 고친 뒤 SandBot 창으로 돌아오거나 다시 INIT하면 다시 읽습니다.',
       // 시뮬레이터 안내(simNotice, SimNoticeCode)
       sim: {
         sharedEncoderMode:
