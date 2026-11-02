@@ -10,7 +10,7 @@ import {
   disposeGeometry,
   getGeometry,
   meshMassProps,
-  meshSourceName,
+  meshSourcePath,
   registerGeometry
 } from './geometryRegistry'
 
@@ -40,25 +40,28 @@ afterEach(() => disposeAllGeometry())
 describe('메시 정보(질량 성질·원래 이름)', () => {
   it('형상과 같은 id로 등록하고 함께 해제한다', () => {
     const props = mass(2e-6, 0)
-    registerGeometry('cad:0', new BufferGeometry(), { mass: props, sourceName: '1120-0015-0384' })
+    const path = [
+      { key: 'cad/', name: 'Kit' },
+      { key: 'cad/0', name: '1120-0015-0384' }
+    ]
+    registerGeometry('cad:0', new BufferGeometry(), { mass: props, sourcePath: path })
     expect(meshMassProps('cad:0')).toBe(props)
-    expect(meshSourceName('cad:0')).toBe('1120-0015-0384')
+    expect(meshSourcePath('cad:0')).toBe(path)
 
     // 정보 없이 다시 등록하면 이전 정보가 남지 않는다
     registerGeometry('cad:0', new BufferGeometry())
     expect(meshMassProps('cad:0')).toBeUndefined()
-    expect(meshSourceName('cad:0')).toBeUndefined()
+    expect(meshSourcePath('cad:0')).toBeUndefined()
 
-    registerGeometry('cad:1', new BufferGeometry(), { mass: props, sourceName: '' })
-    expect(meshSourceName('cad:1')).toBe('')
+    registerGeometry('cad:1', new BufferGeometry(), { mass: props, sourcePath: path })
     disposeGeometry('cad:1')
     expect(getGeometry('cad:1')).toBeUndefined()
     expect(meshMassProps('cad:1')).toBeUndefined()
-    expect(meshSourceName('cad:1')).toBeUndefined()
+    expect(meshSourcePath('cad:1')).toBeUndefined()
   })
 
   it('프로젝트를 새로 열면(disposeAllGeometry) 모두 지운다', () => {
-    registerGeometry('cad:0', new BufferGeometry(), { mass: mass(1e-6, 0), sourceName: 'a' })
+    registerGeometry('cad:0', new BufferGeometry(), { mass: mass(1e-6, 0) })
     disposeAllGeometry()
     expect(meshMassProps('cad:0')).toBeUndefined()
     expect(cadMassSummary('cad', partsUsing(['cad:0']))).toMatchObject({ meshes: 0 })

@@ -16,7 +16,7 @@ import {
   isImportedModel,
   MESH_CACHE_TAG,
   meshGeometryIds,
-  meshSourceNames,
+  meshSourcePaths,
   type ImportedModel,
   type ImportedNode
 } from './stepImport'
@@ -157,7 +157,7 @@ describe('메시 캐시 형식', () => {
   })
 })
 
-describe('형상 id와 원래 CAD 이름', () => {
+describe('형상 id와 원래 이름 경로', () => {
   it('cadRootIdOf는 cadGeometryId의 거꾸로다', () => {
     const root = '0b6c1d2e-3f40-4a5b-8c7d-9e0f1a2b3c4d'
     expect(cadRootIdOf(cadGeometryId(root, 12))).toBe(root)
@@ -168,12 +168,54 @@ describe('형상 id와 원래 CAD 이름', () => {
     expect(cadRootIdOf('cad:x')).toBeNull()
   })
 
-  it('불러올 때 파트가 받은 이름이고, 이름 없는 메시에 붙인 "노드 + 순번"은 빈 글자다', () => {
+  // 메시마다 원래 이름 경로의 이름들(붙인 이름은 '*'를 붙여 보인다)
+  const pathNames = (model: ImportedModel): string[][] =>
+    meshSourcePaths('c', model).map((path) =>
+      path.map((node) => (node.generated ? `*${node.name}` : node.name))
+    )
+
+  it('원래 이름 경로는 CAD 루트부터 파트까지 불러올 때의 이름이고, 붙인 "노드 + 순번"을 표시한다', () => {
     const model = convertOcctResult(synthetic, 'robot.step')!
-    const names = meshSourceNames(model)
-    const bySource = Object.fromEntries(model.meshes.map((m, i) => [m.sourceIndex, names[i]]))
-    // 메시 하나뿐인 잎 노드는 노드(컴포넌트) 이름, 이름 있는 메시는 그 이름, 'WHEEL_ASM 1'은 CAD 이름이 아니다
-    expect(bySource).toEqual({ 0: 'PLATE', 1: '', 2: 'Hub' })
+    const paths = meshSourcePaths('c', model)
+    const bySource = Object.fromEntries(
+      model.meshes.map((m, i) => [m.sourceIndex, pathNames(model)[i]])
+    )
+    // 메시 하나뿐인 잎 노드는 노드(컴포넌트) 이름, 이름 있는 메시는 그 이름, 'WHEEL_ASM 1'은 붙인 이름이다
+    expect(bySource).toEqual({
+      0: ['ROBOT_ASM', 'PLATE'],
+      1: ['ROBOT_ASM', 'WHEEL_ASM', '*WHEEL_ASM 1'],
+      2: ['ROBOT_ASM', 'WHEEL_ASM', 'Hub']
+    })
+    // 같은 노드는 메시끼리 같은 키(CAD 루트 id + 순번 경로)이고 CAD가 다르면 키도 다르다
+    const keys = paths.map((path) => path.map((node) => node.key))
+    expect(keys).toEqual([
+      ['c/', 'c/0'],
+      ['c/', 'c/1', 'c/1.0'],
+      ['c/', 'c/1', 'c/1.1']
+    ])
+    expect(meshSourcePaths('d', model)[0][0].key).toBe('d/')
+    // 변환은 결정적이라 같은 파일을 다시 읽으면 같은 경로다(프로젝트를 다시 열 때)
+    expect(meshSourcePaths('c', convertOcctResult(synthetic, 'robot.step')!)).toEqual(paths)
+  })
+
+  it('원래 이름 경로는 buildSceneObjects의 오브젝트 계층·이름과 같다', () => {
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    const { objects } = buildSceneObjects(model, {
+      fileName: 'robot.step',
+      absolutePath: '/cad/robot.step',
+      alignment: ALIGNMENT_PRESETS.zUp,
+      createId: counterIds()
+    })
+    const meshes = Object.values(objects).filter((o) => o.visual?.type === 'mesh')
+    const objectPaths = meshes.map((o) => {
+      const names: string[] = []
+      for (let at = objects[o.id]; at.kind !== 'robot'; at = objects[at.parentId!])
+        names.unshift(at.name)
+      return names
+    })
+    expect(objectPaths).toEqual(
+      meshSourcePaths('c', model).map((path) => path.map((node) => node.name))
+    )
   })
 
   it('하나만 남아 노드 자체가 파트가 되면 노드 이름이다', () => {
@@ -186,7 +228,10 @@ describe('형상 id와 원래 CAD 이름', () => {
       ]
     }
     const model = convertOcctResult(partial, 'robot.step')!
-    expect(meshSourceNames(model)).toEqual(['PLATE', 'WHEEL_ASM'])
+    expect(pathNames(model)).toEqual([
+      ['ROBOT_ASM', 'PLATE'],
+      ['ROBOT_ASM', 'WHEEL_ASM']
+    ])
   })
 
   it('"부모 이름 + 숫자"인 진짜 CAD 이름은 남긴다(붙인 이름인지는 변환할 때 기록한다)', () => {
@@ -215,7 +260,11 @@ describe('형상 id와 원래 CAD 이름', () => {
       ]
     }
     const model = convertOcctResult(named, 'bracket.step')!
-    expect(meshSourceNames(model)).toEqual(['Bracket 2', '', ''])
+    expect(pathNames(model)).toEqual([
+      ['Bracket', 'Bracket 2'],
+      ['Bracket', '', '* 1'],
+      ['Bracket', '', '* 2']
+    ])
     // 오브젝트 이름은 전과 같다
     const names = (node: ImportedNode): string[] => [node.name, ...node.children.flatMap(names)]
     expect(names(model.root)).toEqual(['Bracket', 'Bracket 2', '', ' 1', ' 2'])

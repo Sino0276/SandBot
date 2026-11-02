@@ -1,5 +1,5 @@
 import type { OcctMesh, OcctNode, OcctResult } from 'occt-import-js'
-import type { MeshMassProps } from '../mass/types'
+import type { MeshMassProps, SourceNode } from '../mass/types'
 import { boundsCenter, cadRootTransform, type CadAlignment } from './alignment'
 import { computeMeshMass, isMeshMassProps } from './meshMass'
 import type { MeshIndexing, SceneObject, SceneObjects, Transform, Vec3 } from '../scene/model'
@@ -30,7 +30,7 @@ export type ImportedNode = {
   kind: 'assembly' | 'part'
   // part일 때 meshes의 인덱스
   meshIndex?: number
-  // 이름 없는 메시에 불러올 때 붙인 "노드 이름 + 순번" 이름이면 true(CAD 이름이 아니다, meshSourceNames)
+  // 이름 없는 메시에 불러올 때 붙인 "노드 이름 + 순번" 이름이면 true(CAD 이름이 아니다, meshSourcePaths)
   generatedName?: true
   bounds: Bounds
   children: ImportedNode[]
@@ -235,18 +235,27 @@ export function meshGeometryIds(
   )
 }
 
-// 메시마다 원래 CAD 이름(이름 규칙용, geometryRegistry의 meshSourceName). 사용자가 오브젝트 이름을 바꿔도 남는다.
-// 불러올 때 파트 오브젝트가 받은 이름이라 ImportedMesh.name과 다를 수 있다: 메시 하나뿐인 잎 노드는 노드(컴포넌트)
-// 이름이고(메시 이름은 빈 글자나 'SOLID'일 때가 많다), 이름 없는 메시에 붙인 "노드 이름 + 순번"(generatedName)은
-// CAD 이름이 아니므로 빈 글자다(부모 이름을 바꿨을 때 자식마다 부모 품번으로 맞지 않게).
-export function meshSourceNames(model: ImportedModel): string[] {
-  const names = model.meshes.map((mesh) => mesh.name)
-  const visit = (node: ImportedNode): void => {
-    if (node.meshIndex !== undefined) names[node.meshIndex] = node.generatedName ? '' : node.name
-    node.children.forEach(visit)
+// 메시마다 원래 이름 경로(질량 모델의 이름 규칙·SKU용, geometryRegistry의 meshSourcePath): CAD 루트 노드부터 그 메시의
+// 파트 노드까지 불러온 계층(ImportedNode) 그대로다. 노드 하나가 buildSceneObjects의 오브젝트 하나이고 이름은 불러올 때
+// 오브젝트가 받은 이름이다(메시 하나뿐인 잎 노드는 노드 이름, 이름 없는 메시에 붙인 "노드 이름 + 순번"은 generated).
+// 사용자가 오브젝트 이름을 바꾸거나 옮겨도 남는다. 키는 CAD 루트 id + 노드 순번 경로라 같은 노드의 메시끼리 같고, 같은
+// 파일을 다시 읽으면(변환은 결정적이다) 같은 경로다. 같은 노드의 칸은 메시끼리 같은 객체를 쓴다.
+export function meshSourcePaths(cadRootId: string, model: ImportedModel): SourceNode[][] {
+  const paths: SourceNode[][] = model.meshes.map(() => [])
+  const visit = (node: ImportedNode, key: string, parents: SourceNode[]): void => {
+    const entry: SourceNode = {
+      key: `${cadRootId}/${key}`,
+      name: node.name,
+      ...(node.generatedName ? { generated: true as const } : {})
+    }
+    const path = [...parents, entry]
+    if (node.meshIndex !== undefined) paths[node.meshIndex] = path
+    node.children.forEach((child, index) =>
+      visit(child, key === '' ? String(index) : `${key}.${index}`, path)
+    )
   }
-  visit(model.root)
-  return names
+  visit(model.root, '', [])
+  return paths
 }
 
 export function transferablesOf(model: ImportedModel): ArrayBuffer[] {

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { computeMassModel } from '../../mass/massModel'
 import type { CadMassSummary, MassLookup, MassModel } from '../../mass/types'
-import { cadMassSummary, meshMassProps, meshSourceName } from '../../scene/geometryRegistry'
+import { cadMassSummary, meshMassProps, meshSourcePath } from '../../scene/geometryRegistry'
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { isChangeOpen } from '../history'
@@ -16,7 +16,7 @@ import { isChangeOpen } from '../history'
 
 export const REGISTRY_MASS_LOOKUP: MassLookup = {
   props: meshMassProps,
-  sourceName: meshSourceName
+  sourcePath: meshSourcePath
 }
 
 // 형상의 메시 질량 성질이 등록됐는지(카드의 읽는 중 표시가 질량 모델과 같은 형상을 본다)

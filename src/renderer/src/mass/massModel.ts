@@ -2,6 +2,7 @@ import { Matrix4, Vector3 } from 'three'
 import { symmetricEigen3 } from '../../../shared/sim/drivetrain'
 import { ROBOT_SIZE } from '../scene/coordinates'
 import {
+  ancestorIds,
   childrenInDocument,
   findRobotId,
   isInSubtree,
@@ -34,6 +35,7 @@ import {
   type ObjectMass,
   type PodIgnoredReason,
   type RobotMass,
+  type SourceNode,
   type SymMatrix3
 } from './types'
 
@@ -43,13 +45,18 @@ import {
 // 1. 덮어쓰기(mass.mass): 그 오브젝트 하위 전체가 한 덩어리다. 하위 형상의 부피 비율로 나누고, 형상이 없으면
 //    점질량(원점)이다. 덮어쓰기 안의 덮어쓰기는 안쪽 값을 고정하고 남은 질량을 나머지에 나눈다. 안쪽 합이 바깥 값보다
 //    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) notices의 innerMassExceeds로 알린다.
-// 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드, 없으면 원래 CAD 이름의 SKU. 덮는 범위와
-//    나누는 방법은 1과 같고, 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
+// 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드는 붙은 오브젝트(지금 계층) 하위 전체를 덮고,
+//    나누는 방법은 1과 같다. 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
 //    Pinpoint 포드는 하위 전체를 포드 질량으로 바꾸므로, 포드일 수 없는 오브젝트(Pinpoint 자신과 상위, 다른 COTS를
 //    품은 것, 너무 큰 형상)는 포드로 보지 않고 notices의 podIgnored로 알린다(podRejection).
-// 3. 재질 × 부피: 위로 가장 가까운 mass.material, 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질. 이름 규칙은
-//    원래 CAD 메시 이름과 상위 CAD 오브젝트 이름(CAD 루트까지)만 본다. 그룹 이름은 팀이 지은 메커니즘 이름(생성 Java
-//    클래스)이라 재질을 말하지 않으므로 건너뛴다(IntakeRoller 그룹에 옮긴 파트가 roller → 고무가 되지 않게).
+//    SKU 제품: 그 밖의 메시는 원래 이름 경로(MassLookup.sourcePath, 불러올 때의 CAD 노드)에서 가장 바깥의 SKU 노드가
+//    제품이다. 제품의 데이터시트 질량은 그 노드를 경로에 가진 메시에 부피 비율로 나눈다(지금 계층의 어디로 옮겼든,
+//    노드 이름을 바꿨든). 제품의 메시 일부가 1·2의 덩어리 안에 있으면, 같은 부품의 컴포넌트 COTS(sameCotsItem) 덩어리면
+//    나머지 메시도 그 덩어리에 넣고, 아니면 덩어리 안 몫(부피 비율)을 제품 질량에서 뺀다(두 번 세지 않게).
+// 3. 재질 × 부피: 위로 가장 가까운 mass.material(지금 계층), 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질.
+//    이름 규칙은 메시의 원래 이름 경로만 본다(파트 노드부터 CAD 루트 쪽으로 가장 가까운 규칙). 지금 오브젝트 이름과
+//    그룹(팀이 지은 메커니즘 이름, 생성 Java 클래스)은 보지 않는다(이름을 바꾸거나 IntakeRoller 그룹으로 옮긴 파트의
+//    재질이 바뀌지 않게). 붙인 "노드 + 순번" 이름은 CAD 이름이 아니라 건너뛴다.
 // 무게중심 덮어쓰기(mass.centerOfMass)는 질량을 정한 오브젝트(1·2)에서만 쓰고, 덩어리 전체의 무게중심을 그 점에 둔다
 // (관성의 모양은 형상 그대로 옮긴다). 안쪽 덮어쓰기는 옮기지 않으므로, 안쪽이 질량을 다 쓰면 옮길 몫이 없어 쓰지 못한다.
 // 이것과, 덩어리를 정하지 않은 오브젝트(덮어쓰기·COTS가 없거나 COTS가 다른 덩어리 안)의 무게중심 덮어쓰기는 notices의
@@ -79,6 +86,10 @@ type Block = {
   // 이 덩어리 전체의 질량(kg)
   mass: number
   detail: string
+  // COTS 표 키(덮어쓰기는 빈 목록)
+  keys: string[]
+  // 이 덩어리를 품은 덩어리(지금 계층), 없으면 null
+  parent: Block | null
   // 덩어리 전체 무게중심 덮어쓰기(로봇 좌표), 없으면 null
   centerOfMass: Vec3 | null
   // 정한 오브젝트의 원점(로봇 좌표, 형상이 없을 때의 점질량 자리)
@@ -111,6 +122,8 @@ type Part = {
   // 추정 파트(저울 맞추기 대상)인지
   estimated: boolean
   scaled: boolean
+  // 이 파트를 품은 가장 안쪽 덩어리(지금 계층), 없으면 null
+  block: Block | null
 }
 
 // 추정 파트의 재질(null이면 질량 0인 이름 규칙)과 출처
@@ -122,8 +135,6 @@ type Context = {
   material: { key: MaterialKey; ownerId: string } | null
   infill: number | undefined
   block: Block | null
-  // 이름 규칙에 쓸 상위 이름(가까운 것부터, CAD 루트까지)
-  names: { id: string; names: string[] }[]
 }
 
 const ZERO_INERTIA: SymMatrix3 = [0, 0, 0, 0, 0, 0]
@@ -178,11 +189,82 @@ function usableVolume(props: MeshMassProps): number {
   return props.closure <= MASS_CLOSURE_LIMIT && props.volume >= MIN_SOLID_VOLUME ? props.volume : 0
 }
 
-// 이 오브젝트의 이름 묶음(원래 CAD 메시 이름이 있으면 그것을 먼저, 지금 이름)
-function ownNames(object: SceneObject, lookup: MassLookup): string[] {
-  const source =
-    object.visual?.type === 'mesh' ? lookup.sourceName(object.visual.geometryId) : undefined
-  return source && source !== object.name ? [source, object.name] : [object.name]
+// 원래 이름 경로의 SKU 제품: 메시마다 경로에서 가장 바깥의 SKU 노드(라벨 이름·붙인 이름 제외)가 그 메시의 제품이다.
+type Product = {
+  nodeKey: string
+  // COTS 표 키
+  cotsKey: string
+  // 이 제품의 메시 오브젝트(문서 순서)
+  meshIds: string[]
+}
+
+// 메시마다 원래 이름 경로와 제품, 노드마다 그 노드를 경로에 가진 메시(문서 순서)
+type SourceIndex = {
+  paths: Map<string, readonly SourceNode[]>
+  productOf: Map<string, Product>
+  products: Product[]
+  nodeMeshes: Map<string, string[]>
+}
+
+function sourceIndex(objects: SceneObjects, lookup: MassLookup, caches: NameCaches): SourceIndex {
+  const index: SourceIndex = {
+    paths: new Map(),
+    productOf: new Map(),
+    products: [],
+    nodeMeshes: new Map()
+  }
+  const byNode = new Map<string, Product>()
+  for (const object of Object.values(objects)) {
+    if (object.visual?.type !== 'mesh' || object.kind === 'robot' || object.kind === 'group')
+      continue
+    const path = lookup.sourcePath(object.visual.geometryId)
+    if (!path) continue
+    index.paths.set(object.id, path)
+    let product: Product | null = null
+    for (const node of path) {
+      const meshes = index.nodeMeshes.get(node.key)
+      if (meshes) meshes.push(object.id)
+      else index.nodeMeshes.set(node.key, [object.id])
+      if (product || node.generated) continue
+      // 라벨 이름의 SKU는 쓰지 않는다(모터 STEP 안의 "5203-2402-0019 Label" 같은 장식 솔리드가 모터 질량을 받지 않게)
+      if (caches.rule(node.name)?.material === null) continue
+      const cotsKey = caches.sku(node.name)
+      if (!cotsKey) continue
+      product = byNode.get(node.key) ?? null
+      if (!product) {
+        product = { nodeKey: node.key, cotsKey, meshIds: [] }
+        byNode.set(node.key, product)
+        index.products.push(product)
+      }
+    }
+    if (product) {
+      product.meshIds.push(object.id)
+      index.productOf.set(object.id, product)
+    }
+  }
+  return index
+}
+
+// 메시들을 모두 품은 가장 아래 오브젝트(지금 계층). 서로 다른 최상위 아래에 있으면 null.
+function lowestCommonAncestor(objects: SceneObjects, ids: readonly string[]): string | null {
+  if (ids.length === 0) return null
+  let chain = [ids[0], ...ancestorIds(objects, ids[0])]
+  for (const id of ids.slice(1)) {
+    const line = new Set([id, ...ancestorIds(objects, id)])
+    const at = chain.findIndex((candidate) => line.has(candidate))
+    if (at < 0) return null
+    chain = chain.slice(at)
+  }
+  return chain[0]
+}
+
+// 같은 부품으로 볼 COTS 키: 키가 같거나, 둘 다 모터이거나 둘 다 서보(컴포넌트의 모델·감속비와 CAD SKU가 조금 달라도 그
+// 부품 하나다)
+function sameCotsItem(a: string, b: string): boolean {
+  if (a === b) return true
+  const kind = (key: string): string => key.slice(0, key.indexOf(':') + 1)
+  const prefix = kind(a)
+  return (prefix === 'motor:' || prefix === 'servo:') && prefix === kind(b)
 }
 
 type PodRequest = { pinpointId: string; target: string; key: string }
@@ -192,7 +274,7 @@ type PodRequest = { pinpointId: string; target: string; key: string }
 function pinpointPods(
   objects: SceneObjects,
   lookup: MassLookup,
-  caches: NameCaches
+  source: SourceIndex
 ): { pods: Map<string, string>; notices: { robotId: string; notice: MassNotice }[] } {
   const requests: PodRequest[] = []
   for (const object of Object.values(objects)) {
@@ -215,7 +297,7 @@ function pinpointPods(
   const reported = new Set<string>()
   for (const request of requests) {
     if (pods.has(request.target)) continue
-    const reason = podRejection(objects, lookup, caches, request, targets)
+    const reason = podRejection(objects, lookup, source, request, targets)
     if (reason === null) {
       pods.set(request.target, request.key)
       continue
@@ -245,7 +327,7 @@ function pinpointPods(
 function podRejection(
   objects: SceneObjects,
   lookup: MassLookup,
-  caches: NameCaches,
+  source: SourceIndex,
   request: PodRequest,
   targets: ReadonlySet<string>
 ): PodIgnoredReason | null {
@@ -253,70 +335,31 @@ function podRejection(
   if (robotId === null || findRobotId(objects, request.target) !== robotId) return 'otherRobot'
   if (isInSubtree(objects, request.pinpointId, request.target)) return 'containsPinpoint'
   let volume = 0
-  // 하위의 같은 포드 SKU 오브젝트(그룹 아래 불러온 포드 STEP의 "3110-0001-0002 …" 어셈블리)
-  const samePod = new Set<string>()
+  // 하위 메시의 SKU 제품(원래 이름 경로). 같은 포드 SKU 제품은 하나까지만 그 포드 자신이다. 둘 이상이면 포드 여럿을 품은
+  // 상위 어셈블리("Odometry")라 포드 하나의 질량으로 덮으면 나머지 포드가 빠진다.
+  const podProducts = new Set<string>()
   for (const id of subtreeIds(objects, request.target)) {
     const object = objects[id]
-    // 하위의 이름 SKU(배터리 등)도 COTS다. 대상 자신의 이름 SKU는 포드 키가 먼저라 쓰이지 않는다(cotsKeys).
-    const sku = id === request.target ? null : skuKeyOf(object, lookup, caches)
+    const product = source.productOf.get(id)
     const hasCots =
       (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
       (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
       (id !== request.target && targets.has(id)) ||
-      (sku !== null && sku !== request.key)
+      (product !== undefined && product.cotsKey !== request.key)
     if (hasCots) return 'containsCots'
-    if (sku !== null) samePod.add(id)
+    if (product) podProducts.add(product.nodeKey)
     if (object.visual?.type === 'mesh') {
       const props = lookup.props(object.visual.geometryId)
       if (props) volume += usableVolume(props)
     }
   }
-  // 같은 포드 SKU는 하나(서로 품은 것은 하나로 센다)까지만 그 포드 자신이다. 둘 이상이면 포드 여럿을 품은 상위
-  // 어셈블리("Odometry")라 포드 하나의 질량으로 덮으면 나머지 포드가 빠진다.
-  let podCount = 0
-  for (const id of samePod) {
-    let parentId = objects[id].parentId
-    let nested = false
-    while (parentId !== null && parentId !== request.target && objects[parentId]) {
-      if (samePod.has(parentId)) {
-        nested = true
-        break
-      }
-      parentId = objects[parentId].parentId
-    }
-    if (!nested && ++podCount > 1) return 'containsCots'
-  }
+  if (podProducts.size > 1) return 'containsCots'
   const podMass = cotsEntry(request.key)?.mass ?? 0
   return volume * MATERIALS.aluminum6061.density > POD_GEOMETRY_FACTOR * podMass ? 'tooLarge' : null
 }
 
-// 포드 대상 하위의 이름 SKU 키(라벨 이름은 빼고, 그룹·로봇은 CAD 이름이 아니라 없음). 메시 파트는 원래 CAD 이름만 본다:
-// 불러올 때 붙인 "노드 + 순번" 이름(원래 이름 '')과 아직 읽지 않은 형상의 이름은 위 노드의 SKU를 되풀이하므로
-// ("3110-0001-0002 Pod 1") 포드 어셈블리 자신의 솔리드를 다른 COTS로 보지 않게 한다.
-function skuKeyOf(object: SceneObject, lookup: MassLookup, caches: NameCaches): string | null {
-  if (object.kind === 'robot' || object.kind === 'group') return null
-  if (object.visual?.type !== 'mesh') return skuFromNames([object.name], caches)
-  const source = lookup.sourceName(object.visual.geometryId)
-  return source ? skuFromNames([source], caches) : null
-}
-
-function skuFromNames(names: string[], caches: NameCaches): string | null {
-  for (const name of names) {
-    if (caches.rule([name])?.material === null) continue
-    const key = caches.sku(name)
-    if (key) return key
-  }
-  return null
-}
-
-// 오브젝트에 맞는 COTS 표 키들(컴포넌트·포드·바퀴는 모두 더하고, 없을 때만 이름의 SKU). 라벨 이름의 SKU는 쓰지 않는다
-// (모터 STEP 안의 "5203-2402-0019 Label" 같은 장식 솔리드가 모터 질량을 받지 않게).
-function cotsKeys(
-  object: SceneObject,
-  names: string[],
-  pods: Map<string, string>,
-  caches: NameCaches
-): string[] {
+// 오브젝트에 붙은 COTS 표 키들(컴포넌트·포드·바퀴, 모두 더한다). 이름의 SKU는 원래 이름 경로의 제품(sourceIndex)이다.
+function cotsKeys(object: SceneObject, pods: Map<string, string>): string[] {
   const keys: string[] = []
   for (const component of object.components ?? []) {
     const key = componentCotsKey(component)
@@ -326,15 +369,13 @@ function cotsKeys(
   if (pod) keys.push(pod)
   const wheel = object.wheel ? wheelCotsKey(object.wheel) : null
   if (wheel) keys.push(wheel)
-  if (keys.length > 0) return keys
-  const sku = skuFromNames(names, caches)
-  return sku ? [sku] : []
+  return keys
 }
 
 // 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)
 // 한 번 계산 안에서 이름마다 한 번만 한다
 type NameCaches = {
-  rule: (names: readonly string[]) => NameRule | null
+  rule: (name: string) => NameRule | null
   sku: (name: string) => string | null
 }
 
@@ -342,12 +383,11 @@ function nameCaches(): NameCaches {
   const rules = new Map<string, NameRule | null>()
   const skus = new Map<string, string | null>()
   return {
-    rule: (names) => {
-      const key = names.join('\u0000')
-      let result = rules.get(key)
+    rule: (name) => {
+      let result = rules.get(name)
       if (result === undefined) {
-        result = matchNameRule(names)
-        rules.set(key, result)
+        result = matchNameRule([name])
+        rules.set(name, result)
       }
       return result
     },
@@ -424,7 +464,8 @@ function principalMoments(inertia: SymMatrix3): Vec3 {
 
 export function computeMassModel(objects: SceneObjects, lookup: MassLookup): MassModel {
   const caches = nameCaches()
-  const { pods, notices: podNotices } = pinpointPods(objects, lookup, caches)
+  const source = sourceIndex(objects, lookup, caches)
+  const { pods, notices: podNotices } = pinpointPods(objects, lookup, source)
   const parts: Part[] = []
   const partsByObject = new Map<string, Part[]>()
   const blocks: Block[] = []
@@ -437,6 +478,18 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   const shapes = new Map<string, number>()
   // 오브젝트마다 질량에 들어가지 않은 읽는 중 메시(덩어리 밖, ObjectMass.pendingMeshes)
   const uncounted = new Map<string, number>()
+  // 덩어리 밖의 SKU 제품 파트(지금 계층을 다 본 뒤 제품 덩어리로 묶는다)
+  const productParts = new Map<Product, Part[]>()
+  // 원래 노드 → 지금 계층에서 그 노드의 메시를 모두 품은 오브젝트(출처 표시의 상속 오브젝트, 제품 덩어리의 주인)
+  const nodeOwners = new Map<string, string | null>()
+  const nodeOwner = (key: string): string | null => {
+    let owner = nodeOwners.get(key)
+    if (owner === undefined) {
+      owner = lowestCommonAncestor(objects, source.nodeMeshes.get(key) ?? [])
+      nodeOwners.set(key, owner)
+    }
+    return owner
+  }
 
   const addPart = (part: Part): void => {
     parts.push(part)
@@ -447,18 +500,21 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
 
   const newBlock = (
     ownerId: string,
-    context: Context,
+    robotId: string | null,
     kind: Block['kind'],
     mass: number,
-    detail: string,
+    keys: string[],
     centerOfMass: Vec3 | null,
-    origin: Vec3
+    origin: Vec3,
+    parent: Block | null
   ): Block => ({
     ownerId,
-    robotId: context.robot?.id ?? null,
+    robotId,
     kind,
     mass,
-    detail,
+    detail: keys.join('+'),
+    keys,
+    parent,
     centerOfMass,
     origin,
     members: [],
@@ -469,8 +525,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     centerOfMassIgnored: false
   })
 
-  // 추정 파트의 재질·출처
-  const estimate = (object: SceneObject, context: Context, names: string[]): Estimate => {
+  // 추정 파트의 재질·출처. 이름 규칙은 원래 이름 경로에서 파트 노드부터 위로 가장 가까운 규칙이다.
+  const estimate = (object: SceneObject, context: Context): Estimate => {
     if (context.material) {
       const { key, ownerId } = context.material
       return {
@@ -480,16 +536,19 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         inheritedFrom: ownerId === object.id ? null : ownerId
       }
     }
-    const levels = [{ id: object.id, names }, ...context.names]
-    for (const level of levels) {
-      const matched = caches.rule(level.names)
-      if (matched)
-        return {
-          material: matched.material,
-          source: 'nameRule',
-          detail: matched.name,
-          inheritedFrom: level.id === object.id ? null : level.id
-        }
+    const path = source.paths.get(object.id) ?? []
+    for (let i = path.length - 1; i >= 0; i--) {
+      const node = path[i]
+      if (node.generated) continue
+      const matched = caches.rule(node.name)
+      if (!matched) continue
+      const owner = i === path.length - 1 ? null : nodeOwner(node.key)
+      return {
+        material: matched.material,
+        source: 'nameRule',
+        detail: matched.name,
+        inheritedFrom: owner === object.id ? null : owner
+      }
     }
     const key = context.robot?.rigidbody?.defaultMaterial ?? DEFAULT_MATERIAL
     return {
@@ -506,10 +565,6 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     // 로봇은 자기 좌표가 기준이라 단위 행렬, 로봇 밖 최상위는 필드 좌표
     const matrix = isRobot ? new Matrix4() : parent ? parent.matrix.clone().multiply(local) : local
     matrices.set(object.id, matrix)
-    // 이름 규칙·SKU에 쓰는 이름은 CAD 오브젝트(어셈블리·파트·CAD 루트)의 것뿐이다. 로봇 이름은 파일 이름이고, 그룹
-    // 이름은 팀이 지은 메커니즘 이름이다.
-    const cadNamed = !isRobot && object.kind !== 'group'
-    const names = cadNamed ? ownNames(object, lookup) : []
     const settings = object.mass
 
     const context: Context = {
@@ -519,23 +574,31 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         ? { key: settings.material, ownerId: object.id }
         : (parent?.material ?? null),
       infill: settings?.infill ?? parent?.infill,
-      block: parent?.block ?? null,
-      // CAD 루트 위의 이름은 보지 않는다(CAD 루트에서 다시 시작한다). 그룹은 건너뛰어 위 CAD 이름을 그대로 넘긴다.
-      names: isRobot || object.cad ? [] : (parent?.names ?? [])
+      block: parent?.block ?? null
     }
 
     // 질량을 정하는 덩어리
     if (!isRobot) {
       const origin = applyPoint(matrix, [0, 0, 0])
       const centerOfMass = settings?.centerOfMass ? applyPoint(matrix, settings.centerOfMass) : null
+      const robotId = context.robot?.id ?? null
       let block: Block | null = null
       if (settings?.mass !== undefined) {
-        block = newBlock(object.id, context, 'override', settings.mass, '', centerOfMass, origin)
+        block = newBlock(
+          object.id,
+          robotId,
+          'override',
+          settings.mass,
+          [],
+          centerOfMass,
+          origin,
+          context.block
+        )
       } else if (context.block === null) {
-        const keys = cotsKeys(object, names, pods, caches)
+        const keys = cotsKeys(object, pods)
         if (keys.length > 0) {
           const mass = keys.reduce((sum, key) => sum + (cotsEntry(key)?.mass ?? 0), 0)
-          block = newBlock(object.id, context, 'cots', mass, keys.join('+'), centerOfMass, origin)
+          block = newBlock(object.id, robotId, 'cots', mass, keys, centerOfMass, origin, null)
         }
       }
       if (block) {
@@ -544,7 +607,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         noticeOrder.push({ block })
         context.block = block
       } else if (settings?.centerOfMass) {
-        // 질량을 정하지 않았거나(덮어쓰기·COTS 없음) COTS가 다른 덩어리 안이라 쓰이지 않아, 무게중심을 옮길 덩어리가 없다
+        // 질량을 정하지 않았거나(덮어쓰기·COTS 없음) COTS가 다른 덩어리 안이라 쓰이지 않아, 무게중심을 옮길 덩어리가
+        // 없다(SKU 제품의 주인이면 제품 덩어리가 쓴다, 아래)
         noticeOrder.push({ unusedCenter: object.id, robotId: context.robot?.id ?? null })
       }
     }
@@ -570,13 +634,19 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
           detail: '',
           inheritedFrom: null,
           estimated: false,
-          scaled: false
+          scaled: false,
+          block: context.block
         }
+        const product = source.productOf.get(object.id)
         if (context.block) {
           context.block.members.push(part)
+        } else if (product) {
+          const list = productParts.get(product)
+          if (list) list.push(part)
+          else productParts.set(product, [part])
         } else if (volume > 0) {
-          const { material, ...source } = estimate(object, context, names)
-          Object.assign(part, source)
+          const { material, ...estimated } = estimate(object, context)
+          Object.assign(part, estimated)
           part.estimated = true
           part.mass =
             material === null
@@ -588,14 +658,70 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       }
     }
 
-    if (cadNamed) context.names = [{ id: object.id, names }, ...context.names]
     for (const child of childrenInDocument(objects, object.id)) visit(child, context)
   }
 
   for (const root of childrenInDocument(objects, null)) visit(root, null)
 
+  // SKU 제품 덩어리: 덩어리 밖에 남은 제품 파트를 묶는다(제품마다 첫 메시의 문서 순서). 제품 메시 일부가 같은 부품의
+  // COTS 덩어리(모터 어셈블리에 붙인 모터 컴포넌트 등) 안에 있으면 나머지도 그 덩어리에 넣는다. 아니면 덩어리 안 몫을
+  // 뺀 질량으로 제품 덩어리를 만든다.
+  const productBlocks: Block[] = []
+  for (const product of source.products) {
+    const free = productParts.get(product)
+    if (!free) continue
+    const all = product.meshIds.flatMap((id) => partsByObject.get(id) ?? [])
+    let joined: Block | null = null
+    for (const part of all) {
+      for (let block = part.block; block && !joined; block = block.parent) {
+        if (block.kind === 'cots' && block.keys.some((key) => sameCotsItem(key, product.cotsKey)))
+          joined = block
+      }
+      if (joined) break
+    }
+    if (joined) {
+      for (const part of free) {
+        part.block = joined
+        joined.members.push(part)
+      }
+      continue
+    }
+    const freeVolume = free.reduce((sum, part) => sum + part.volume, 0)
+    const allVolume = all.reduce((sum, part) => sum + part.volume, 0)
+    const share = allVolume > 0 ? freeVolume / allVolume : free.length / all.length
+    const ownerId =
+      lowestCommonAncestor(
+        objects,
+        free.map((part) => part.objectId)
+      ) ?? free[0].objectId
+    const owner = objects[ownerId]
+    const matrix = matrices.get(ownerId) ?? new Matrix4()
+    // 주인이 덩어리를 정하지 않아 쓰이지 않던 무게중심 덮어쓰기는 제품 덩어리가 쓴다
+    const center = owner.kind !== 'robot' ? owner.mass?.centerOfMass : undefined
+    const unused = center
+      ? noticeOrder.findIndex((entry) => 'unusedCenter' in entry && entry.unusedCenter === ownerId)
+      : -1
+    const block = newBlock(
+      ownerId,
+      free[0].robotId,
+      'cots',
+      (cotsEntry(product.cotsKey)?.mass ?? 0) * share,
+      [product.cotsKey],
+      unused >= 0 && center ? applyPoint(matrix, center) : null,
+      applyPoint(matrix, [0, 0, 0]),
+      null
+    )
+    for (const part of free) {
+      part.block = block
+      block.members.push(part)
+    }
+    if (unused >= 0) noticeOrder[unused] = { block }
+    productBlocks.push(block)
+  }
+
   // 덩어리 풀기: 안쪽 덩어리가 먼저(만든 순서의 반대가 곧 안쪽부터다)
   for (let i = blocks.length - 1; i >= 0; i--) resolveBlock(blocks[i], parts, partsByObject)
+  for (const block of productBlocks) resolveBlock(block, parts, partsByObject)
 
   // 저울 맞추기와 로봇 합계
   const robots: Record<string, RobotMass> = {}
@@ -773,7 +899,8 @@ function resolveBlock(block: Block, parts: Part[], partsByObject: Map<string, Pa
       detail: block.detail,
       inheritedFrom: null,
       estimated: false,
-      scaled: false
+      scaled: false,
+      block
     }
     // 점질량은 정한 오브젝트의 파트로 센다
     own.push(point)

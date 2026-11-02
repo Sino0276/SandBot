@@ -3,9 +3,15 @@ import { ROBOT_SIZE } from '../scene/coordinates'
 import type { HardwareComponent, SceneObject, SceneObjects, Transform, Vec3 } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { defaultWheel } from '../scene/wheel'
-import { computeMassModel } from './massModel'
+import { computeMassModel as computeWithLookup } from './massModel'
 import { PRINTED_SHELL_THICKNESS } from './materials'
-import { DEFAULT_ROBOT_MASS, type MassLookup, type MeshMassProps, type SymMatrix3 } from './types'
+import {
+  DEFAULT_ROBOT_MASS,
+  type MassLookup,
+  type MeshMassProps,
+  type SourceNode,
+  type SymMatrix3
+} from './types'
 
 // 피벗 기준 직육면체(a × b × c, 무게중심 offset)의 단위 밀도 질량 성질(해석해)
 function box(a: number, b: number, c: number, offset: Vec3 = [0, 0, 0]): MeshMassProps {
@@ -32,11 +38,56 @@ function solid(volume: number): MeshMassProps {
   return box(side, side, side)
 }
 
+// 시험의 형상 정보: 메시 성질, 원래 파트 이름('' = 불러올 때 붙인 "노드 + 순번" 이름), 원래 이름 경로(정하지 않으면
+// 지금 씬을 불러온 그대로라고 보고 만든다, sceneLookup)
+type TestLookup = {
+  props: Record<string, MeshMassProps>
+  names: Record<string, string>
+  paths: Record<string, SourceNode[]>
+}
+
 function lookupOf(
   props: Record<string, MeshMassProps>,
-  names: Record<string, string> = {}
-): MassLookup {
-  return { props: (id) => props[id], sourceName: (id) => names[id] }
+  names: Record<string, string> = {},
+  paths: Record<string, SourceNode[]> = {}
+): TestLookup {
+  return { props, names, paths }
+}
+
+// 지금 씬을 불러온 계층으로 본 원래 이름 경로: 메시 파트부터 위로 CAD 오브젝트(그룹은 건너뜀)를 CAD 루트나 로봇 앞까지.
+// 노드 키는 오브젝트 id, 이름은 오브젝트 이름(파트는 names에 있으면 그 이름, ''이면 붙인 이름)이다.
+function sceneLookup(objects: SceneObjects, lookup: TestLookup): MassLookup {
+  const derive = (geometryId: string): SourceNode[] | undefined => {
+    const leaf = Object.values(objects).find(
+      (object) => object.visual?.type === 'mesh' && object.visual.geometryId === geometryId
+    )
+    if (!leaf) return undefined
+    const path: SourceNode[] = []
+    for (let at: SceneObject | undefined = leaf; at && at.kind !== 'robot';) {
+      if (at.kind !== 'group') {
+        const source = at === leaf ? lookup.names[geometryId] : undefined
+        path.unshift({
+          key: at.id,
+          name: source || at.name,
+          ...(source === '' ? { generated: true as const } : {})
+        })
+      }
+      if (at.cad) break
+      at = at.parentId ? objects[at.parentId] : undefined
+    }
+    return path
+  }
+  return {
+    props: (id) => lookup.props[id],
+    sourcePath: (id) => lookup.paths[id] ?? derive(id)
+  }
+}
+
+function computeMassModel(
+  objects: SceneObjects,
+  lookup: TestLookup
+): ReturnType<typeof computeWithLookup> {
+  return computeWithLookup(objects, sceneLookup(objects, lookup))
 }
 
 function robot(extra: Partial<SceneObject> = {}): SceneObject {
@@ -196,7 +247,7 @@ describe('질량 추정: 재질', () => {
 })
 
 describe('질량 추정: 이름 규칙', () => {
-  it('원래 CAD 메시 이름, 지금 이름, 상위 이름(CAD 루트까지) 순으로 본다', () => {
+  it('원래 이름 경로를 파트 노드부터 CAD 루트까지 본다(붙인 이름은 건너뛴다)', () => {
     const cadRoot = node('C', 'R', {
       name: 'Screw Kit',
       cad: {
@@ -212,55 +263,81 @@ describe('질량 추정: 이름 규칙', () => {
       robot({ name: 'Steel Robot' }),
       cadRoot,
       node('B', 'C', { name: '1611-0514-0006' }),
-      // 사용자가 이름을 바꿨어도 원래 메시 이름(Washer)으로 맞춘다
-      part('P1', 'B', [0, 0, 0], { name: 'Renamed' }),
-      // 메시 이름이 비면 지금 이름 → 부모(베어링 SKU 시리즈)
+      part('P1', 'B', [0, 0, 0], { name: 'Washer' }),
+      // 붙인 "노드 + 순번" 이름은 CAD 이름이 아니라 부모(베어링 SKU 시리즈)로 간다
       part('P2', 'B', [0, 0, 0], { name: '1611-0514-0006 2' }),
       part('P3', 'B', [0, 0, 0], { name: 'IR' }),
       // CAD 루트 이름까지 본다(로봇 이름은 보지 않는다)
-      part('P4', 'C', [0, 0, 0], { name: 'Thing' }),
-      // 그룹 이름(팀이 지은 메커니즘 이름)은 보지 않는다: CAD 밖으로 옮긴 파트는 기본 재질이고,
-      node('G', 'R', { kind: 'group', name: 'IntakeRoller' }),
-      part('P5', 'G', [0, 0, 0], { name: 'Part 12', cadOrigin: 'C' }),
-      // CAD 안의 그룹은 건너뛰고 그 위 CAD 이름을 본다
-      node('H', 'C', { kind: 'group', name: 'Belt Tensioner' }),
-      part('P6', 'H', [0, 0, 0], { name: 'Thing' })
+      part('P4', 'C', [0, 0, 0], { name: 'Thing' })
     )
     const props = Object.fromEntries(
-      ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].map((id) => [`g:${id}`, solid(LITER)])
+      ['P1', 'P2', 'P3', 'P4'].map((id) => [`g:${id}`, solid(LITER)])
     )
-    const model = computeMassModel(
-      objects,
-      lookupOf(props, { 'g:P1': 'Washer', 'g:P2': '', 'g:P3': 'IR' })
-    )
+    const model = computeMassModel(objects, lookupOf(props, { 'g:P2': '' }))
     expect(model.objects.P1).toMatchObject({
       source: 'nameRule',
       detail: 'washer',
       inheritedFrom: null
     })
     expect(model.objects.P1.mass).toBeCloseTo(7.85, 12)
-    expect(model.objects.P2).toMatchObject({
-      source: 'nameRule',
-      detail: 'gobilda-1611',
-      inheritedFrom: null
-    })
-    expect(model.objects.P3).toMatchObject({
-      source: 'nameRule',
-      detail: 'gobilda-1611',
-      inheritedFrom: 'B'
-    })
+    for (const id of ['P2', 'P3'])
+      expect(model.objects[id]).toMatchObject({
+        source: 'nameRule',
+        detail: 'gobilda-1611',
+        inheritedFrom: 'B'
+      })
     expect(model.objects.P4).toMatchObject({
       source: 'nameRule',
       detail: 'screw',
       inheritedFrom: 'C'
     })
-    expect(model.objects.P5).toMatchObject({ source: 'default', detail: 'aluminum6061' })
-    expect(model.objects.P5.mass).toBeCloseTo(2.7, 12)
-    expect(model.objects.P6).toMatchObject({
-      source: 'nameRule',
-      detail: 'screw',
-      inheritedFrom: 'C'
-    })
+  })
+
+  it('이름 규칙은 지금 이름·그룹 이름을 보지 않고, 옮기거나 이름을 바꿔도 원래 경로의 규칙이다', () => {
+    const cad = {
+      fileName: 'kit.step',
+      absolutePath: '/kit.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 },
+      meshCount: 3
+    }
+    const imported = scene(
+      robot(),
+      node('C', 'R', { name: 'Kit', cad }),
+      node('B', 'C', { name: 'Bearing Kit' }),
+      part('P1', 'B', [0, 0, 0], { name: '1120-0010-0264' }),
+      part('P2', 'B', [0, 0, 0], { name: 'Thing' }),
+      part('P3', 'C', [0, 0, 0], { name: 'Thing 2' })
+    )
+    const props = Object.fromEntries(['P1', 'P2', 'P3'].map((id) => [`g:${id}`, solid(LITER)]))
+    // 불러온 그대로의 경로를 고정한다(아래에서 이름을 바꾸고 옮겨도 등록된 경로는 그대로다)
+    const paths = Object.fromEntries(
+      ['P1', 'P2', 'P3'].map((id) => [
+        `g:${id}`,
+        sceneLookup(imported, lookupOf(props)).sourcePath(`g:${id}`) as SourceNode[]
+      ])
+    )
+    const before = computeMassModel(imported, lookupOf(props, {}, paths))
+    expect(before.objects.P1).toMatchObject({ source: 'nameRule', detail: 'gobilda-1120' })
+    expect(before.objects.P2).toMatchObject({ source: 'nameRule', detail: 'bearing' })
+    expect(before.objects.P3).toMatchObject({ source: 'default' })
+    const edited: SceneObjects = {
+      ...imported,
+      // 규칙 낱말이 든 새 이름(원래 SKU 규칙이 그대로 이긴다)
+      P1: { ...imported.P1, name: 'steel bolt plate' },
+      // 부모 어셈블리 이름을 바꿔도 원래 이름(bearing)이다
+      B: { ...imported.B, name: 'Intake Roller' },
+      // 그룹(팀이 지은 메커니즘 이름)으로 옮긴 파트도 원래 경로다
+      G: node('G', 'R', { kind: 'group', name: 'IntakeRoller' }),
+      P3: { ...imported.P3, name: 'Steel Shaft', parentId: 'G', cadOrigin: 'C' }
+    }
+    const after = computeMassModel(edited, lookupOf(props, {}, paths))
+    for (const id of ['P1', 'P2', 'P3']) {
+      expect(after.objects[id].mass, id).toBeCloseTo(before.objects[id].mass, 12)
+      expect(after.objects[id].detail, id).toBe(before.objects[id].detail)
+    }
+    expect(after.robots.R.mass).toBeCloseTo(before.robots.R.mass, 12)
   })
 
   it('그룹 이름의 SKU는 COTS로 보지 않는다', () => {
@@ -559,6 +636,121 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(model.robots.R.notices).toEqual([])
   })
 
+  describe('SKU 제품은 원래 이름 경로로 정하고 이름을 바꾸거나 옮겨도 질량이 같다', () => {
+    const cad = {
+      fileName: 'kit.step',
+      absolutePath: '/kit.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 },
+      meshCount: 6
+    }
+    // CAD 루트 C 안에 모터 어셈블리(SKU, 이름 없는 솔리드 셋에 붙인 이름)와 배터리 어셈블리(SKU, 셀 둘), 판 하나
+    const imported = scene(
+      robot(),
+      node('C', 'R', { name: 'Kit', cad }),
+      node('M', 'C', { name: '5203-2402-0019' }),
+      part('M1', 'M', [0, 0, 0], { name: '5203-2402-0019 1' }),
+      part('M2', 'M', [0.01, 0, 0], { name: '5203-2402-0019 2' }),
+      part('M3', 'M', [0.02, 0, 0], { name: '5203-2402-0019 3' }),
+      node('B', 'C', { name: '3100-0012-0020' }),
+      part('B1', 'B', [0, 0.1, 0], { name: '3100-0012-0020 1' }),
+      part('B2', 'B', [0, 0.2, 0], { name: '3100-0012-0020 2' }),
+      part('Plate', 'C', [0, 0, 0], { name: 'Plate' })
+    )
+    const ids = ['M1', 'M2', 'M3', 'B1', 'B2', 'Plate']
+    const props = Object.fromEntries(ids.map((id) => [`g:${id}`, box(0.02, 0.02, 0.02)]))
+    const generated = Object.fromEntries(
+      ids.filter((id) => id !== 'Plate').map((id) => [`g:${id}`, ''])
+    )
+    const paths = Object.fromEntries(
+      ids.map((id) => [
+        `g:${id}`,
+        sceneLookup(imported, lookupOf(props, generated)).sourcePath(`g:${id}`) as SourceNode[]
+      ])
+    )
+    const lookup = lookupOf(props, generated, paths)
+    const plate = 8e-6 * 2700
+    const total = 0.437 + 0.597 + plate
+
+    it('불러온 그대로: 제품마다 데이터시트 질량 한 번', () => {
+      const model = computeMassModel(imported, lookup)
+      expect(model.objects.M).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+      expect(model.objects.M.mass).toBeCloseTo(0.437, 12)
+      expect(model.objects.M2).toMatchObject({ source: 'cots', inheritedFrom: 'M' })
+      expect(model.objects.B.mass).toBeCloseTo(0.597, 12)
+      expect(model.robots.R.mass).toBeCloseTo(total, 12)
+    })
+
+    it('SKU 어셈블리·CAD 루트 이름을 바꿔도 붙인 이름의 솔리드마다 제품 질량을 받지 않는다', () => {
+      const renamed: SceneObjects = {
+        ...imported,
+        M: { ...imported.M, name: 'Left Front Motor' },
+        B: { ...imported.B, name: 'Battery' },
+        C: { ...imported.C, name: 'Robot' }
+      }
+      const model = computeMassModel(renamed, lookup)
+      expect(model.objects.M).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+      expect(model.objects.M.mass).toBeCloseTo(0.437, 12)
+      expect(model.objects.B.mass).toBeCloseTo(0.597, 12)
+      expect(model.robots.R.mass).toBeCloseTo(total, 12)
+    })
+
+    it('제품 솔리드 하나를 그룹으로 옮겨도 제품 질량은 한 번이고 옮긴 솔리드도 제품 몫을 받는다', () => {
+      const moved: SceneObjects = {
+        ...imported,
+        G: node('G', 'R', { kind: 'group', name: 'Lift' }),
+        M3: { ...imported.M3, parentId: 'G', cadOrigin: 'C' }
+      }
+      const model = computeMassModel(moved, lookup)
+      expect(model.robots.R.mass).toBeCloseTo(total, 12)
+      expect(model.objects.M3).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+      expect(model.objects.M3.mass).toBeCloseTo(0.437 / 3, 12)
+      expect(model.objects.M.mass).toBeCloseTo((2 * 0.437) / 3, 12)
+      // 제품의 메시를 모두 품은 오브젝트(지금 계층)가 출처의 주인이다
+      expect(model.objects.M3.inheritedFrom).toBe('R')
+    })
+
+    it('같은 부품의 컴포넌트 COTS가 제품 일부를 덮으면 나머지 제품 메시도 그 덩어리에 든다', () => {
+      const withMotor: SceneObjects = {
+        ...imported,
+        M: { ...imported.M, components: [motor(13.7)] },
+        G: node('G', 'R', { kind: 'group', name: 'Lift' }),
+        M3: { ...imported.M3, parentId: 'G', cadOrigin: 'C' }
+      }
+      const model = computeMassModel(withMotor, lookup)
+      // 컴포넌트(사용자 설정, 13.7:1 438 g)가 이긴다. 옮긴 솔리드도 그 모터의 몫이다
+      expect(model.objects.M3).toMatchObject({
+        source: 'cots',
+        detail: 'motor:goBilda5203:13.7',
+        inheritedFrom: 'M'
+      })
+      expect(model.robots.R.mass).toBeCloseTo(0.438 + 0.597 + plate, 12)
+    })
+
+    it('덮어쓰기가 제품 일부를 덮으면 그 몫(부피 비율)을 제품 질량에서 뺀다', () => {
+      const overridden: SceneObjects = {
+        ...imported,
+        B2: { ...imported.B2, mass: { mass: 0.1 } }
+      }
+      const model = computeMassModel(overridden, lookup)
+      expect(model.objects.B2.mass).toBeCloseTo(0.1, 12)
+      expect(model.objects.B1.mass).toBeCloseTo(0.597 / 2, 12)
+      expect(model.robots.R.mass).toBeCloseTo(0.437 + 0.597 / 2 + 0.1 + plate, 12)
+    })
+
+    it('제품의 주인에 둔 무게중심 덮어쓰기를 쓴다', () => {
+      const centered: SceneObjects = {
+        ...imported,
+        B: { ...imported.B, mass: { centerOfMass: [0, 0, 0.3] } }
+      }
+      const model = computeMassModel(centered, lookup)
+      expect(model.robots.R.notices).toEqual([])
+      const origin = computeMassModel(imported, lookup).objects.B.centerOfMass
+      expect(model.objects.B.centerOfMass[2] - origin[2]).toBeCloseTo(0.3, 9)
+    })
+  })
+
   describe('Pinpoint 포드로 볼 수 없는 오브젝트는 포드 질량을 쓰지 않고 알린다', () => {
     const pinpoint = (xPod: string, yPod = ''): HardwareComponent => ({
       id: 'pp',
@@ -692,9 +884,11 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       // 어셈블리 이름 SKU도 센다
       const assembly = {
         ...base('Arm'),
-        Sub: node('Sub', 'Arm', { name: 'REV-31-1302 Slim Battery' })
+        Sub: node('Sub', 'Arm', { name: 'REV-31-1302 Slim Battery' }),
+        Cell: part('Cell', 'Sub', [0, 0, 0], { name: 'Cell' })
       }
-      expect(computeMassModel(assembly, lookupOf(small)).robots.R.notices).toEqual([
+      const cell = { ...small, 'g:Cell': box(0.01, 0.01, 0.01) }
+      expect(computeMassModel(assembly, lookupOf(cell)).robots.R.notices).toEqual([
         ignored('Arm', 'containsCots')
       ])
       // 불러올 때 붙인 이름(원래 이름 '')은 위 노드 이름을 되풀이할 뿐이라 세지 않는다

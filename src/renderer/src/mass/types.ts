@@ -143,11 +143,23 @@ export type MassModel = {
   robots: Record<string, RobotMass>
 }
 
+// 불러올 때의 CAD 노드 하나(메시의 원래 이름 경로의 한 칸, cad/stepImport.ts의 meshSourcePaths). 하이어라키에서 이름을
+// 바꾸거나 오브젝트를 옮겨도 바뀌지 않는다.
+export type SourceNode = {
+  // 노드를 가리키는 키: 같은 CAD의 같은 노드면 메시마다 같은 키다(CAD 루트 id + 노드 순번 경로)
+  key: string
+  // 불러올 때의 이름(ImportedNode.name)
+  name: string
+  // 이름 없는 메시에 불러올 때 붙인 "노드 이름 + 순번"이면 true(CAD 이름이 아니므로 이름 규칙·SKU에 쓰지 않는다)
+  generated?: true
+}
+
 // computeMassModel이 문서 밖 형상 정보를 읽는 길(시험에서 바꿀 수 있게 인자로 받는다)
 export type MassLookup = {
   props: (geometryId: string) => MeshMassProps | undefined
-  // 원래 CAD 메시 이름(오브젝트 이름을 바꿔도 이름 규칙이 원래 이름으로 맞추게)
-  sourceName: (geometryId: string) => string | undefined
+  // 메시의 원래 이름 경로: CAD 루트 노드부터 그 메시의 파트 노드까지(불러온 계층 그대로). 이름 규칙과 SKU는 이것만
+  // 본다(오브젝트 이름을 바꾸거나 옮기거나 그룹으로 묶어도 질량이 바뀌지 않게). 모르면 undefined.
+  sourcePath: (geometryId: string) => readonly SourceNode[] | undefined
 }
 
 // CAD 루트마다 메시 상태 요약(인스펙터)

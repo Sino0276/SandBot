@@ -11,7 +11,7 @@ import {
   disposeAllGeometry,
   getGeometry,
   meshMassProps,
-  meshSourceName
+  meshSourcePath
 } from '../scene/geometryRegistry'
 import type { SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
@@ -175,15 +175,27 @@ describe('형상 등록과 질량 성질', () => {
     vi.unstubAllGlobals()
   })
 
-  it('형상과 같은 id로 질량 성질과 원래 CAD 이름을 둔다', () => {
+  it('형상과 같은 id로 질량 성질과 원래 이름 경로를 둔다', () => {
     registerModelGeometries('cad', cubes, 'source')
     expect(getGeometry('cad:0')).toBeDefined()
     expect(meshMassProps('cad:0')?.volume).toBeCloseTo(1e-3, 15)
     expect(meshMassProps('cad:2')).toBe(cubes.meshes[2].mass)
-    expect([0, 1, 2].map((i) => meshSourceName(`cad:${i}`))).toEqual([
-      '1120-0001-0048',
-      '',
-      'Gearbox'
+    // 원래 이름 경로(CAD 루트부터 파트까지, 붙인 "노드 + 순번"은 generated)
+    expect([0, 1, 2].map((i) => meshSourcePath(`cad:${i}`))).toEqual([
+      [
+        { key: 'cad/', name: 'bot' },
+        { key: 'cad/0', name: '1120-0001-0048' }
+      ],
+      [
+        { key: 'cad/', name: 'bot' },
+        { key: 'cad/1', name: 'motor' },
+        { key: 'cad/1.0', name: 'motor 1', generated: true }
+      ],
+      [
+        { key: 'cad/', name: 'bot' },
+        { key: 'cad/1', name: 'motor' },
+        { key: 'cad/1.1', name: 'Gearbox' }
+      ]
     ])
     expect(cadMassSummary('cad', scene)).toMatchObject({
       meshes: 3,
