@@ -688,16 +688,24 @@ describe('질량 입력', () => {
 })
 
 describe('쓰지 못한 질량 설정 알림', () => {
-  const pod: Extract<MassNotice, { kind: 'podIgnored' }> = {
-    kind: 'podIgnored',
+  const pod: Extract<MassNotice, { kind: 'cotsIgnored' }> = {
+    kind: 'cotsIgnored',
     objectId: 'plate',
-    pinpointId: 'bolt',
-    reason: 'tooLarge'
+    keys: ['pod:fourBar'],
+    reason: 'tooLarge',
+    pinpointId: 'bolt'
+  }
+  const component: Extract<MassNotice, { kind: 'cotsIgnored' }> = {
+    kind: 'cotsIgnored',
+    objectId: 'bolt',
+    keys: ['motor:goBilda5203:19.2', 'wheel:gripForce104'],
+    reason: 'containsCad'
   }
   const notices: MassNotice[] = [
     { kind: 'innerMassExceeds', objectId: 'battery', mass: 0.2, inner: 0.5 },
     { kind: 'centerOfMassIgnored', objectId: 'lift' },
-    pod
+    pod,
+    component
   ]
 
   it('문구: 오브젝트 이름·표시 단위 질량·포드 이유, 지운 오브젝트는 id', () => {
@@ -707,12 +715,25 @@ describe('쓰지 못한 질량 설정 알림', () => {
     )
     expect(noticeText(t, objects, notices[1], 'mm')).toMatch(/^Lift의 무게중심 덮어쓰기는 쓰이지/)
     expect(noticeText(t, objects, notices[2], 'mm')).toBe(
-      'Plate을(를) Bolt의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다(형상이 포드 하나로 보기에 너무 큼).'
+      'Plate을(를) Bolt의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다(형상이 그 부품 하나로 보기에 너무 큼).'
     )
-    for (const reason of ['otherRobot', 'containsPinpoint', 'containsCots', 'tooLarge'] as const) {
+    // 포드가 아닌 COTS(컴포넌트·바퀴)는 제품 이름으로 부른다
+    expect(noticeText(t, objects, notices[3], 'mm')).toBe(
+      'Bolt의 하위를 goBILDA 5203 19.2:1 + goBILDA GripForce Mecanum 104mm 하나로 볼 수 없어 데이터시트 질량을 쓰지 않고 형상으로 추정합니다(하위에 CAD 루트가 있음). 그 부품의 형상만 품은 오브젝트에 붙이세요.'
+    )
+    const reasons = [
+      'otherRobot',
+      'containsPinpoint',
+      'containsCots',
+      'containsCad',
+      'tooLarge'
+    ] as const
+    for (const reason of reasons) {
       const text = noticeText(t, objects, { ...pod, reason, objectId: 'gone' }, 'in')
       expect(text.startsWith('gone을(를) ')).toBe(true)
-      expect(text).toContain(`(${ko.mass.notices.podReasons[reason]})`)
+      expect(text).toContain(`(${ko.mass.notices.cotsReasons[reason]})`)
+      const other = noticeText(t, objects, { ...component, reason, objectId: 'gone' }, 'in')
+      expect(other.startsWith('gone의 하위를 ')).toBe(true)
     }
   })
 
@@ -990,7 +1011,13 @@ describe('질량 카드 그리기', () => {
   it('쓰지 못한 설정 알림: Rigidbody 카드에 모두, 질량 카드·추정 한 줄에는 그 오브젝트의 것', () => {
     const objects = scene()
     const notices: MassNotice[] = [
-      { kind: 'podIgnored', objectId: 'plate', pinpointId: 'bolt', reason: 'containsCots' },
+      {
+        kind: 'cotsIgnored',
+        objectId: 'plate',
+        keys: ['pod:fourBar'],
+        reason: 'containsCots',
+        pinpointId: 'bolt'
+      },
       { kind: 'innerMassExceeds', objectId: 'battery', mass: 0.597, inner: 0.7 }
     ]
     fake.model = {

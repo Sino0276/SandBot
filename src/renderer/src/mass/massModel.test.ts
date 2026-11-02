@@ -147,6 +147,9 @@ const motor = (gearbox: number): HardwareComponent => ({
 })
 
 const LITER = 1e-3
+// 모터·서보 크기의 형상(30 × 30 × 60 mm, 54 cm³). COTS 컴포넌트는 하위가 그 부품 하나로 보일 때만 하위를 덮는다
+// (알루미늄으로 쳐서 표 질량의 4배 이하, cotsRejection)
+const MOTOR_SIZE = (): MeshMassProps => box(0.03, 0.03, 0.06)
 
 describe('질량 추정: 재질', () => {
   it('재질이 없으면 로봇 기본 재질(없으면 알루미늄 6061)이고 출처는 default', () => {
@@ -498,7 +501,10 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       node('M', 'R', { components: [motor(19.2)] }),
       part('Q', 'M', [0, 0, 0], { mass: { mass: 1 } })
     )
-    const props = Object.fromEntries(['P1', 'P2', 'P3', 'Q'].map((id) => [`g:${id}`, solid(LITER)]))
+    const props = {
+      ...Object.fromEntries(['P1', 'P2', 'P3'].map((id) => [`g:${id}`, solid(LITER)])),
+      'g:Q': MOTOR_SIZE()
+    }
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.P3.mass).toBe(0)
     expect(model.objects.A.mass).toBeCloseTo(1, 15)
@@ -548,7 +554,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       // 쓰이는 무게중심(COTS를 정한 오브젝트)은 알리지 않는다
       part('N', 'R', [0, 0, 0], { components: [motor(19.2)], mass: { centerOfMass: [0, 0, 0.1] } })
     )
-    const props = Object.fromEntries(['A1', 'M', 'N'].map((id) => [`g:${id}`, solid(LITER)]))
+    const props = { 'g:A1': solid(LITER), 'g:M': solid(LITER), 'g:N': MOTOR_SIZE() }
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.A.centerOfMass).toEqual(model.objects.A1.centerOfMass)
     expect(model.objects.N.centerOfMass[2]).toBeCloseTo(0.1, 14)
@@ -565,21 +571,21 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(computeMassModel(loose, lookupOf(props)).robots.R.notices).toHaveLength(2)
   })
 
-  it('컴포넌트 COTS는 붙은 오브젝트 하위 전체를 덮고, 안쪽 COTS는 쓰지 않는다', () => {
+  it('컴포넌트 COTS는 붙은 오브젝트 하위 전체를 부피 비율로 덮는다', () => {
     const objects = scene(
       robot(),
       node('M', 'R', { components: [motor(19.2)] }),
       part('M1', 'M'),
       part('M2', 'M'),
-      // 모터 안의 서보 컴포넌트(이중 계산을 막아 위의 것을 쓴다)
-      part('M3', 'M', [0, 0, 0], { components: [{ ...motor(1), type: 'servo', props: {} }] })
+      part('M3', 'M')
     )
-    const props = Object.fromEntries(['M1', 'M2', 'M3'].map((id) => [`g:${id}`, solid(LITER)]))
+    const props = Object.fromEntries(['M1', 'M2', 'M3'].map((id) => [`g:${id}`, MOTOR_SIZE()]))
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.M).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
     expect(model.objects.M.mass).toBeCloseTo(0.437, 15)
     expect(model.objects.M3).toMatchObject({ source: 'cots', inheritedFrom: 'M' })
     expect(model.objects.M3.mass).toBeCloseTo(0.437 / 3, 15)
+    expect(model.robots.R.notices).toEqual([])
   })
 
   it('덮어쓰기는 COTS보다 먼저이고, 한 오브젝트의 컴포넌트·바퀴 COTS는 더한다', () => {
@@ -590,7 +596,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       node('W', 'R', { components: [motor(19.2)], wheel: defaultWheel() }),
       part('W1', 'W')
     )
-    const props = { 'g:M1': solid(LITER), 'g:W1': solid(LITER) }
+    const props = { 'g:M1': solid(LITER), 'g:W1': MOTOR_SIZE() }
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.M).toMatchObject({ mass: 0.5, source: 'override' })
     expect(model.objects.W).toMatchObject({
@@ -622,7 +628,8 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       part('X', 'R', [0, 0, 0], { name: 'Pod' })
     )
     const props = {
-      ...Object.fromEntries(['B1', 'L', 'Pin'].map((id) => [`g:${id}`, solid(LITER)])),
+      ...Object.fromEntries(['B1', 'L'].map((id) => [`g:${id}`, solid(LITER)])),
+      'g:Pin': box(0.03, 0.03, 0.01),
       // 포드 크기의 형상(20 mm 정육면체). 1 L처럼 큰 형상은 포드로 보지 않는다(아래 tooLarge)
       'g:X': box(0.02, 0.02, 0.02)
     }
@@ -751,6 +758,120 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     })
   })
 
+  describe('컴포넌트·바퀴 COTS도 하위가 그 부품 하나로 볼 수 있을 때만 하위를 덮는다', () => {
+    const cad = {
+      fileName: 'r.step',
+      absolutePath: '/r.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 },
+      meshCount: 3
+    }
+    const pinpointComponent: HardwareComponent = {
+      id: 'pp',
+      type: 'pinpoint',
+      name: 'pinpoint',
+      hub: 'controlHub',
+      port: 1,
+      props: { podType: 'fourBar', xPod: '', yPod: '' }
+    }
+    // 알루미늄 판(0.4 × 0.4 × 0.01 m, 4.32 kg)과 작은 모터 몸체를 품은 CAD 루트
+    const base = scene(
+      robot(),
+      node('C', 'R', { name: 'Robot CAD', cad }),
+      node('Chassis', 'C', { name: 'Chassis' }),
+      part('Plate', 'Chassis', [0, 0, 0], { name: 'Chassis Plate' }),
+      node('Drive', 'C', { name: 'Drive' }),
+      part('Mot', 'Drive', [0, 0, 0], { name: 'Motor body' })
+    )
+    const props = { 'g:Plate': box(0.4, 0.4, 0.01), 'g:Mot': box(0.03, 0.03, 0.06) }
+    const plain = computeMassModel(base, lookupOf(props))
+    const ignored = (objectId: string, keys: string[], reason: string): object => ({
+      kind: 'cotsIgnored',
+      objectId,
+      keys,
+      reason
+    })
+
+    it('부품 크기의 형상이면 데이터시트 질량이 하위를 덮는다', () => {
+      const model = computeMassModel(
+        { ...base, Mot: { ...base.Mot, components: [motor(19.2)] } },
+        lookupOf(props)
+      )
+      expect(model.objects.Mot).toMatchObject({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+      expect(model.robots.R.notices).toEqual([])
+    })
+
+    it('큰 형상(알루미늄으로 쳐서 표 질량의 4배 넘음)이면 추정하고 tooLarge로 알린다', () => {
+      const model = computeMassModel(
+        { ...base, Chassis: { ...base.Chassis, components: [pinpointComponent] } },
+        lookupOf(props)
+      )
+      expect(model.objects.Chassis.source).not.toBe('cots')
+      expect(model.robots.R.mass).toBeCloseTo(plain.robots.R.mass, 12)
+      expect(model.robots.R.notices).toEqual([ignored('Chassis', ['pinpoint'], 'tooLarge')])
+    })
+
+    it('CAD 루트를 품으면 containsCad, 다른 COTS를 품으면 containsCots이고 안의 COTS는 그대로 쓴다', () => {
+      const group: SceneObjects = {
+        ...scene(robot(), node('G', 'R', { kind: 'group', components: [motor(19.2)] })),
+        ...Object.fromEntries(Object.entries(base).filter(([id]) => id !== 'R')),
+        C: { ...base.C, parentId: 'G' }
+      }
+      const inGroup = computeMassModel(group, lookupOf(props))
+      expect(inGroup.robots.R.notices).toEqual([
+        ignored('G', ['motor:goBilda5203:19.2'], 'containsCad')
+      ])
+      expect(inGroup.robots.R.mass).toBeCloseTo(plain.robots.R.mass, 12)
+      // 구동계 어셈블리에 붙인 모터 컴포넌트 넷: 안의 서보가 다른 COTS다
+      const drive = computeMassModel(
+        {
+          ...base,
+          Drive: { ...base.Drive, components: [motor(19.2), motor(19.2)] },
+          Mot: { ...base.Mot, components: [{ ...motor(1), type: 'servo', props: {} }] }
+        },
+        lookupOf(props)
+      )
+      expect(drive.robots.R.notices).toEqual([
+        ignored('Drive', ['motor:goBilda5203:19.2', 'motor:goBilda5203:19.2'], 'containsCots')
+      ])
+      expect(drive.objects.Mot).toMatchObject({ source: 'cots', detail: 'servo:gobildaTorque' })
+    })
+
+    it('바퀴 COTS도 같은 규칙이고, 바퀴의 SKU 제품은 같은 부품이라 품어도 된다', () => {
+      const wheel = { ...defaultWheel(), kind: 'mecanum' as const, diameter: 0.104 }
+      // 팀 CAD의 바퀴 모듈 어셈블리(SKU 아님) 안의 바퀴 SKU 어셈블리
+      const withWheel: SceneObjects = {
+        ...base,
+        W: node('W', 'C', { name: 'Wheel Module', wheel }),
+        WS: node('WS', 'W', { name: '3625-0100-0104' }),
+        W1: part('W1', 'WS', [0, 0, 0], { name: '3625-0100-0104 1' })
+      }
+      const small = { ...props, 'g:W1': box(0.05, 0.05, 0.03) }
+      const model = computeMassModel(withWheel, lookupOf(small, { 'g:W1': '' }))
+      expect(model.objects.W).toMatchObject({ source: 'cots', detail: 'wheel:gripForce104' })
+      expect(model.objects.W.mass).toBeCloseTo(0.236, 12)
+      expect(model.robots.R.notices).toEqual([])
+      // 모터 SKU 제품도 품은 바퀴 모듈은 바퀴 하나가 아니다
+      const motorInside = computeMassModel(
+        {
+          ...withWheel,
+          WM: node('WM', 'W', { name: '5203-2402-0019' }),
+          WM1: part('WM1', 'WM', [0, 0, 0], { name: 'Can' })
+        },
+        lookupOf({ ...small, 'g:WM1': box(0.01, 0.01, 0.01) }, { 'g:W1': '' })
+      )
+      expect(motorInside.robots.R.notices).toEqual([
+        ignored('W', ['wheel:gripForce104'], 'containsCots')
+      ])
+      expect(motorInside.objects.WM).toMatchObject({
+        source: 'cots',
+        detail: 'motor:goBilda5203:19.2'
+      })
+      expect(motorInside.objects.W1.source).toBe('cots')
+    })
+  })
+
   describe('Pinpoint 포드로 볼 수 없는 오브젝트는 포드 질량을 쓰지 않고 알린다', () => {
     const pinpoint = (xPod: string, yPod = ''): HardwareComponent => ({
       id: 'pp',
@@ -796,10 +917,11 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     const run = (xPod: string, yPod = ''): ReturnType<typeof computeMassModel> =>
       computeMassModel(base(xPod, yPod), lookupOf(props))
     const ignored = (objectId: string, reason: string): object => ({
-      kind: 'podIgnored',
+      kind: 'cotsIgnored',
       objectId,
-      pinpointId: 'Pin',
-      reason
+      keys: ['pod:fourBar'],
+      reason,
+      pinpointId: 'Pin'
     })
 
     it('작은 포드 파트는 포드 질량(84 g)이다', () => {
@@ -841,7 +963,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(both.robots.R.notices).toEqual([ignored('Arm', 'containsCots')])
       expect(both.objects.Pod2).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
       // 로봇 CAD 루트를 품은 그룹(Pinpoint는 그 밖의 그룹 Other로 옮김)은 안의 모터로 containsCots, 모터가 없어도
-      // 형상이 커서 tooLarge다(CAD 루트를 따로 거르지 않는다)
+      // CAD 루트를 품어 containsCad다
       const wrapped = base('G')
       const withGroup: SceneObjects = {
         ...scene(robot(), node('G', 'R', { kind: 'group' })),
@@ -856,7 +978,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
         Object.entries(withGroup).filter(([id]) => id !== 'Mot')
       )
       expect(computeMassModel(withoutMotor, lookupOf(props)).robots.R.notices).toEqual([
-        ignored('G', 'tooLarge')
+        ignored('G', 'containsCad')
       ])
       // 로봇 밖 오브젝트
       const outside = {
@@ -1303,7 +1425,7 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     })
     expect(loading.robots.R.warnings.some((w) => w.kind === 'scaleImpossible')).toBe(false)
     // 다 읽으면 형상으로 나누고 맞춘다(기본값 경고 없음)
-    const props = { 'g:P1': solid(LITER), 'g:P2': solid(LITER), 'g:P3': solid(LITER) }
+    const props = { 'g:P1': MOTOR_SIZE(), 'g:P2': solid(LITER), 'g:P3': solid(LITER) }
     const loaded = computeMassModel(objects, lookupOf(props)).robots.R
     expect(loaded.mass).toBeCloseTo(15, 12)
     expect(loaded.fixedMass).toBe(fixed)

@@ -94,13 +94,22 @@ export type MassNotice =
   // objectId의 무게중심 덮어쓰기를 쓰지 못함: 안쪽 덮어쓰기가 덩어리 질량을 다 써서(inner ≥ mass) 옮길 질량이 없거나,
   // objectId가 덩어리를 정하지 않음(질량 덮어쓰기·COTS가 없거나, COTS가 다른 덩어리 안이라 쓰이지 않음)
   | { kind: 'centerOfMassIgnored'; objectId: string }
-  // Pinpoint(pinpointId 오브젝트)의 xPod·yPod가 가리키는 objectId를 포드로 볼 수 없어 포드 질량을 쓰지 않음
-  // (그 하위는 다른 파트처럼 추정한다)
-  | { kind: 'podIgnored'; objectId: string; pinpointId: string; reason: PodIgnoredReason }
+  // objectId에 붙은 COTS(컴포넌트·바퀴·Pinpoint 포드, 표 키 keys)의 데이터시트 질량을 쓰지 않음: 그 하위를 그 부품
+  // 하나로 볼 수 없어서다(그 하위는 다른 파트처럼 추정하고, 안의 COTS는 그대로 쓴다). 포드면 pinpointId가 그 Pinpoint
+  // 오브젝트다(그 Pinpoint의 로봇에 알린다).
+  | {
+      kind: 'cotsIgnored'
+      objectId: string
+      keys: string[]
+      reason: CotsIgnoredReason
+      pinpointId?: string
+    }
 
-// otherRobot: Pinpoint와 다른 로봇(이거나 로봇 밖), containsPinpoint: Pinpoint 오브젝트 자신이거나 그 상위(로봇 포함),
-// containsCots: 하위에 다른 COTS(컴포넌트·바퀴·다른 포드·이름 SKU)가 있음, tooLarge: 하위 형상이 포드 하나로 보기에 너무 큼
-export type PodIgnoredReason = 'otherRobot' | 'containsPinpoint' | 'containsCots' | 'tooLarge'
+// otherRobot: 포드가 Pinpoint와 다른 로봇에 있음(이거나 로봇 밖), containsPinpoint: 포드가 Pinpoint 오브젝트 자신이거나 그
+// 상위(로봇 포함), containsCots: 하위에 다른 COTS(컴포넌트·바퀴·포드·다른 SKU 제품)가 있음, containsCad: 하위에 CAD 루트가
+// 있음(CAD 루트 자신은 아님), tooLarge: 하위 형상이 그 부품 하나로 보기에 너무 큼
+export type CotsIgnoredReason =
+  'otherRobot' | 'containsPinpoint' | 'containsCots' | 'containsCad' | 'tooLarge'
 
 export type ObjectMass = {
   // kg, 이 오브젝트 하위 전체

@@ -1447,11 +1447,14 @@ const ko = {
         '{{object}}의 무게중심 덮어쓰기는 쓰이지 않습니다. 질량을 직접 입력했거나 데이터시트 질량을 정한 오브젝트에서만 쓰고, 안쪽 직접 입력이 질량을 다 쓰면 옮길 몫이 없습니다.',
       podIgnored:
         '{{object}}을(를) {{pinpoint}}의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다({{reason}}).',
-      podReasons: {
+      cotsIgnored:
+        '{{object}}의 하위를 {{product}} 하나로 볼 수 없어 데이터시트 질량을 쓰지 않고 형상으로 추정합니다({{reason}}). 그 부품의 형상만 품은 오브젝트에 붙이세요.',
+      cotsReasons: {
         otherRobot: 'Pinpoint와 다른 로봇에 있음',
         containsPinpoint: 'Pinpoint 자신이거나 그 상위',
-        containsCots: '하위에 다른 상용 부품(모터·서보·바퀴·다른 포드·SKU 이름)이 있음',
-        tooLarge: '형상이 포드 하나로 보기에 너무 큼'
+        containsCots: '하위에 다른 상용 부품(모터·서보·바퀴·포드·SKU 이름)이 있음',
+        containsCad: '하위에 CAD 루트가 있음',
+        tooLarge: '형상이 그 부품 하나로 보기에 너무 큼'
       }
     },
     rigidbody: {

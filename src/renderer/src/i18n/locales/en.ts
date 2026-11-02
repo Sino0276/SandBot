@@ -1448,12 +1448,15 @@ const en: Messages = {
         'The center of mass override on {{object}} is not used. It applies only to an object with a mass override or a datasheet mass, and only when inner overrides leave some of that mass to move.',
       podIgnored:
         '{{object}} cannot be the Pinpoint pod of {{pinpoint}}, so it is estimated without the pod mass ({{reason}}).',
-      podReasons: {
+      cotsIgnored:
+        'What is under {{object}} cannot be a single {{product}}, so its datasheet mass is not used and the shapes are estimated instead ({{reason}}). Attach it to an object that holds only that part.',
+      cotsReasons: {
         otherRobot: 'it is in a different robot from the Pinpoint',
         containsPinpoint: 'it is the Pinpoint itself or contains it',
         containsCots:
-          'it contains other off-the-shelf parts (motors, servos, wheels, another pod, SKU names)',
-        tooLarge: 'its shape is too large for a single pod'
+          'it contains other off-the-shelf parts (motors, servos, wheels, pods, SKU names)',
+        containsCad: 'it contains a CAD root',
+        tooLarge: 'its shape is too large for that one part'
       }
     },
     rigidbody: {

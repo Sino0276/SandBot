@@ -33,7 +33,7 @@ import {
   type MaterialKey,
   type MeshMassProps,
   type ObjectMass,
-  type PodIgnoredReason,
+  type CotsIgnoredReason,
   type RobotMass,
   type SourceNode,
   type SymMatrix3
@@ -47,8 +47,9 @@ import {
 //    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) notices의 innerMassExceeds로 알린다.
 // 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드는 붙은 오브젝트(지금 계층) 하위 전체를 덮고,
 //    나누는 방법은 1과 같다. 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
-//    Pinpoint 포드는 하위 전체를 포드 질량으로 바꾸므로, 포드일 수 없는 오브젝트(Pinpoint 자신과 상위, 다른 COTS를
-//    품은 것, 너무 큰 형상)는 포드로 보지 않고 notices의 podIgnored로 알린다(podRejection).
+//    하위 전체를 데이터시트 질량으로 바꾸므로, 그 하위를 그 부품 하나로 볼 수 없으면(다른 COTS나 CAD 루트를 품음, 형상이
+//    너무 큼, 포드면 Pinpoint 자신·상위이거나 다른 로봇) 쓰지 않고 notices의 cotsIgnored로 알린다(cotsRejection).
+//    로봇 전체 CAD 루트나 서브시스템 어셈블리에 붙인 Pinpoint·서보 컴포넌트가 그 하위 질량을 지우지 않게 한다.
 //    SKU 제품: 그 밖의 메시는 원래 이름 경로(MassLookup.sourcePath, 불러올 때의 CAD 노드)에서 가장 바깥의 SKU 노드가
 //    제품이다. 제품의 데이터시트 질량은 그 노드를 경로에 가진 메시에 부피 비율로 나눈다(지금 계층의 어디로 옮겼든,
 //    노드 이름을 바꿨든). 제품의 메시 일부가 1·2의 덩어리 안에 있으면, 같은 부품의 컴포넌트 COTS(sameCotsItem) 덩어리면
@@ -74,10 +75,11 @@ export const SCALE_USUAL_MIN = 0.6
 export const SCALE_USUAL_MAX = 1.6
 // 정보 없는 로봇의 무게중심 높이(외곽 높이에 대한 비율). 구동계·배터리·허브가 아래에 몰린 FTC 로봇을 가정한 판단값이다.
 const DEFAULT_COM_HEIGHT = 0.35
-// 포드로 보기에 너무 큰 형상: 하위의 닫힌 부피를 알루미늄 6061로 쳐서 포드 표 질량의 이 배를 넘으면 포드 하나가 아니다.
-// 판단값이다: 포드는 알루미늄·플라스틱·강철 부품이고, 가장 가벼운 플라스틱(materials.ts의 ABS 1.04)을 알루미늄(2.70)으로
-// 쳐도 2.6배이므로, 엔코더 몸체를 속이 찬 솔리드로 그린 CAD까지 넉넉히 받는다.
-const POD_GEOMETRY_FACTOR = 4
+// COTS 하나로 보기에 너무 큰 형상: 하위의 닫힌 부피를 알루미늄 6061로 쳐서 표 질량(합)의 이 배를 넘으면 그 부품 하나가
+// 아니다. 판단값이다: 모터·서보·포드·바퀴는 알루미늄·플라스틱·강철 부품이고, 가장 가벼운 플라스틱(materials.ts의 ABS
+// 1.04)을 알루미늄(2.70)으로 쳐도 2.6배이므로, 몸체를 속이 찬 솔리드로 그린 CAD까지 넉넉히 받는다(goBILDA 5203을
+// 알루미늄으로 보면 161 g, 표 437 g).
+const COTS_GEOMETRY_FACTOR = 4
 
 type Block = {
   ownerId: string
@@ -269,13 +271,16 @@ function sameCotsItem(a: string, b: string): boolean {
 
 type PodRequest = { pinpointId: string; target: string; key: string }
 
-// Pinpoint 포드(Pinpoint 컴포넌트의 xPod·yPod가 가리키는 오브젝트) → 표 키. 같은 포드를 여러 Pinpoint가 가리키면 앞의 것.
-// 없는 오브젝트는 건너뛰고(하드웨어 검증이 알린다), 포드일 수 없는 오브젝트는 그 Pinpoint의 로봇에 podIgnored로 알린다.
-function pinpointPods(
-  objects: SceneObjects,
-  lookup: MassLookup,
-  source: SourceIndex
-): { pods: Map<string, string>; notices: { robotId: string; notice: MassNotice }[] } {
+type CotsNotice = { robotId: string; notice: MassNotice }
+
+// Pinpoint 포드(Pinpoint 컴포넌트의 xPod·yPod가 가리키는 오브젝트) → 그 요청. 같은 포드를 여러 Pinpoint가 가리키면 앞의
+// 것. 없는 오브젝트는 건너뛰고(하드웨어 검증이 알린다), Pinpoint와 다른 로봇·Pinpoint 자신과 상위는 포드로 보지 않고 그
+// Pinpoint의 로봇에 알린다. 남은 포드는 오브젝트의 다른 COTS와 함께 cotsRejection으로 본다(computeMassModel).
+function pinpointPods(objects: SceneObjects): {
+  pods: Map<string, PodRequest>
+  targets: Set<string>
+  notices: CotsNotice[]
+} {
   const requests: PodRequest[] = []
   for (const object of Object.values(objects)) {
     for (const component of object.components ?? []) {
@@ -292,84 +297,100 @@ function pinpointPods(
     }
   }
   const targets = new Set(requests.map((request) => request.target))
-  const pods = new Map<string, string>()
-  const notices: { robotId: string; notice: MassNotice }[] = []
+  const pods = new Map<string, PodRequest>()
+  const notices: CotsNotice[] = []
   const reported = new Set<string>()
   for (const request of requests) {
     if (pods.has(request.target)) continue
-    const reason = podRejection(objects, lookup, source, request, targets)
+    const robotId = findRobotId(objects, request.pinpointId)
+    let reason: CotsIgnoredReason | null = null
+    if (robotId === null || findRobotId(objects, request.target) !== robotId) reason = 'otherRobot'
+    else if (isInSubtree(objects, request.pinpointId, request.target)) reason = 'containsPinpoint'
     if (reason === null) {
-      pods.set(request.target, request.key)
+      pods.set(request.target, request)
       continue
     }
     // xPod·yPod가 같은 오브젝트를 가리켜도 한 번만 알린다
     const seen = `${request.pinpointId}\u0000${request.target}`
-    const robotId = findRobotId(objects, request.pinpointId)
     if (!robotId || reported.has(seen)) continue
     reported.add(seen)
     notices.push({
       robotId,
-      notice: {
-        kind: 'podIgnored',
-        objectId: request.target,
-        pinpointId: request.pinpointId,
-        reason
-      }
+      notice: cotsIgnored(request.target, [request.key], reason, request.pinpointId)
     })
   }
-  return { pods, notices }
+  return { pods, targets, notices }
 }
 
-// 포드로 볼 수 없는 이유(볼 수 있으면 null). 포드 질량은 하위 전체를 덮으므로(인스펙터는 로봇 안 아무 오브젝트나 고르게
-// 한다) 상위·큰 어셈블리를 고르면 그 형상과 안의 모터·Pinpoint 질량이 포드 질량으로 바뀐다. CAD 루트는 따로 거르지
-// 않는다: 로봇 전체 CAD는 Pinpoint를 품거나(containsPinpoint) 너무 커서(tooLarge) 걸리고, 포드만 따로 불러온 작은
-// STEP은 포드다.
-function podRejection(
-  objects: SceneObjects,
-  lookup: MassLookup,
-  source: SourceIndex,
-  request: PodRequest,
-  targets: ReadonlySet<string>
-): PodIgnoredReason | null {
-  const robotId = findRobotId(objects, request.pinpointId)
-  if (robotId === null || findRobotId(objects, request.target) !== robotId) return 'otherRobot'
-  if (isInSubtree(objects, request.pinpointId, request.target)) return 'containsPinpoint'
-  let volume = 0
-  // 하위 메시의 SKU 제품(원래 이름 경로). 같은 포드 SKU 제품은 하나까지만 그 포드 자신이다. 둘 이상이면 포드 여럿을 품은
-  // 상위 어셈블리("Odometry")라 포드 하나의 질량으로 덮으면 나머지 포드가 빠진다.
-  const podProducts = new Set<string>()
-  for (const id of subtreeIds(objects, request.target)) {
-    const object = objects[id]
-    const product = source.productOf.get(id)
-    const hasCots =
-      (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
-      (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
-      (id !== request.target && targets.has(id)) ||
-      (product !== undefined && product.cotsKey !== request.key)
-    if (hasCots) return 'containsCots'
-    if (product) podProducts.add(product.nodeKey)
-    if (object.visual?.type === 'mesh') {
-      const props = lookup.props(object.visual.geometryId)
-      if (props) volume += usableVolume(props)
-    }
-  }
-  if (podProducts.size > 1) return 'containsCots'
-  const podMass = cotsEntry(request.key)?.mass ?? 0
-  return volume * MATERIALS.aluminum6061.density > POD_GEOMETRY_FACTOR * podMass ? 'tooLarge' : null
-}
+const cotsIgnored = (
+  objectId: string,
+  keys: string[],
+  reason: CotsIgnoredReason,
+  pinpointId?: string
+): MassNotice => ({
+  kind: 'cotsIgnored',
+  objectId,
+  keys,
+  reason,
+  ...(pinpointId !== undefined ? { pinpointId } : {})
+})
 
-// 오브젝트에 붙은 COTS 표 키들(컴포넌트·포드·바퀴, 모두 더한다). 이름의 SKU는 원래 이름 경로의 제품(sourceIndex)이다.
-function cotsKeys(object: SceneObject, pods: Map<string, string>): string[] {
+// 오브젝트에 붙은 COTS 표 키들(컴포넌트·포드·바퀴, 모두 더한다). 이름의 SKU는 원래 이름 경로의 제품이다(sourceIndex).
+function ownCotsKeys(object: SceneObject, pod: PodRequest | undefined): string[] {
   const keys: string[] = []
   for (const component of object.components ?? []) {
     const key = componentCotsKey(component)
     if (key) keys.push(key)
   }
-  const pod = pods.get(object.id)
-  if (pod) keys.push(pod)
+  if (pod) keys.push(pod.key)
   const wheel = object.wheel ? wheelCotsKey(object.wheel) : null
   if (wheel) keys.push(wheel)
   return keys
+}
+
+// 오브젝트(ownerId) 하위를 COTS 키들(ownKeys)의 부품 하나로 볼 수 없는 이유(볼 수 있으면 null). COTS 질량은 하위 전체를
+// 덮으므로(인스펙터는 아무 오브젝트에나 컴포넌트를 붙이고 포드를 고르게 한다) 상위·큰 어셈블리면 그 형상과 안의 모터·
+// Pinpoint 질량이 데이터시트 질량으로 바뀐다. 하위 메시의 SKU 제품은 같은 부품(sameCotsItem)이면 키마다 하나까지 그 부품
+// 자신이다(포드 어셈블리의 포드 SKU, 모터 어셈블리의 모터 SKU). 둘 이상이면 여럿을 품은 상위 어셈블리("Odometry")다.
+// 오브젝트 자신이 CAD 루트인 것은 거르지 않는다: 로봇 전체 CAD는 다른 COTS를 품거나 너무 커서 걸리고, 부품만 따로
+// 불러온 작은 STEP은 그 부품이다.
+function cotsRejection(
+  objects: SceneObjects,
+  lookup: MassLookup,
+  source: SourceIndex,
+  ownerId: string,
+  ownKeys: readonly string[],
+  podTargets: ReadonlySet<string>
+): CotsIgnoredReason | null {
+  let volume = 0
+  let containsCad = false
+  const products = new Map<string, string>()
+  for (const id of subtreeIds(objects, ownerId)) {
+    const object = objects[id]
+    if (id !== ownerId) {
+      const hasCots =
+        (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
+        (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
+        podTargets.has(id)
+      if (hasCots) return 'containsCots'
+      if (object.cad) containsCad = true
+    }
+    const product = source.productOf.get(id)
+    if (product) products.set(product.nodeKey, product.cotsKey)
+    if (object.visual?.type === 'mesh') {
+      const props = lookup.props(object.visual.geometryId)
+      if (props) volume += usableVolume(props)
+    }
+  }
+  const remaining = [...ownKeys]
+  for (const cotsKey of products.values()) {
+    const at = remaining.findIndex((key) => sameCotsItem(key, cotsKey))
+    if (at < 0) return 'containsCots'
+    remaining.splice(at, 1)
+  }
+  if (containsCad) return 'containsCad'
+  const mass = ownKeys.reduce((sum, key) => sum + (cotsEntry(key)?.mass ?? 0), 0)
+  return volume * MATERIALS.aluminum6061.density > COTS_GEOMETRY_FACTOR * mass ? 'tooLarge' : null
 }
 
 // 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)
@@ -465,7 +486,7 @@ function principalMoments(inertia: SymMatrix3): Vec3 {
 export function computeMassModel(objects: SceneObjects, lookup: MassLookup): MassModel {
   const caches = nameCaches()
   const source = sourceIndex(objects, lookup, caches)
-  const { pods, notices: podNotices } = pinpointPods(objects, lookup, source)
+  const { pods, targets: podTargets, notices: cotsNotices } = pinpointPods(objects)
   const parts: Part[] = []
   const partsByObject = new Map<string, Part[]>()
   const blocks: Block[] = []
@@ -595,10 +616,22 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
           context.block
         )
       } else if (context.block === null) {
-        const keys = cotsKeys(object, pods)
-        if (keys.length > 0) {
+        const pod = pods.get(object.id)
+        const keys = ownCotsKeys(object, pod)
+        const reason =
+          keys.length > 0
+            ? cotsRejection(objects, lookup, source, object.id, keys, podTargets)
+            : null
+        if (keys.length > 0 && reason === null) {
           const mass = keys.reduce((sum, key) => sum + (cotsEntry(key)?.mass ?? 0), 0)
           block = newBlock(object.id, robotId, 'cots', mass, keys, centerOfMass, origin, null)
+        } else if (reason !== null) {
+          // 포드면 그 Pinpoint의 로봇에(포드와 같은 로봇이다), 아니면 이 오브젝트의 로봇에 알린다
+          if (robotId)
+            cotsNotices.push({
+              robotId,
+              notice: cotsIgnored(object.id, keys, reason, pod?.pinpointId)
+            })
         }
       }
       if (block) {
@@ -736,7 +769,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     const list = robotParts.get(robotId) ?? []
     const warnings: MassWarning[] = []
     const notices: MassNotice[] = []
-    for (const entry of podNotices) if (entry.robotId === robotId) notices.push(entry.notice)
+    for (const entry of cotsNotices) if (entry.robotId === robotId) notices.push(entry.notice)
     for (const entry of noticeOrder) {
       if (!('block' in entry)) {
         if (entry.robotId === robotId)

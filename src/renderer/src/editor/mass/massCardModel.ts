@@ -639,12 +639,21 @@ export function noticeText(
       })
     case 'centerOfMassIgnored':
       return t('mass.notices.centerOfMassIgnored', { object: name(notice.objectId) })
-    case 'podIgnored':
-      return t('mass.notices.podIgnored', {
+    case 'cotsIgnored': {
+      const reason = t(`mass.notices.cotsReasons.${notice.reason}`)
+      // 포드만이면 그 Pinpoint의 포드라고 부른다
+      if (notice.pinpointId !== undefined && notice.keys.length === 1)
+        return t('mass.notices.podIgnored', {
+          object: name(notice.objectId),
+          pinpoint: name(notice.pinpointId),
+          reason
+        })
+      return t('mass.notices.cotsIgnored', {
         object: name(notice.objectId),
-        pinpoint: name(notice.pinpointId),
-        reason: t(`mass.notices.podReasons.${notice.reason}`)
+        product: cotsText(t, notice.keys.join('+'), DEFAULT_DESCRIBERS),
+        reason
       })
+    }
   }
 }
 
