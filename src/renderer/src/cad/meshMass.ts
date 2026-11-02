@@ -130,7 +130,7 @@ export function computeMeshMass(
   }
 
   // 원점(피벗)을 꼭짓점으로 하는 사면체 부피의 합과 같은 값(V = (Vx + Vy + Vz) / 3)이다. 닫히면 세 값이 같다.
-  // 열리면 축마다 다른데, 사면체 합은 원점을 o만큼 옮길 때 o·S/3만 바뀌므로 아래 closure가 그 오차의 상한이다.
+  // 열리면 축마다 다른데, 사면체 합은 원점을 o만큼 옮길 때 o·S/3만 바뀌므로 아래 closure의 첫 항이 그 오차의 상한이다.
   let volume = (vx + vy + vz) / 18
   // 좌표가 유한하지 않은 깨진 입력이어도 결과는 유한한 수로 둔다(캐시 확인과 질량 합성이 NaN을 받지 않게)
   const area = Number.isFinite(area2) ? area2 / 2 : 0
@@ -160,11 +160,23 @@ export function computeMeshMass(
     -(yz - volume * cy * cz)
   ]
 
-  // 닫힘 지표: 원점을 경계 상자 안에서 옮길 때 부피가 바뀌는 상한(|S|·R/3)을 부피로 나눈 것. 닫히면 0이다.
+  // 닫힘 지표는 두 값 가운데 큰 것이다. 닫히면 둘 다 0이다.
+  // - 원점을 경계 상자 안에서 옮길 때 부피가 바뀌는 상한(|S|·R/3)을 부피로 나눈 것
+  // - 축별 부피의 퍼짐 max_k |V_k − V| / V. 양쪽 뚜껑이 빠진 관처럼 면적 벡터 S가 상쇄돼 앞의 값이 0인 열린
+  //   메시도 잡는다(뚜껑 법선 축의 V_k만 다르다, method.md §3.3의 ε_V)
   const hx = (bounds.max[0] - bounds.min[0]) / 2
   const hy = (bounds.max[1] - bounds.min[1]) / 2
   const hz = (bounds.max[2] - bounds.min[2]) / 2
-  const closure = (vectorArea * Math.sqrt(hx * hx + hy * hy + hz * hz)) / (3 * volume)
+  const spread =
+    Math.max(
+      Math.abs((sign * vx) / 6 - volume),
+      Math.abs((sign * vy) / 6 - volume),
+      Math.abs((sign * vz) / 6 - volume)
+    ) / volume
+  const closure = Math.max(
+    (vectorArea * Math.sqrt(hx * hx + hy * hy + hz * hz)) / (3 * volume),
+    spread
+  )
   const centroid: Vec3 = [cx, cy, cz]
   if (![...centroid, ...inertia, volume].every(Number.isFinite) || !(closure >= 0)) {
     return surfaceProps(area)

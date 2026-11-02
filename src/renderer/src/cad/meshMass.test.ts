@@ -243,9 +243,11 @@ describe('computeMeshMass: 열린 메시와 표면', () => {
     const props = massOf(mesh)
     const full = prismAnalytic(r, h, 64).volume
     expectClose(props.volume, (5 / 6) * full, 1e-12)
-    // |S| = 뚜껑 넓이, 반대각선 R → closure = A·R / (3 · 5/6 · A·h) = 2R / (5h)
+    // 면적 벡터 항: |S| = 뚜껑 넓이, 반대각선 R → A·R / (3 · 5/6 · A·h) = 2R / (5h) ≈ 0.23
+    // 축별 부피 항: V_x = V_y = V, V_z = V/2(바닥만) → |V/2 − 5V/6| / (5V/6) = 0.4
     const half = Math.hypot(r, r, h / 2)
-    expectClose(props.closure, (2 * half) / (5 * h), 1e-9)
+    expect((2 * half) / (5 * h)).toBeLessThan(0.4)
+    expectClose(props.closure, 0.4, 1e-9)
     expect(props.closure).toBeGreaterThan(MASS_CLOSURE_LIMIT)
     expect(meshMassState(props)).toBe('surface')
   })
@@ -262,12 +264,25 @@ describe('computeMeshMass: 열린 메시와 표면', () => {
     expect(Math.abs(props.volume - full) / full).toBeLessThan(props.closure)
   })
 
-  it('한계: 양쪽 뚜껑이 빠진 관은 면적 벡터가 상쇄돼 닫힌 것으로 보인다(부피 2/3)', () => {
+  it('양쪽 뚜껑이 빠진 관: 면적 벡터는 상쇄되지만 축별 부피가 달라 표면이다', () => {
     const mesh = emptyMesh()
     addCylinder(mesh, [0, 0, 0], r, h, 64, { top: false, bottom: false })
     const props = massOf(mesh)
-    expect(props.closure).toBeLessThan(1e-12)
+    // 사면체 합은 2/3(V_x = V_y = V, V_z = 0)이고, 퍼짐 |0 − 2V/3| / (2V/3) = 1이 closure다
     expectClose(props.volume, (2 / 3) * prismAnalytic(r, h, 64).volume, 1e-12)
+    expectClose(props.closure, 1, 1e-9)
+    expect(meshMassState(props)).toBe('surface')
+  })
+
+  it('한계: 구멍이 세 축 모두 대칭이면 두 지표가 모두 0이라 닫힌 것으로 보인다', () => {
+    // 정육면체의 여섯 면에서 삼각형 하나씩(맞은편끼리 면적 벡터가 상쇄)을 뺀다. V_x = V_y = V_z = V/2
+    const mesh = emptyMesh()
+    addBox(mesh, [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])
+    mesh.indices = mesh.indices.filter((_, i) => i % 6 >= 3)
+    const props = massOf(mesh)
+    expect(props.closure).toBeLessThan(1e-12)
+    expect(meshMassState(props)).toBe('closed')
+    expectClose(props.volume, 0.5, 1e-12)
   })
 
   it('면만 있는 판은 부피 0·closure Infinity·표면이고 무게중심은 피벗이다', () => {
