@@ -402,7 +402,9 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(model.objects.Q1.mass).toBeCloseTo(0.5, 15)
     expect(model.objects.Q2.mass).toBe(0)
     expect(model.objects.X.mass).toBeCloseTo(0.5, 15)
-    expect(model.robots.R.warnings).toEqual([
+    // 계약의 경고(warnings)가 아니라 notices로 알린다
+    expect(model.robots.R.warnings).toEqual([])
+    expect(model.robots.R.notices).toEqual([
       { kind: 'innerMassExceeds', objectId: 'X', mass: 0.2, inner: 0.5 }
     ])
     expect(model.robots.R.mass).toBeCloseTo(1.5, 15)
@@ -423,9 +425,35 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.P3.mass).toBe(0)
     expect(model.objects.A.mass).toBeCloseTo(1, 15)
-    expect(model.robots.R.warnings).toEqual([
+    expect(model.robots.R.notices).toEqual([
       { kind: 'innerMassExceeds', objectId: 'M', mass: 0.437, inner: 1 }
     ])
+  })
+
+  it('안쪽 덮어쓰기가 질량을 다 쓰면 무게중심 덮어쓰기를 쓰지 못하고 알린다', () => {
+    const objects = scene(
+      robot(),
+      // 안쪽이 바깥과 같음(남은 몫 0)
+      node('M', 'R', { kind: 'group', mass: { mass: 1, centerOfMass: [0.5, 0, 0] } }),
+      part('A', 'M', [0, 0, 0], { mass: { mass: 1 } }),
+      // 안쪽이 바깥보다 큼
+      node('N', 'R', { kind: 'group', mass: { mass: 0.2, centerOfMass: [0, 0.5, 0] } }),
+      part('B', 'N', [0, 0, 0], { mass: { mass: 0.3 } }),
+      // 남은 몫이 있으면 쓰고 알리지 않는다
+      node('K', 'R', { kind: 'group', mass: { mass: 1, centerOfMass: [0, 0, 0.5] } }),
+      part('C', 'K', [0, 0, 0], { mass: { mass: 0.5 } }),
+      part('D', 'K')
+    )
+    const props = Object.fromEntries(['A', 'B', 'C', 'D'].map((id) => [`g:${id}`, solid(LITER)]))
+    const model = computeMassModel(objects, lookupOf(props))
+    expect(model.objects.M.centerOfMass).toEqual([0, 0, 0])
+    expect(model.objects.K.centerOfMass[2]).toBeCloseTo(0.5, 14)
+    expect(model.robots.R.notices).toEqual([
+      { kind: 'centerOfMassIgnored', objectId: 'M' },
+      { kind: 'innerMassExceeds', objectId: 'N', mass: 0.2, inner: 0.3 },
+      { kind: 'centerOfMassIgnored', objectId: 'N' }
+    ])
+    expect(model.robots.R.warnings).toEqual([])
   })
 
   it('컴포넌트 COTS는 붙은 오브젝트 하위 전체를 덮고, 안쪽 COTS는 쓰지 않는다', () => {
@@ -484,7 +512,11 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       }),
       part('X', 'R', [0, 0, 0], { name: 'Pod' })
     )
-    const props = Object.fromEntries(['B1', 'L', 'Pin', 'X'].map((id) => [`g:${id}`, solid(LITER)]))
+    const props = {
+      ...Object.fromEntries(['B1', 'L', 'Pin'].map((id) => [`g:${id}`, solid(LITER)])),
+      // 포드 크기의 형상(20 mm 정육면체). 1 L처럼 큰 형상은 포드로 보지 않는다(아래 tooLarge)
+      'g:X': box(0.02, 0.02, 0.02)
+    }
     const model = computeMassModel(objects, lookupOf(props))
     expect(model.objects.B).toMatchObject({ source: 'cots', detail: 'battery:gobilda' })
     expect(model.objects.B.mass).toBeCloseTo(0.597, 15)
@@ -492,6 +524,124 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
     expect(model.objects.Pin.mass).toBeCloseTo(0.04, 15)
     expect(model.objects.X).toMatchObject({ source: 'cots', detail: 'pod:swingarm' })
     expect(model.objects.X.mass).toBeCloseTo(0.121, 15)
+    expect(model.robots.R.notices).toEqual([])
+  })
+
+  describe('Pinpoint 포드로 볼 수 없는 오브젝트는 포드 질량을 쓰지 않고 알린다', () => {
+    const pinpoint = (xPod: string, yPod = ''): HardwareComponent => ({
+      id: 'pp',
+      type: 'pinpoint',
+      name: 'pinpoint',
+      hub: 'controlHub',
+      port: 1,
+      props: { podType: 'fourBar', xPod, yPod }
+    })
+    // CAD 루트 C 안에 Pinpoint 파트와 큰 판(0.5 × 0.5 × 0.1 m 알루미늄, 67.5 kg), 따로 포드 파트·모터 어셈블리
+    const base = (xPod: string, yPod = ''): SceneObjects =>
+      scene(
+        robot(),
+        node('C', 'R', {
+          name: 'Robot CAD',
+          cad: {
+            fileName: 'r.step',
+            absolutePath: '/r.step',
+            upAxis: '+Z',
+            forwardAxis: '+X',
+            bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+            meshCount: 6
+          }
+        }),
+        part('Pin', 'C', [0, 0, 0], { name: 'Pinpoint', components: [pinpoint(xPod, yPod)] }),
+        part('Big', 'C', [0, 0, 0], { name: 'Plate' }),
+        part('Pod', 'C', [0.1, 0, 0], { name: 'Pod' }),
+        node('Drive', 'C', { name: 'Drive' }),
+        part('Mot', 'Drive', [0, 0, 0], { name: 'Motor', components: [motor(19.2)] }),
+        node('Arm', 'C', { name: 'Arm' }),
+        part('Arm1', 'Arm', [0, 0, 0], { name: 'Arm Plate' }),
+        node('Other', 'R', { kind: 'group' }),
+        part('Far', 'Other', [0, 0, 0], { name: 'Far' })
+      )
+    const props = {
+      'g:Pin': box(0.03, 0.03, 0.01),
+      'g:Big': box(0.5, 0.5, 0.1),
+      'g:Pod': box(0.02, 0.02, 0.02),
+      'g:Mot': box(0.04, 0.04, 0.1),
+      'g:Arm1': box(0.3, 0.05, 0.01),
+      'g:Far': box(0.02, 0.02, 0.02)
+    }
+    const run = (xPod: string, yPod = ''): ReturnType<typeof computeMassModel> =>
+      computeMassModel(base(xPod, yPod), lookupOf(props))
+    const ignored = (objectId: string, reason: string): object => ({
+      kind: 'podIgnored',
+      objectId,
+      pinpointId: 'Pin',
+      reason
+    })
+
+    it('작은 포드 파트는 포드 질량(84 g)이다', () => {
+      const model = run('Pod')
+      expect(model.objects.Pod).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+      expect(model.objects.Pod.mass).toBeCloseTo(0.084, 15)
+      expect(model.robots.R.notices).toEqual([])
+    })
+
+    it('Pinpoint 자신·상위(CAD 루트, 로봇)는 containsPinpoint, 하위 형상은 그대로 추정한다', () => {
+      const plain = run('')
+      for (const target of ['Pin', 'C', 'R']) {
+        const model = run(target)
+        expect(model.robots.R.notices).toEqual([ignored(target, 'containsPinpoint')])
+        expect(model.robots.R.mass).toBeCloseTo(plain.robots.R.mass, 12)
+        expect(model.objects.Pin).toMatchObject({ source: 'cots', detail: 'pinpoint' })
+        expect(model.objects.Big.mass).toBeCloseTo(0.025 * 2700, 9)
+      }
+    })
+
+    it('다른 COTS를 품은 것은 containsCots, 큰 형상은 tooLarge, 다른 CAD 루트·로봇 밖은 cadRoot·otherRobot', () => {
+      expect(run('Drive').robots.R.notices).toEqual([ignored('Drive', 'containsCots')])
+      expect(run('Drive').objects.Mot).toMatchObject({
+        source: 'cots',
+        detail: 'motor:goBilda5203:19.2'
+      })
+      // 0.3 × 0.05 × 0.01 m = 150 cm³ → 405 g > 4 × 84 g
+      expect(run('Arm').robots.R.notices).toEqual([ignored('Arm', 'tooLarge')])
+      expect(run('Arm').objects.Arm1.source).not.toBe('cots')
+      expect(run('Big').robots.R.notices).toEqual([ignored('Big', 'tooLarge')])
+      // 포드 둘을 품은 어셈블리는 두 번째 포드를 덮으므로 containsCots
+      const both = computeMassModel(
+        {
+          ...base('Arm', 'Pod2'),
+          Pod2: part('Pod2', 'Arm', [0, 0, 0], { name: 'Pod 2' })
+        },
+        lookupOf({ ...props, 'g:Arm1': box(0.01, 0.01, 0.01), 'g:Pod2': box(0.01, 0.01, 0.01) })
+      )
+      expect(both.robots.R.notices).toEqual([ignored('Arm', 'containsCots')])
+      expect(both.objects.Pod2).toMatchObject({ source: 'cots', detail: 'pod:fourBar' })
+      // CAD 루트를 품은 그룹은 cadRoot(Pinpoint는 그 밖의 그룹 Other로 옮김)
+      const wrapped = base('G')
+      const withGroup: SceneObjects = {
+        ...scene(robot(), node('G', 'R', { kind: 'group' })),
+        ...Object.fromEntries(Object.entries(wrapped).filter(([id]) => id !== 'R')),
+        C: { ...wrapped.C, parentId: 'G' },
+        Pin: { ...wrapped.Pin, parentId: 'Other' }
+      }
+      expect(computeMassModel(withGroup, lookupOf(props)).robots.R.notices).toEqual([
+        ignored('G', 'cadRoot')
+      ])
+      // 로봇 밖 오브젝트
+      const outside = {
+        ...base('Loose'),
+        Loose: { ...part('Loose', 'R', [0, 0, 0]), parentId: null }
+      }
+      expect(computeMassModel(outside, lookupOf(props)).robots.R.notices).toEqual([
+        ignored('Loose', 'otherRobot')
+      ])
+    })
+
+    it('xPod·yPod가 같은 오브젝트면 한 번만 알리고, 같은 포드는 한 번만 센다', () => {
+      expect(run('C', 'C').robots.R.notices).toEqual([ignored('C', 'containsPinpoint')])
+      const model = run('Pod', 'Pod')
+      expect(model.objects.Pod.mass).toBeCloseTo(0.084, 15)
+    })
   })
 })
 

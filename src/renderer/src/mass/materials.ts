@@ -78,7 +78,7 @@ export const PRINTED_SHELL_THICKNESS = 0.0011
 // 출력물에서 재료가 찬 부피 비율 f = f_shell + (1 − f_shell)·infill, f_shell = min(1, A·t/V).
 // 껍질이 100 %이고 안이 채움 비율로 차 있다는 근사다. 직육면체의 정확한 안쪽 상자 (a − 2t_벽)(b − 2t_벽)(c − 2t_위아래)와
 // 견주면 덩어리 파트(20–80 mm)에서 ±0.02 안이고, 눕혀 출력한 얇은 판(5 mm 이하)은 0.1–0.15 무겁게 본다
-// (100×50×5 판, 벽 3·채움 25 %: 정확 0.53, 근사 0.62). 부피나 면적이 0이면 채움만.
+// (100×50×5 판, 벽 3·채움 25 %: 정확 0.53, 근사 0.63). 부피나 면적이 0이면 채움만.
 export function printedFillFraction(volume: number, area: number, infill: number): number {
   const shell = volume > 0 && area > 0 ? Math.min(1, (area * PRINTED_SHELL_THICKNESS) / volume) : 0
   return shell + (1 - shell) * infill

@@ -3,7 +3,9 @@ import { symmetricEigen3 } from '../../../shared/sim/drivetrain'
 import { ROBOT_SIZE } from '../scene/coordinates'
 import {
   childrenInDocument,
+  findRobotId,
   isInSubtree,
+  subtreeIds,
   transformToMatrix,
   type SceneObject,
   type SceneObjects,
@@ -16,7 +18,7 @@ import {
   skuCotsKey,
   wheelCotsKey
 } from './cotsTable'
-import { DEFAULT_MATERIAL, effectiveDensity } from './materials'
+import { DEFAULT_MATERIAL, effectiveDensity, MATERIALS } from './materials'
 import { matchNameRule, type NameRule } from './nameRules'
 import {
   DEFAULT_INFILL,
@@ -24,11 +26,13 @@ import {
   MASS_CLOSURE_LIMIT,
   type MassLookup,
   type MassModel,
+  type MassNotice,
   type MassSource,
   type MassWarning,
   type MaterialKey,
   type MeshMassProps,
   type ObjectMass,
+  type PodIgnoredReason,
   type RobotMass,
   type SymMatrix3
 } from './types'
@@ -38,14 +42,17 @@ import {
 // 파트(메시 하나) 질량의 출처는 위가 먼저다.
 // 1. 덮어쓰기(mass.mass): 그 오브젝트 하위 전체가 한 덩어리다. 하위 형상의 부피 비율로 나누고, 형상이 없으면
 //    점질량(원점)이다. 덮어쓰기 안의 덮어쓰기는 안쪽 값을 고정하고 남은 질량을 나머지에 나눈다. 안쪽 합이 바깥 값보다
-//    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) innerMassExceeds로 알린다.
+//    크면 안쪽 값을 그대로 쓰고(바깥 하위 합계가 바깥 값보다 커진다) notices의 innerMassExceeds로 알린다.
 // 2. 상용 부품(COTS, cotsTable.ts): 하드웨어 컴포넌트·바퀴·Pinpoint 포드, 없으면 원래 CAD 이름의 SKU. 덮는 범위와
 //    나누는 방법은 1과 같고, 덩어리(덮어쓰기·COTS) 안의 COTS는 쓰지 않는다(두 번 세지 않게 위의 것을 쓴다).
+//    Pinpoint 포드는 하위 전체를 포드 질량으로 바꾸므로, 포드일 수 없는 오브젝트(Pinpoint의 상위, CAD 루트, 다른 COTS를
+//    품은 것, 너무 큰 형상)는 포드로 보지 않고 notices의 podIgnored로 알린다(podRejection).
 // 3. 재질 × 부피: 위로 가장 가까운 mass.material, 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질. 이름 규칙은
 //    원래 CAD 메시 이름과 상위 CAD 오브젝트 이름(CAD 루트까지)만 본다. 그룹 이름은 팀이 지은 메커니즘 이름(생성 Java
 //    클래스)이라 재질을 말하지 않으므로 건너뛴다(IntakeRoller 그룹에 옮긴 파트가 roller → 고무가 되지 않게).
 // 무게중심 덮어쓰기(mass.centerOfMass)는 질량을 정한 오브젝트(1·2)에서만 쓰고, 덩어리 전체의 무게중심을 그 점에 둔다
-// (관성의 모양은 형상 그대로 옮긴다).
+// (관성의 모양은 형상 그대로 옮긴다). 안쪽 덮어쓰기는 옮기지 않으므로, 안쪽이 질량을 다 쓰면 옮길 몫이 없어 쓰지 못하고
+// notices의 centerOfMassIgnored로 알린다.
 //
 // 저울 무게(rigidbody.weighedMass)가 있으면 고정 질량(1·2)을 뺀 나머지로 3의 파트만 같은 비율로 늘이거나 줄인다.
 // 위치는 로봇 좌표(로봇 밖은 필드 좌표)이고, 관성은 무게중심 기준 R·I·Rᵀ와 평행축 정리로 합친다(transform에 척도 없음).
@@ -59,6 +66,10 @@ export const SCALE_USUAL_MIN = 0.6
 export const SCALE_USUAL_MAX = 1.6
 // 정보 없는 로봇의 무게중심 높이(외곽 높이에 대한 비율). 구동계·배터리·허브가 아래에 몰린 FTC 로봇을 가정한 판단값이다.
 const DEFAULT_COM_HEIGHT = 0.35
+// 포드로 보기에 너무 큰 형상: 하위의 닫힌 부피를 알루미늄 6061로 쳐서 포드 표 질량의 이 배를 넘으면 포드 하나가 아니다.
+// 판단값이다: 포드는 알루미늄·플라스틱·강철 부품이고, 가장 가벼운 플라스틱(materials.ts의 ABS 1.04)을 알루미늄(2.70)으로
+// 쳐도 2.6배이므로, 엔코더 몸체를 속이 찬 솔리드로 그린 CAD까지 넉넉히 받는다.
+const POD_GEOMETRY_FACTOR = 4
 
 type Block = {
   ownerId: string
@@ -78,6 +89,8 @@ type Block = {
   resolvedCom: Vec3
   // 안쪽 덮어쓰기 합이 이 덩어리 질량보다 컸는지(그 합, 아니면 null)
   exceededBy: number | null
+  // 무게중심 덮어쓰기를 옮길 자기 몫이 없어 쓰지 못했는지
+  centerOfMassIgnored: boolean
 }
 
 type Part = {
@@ -171,20 +184,85 @@ function ownNames(object: SceneObject, lookup: MassLookup): string[] {
   return source && source !== object.name ? [source, object.name] : [object.name]
 }
 
+type PodRequest = { pinpointId: string; target: string; key: string }
+
 // Pinpoint 포드(Pinpoint 컴포넌트의 xPod·yPod가 가리키는 오브젝트) → 표 키. 같은 포드를 여러 Pinpoint가 가리키면 앞의 것.
-function pinpointPods(objects: SceneObjects): Map<string, string> {
-  const pods = new Map<string, string>()
+// 없는 오브젝트는 건너뛰고(하드웨어 검증이 알린다), 포드일 수 없는 오브젝트는 그 Pinpoint의 로봇에 podIgnored로 알린다.
+function pinpointPods(
+  objects: SceneObjects,
+  lookup: MassLookup
+): { pods: Map<string, string>; notices: { robotId: string; notice: MassNotice }[] } {
+  const requests: PodRequest[] = []
   for (const object of Object.values(objects)) {
     for (const component of object.components ?? []) {
       if (component.type !== 'pinpoint') continue
-      for (const key of ['xPod', 'yPod']) {
-        const target = component.props[key]
-        if (typeof target === 'string' && target && !pods.has(target))
-          pods.set(target, pinpointPodCotsKey(component.props.podType))
+      for (const prop of ['xPod', 'yPod']) {
+        const target = component.props[prop]
+        if (typeof target === 'string' && target && objects[target])
+          requests.push({
+            pinpointId: object.id,
+            target,
+            key: pinpointPodCotsKey(component.props.podType)
+          })
       }
     }
   }
-  return pods
+  const targets = new Set(requests.map((request) => request.target))
+  const pods = new Map<string, string>()
+  const notices: { robotId: string; notice: MassNotice }[] = []
+  const reported = new Set<string>()
+  for (const request of requests) {
+    if (pods.has(request.target)) continue
+    const reason = podRejection(objects, lookup, request, targets)
+    if (reason === null) {
+      pods.set(request.target, request.key)
+      continue
+    }
+    // xPod·yPod가 같은 오브젝트를 가리켜도 한 번만 알린다
+    const seen = `${request.pinpointId}\u0000${request.target}`
+    const robotId = findRobotId(objects, request.pinpointId)
+    if (!robotId || reported.has(seen)) continue
+    reported.add(seen)
+    notices.push({
+      robotId,
+      notice: {
+        kind: 'podIgnored',
+        objectId: request.target,
+        pinpointId: request.pinpointId,
+        reason
+      }
+    })
+  }
+  return { pods, notices }
+}
+
+// 포드로 볼 수 없는 이유(볼 수 있으면 null). 포드 질량은 하위 전체를 덮으므로(인스펙터는 로봇 안 아무 오브젝트나 고르게
+// 한다) 상위·CAD 루트·큰 어셈블리를 고르면 그 형상과 안의 모터·Pinpoint 질량이 포드 질량으로 바뀐다.
+function podRejection(
+  objects: SceneObjects,
+  lookup: MassLookup,
+  request: PodRequest,
+  targets: ReadonlySet<string>
+): PodIgnoredReason | null {
+  const robotId = findRobotId(objects, request.pinpointId)
+  if (robotId === null || findRobotId(objects, request.target) !== robotId) return 'otherRobot'
+  if (isInSubtree(objects, request.pinpointId, request.target)) return 'containsPinpoint'
+  let volume = 0
+  for (const id of subtreeIds(objects, request.target)) {
+    const object = objects[id]
+    if (object.cad) return 'cadRoot'
+    const hasCots =
+      (object.components ?? []).some((component) => componentCotsKey(component) !== null) ||
+      (object.wheel !== undefined && wheelCotsKey(object.wheel) !== null) ||
+      (id !== request.target && targets.has(id))
+    if (hasCots) return 'containsCots'
+    if (object.visual?.type === 'mesh') {
+      const props = lookup.props(object.visual.geometryId)
+      if (props) volume += usableVolume(props)
+    }
+  }
+  const podMass = cotsEntry(request.key)?.mass ?? 0
+  return volume * MATERIALS.aluminum6061.density > POD_GEOMETRY_FACTOR * podMass ? 'tooLarge' : null
 }
 
 // 오브젝트에 맞는 COTS 표 키들(컴포넌트·포드·바퀴는 모두 더하고, 없을 때만 이름의 SKU). 라벨 이름의 SKU는 쓰지 않는다
@@ -304,7 +382,7 @@ function principalMoments(inertia: SymMatrix3): Vec3 {
 }
 
 export function computeMassModel(objects: SceneObjects, lookup: MassLookup): MassModel {
-  const pods = pinpointPods(objects)
+  const { pods, notices: podNotices } = pinpointPods(objects, lookup)
   const caches = nameCaches()
   const parts: Part[] = []
   const partsByObject = new Map<string, Part[]>()
@@ -339,7 +417,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     children: [],
     resolvedMass: 0,
     resolvedCom: origin,
-    exceededBy: null
+    exceededBy: null,
+    centerOfMassIgnored: false
   })
 
   // 추정 파트의 재질·출처
@@ -475,14 +554,19 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   for (const robotId of robotIds) {
     const list = robotParts.get(robotId) ?? []
     const warnings: MassWarning[] = []
+    const notices: MassNotice[] = []
+    for (const entry of podNotices) if (entry.robotId === robotId) notices.push(entry.notice)
     for (const block of blocks) {
-      if (block.robotId === robotId && block.exceededBy !== null)
-        warnings.push({
+      if (block.robotId !== robotId) continue
+      if (block.exceededBy !== null)
+        notices.push({
           kind: 'innerMassExceeds',
           objectId: block.ownerId,
           mass: block.mass,
           inner: block.exceededBy
         })
+      if (block.centerOfMassIgnored)
+        notices.push({ kind: 'centerOfMassIgnored', objectId: block.ownerId })
     }
     const meshes = pending.get(robotId) ?? 0
     let fixed = 0
@@ -557,7 +641,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       fixedMass: fixed,
       estimatedMass: estimated,
       scale,
-      warnings
+      warnings,
+      notices
     }
   }
 
@@ -609,7 +694,9 @@ function resolveBlock(block: Block, parts: Part[], partsByObject: Map<string, Pa
   }
   const restMoment: Vec3 = [0, 0, 0]
   for (const part of own) for (let k = 0; k < 3; k++) restMoment[k] += part.mass * part.com[k]
-  // 무게중심 덮어쓰기: 안쪽 덩어리는 그대로 두고 자기 몫을 옮겨 덩어리 전체 무게중심을 맞춘다
+  // 무게중심 덮어쓰기: 안쪽 덩어리는 그대로 두고 자기 몫을 옮겨 덩어리 전체 무게중심을 맞춘다. 안쪽이 질량을 다 쓰면
+  // 옮길 몫이 없다(안쪽 값이 먼저라 안쪽을 옮기지 않는다).
+  if (block.centerOfMass && rest === 0) block.centerOfMassIgnored = true
   if (block.centerOfMass && rest > 0) {
     const target = block.centerOfMass
     const delta = [0, 1, 2].map((k) => (total * target[k] - innerMoment[k] - restMoment[k]) / rest)

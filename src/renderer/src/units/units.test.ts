@@ -6,6 +6,7 @@ import {
   fromDisplayLength,
   KG_PER_LB,
   loadLengthUnit,
+  MASS_SYMBOLS,
   massDisplay,
   parseAngle,
   parseMass,
@@ -71,14 +72,14 @@ describe('길이 단위', () => {
   })
 })
 
-// 기호 글자는 i18n 리소스가 준다(시험에서는 기호 그대로)
-const SYMBOLS = { g: 'g', kg: 'kg', lb: 'lb', oz: 'oz' } as const
-const fmt = (kg: number, unit: LengthUnit): string => formatMass(kg, unit, SYMBOLS)
+const fmt = (kg: number, unit: LengthUnit): string => formatMass(kg, unit)
 
 describe('질량 단위', () => {
-  it('기호 글자는 받은 것을 쓴다', () => {
-    expect(formatMass(0.437, 'mm', { ...SYMBOLS, g: 'G' })).toBe('437 G')
-    expect(formatMass(13.6, 'in', { ...SYMBOLS, lb: 'LB' })).toBe('29.98 LB')
+  it('기호 글자는 받은 것을 쓰고, 없으면 국제 단위 기호다(계약의 두 인자 호출)', () => {
+    expect(formatMass(0.437, 'mm', { ...MASS_SYMBOLS, g: 'G' })).toBe('437 G')
+    expect(formatMass(13.6, 'in', { ...MASS_SYMBOLS, lb: 'LB' })).toBe('29.98 LB')
+    expect(formatMass(0.437, 'mm')).toBe(formatMass(0.437, 'mm', MASS_SYMBOLS))
+    expect(MASS_SYMBOLS).toEqual({ g: 'g', kg: 'kg', lb: 'lb', oz: 'oz' })
   })
 
   it('미터법 표시 단위는 1 kg 미만이면 g(정수), 그 위는 kg(소수 셋)', () => {

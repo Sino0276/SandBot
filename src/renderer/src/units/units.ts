@@ -122,11 +122,21 @@ export function massDisplay(kg: number, unit: LengthUnit): { value: string; symb
   return { value: formatNumber(kg, 3), symbol: 'kg' }
 }
 
-// "437 g"처럼 수와 기호를 붙인다. 기호 글자(symbols)는 쓰는 쪽이 i18n 리소스에서 준다(UI 문자열을 하드코딩하지 않게).
+// 기호 글자의 기본값: 국제 단위 기호(SI의 g·kg, 국제 야드·파운드의 lb·oz)라 한국어·영어 표기가 같다. 길이 기호처럼
+// i18n 리소스(units.massSymbols)에 기호를 두면 쓰는 쪽이 그것을 symbols로 넘긴다. 기본값은 갈래 사이 계약의
+// formatMass(kg, unit) 호출을 그대로 받기 위한 것이다.
+export const MASS_SYMBOLS: Readonly<Record<MassSymbol, string>> = {
+  g: 'g',
+  kg: 'kg',
+  lb: 'lb',
+  oz: 'oz'
+}
+
+// "437 g"처럼 수와 기호를 붙인다
 export function formatMass(
   kg: number,
   unit: LengthUnit,
-  symbols: Readonly<Record<MassSymbol, string>>
+  symbols: Readonly<Record<MassSymbol, string>> = MASS_SYMBOLS
 ): string {
   const { value, symbol } = massDisplay(kg, unit)
   return `${value} ${symbols[symbol]}`

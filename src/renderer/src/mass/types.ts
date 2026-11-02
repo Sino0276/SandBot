@@ -79,13 +79,28 @@ export type MassWarning =
   | { kind: 'scaleUnusual'; scale: number }
   // 고정 질량(덮어쓰기·COTS) ≥ 저울 무게이거나 추정 질량이 0이라 맞추지 않음
   | { kind: 'scaleImpossible'; fixed: number; weighed: number }
-  // 덩어리(덮어쓰기·COTS를 정한 objectId) 안의 덮어쓰기 합 inner가 그 질량 mass보다 커서 안쪽 값을 그대로 씀
-  // (objectId 하위 합계가 inner가 된다)
-  | { kind: 'innerMassExceeds'; objectId: string; mass: number; inner: number }
   // 질량 정보가 없어 기본값을 씀
   | { kind: 'defaultMass' }
   // 형상을 읽는 중인 메시가 있어 그 부분이 빠짐
   | { kind: 'pending'; meshes: number }
+
+// 설정 일부를 추정에 쓰지 못한 곳(RobotMass.notices). 갈래 사이 계약(MassWarning) 뒤에 더한 것이라 MassWarning과 따로
+// 두었다(경고 문구 switch가 계약의 종류만 다루게).
+export type MassNotice =
+  // 덩어리(덮어쓰기·COTS를 정한 objectId) 안의 덮어쓰기 합 inner가 그 질량 mass보다 커서 안쪽 값을 그대로 씀
+  // (objectId 하위 합계가 inner가 된다)
+  | { kind: 'innerMassExceeds'; objectId: string; mass: number; inner: number }
+  // 안쪽 덮어쓰기가 덩어리 질량을 다 써서(inner ≥ mass) objectId의 무게중심 덮어쓰기로 옮길 질량이 없음
+  | { kind: 'centerOfMassIgnored'; objectId: string }
+  // Pinpoint(pinpointId 오브젝트)의 xPod·yPod가 가리키는 objectId를 포드로 볼 수 없어 포드 질량을 쓰지 않음
+  // (그 하위는 다른 파트처럼 추정한다)
+  | { kind: 'podIgnored'; objectId: string; pinpointId: string; reason: PodIgnoredReason }
+
+// otherRobot: Pinpoint와 다른 로봇(이거나 로봇 밖), containsPinpoint: Pinpoint 오브젝트 자신이거나 그 상위(로봇 포함),
+// cadRoot: CAD 루트이거나 CAD 루트를 품음, containsCots: 하위에 다른 COTS(컴포넌트·바퀴·다른 포드)가 있음,
+// tooLarge: 하위 형상이 포드 하나로 보기에 너무 큼
+export type PodIgnoredReason =
+  'otherRobot' | 'containsPinpoint' | 'cadRoot' | 'containsCots' | 'tooLarge'
 
 export type ObjectMass = {
   // kg, 이 오브젝트 하위 전체
@@ -115,6 +130,9 @@ export type RobotMass = {
   // 저울 맞추기 비율(맞추지 않았으면 1)
   scale: number
   warnings: MassWarning[]
+  // 설정 일부를 쓰지 못한 곳(문서 순서). computeMassModel은 늘 채운다. 계약 뒤에 더한 선택 필드다(시험용 가짜 모델이
+  // 그대로 맞게).
+  notices?: MassNotice[]
 }
 
 export type MassModel = {
