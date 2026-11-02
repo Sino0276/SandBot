@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { GENERATED_JAVA_DIR } from '../shared/generatedFiles'
 import type { JdkInfo, ListOpModesResult, OpModeInfo } from '../shared/play'
 import type {
   ErrorMessage,
@@ -323,6 +324,48 @@ describe('RegisteredOpModes', () => {
       compileClasspath: [FILES.sdkJar, jar],
       libraryClasspath: [jar]
     })
+  })
+
+  it('생성 패키지의 Java(목록에는 없지만 javac가 -sourcepath로 찾는다)가 바뀌어도 다시 읽는다', async () => {
+    // 인스펙터에서 장치를 더하고 Ctrl+S: 생성 하드웨어 클래스만 다시 쓰인다(팀 Java 파일은 그대로)
+    const generated = await write(
+      `${GENERATED_JAVA_DIR}/RobotHardware.java`,
+      'package org.firstinspires.ftc.teamcode.sandbot;\npublic class RobotHardware {}\n'
+    )
+    // 대소문자만 다른 생성 폴더도 목록이 빼므로(teamCodePaths.ts) 키에 넣는다
+    const other = await write(
+      'src/main/java/org/firstinspires/ftc/teamcode/SandBot/Extra.java',
+      'package org.firstinspires.ftc.teamcode.SandBot;\npublic class Extra {}\n'
+    )
+    script = listed([op({ name: 'A' })])
+    const lister = new RegisteredOpModes(deps)
+    await lister.list(root)
+    expect(spawned).toHaveLength(1)
+    expect((await scanOpModes(root)).files.map((file) => file.path)).not.toContain(
+      `${GENERATED_JAVA_DIR}/RobotHardware.java`
+    )
+
+    await writeFile(
+      generated,
+      'package org.firstinspires.ftc.teamcode.sandbot;\npublic class RobotHardware { public static final double LIFT_MAX_MM = 700; }\n'
+    )
+    script = listed([op({ name: 'B' })])
+    expect(await lister.list(root)).toMatchObject({ opModes: [{ name: 'B' }] })
+    expect(spawned).toHaveLength(2)
+    await lister.list(root)
+    expect(spawned).toHaveLength(2)
+
+    // 시각만 바뀌어도(크기가 같은 다시 쓰기) 다시
+    await utimes(generated, new Date(), new Date(Date.now() + 5000))
+    await lister.list(root)
+    expect(spawned).toHaveLength(3)
+    // 생성 파일이 사라져도
+    await rm(generated)
+    await lister.list(root)
+    expect(spawned).toHaveLength(4)
+    await utimes(other, new Date(), new Date(Date.now() + 7000))
+    await lister.list(root)
+    expect(spawned).toHaveLength(5)
   })
 
   it('같은 루트의 겹친 요청은 하나만 돌고 같은 결과를 기다린다', async () => {
