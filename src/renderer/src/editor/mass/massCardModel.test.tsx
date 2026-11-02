@@ -349,7 +349,9 @@ describe('질량 출처 문구', () => {
     expect(warningText(t, { kind: 'scaleImpossible', fixed: 15, weighed: 12 }, 'mm')).toContain(
       `(${formatMass(15, 'mm')})이 저울 무게(${formatMass(12, 'mm')})`
     )
-    expect(warningText(t, { kind: 'defaultMass' }, 'mm')).toContain('기본값(30 lb')
+    expect(warningText(t, { kind: 'defaultMass' }, 'mm')).toContain(
+      `기본값 ${formatMass(13.6, 'mm')}(30 lb`
+    )
     expect(warningText(t, { kind: 'pending', meshes: 3 }, 'mm')).toBe(
       '형상을 읽는 중인 메시 3개는 아직 계산에 들어가지 않았습니다.'
     )
@@ -521,6 +523,6 @@ describe('질량 카드 그리기', () => {
       robots: { R: robotMass({ warnings: [{ kind: 'defaultMass' }] }) }
     }
     const fallback = render(scene(), () => <RigidbodyCard robot={objects.R} />)
-    expect(fallback).toContain('질량 정보가 없어 기본값(30 lb')
+    expect(fallback).toContain(`질량 정보가 없어 기본값 ${formatMass(13.6, 'mm')}(30 lb`)
   })
 })

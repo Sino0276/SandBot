@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
 import {
+  DEFAULT_ROBOT_MASS,
   MATERIAL_KEYS,
   type CadMassSummary,
   type MassSettings,
@@ -341,7 +342,7 @@ export function warningText(t: TFunction, warning: MassWarning, unit: LengthUnit
         weighed: formatMass(warning.weighed, unit)
       })
     case 'defaultMass':
-      return t('mass.warnings.defaultMass')
+      return t('mass.warnings.defaultMass', { mass: formatMass(DEFAULT_ROBOT_MASS, unit) })
     case 'pending':
       return t('mass.warnings.pending', { count: warning.meshes })
   }

@@ -1412,7 +1412,7 @@ const en: Messages = {
       scaleImpossible:
         'Not scaled to the weighed mass: the override and datasheet mass ({{fixed}}) is at least the weighed mass ({{weighed}}), or there is no shape to estimate.',
       defaultMass:
-        'No mass information, so the default (30 lb, typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
+        'No mass information, so the default {{mass}} (30 lb, typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
       pending: '{{count}} mesh(es) still loading are not counted yet.'
     },
     rigidbody: {
