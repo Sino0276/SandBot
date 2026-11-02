@@ -145,8 +145,9 @@ sandbot-dashboard.jar contains:
    and com.acmerobotics.dashboard:dashboard 0.6.0, https://github.com/acmerobotics/ftc-dashboard)
    whose references close over the JDK, the SDK above and SandBot's own implementation, with the
    same clock and collection-order redirection; the public and protected API of the remaining
-   Dashboard classes (method bodies replaced); and com.acmerobotics.dashboard.FtcDashboard,
-   re-implemented for the simulator from the FTC Dashboard sources (the source file keeps the
+   Dashboard classes (method bodies replaced); and com.acmerobotics.dashboard.FtcDashboard and
+   com.acmerobotics.dashboard.config.reflection.{ReflectionConfig, FieldProvider, ArrayProvider},
+   re-implemented for the simulator from the FTC Dashboard sources (the source files keep the
    license below). No web client, image or other asset of FTC Dashboard is included. FTC Dashboard
    is licensed under the MIT License:
 
