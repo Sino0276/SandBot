@@ -66,6 +66,9 @@ export type ConsoleBody =
   | { type: 'gradle'; diagnostic: GradleDiagnostic }
   // 라이브러리 하나의 링크 검사 경고(라이브러리별로 묶음)
   | { type: 'linkWarnings'; library: string; warnings: PlayLinkWarning[] }
+  // Road Runner 튜닝 OpMode가 결과 JSON을 모의 저장소에 썼다(simNotice rrTuningSaved). path는 모의 저장소 기준 경로,
+  // file은 메인이 더한 절대 경로(모르면 null). 더블클릭·Enter로 파일 관리자에서 보인다.
+  | { type: 'rrTuning'; path: string; file: string | null }
 
 export type ConsoleEntry = ConsoleBody & {
   id: number
@@ -111,6 +114,7 @@ export function consoleLevel(
     case 'compiled':
       return body.ok ? 'info' : 'error'
     case 'run':
+    case 'rrTuning':
       return 'info'
     case 'finished':
       return ERROR_FINISH.has(body.reason) ? 'error' : body.reason === 'killed' ? 'warning' : 'info'
@@ -235,6 +239,8 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
         library: entry.library,
         count: entry.warnings.length
       })
+    case 'rrTuning':
+      return t('console.notices.sim.rrTuningSaved', { file: entry.file ?? entry.path })
   }
 }
 
@@ -338,6 +344,8 @@ export function entryDetailLines(entry: ConsoleEntry, t: TFunction): string[] {
       return entry.detail
         ? [entryHeadline(entry, t), finishDetail(entry.reason, entry.detail, t)]
         : [entryHeadline(entry, t)]
+    case 'rrTuning':
+      return [entryHeadline(entry, t), t('console.rrTuningHint')]
     default:
       return [entryHeadline(entry, t)]
   }
@@ -383,4 +391,11 @@ export function entryTarget(entry: ConsoleEntry, root?: string | null): ConsoleT
     return frame?.path ? { path: frame.path, line: Math.max(1, frame.line) } : null
   }
   return null
+}
+
+// 더블클릭·Enter(와 [폴더에서 보기])로 파일 관리자에서 보일 파일: 지금 프로젝트의 실행이 남긴 Road Runner 튜닝 결과의
+// 절대 경로. 메인이 그 프로젝트의 모의 저장소 안인지 다시 확인한다(revealSimFile).
+export function entryRevealFile(entry: ConsoleEntry, root: string | null): string | null {
+  if (entry.type !== 'rrTuning' || entry.file === null || root === null) return null
+  return entry.root === root ? entry.file : null
 }

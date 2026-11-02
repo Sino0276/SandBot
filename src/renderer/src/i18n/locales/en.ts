@@ -103,6 +103,9 @@ const en: Messages = {
     scriptLaunchFailed:
       'The external script editor could not open {{fileName}} ({{detail}}). Check the editor in the toolbar [Preferences] > External Tools.',
     scriptMissing: '{{fileName}} is not in TeamCode. Check the link in the Inspector.',
+    // The Console's Road Runner tuning result entry could not be shown in the file manager (a simulated storage file)
+    simFileMissing: 'Could not find {{fileName}}. It may have been deleted or moved.',
+    simFileRevealFailed: 'Could not show {{fileName}} in the file manager ({{detail}}).',
     scriptNotAllowed:
       '{{fileName}} is not a path SandBot opens. Only Java files inside TeamCode/src/main/java can be opened.',
     lineIgnored:
@@ -743,6 +746,11 @@ const en: Messages = {
     noSelection: 'Select an entry to see its full text and stack.',
     openHint: 'Double-click or press Enter to open this line in the external script editor.',
     openLink: 'Click to open this line in the external script editor.',
+    // The Road Runner tuning result entry (simNotice rrTuningSaved): show it in the file manager
+    revealFile: 'Show in folder',
+    revealHint: 'Double-click or press Enter to show this file in the file manager.',
+    rrTuningHint:
+      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (for example http://192.168.43.1:8080/tuning/forward-ramp.html): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's kinematic model and do not replace tuning on the real robot.",
     diagnosticKind: {
       error: 'error',
       warning: 'warning',
@@ -819,8 +827,8 @@ const en: Messages = {
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
-        rrTuningSaved:
-          'Saved the Road Runner tuning result to {{path}} in the simulated storage. SandBot does not support the regression web page; open that file with [Browse] on a Road Runner tuning page.'
+        // file: absolute path in the simulated storage (userData/sim-files/<project>/FIRST, the robot's /sdcard/FIRST)
+        rrTuningSaved: 'Saved the Road Runner tuning result: {{file}}'
       },
       // Library dependency report (INIT, src/main/libraries)
       library: {

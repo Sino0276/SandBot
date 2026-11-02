@@ -1,4 +1,3 @@
-import { createHash } from 'crypto'
 import { lstat, mkdir, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
 import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
@@ -33,6 +32,7 @@ import {
 import { isTrustedRoot } from '../projectRoots'
 import { containedIn, locateJavaFile } from '../teamCodeJava'
 import { isValidSpeed, type SourceMapper } from './session'
+import { simFirstFolderPath } from './simFiles'
 
 // 실행 준비: 렌더러가 보낸 요청(믿지 않는 입력)을 확인하고, 사이드카 빌드 결과를 찾고, JVM 명령과 RunRequest를 만든다.
 // 경로 규칙은 다른 TeamCode IPC와 같다: 열거나 저장한 프로젝트만(projectRoots.ts), OpMode 소스는 teamCodePaths.ts 규칙과
@@ -277,12 +277,11 @@ export async function sourceRootsOf(projectRoot: string): Promise<string[]> {
 
 export const SIM_FILES_DIR = 'sim-files'
 
-// 프로젝트마다의 모의 저장소: <simRoot>/<sha256(링크를 푼 프로젝트 루트) 앞 16자>/FIRST. simRoot는 userData/sim-files라
-// TeamCode·프로젝트 밖이다. 실행마다(INIT·등록기 목록) 만든다(mkdir -p, 지우지 않는다: Road Runner 튜닝 결과 등이 남는다).
+// 프로젝트마다의 모의 저장소: <simRoot>/<sha256(링크를 푼 프로젝트 루트) 앞 16자>/FIRST(simFiles.ts). simRoot는
+// userData/sim-files라 TeamCode·프로젝트 밖이다. 실행마다(INIT·등록기 목록) 만든다(mkdir -p, 지우지 않는다: Road Runner
+// 튜닝 결과 등이 남는다).
 export async function simFirstFolder(simRoot: string, projectRoot: string): Promise<string> {
-  const real = await realpath(projectRoot).catch(() => path.resolve(projectRoot))
-  const key = createHash('sha256').update(real, 'utf8').digest('hex').slice(0, 16)
-  const dir = path.join(simRoot, key, 'FIRST')
+  const dir = await simFirstFolderPath(simRoot, projectRoot)
   await mkdir(dir, { recursive: true })
   return dir
 }

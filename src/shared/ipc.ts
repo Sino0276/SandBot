@@ -41,6 +41,7 @@ export const IPC = {
   listOpModes: 'play:list-opmodes',
   listRegisteredOpModes: 'play:list-registered-opmodes',
   readTeamCodeAsset: 'teamcode:read-asset',
+  revealSimFile: 'play:reveal-sim-file',
   playInit: 'play:init',
   playCommand: 'play:command',
   playGamepads: 'play:gamepads',
@@ -66,6 +67,10 @@ export type TeamCodeAssetMime = 'image/png' | 'image/jpeg' | 'image/webp' | 'ima
 export type ReadTeamCodeAssetResult =
   | { ok: true; mime: TeamCodeAssetMime; bytes: Uint8Array }
   | { ok: false; code: 'notAllowed' | 'missing' | 'tooLarge' | 'failed'; detail: string }
+
+// 모의 저장소(userData/sim-files/<프로젝트 해시>/FIRST)의 파일을 파일 관리자로 보인 결과(Road Runner 튜닝 결과 JSON)
+export type RevealSimFileResult =
+  { ok: true } | { ok: false; code: 'notAllowed' | 'missing' | 'failed'; detail: string }
 
 // STEP 읽기 결과. 캐시가 있으면 model(변환 결과, 렌더러의 ImportedModel)을, 없으면 파일 내용을 준다.
 // 캐시가 없을 때 렌더러가 변환한 뒤 key로 storeMeshCache를 부른다.
@@ -263,6 +268,9 @@ export type SandbotApi = {
   listRegisteredOpModes: (root: string) => Promise<ListRegisteredResult>
   // Dashboard 오버레이 그림('/images/…'를 TeamCode/src/main/assets 기준 경로로 바꾼 'images/…')
   readTeamCodeAsset: (root: string, path: string) => Promise<ReadTeamCodeAssetResult>
+  // 실행이 알린 모의 저장소 파일(simNotice rrTuningSaved의 params.file)을 파일 관리자에서 보인다. 메인이 그 프로젝트의
+  // 모의 저장소 안의 보통 파일인지 다시 확인한다(root는 열거나 저장한 프로젝트).
+  revealSimFile: (root: string, file: string) => Promise<RevealSimFileResult>
   // JDK·사이드카를 확인하고 JVM을 띄워 컴파일·INIT까지 시작한다. 진행은 onPlayEvent로 온다.
   playInit: (request: PlayInitRequest) => Promise<PlayInitResult>
   // 지금 실행에 보내는 명령(실행이 없으면 무시)
