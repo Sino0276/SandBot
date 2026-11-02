@@ -377,17 +377,19 @@ const ownerName = (objects: SceneObjects, id: string | null): string | null =>
   id !== null && objects[id] ? objects[id].name : null
 
 // 이 오브젝트(와 하위)의 형상 중 CAD를 읽는 중인 것이 있는지(그 CAD 루트 요약의 pendingMeshes). 형상 id의 접두어가
-// CAD 루트라 다른 그룹으로 옮긴 파트도 그 CAD를 본다.
+// CAD 루트라 다른 그룹으로 옮긴 파트도 그 CAD를 본다. hasProps를 주면 질량 성질이 이미 있는 형상(다시 읽는 동안 남은
+// 이전 형상)은 셈에 들어갔으므로 보지 않는다.
 export function loadingCad(
   objects: SceneObjects,
   objectId: string,
-  summaryOf: (cadRootId: string) => CadMassSummary | undefined
+  summaryOf: (cadRootId: string) => CadMassSummary | undefined,
+  hasProps: (geometryId: string) => boolean = () => false
 ): boolean {
   if (!objects[objectId]) return false
   const roots = new Set<string>()
   for (const id of subtreeIds(objects, objectId)) {
     const visual = objects[id].visual
-    if (visual?.type !== 'mesh') continue
+    if (visual?.type !== 'mesh' || hasProps(visual.geometryId)) continue
     const root = cadRootIdOf(visual.geometryId)
     if (root !== null) roots.add(root)
   }
@@ -452,11 +454,12 @@ function resultMassText(
   return loading && mass.source === 'none' ? t('mass.massLoading') : massText(t, mass.mass, unit)
 }
 
-// 결과 뒤에 붙는 표시: 저울 무게에 맞춤, 읽는 중인 형상이 있어 일부만 셈
+// 결과 뒤에 붙는 표시: 저울 무게에 맞춤, 읽는 중인 형상이 질량에 아직 들어가지 않아 일부만 셈. 데이터시트·직접 입력
+// 덩어리 안의 형상은 질량이 이미 정해져 있으므로(pendingMeshes에 세지 않는다) 일부만 센 것이 아니다.
 function resultTags(t: TFunction, mass: ObjectMass, loading: boolean): string {
   const tags: string[] = []
   if (mass.scaled) tags.push(t('mass.scaledTag'))
-  if (loading && mass.source !== 'none') tags.push(t('mass.loadingTag'))
+  if (loading && mass.source !== 'none' && mass.pendingMeshes > 0) tags.push(t('mass.loadingTag'))
   return tags.map((tag) => ` ${tag}`).join('')
 }
 

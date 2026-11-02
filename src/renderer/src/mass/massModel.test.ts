@@ -954,6 +954,27 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 2 }])
   })
 
+  it('오브젝트마다 질량에 들어가지 않은 읽는 중 메시를 센다(데이터시트·직접 입력 덩어리 안은 세지 않는다)', () => {
+    const objects = scene(
+      robot(),
+      node('A', 'R'),
+      part('P1', 'A'),
+      part('P2', 'A'),
+      part('Mot', 'A', [0, 0, 0], { components: [motor(19.2)] }),
+      node('F', 'R', { mass: { mass: 1 } }),
+      part('F1', 'F')
+    )
+    const model = computeMassModel(objects, lookupOf({ 'g:P1': solid(LITER) }))
+    expect(model.objects.P1.pendingMeshes).toBe(0)
+    expect(model.objects.P2.pendingMeshes).toBe(1)
+    expect(model.objects.Mot).toMatchObject({ source: 'cots', pendingMeshes: 0 })
+    expect(model.objects.A.pendingMeshes).toBe(1)
+    expect(model.objects.F).toMatchObject({ source: 'override', mass: 1, pendingMeshes: 0 })
+    expect(model.objects.R.pendingMeshes).toBe(1)
+    // 로봇 경고는 읽는 중인 메시를 모두 센다
+    expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 3 }])
+  })
+
   it('모든 메시를 읽는 중이면 기본값(13.6 kg)이 아니라 읽은 만큼(0 kg)이다', () => {
     const plain = scene(robot(), part('P1', 'R'), part('P2', 'R'))
     const r = computeMassModel(plain, lookupOf({})).robots.R

@@ -171,6 +171,7 @@ const objectMass = (patch: Partial<ObjectMass>): ObjectMass => ({
   detail: 'steel',
   inheritedFrom: null,
   scaled: false,
+  pendingMeshes: 0,
   ...patch
 })
 
@@ -466,12 +467,23 @@ describe('질량 출처 문구', () => {
       `질량(추정) ${massText(t, 0, 'mm')} · 질량 없음 (형상 없음 또는 표면 메시)`
     )
     expect(resultLine(t, objects, none, 'mm', DESCRIBERS, true)).toBe('결과: — · 형상을 읽는 중')
-    const partial = objectMass({ scaled: true })
+    const partial = objectMass({ scaled: true, pendingMeshes: 3 })
     expect(resultLine(t, objects, partial, 'mm', DESCRIBERS, true)).toBe(
       `결과: ${massText(t, 0.437, 'mm')} · 재질: 강철 (저울 무게에 맞춤) (형상을 읽는 중, 일부만 셈)`
     )
     expect(resultLine(t, objects, partial, 'mm', DESCRIBERS)).toBe(
       `결과: ${massText(t, 0.437, 'mm')} · 재질: 강철 (저울 무게에 맞춤)`
+    )
+    // 질량에 빠진 형상이 없으면(데이터시트·직접 입력 덩어리 안이거나, 다시 읽는 동안 이전 형상으로 다 셈) 붙이지 않는다
+    const motor = objectMass({ source: 'cots', detail: 'motor:goBilda5203:19.2' })
+    expect(estimateLine(t, objects, motor, 'mm', DESCRIBERS, true)).toBe(
+      `질량(추정) ${massText(t, 0.437, 'mm')} · 데이터시트: goBILDA 5203 19.2:1`
+    )
+    expect(
+      resultLine(t, objects, objectMass({ source: 'override', detail: '' }), 'mm', DESCRIBERS, true)
+    ).toBe(`결과: ${massText(t, 0.437, 'mm')} · 직접 입력`)
+    expect(resultLine(t, objects, objectMass({}), 'mm', DESCRIBERS, true)).toBe(
+      `결과: ${massText(t, 0.437, 'mm')} · 재질: 강철`
     )
   })
 
@@ -500,6 +512,10 @@ describe('질량 출처 문구', () => {
     const moved = { ...objects, bolt: { ...objects.bolt, parentId: 'R' } }
     expect(loadingCad(moved, 'bolt', loading)).toBe(true)
     expect(new Set(asked)).toEqual(new Set(['cad']))
+    // 질량 성질이 이미 있는 형상(다시 읽는 동안 남은 이전 형상)은 읽는 중으로 보지 않는다
+    const allProps = (): boolean => true
+    expect(loadingCad(objects, 'bolt', loading, allProps)).toBe(false)
+    expect(loadingCad(objects, 'cad', loading, allProps)).toBe(false)
   })
 
   it('재질 고르기의 빈 값: 위 오브젝트 → 이름 규칙(모델 결과) → 로봇 기본 → 기본', () => {

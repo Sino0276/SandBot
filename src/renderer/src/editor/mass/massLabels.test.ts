@@ -83,7 +83,8 @@ describe('질량 카드 번역', () => {
             source,
             detail: source === 'material' || source === 'default' ? 'steel' : 'x',
             inheritedFrom: null,
-            scaled: false
+            scaled: false,
+            pendingMeshes: 0
           })
         ),
         ...WARNINGS.map((warning) => warningText(t, warning, 'mm')),

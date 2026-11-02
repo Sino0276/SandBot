@@ -19,6 +19,9 @@ export const REGISTRY_MASS_LOOKUP: MassLookup = {
   sourceName: meshSourceName
 }
 
+// 형상의 메시 질량 성질이 등록됐는지(카드의 읽는 중 표시가 질량 모델과 같은 형상을 본다)
+export const hasMassProps = (geometryId: string): boolean => meshMassProps(geometryId) !== undefined
+
 // 드래그 중 다시 계산하는 간격(ms). 무게중심 표시가 따라오는 것이 보일 만큼 짧고, 계산이 드래그 시간의 일부만 쓰게 길다.
 export const DRAG_REFRESH_MS = 250
 

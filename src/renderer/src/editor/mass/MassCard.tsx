@@ -33,7 +33,7 @@ import {
 } from './massCardModel'
 import { EditableVector, ReadonlyVector } from './MassVector'
 import OptionalField from './OptionalField'
-import { useCadMassSummary, useMassModel } from './useMassModel'
+import { hasMassProps, useCadMassSummary, useMassModel } from './useMassModel'
 
 // 질량 카드(시뮬레이터 설정, spec-3a §6). 재질은 하위로 물려주고, 질량 덮어쓰기는 이 오브젝트 하위 전체를 한 덩어리로
 // 정한다. 바퀴 카드처럼 생성 코드·구성 XML과 관계없고, 실행 중에도 고칠 수 있다(3b·3c에서 INIT 때 굳는다).
@@ -179,7 +179,7 @@ function MassCard({ object }: { object: SceneObject }): React.JSX.Element | null
               result,
               lengthUnit,
               DEFAULT_DESCRIBERS,
-              loadingCad(objects, object.id, summaryOf)
+              loadingCad(objects, object.id, summaryOf, hasMassProps)
             )}
           </p>
           {result.mass > 0 && (

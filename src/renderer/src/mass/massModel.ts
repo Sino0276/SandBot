@@ -352,7 +352,8 @@ const emptyObjectMass = (origin: Vec3): ObjectMass => ({
   source: 'none',
   detail: '',
   inheritedFrom: null,
-  scaled: false
+  scaled: false,
+  pendingMeshes: 0
 })
 
 // 정보 없는 로봇의 외곽 상자(로봇 좌표): CAD 루트들의 cad.bounds 8꼭짓점, CAD가 없으면 18 in 정육면체(임시 씬의 상자)
@@ -415,6 +416,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   const noticeOrder: ({ block: Block } | { unusedCenter: string; robotId: string | null })[] = []
   const matrices = new Map<string, Matrix4>()
   const pending = new Map<string, number>()
+  // 오브젝트마다 질량에 들어가지 않은 읽는 중 메시(덩어리 밖, ObjectMass.pendingMeshes)
+  const uncounted = new Map<string, number>()
 
   const addPart = (part: Part): void => {
     parts.push(part)
@@ -532,6 +535,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       if (!props) {
         const robotId = context.robot?.id
         if (robotId) pending.set(robotId, (pending.get(robotId) ?? 0) + 1)
+        if (!context.block) uncounted.set(object.id, (uncounted.get(object.id) ?? 0) + 1)
       } else {
         const volume = usableVolume(props)
         const part: Part = {
@@ -714,7 +718,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   }
 
   return {
-    objects: objectMasses(objects, matrices, partsByObject, defaultRobots),
+    objects: objectMasses(objects, matrices, partsByObject, defaultRobots, uncounted),
     robots
   }
 }
@@ -782,10 +786,17 @@ function objectMasses(
   objects: SceneObjects,
   matrices: Map<string, Matrix4>,
   partsByObject: Map<string, Part[]>,
-  defaultRobots: Map<string, { mass: number; com: Vec3 }>
+  defaultRobots: Map<string, { mass: number; com: Vec3 }>,
+  uncounted: Map<string, number>
 ): Record<string, ObjectMass> {
   type Group = { source: MassSource; detail: string; inheritedFrom: string | null; mass: number }
-  type Aggregate = { mass: number; moment: Vec3; groups: Map<string, Group>; scaled: boolean }
+  type Aggregate = {
+    mass: number
+    moment: Vec3
+    groups: Map<string, Group>
+    scaled: boolean
+    pending: number
+  }
   const results = new Map<string, ObjectMass>()
 
   const addGroup = (groups: Map<string, Group>, group: Group): void => {
@@ -796,7 +807,13 @@ function objectMasses(
   }
 
   const visit = (object: SceneObject): Aggregate => {
-    const aggregate: Aggregate = { mass: 0, moment: [0, 0, 0], groups: new Map(), scaled: false }
+    const aggregate: Aggregate = {
+      mass: 0,
+      moment: [0, 0, 0],
+      groups: new Map(),
+      scaled: false,
+      pending: uncounted.get(object.id) ?? 0
+    }
     for (const part of partsByObject.get(object.id) ?? []) {
       aggregate.mass += part.mass
       for (let k = 0; k < 3; k++) aggregate.moment[k] += part.mass * part.com[k]
@@ -813,6 +830,7 @@ function objectMasses(
       aggregate.mass += sub.mass
       for (let k = 0; k < 3; k++) aggregate.moment[k] += sub.moment[k]
       aggregate.scaled ||= sub.scaled
+      aggregate.pending += sub.pending
       for (const group of sub.groups.values()) addGroup(aggregate.groups, group)
     }
 
@@ -825,7 +843,9 @@ function objectMasses(
         source: 'default',
         detail: '',
         inheritedFrom: null,
-        scaled: false
+        scaled: false,
+        // 대체값의 질량(저울 무게·기본값)은 읽는 중인 메시와 관계없이 전체다
+        pendingMeshes: 0
       })
       return aggregate
     }
@@ -852,6 +872,7 @@ function objectMasses(
       result.inheritedFrom = from !== null && !isInSubtree(objects, from, object.id) ? from : null
     }
     result.scaled = aggregate.scaled
+    result.pendingMeshes = aggregate.pending
     results.set(object.id, result)
     return aggregate
   }

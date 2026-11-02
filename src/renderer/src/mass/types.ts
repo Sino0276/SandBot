@@ -114,6 +114,9 @@ export type ObjectMass = {
   inheritedFrom: string | null
   // 저울 맞추기 비율이 곱해졌는지
   scaled: boolean
+  // 하위 메시 중 형상 질량 성질이 아직 없어(읽는 중) mass에 들어가지 않은 것의 수. 덮어쓰기·COTS 덩어리 안의 메시는
+  // 덩어리 질량이 이미 정해져 있으므로 세지 않는다(데이터시트 질량은 형상을 읽는 중에도 다 센 것이다).
+  pendingMeshes: number
 }
 
 export type RobotMass = {

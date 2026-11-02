@@ -9,7 +9,7 @@ import {
   noticeText,
   objectNotices
 } from './massCardModel'
-import { useCadMassSummary, useMassModel } from './useMassModel'
+import { hasMassProps, useCadMassSummary, useMassModel } from './useMassModel'
 
 // 질량 카드가 없는 오브젝트의 추정 질량 한 줄(읽기 전용). 누르면 질량 카드를 붙인다(Add Component의 "질량"과 같다).
 // 로봇은 Rigidbody 카드가 보이므로 그리지 않는다.
@@ -38,7 +38,7 @@ function MassEstimateLine({ object }: { object: SceneObject }): React.JSX.Elemen
           result,
           lengthUnit,
           DEFAULT_DESCRIBERS,
-          loadingCad(objects, object.id, summaryOf)
+          loadingCad(objects, object.id, summaryOf, hasMassProps)
         )}
       </button>
       {notices.length > 0 && (

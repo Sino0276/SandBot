@@ -60,7 +60,8 @@ const objectMass = (centerOfMass: [number, number, number], mass = 0.5): ObjectM
   source: 'material',
   detail: 'aluminum6061',
   inheritedFrom: null,
-  scaled: false
+  scaled: false,
+  pendingMeshes: 0
 })
 
 const robotMass = (centerOfMass: [number, number, number], mass = 10): RobotMass => ({
