@@ -1229,9 +1229,10 @@ describe('질량 추정: 합성(평행축 정리)', () => {
   })
 
   it('비대각 성분은 행렬 값 그대로다(Ixy = −Σ m x y)', () => {
-    // 점질량 둘을 (1, 1)·(−1, −1)에: Ixy = −2
+    // 점질량 둘을 (1, 1)·(−1, −1)에: Ixy = −2. 형상이 없는 로봇은 기본값 상자를 더하므로 저울 무게를 점질량 합과 같게
+    // 둬서 상자 없이 합친다(맞출 추정이 없어 scaleImpossible)
     const objects = scene(
-      robot(),
+      robot({ rigidbody: { weighedMass: 2 } }),
       node('A', 'R', { kind: 'group', mass: { mass: 1 } }, [1, 1, 0]),
       node('B', 'R', { kind: 'group', mass: { mass: 1 } }, [-1, -1, 0])
     )
@@ -1320,17 +1321,37 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 3 }])
   })
 
-  it('모든 메시를 읽는 중이면 기본값(13.6 kg)이 아니라 읽은 만큼(0 kg)이다', () => {
+  it('형상이 하나도 없으면(모두 읽는 중·읽지 못함·표면뿐) 저울 무게가 없어도 기본값(13.6 kg) 상자이고 경고를 함께 낸다', () => {
     const plain = scene(robot(), part('P1', 'R'), part('P2', 'R'))
-    const r = computeMassModel(plain, lookupOf({})).robots.R
-    expect(r).toMatchObject({
-      mass: 0,
-      centerOfMass: [0, 0, 0],
-      inertia: [0, 0, 0, 0, 0, 0],
+    const model = computeMassModel(plain, lookupOf({}))
+    const side = (DEFAULT_ROBOT_MASS * 2 * ROBOT_SIZE * ROBOT_SIZE) / 12
+    expect(model.robots.R).toMatchObject({
+      mass: DEFAULT_ROBOT_MASS,
+      centerOfMass: [
+        expect.closeTo(0, 15),
+        expect.closeTo(0, 15),
+        expect.closeTo(0.35 * ROBOT_SIZE, 15)
+      ],
+      inertia: [side, side, side, 0, 0, 0].map((v) => expect.closeTo(v, 12)),
       fixedMass: 0,
-      estimatedMass: 0,
+      estimatedMass: DEFAULT_ROBOT_MASS,
       scale: 1,
-      warnings: [{ kind: 'pending', meshes: 2 }]
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2 }]
+    })
+    expect(model.objects.R).toMatchObject({ mass: DEFAULT_ROBOT_MASS, source: 'default' })
+    // 읽은 형상이 모두 표면 메시(질량 0)여도 셈할 것이 없다
+    const surfaces = {
+      'g:P1': { ...solid(LITER), closure: 1 },
+      'g:P2': { ...solid(LITER), closure: 1 }
+    }
+    expect(computeMassModel(plain, lookupOf(surfaces)).robots.R).toMatchObject({
+      mass: DEFAULT_ROBOT_MASS,
+      warnings: [{ kind: 'defaultMass' }]
+    })
+    // 하나라도 읽으면 형상으로 계산한다
+    expect(computeMassModel(plain, lookupOf({ 'g:P1': solid(LITER) })).robots.R).toMatchObject({
+      mass: expect.closeTo(2.7, 12),
+      warnings: [{ kind: 'pending', meshes: 1 }]
     })
   })
 
@@ -1430,15 +1451,17 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     expect(loaded.mass).toBeCloseTo(15, 12)
     expect(loaded.fixedMass).toBe(fixed)
     expect(loaded.warnings.map((w) => w.kind)).toEqual(['scaleUnusual'])
-    // 저울 무게가 없으면 읽은 만큼(모터 질량)만이다
+    // 저울 무게가 없으면 기본값(13.6 kg)에서 모터 질량을 제자리에 두고 나머지를 상자에 둔다(모터만 있는 로봇이 아니다)
     const unweighed = { ...objects, R: robot() }
     expect(computeMassModel(unweighed, lookupOf({})).robots.R).toMatchObject({
-      mass: fixed,
-      warnings: [{ kind: 'pending', meshes: 3 }]
+      mass: DEFAULT_ROBOT_MASS,
+      fixedMass: fixed,
+      estimatedMass: expect.closeTo(DEFAULT_ROBOT_MASS - fixed, 12),
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 3 }]
     })
   })
 
-  it('CAD가 없는 로봇(메시 형상 없음)도 고정 질량은 제자리에 두고 저울 무게의 나머지를 상자에 둔다', () => {
+  it('CAD가 없는 로봇(메시 형상 없음)도 고정 질량은 제자리에 두고 저울 무게(없으면 기본값)의 나머지를 상자에 둔다', () => {
     // 임시 씬처럼 형상이 없고(웹캠 자리 표시 오브젝트에 모터), 배터리 점질량(덮어쓴 그룹)이 있다
     const placeholder = (id: string, extra: Partial<SceneObject>): SceneObject => ({
       ...node(id, 'R', {}, [0.1, 0, 0.05]),
@@ -1473,12 +1496,16 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
       mass: fixed,
       warnings: [{ kind: 'scaleImpossible', fixed, weighed: 0.5 }]
     })
-    // 저울 무게가 없으면 정해진 질량 그대로다(질량 정보가 있으므로 13.6 kg 대체값이 아니다)
+    // 저울 무게가 없으면 기본값(13.6 kg)의 나머지를 상자에 둔다(데이터시트·직접 입력 몇 개는 로봇 전체가 아니다)
     const unweighed = { ...objects, R: robot() }
-    expect(computeMassModel(unweighed, lookupOf({})).robots.R).toMatchObject({
-      mass: expect.closeTo(fixed, 12),
-      warnings: []
+    const fallback = computeMassModel(unweighed, lookupOf({})).robots.R
+    expect(fallback).toMatchObject({
+      mass: expect.closeTo(DEFAULT_ROBOT_MASS, 12),
+      fixedMass: expect.closeTo(fixed, 12),
+      estimatedMass: expect.closeTo(DEFAULT_ROBOT_MASS - fixed, 12),
+      warnings: [{ kind: 'defaultMass' }]
     })
+    expect(fallback.centerOfMass[2]).toBeGreaterThan(0.1)
   })
 
   it('같은 입력이면 같은 결과이고, 결과 키는 objects 키 순서다', () => {

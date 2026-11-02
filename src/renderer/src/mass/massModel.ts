@@ -824,13 +824,18 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       }
     }
 
+    // 질량에 드는 형상(부피가 있고, 덩어리 안이거나 질량 0 규칙이 아닌 추정 파트)이 하나도 없는 로봇: CAD가 없거나
+    // 형상을 모두 읽는 중이거나 읽지 못했거나 표면뿐이다. 데이터시트·직접 입력 몇 개(형상 없는 점질량)는 로봇 전체가
+    // 아니므로, 저울 무게가 없으면 기본값(§3.3)에서 그것을 제자리에 두고 나머지를 외곽 상자에 둔다(defaultMass와
+    // pending 경고를 함께 낸다. 카드는 읽는 중인지 읽지 못했는지를 형상 보관소로 가린다).
+    const contributing = list.some((part) => part.volume > 0 && (!part.estimated || part.mass > 0))
+    const defaultBox = boxRest || (weighed === undefined && !contributing)
+
     let mass: number
     let centerOfMass: Vec3
     let inertia: SymMatrix3
-    if (!boxRest && (total > 0 || (meshes > 0 && weighed === undefined))) {
-      // 읽는 중인 메시는 빼고 계산한다(모두 읽는 중이면 0 kg). 기본값으로 바꾸지 않는다: 그러면 CAD를 다 읽을 때
-      // 질량이 13.6 kg에서 실제 값으로 뛰고, 읽지 못한 CAD가 기본값으로 굳는다. 저울 무게가 있으면 그 질량은 알므로
-      // 아래 상자 대체값을 쓴다(pending 경고도 함께).
+    if (!defaultBox) {
+      // 읽는 중인 메시는 빼고 계산한다(일부만 읽었으면 읽은 만큼)
       mass = fixed + estimated
       const moment: Vec3 = [0, 0, 0]
       for (const part of list) for (let k = 0; k < 3; k++) moment[k] += part.mass * part.com[k]
@@ -844,11 +849,10 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         addParallelAxis(inertia, own, part.mass, d)
       }
     } else {
-      // 질량 정보 없음(형상이 없거나 모두 질량 0이거나 모두 읽는 중, 덮어쓰기·COTS 없음): 외곽 상자의 균일 직육면체.
-      // 저울 무게가 있으면 그 질량을 쓰고(분포는 그래도 기본값이다), 고정 질량이 있으면(boxRest) 그것은 제자리에 두고
-      // 나머지만 상자에 둔다. 저울 무게 없이 읽는 중이면 위 갈래(0 kg)다.
-      mass = weighed ?? DEFAULT_ROBOT_MASS
-      const rest = mass - fixed
+      // 질량 정보 없음(질량에 드는 형상이 없음): 외곽 상자의 균일 직육면체. 저울 무게가 있으면 그 질량을 쓰고(분포는
+      // 그래도 기본값이다), 없으면 기본값이다. 고정 질량이 있으면 그것은 제자리에 두고 나머지만 상자에 둔다.
+      const rest = weighed !== undefined ? weighed - fixed : Math.max(0, DEFAULT_ROBOT_MASS - fixed)
+      mass = fixed + rest
       const { min, max } = robotBox(objects, robotId, matrices)
       const [a, b, c] = [0, 1, 2].map((k) => max[k] - min[k])
       const boxCenter: Vec3 = [

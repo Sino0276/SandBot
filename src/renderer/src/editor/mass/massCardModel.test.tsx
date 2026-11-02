@@ -613,6 +613,25 @@ describe('질량 출처 문구', () => {
     expect(noCadWarning).toContain('형상 정보가 없어')
     expect(noCadWarning).toContain(`나머지 ${massText(t, 19.5, 'cm')}를`)
     expect(noCadWarning).not.toContain('읽는')
+    // 저울 무게가 없어도 질량에 드는 형상이 없으면 기본값이다: 데이터시트·직접 입력은 제자리, 나머지를 상자에
+    const unweighedFixed = robotMass({
+      mass: 13.6,
+      fixedMass: 1.6,
+      estimatedMass: 12,
+      warnings: [{ kind: 'defaultMass' }]
+    })
+    expect(robotMassBreakdown(t, unweighedFixed, 'cm')).toBe(
+      `기본값: 직접 입력·데이터시트 ${massText(t, 1.6, 'cm')} + 나머지 ${massText(t, 12, 'cm')} (질량 정보 없음, 외곽 상자로 근사)`
+    )
+    const unweighedWarning = warningText(t, { kind: 'defaultMass' }, 'cm', undefined, false, 1.6)
+    expect(unweighedWarning).toContain(`기본값 ${massText(t, 13.6, 'cm')}`)
+    expect(unweighedWarning).toContain(
+      `직접 입력·데이터시트 질량 ${massText(t, 1.6, 'cm')}은 제자리에 두고 나머지 ${massText(t, 12, 'cm')}를`
+    )
+    // 읽는 중이면 다 읽은 뒤 형상으로 계산한다고 알린다(기본값으로 굳지 않는다)
+    const unweighedLoading = warningText(t, { kind: 'defaultMass' }, 'cm', undefined, true)
+    expect(unweighedLoading).toContain(`형상을 읽는 동안 기본값 ${massText(t, 13.6, 'cm')}`)
+    expect(unweighedLoading).toContain('다 읽으면 형상으로 계산합니다')
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
     expect(formatInertia(12.345)).toBe('12.3')
@@ -1081,7 +1100,14 @@ describe('질량 카드 그리기', () => {
     expect(empty).not.toContain('주관성')
     fake.model = {
       objects: {},
-      robots: { R: robotMass({ warnings: [{ kind: 'defaultMass' }] }) }
+      robots: {
+        R: robotMass({
+          mass: 13.6,
+          fixedMass: 0,
+          estimatedMass: 13.6,
+          warnings: [{ kind: 'defaultMass' }]
+        })
+      }
     }
     const fallback = render(scene(), () => <RigidbodyCard robot={objects.R} />)
     expect(fallback).toContain(`질량 정보가 없어 기본값 ${massText(t, 13.6, 'mm')}(FTC`)

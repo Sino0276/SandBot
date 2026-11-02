@@ -557,7 +557,7 @@ export function formatInertia(value: number): string {
   return formatNumber(value, Math.min(digits, 8))
 }
 
-// 질량 정보 없음 대체값을 쓰는지(형상·덮어쓰기·데이터시트 질량이 없음, 질량 모델의 defaultMass 경고)
+// 질량 정보 없음 대체값을 쓰는지(질량에 드는 형상이 없음, 질량 모델의 defaultMass 경고)
 export function usesDefaultMass(robot: RobotMass): boolean {
   return robot.warnings.some((warning) => warning.kind === 'defaultMass')
 }
@@ -584,8 +584,18 @@ export function warningText(
         weighed: massText(t, warning.weighed, unit)
       })
     case 'defaultMass':
-      if (weighedMass === undefined)
-        return t('mass.warnings.defaultMass', { mass: massText(t, DEFAULT_ROBOT_MASS, unit) })
+      if (weighedMass === undefined) {
+        // 저울 무게 없이 질량에 드는 형상이 없다(CAD 없음·읽는 중·읽지 못함). 고정 질량은 제자리에 둔다
+        const mass = massText(t, DEFAULT_ROBOT_MASS, unit)
+        if (loading) return t('mass.warnings.defaultMassLoadingDefault', { mass })
+        if (fixed > 0)
+          return t('mass.warnings.defaultMassFixed', {
+            mass,
+            fixed: massText(t, fixed, unit),
+            rest: massText(t, Math.max(0, DEFAULT_ROBOT_MASS - fixed), unit)
+          })
+        return t('mass.warnings.defaultMass', { mass })
+      }
       // 고정 질량을 두고 나머지만 상자에 두는 것(질량 모델의 boxRest)은 형상을 읽는 중이거나 형상 정보가 없을 때다
       if (fixed > 0)
         return t(
@@ -619,7 +629,13 @@ export function robotMassBreakdown(
   loading = false
 ): string {
   if (usesDefaultMass(robot)) {
-    if (weighedMass === undefined) return t('mass.rigidbody.breakdownDefault')
+    if (weighedMass === undefined)
+      return robot.fixedMass > 0
+        ? t('mass.rigidbody.breakdownDefaultFixed', {
+            fixed: massText(t, robot.fixedMass, unit),
+            rest: massText(t, robot.estimatedMass, unit)
+          })
+        : t('mass.rigidbody.breakdownDefault')
     if (robot.fixedMass > 0)
       return t(
         loading

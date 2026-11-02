@@ -1428,6 +1428,10 @@ const ko = {
         '직접 입력·데이터시트 질량({{fixed}})이 저울 무게({{weighed}}) 이상이거나 추정할 형상이 없어 저울 무게에 맞추지 않았습니다.',
       defaultMass:
         '질량 정보가 없어 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게)을 씁니다. 저울 무게를 넣거나 CAD를 불러오세요.',
+      defaultMassFixed:
+        '형상 정보가 없어 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게) 가운데 직접 입력·데이터시트 질량 {{fixed}}은 제자리에 두고 나머지 {{rest}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 저울 무게를 넣거나 CAD를 불러오세요.',
+      defaultMassLoadingDefault:
+        '형상을 읽는 동안 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게)를 씁니다(무게중심·관성은 로봇 외곽 상자로 근사). 다 읽으면 형상으로 계산합니다.',
       defaultMassWeighed:
         '형상 정보가 없어 저울 무게 {{mass}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). CAD를 불러오면 형상으로 나눕니다.',
       defaultMassLoading:
@@ -1464,6 +1468,8 @@ const ko = {
       massNone: '—',
       breakdown: '직접 입력·데이터시트 {{fixed}} + 추정 {{estimated}}',
       breakdownDefault: '기본값 (질량 정보 없음)',
+      breakdownDefaultFixed:
+        '기본값: 직접 입력·데이터시트 {{fixed}} + 나머지 {{rest}} (질량 정보 없음, 외곽 상자로 근사)',
       breakdownWeighedBox: '저울 무게 (형상 없음, 외곽 상자로 근사)',
       breakdownWeighedFixed:
         '저울 무게: 직접 입력·데이터시트 {{fixed}} + 형상을 읽는 중인 나머지 {{rest}} (외곽 상자로 근사)',
