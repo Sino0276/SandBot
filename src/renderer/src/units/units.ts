@@ -99,7 +99,7 @@ export function saveLengthUnit(storage: Pick<Storage, 'setItem'>, unit: LengthUn
   storage.setItem(STORAGE_KEY, unit)
 }
 
-// 질량 표시·입력(spec-3a §5). 내부 값은 kg이고, 개인 설정을 따로 늘리지 않고 길이 표시 단위를 따른다:
+// 질량 표시·입력. 내부 값은 kg이고, 개인 설정을 따로 늘리지 않고 길이 표시 단위를 따른다:
 // mm·cm·m는 1 kg 미만이면 g(정수), 그 위는 kg(소수 셋). in은 lb(소수 둘), 0.1 lb 미만이면 oz(소수 하나).
 export type MassSymbol = 'g' | 'kg' | 'lb' | 'oz'
 
@@ -107,7 +107,7 @@ export type MassSymbol = 'g' | 'kg' | 'lb' | 'oz'
 export const KG_PER_LB = 0.45359237
 export const KG_PER_OZ = KG_PER_LB / 16
 
-// 표시할 수와 기호(기호는 인스펙터가 i18n 문구에 넣을 수 있게 따로 준다)
+// 표시할 수와 기호 키(기호 글자는 길이 기호 units.symbols처럼 i18n 리소스에서 가져오도록 키만 준다)
 export function massDisplay(kg: number, unit: LengthUnit): { value: string; symbol: MassSymbol } {
   if (unit === 'in') {
     const lb = kg / KG_PER_LB
@@ -122,9 +122,14 @@ export function massDisplay(kg: number, unit: LengthUnit): { value: string; symb
   return { value: formatNumber(kg, 3), symbol: 'kg' }
 }
 
-export function formatMass(kg: number, unit: LengthUnit): string {
+// "437 g"처럼 수와 기호를 붙인다. 기호 글자(symbols)는 쓰는 쪽이 i18n 리소스에서 준다(UI 문자열을 하드코딩하지 않게).
+export function formatMass(
+  kg: number,
+  unit: LengthUnit,
+  symbols: Readonly<Record<MassSymbol, string>>
+): string {
   const { value, symbol } = massDisplay(kg, unit)
-  return `${value} ${symbol}`
+  return `${value} ${symbols[symbol]}`
 }
 
 // 입력칸에서 받는 질량 단위(대소문자 무시) → kg
