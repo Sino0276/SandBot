@@ -99,15 +99,52 @@ export function saveLengthUnit(storage: Pick<Storage, 'setItem'>, unit: LengthUn
   storage.setItem(STORAGE_KEY, unit)
 }
 
-// 질량 표시·입력(spec-3a §5). 길이 표시 단위를 따른다: mm·cm·m는 g·kg, in은 lb·oz. 계약 단계의 빈 구현이다(갈래 B가 채운다).
-export function formatMass(kg: number, unit: LengthUnit): string {
-  void unit
-  return String(kg)
+// 질량 표시·입력(spec-3a §5). 내부 값은 kg이고, 개인 설정을 따로 늘리지 않고 길이 표시 단위를 따른다:
+// mm·cm·m는 1 kg 미만이면 g(정수), 그 위는 kg(소수 셋). in은 lb(소수 둘), 0.1 lb 미만이면 oz(소수 하나).
+export type MassSymbol = 'g' | 'kg' | 'lb' | 'oz'
+
+// 1 lb = 0.45359237 kg, 1 oz = 1/16 lb(국제 야드·파운드 정의)
+export const KG_PER_LB = 0.45359237
+export const KG_PER_OZ = KG_PER_LB / 16
+
+// 표시할 수와 기호(기호는 인스펙터가 i18n 문구에 넣을 수 있게 따로 준다)
+export function massDisplay(kg: number, unit: LengthUnit): { value: string; symbol: MassSymbol } {
+  if (unit === 'in') {
+    const lb = kg / KG_PER_LB
+    // 반올림해 0.10 lb가 되는 값은 lb로, 0은 0.00 lb로 보인다
+    if (lb !== 0 && Math.abs(Number(lb.toFixed(2))) < 0.1)
+      return { value: formatNumber(kg / KG_PER_OZ, 1), symbol: 'oz' }
+    return { value: formatNumber(lb, 2), symbol: 'lb' }
+  }
+  const grams = Math.round(kg * 1000)
+  // 999.6 g처럼 반올림하면 1000 g이 되는 값도 kg로 보인다
+  if (Math.abs(grams) < 1000) return { value: formatNumber(grams, 0), symbol: 'g' }
+  return { value: formatNumber(kg, 3), symbol: 'kg' }
 }
 
-// kg·g·lb·oz를 붙인 값과 단위 없는 값(표시 단위)을 받는다. 읽지 못하면 null
+export function formatMass(kg: number, unit: LengthUnit): string {
+  const { value, symbol } = massDisplay(kg, unit)
+  return `${value} ${symbol}`
+}
+
+// 입력칸에서 받는 질량 단위(대소문자 무시) → kg
+const MASS_SUFFIXES: Record<string, number> = {
+  g: 0.001,
+  gram: 0.001,
+  grams: 0.001,
+  kg: 1,
+  kgs: 1,
+  lb: KG_PER_LB,
+  lbs: KG_PER_LB,
+  pound: KG_PER_LB,
+  pounds: KG_PER_LB,
+  oz: KG_PER_OZ,
+  ounce: KG_PER_OZ,
+  ounces: KG_PER_OZ
+}
+
+// "437g", "1.2 kg", "3lb", "8 oz" → kg. 단위가 없으면 표시 단위의 큰 단위로 읽는다(mm·cm·m는 kg, in은 lb).
+// 읽을 수 없으면 null. 범위(0 초과 등)는 쓰는 쪽이 본다.
 export function parseMass(text: string, unit: LengthUnit): number | null {
-  void unit
-  const value = Number(text)
-  return Number.isFinite(value) ? value : null
+  return parseWithSuffix(text, MASS_SUFFIXES, unit === 'in' ? KG_PER_LB : 1)
 }
