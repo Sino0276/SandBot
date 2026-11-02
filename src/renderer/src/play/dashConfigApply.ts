@@ -18,7 +18,9 @@ import { checkApply, tunableTarget, type ApplyCheck } from './dashConfigModel'
 // tunableEditValue·diskLiteralKey → sceneStore.setTunable. 그래서 저장(Ctrl+S)·실행 취소·충돌 처리가 인스펙터와 같다.
 // 파일 내용은 연결한 파일이면 javaSources 캐시를, 아니면 여기서 읽어 둔 것을 쓴다(열린 루트·경로 규칙은 메인이 본다).
 // 누르면 파일을 다시 읽어 그 내용으로 다시 판정한다(그사이 밖에서 바뀐 값을 base로 삼지 않게).
-// 여기서 읽은 파일은 실행마다 새로 읽는다(그 실행의 runId로만 보인다).
+// 여기서 읽은 파일은 실행마다 새로 읽는다(그 실행의 runId로만 보인다). 연결한 파일처럼 창 포커스 때 다시 읽고
+// (refreshConfigSources: 막힌 이유를 Android Studio에서 고치고 돌아오면 풀린다), 연결 캐시에 더 새 내용이 들어오면
+// (저장이 쓴 파일) 그것으로 바꾼다(initConfigSources).
 
 type ConfigSourcesState = {
   root: string | null
@@ -92,13 +94,8 @@ function configSource(
   )
 }
 
-// 실행(runId)의 칸이 보일 때 아직 읽지 않은 파일을 읽는다
-export function ensureConfigSource(path: string, runId: string): void {
-  const { root, session, busy } = useProjectStore.getState()
-  if (!root || busy) return
-  enterScope(root, session)
-  syncConfigSourcesRun(runId)
-  if (configSource({ root, session }, runId, path) || inFlight.has(path)) return
+// 파일 하나를 읽어 둔다(같은 파일의 이전 읽기 결과는 버린다)
+function startRead(root: string, session: number, path: string): void {
   const seq = ++readSeq
   inFlight.set(path, seq)
   void readFile(root, path).then((result) => {
@@ -109,6 +106,51 @@ export function ensureConfigSource(path: string, runId: string): void {
     useConfigSourcesStore.setState({
       files: { ...state.files, [path]: sourceFromRead(result, state.files[path]) }
     })
+  })
+}
+
+// 실행(runId)의 칸이 보일 때 아직 읽지 않은 파일을 읽는다
+export function ensureConfigSource(path: string, runId: string): void {
+  const { root, session, busy } = useProjectStore.getState()
+  if (!root || busy) return
+  enterScope(root, session)
+  syncConfigSourcesRun(runId)
+  if (configSource({ root, session }, runId, path) || inFlight.has(path)) return
+  startRead(root, session, path)
+}
+
+// 여기서 읽어 둔 파일을 모두 다시 읽는다(창 포커스: 식 초기값을 리터럴로 고치거나 읽기 전용을 풀고 돌아오면 칸이 그
+// 내용으로 다시 판정한다). 열기·저장 중에는 건너뛴다(저장이 쓴 파일은 initConfigSources가 따라간다).
+export function refreshConfigSources(): void {
+  const { root, session, busy } = useProjectStore.getState()
+  if (!root || busy) return
+  const state = useConfigSourcesStore.getState()
+  if (state.root !== root || state.session !== session) return
+  for (const path of Object.keys(state.files)) startRead(root, session, path)
+}
+
+let following = false
+
+// 앱 시작 때 한 번: 연결 캐시(javaSources)에 새 내용이 들어오면(저장이 쓴 파일, [파일에 반영]이 다시 읽은 연결 파일)
+// 여기서 읽어 둔(읽는 중인) 같은 파일도 그것으로 바꾼다. 저장 뒤 목록을 다시 읽을 때 javaSources는 연결하지 않은 파일을
+// 빼므로 칸이 이 사본으로 돌아오는데, 사본이 저장 전 내용이면 이미 반영한 값에 [파일에 반영]이 다시 켜진다.
+export function initConfigSources(): void {
+  if (following) return
+  following = true
+  useJavaSourcesStore.subscribe((state, previous) => {
+    if (state.files === previous.files) return
+    const local = useConfigSourcesStore.getState()
+    if (state.root !== local.root || state.session !== local.session) return
+    let files: Record<string, JavaSource> | null = null
+    for (const path of new Set([...Object.keys(local.files), ...inFlight.keys()])) {
+      const source = state.files[path]
+      if (!source || source === previous.files[path] || source === local.files[path]) continue
+      // 읽는 중인 것은 이 내용보다 먼저 시작했을 수 있다(늦게 끝나 저장 전 내용으로 덮지 않게 버린다)
+      inFlight.delete(path)
+      files ??= { ...local.files }
+      files[path] = source
+    }
+    if (files) useConfigSourcesStore.setState({ files })
   })
 }
 

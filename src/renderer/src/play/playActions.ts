@@ -15,6 +15,7 @@ import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
 import type { ConsoleEntry } from './consoleModel'
+import { initConfigSources, refreshConfigSources } from './dashConfigApply'
 import { configCommandFits } from './dashConfigModel'
 import {
   browserGamepads,
@@ -678,13 +679,17 @@ function scheduleFocusRefresh(): void {
   focusTimer = setTimeout(() => {
     focusTimer = null
     const { root, busy } = useProjectStore.getState()
-    if (root && !busy) void refreshOpModes()
+    if (!root || busy) return
+    void refreshOpModes()
+    // 설정값 탭의 [파일에 반영]이 보는 연결하지 않은 파일(연결한 파일은 javaIndex가 다시 읽는다)
+    refreshConfigSources()
   }, FOCUS_REFRESH_DELAY)
 }
 
 let initialized = false
 
-// 앱 시작 때 한 번(EditorLayout): PlayEvent 구독, 프로젝트 변경, 창 포커스, 창 닫기·새로 고침 때 STOP, 게임패드 연결
+// 앱 시작 때 한 번(EditorLayout): PlayEvent 구독, 프로젝트 변경, 창 포커스, 창 닫기·새로 고침 때 STOP, 게임패드 연결,
+// 설정값 탭이 읽은 파일의 연결 캐시 따라가기
 export function initPlaySession(): void {
   if (initialized) return
   initialized = true
@@ -702,6 +707,7 @@ export function initPlaySession(): void {
   window.addEventListener('gamepaddisconnected', updateGamepadSlots)
   installKeyboardGamepad(keyboardPad, window)
   installLibraryNotice(stopPlay)
+  initConfigSources()
   const { root } = useProjectStore.getState()
   if (root) onProjectChanged(root, true)
 }
