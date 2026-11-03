@@ -227,6 +227,16 @@ describe('관절 카드 보기 계산', () => {
       { id: 'claw', name: 'claw', objectName: 'Base' }
     ])
     expect(driveOptions(objects, 'arm', 'crServo')).toEqual([])
+    // SPARK Mini(서보 포트 모터 컨트롤러)는 3b의 관절 구동이 아니라 어느 구동 장치 후보에도 없다
+    const spark = {
+      ...objects,
+      base: {
+        ...objects.base,
+        components: [...objects.base.components!, createComponent('sparkMini', [], () => 'spark')]
+      }
+    }
+    for (const kind of ['motor', 'servo', 'crServo'] as const)
+      expect(driveOptions(spark, 'arm', kind).map((o) => o.id)).not.toContain('spark')
     expect(stageOptions(objects, 'lift')).toEqual([{ id: 'stage2', name: 'Stage 2' }])
     expect(stageOptions(objects, 'arm')).toEqual([])
     expect(parentJointId(objects, 'stage2')).toBe('lift')

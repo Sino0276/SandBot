@@ -323,17 +323,6 @@ describe('관절 리프트(모터 구동 직선 관절)', () => {
     expect(last.top.state).toBe(false)
   })
 
-  it('SPARK Mini(서보 포트 출력)를 모터 구동으로 쓰면 펄스가 듀티이고 허브 모터 입력이 없다', () => {
-    const r = run(world([lift()]), 0.5, () => ({ lift: { power: 1, pulseUs: 2500, pwm: true } }))
-    expect(r.q[r.q.length - 1][0]).toBeGreaterThan(0.05)
-    for (const step of r.inputs) expect(step.lift).toBeUndefined()
-    const neutral = run(world([lift({}, FRICTIONLESS)]), 0.2, () => ({
-      lift: { power: 0, pulseUs: 1505, pwm: true }
-    }))
-    // 중립은 FLOAT라 떨어진다
-    expect(neutral.q[neutral.q.length - 1][0]).toBeLessThan(-0.01)
-  })
-
   it('관절이 없는 세계의 자세에는 joints 키가 없다', () => {
     const w = new KinematicWorld(world([], { motors: [] }))
     w.step(0, {})

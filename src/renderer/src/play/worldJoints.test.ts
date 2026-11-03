@@ -410,6 +410,34 @@ describe('세계 설명의 관절', () => {
     expect(custom.freeSpeed).toBeCloseTo((200 * 2 * Math.PI) / 60, 12)
   })
 
+  it('SPARK Mini는 3b의 관절 구동이 아니다: 어떤 구동 종류로 가리켜도 구동 없음(세계 설명에 넣지 않는다)', () => {
+    for (const drive of [
+      { kind: 'crServo', servo: 'spark', gearRatio: 1, spoolDiameter: 0.03 },
+      { kind: 'servo', servo: 'spark', gearRatio: 1 },
+      {
+        kind: 'motor',
+        motors: ['spark'],
+        gearRatio: 1,
+        spoolDiameter: 0.03,
+        rigging: { kind: 'direct' }
+      }
+    ] as JointSettings['drive'][]) {
+      const objects = liftRobot()
+      objects.drive = {
+        ...objects.drive,
+        components: [...objects.drive.components!, component('sparkMini', 'spark', 'sparky')]
+      }
+      objects.arm = { ...objects.arm, joint: { ...defaultJoint('revolute'), drive } }
+      const { spec, warnings } = buildWorldSpec(objects, 'R', SETTINGS)
+      expect(spec!.joints[2].drive).toEqual({ kind: 'none' })
+      expect(JSON.stringify(spec!.joints)).not.toContain('sparky')
+      expect(spec!.motors.map((m) => m.device)).not.toContain('sparky')
+      expect(warnings.map((w) => w.key)).toContain(
+        drive.kind === 'motor' ? 'worldJointMotorMissing' : 'worldJointServoMissing'
+      )
+    }
+  })
+
   it('서보: 없는 서보·다른 종류·직선 관절의 위치 서보는 구동 없음', () => {
     const cases: [JointSettings['drive'], 'revolute' | 'prismatic', string][] = [
       [{ kind: 'servo', servo: 'gone', gearRatio: 1 }, 'revolute', 'worldJointServoMissing'],

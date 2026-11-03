@@ -2,8 +2,9 @@ import type { DeviceValues } from '../sidecarProtocol'
 import { NOMINAL_VOLTAGE, type MotorOutputs } from './motorModel'
 import type { SimMotorParams, SimServoParams } from './worldSpec'
 
-// 메커니즘 관절의 구동기(3b): 브러시 DC 기어모터, 허브 전력단(VNH5050 H-브리지), 허브 펌웨어 제어 루프, 서보·CR 서보,
-// SPARK Mini. 모두 순수 함수·작은 상태라 결정적이다. 구동계 바퀴 모터는 지금처럼 motorModel.ts(운동학 1차 지연)를 쓴다.
+// 메커니즘 관절의 구동기(3b): 브러시 DC 기어모터, 허브 전력단(VNH5050 H-브리지), 허브 펌웨어 제어 루프, 서보·CR 서보.
+// 모두 순수 함수·작은 상태라 결정적이다. 서보 포트의 모터 컨트롤러(SPARK Mini)로 도는 관절은 3b에 없다(세계 설명 v2의 관절 구동이
+// 그 모터를 나타내지 못한다: 모터 컴포넌트가 아니라 형식·감속비가 없다). 구동계 바퀴 모터는 지금처럼 motorModel.ts(운동학 1차 지연)를 쓴다.
 //
 // 근거(scratchpad p10mass/research/actuators.md = [ACT], p11joint/research/{data,critique}.md, spec-3b §1):
 //   - DC 모터 식(인덕턴스 무시, [ACT] §3.1): V = I·R + Ke·ω_m, τ_m = Kt·I. 데이터시트 기본값(사용자 결정, spec-3b §1.1):
@@ -28,10 +29,6 @@ export type Pidf = [number, number, number, number]
 export const DEFAULT_VELOCITY_PIDF: Pidf = [10, 3, 0, 0]
 export const DEFAULT_POSITION_PIDF: Pidf = [10, 0.05, 0, 0]
 
-// SPARK Mini: SDK RevSPARKMini 펄스 500–2500 µs(1500 중앙, 1000 µs가 최대 듀티), 중립 1490–1510 µs(REV 문서, data §8.1)
-const SPARK_CENTER_US = 1500
-const SPARK_SPAN_US = 1000
-const SPARK_NEUTRAL_US = 10
 // 서보 펄스: SDK 기본 범위 600–2400 µs의 가운데와 반폭(PwmControl.PwmRange 기본, [ACT] §5.1). 허브 출력은 500–2500 µs(REV
 // Control Hub 서보 포트 사양)라 그 밖은 자른다. CR 서보는 power −1..1이 600–2400 µs다(CRServoImpl).
 const SERVO_CENTER_US = 1500
@@ -204,21 +201,6 @@ export class HubMotorController {
     }
     this.duty = u / DUTY_FULL_SCALE
   }
-}
-
-// SPARK Mini(서보 포트의 모터 컨트롤러): 펄스 → 듀티(부호는 SDK가 방향을 적용한 power). PWM이 꺼졌거나 중립이면 FLOAT
-// (브레이크·코스트는 기판 스위치라 소프트웨어가 모른다, spec-3b §1.9).
-export function sparkMiniStage(values: DeviceValues | undefined): PowerStage {
-  const pulse = values?.pulseUs
-  if (values?.pwm !== true || !finiteNumber(pulse)) return FLOAT
-  const offset = pulse - SPARK_CENTER_US
-  if (Math.abs(offset) <= SPARK_NEUTRAL_US) return FLOAT
-  return { kind: 'duty', duty: Math.max(-1, Math.min(1, offset / SPARK_SPAN_US)) }
-}
-
-// 서보 포트 장치의 출력인가(SPARK Mini를 모터 구동으로 쓸 때 허브 모터와 구별한다: 허브 모터는 mode가 있다)
-export function isServoPortOutput(values: DeviceValues | undefined): boolean {
-  return values !== undefined && !('mode' in values) && 'pwm' in values
 }
 
 // ---- 서보 ----

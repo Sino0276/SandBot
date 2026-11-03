@@ -16,11 +16,9 @@ import {
   FLOAT,
   HUB_CONTROL_PERIOD_NANOS,
   HubMotorController,
-  isServoPortOutput,
   readPidf,
   servoCommand,
   servoTerms,
-  sparkMiniStage,
   type PowerStage,
   type ServoCommand
 } from './actuators'
@@ -104,8 +102,6 @@ type JointMotor = {
   out: MotorOutputs
   velocityPidf: [number, number, number, number]
   positionPidf: [number, number, number, number]
-  // 서보 포트 장치(SPARK Mini)의 출력이다: 허브 엔코더·전류가 없다
-  servoPort: boolean
   // 이번 하위 단계의 전력단("앞" 부호)
   stage: PowerStage
   // 원시 허브 틱(소수)
@@ -259,7 +255,6 @@ export class KinematicWorld {
           out: readMotorOutputs(undefined),
           velocityPidf: DEFAULT_VELOCITY_PIDF,
           positionPidf: DEFAULT_POSITION_PIDF,
-          servoPort: false,
           stage: FLOAT,
           raw: 0,
           current: 0
@@ -304,9 +299,6 @@ export class KinematicWorld {
     if (dtNanos > 0 || first) this.tPrev = tNanos
     this.checkSharedPorts(outputs)
     this.outputsPrev = outputs
-    // 서보 포트 장치(SPARK Mini)는 허브 모터 입력을 받지 않는다(출력 모양은 틱마다 같다)
-    for (const motor of this.motors)
-      if (motor.joint) motor.joint.servoPort = isServoPortOutput(own(outputs, motor.spec.device))
     return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9, yawBefore), first)
   }
 
@@ -390,7 +382,7 @@ export class KinematicWorld {
       this.nextSample = (Math.floor(t / HUB_CONTROL_PERIOD_NANOS) + 1) * HUB_CONTROL_PERIOD_NANOS
       for (const motor of this.motors) {
         const jm = motor.joint
-        if (!jm || jm.servoPort) continue
+        if (!jm) continue
         jm.controller.sample({
           out: jm.out,
           velocityPidf: jm.velocityPidf,
@@ -405,12 +397,9 @@ export class KinematicWorld {
     for (const motor of this.motors) {
       const jm = motor.joint
       if (!jm) continue
-      // SPARK Mini의 power는 SDK가 이미 방향을 적용했다(형식 회전 방향이 없다): "앞" = power × 인스펙터 방향
-      const stage = jm.servoPort
-        ? sparkMiniStage(own(this.outputsPrev, motor.spec.device))
-        : jm.controller.stage(jm.out)
-      const sign = jm.servoPort ? motor.spec.directionSign : motor.forwardSign
-      jm.stage = stage.kind === 'duty' ? { kind: 'duty', duty: stage.duty * sign } : stage
+      const stage = jm.controller.stage(jm.out)
+      jm.stage =
+        stage.kind === 'duty' ? { kind: 'duty', duty: stage.duty * motor.forwardSign } : stage
     }
     if (this.jointsFailed) return
     try {
@@ -601,8 +590,6 @@ export class KinematicWorld {
     for (const hub of this.spec.hubs) put(hub, 'voltage', this.spec.batteryVoltage)
 
     for (const motor of this.motors) {
-      // SPARK Mini(서보 포트)는 허브 엔코더·전류가 없다
-      if (motor.joint?.servoPort) continue
       // 포드와 포트를 함께 쓰면 그 포트의 엔코더는 포드다(아래)
       if (motor.hubVelocity) {
         put(motor.spec.device, 'position', Math.floor(rawOf(motor)))

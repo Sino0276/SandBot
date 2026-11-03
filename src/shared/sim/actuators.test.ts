@@ -6,11 +6,9 @@ import {
   DUTY_FULL_SCALE,
   FLOAT,
   HubMotorController,
-  isServoPortOutput,
   readPidf,
   servoCommand,
   servoTerms,
-  sparkMiniStage,
   type ControlInputs
 } from './actuators'
 import type { DeviceValues } from '../sidecarProtocol'
@@ -164,16 +162,7 @@ describe('HubMotorController', () => {
   })
 })
 
-describe('SPARK Mini·서보', () => {
-  it('SPARK Mini 펄스: 1000 µs가 최대 듀티, 1490–1510 µs와 PWM 꺼짐은 FLOAT', () => {
-    expect(sparkMiniStage({ pulseUs: 2500, pwm: true })).toEqual({ kind: 'duty', duty: 1 })
-    expect(sparkMiniStage({ pulseUs: 1000, pwm: true })).toEqual({ kind: 'duty', duty: -0.5 })
-    expect(sparkMiniStage({ pulseUs: 1508, pwm: true })).toBe(FLOAT)
-    expect(sparkMiniStage({ pulseUs: 2000, pwm: false })).toBe(FLOAT)
-    expect(isServoPortOutput({ power: 0, pulseUs: 1500, pwm: true })).toBe(true)
-    expect(isServoPortOutput({ mode: 'RUN_WITHOUT_ENCODER', power: 0 })).toBe(false)
-  })
-
+describe('서보', () => {
   it('서보 펄스 → 각(1500 µs가 0, 600–2400 µs = rangeAngle), PWM이 꺼지면 풀림', () => {
     expect(servoCommand({ pulseUs: 2400, pwm: true }, SERVO, false)).toEqual({
       kind: 'position',
