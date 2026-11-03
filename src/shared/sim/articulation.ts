@@ -24,7 +24,8 @@ import type { SimJointSpec, Vec3 } from './worldSpec'
 //      근처면 늘 넣는다(결합 관절에서 행을 v*로 고르면 떨린다 — 3b 비평 §2.5). 풀고 난 뒤 빠진 한계가 넘으면 그 행을 더해
 //      다시 푼다.
 //   5. 위치 자르기는 z 공간에서만 한다: 한계 관절의 S 행이 z 성분 하나일 때만 그 z를 한계로 자른다(리깅 구속을 깨지 않게).
-//      그 좌표의 바깥 속도는 M̂⁻¹을 거친 결합 충격으로 지운다(결합된 자식 관절의 일반화 운동량을 지킨다).
+//      그 좌표의 바깥 속도는 M̂⁻¹을 거친 결합 충격으로 지운다(결합된 자식 관절의 일반화 운동량을 지킨다). 여러 성분 S 행의
+//      한계(continuous 맨 위 단)도 한계에 있으면 그 충격의 한쪽 구속 행이고, 충격 뒤 다시 적분한 위치가 넘지 않게 한계에 놓는다.
 //   힘이 영역(모터 회생 자르기·서보 포화)에 따라 다르면 지금 v로 정한 영역으로 풀고, v⁺의 영역이 다르면 그 영역으로 한 번 더
 //   푼다(많아야 두 번, 결정적).
 
@@ -810,12 +811,17 @@ export class Articulation {
 
   // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다).
   // 한계에 닿은(넘은) 좌표는 한계에 두고 바깥 속도를 지운다(반발 0: 다음 하위 단계는 멈춘 채 시작한다). 속도를 지우는 것은
-  // 한계 위 좌표들(집합 C)에만 거는 충격 Jᵀλ(J = C의 단위 행)이다: v⁺ = v + M̂⁻¹Jᵀλ. 그래서 결합된 다른 좌표(한계에 닿은
-  // 단이 실은 팔, 리깅으로 묶인 단)도 같은 충격을 받아 그 일반화 운동량이 그대로다(예전에는 v_C만 0으로 바꿔 자식이 마지막
-  // 하위 단계가 한계와 어떻게 맞았는지에 따라 운동량을 0–100 % 잃었다). 한계는 한쪽 구속이라 행마다 상자 LCP다: 아래 한계면
-  // λ ≥ 0, v⁺ ≥ 0, 위 한계면 λ ≤ 0, v⁺ ≤ 0, 상보(λ ≠ 0이면 v⁺ = 0). 그래서 다른 좌표를 멈추는 충격이 한계에 멈춰 있던 좌표를
-  // 안쪽으로 밀면 그것은 한계에서 떨어지고(두 방향 구속으로 묶으면 그 운동량을 잃는다), 바깥으로 밀면 멈춘 채다. M̂은 이번 하위
-  // 단계의 암시 행렬(LCP와 같은 계)이고, 다른 좌표와 떨어지는 좌표의 위치는 바뀐 속도로 다시 적분한다.
+  // 한계 위 행들에만 거는 충격 Jᵀλ다: v⁺ = v + M̂⁻¹Jᵀλ. 그래서 결합된 다른 좌표(한계에 닿은 단이 실은 팔, 리깅으로 묶인 단)도
+  // 같은 충격을 받아 그 일반화 운동량이 그대로다(예전에는 v_C만 0으로 바꿔 자식이 마지막 하위 단계가 한계와 어떻게 맞았는지에
+  // 따라 운동량을 0–100 % 잃었다). 행은 두 가지다.
+  //   - 성분 하나인 한계: J = ±e_c(안쪽이 +).
+  //   - S 행이 여러 성분인 한계(continuous 리깅의 맨 위 단 q = r·φ − Σq): 적분한 뒤 한계에 있거나 LIMIT_TOLERANCE 안이면
+  //     J = ±S_i. 이 행이 없으면 다른 좌표를 멈추는 충격이 M̂로 묶인 φ를 바꿔 그 단을 한계 밖으로 밀고(다음 하위 단계의 간격
+  //     항이 그 침투를 바깥 속도로 바꿔 단이 튀어 오른다), 수평 리프트에서는 정확한 비탄성 충돌보다 운동 에너지가 늘었다.
+  // 한계는 한쪽 구속이라 행마다 상자 LCP다: λ ≥ 0, w = J·v⁺ ≥ 0, 상보(λ ≠ 0이면 w = 0). 그래서 다른 좌표를 멈추는 충격이 한계에
+  // 멈춰 있던 좌표를 안쪽으로 밀면 그것은 한계에서 떨어지고(두 방향 구속으로 묶으면 그 운동량을 잃는다), 바깥으로 밀면 멈춘
+  // 채다. M̂은 이번 하위 단계의 암시 행렬(LCP와 같은 계)이고, 멈추지 않은 좌표의 위치는 바뀐 속도로 다시 적분한다. 그 뒤 걸린
+  // 여러 성분 행이나 한계를 넘은 여러 성분 관절은 멈추지 않은 좌표만 움직여(그 행 방향의 최소 이동) 한계에 놓는다.
   private clampLimits(
     z: number[],
     v: number[],
@@ -825,9 +831,16 @@ export class Articulation {
     const m = this.coordinates.length
     const low = new Array<number>(m).fill(-Infinity)
     const high = new Array<number>(m).fill(Infinity)
+    // 여러 성분 한계 관절: 관절 순번, 안쪽 방향(+1 = 아래 한계, −1 = 위 한계)과 그 한계 값
+    const coupled: { joint: number; sign: number; limit: number }[] = []
     this.joints.forEach((joint, i) => {
       if (!joint.limits) return
       const nonzero = this.s[i].flatMap((x, c) => (x !== 0 ? [c] : []))
+      if (nonzero.length > 1) {
+        coupled.push({ joint: i, sign: 1, limit: joint.limits.lower })
+        coupled.push({ joint: i, sign: -1, limit: joint.limits.upper })
+        return
+      }
       if (nonzero.length !== 1) return
       const c = nonzero[0]
       const k = this.s[i][c]
@@ -836,41 +849,54 @@ export class Articulation {
       low[c] = Math.max(low[c], Math.min(a, b))
       high[c] = Math.min(high[c], Math.max(a, b))
     })
-    // 한계 위(넘은) 좌표: 한계에 두고 구속 행 후보로 넣는다(side −1 = 아래 한계, +1 = 위 한계)
-    const rows: number[] = []
-    const side: number[] = []
+    const dot = (j: readonly number[], x: readonly number[]): number => {
+      let sum = 0
+      for (let c = 0; c < m; c++) if (j[c] !== 0) sum += j[c] * x[c]
+      return sum
+    }
+    // 여러 성분 행의 간격(안쪽이 +): sign·(S_i·z − 한계)
+    const gap = (row: (typeof coupled)[number]): number =>
+      row.sign * (dot(this.s[row.joint], z) - row.limit)
+    // 구속 행 후보: 성분 하나면 coordinate ≥ 0(그 좌표를 한계에 둔다), 여러 성분이면 coupled 순번
+    const rows: { j: number[]; coordinate: number; coupled: number }[] = []
     for (let c = 0; c < m; c++) {
+      const j = new Array<number>(m).fill(0)
       if (z[c] <= low[c]) {
         z[c] = low[c]
-        rows.push(c)
-        side.push(-1)
+        j[c] = 1
       } else if (z[c] >= high[c]) {
         z[c] = high[c]
-        rows.push(c)
-        side.push(1)
-      }
+        j[c] = -1
+      } else continue
+      // 한계에 멈춰 있는 좌표는 정확히 +0(반올림의 −0 없이)
+      if (v[c] === 0) v[c] = 0
+      rows.push({ j, coordinate: c, coupled: -1 })
     }
-    // 한계에 멈춰 있는 좌표는 정확히 +0(반올림의 −0 없이). 바깥으로 움직이는 좌표가 없으면 충격이 없다(λ = 0이 해)
-    for (const c of rows) if (v[c] === 0) v[c] = 0
-    if (rows.every((c, k) => side[k] * v[c] <= 0)) return
-    // y_k = M̂⁻¹e_{C_k}, A = J·M̂⁻¹·Jᵀ(양정치 부분 행렬), w = A·λ + v_C = v⁺_C
-    const unit = (c: number): number[] => {
-      const e = new Array<number>(m).fill(0)
-      e[c] = 1
-      return e
+    coupled.forEach((row, k) => {
+      if (gap(row) > LIMIT_TOLERANCE * Math.max(1, Math.abs(row.limit))) return
+      rows.push({ j: this.s[row.joint].map((x) => row.sign * x), coordinate: -1, coupled: k })
+    })
+    // 바깥으로 움직이는 행이 없으면 충격이 없다(λ = 0이 해)
+    if (rows.every((row) => dot(row.j, v) >= 0)) {
+      this.placeCoupled(z, coupled, rows, [], new Array<boolean>(m).fill(false), gap, low, high)
+      return
     }
-    const y = rows.map((c) => ldlSolve(factor, unit(c)))
-    const a = rows.map((_, r) => rows.map((c) => y[r][c]))
+    // y_k = M̂⁻¹J_kᵀ, A = J·M̂⁻¹·Jᵀ(양반정치), w = A·λ + J·v = J·v⁺
+    const y = rows.map((row) => ldlSolve(factor, row.j))
+    const a = rows.map((row) => y.map((col) => dot(row.j, col)))
     const { lambda, states } = solveBoxLcp(
       a,
-      rows.map((c) => v[c]),
-      side.map((s) => (s < 0 ? 0 : -Infinity)),
-      side.map((s) => (s < 0 ? Infinity : 0))
+      rows.map((row) => dot(row.j, v)),
+      rows.map(() => 0),
+      rows.map(() => Infinity)
     )
     const held = new Array<boolean>(m).fill(false)
-    rows.forEach((c, k) => {
-      // 구속이 걸린(λ ≠ 0) 좌표나, 바깥 속도를 정확히 지운(w = 0) 좌표는 멈춘다
-      if (states[k] === 'free' || lambda[k] !== 0) held[c] = true
+    const active: number[] = []
+    rows.forEach((row, k) => {
+      // 구속이 걸린(λ ≠ 0) 행이나, 바깥 속도를 정확히 지운(w = 0) 행은 멈춘다
+      if (states[k] !== 'free' && lambda[k] === 0) return
+      if (row.coordinate >= 0) held[row.coordinate] = true
+      else active.push(row.coupled)
     })
     for (let c = 0; c < m; c++) {
       let dv = 0
@@ -885,6 +911,46 @@ export class Articulation {
       z[c] += h * dv
       if (z[c] < low[c]) z[c] = low[c]
       else if (z[c] > high[c]) z[c] = high[c]
+    }
+    this.placeCoupled(z, coupled, rows, active, held, gap, low, high)
+  }
+
+  // 걸린 여러 성분 행(active)과 한계를 넘은 여러 성분 관절을 한계에 놓는다. 멈춘 좌표(held)와 한계에 닿은 성분 하나 좌표는
+  // 움직이지 않고, 나머지 좌표를 그 행 방향(J를 그 좌표로 제한한 것)으로 최소만큼 옮긴다(성분 하나 한계 안에서). 다른 행을
+  // 넘게 하면 다시 본다(많아야 네 번, 결정적).
+  private placeCoupled(
+    z: number[],
+    coupled: readonly { joint: number; sign: number; limit: number }[],
+    rows: readonly { coordinate: number; coupled: number }[],
+    active: readonly number[],
+    held: readonly boolean[],
+    gap: (row: { joint: number; sign: number; limit: number }) => number,
+    low: readonly number[],
+    high: readonly number[]
+  ): void {
+    if (coupled.length === 0) return
+    const fixed = held.slice()
+    for (const row of rows) if (row.coordinate >= 0) fixed[row.coordinate] = true
+    const target = new Set(active)
+    for (let pass = 0; pass < 4; pass++) {
+      let moved = false
+      coupled.forEach((row, k) => {
+        const g = gap(row)
+        const tolerance = LIMIT_TOLERANCE * Math.max(1, Math.abs(row.limit))
+        if (!(g < -tolerance || (target.has(k) && Math.abs(g) > tolerance))) return
+        const j = this.s[row.joint].map((x, c) => (fixed[c] ? 0 : row.sign * x))
+        let norm = 0
+        for (const x of j) norm += x * x
+        if (norm === 0) return
+        // sign·S_i·(z + α·j) = sign·한계 → α = −g / |j|²
+        const alpha = -g / norm
+        for (let c = 0; c < z.length; c++) {
+          if (j[c] === 0) continue
+          z[c] = Math.min(high[c], Math.max(low[c], z[c] + alpha * j[c]))
+        }
+        moved = true
+      })
+      if (!moved) return
     }
   }
 }

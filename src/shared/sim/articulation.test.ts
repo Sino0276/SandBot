@@ -737,6 +737,147 @@ describe('Articulation 적분', () => {
     art.z.forEach((z, c) => expect(Math.abs(z - before[c])).toBeLessThan(1e-9))
   })
 
+  // continuous 2단 리프트(단 0.4·0.3 kg, 이동 0.244 m)와 단 하나에 실은 자유 팔(회전, 무게중심 x 쪽). 수직(z)·수평(x) 둘 다
+  function liftWithArm(
+    axis: Vec3,
+    armParent: number,
+    arm: {
+      mass: number
+      centerOfMass: Vec3
+      axis: Vec3
+      limits: { lower: number; upper: number }
+    }
+  ): Articulation {
+    const stage = (parent: number, mass: number): SimJointSpec =>
+      jointSpec({
+        parent,
+        type: 'prismatic',
+        axis,
+        limits: { lower: 0, upper: 0.244 },
+        body: { mass, centerOfMass: ZERO, inertia: [1e-3, 1e-3, 1e-3, 0, 0, 0] }
+      })
+    return new Articulation([
+      {
+        ...stage(-1, 0.4),
+        drive: {
+          kind: 'motor',
+          devices: ['lift'],
+          ratio: 0.112 / (2 * Math.PI),
+          params: {
+            stallTorque: 1.834,
+            freeSpeed: (435 * 2 * Math.PI) / 60,
+            stallCurrent: 9.2,
+            freeCurrent: 0.25,
+            gearbox: 13.7336,
+            efficiency: 0.9025,
+            rotorInertia: 3e-6,
+            backdriveFriction: 0
+          },
+          rigging: { kind: 'continuous', stages: [1] }
+        }
+      },
+      { ...stage(0, 0.3), drive: { kind: 'stage' } },
+      jointSpec({
+        parent: armParent,
+        axis: arm.axis,
+        limits: arm.limits,
+        body: {
+          mass: arm.mass,
+          centerOfMass: arm.centerOfMass,
+          inertia: [1e-4, 1e-4, 1e-4, 0, 0, 0]
+        }
+      })
+    ])
+  }
+
+  it('continuous 리깅 맨 위 단(여러 성분 S 행)의 한계도 결합 충격에 넣는다: 바닥에 둔 리프트의 캐리지 팔이 멈춰도 단이 꺼지거나 뜨지 않는다', () => {
+    // 리프트가 바닥(두 단 모두 아래 한계 0)에 있고, 맨 위 단(캐리지)에 실은 팔이 중력으로 떨어져 위 한계에 닿는다. 팔을
+    // 멈추는 충격이 M̂로 묶인 φ를 바꾸므로 맨 위 단 q = r·φ − q₀의 한계 행이 없으면 단이 한계 아래로 꺼졌다가 다음 하위 단계의
+    // 간격 항으로 튀어 오른다(예전: 0.07–0.2 mm 꺼지고 0.25–4 mm 뜸).
+    const cases = [
+      { mass: 0.5, reach: 0.2, upper: 0.6 },
+      { mass: 0.5, reach: 0.2, upper: 1.0 },
+      { mass: 0.5, reach: 0.2, upper: 1.4 },
+      { mass: 1.2, reach: 0.3, upper: 1.0 }
+    ]
+    for (const c of cases) {
+      const art = liftWithArm({ x: 0, y: 0, z: 1 }, 1, {
+        mass: c.mass,
+        centerOfMass: { x: c.reach, y: 0, z: 0 },
+        axis: { x: 0, y: 1, z: 0 },
+        limits: { lower: -1.5, upper: c.upper }
+      })
+      let hit = false
+      for (let k = 0; k < 1500; k++) {
+        art.step(1e-3, passive(art))
+        const [q0, q1, q2] = art.q()
+        expect(Math.abs(q0)).toBeLessThan(1e-9)
+        expect(Math.abs(q1)).toBeLessThan(1e-9)
+        if (q2 >= c.upper) hit = true
+      }
+      expect(hit).toBe(true)
+      expect(art.q()[2]).toBe(c.upper)
+    }
+  })
+
+  it('맨 위 단이 한계에 있을 때 팔이 멈추는 충격은 정확한 비탄성 충돌보다 에너지를 늘리지 않고 단을 한계 밖으로 밀지 않는다', () => {
+    // 수평 continuous 리프트(중력이 단·팔 좌표에 일하지 않음)의 맨 위 단이 위 한계, 첫 단은 중간이다. 첫 단에 실은 팔이
+    // z 축 둘레로 w₀로 돌아 위 한계 0.5에 닿는다. 기준은 닿기 전 상태에서 팔 위 한계와 맨 위 단 위 한계 두 행으로 푼 정확한
+    // 비탄성 충돌이다(예전: 맨 위 단이 −0.07–−0.54 m/s로 튀고 운동 에너지가 기준의 2.4배까지).
+    const r = 0.112 / (2 * Math.PI)
+    for (const w0 of [3, 5.1234, 8]) {
+      const lift = liftWithArm({ x: 1, y: 0, z: 0 }, 0, {
+        mass: 0.4,
+        centerOfMass: { x: 0, y: 0.2, z: 0 },
+        axis: { x: 0, y: 0, z: 1 },
+        limits: { lower: -1, upper: 0.5 }
+      })
+      lift.z = [(0.1 + 0.244) / r, 0.1, 0]
+      lift.v = [0, 0, w0]
+      let exactEnergy = NaN
+      let exactQd: number[] = []
+      for (let k = 0; k < 400 && Number.isNaN(exactEnergy); k++) {
+        const v = lift.v.slice()
+        const mq = lift.massMatrix(lift.q())
+        lift.step(1e-3, passive(lift))
+        if (lift.q()[2] < 0.5) continue
+        const s = lift.s
+        const mz = [0, 1, 2].map((a) =>
+          [0, 1, 2].map((b) => {
+            let sum = 0
+            for (let i = 0; i < 3; i++)
+              for (let j = 0; j < 3; j++) sum += s[i][a] * mq[i][j] * s[j][b]
+            return sum + (a === b ? lift.armature[a] + 1e-9 : 0)
+          })
+        )
+        const f = ldlFactor(mz)
+        const rows = [
+          [0, 0, -1],
+          [-r, 1, 0]
+        ]
+        const y = rows.map((row) => ldlSolve(f, row))
+        const a = rows.map((row) => y.map((col) => row.reduce((sum, x, c) => sum + x * col[c], 0)))
+        const b = rows.map((row) => row.reduce((sum, x, c) => sum + x * v[c], 0))
+        const { lambda } = solveBoxLcp(a, b, [0, 0], [Infinity, Infinity])
+        const after = v.slice()
+        y.forEach((col, k2) => col.forEach((x, c) => (after[c] += x * lambda[k2])))
+        exactQd = lift.qd(after)
+        exactEnergy = 0
+        for (let i = 0; i < 3; i++)
+          for (let j = 0; j < 3; j++) exactEnergy += 0.5 * after[i] * mz[i][j] * after[j]
+      }
+      expect(Number.isNaN(exactEnergy)).toBe(false)
+      for (let k = 0; k < 100; k++) {
+        lift.step(1e-3, passive(lift))
+        expect(lift.q()[1]).toBeLessThanOrEqual(0.244 + 1e-9)
+      }
+      expect(lift.kineticEnergy()).toBeLessThanOrEqual(exactEnergy * 1.02)
+      const qd = lift.qd()
+      for (let i = 0; i < 3; i++)
+        expect(Math.abs(qd[i] - exactQd[i])).toBeLessThan(0.02 * Math.abs(exactQd[0]) + 1e-6)
+    }
+  })
+
   it('같은 입력이면 같은 프로세스에서 비트까지 같은 상태다', () => {
     const run = (): string => {
       const art = twoStage('continuous')
