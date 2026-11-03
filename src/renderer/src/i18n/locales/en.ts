@@ -1116,6 +1116,8 @@ const en: Messages = {
     gearboxModelDefault: 'Model default',
     gearboxReset: 'Model default',
     gearboxResetHint: 'Go back to the SDK gear ratio of the motor type.',
+    gearboxResetHintJoint:
+      'Go back to the datasheet gear ratio of the motor type (the actual value the joint simulation uses).',
     // Wheel (simulator setting, attached to wheel parts like a Unity WheelCollider)
     wheel: {
       addGroup: 'Simulation',
@@ -1337,6 +1339,8 @@ const en: Messages = {
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      jointMotorOutput:
+        'Joint: output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · actual ratio {{ratio}}:1',
       deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
     },
     robot: {

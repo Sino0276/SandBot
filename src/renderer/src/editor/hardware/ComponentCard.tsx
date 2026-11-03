@@ -4,8 +4,10 @@ import {
   componentDef,
   deadWheelTicksPerMeter,
   isComponentType,
+  isMotorModel,
   isPropertyVisible,
   MIN_GEARBOX,
+  MOTOR_MODEL_TAGS,
   motorGearbox,
   motorOutput,
   PORT_RANGES,
@@ -42,6 +44,8 @@ import {
 } from '../../scene/model'
 import { DEG } from '../../scene/coordinates'
 import { motorDrivesJoint } from '../../scene/joint'
+import { motorComponentParams } from '../../play/worldJoints'
+import { jointEncoderTicksPerOutputRev } from '../../../../shared/sim/actuatorData'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import {
@@ -129,10 +133,31 @@ function derivedText(
   }
 }
 
-// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다.
-function simulationText(t: ReturnType<typeof looseT>, component: HardwareComponent): string | null {
+// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다. 관절을 구동하는 모터는
+// 관절 시뮬레이션이 쓰는 값(데이터시트 기어모터 표의 실제 감속비·무부하 속도와 덮어쓰기, 출력축 틱 = 모터축 카운트 × 실제
+// 감속비 — world.ts와 같은 jointEncoderTicksPerOutputRev)이고, 구동계 바퀴 규칙(SDK ticksPerRev ÷ gearing × gearbox)과
+// 다를 수 있어(UltraPlanetary 560 → 530, Core Hex 72:1은 288) 실제 감속비를 함께 보인다.
+function simulationText(
+  t: ReturnType<typeof looseT>,
+  component: HardwareComponent,
+  drivesJoint: boolean
+): string | null {
   switch (component.type) {
     case 'motor': {
+      if (drivesJoint) {
+        const params = motorComponentParams(component.props)
+        const model = isMotorModel(component.props.motorModel)
+          ? component.props.motorModel
+          : 'unspecified'
+        return t('hardware.derived.jointMotorOutput', {
+          rpm: formatNumber((params.freeSpeed * 60) / (2 * Math.PI), 0),
+          ticks: formatNumber(
+            jointEncoderTicksPerOutputRev(MOTOR_MODEL_TAGS[model], params.gearbox),
+            1
+          ),
+          ratio: formatNumber(params.gearbox, 2)
+        })
+      }
       const output = motorOutput(component.props)
       return t('hardware.derived.motorOutput', {
         rpm: formatNumber(output.freeRpm, 0),
@@ -169,6 +194,10 @@ function ComponentCard({
   const update = (patch: Partial<HardwareComponent>): void =>
     updateComponent(objectId, component.id, patch)
   const setProp = (key: string, value: string | number): void => update({ props: { [key]: value } })
+  // 정지 토크·무부하 속도 덮어쓰기는 관절 구동만 읽는다(visibleWhenDrivesJoint). 관절을 구동하는 모터의 감속비 "모델
+  // 기본"과 출력축 줄은 관절 시뮬레이션의 값(데이터시트 실제 감속비)이다.
+  const drivesJoint = type === 'motor' && motorDrivesJoint(objects, objectId, component.id)
+  const simulated = simulationText(tl, component, drivesJoint)
 
   // 포트 번호 옆에 같은 자리를 쓰는 다른 장치 이름을 보여 준다
   const portLabel = (port: number): string => {
@@ -204,14 +233,20 @@ function ComponentCard({
           </select>
         )
       case 'number':
-        // 감속비 0은 모델 기본(motorGearbox): 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다
+        // 감속비 0은 모델 기본: 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다. 구동계 바퀴는 SDK
+        // gearing(motorGearbox), 관절 구동은 데이터시트 표의 실제 감속비(UltraPlanetary 18.93, Core Hex 72)다. 그래서 보이는
+        // 값을 그대로 다시 넣어도 관절 물리가 같다(SDK gearing 36.25를 넣으면 Core Hex 관절이 36.25:1이 되던 함정).
         if (property.key === 'gearbox') {
           const modelDefault = Number(value) < MIN_GEARBOX
           return (
             <div className="hw-inline">
               <NumberField
                 ariaLabel={label}
-                value={motorGearbox(component.props)}
+                value={
+                  modelDefault && drivesJoint
+                    ? motorComponentParams(component.props).gearbox
+                    : motorGearbox(component.props)
+                }
                 digits={property.digits}
                 onCommit={(input) =>
                   setProp(
@@ -226,7 +261,9 @@ function ComponentCard({
                 <button
                   type="button"
                   className="panel-button"
-                  title={t('hardware.gearboxResetHint')}
+                  title={t(
+                    drivesJoint ? 'hardware.gearboxResetHintJoint' : 'hardware.gearboxResetHint'
+                  )}
                   onClick={() => setProp(property.key, 0)}
                 >
                   {t('hardware.gearboxReset')}
@@ -323,7 +360,6 @@ function ComponentCard({
   }
 
   const derived = derivedText(tl, objects, objectId, component)
-  const simulated = simulationText(tl, component)
   const rowLabel = (property: PropertyDef): string =>
     property.kind === 'length'
       ? `${tl(propertyLabelKey(property.key))} (${t(`units.symbols.${lengthUnit}`)})`
@@ -335,8 +371,6 @@ function ComponentCard({
     objectOptions.joint?.some((option) => option.id === id)
       ? (objects[id]?.joint?.type ?? null)
       : null
-  // 정지 토크·무부하 속도 덮어쓰기는 관절 구동만 읽는다(visibleWhenDrivesJoint)
-  const drivesJoint = type === 'motor' && motorDrivesJoint(objects, objectId, component.id)
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.

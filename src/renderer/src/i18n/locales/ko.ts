@@ -1115,6 +1115,8 @@ const ko = {
     gearboxModelDefault: '모델 기본',
     gearboxReset: '모델 기본으로',
     gearboxResetHint: '모터 종류의 SDK 감속비로 되돌립니다.',
+    gearboxResetHintJoint:
+      '모터 종류의 데이터시트 감속비(관절 시뮬레이션이 쓰는 실제 값)로 되돌립니다.',
     // 바퀴(시뮬레이터 설정, Unity WheelCollider처럼 바퀴 파트에 붙인다)
     wheel: {
       addGroup: '시뮬레이션',
@@ -1336,6 +1338,8 @@ const ko = {
       otos: '오프셋: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: '위치: X {{x}} mm, Y {{y}} mm',
       motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
+      jointMotorOutput:
+        '관절: 출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 실제 감속비 {{ratio}}:1',
       deadWheelPod: '포드 해상도: {{ticks}} 틱/mm'
     },
     robot: {

@@ -678,6 +678,61 @@ describe('관절 카드 그리기', () => {
     expect(motorDrivesJoint(elsewhere, 'base', 'armMotor')).toBe(false)
   })
 
+  it('관절을 구동하는 모터 카드의 출력축 줄은 관절 시뮬레이션이 세는 실제 감속비·속도·틱이다', () => {
+    const section = (objects: SceneObjects, id: string): string[] => {
+      setStore(useSceneStore, { objects })
+      return renderToStaticMarkup(<HardwareComponentsSection object={objects[id]} />)
+        .split('<li class="hw-card"')
+        .slice(1)
+    }
+    const withMotors = (
+      objects: SceneObjects,
+      props: Record<string, string | number>
+    ): SceneObjects => ({
+      ...objects,
+      base: {
+        ...objects.base,
+        components: objects.base.components!.map((c) =>
+          c.type === 'motor' ? { ...c, props: { ...c.props, ...props } } : c
+        )
+      }
+    })
+    const drive = (objects: SceneObjects): SceneObjects =>
+      withJoint(objects, 'arm', { drive: motorDrive({ motors: ['armMotor'] }) })
+    // UltraPlanetary 모델 기본: 관절은 실제 18.93:1(28 × 18.93 = 530.1 틱, 6000/18.93 rpm), 관절이 없는 모터는 SDK 규칙(560)
+    const ultra = section(drive(withMotors(scene(), { motorModel: 'revUltraPlanetary' })), 'base')
+    expect(ultra[0]).toContain('관절: 출력축 317 RPM')
+    expect(ultra[0]).toContain('530.1 틱/회전')
+    expect(ultra[0]).toContain('실제 감속비 18.93:1')
+    expect(ultra[1]).toContain('출력축 300 RPM (무부하, 12 V) · 560.0 틱/회전')
+    expect(ultra[1]).not.toContain('관절:')
+    // 감속비 칸의 "모델 기본"도 관절이면 실제 감속비, 아니면 SDK gearing이다
+    const gearboxValue = (card: string): string =>
+      card.match(/aria-label="기어박스 감속비" value="([^"]*)"/)![1]
+    expect(gearboxValue(ultra[0])).toBe('18.93')
+    expect(gearboxValue(ultra[1])).toBe('20.00')
+    expect(
+      gearboxValue(section(drive(withMotors(scene(), { motorModel: 'revCoreHex' })), 'base')[0])
+    ).toBe('72.00')
+    // Core Hex: 모델 기본과 72를 넣은 것은 288 틱(REV 출력축 카운트), SDK gearing 36.25를 넣으면 관절 물리가 그 감속비임을 보인다
+    for (const gearbox of [0, 72])
+      expect(
+        section(drive(withMotors(scene(), { motorModel: 'revCoreHex', gearbox })), 'base')[0]
+      ).toContain('288.0 틱/회전')
+    const typed = section(
+      drive(withMotors(scene(), { motorModel: 'revCoreHex', gearbox: 36.25 })),
+      'base'
+    )[0]
+    expect(typed).toContain('145.0 틱/회전')
+    expect(typed).toContain('실제 감속비 36.25:1')
+    // 무부하 속도 덮어쓰기는 관절 줄의 rpm이 된다
+    const overridden = section(
+      drive(withMotors(scene(), { motorModel: 'revUltraPlanetary', freeSpeed: 250 })),
+      'base'
+    )[0]
+    expect(overridden).toContain('관절: 출력축 250 RPM')
+  })
+
   it('Add Component에 관절이 있고, 로봇·이미 관절이 있는 오브젝트는 비활성', () => {
     const objects = withJoint(scene(), 'arm')
     setStore(useSceneStore, { objects })
