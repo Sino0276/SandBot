@@ -22,6 +22,7 @@ import {
 } from '../hardware/catalog'
 import type { ComponentEntry } from '../hardware/components'
 import { sidecarDeviceName } from '../hardware/naming'
+import type { MassProps } from '../mass/chassis'
 import type { MassModel, SymMatrix3 } from '../mass/types'
 import { canHaveJoint, DEFAULT_LIMIT_WITHIN, sanitizeJoint } from '../scene/joint'
 import {
@@ -77,6 +78,9 @@ export type JointBuildResult = {
   // 관절을 실제로 구동하는 모터 컴포넌트 id(관절 순서, 바퀴 모터·다른 관절이 먼저 쓴 모터·범위 밖 구동은 없다). 인스펙터
   // 모터 카드가 관절 값을 보일지 이것으로 정한다(motorDrivesJoint)
   motorIds: string[]
+  // 관절 순번마다 몸체의 질량 성질(로봇 좌표, 무게중심 기준 관성, 질량 모델 자기 몫의 합). 질량을 몰라 대체 질량(1 g)을 둔
+  // 몸체는 null이다(질량 모델에 없는 질량이라 섀시에서 빼지 않는다). 섀시 몸체(robot.body)는 로봇 전체에서 이것을 뺀다.
+  bodyMasses: (MassProps | null)[]
   warnings: WorldWarning[]
 }
 
@@ -283,6 +287,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     const body = bodyOf.get(id) ?? -1
     if (body >= 0) bodyParts[body].push(id)
   }
+  const bodyMasses: (MassProps | null)[] = kept.map(() => null)
   const bodies = kept.map((candidate, i): SimJointSpec['body'] => {
     let total = 0
     let pending = 0
@@ -318,6 +323,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
       inertia[4] += own.inertia[4] - m * dx * dz
       inertia[5] += own.inertia[5] - m * dy * dz
     }
+    bodyMasses[i] = { mass: total, centerOfMass: [com[0], com[1], com[2]], inertia: [...inertia] }
     const toJoint = frames[i].clone().invert()
     return {
       mass: total,
@@ -588,6 +594,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     joints,
     objectIds: kept.map((candidate) => candidate.objectId),
     motorIds,
+    bodyMasses,
     warnings
   }
 }
