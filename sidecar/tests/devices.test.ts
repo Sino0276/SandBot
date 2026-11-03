@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parseSidecarLine } from '../../src/main/sidecar/protocol'
 import {
   COMPONENT_TYPE_KEYS,
   EMBEDDED_IMU_BUS,
@@ -571,6 +572,17 @@ describe.skipIf(build === null)('사이드카 장치', () => {
       // 다른 장치도 모두 틱 출력에 있다
       for (const name of ['servo', 'imu', 'pinpoint', 'otos', 'Webcam 1', 'limelight', 'liftLeft'])
         expect(Object.keys(last.outputs)).toContain(name)
+      // 허브 PIDF 계수: 받은 적 없으면 펌웨어 기본값(LegacyPID), 팀이 쓴 것은 허브 고정소수점(×65536)으로 되돌린 값
+      const fixed = (c: number): number => Math.round(c * 65536) / 65536
+      expect(last.outputs.motor.velocityPidf).toEqual([10, 3, 0, 0])
+      expect(last.outputs.motor.positionPidf).toEqual([10, fixed(0.05), 0, 0])
+      expect(last.outputs.motor.velocityAlgorithm).toBe('LegacyPID')
+      expect(last.outputs.liftLeft.velocityPidf).toEqual([1.17, 0.117, 0, 11.7].map(fixed))
+      expect(last.outputs.liftLeft.positionPidf).toEqual([5, 0, 0, 0])
+      expect(last.outputs.liftLeft.velocityAlgorithm).toBe('PIDF')
+      expect(last.outputs.liftLeft.positionAlgorithm).toBe('PIDF')
+      // 호스트(메인 프로세스)의 프로토콜 검사가 이 출력을 받는다
+      for (const tick of ticks) expect(parseSidecarLine(JSON.stringify(tick))).toEqual(tick)
     },
     SIDECAR_TEST_TIMEOUT
   )

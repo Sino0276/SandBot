@@ -28,7 +28,7 @@ import {
   type TelemetryMessage,
   type TickMessage
 } from '../../shared/sidecarProtocol'
-import type { SimPose } from '../../shared/sim/worldSpec'
+import { MAX_WORLD_JOINTS, type SimPose } from '../../shared/sim/worldSpec'
 import type { ProcessExit, SidecarProcess } from './process'
 import { LineSplitter, parseSidecarLine, ProtocolError } from './protocol'
 import { simFilePath } from './simFiles'
@@ -61,9 +61,9 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   마지막 cleared 묶음부터의 마지막 null 아닌 것, ops는 마지막 null 아닌 것). 설정 트리(dashConfig)는 마지막 것만 보낸다. Config 탭의 값(PlayCommand config)은 다음 틱 답의
 //   configSet에 싣는다(일시 정지 중이면 답을 보낼 때). 사이드카 안내(notice)는 simNotice다.
 // 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·dash(합쳐서, 30 Hz 이하)·dashConfig(최신만,
-//   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 일시
-//   정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는 한 번)·finished. 순서가 중요한 이벤트(phase·compiled·error·simNotice·
-//   finished) 전에는 모아 둔 로그를 먼저 보낸다.
+//   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 로봇
+//   자세나 관절 값(joints)이 바뀔 때만, 일시 정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는 한 번)·finished.
+//   순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
   // 단조 증가하는 밀리초
@@ -169,6 +169,16 @@ function mergeInputs(into: InputState, inputs: unknown): void {
       known.set(key, value as DeviceValues[string])
     }
   }
+}
+
+// 세계 자세의 관절 값(세계 설명의 관절 순번 순 q, rad 또는 m). 관절이 없으면 undefined(키를 넣지 않는다). 배열이 아니거나
+// MAX_WORLD_JOINTS를 넘거나 유한하지 않은 값이 있으면 null이고, 그 자세를 버린다(x·y·yaw와 같은 규칙). 세계가 같은 배열을
+// 다시 써도 이미 보낸 값이 바뀌지 않게 복사한다.
+function poseJoints(pose: SimPose): number[] | undefined | null {
+  const joints: unknown = pose.joints
+  if (joints === undefined) return undefined
+  if (!Array.isArray(joints) || joints.length > MAX_WORLD_JOINTS) return null
+  return joints.every((q) => typeof q === 'number' && Number.isFinite(q)) ? [...joints] : null
 }
 
 function inputsRecord(state: InputState): Record<string, DeviceValues> {
@@ -616,13 +626,22 @@ export class SidecarSession {
     }
     mergeInputs(this.pendingInputs, inputs)
     mergeInputs(this.inputState, inputs)
-    if (pose && Number.isFinite(pose.x) && Number.isFinite(pose.y) && Number.isFinite(pose.yaw)) {
+    const joints = pose ? poseJoints(pose) : null
+    if (
+      pose &&
+      joints !== null &&
+      Number.isFinite(pose.x) &&
+      Number.isFinite(pose.y) &&
+      Number.isFinite(pose.yaw)
+    ) {
       this.latestPose = {
         tNanos: tick.tNanos,
         x: pose.x,
         y: pose.y,
         yaw: pose.yaw,
-        blocked: pose.blocked === true
+        blocked: pose.blocked === true,
+        // 관절이 없는 세계는 키를 넣지 않는다(이벤트 모양이 관절 전과 같다)
+        ...(joints === undefined ? {} : { joints })
       }
       this.poseThrottle.request()
     }
@@ -1014,7 +1033,8 @@ export class SidecarSession {
   private sendPose(): void {
     const pose = this.latestPose
     if (!pose) return
-    const key = JSON.stringify([pose.x, pose.y, pose.yaw, pose.blocked])
+    // 관절만 움직여도(로봇은 서 있어도) 보내도록 관절 값도 키에 넣는다
+    const key = JSON.stringify([pose.x, pose.y, pose.yaw, pose.blocked, pose.joints ?? null])
     if (key === this.lastPoseKey) return
     this.lastPoseKey = key
     this.emit({ type: 'pose', runId: this.runId, ...pose })

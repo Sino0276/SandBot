@@ -173,6 +173,9 @@ describe('실행 화면의 값 글자', () => {
     expect(formatDeviceValue(0.123456)).toBe('0.1235')
     expect(formatDeviceValue(0.5)).toBe('0.5')
     expect(formatDeviceValue('RUN_TO_POSITION')).toBe('RUN_TO_POSITION')
+    // 모터 PIDF 계수(허브 고정소수점: 0.05는 3277/65536)
+    expect(formatDeviceValue([10, 0.0500030517578125, 0, 0])).toBe('[10, 0.05, 0, 0]')
+    expect(formatDeviceValue([])).toBe('[]')
   })
 
   it('HTML 텔레메트리는 태그를 빼고 글자로(그리지 않는다)', () => {

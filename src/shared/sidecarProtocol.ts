@@ -129,7 +129,12 @@ export type GamepadState = {
 
 // 장치 하나의 값. 키는 장치 종류마다 정한다(sidecar의 org.sandbot.sdk.devices 문서). 숫자는 SDK 단위 그대로다
 // (모터 power −1..1, 엔코더 tick, 서보 position 0..1 등). null은 값이 없음(예: 한 번도 쓰지 않은 서보).
-export type DeviceValues = Record<string, number | boolean | string | null>
+// 숫자 배열은 사이드카 출력에만 쓴다(모터 velocityPidf·positionPidf의 [p, i, d, f], 길이 MAX_DEVICE_ARRAY까지).
+// 입력(tickReply.inputs)은 배열을 싣지 않는다(호스트가 거른다).
+export type DeviceValues = Record<string, number | boolean | string | null | readonly number[]>
+
+// 장치 출력 값 하나가 숫자 배열일 때의 길이 한도(사이드카가 넘기면 프로토콜 오류)
+export const MAX_DEVICE_ARRAY = 16
 
 export type TickReply = {
   type: 'tickReply'

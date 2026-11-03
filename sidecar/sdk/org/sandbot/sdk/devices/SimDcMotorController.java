@@ -18,6 +18,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 import org.sandbot.sim.SimDevice;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -43,7 +45,10 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     /** LynxConstants.DEFAULT_TARGET_POSITION_TOLERANCE */
     static final int DEFAULT_TARGET_POSITION_TOLERANCE = 5;
 
-    // 펌웨어의 PID 기본값(측정값이 아닌 근사: REV Core Hex 형식 주석의 값과 같게 둔다)
+    // 펌웨어의 PID 기본값(측정값이 아닌 근사: REV Core Hex 형식 주석의 값과 같게 둔다). SDK 12.0에서 계수를 정한 형식은 Core Hex
+    // 하나이고(RevRoboticsCoreHexMotor의 @ExpansionHubMotorControllerVelocityParams(P=10, I=3, D=0)·PositionParams(P=10,
+    // I=0.05, D=0), LegacyPID), 나머지는 펌웨어 기본값을 쓴다. FTC SDK 6.0 릴리스 노트는 REV 모터 기본값을 2018-19 시즌의 기본
+    // PID로 되돌려 모든 모터와 같게 했다고 쓰지만 그 숫자는 공개되지 않았다(가정: Core Hex 주석이 그 값을 옮긴 것).
     static final PIDFCoefficients DEFAULT_VELOCITY_PIDF = new PIDFCoefficients(10, 3, 0, 0, MotorControlAlgorithm.LegacyPID);
     static final PIDFCoefficients DEFAULT_POSITION_PIDF = new PIDFCoefficients(10, 0.05, 0, 0, MotorControlAlgorithm.LegacyPID);
 
@@ -107,6 +112,16 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
         static int pidIndex(DcMotor.RunMode mode) {
             return mode == DcMotor.RunMode.RUN_TO_POSITION ? 1 : 0;
+        }
+
+        /** 허브에 저장된 계수 [p, i, d, f](고정소수점에서 되돌린 값, getPIDFCoefficients가 읽는 것과 같다) */
+        List<Double> pidfOutput(DcMotor.RunMode mode) {
+            int[] values = pidf[pidIndex(mode)];
+            return Arrays.asList(
+                    externalCoefficientFromInternal(values[0]),
+                    externalCoefficientFromInternal(values[1]),
+                    externalCoefficientFromInternal(values[2]),
+                    externalCoefficientFromInternal(values[3]));
         }
 
         void storePidf(DcMotor.RunMode mode, PIDFCoefficients c) {
@@ -191,6 +206,12 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             device.output("encoderOffset", encoderOffset);
             // 틱 경계가 STOP_AND_RESET_ENCODER 모드를 보지 못해도(한 루프에서 리셋 → RUN_TO_POSITION) 리셋을 알 수 있게 늘 보낸다
             device.output("encoderResets", encoderResets);
+            // 허브 펌웨어의 제어 계수(LynxSetMotorPIDFControlLoopCoefficientsCommand로 받은 값, 받은 적 없으면 펌웨어 기본값).
+            // RUN_USING_ENCODER의 속도 루프와 RUN_TO_POSITION의 위치 루프(그 안에서 속도 루프도 돈다)를 시뮬레이터가 따른다.
+            device.output("velocityPidf", pidfOutput(DcMotor.RunMode.RUN_USING_ENCODER));
+            device.output("positionPidf", pidfOutput(DcMotor.RunMode.RUN_TO_POSITION));
+            device.output("velocityAlgorithm", algorithm[pidIndex(DcMotor.RunMode.RUN_USING_ENCODER)].name());
+            device.output("positionAlgorithm", algorithm[pidIndex(DcMotor.RunMode.RUN_TO_POSITION)].name());
         }
     }
 
@@ -668,13 +689,22 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             // 위치 루프 안의 속도 루프가 이중 적분되지 않게 막는다(실제와 같음)
             if (pidfCoefficients.i != 0 || pidfCoefficients.d != 0 || pidfCoefficients.f != 0) return false;
         }
+        // 실제 InternalMotorControlAlgorithm.fromExternal의 switch처럼 알고리즘이 null이면 보내기 전에 던진다(허브 값은 그대로)
+        if (pidfCoefficients.algorithm == null) throw new NullPointerException();
+        // 실제처럼 계수는 LastKnown으로 기억하지 않는다: 같은 값이어도 부를 때마다 보낸다
         hub.lynxCommand(); // LynxSetMotorPIDFControlLoopCoefficientsCommand
-        channels[motorZ].storePidf(mode, pidfCoefficients);
+        Channel c = channels[motorZ];
+        c.storePidf(mode, pidfCoefficients);
+        c.publish();
         return true;
     }
 
     @Override public synchronized PIDCoefficients getPIDCoefficients(int motor, DcMotor.RunMode mode) {
-        PIDFCoefficients pidf = getPIDFCoefficients(motor, mode);
+        validateMotor(motor);
+        hub.lynxCommand(); // LynxGetMotorPIDControlLoopCoefficientsCommand
+        Channel c = channels[motor - API_MOTOR_FIRST];
+        // F가 0이 아니면 허브가 PARAM2로 NACK하고 SDK가 PIDF 명령으로 다시 묻는다(F는 버린다)
+        PIDFCoefficients pidf = c.pidf[Channel.pidIndex(mode)][3] != 0 ? getPIDFCoefficients(motor, mode) : c.readPidf(mode);
         return new PIDCoefficients(pidf.p, pidf.i, pidf.d);
     }
 
