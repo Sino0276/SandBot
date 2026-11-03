@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { MAX_WHEEL_FRICTION, MIN_WHEEL_FRICTION } from '../../../../shared/sim/worldSpec'
 import { usePlayStore } from '../../play/playStore'
 import { wheelTopSpeed } from '../../play/worldSpec'
 import { DEG } from '../../scene/coordinates'
@@ -23,12 +24,18 @@ import {
   parseLength,
   toDisplayLength
 } from '../../units/units'
+import { formatInertia, massText } from '../mass/massCardModel'
+import OptionalField from '../mass/OptionalField'
+import { useMassModel } from '../mass/useMassModel'
 import NumberField from '../NumberField'
 import {
+  formatWheelFriction,
+  parseWheelFriction,
   suggestWheelDiameter,
   wheelCardView,
   wheelKindPatch,
-  wheelMotorOptions
+  wheelMotorOptions,
+  wheelPhysicsView
 } from './wheelCardModel'
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -46,6 +53,12 @@ function WheelCard({ object }: { object: SceneObject }): React.JSX.Element | nul
   const batteryVoltage = usePlayStore((state) => state.settings.batteryVoltage)
   const view = useMemo(() => wheelCardView(objects, object.id), [objects, object.id])
   const motorOptions = useMemo(() => wheelMotorOptions(objects, object.id), [objects, object.id])
+  // 바퀴 질량·정지 하중은 질량 모델(Rigidbody 카드와 같은 계산, 문서·형상마다 한 번)에서 온다
+  const massModel = useMassModel()
+  const physics = useMemo(
+    () => wheelPhysicsView(objects, object.id, massModel),
+    [objects, object.id, massModel]
+  )
   const suggested = suggestWheelDiameter(objects, object.id)
   const wheel = object.wheel
   if (!wheel) return null
@@ -196,6 +209,28 @@ function WheelCard({ object }: { object: SceneObject }): React.JSX.Element | nul
           </select>
         </div>
       )}
+      {/* Unity WheelCollider의 Friction 자리: 비우면 종류 기본값(흐리게) */}
+      <div className="hw-row" title={t('hardware.wheel.frictionHint')}>
+        <span className="hw-row-label">{t('hardware.wheel.friction')}</span>
+        <OptionalField
+          ariaLabel={t('hardware.wheel.friction')}
+          value={wheel.friction === 0 ? '' : formatWheelFriction(wheel.friction)}
+          placeholder={
+            physics
+              ? t('hardware.wheel.frictionDefault', {
+                  value: formatWheelFriction(physics.defaultFriction)
+                })
+              : undefined
+          }
+          title={t('hardware.wheel.frictionHint')}
+          invalidTitle={t('hardware.wheel.frictionRejected', {
+            min: formatWheelFriction(MIN_WHEEL_FRICTION),
+            max: formatWheelFriction(MAX_WHEEL_FRICTION)
+          })}
+          parse={parseWheelFriction}
+          onCommit={(friction) => update({ friction: friction ?? 0 })}
+        />
+      </div>
       <p className="hw-derived">
         {topSpeed !== null
           ? t('hardware.wheel.topSpeed', {
@@ -208,6 +243,24 @@ function WheelCard({ object }: { object: SceneObject }): React.JSX.Element | nul
             })
           : t('hardware.wheel.topSpeedNoMotor')}
       </p>
+      {physics && (
+        <p className="hw-derived">
+          {t('hardware.wheel.wheelMass', {
+            mass: massText(t, physics.mass, lengthUnit),
+            inertia: formatInertia(physics.spinInertia)
+          })}
+        </p>
+      )}
+      {physics && view.inRobot && (
+        <p className="hw-derived">
+          {physics.load !== null && physics.tractionLimit !== null
+            ? t('hardware.wheel.staticLoad', {
+                load: formatNumber(physics.load, 1),
+                limit: formatNumber(physics.tractionLimit, 1)
+              })
+            : t('hardware.wheel.staticLoadUnknown')}
+        </p>
+      )}
       <p className="inspector-note">{t('hardware.wheel.hint')}</p>
       {(view.motorState === 'missing' || view.rollersAmbiguous) && (
         <ul className="hw-issues">

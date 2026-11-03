@@ -1168,6 +1168,8 @@ const en: Messages = {
       wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
       staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
       staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
+      frictionRejected:
+        'Enter a friction coefficient from {{min}} to {{max}}. Leave it empty to use the kind default.',
       motorMissingWarning:
         'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
       rollersAmbiguousWarning:
@@ -1181,6 +1183,9 @@ const en: Messages = {
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
       traction: 'Traction-limited acceleration ≈ {{accel}} m/s² ({{g}} g)',
+      topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
+      topSpeedRange:
+        'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',
       none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
     },
     categories: {

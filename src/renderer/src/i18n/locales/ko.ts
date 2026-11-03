@@ -1170,6 +1170,7 @@ const ko = {
       wheelMass: '바퀴 질량 {{mass}} · 회전 관성 {{inertia}} kg·m²',
       staticLoad: '정지 하중 ≈ {{load}} N · 견인 한계 ≈ {{limit}} N',
       staticLoadUnknown: '로봇 질량을 계산하면 정지 하중을 보입니다.',
+      frictionRejected: '{{min}}–{{max}} 사이의 마찰 계수를 넣으세요. 비우면 종류 기본값을 씁니다.',
       motorMissingWarning:
         '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 이 바퀴는 굴리지 않습니다.',
       rollersAmbiguousWarning:
@@ -1183,6 +1184,8 @@ const ko = {
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
       traction: '견인 한계 가속 ≈ {{accel}} m/s² ({{g}} g)',
+      topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
+      topSpeedRange: '최고 속도 ≈ {{min}}–{{max}} {{unit}}/s (바퀴마다 다름, 무부하, {{volts}} V)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'
     },
     categories: {
