@@ -2841,6 +2841,11 @@ button.usage-header:hover {
   outline-offset: -1px;
 }
 
+/* 장치 표 아래의 관절 값 표(3b) */
+.devices-joints {
+  margin-top: 8px;
+}
+
 .devices-name {
   white-space: nowrap;
 }
