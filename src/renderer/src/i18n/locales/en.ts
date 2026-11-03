@@ -1687,7 +1687,7 @@ const en: Messages = {
     deviceMissing: '(device not found)',
     gearRatio: 'External gear ratio',
     gearRatioHint: "Reduction from the device's output shaft to the joint (1 if direct).",
-    servoEditPosition: 'Servo position at edit pose',
+    servoEditPosition: 'Edit-pose position',
     servoEditPositionHint:
       "The servo.setPosition value your code gives when the joint is at the edit pose in the scene (joint value 0). Range 0–1, default 0.5. Match it to how the servo horn is mounted. Example: if the claw is modelled closed and your code closes it with setPosition(0.35), enter 0.35. As in the SDK, the pulse goes through this servo component's direction (REVERSE), scale range (scaleRange) and pulse range (standard 600–2400 µs, full 500–2500 µs). If your code sets a different direction or range at run time, the edit pose is off by that much.",
     servoDirection: '+pulse direction',
