@@ -10,6 +10,7 @@ import {
   type SimJointDriveSpec,
   type SimJointSpec,
   type SimMotorParams,
+  type SimServoParams,
   type Vec3 as SimVec3
 } from '../../../shared/sim/worldSpec'
 import {
@@ -24,12 +25,14 @@ import { sidecarDeviceName } from '../hardware/naming'
 import type { MassModel, SymMatrix3 } from '../mass/types'
 import { canHaveJoint, DEFAULT_LIMIT_WITHIN, sanitizeJoint } from '../scene/joint'
 import {
+  ancestorIds,
   frameMatrix,
   matrixToTransform,
   subtreeIds,
   worldMatrix,
   type HardwareComponent,
   type JointSettings,
+  type SceneObject,
   type SceneObjects
 } from '../scene/model'
 import type { WorldWarning } from './worldSpec'
@@ -150,6 +153,62 @@ export function motorComponentParams(props: HardwareComponent['props']): SimMoto
 const sameParams = (a: SimMotorParams, b: SimMotorParams): boolean =>
   (Object.keys(a) as (keyof SimMotorParams)[]).every((key) => a[key] === b[key])
 
+// 한 관절을 같이 구동하는 모터들의 기어모터 값(세계 설명과 인스펙터 관절 카드가 같이 쓰는 한 규칙). 세계 설명의 모터 구동은
+// 값 하나(SimJointDriveSpec.params)를 모든 장치에 쓰고 시뮬레이터는 장치마다 그 토크를 더하므로, 첫 모터(목록 순서)의 값을
+// 쓴다. 형식·감속비·덮어쓰기가 달라 값이 다르면 differ(Console·카드 경고 worldJointMotorsDiffer·motorsDiffer). 모터가
+// 없으면 null.
+export function jointMotorParams(
+  components: readonly Pick<HardwareComponent, 'props'>[]
+): { params: SimMotorParams; differ: boolean } | null {
+  if (components.length === 0) return null
+  const params = motorComponentParams(components[0].props)
+  const differ = components
+    .slice(1)
+    .some((component) => !sameParams(params, motorComponentParams(component.props)))
+  return { params, differ }
+}
+
+// 서보·CR 서보 컴포넌트의 서보 값(servoModel, src/shared/sim/actuatorData.ts)
+export function servoComponentParams(
+  props: HardwareComponent['props'],
+  kind: 'servo' | 'crServo'
+): SimServoParams {
+  return resolveServoParams(props.servoModel, kind)
+}
+
+// 관절 오브젝트로 보는 것: 관절 설정이 있고 관절을 둘 수 있는 오브젝트(로봇·바퀴 오브젝트에 남은 설정은 쓰지 않는다)
+export const isJointObject = (object: SceneObject | undefined): boolean =>
+  !!object?.joint && canHaveJoint(object)
+
+// 관절 몸체의 오브젝트(문서 순서): 관절 오브젝트 하위에서 안쪽 관절의 하위를 뺀 것(spec-3b §1-10). 세계 설명의 몸체와 같다
+// (관절이 MAX_WORLD_JOINTS를 넘어 뺀 관절의 하위만 다르다: 세계 설명은 그것을 가까운 남은 관절의 몸체로 센다).
+export function jointBodyIds(objects: SceneObjects, jointId: string): string[] {
+  if (!objects[jointId]) return []
+  return subtreeIds(objects, jointId).filter(
+    (id) =>
+      id === jointId ||
+      (!isJointObject(objects[id]) &&
+        ancestorIds(objects, id).find((a) => isJointObject(objects[a])) === jointId)
+  )
+}
+
+// 관절 몸체의 질량 합과 아직 읽는 중인 메시 수(질량 모델 자기 몫 MassModel.own의 합, 세계 설명의 몸체 질량과 같은 값)
+export function jointBodyMass(
+  objects: SceneObjects,
+  jointId: string,
+  own: MassModel['own']
+): { mass: number; pendingMeshes: number } {
+  let mass = 0
+  let pendingMeshes = 0
+  for (const id of jointBodyIds(objects, jointId)) {
+    const part = own?.[id]
+    if (!part) continue
+    mass += part.mass
+    pendingMeshes += part.pendingMeshes
+  }
+  return { mass, pendingMeshes }
+}
+
 type Candidate = { objectId: string; name: string; joint: JointSettings }
 
 export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
@@ -162,7 +221,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   const candidates: Candidate[] = []
   for (const id of robotTree) {
     const object = objects[id]
-    if (id === robotId || !object.joint || !canHaveJoint(object)) continue
+    if (id === robotId || !object.joint || !isJointObject(object)) continue
     // 문서의 관절은 스토어·프로젝트 파일이 이미 정리했지만, 세계 설명이 검증을 통과하도록 한 번 더 정리한다(같은 값이면 그대로)
     candidates.push({ objectId: id, name: object.name, joint: sanitizeJoint(object.joint) })
   }
@@ -272,8 +331,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
           return { kind: 'none' }
         }
         const devices: string[] = []
-        let params: SimMotorParams | null = null
-        let differ = false
+        const driving: HardwareComponent[] = []
         if (drive.motors.length === 0) warnings.push({ key: 'worldJointNoMotor', params: { name } })
         for (const id of drive.motors) {
           const component = components.get(id)
@@ -295,17 +353,16 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
           }
           usedMotors.add(id)
           devices.push(device)
-          const own = motorComponentParams(component.props)
-          if (!params) params = own
-          else if (!sameParams(params, own)) differ = true
+          driving.push(component)
         }
-        if (differ) warnings.push({ key: 'worldJointMotorsDiffer', params: { name } })
-        if (!params || devices.length === 0) return { kind: 'none' }
+        const motorParams = jointMotorParams(driving)
+        if (motorParams?.differ) warnings.push({ key: 'worldJointMotorsDiffer', params: { name } })
+        if (!motorParams) return { kind: 'none' }
         return {
           kind: 'motor',
           devices,
           ratio,
-          params,
+          params: motorParams.params,
           rigging: rigging(i, candidate)
         }
       }
@@ -340,7 +397,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
           kind: drive.kind,
           device,
           ratio,
-          params: resolveServoParams(component.props.servoModel, drive.kind)
+          params: servoComponentParams(component.props, drive.kind)
         }
       }
     }

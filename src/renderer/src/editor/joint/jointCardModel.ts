@@ -1,7 +1,22 @@
 import { Vector3 } from 'three'
 import { MAX_JOINT_MOTORS } from '../../../../shared/sim/worldSpec'
 import { robotComponents } from '../../hardware/components'
-import type { ObjectMass } from '../../mass/types'
+import type { MassModel, ObjectMass } from '../../mass/types'
+import {
+  isJointObject,
+  jointBodyMass,
+  jointMotorParams,
+  servoComponentParams
+} from '../../play/worldJoints'
+import {
+  canHaveJoint,
+  defaultJoint,
+  MAX_JOINT_DAMPING,
+  MAX_JOINT_FORCE,
+  MAX_JOINT_STIFFNESS,
+  MAX_PRISMATIC_LIMIT,
+  MAX_REVOLUTE_LIMIT
+} from '../../scene/joint'
 import { jointAxisVector } from '../../scene/jointMotion'
 import {
   ancestorIds,
@@ -15,16 +30,6 @@ import {
   type SceneObjects,
   type Vec3
 } from '../../scene/model'
-import {
-  canHaveJoint,
-  defaultJoint,
-  MAX_JOINT_DAMPING,
-  MAX_JOINT_FORCE,
-  MAX_JOINT_STIFFNESS,
-  MAX_PRISMATIC_LIMIT,
-  MAX_REVOLUTE_LIMIT
-} from './jointDefaults'
-import type { ActuatorRatings } from './jointRatings'
 
 // 인스펙터 관절 카드(Articulation Body)·Add Component의 보기 계산(그리기와 나눠 시험한다). 관절은 시뮬레이터 설정이라
 // 생성 코드·구성 XML·하드웨어 검증과 관계없다. 경고는 INIT 때 세계 설명이 Console에 남길 것과 같은 뜻을 카드에서 미리
@@ -71,7 +76,7 @@ export function driveOptions(
 
 // 가장 가까운 관절 상위(자기 제외). 세계 설명의 부모 관절과 같다(관절 몸체 = 하위에서 안쪽 관절의 하위를 뺀 것).
 export function parentJointId(objects: SceneObjects, objectId: string): string | null {
-  return ancestorIds(objects, objectId).find((id) => objects[id]?.joint !== undefined) ?? null
+  return ancestorIds(objects, objectId).find((id) => isJointObject(objects[id])) ?? null
 }
 
 // 다단 슬라이드의 위 단으로 고를 수 있는 것: 이 관절 하위의 직선 관절(문서 순서). 유효한 순서인지는 jointCardView가 본다.
@@ -90,6 +95,7 @@ export type JointWarning =
   | { key: 'motorMissing' }
   | { key: 'motorOnWheel'; motor: string }
   | { key: 'motorShared'; motor: string; joint: string }
+  | { key: 'motorsDiffer' }
   | { key: 'servoMissing' }
   | { key: 'servoOnSlide' }
   | { key: 'stageInvalid'; stage: string }
@@ -103,11 +109,11 @@ export type JointCardView = {
   inRobot: boolean
   // 관절 축의 로봇 좌표 방향(단위 벡터). 로봇 밖이면 필드 좌표.
   robotAxis: Vec3
-  // 장치(모터 여럿이면 모두)가 구동하는 관절 좌표의 무부하 최고 속도. 다단이면 맨 위 단(endSpeed)도. 모르면 null.
+  // 장치가 구동하는 관절 좌표의 무부하 최고 속도. 다단이면 맨 위 단(endSpeed)도. 구동 장치가 없으면 null.
   maxSpeed: number | null
   endSpeed: number | null
   // 편집 자세(q = 0)에서 중력(+스프링)을 버티는 데 드는 힘·토크의 크기(관절 좌표), 장치의 정지 토크를 관절 좌표로 옮긴
-  // 것(모르면 null), 둘의 비(여유, 부하가 없으면 null)
+  // 것(구동 장치가 없으면 null), 둘의 비(여유, 부하가 없으면 null)
   load: number
   capacity: number | null
   margin: number | null
@@ -188,13 +194,16 @@ function drivingStages(drive: JointDrive): readonly string[] {
   return drive.kind === 'motor' && drive.rigging.kind !== 'direct' ? drive.rigging.stages : []
 }
 
+// 장치 정격은 세계 설명과 같은 값이다: 모터는 jointMotorParams(형식·감속비·덮어쓰기의 데이터시트 값, 같이 묶은 모터는 첫
+// 모터의 값 × 모터 수), 서보는 servoComponentParams(servoModel). 질량은 질량 모델(objects: 하위 전체 — 중력 부하, own: 자기
+// 몫 — 몸체 질량 경고)이다.
 export function jointCardView(
   objects: SceneObjects,
   objectId: string,
-  masses: Readonly<Record<string, ObjectMass>>,
-  ratings: ActuatorRatings,
+  massModel: Pick<MassModel, 'objects' | 'own'>,
   batteryVoltage: number
 ): JointCardView | null {
+  const masses = massModel.objects
   const object = objects[objectId]
   const joint = object?.joint
   if (!joint) return null
@@ -209,11 +218,11 @@ export function jointCardView(
   const prismatic = joint.type === 'prismatic'
   const voltageScale = batteryVoltage / RATED_VOLTAGE
 
-  // 질량: 하위 전체가 0이면 시뮬레이터는 1 g으로 둔다(spec §1-10). 읽는 중인 메시는 빠진다.
-  const mass = masses[objectId]
-  if (mass && mass.pendingMeshes > 0)
-    warnings.push({ key: 'massPending', count: mass.pendingMeshes })
-  else if (!mass || !(mass.mass > 0)) warnings.push({ key: 'noMass' })
+  // 몸체 질량(이 관절 하위에서 안쪽 관절의 하위를 뺀 것, 세계 설명과 같은 값)이 0이면 시뮬레이터는 1 g으로 둔다(spec
+  // §1-10). 읽는 중인 메시는 빠진다. 세계 설명 빌더와 같은 순서로 둘 다 알린다.
+  const body = jointBodyMass(objects, objectId, massModel.own)
+  if (body.pendingMeshes > 0) warnings.push({ key: 'massPending', count: body.pendingMeshes })
+  if (!(body.mass > 0) || !Number.isFinite(body.mass)) warnings.push({ key: 'noMass' })
 
   // 관절 좌표(다단이면 첫 단 좌표 z, 연속 리깅은 줄 길이 Σq)의 중력 + 스프링 부하
   const { valid: stages, invalid } = validStages(objects, objectId, drivingStages(drive))
@@ -263,14 +272,14 @@ export function jointCardView(
         }
         used.push(component)
       }
-      if (used.length === 0) break
+      const motorParams = jointMotorParams(used)
+      if (!motorParams) break
+      if (motorParams.differ) warnings.push({ key: 'motorsDiffer' })
       const ratio = perOutputRad(drive.gearRatio, drive.spoolDiameter)
-      // 같이 묶은 모터는 한 축을 돌리므로 속도는 첫 모터, 토크는 합이다(세계 설명은 형식이 다르면 첫 모터 값으로 계산)
-      const first = ratings.motor(used[0])
-      if (first.freeSpeed !== null) maxSpeed = first.freeSpeed * voltageScale * ratio
-      const torques = used.map((component) => ratings.motor(component).stallTorque)
-      if (torques.every((torque): torque is number => torque !== null))
-        capacity = (torques.reduce((sum, torque) => sum + torque, 0) * voltageScale) / ratio
+      // 같이 묶은 모터는 한 축을 돌리므로 속도는 그 값, 토크는 모터 수배다(시뮬레이터가 모터마다 같은 값으로 더한다)
+      const { params } = motorParams
+      maxSpeed = params.freeSpeed * voltageScale * ratio
+      capacity = (used.length * params.stallTorque * voltageScale) / ratio
       break
     }
     case 'servo':
@@ -289,9 +298,9 @@ export function jointCardView(
         drive.gearRatio,
         drive.kind === 'crServo' ? drive.spoolDiameter : 0
       )
-      const rating = ratings.servo(component, drive.kind)
-      if (rating.freeSpeed !== null) maxSpeed = rating.freeSpeed * ratio
-      if (rating.stallTorque !== null) capacity = rating.stallTorque / ratio
+      const params = servoComponentParams(component.props, drive.kind)
+      maxSpeed = params.freeSpeed * ratio
+      capacity = params.stallTorque / ratio
       break
     }
     case 'stage': {
@@ -355,7 +364,7 @@ export function withLimit(
     : { lower: limits.lower, upper: Math.max(value, 0, limits.lower) || 0 }
 }
 
-// 마찰·스프링 칸의 상한(위 jointDefaults의 한도)
+// 마찰·스프링 칸의 상한(scene/joint.ts의 한도, 스토어 정리와 같다)
 const NON_NEGATIVE_MAX = {
   coulomb: MAX_JOINT_FORCE,
   viscous: MAX_JOINT_DAMPING,

@@ -4,7 +4,10 @@ import { initReactI18next } from 'react-i18next'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createComponent } from '../../hardware/components'
 import ko from '../../i18n/locales/ko'
-import type { ObjectMass } from '../../mass/types'
+import type { MassModel, ObjectMass, OwnMass } from '../../mass/types'
+import { buildWorldSpec } from '../../play/worldSpec'
+import { jointBodyIds, motorComponentParams, servoComponentParams } from '../../play/worldJoints'
+import { defaultJoint, defaultJointDrive, jointTypePatch, sanitizeJoint } from '../../scene/joint'
 import type {
   HardwareComponent,
   JointDrive,
@@ -30,9 +33,7 @@ import {
   stageOptions,
   withLimit
 } from './jointCardModel'
-import { defaultJoint, defaultJointDrive, jointTypePatch } from './jointDefaults'
 import { clearJointPreview, setJointPreview, useJointPreviewStore } from './jointPreviewStore'
-import type { ActuatorRatings } from './jointRatings'
 
 // 단위 스토어는 불러올 때 localStorage를 읽는다(Node 테스트에는 없다)
 vi.hoisted(() => {
@@ -151,11 +152,39 @@ const objectMass = (mass: number, centerOfMass: [number, number, number]): Objec
   pendingMeshes: 0
 })
 
-// 시험 정격: 모터마다 정지 토크 2 N·m·무부하 10 rad/s, 서보 1 N·m·5 rad/s
-const RATINGS: ActuatorRatings = {
-  motor: () => ({ stallTorque: 2, freeSpeed: 10 }),
-  servo: () => ({ stallTorque: 1, freeSpeed: 5 })
+// 질량 모델: objects는 하위 전체(중력 부하), own은 자기 몫(몸체 질량 경고). own을 주지 않으면 하위 전체와 같게 둔다.
+function model(
+  masses: Readonly<Record<string, ObjectMass>>,
+  own?: Readonly<Record<string, Partial<OwnMass>>>
+): Pick<MassModel, 'objects' | 'own'> {
+  const ownOf = own ?? masses
+  return {
+    objects: masses,
+    own: Object.fromEntries(
+      Object.entries(ownOf).map(([id, m]) => [
+        id,
+        {
+          mass: m.mass ?? 0,
+          centerOfMass: m.centerOfMass ?? [0, 0, 0],
+          inertia: [0, 0, 0, 0, 0, 0],
+          pendingMeshes: m.pendingMeshes ?? 0
+        }
+      ])
+    )
+  }
 }
+
+const cardView = (
+  objects: SceneObjects,
+  id: string,
+  masses: Readonly<Record<string, ObjectMass>> | Pick<MassModel, 'objects' | 'own'>,
+  volts = 12
+): ReturnType<typeof jointCardView> =>
+  jointCardView(objects, id, 'objects' in masses ? (masses as MassModel) : model(masses), volts)
+
+// 장치 정격은 세계 설명과 같은 데이터시트 값이다(시험 장면의 모터는 카탈로그 기본 모터, 서보는 기본 서보 모델)
+const MOTOR = motorComponentParams(motor('m', 'm').props)
+const SERVO = servoComponentParams(servo('s', 's').props, 'servo')
 
 const motorDrive = (patch: Partial<Extract<JointDrive, { kind: 'motor' }>> = {}): JointDrive => ({
   ...(defaultJointDrive('motor') as Extract<JointDrive, { kind: 'motor' }>),
@@ -211,28 +240,23 @@ describe('관절 카드 보기 계산', () => {
       drive: motorDrive({ motors: ['armMotor'], gearRatio: 5 })
     })
     const masses = { arm: objectMass(2, [0.4, 0, 0.3]) }
-    const view = jointCardView(objects, 'arm', masses, RATINGS, 12)!
+    const view = cardView(objects, 'arm', masses)!
     expect(view.inRobot).toBe(true)
     expect(view.robotAxis).toEqual([0, 1, 0])
     // |u · ((c − p) × m·g)| = 0.3 × 2 × g
     expect(view.load).toBeCloseTo(0.3 * 2 * GRAVITY, 9)
-    expect(view.capacity).toBeCloseTo(2 * 5, 9)
-    expect(view.margin).toBeCloseTo(10 / (0.6 * GRAVITY), 9)
-    expect(view.maxSpeed).toBeCloseTo(10 / 5, 9)
+    // 데이터시트 정지 토크 × 외부 감속비, 무부하 속도 ÷ 외부 감속비(세계 설명과 같은 값)
+    expect(view.capacity).toBeCloseTo(MOTOR.stallTorque * 5, 9)
+    expect(view.margin).toBeCloseTo((MOTOR.stallTorque * 5) / (0.6 * GRAVITY), 9)
+    expect(view.maxSpeed).toBeCloseTo(MOTOR.freeSpeed / 5, 9)
     expect(view.endSpeed).toBeNull()
     expect(view.warnings).toEqual([])
     // 배터리 전압에 비례한다(바퀴 최고 속도와 같은 가정)
-    const low = jointCardView(objects, 'arm', masses, RATINGS, 9)!
-    expect(low.maxSpeed).toBeCloseTo(2 * 0.75, 9)
-    expect(low.capacity).toBeCloseTo(10 * 0.75, 9)
+    const low = cardView(objects, 'arm', masses, 9)!
+    expect(low.maxSpeed).toBeCloseTo((MOTOR.freeSpeed / 5) * 0.75, 9)
+    expect(low.capacity).toBeCloseTo(MOTOR.stallTorque * 5 * 0.75, 9)
     // 무게중심이 축 위에 있으면 부하가 없다(여유 없음)
-    const balanced = jointCardView(
-      objects,
-      'arm',
-      { arm: objectMass(2, [0.1, 0, 0.6]) },
-      RATINGS,
-      12
-    )!
+    const balanced = cardView(objects, 'arm', { arm: objectMass(2, [0.1, 0, 0.6]) })!
     expect(balanced.load).toBeCloseTo(0, 12)
     expect(balanced.margin).toBeNull()
   })
@@ -243,18 +267,14 @@ describe('관절 카드 보기 계산', () => {
       axis: 'z',
       drive: motorDrive({ motors: ['liftMotor'], gearRatio: 1, spoolDiameter: 0.04 })
     })
-    const light = jointCardView(objects, 'lift', { lift: objectMass(3, [0, 0, 0.2]) }, RATINGS, 12)!
+    const light = cardView(objects, 'lift', { lift: objectMass(3, [0, 0, 0.2]) })!
     expect(light.load).toBeCloseTo(3 * GRAVITY, 9)
-    expect(light.capacity).toBeCloseTo(2 / 0.02, 9)
-    expect(light.maxSpeed).toBeCloseTo(10 * 0.02, 9)
+    expect(light.capacity).toBeCloseTo(MOTOR.stallTorque / 0.02, 9)
+    expect(light.maxSpeed).toBeCloseTo(MOTOR.freeSpeed * 0.02, 9)
     expect(light.warnings).toEqual([])
-    const heavy = jointCardView(
-      objects,
-      'lift',
-      { lift: objectMass(20, [0, 0, 0.2]) },
-      RATINGS,
-      12
-    )!
+    const heavy = cardView(objects, 'lift', {
+      lift: objectMass((2 * light.capacity!) / GRAVITY, [0, 0, 0.2])
+    })!
     expect(heavy.margin).toBeLessThan(1)
     expect(heavy.warnings).toEqual([{ key: 'cannotHold' }])
     // 모터를 둘 묶으면 정지 토크가 두 배, 속도는 같다
@@ -263,9 +283,36 @@ describe('관절 카드 보기 계산', () => {
       axis: 'z',
       drive: motorDrive({ motors: ['liftMotor', 'armMotor'], spoolDiameter: 0.04 })
     })
-    const view = jointCardView(both, 'lift', { lift: objectMass(3, [0, 0, 0.2]) }, RATINGS, 12)!
-    expect(view.capacity).toBeCloseTo(200, 9)
-    expect(view.maxSpeed).toBeCloseTo(0.2, 9)
+    const view = cardView(both, 'lift', { lift: objectMass(3, [0, 0, 0.2]) })!
+    expect(view.capacity).toBeCloseTo((2 * MOTOR.stallTorque) / 0.02, 9)
+    expect(view.maxSpeed).toBeCloseTo(MOTOR.freeSpeed * 0.02, 9)
+    expect(view.warnings).toEqual([])
+  })
+
+  it('형식이 다른 모터를 묶으면 세계 설명처럼 첫 모터의 값 × 모터 수로 계산하고 경고한다', () => {
+    const objects = withJoint(scene(), 'lift', {
+      type: 'prismatic',
+      axis: 'z',
+      drive: motorDrive({ motors: ['liftMotor', 'armMotor'], spoolDiameter: 0.04 })
+    })
+    const base = objects.base
+    objects.base = {
+      ...base,
+      components: base.components!.map((c) =>
+        c.id === 'armMotor' ? { ...c, props: { ...c.props, motorModel: 'revCoreHex' } } : c
+      )
+    }
+    const masses = { lift: objectMass(3, [0, 0, 0.2]) }
+    const view = cardView(objects, 'lift', masses)!
+    expect(view.warnings).toEqual([{ key: 'motorsDiffer' }])
+    expect(view.capacity).toBeCloseTo((2 * MOTOR.stallTorque) / 0.02, 9)
+    expect(view.maxSpeed).toBeCloseTo(MOTOR.freeSpeed * 0.02, 9)
+    // 세계 설명도 같은 값 하나(첫 모터)를 두 장치에 쓰고 같은 이유로 경고한다
+    const { spec, warnings } = buildWorldSpec(objects, 'R', { batteryVoltage: 12 })
+    const drive = spec!.joints[0].drive
+    expect(drive.kind === 'motor' && drive.params).toEqual(MOTOR)
+    expect(drive.kind === 'motor' && drive.devices).toEqual(['lift', 'arm'])
+    expect(warnings.map((w) => w.key)).toContain('worldJointMotorsDiffer')
   })
 
   it('정하중 스프링은 중력 부하를 덜고, 선형 스프링은 편집 자세에서 k × 기준 위치', () => {
@@ -275,16 +322,13 @@ describe('관절 카드 보기 계산', () => {
       spring: { kind: 'constantForce', force: 3 * GRAVITY }
     })
     const masses = { lift: objectMass(3, [0, 0, 0.2]) }
-    expect(jointCardView(base, 'lift', masses, RATINGS, 12)!.load).toBeCloseTo(0, 9)
+    expect(cardView(base, 'lift', masses)!.load).toBeCloseTo(0, 9)
     const linear = withJoint(scene(), 'lift', {
       type: 'prismatic',
       axis: 'z',
       spring: { kind: 'linear', stiffness: 100, rest: 0.1 }
     })
-    expect(jointCardView(linear, 'lift', masses, RATINGS, 12)!.load).toBeCloseTo(
-      3 * GRAVITY - 10,
-      9
-    )
+    expect(cardView(linear, 'lift', masses)!.load).toBeCloseTo(3 * GRAVITY - 10, 9)
   })
 
   it('다단 슬라이드: 캐스케이드는 단 짐의 합·끝 단 속도 ×(단 수 + 1), 연속은 가장 무거운 단·속도 그대로', () => {
@@ -309,14 +353,14 @@ describe('관절 카드 보기 계산', () => {
       lift: objectMass(3, [0, 0, 0.3]),
       stage2: objectMass(1, [0, 0, 0.4])
     }
-    const cascade = jointCardView(slide('cascade'), 'lift', masses, RATINGS, 12)!
+    const cascade = cardView(slide('cascade'), 'lift', masses)!
     expect(cascade.load).toBeCloseTo(4 * GRAVITY, 9)
-    expect(cascade.endSpeed).toBeCloseTo(2 * 0.2, 9)
-    const continuous = jointCardView(slide('continuous'), 'lift', masses, RATINGS, 12)!
+    expect(cascade.endSpeed).toBeCloseTo(2 * MOTOR.freeSpeed * 0.02, 9)
+    const continuous = cardView(slide('continuous'), 'lift', masses)!
     expect(continuous.load).toBeCloseTo(3 * GRAVITY, 9)
-    expect(continuous.endSpeed).toBeCloseTo(0.2, 9)
+    expect(continuous.endSpeed).toBeCloseTo(MOTOR.freeSpeed * 0.02, 9)
     // 위 단 카드는 아래 단을 가리킨다
-    const stage = jointCardView(slide('cascade'), 'stage2', masses, RATINGS, 12)!
+    const stage = cardView(slide('cascade'), 'stage2', masses)!
     expect(stage.stageOf).toBe('lift')
     expect(stage.warnings).toEqual([])
   })
@@ -328,30 +372,23 @@ describe('관절 카드 보기 계산', () => {
       drive: motorDrive({ motors: ['armMotor', 'fl', 'otherMotor', 'gone'] })
     })
     const masses = { arm: objectMass(1, [0.2, 0, 0.3]), lift: objectMass(1, [0, 0, 0]) }
-    expect(jointCardView(objects, 'lift', masses, RATINGS, 12)!.warnings).toEqual([
+    expect(cardView(objects, 'lift', masses)!.warnings).toEqual([
       { key: 'motorShared', motor: 'arm', joint: 'Arm' },
       { key: 'motorOnWheel', motor: 'leftFront' },
       { key: 'motorMissing' },
       { key: 'motorMissing' }
     ])
     const none = withJoint(scene(), 'arm', { drive: motorDrive() })
-    expect(jointCardView(none, 'arm', {}, RATINGS, 12)!.warnings).toEqual([
-      { key: 'noMass' },
-      { key: 'noMotor' }
-    ])
+    expect(cardView(none, 'arm', {})!.warnings).toEqual([{ key: 'noMass' }, { key: 'noMotor' }])
     const slideServo = withJoint(scene(), 'lift', {
       type: 'prismatic',
       drive: { kind: 'servo', servo: 'claw', gearRatio: 1 }
     })
-    expect(jointCardView(slideServo, 'lift', masses, RATINGS, 12)!.warnings).toEqual([
-      { key: 'servoOnSlide' }
-    ])
+    expect(cardView(slideServo, 'lift', masses)!.warnings).toEqual([{ key: 'servoOnSlide' }])
     const missingServo = withJoint(scene(), 'arm', {
       drive: { kind: 'crServo', servo: 'claw', gearRatio: 1, spoolDiameter: 0.04 }
     })
-    expect(jointCardView(missingServo, 'arm', masses, RATINGS, 12)!.warnings).toEqual([
-      { key: 'servoMissing' }
-    ])
+    expect(cardView(missingServo, 'arm', masses)!.warnings).toEqual([{ key: 'servoMissing' }])
     // 위 단의 구동이 '위 단'이 아니면 그 단부터 묶지 않고, 그 단은 어느 슬라이드에도 들지 않는다
     let slide = withJoint(scene(), 'lift', {
       type: 'prismatic',
@@ -359,39 +396,74 @@ describe('관절 카드 보기 계산', () => {
     })
     slide = withJoint(slide, 'stage2', { type: 'prismatic' })
     expect(
-      jointCardView(slide, 'lift', { ...masses, stage2: objectMass(1, [0, 0, 0]) }, RATINGS, 12)!
-        .warnings
+      cardView(slide, 'lift', { ...masses, stage2: objectMass(1, [0, 0, 0]) })!.warnings
     ).toEqual([{ key: 'stageInvalid', stage: 'Stage 2' }])
     slide = withJoint(slide, 'stage2', { type: 'prismatic', drive: { kind: 'stage' } })
     const orphan = withJoint(slide, 'lift', { type: 'prismatic' })
-    expect(
-      jointCardView(orphan, 'stage2', { stage2: objectMass(1, [0, 0, 0]) }, RATINGS, 12)!.warnings
-    ).toEqual([{ key: 'stageOrphan' }])
+    expect(cardView(orphan, 'stage2', { stage2: objectMass(1, [0, 0, 0]) })!.warnings).toEqual([
+      { key: 'stageOrphan' }
+    ])
     // 읽는 중인 메시
     const pending = { arm: { ...objectMass(1, [0.2, 0, 0.3]), pendingMeshes: 4 } }
     const arm = withJoint(scene(), 'arm')
-    expect(jointCardView(arm, 'arm', pending, RATINGS, 12)!.warnings).toEqual([
-      { key: 'massPending', count: 4 }
-    ])
+    expect(cardView(arm, 'arm', pending)!.warnings).toEqual([{ key: 'massPending', count: 4 }])
   })
 
-  it('정격을 모르면 속도·정지 토크·여유는 null(서보는 배터리 전압과 관계없다)', () => {
+  it('서보는 서보 모델의 데이터시트 값이고 배터리 전압과 관계없다, 구동 장치가 없으면 속도·정지 토크·여유는 null', () => {
     const objects = withJoint(scene(), 'arm', {
       drive: { kind: 'servo', servo: 'claw', gearRatio: 2 }
     })
     const masses = { arm: objectMass(1, [0.2, 0, 0.3]) }
-    const unknown: ActuatorRatings = {
-      motor: () => ({ stallTorque: null, freeSpeed: null }),
-      servo: () => ({ stallTorque: null, freeSpeed: null })
+    const known = cardView(objects, 'arm', masses, 9)!
+    expect(known.maxSpeed).toBeCloseTo(SERVO.freeSpeed / 2, 9)
+    expect(known.capacity).toBeCloseTo(SERVO.stallTorque * 2, 9)
+    // 모델을 바꾸면 그 모델의 값(세계 설명 resolveServoParams와 같다)
+    const axon = {
+      ...objects,
+      base: {
+        ...objects.base,
+        components: objects.base.components!.map((c) =>
+          c.id === 'claw' ? { ...c, props: { ...c.props, servoModel: 'axonMax' } } : c
+        )
+      }
     }
-    expect(jointCardView(objects, 'arm', masses, unknown, 12)).toMatchObject({
+    expect(cardView(axon, 'arm', masses)!.capacity).toBeCloseTo(
+      servoComponentParams({ servoModel: 'axonMax' }, 'servo').stallTorque * 2,
+      9
+    )
+    const none = withJoint(scene(), 'arm', { drive: motorDrive() })
+    expect(cardView(none, 'arm', masses)).toMatchObject({
       maxSpeed: null,
       capacity: null,
       margin: null
     })
-    const known = jointCardView(objects, 'arm', masses, RATINGS, 9)!
-    expect(known.maxSpeed).toBeCloseTo(2.5, 9)
-    expect(known.capacity).toBeCloseTo(2, 9)
+  })
+
+  it('몸체 질량 경고는 하위에서 안쪽 관절의 하위를 뺀 몸체로 보고 세계 설명 빌더와 같다', () => {
+    // lift(관절) → stage2(관절). 질량은 stage2에만 있어 lift의 하위 전체는 1 kg이지만 lift 몸체는 비어 있다
+    let objects = withJoint(scene(), 'lift', { type: 'prismatic', axis: 'z' })
+    objects = withJoint(objects, 'stage2', { type: 'prismatic', axis: 'z' })
+    const masses = model(
+      { lift: objectMass(1, [0, 0, 0.15]), stage2: objectMass(1, [0, 0, 0.15]) },
+      { stage2: { mass: 1, centerOfMass: [0, 0, 0.15] } }
+    )
+    expect(jointBodyIds(objects, 'lift')).toEqual(['lift'])
+    expect(jointBodyIds(objects, 'stage2')).toEqual(['stage2'])
+    expect(cardView(objects, 'lift', masses)!.warnings).toEqual([{ key: 'noMass' }])
+    expect(cardView(objects, 'stage2', masses)!.warnings).toEqual([])
+    const built = buildWorldSpec(objects, 'R', { batteryVoltage: 12 }, {
+      ...masses,
+      robots: {}
+    } as MassModel)
+    expect(built.warnings.filter((w) => w.key === 'worldJointNoMass')).toEqual([
+      { key: 'worldJointNoMass', params: { name: 'Lift' } }
+    ])
+    // 읽는 중인 메시도 몸체 몫만 센다(안쪽 관절의 메시는 그 관절의 경고)
+    const pending = model(
+      { lift: { ...objectMass(1, [0, 0, 0]), pendingMeshes: 3 } },
+      { lift: { mass: 0.5, pendingMeshes: 1 }, stage2: { mass: 0.5, pendingMeshes: 2 } }
+    )
+    expect(cardView(objects, 'lift', pending)!.warnings).toEqual([{ key: 'massPending', count: 1 }])
   })
 
   it('축의 로봇 방향: CAD 파일 축(Y-up)으로 돌아간 오브젝트의 로컬 Y는 로봇 +Z', () => {
@@ -403,7 +475,7 @@ describe('관절 카드 보기 계산', () => {
       'arm',
       { axis: 'y' }
     )
-    const view = jointCardView(objects, 'arm', {}, RATINGS, 12)!
+    const view = cardView(objects, 'arm', {})!
     expect(robotAxisName(view.robotAxis)).toBe('+z')
     expect(robotAxisName([0, 0, -1])).toBe('-z')
     expect(robotAxisName([Math.SQRT1_2, Math.SQRT1_2, 0])).toBeNull()
@@ -441,15 +513,25 @@ describe('관절 카드 보기 계산', () => {
     expect(springRestValue('prismatic', -0.2)).toBe(-0.2)
   })
 
-  it('종류를 바꾸면 기본값 그대로인 한계·마찰을 새 종류의 기본값으로, 스프링은 뗀다', () => {
+  it('종류를 바꾸면 기본값 그대로인 한계·마찰을 새 종류의 기본값으로, 스프링은 sanitizeJoint 규칙대로 남긴다', () => {
     const revolute = { ...defaultJoint('revolute'), spring: { kind: 'constantForce', force: 1 } }
     const prismatic = jointTypePatch(revolute as JointSettings, 'prismatic')
     expect(prismatic).toMatchObject({
       type: 'prismatic',
       limits: { lower: 0, upper: 0.5 },
       friction: { coulomb: 1, viscous: 0.5 },
-      spring: null
+      spring: { kind: 'constantForce', force: 1 }
     })
+    // 스토어 정리(sanitizeJoint)와 한 규칙이다: 종류를 바꾼 결과는 정리해도 그대로다
+    expect(sanitizeJoint(prismatic)).toEqual(prismatic)
+    // 새 종류의 한도 밖인 선형 스프링 기준 위치(회전 12 rad → 직선 한도 10 m)는 정리처럼 뗀다
+    const wound = {
+      ...defaultJoint('revolute'),
+      spring: { kind: 'linear', stiffness: 1, rest: 12 }
+    } as JointSettings
+    expect(jointTypePatch(wound, 'prismatic').spring).toBeNull()
+    const kept = { ...wound, spring: { kind: 'linear', stiffness: 1, rest: 0.5 } } as JointSettings
+    expect(jointTypePatch(kept, 'prismatic').spring).toEqual(kept.spring)
     // 고친 값은 그대로, 제한 없는 회전 관절은 직선의 기본 한계
     const custom = { ...defaultJoint('revolute'), limits: { lower: -0.2, upper: 0.3 } }
     expect(jointTypePatch(custom, 'prismatic').limits).toEqual({ lower: -0.2, upper: 0.3 })

@@ -1695,7 +1695,6 @@ const en: Messages = {
     stageOf: 'Moves with the drive of the lower stage {{name}}.',
     maxSpeedMotor: 'Top speed ≈ {{speed}} {{unit}} (no load, {{volts}} V)',
     maxSpeedServo: 'Top speed ≈ {{speed}} {{unit}} (no load)',
-    maxSpeedUnknown: "The device's free speed is unknown, so the top speed is not shown.",
     endSpeed: 'Top stage ≈ {{speed}} {{unit}}',
     load: 'Gravity load (edit pose) ≈ {{load}} {{unit}}',
     loadNone: 'There is no gravity load in the edit pose.',
@@ -1703,9 +1702,8 @@ const en: Messages = {
       'The gravity and spring force this joint (with the upper stages of a multi-stage slide) must hold in the edit pose, from the mass and center of mass of the mass model.',
     capacity: 'Stall torque ≈ {{capacity}} {{unit}}',
     capacityMargin: 'Stall torque ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
-    capacityUnknown: "The device's stall torque is unknown, so the margin is not shown.",
     capacityHint:
-      "The device's stall torque in joint coordinates (summed over motors) and its ratio to the gravity load. Below 1 the joint cannot hold still.",
+      "The device's datasheet stall torque in joint coordinates and its ratio to the load. Motors linked together count as the first motor's value × the number of motors (as in the simulator). Below 1 the joint cannot hold still.",
     preview: 'Preview',
     previewHint:
       'Moves the joint in the scene view to try it. It changes only the view, not the scene, saving or undo. Selecting another object returns to the edit pose.',
@@ -1717,6 +1715,8 @@ const en: Messages = {
         'A drive motor was not found in this robot (deleted, or on another robot). That motor is not used when running.',
       motorOnWheel: 'Motor {{motor}} drives a wheel, so this joint does not use it.',
       motorShared: 'Joint {{joint}} already drives motor {{motor}}, so this joint does not use it.',
+      motorsDiffer:
+        'The linked motors differ in type, gearbox or overridden values, so the simulator computes every motor with the values of the first one.',
       servoMissing:
         'The drive device was not found in this robot, so the joint is not driven when running.',
       servoOnSlide:
@@ -1725,10 +1725,10 @@ const en: Messages = {
         'Upper stage {{stage}} is not a prismatic joint (drive: Upper stage) under the stage right below it, so stages from there on are not linked.',
       stageOrphan: 'This stage is not in any multi-stage slide drive, so it is not driven.',
       noMass:
-        "The body's mass is unknown (no geometry or zero mass), so the simulator uses 1 g. Enter a mass in a Mass card.",
-      massPending: 'The mass of {{count}} meshes still loading is missing.',
+        "The body's mass (this object and its children, without the children of inner joints) is unknown (no geometry or zero mass), so the simulator uses 1 g. Enter a mass in a Mass card.",
+      massPending: 'The mass of {{count}} meshes of the body still loading is missing.',
       cannotHold:
-        'The stall torque is less than the gravity load in the edit pose, so the joint cannot hold.'
+        'The stall torque (force) is less than the load in the edit pose, so the joint cannot hold.'
     }
   }
 }

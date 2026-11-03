@@ -4,6 +4,21 @@ import { useTranslation } from 'react-i18next'
 import { MAX_JOINT_MOTORS } from '../../../../shared/sim/worldSpec'
 import { usePlayStore } from '../../play/playStore'
 import { DEG } from '../../scene/coordinates'
+import {
+  defaultJointDrive,
+  JOINT_AXES,
+  JOINT_DRIVE_KINDS,
+  JOINT_RIGGING_KINDS,
+  JOINT_TYPES,
+  jointTypePatch,
+  MAX_JOINT_ANCHOR,
+  MAX_JOINT_GEAR_RATIO,
+  MAX_PRISMATIC_LIMIT,
+  MAX_REVOLUTE_LIMIT,
+  MAX_SPOOL_DIAMETER,
+  MIN_JOINT_GEAR_RATIO,
+  MIN_SPOOL_DIAMETER
+} from '../../scene/joint'
 import type {
   JointAxis,
   JointDrive,
@@ -40,27 +55,13 @@ import {
   type JointCardView,
   type JointWarning
 } from './jointCardModel'
-import {
-  defaultJointDrive,
-  jointTypePatch,
-  MAX_JOINT_ANCHOR,
-  MAX_JOINT_GEAR_RATIO,
-  MAX_PRISMATIC_LIMIT,
-  MAX_REVOLUTE_LIMIT,
-  MAX_SPOOL_DIAMETER,
-  MIN_JOINT_GEAR_RATIO,
-  MIN_SPOOL_DIAMETER
-} from './jointDefaults'
 import { clearJointPreview, setJointPreview, useJointPreviewStore } from './jointPreviewStore'
-import { INTERIM_RATINGS } from './jointRatings'
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
 
-const JOINT_TYPES: readonly JointType[] = ['revolute', 'prismatic']
-const JOINT_AXES: readonly JointAxis[] = ['x', 'y', 'z']
-const DRIVE_KINDS: readonly JointDrive['kind'][] = ['none', 'motor', 'servo', 'crServo', 'stage']
-const RIGGING_KINDS = ['direct', 'cascade', 'continuous'] as const
+const DRIVE_KINDS = JOINT_DRIVE_KINDS
+const RIGGING_KINDS = JOINT_RIGGING_KINDS
 const SPRING_KINDS = ['none', 'constantForce', 'linear'] as const
 
 // 관절 값(위치) 칸의 단위: 회전은 °(입력은 rad도), 직선은 표시 길이 단위(단위를 붙인 입력도)
@@ -117,11 +118,11 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
   const setJoint = useSceneStore((state) => state.setJoint)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const batteryVoltage = usePlayStore((state) => state.settings.batteryVoltage)
-  const masses = useMassModel().objects
+  const massModel = useMassModel()
   const joint = object.joint
   const view = useMemo(
-    () => jointCardView(objects, object.id, masses, INTERIM_RATINGS, batteryVoltage),
-    [objects, object.id, masses, batteryVoltage]
+    () => jointCardView(objects, object.id, massModel, batteryVoltage),
+    [objects, object.id, massModel, batteryVoltage]
   )
   const valueUnit = useValueUnit(joint?.type ?? 'revolute', lengthUnit)
   // 카드가 사라지면(선택이 바뀜, 카드 떼기) 미리보기를 지운다(씬 뷰가 편집 자세로 돌아간다)
@@ -790,15 +791,16 @@ function DerivedLines({
   const motor = joint.drive.kind === 'motor'
   return (
     <>
-      <p className="hw-derived">
-        {view.maxSpeed === null
-          ? t('joint.maxSpeedUnknown')
-          : t(motor ? 'joint.maxSpeedMotor' : 'joint.maxSpeedServo', {
-              speed: speed(view.maxSpeed),
-              unit: speedUnit,
-              volts: formatNumber(volts, 1)
-            })}
-      </p>
+      {/* 구동 장치를 쓸 수 없으면(경고가 이유를 말한다) 속도·정지 토크를 보이지 않는다 */}
+      {view.maxSpeed !== null && (
+        <p className="hw-derived">
+          {t(motor ? 'joint.maxSpeedMotor' : 'joint.maxSpeedServo', {
+            speed: speed(view.maxSpeed),
+            unit: speedUnit,
+            volts: formatNumber(volts, 1)
+          })}
+        </p>
+      )}
       {view.endSpeed !== null && (
         <p className="hw-derived">
           {t('joint.endSpeed', { speed: speed(view.endSpeed), unit: speedUnit })}
@@ -809,15 +811,15 @@ function DerivedLines({
           ? t('joint.load', { load: force(view.load), unit: forceUnit })
           : t('joint.loadNone')}
       </p>
-      <p className="hw-derived" title={t('joint.capacityHint')}>
-        {view.capacity === null
-          ? t('joint.capacityUnknown')
-          : t(view.margin === null ? 'joint.capacity' : 'joint.capacityMargin', {
-              capacity: force(view.capacity),
-              unit: forceUnit,
-              margin: view.margin === null ? '' : formatNumber(view.margin, 1)
-            })}
-      </p>
+      {view.capacity !== null && (
+        <p className="hw-derived" title={t('joint.capacityHint')}>
+          {t(view.margin === null ? 'joint.capacity' : 'joint.capacityMargin', {
+            capacity: force(view.capacity),
+            unit: forceUnit,
+            margin: view.margin === null ? '' : formatNumber(view.margin, 1)
+          })}
+        </p>
+      )}
     </>
   )
 }
