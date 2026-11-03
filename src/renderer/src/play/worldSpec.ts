@@ -25,7 +25,6 @@ import {
   isMotorModel,
   MOTOR_MODEL_TAGS,
   motorGearbox,
-  motorOutput,
   pinpointPodTicksPerMm
 } from '../hardware/catalog'
 import { robotComponents, robotHardwareSettings, type ComponentEntry } from '../hardware/components'
@@ -190,15 +189,16 @@ export function robotWheels(objects: SceneObjects, robotId: string): ResolvedWhe
   })
 }
 
-// 무부하 최고 굴림 속도(m/s): 모터 출력축 무부하 RPM × 전압/12 ÷ 외부 감속비 × 바퀴 둘레. 메카넘도 이상적인 IK에서
-// 앞·옆 최고 속도가 바퀴 표면 속도와 같다.
+// 무부하 최고 굴림 속도(m/s): 모터 출력축 데이터시트 무부하 속도(rad/s, 실제 감속비·덮어쓰기, motorComponentParams) ×
+// 전압/12 × 바퀴 반지름 ÷ 외부 감속비(spec-3c §1.8). 세계 설명의 바퀴 모터가 쓰는 값과 같다(엔코더의 SDK maxRPM이 아니다).
+// 메카넘도 이상적인 IK에서 앞·옆 최고 속도가 바퀴 표면 속도와 같다(롤러 점성·굴림 저항은 빼지 않은 무부하 값).
 export function wheelTopSpeed(
   wheel: WheelSettings,
   motorProps: Record<string, string | number>,
   batteryVoltage: number
 ): number {
-  const { freeRpm } = motorOutput(motorProps)
-  return ((freeRpm / 60) * Math.PI * wheel.diameter * (batteryVoltage / 12)) / wheel.gearRatio
+  const { freeSpeed } = motorComponentParams(motorProps)
+  return (freeSpeed * (batteryVoltage / NOMINAL_VOLTAGE) * (wheel.diameter / 2)) / wheel.gearRatio
 }
 
 // 외곽: 로봇의 CAD 루트들의 경계 상자(cad.bounds, CAD 좌표) 8꼭짓점을 로봇 좌표로 옮긴 바닥 사각형(반시계).

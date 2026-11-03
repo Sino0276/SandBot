@@ -547,14 +547,24 @@ describe('buildWorldSpec', () => {
     expect(far.warnings).toEqual([{ key: 'worldInvalid', params: { detail: 'robot.start' } }])
   })
 
-  it('최고 속도: goBILDA 5203 312 RPM(19.2:1), 104 mm 바퀴', () => {
+  it('최고 속도: 데이터시트 무부하 속도(goBILDA 5203 19.2:1 312 RPM), 104 mm 바퀴', () => {
     const props = motor('m', 0, { gearbox: 19.2 }).props
-    // SDK 형식(60 RPM × 99.5)을 19.2:1로 바꾼 무부하 310.94 RPM
+    // 제조사 표의 무부하 312 RPM(SDK 형식 60 RPM × 99.5 ÷ 19.2 = 310.94 RPM이 아니다): 312/60 × π × 0.104 m
     const speed12 = wheelTopSpeed(wheel(), props, 12)
-    expect(speed12).toBeCloseTo(((60 * 99.5) / 19.2 / 60) * Math.PI * 0.104, 10)
-    expect(speed12).toBeCloseTo(1.6932, 4)
+    expect(speed12).toBeCloseTo((312 / 60) * Math.PI * 0.104, 10)
+    expect(speed12).toBeCloseTo(1.699, 3)
+    // 세계 설명의 바퀴 모터가 쓰는 값과 같다(rad/s × 반지름)
+    expect(speed12).toBeCloseTo(resolveMotorParams(GOBILDA, 19.2).freeSpeed * 0.052, 12)
     expect(wheelTopSpeed(wheel(), props, 12.5)).toBeCloseTo((speed12 * 12.5) / 12, 10)
     expect(wheelTopSpeed(wheel({ gearRatio: 2 }), props, 12)).toBeCloseTo(speed12 / 2, 10)
+    // 감속비 칸 0 = 모델의 실제 감속비(5202 계열 기본 99.5:1 근처의 표 행), 무부하 속도 덮어쓰기(RPM)도 따른다
+    const defaultProps = motor('m', 0).props
+    expect(wheelTopSpeed(wheel(), defaultProps, 12)).toBeCloseTo(
+      resolveMotorParams(GOBILDA, 'default').freeSpeed * 0.052,
+      12
+    )
+    const fast = motor('m', 0, { gearbox: 19.2, freeSpeed: 400 }).props
+    expect(wheelTopSpeed(wheel(), fast, 12)).toBeCloseTo((400 / 60) * Math.PI * 0.104, 10)
   })
 })
 
