@@ -75,11 +75,18 @@ export const SCALE_USUAL_MIN = 0.6
 export const SCALE_USUAL_MAX = 1.6
 // 정보 없는 로봇의 무게중심 높이(외곽 높이에 대한 비율). 구동계·배터리·허브가 아래에 몰린 FTC 로봇을 가정한 판단값이다.
 const DEFAULT_COM_HEIGHT = 0.35
-// COTS 하나로 보기에 너무 큰 형상: 하위의 닫힌 부피를 알루미늄 6061로 쳐서 표 질량(합)의 이 배를 넘으면 그 부품 하나가
-// 아니다. 판단값이다: 모터·서보·포드·바퀴는 알루미늄·플라스틱·강철 부품이고, 가장 가벼운 플라스틱(materials.ts의 ABS
-// 1.04)을 알루미늄(2.70)으로 쳐도 2.6배이므로, 몸체를 속이 찬 솔리드로 그린 CAD까지 넉넉히 받는다(goBILDA 5203을
-// 알루미늄으로 보면 161 g, 표 437 g).
-const COTS_GEOMETRY_FACTOR = 4
+// COTS 하나로 보기에 너무 큰 형상: 하위의 닫힌 부피를 알루미늄 6061로 쳐서 표 질량(키마다 그 종류의 배수를 곱한 합)을
+// 넘으면 그 부품 하나가 아니다(cotsSizeFactor). 판단값이다. 실제 상용 부품 CAD(scratchpad CAD 실측: goBILDA 5204 모터
+// 0.4, REV Core Hex 0.49, Limelight 3A 0.52, Pinpoint 0.78, REV Smart Robot Servo 1.12, 4-Bar 포드 1.10, Swingarm 포드
+// 1.04, Axon MAX 1.02, 메카넘 96 mm 1.17)는 부피 × 2.70 / 표 질량이 1.2 이하이므로 모터·서보·Pinpoint·포드·Limelight는
+// 1.6배까지 받는다. 몸체를 속이 찬 솔리드로 그린 서보(1.4쯤)는 받고, 서브시스템 어셈블리(인테이크의 옆판·롤러, 집게의
+// 판)에 붙인 컴포넌트는 걸린다. 바퀴는 팀 CAD가 속이 찬 원기둥으로 그리기도 해서(GripForce 104 × 38 mm 원기둥 3.7배)
+// 4배까지다.
+const COTS_SIZE_FACTOR = 1.6
+const WHEEL_SIZE_FACTOR = 4
+
+const cotsSizeFactor = (key: string): number =>
+  key.startsWith('wheel:') ? WHEEL_SIZE_FACTOR : COTS_SIZE_FACTOR
 
 type Block = {
   ownerId: string
@@ -471,8 +478,11 @@ function cotsRejection(
     remaining.splice(at, 1)
   }
   if (containsCad) return 'containsCad'
-  const mass = ownKeys.reduce((sum, key) => sum + (cotsEntry(key)?.mass ?? 0), 0)
-  return volume * MATERIALS.aluminum6061.density > COTS_GEOMETRY_FACTOR * mass ? 'tooLarge' : null
+  const limit = ownKeys.reduce(
+    (sum, key) => sum + cotsSizeFactor(key) * (cotsEntry(key)?.mass ?? 0),
+    0
+  )
+  return volume * MATERIALS.aluminum6061.density > limit ? 'tooLarge' : null
 }
 
 // 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)

@@ -148,7 +148,7 @@ const motor = (gearbox: number): HardwareComponent => ({
 
 const LITER = 1e-3
 // 모터·서보 크기의 형상(30 × 30 × 60 mm, 54 cm³). COTS 컴포넌트는 하위가 그 부품 하나로 보일 때만 하위를 덮는다
-// (알루미늄으로 쳐서 표 질량의 4배 이하, cotsRejection)
+// (알루미늄으로 쳐서 표 질량의 1.6배 이하, cotsRejection)
 const MOTOR_SIZE = (): MeshMassProps => box(0.03, 0.03, 0.06)
 
 describe('질량 추정: 재질', () => {
@@ -953,7 +953,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(model.robots.R.notices).toEqual([])
     })
 
-    it('큰 형상(알루미늄으로 쳐서 표 질량의 4배 넘음)이면 추정하고 tooLarge로 알린다', () => {
+    it('큰 형상(알루미늄으로 쳐서 표 질량의 1.6배 넘음, 바퀴는 4배)이면 추정하고 tooLarge로 알린다', () => {
       const model = computeMassModel(
         { ...base, Chassis: { ...base.Chassis, components: [pinpointComponent] } },
         lookupOf(props)
@@ -961,6 +961,101 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       expect(model.objects.Chassis.source).not.toBe('cots')
       expect(model.robots.R.mass).toBeCloseTo(plain.robots.R.mass, 12)
       expect(model.robots.R.notices).toEqual([ignored('Chassis', ['pinpoint'], 'tooLarge')])
+    })
+
+    describe('크기 한도는 부품 종류마다 다르다(모터·서보·Pinpoint·포드·Limelight 1.6배, 바퀴 4배)', () => {
+      const servo: HardwareComponent = { ...motor(1), id: 's', type: 'servo', props: {} }
+      // 평탄화된 서브시스템: 최상위 컴포넌트 아래에 솔리드가 바로 있고 모터·서보 SKU 노드가 없다
+      const subsystem = (
+        name: string,
+        component: HardwareComponent,
+        solids: Record<string, MeshMassProps>
+      ): { objects: SceneObjects; props: Record<string, MeshMassProps> } => ({
+        objects: {
+          ...scene(robot(), node('C', 'R', { name: 'Robot CAD', cad }), node('S', 'C', { name })),
+          ...Object.fromEntries(
+            Object.keys(solids).map((id) => [
+              id,
+              part(id, 'S', [0, 0, 0], { name: `${name} ${id}` })
+            ])
+          ),
+          S: { ...node('S', 'C', { name }), components: [component] }
+        },
+        props: Object.fromEntries(Object.entries(solids).map(([id, p]) => [`g:${id}`, p]))
+      })
+      const generated = (ids: string[]): Record<string, string> =>
+        Object.fromEntries(ids.map((id) => [`g:${id}`, '']))
+      const run = (
+        input: ReturnType<typeof subsystem>,
+        withComponent = true
+      ): ReturnType<typeof computeMassModel> => {
+        const objects = withComponent
+          ? input.objects
+          : { ...input.objects, S: { ...input.objects.S, components: [] } }
+        return computeMassModel(
+          objects,
+          lookupOf(input.props, generated(Object.keys(input.props).map((g) => g.slice(2))))
+        )
+      }
+
+      it('인테이크(옆판 둘·롤러 관·모터 몸체)에 붙인 모터 컴포넌트는 서브시스템 질량을 지우지 않는다', () => {
+        const intake = subsystem('Intake', motor(19.2), {
+          L: box(0.2, 0.004, 0.12),
+          Rt: box(0.2, 0.004, 0.12),
+          T: box(0.3, 0.03, 0.03),
+          Mb: box(0.037, 0.1, 0.037)
+        })
+        const estimated = run(intake, false)
+        const model = run(intake)
+        // 알루미늄으로 쳐서 0.96 kg: 4배 한도(1.75 kg)는 받았지만 1.6배(0.70 kg)는 넘는다
+        expect(model.objects.S.source).not.toBe('cots')
+        expect(model.robots.R.mass).toBeCloseTo(estimated.robots.R.mass, 12)
+        expect(model.robots.R.notices).toEqual([
+          ignored('S', ['motor:goBilda5203:19.2'], 'tooLarge')
+        ])
+      })
+
+      it('집게(판 + 서보 몸체)에 붙인 서보 컴포넌트는 판 질량을 지우지 않고, 서보 몸체만이면 서보다', () => {
+        const claw = subsystem('Claw', servo, {
+          P: box(0.1, 0.05, 0.003),
+          Sv: box(0.04, 0.02, 0.038)
+        })
+        const model = run(claw)
+        expect(model.objects.S.source).not.toBe('cots')
+        expect(model.robots.R.mass).toBeCloseTo(run(claw, false).robots.R.mass, 12)
+        expect(model.robots.R.notices).toEqual([ignored('S', ['servo:gobildaTorque'], 'tooLarge')])
+        const body = run(subsystem('Claw', servo, { Sv: box(0.04, 0.02, 0.038) }))
+        expect(body.objects.S).toMatchObject({ source: 'cots', detail: 'servo:gobildaTorque' })
+        expect(body.robots.R.notices).toEqual([])
+      })
+
+      it('실제 상용 부품 CAD 부피(× 2.70이 표 질량의 1.2배 이하)는 그 부품으로 본다', () => {
+        // scratchpad CAD 실측: REV Smart Robot Servo 25.75 cm³(표 60 g), 4-Bar 포드 34.2 cm³(84 g),
+        // Pinpoint 11.59 cm³(40 g), Limelight 3A 17.92 cm³(93 g)
+        const cases: [HardwareComponent, number][] = [
+          [servo, 25.75e-6],
+          [pinpointComponent, 11.59e-6],
+          [{ ...servo, type: 'limelight', props: {} }, 17.92e-6]
+        ]
+        for (const [component, volume] of cases) {
+          const model = run(subsystem('Part', component, { V: solid(volume) }))
+          expect(model.objects.S.source, component.type).toBe('cots')
+          expect(model.robots.R.notices, component.type).toEqual([])
+        }
+      })
+
+      it('속이 찬 원기둥으로 그린 바퀴(104 × 38 mm, 표의 3.7배)도 바퀴로 본다', () => {
+        const wheel = { ...defaultWheel(), kind: 'mecanum' as const, diameter: 0.104 }
+        const cylinder = solid(Math.PI * 0.052 ** 2 * 0.038)
+        const objects: SceneObjects = {
+          ...scene(robot(), node('C', 'R', { name: 'Robot CAD', cad })),
+          W: node('W', 'C', { name: 'Wheel', wheel }),
+          W1: part('W1', 'W', [0, 0, 0], { name: 'Wheel 1' })
+        }
+        const model = computeMassModel(objects, lookupOf({ 'g:W1': cylinder }, { 'g:W1': '' }))
+        expect(model.objects.W).toMatchObject({ source: 'cots', detail: 'wheel:gripForce104' })
+        expect(model.robots.R.notices).toEqual([])
+      })
     })
 
     it('CAD 루트를 품으면 containsCad, 다른 COTS를 품으면 containsCots이고 안의 COTS는 그대로 쓴다', () => {
@@ -981,7 +1076,8 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
           Drive: { ...base.Drive, components: [motor(19.2), motor(19.2)] },
           Mot: { ...base.Mot, components: [{ ...motor(1), type: 'servo', props: {} }] }
         },
-        lookupOf(props)
+        // 서보 크기의 몸체(40 × 20 × 38 mm)
+        lookupOf({ ...props, 'g:Mot': box(0.04, 0.02, 0.038) })
       )
       expect(drive.robots.R.notices).toEqual([
         ignored('Drive', ['motor:goBilda5203:19.2', 'motor:goBilda5203:19.2'], 'containsCots')
@@ -1099,7 +1195,7 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
         source: 'cots',
         detail: 'motor:goBilda5203:19.2'
       })
-      // 0.3 × 0.05 × 0.01 m = 150 cm³ → 405 g > 4 × 84 g
+      // 0.3 × 0.05 × 0.01 m = 150 cm³ → 405 g > 1.6 × 84 g
       expect(run('Arm').robots.R.notices).toEqual([ignored('Arm', 'tooLarge')])
       expect(run('Arm').objects.Arm1.source).not.toBe('cots')
       expect(run('Big').robots.R.notices).toEqual([ignored('Big', 'tooLarge')])
