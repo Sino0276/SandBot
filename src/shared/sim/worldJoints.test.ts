@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { DcGearMotor } from './actuators'
+import { resolveServoParams } from './actuatorData'
 import { Articulation, MIN_COORDINATE_INERTIA, type DriveForces } from './articulation'
 import { motorType, rotationSign } from './motorTypes'
 import { GRAVITY } from './physics'
@@ -624,6 +625,43 @@ describe('서보 관절', () => {
     )
     for (const q of held.q) expect(q[0]).toBe(0)
   })
+
+  // 실제 앱 E2E 재현(p11joint e2e): 질량이 없는 몸체(1 g, 관성 바닥 4e-8 = play/worldJoints.ts의 FALLBACK_BODY_MASS·
+  // MIN_BODY_INERTIA)의 goBILDA Speed CR 서보 인테이크, 회전 관절 기본 마찰(쿨롱 0.02·점성 0.001). setPower(1) 뒤
+  // setPower(−0.5)(1050 µs)로 바꾸면 거꾸로 −0.9 × 무부하 근처로 돈다(예전에는 역구동 포화 구간의 일정 토크가 한 하위
+  // 단계에 영을 넘어가 +780 rad/s로 폭주했다).
+  for (const inertia of [4e-8, 5e-7, 3e-6, 1e-4])
+    it(`CR 서보가 가벼운 몸체(관성 ${inertia})에서 방향을 바꿔도 폭주하지 않는다: power 1 → −0.5는 약 −8.6 rad/s`, () => {
+      const params = resolveServoParams('gobildaSpeed', 'crServo')
+      const intake: SimJointSpec = {
+        parent: -1,
+        type: 'revolute',
+        origin: { position: ZERO, rotation: ZERO },
+        axis: { x: 1, y: 0, z: 0 },
+        limits: null,
+        body: { mass: 0.001, centerOfMass: ZERO, inertia: [inertia, inertia, inertia, 0, 0, 0] },
+        friction: { coulomb: 0.02, viscous: 0.001 },
+        spring: null,
+        drive: { kind: 'crServo', device: 'intake', ratio: 1, params },
+        switches: []
+      }
+      const r = run(world([intake], { motors: [] }), 2, (k) => ({
+        intake: { position: 0, power: 0, pulseUs: k < 200 ? 2400 : 1050, pwm: true }
+      }))
+      const rate = (i: number): number => (r.q[i][0] - r.q[i - 1][0]) / 0.005
+      for (let i = 1; i < r.q.length; i++)
+        expect(Math.abs(rate(i))).toBeLessThanOrEqual(params.freeSpeed * (1 + 1e-9))
+      expect(rate(199)).toBeGreaterThan(9)
+      const n = r.q.length - 1
+      const reversed = (r.q[n][0] - r.q[n - 20][0]) / 0.1
+      // 정상: τs·u − (τs/ωf + 점성)·ω − 쿨롱 = 0, u = −450/(900 × crFullPower)
+      const u = -450 / (900 * params.crFullPower)
+      const slope = params.stallTorque / params.freeSpeed
+      const expected = (params.stallTorque * u + 0.02) / (slope + 0.001)
+      expect(reversed).toBeCloseTo(expected, 2)
+      expect(reversed).toBeGreaterThan(-9)
+      expect(reversed).toBeLessThan(-8.3)
+    })
 
   it('CR 서보는 펄스에 비례한 속도로 돌고 최고 속도에서 묶인다', () => {
     const r = run(

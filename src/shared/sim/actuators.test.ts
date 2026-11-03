@@ -239,12 +239,24 @@ describe('서보', () => {
     // 출력 τ = force − damping·ω
     const torque = (t: ReturnType<typeof servoTerms>, omega: number): number =>
       t.force - t.damping * omega
-    // CR: 전진 명령인데 부하가 무부하 속도로 거꾸로 돌리면 직선은 2τs지만 τs로 자른다(감쇠 없음)
+    // CR: 전진 명령인데 부하가 무부하 속도로 거꾸로 돌리면 직선은 2τs지만 τs로 자른다. 잘린 토크는 그 속도에서 선형화해
+    // 감쇠(τs/ωf)를 암시 항에 둔다(일정 토크가 아님): 그 속도에서 정확히 τs, 더 빨리 돌면 덜 민다
+    const slope = ts / wf
     const back = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, -wf)
-    expect(back).toMatchObject({ force: ts, damping: 0, region: 'H' })
-    expect(torque(back, -wf)).toBe(ts)
+    expect(back.region).toBe('H')
+    expect(back.damping).toBeCloseTo(slope, 12)
+    expect(torque(back, -wf)).toBeCloseTo(ts, 12)
+    expect(torque(back, -0.5 * wf)).toBeCloseTo(0.5 * ts, 12)
     const backNeg = servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, 0.5 * wf)
-    expect(backNeg).toMatchObject({ force: -ts, damping: 0, region: 'N' })
+    expect(backNeg.region).toBe('N')
+    expect(backNeg.damping).toBeCloseTo(slope, 12)
+    expect(torque(backNeg, 0.5 * wf)).toBeCloseTo(-ts, 12)
+    // 직선과 만나는 경계(u = −1에서 ω = 0)에서 연속
+    const edge = servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, 1e-12)
+    expect(torque(edge, 1e-12)).toBeCloseTo(
+      torque(servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, -1e-12), -1e-12),
+      9
+    )
     // 명령 방향으로 도는 동안은 직선 그대로(무부하 속도에서 0)
     const forward = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, 0.5 * wf)
     expect(forward.region).toBe('r')
@@ -254,7 +266,8 @@ describe('서보', () => {
     ).toBeCloseTo(0.9 * ts, 12)
     // 위치 서보도 같다: 목표가 멀고 거꾸로 돌려지면 τs
     const pos = servoTerms({ kind: 'position', angle: 1 }, SERVO, 0, -0.5 * wf)
-    expect(pos).toMatchObject({ force: ts, damping: 0, region: 'H' })
+    expect(pos.region).toBe('H')
+    expect(torque(pos, -0.5 * wf)).toBeCloseTo(ts, 12)
     for (const omega of [-2 * wf, -wf, -0.1, 0, 0.1, wf, 2 * wf])
       for (const command of [
         { kind: 'speed', fraction: 1 },

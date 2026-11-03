@@ -260,10 +260,20 @@ export type ServoTerms = {
 // 정지 토크로 자른 출력: 모터 직선 τs·(u − ω/ωf)는 부하가 서보를 명령 반대로 돌리면(역구동, ω가 미는 방향과 반대) τs를
 // 넘는다(맨 DC 모터라면 역기전력이 더해져 정지 전류보다 큰 전류가 흐른다). 서보 출력은 정지 토크까지로 자른다(spec-3b §1.9
 // "토크는 정지 토크까지 … CR 서보도 토크로 자른다". 가정: 서보 내부 구동 회로가 정지 전류를 넘기지 않는다 — 공개 출처 없음,
-// [ACT] §5.4의 포화 모델). 그 구간은 ±τs 일정 힘이고 감쇠가 없다(영역 'H'·'N').
+// [ACT] §5.4의 포화 모델).
+// 역구동 구간(영역 'H'·'N')은 잘린 토크 ±τs를 지금 속도 ω₀에서 선형화한다: τ = ±τs − (τs/ωf)·(ω − ω₀). 감쇠를 암시 D 항에
+// 그대로 두므로 한 하위 단계의 속도 변화가 많아야 ωf 남짓이고(감쇠 없는 일정 토크였을 때는 관성이 작은 몸체에서 한 하위
+// 단계에 영을 넘어 반대 포화 구간으로 튀고, 그 둘을 오가며 (τs − 마찰)/점성까지 폭주했다), ω₀에서는 정확히 ±τs, 직선과
+// 만나는 경계에서는 직선과 같다(연속). 명령 쪽으로 도는 포화(영역 'h'·'n', 위치 서보의 큰 오차)는 모터 직선의 끝 ±τs − (τs/ωf)·ω다.
 function saturatedServo(sign: 1 | -1, ts: number, slope: number, omega: number): ServoTerms {
   if (sign * omega < 0)
-    return { force: sign * ts, damping: 0, stiffness: 0, friction: 0, region: sign > 0 ? 'H' : 'N' }
+    return {
+      force: sign * ts + slope * omega,
+      damping: slope,
+      stiffness: 0,
+      friction: 0,
+      region: sign > 0 ? 'H' : 'N'
+    }
   return {
     force: sign * ts,
     damping: slope,
