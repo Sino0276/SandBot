@@ -409,6 +409,66 @@ describe('continuous 리깅 리프트', () => {
     })
 })
 
+describe('전력단 발전 제동(본체 다이오드)', () => {
+  // goBILDA 5203 19.2:1, 스풀 Ø38.2 mm(goBILDA 3407 계열), 1.5 kg 짐, 단 마찰 spec-3b 기본값(1 N·0.5 N·s/m), 0.8 m 행정.
+  // 2 s 동안 power 1로 올린 뒤 내린다. 중력이 돕는 하강은 역기전력이 배터리 전압을 넘으면 브리지(켜짐 구간은 FET,
+  // 꺼짐 구간·FLOAT는 본체 다이오드)가 단자를 레일에 묶어 회생 전류가 흐르므로 무부하 속도 근처에서 묶인다.
+  const radius = 0.0382 / 2
+  const free = PARAMS.freeSpeed * radius
+  const spec = world([
+    lift({
+      limits: { lower: 0, upper: 0.8 },
+      friction: { coulomb: 1, viscous: 0.5 },
+      drive: {
+        kind: 'motor',
+        devices: ['lift'],
+        ratio: radius,
+        params: PARAMS,
+        rigging: { kind: 'direct' }
+      }
+    })
+  ])
+  const lowering = (down: Record<string, DeviceValues>): { peak: number; peakTicks: number } => {
+    const r = run(spec, 5, (k) => (k * 0.005 < 2 ? motorOut(1) : down))
+    expect(r.q[400][0]).toBeCloseTo(0.8, 6)
+    let peak = 0
+    let peakTicks = 0
+    for (let i = 401; i < r.q.length; i++) {
+      peak = Math.max(peak, (r.q[i - 1][0] - r.q[i][0]) / 0.005)
+      const v = r.inputs[i].lift?.velocity
+      if (typeof v === 'number') peakTicks = Math.max(peakTicks, Math.abs(v))
+    }
+    return { peak, peakTicks }
+  }
+  const full = lowering(motorOut(-1))
+  const cases: [string, Record<string, DeviceValues>][] = [
+    ['FLOAT', motorOut(0, { zeroPower: 'FLOAT' })],
+    ['꺼짐', motorOut(0, { enabled: false })],
+    ['power −0.05', motorOut(-0.05)],
+    ['power −0.3', motorOut(-0.3)],
+    ['power −0.99', motorOut(-0.99)]
+  ]
+
+  it('power −1은 무부하 속도 근처에서 묶인다', () => {
+    expect(full.peak).toBeGreaterThan(free)
+    expect(full.peak).toBeLessThan(1.2 * free)
+  })
+
+  for (const [label, down] of cases)
+    it(`${label}로 내리면 무부하 속도 근처에서 묶이고 power −1보다 빠르지 않다`, () => {
+      const { peak, peakTicks } = lowering(down)
+      expect(peak).toBeLessThan(1.2 * free)
+      expect(peak).toBeLessThanOrEqual(full.peak * (1 + 1e-3))
+      // 허브 엔코더 속도도 무부하(28 틱 × 6000 rpm ÷ 60 = 2800 틱/s)의 1.2배 안
+      expect(peakTicks).toBeLessThan(1.2 * 2800)
+    })
+
+  it('듀티 0.99와 1.0은 거의 같다(연속)', () => {
+    const near = lowering(motorOut(-0.99))
+    expect(Math.abs(near.peak / full.peak - 1)).toBeLessThan(0.02)
+  })
+})
+
 describe('강성·유계', () => {
   it('회전자 관성 0, 99.5:1, 작은 부하의 BRAKE 감속은 발산하지 않고 단조롭게 준다(암시 감쇠)', () => {
     // goBILDA 5203 99.5:1(60 RPM, 133.2 kg·cm = 13.06 N·m, [ACT] §2.1), 손목 4.5e-5 kg·m²(50 g·3 cm, 3b method §4 가정)

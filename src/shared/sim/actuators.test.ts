@@ -58,7 +58,7 @@ describe('DcGearMotor', () => {
     expect(shaft).toBeCloseTo(motor.coulomb + motor.viscous * PARAMS.freeSpeed * g, 12)
   })
 
-  it('BRAKE는 단락 감쇠, FLOAT는 0, 부분 듀티는 명령과 반대 토크를 자른다(회생 없음)', () => {
+  it('BRAKE는 단락 감쇠, FLOAT는 레일 아래 0, 부분 듀티는 명령과 반대 토크를 자른다(레일 아래 회생 없음)', () => {
     const k = (g * g * motor.torqueConstant * motor.backEmfConstant) / motor.resistance
     expect(motor.terms(BRAKE, 12, 1)).toEqual({ force: 0, damping: k, region: 'b' })
     expect(motor.terms(FLOAT, 12, 1)).toEqual({ force: 0, damping: 0, region: 'f' })
@@ -69,6 +69,49 @@ describe('DcGearMotor', () => {
     // 듀티 1은 꺼짐 구간이 없어 그대로(역전류)
     expect(motor.terms({ kind: 'duty', duty: 1 }, 12, 1.2 * PARAMS.freeSpeed).region).toBe('l')
     expect(motor.current({ kind: 'duty', duty: 1 }, 12, 1.2 * PARAMS.freeSpeed)).toBeLessThan(0)
+  })
+
+  it('역기전력이 배터리 전압을 넘으면 단자가 레일에 묶여 회생 제동한다(FLOAT·부분 듀티·듀티 0, 본체 다이오드)', () => {
+    const k = (g * g * motor.torqueConstant * motor.backEmfConstant) / motor.resistance
+    // 역기전력이 12 V가 되는 출력축 속도
+    const rail = 12 / (motor.backEmfConstant * g)
+    const torque = (t: ReturnType<typeof motor.terms>, omega: number): number =>
+      t.force - t.damping * omega
+    for (const [stage, region] of [
+      [FLOAT, 'F'],
+      [{ kind: 'duty', duty: 0 }, 'z'],
+      [{ kind: 'duty', duty: 0.3 }, 'g'],
+      [{ kind: 'duty', duty: 0.99 }, 'g']
+    ] as const) {
+      // 레일 바로 아래는 전류 0, 위는 (V − e)/R의 회생(제동, ω 반대 토크)
+      expect(motor.current(stage, 12, 0.999 * rail)).toBe(0)
+      const above = motor.terms(stage, 12, 1.3 * rail)
+      expect(above.region).toBe(region)
+      expect(above.damping).toBeCloseTo(k, 12)
+      expect(torque(above, 1.3 * rail)).toBeLessThan(0)
+      expect(motor.current(stage, 12, 1.3 * rail)).toBeCloseTo(
+        (12 - motor.backEmfConstant * g * 1.3 * rail) / motor.resistance,
+        12
+      )
+      // 거꾸로 돌려져도 같다(대칭: FLOAT·듀티 0은 레일 −V, 부분 듀티는 명령 쪽이 아니면 선형)
+      if (stage.kind !== 'duty' || stage.duty === 0)
+        expect(torque(motor.terms(stage, 12, -1.3 * rail), -1.3 * rail)).toBeCloseTo(
+          -torque(above, 1.3 * rail),
+          12
+        )
+    }
+    // 레일 위에서 듀티 0.99·1.0·FLOAT는 같은 직선이고, 아래로 레일을 지나도 토크가 연속이다
+    for (const omega of [1.01 * rail, 1.5 * rail, 3 * rail])
+      expect(torque(motor.terms({ kind: 'duty', duty: 0.99 }, 12, omega), omega)).toBeCloseTo(
+        torque(motor.terms({ kind: 'duty', duty: 1 }, 12, omega), omega),
+        12
+      )
+    for (const stage of [FLOAT, { kind: 'duty', duty: 0.5 }, { kind: 'duty', duty: 0.99 }] as const)
+      for (const edge of [0.5 * rail, 0.99 * rail, rail]) {
+        const below = torque(motor.terms(stage, 12, edge * (1 - 1e-9)), edge * (1 - 1e-9))
+        const above = torque(motor.terms(stage, 12, edge * (1 + 1e-9)), edge * (1 + 1e-9))
+        expect(Math.abs(below - above)).toBeLessThan(1e-6)
+      }
   })
 })
 

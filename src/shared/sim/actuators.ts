@@ -75,35 +75,54 @@ export class DcGearMotor {
     )
   }
 
-  // 출력축 전기 토크(효율 없이 G·τ_m)를 출력축 각속도 ω에 대해 선형으로. 회생 없음: 0 < |d| < 1이면 PWM 꺼짐 구간에 H-브리지가
-  // 제동하지 않으므로(gm0 control-system-internals "does not brake the H-bridge during the PWM off cycle", [ACT] §3.3) 토크가
-  // 명령과 반대가 되면 0으로 자른다. |d| = 1은 꺼짐 구간이 없어 그대로다(가정: 브리지가 늘 켜져 역전류가 흐른다).
-  terms(stage: PowerStage, voltage: number, omega: number): MotorTerms {
-    const g = this.gearbox
-    const k = (this.torqueConstant * this.backEmfConstant) / this.resistance
-    if (stage.kind === 'float') return { force: 0, damping: 0, region: 'f' }
-    if (stage.kind === 'brake') return { force: 0, damping: g * g * k, region: 'b' }
-    const d = stage.duty
-    if (d === 0) return { force: 0, damping: 0, region: '0' }
-    const drive = d * voltage - this.backEmfConstant * g * omega
-    if (Math.abs(d) < 1 && drive * d <= 0) return { force: 0, damping: 0, region: 'c' }
-    return {
-      force: (g * this.torqueConstant * d * voltage) / this.resistance,
-      damping: g * g * k,
-      region: 'l'
+  // 전력단(H-브리지와 본체 다이오드)이 모터 단자에 거는 평균 전압(V), 전류가 흐르지 않으면 null. e는 역기전력 Ke·G·ω(V).
+  // 모델(가정, 인덕턴스와 다이오드 강하는 무시한다):
+  //   - VNH5050은 비동기(asynchronous)로 PWM한다: 켜짐 구간은 FET가 단자를 ±V_bat에 잇고(전류는 양쪽으로 흐른다), 꺼짐 구간은
+  //     FET를 끄고 본체 다이오드로만 환류한다(gm0 control-system-internals "does not brake the H-bridge during the PWM off
+  //     cycle", [ACT] §3.3). 다이오드는 단자 전압이 레일을 넘을 때만 전도하므로 단자 전압은 늘 [−V_bat, V_bat] 안이다.
+  //   - 0 < |d| < 1의 평균 단자 전압은 d·V다(연속 전도의 평균, 3b 비평 §4.3-14). 역기전력이 명령 쪽으로 d·V를 넘으면 전류가
+  //     역전해야 하는데 꺼짐 구간의 다이오드가 그 길을 막으므로 전류 0으로 자른다(회생 없음). 역기전력이 V_bat를 넘으면
+  //     (중력이 리프트를 끌어내림, 큰 관성이 명령보다 빨리 돎) 켜짐 구간의 FET와 꺼짐 구간의 다이오드 모두 단자를 같은 레일
+  //     sign(d)·V_bat에 묶으므로 회생 전류 (sign(d)·V − e)/R가 흐르며 제동한다. |d| = 1은 이 두 직선이 같아 자르는 구간이 없고,
+  //     |d| → 1에서 토크가 연속이다(d = 0.99와 1.0이 거의 같다).
+  //   - FLOAT(단자 열림)·듀티 0: |e| ≤ V_bat이면 전류 0, 넘으면 다이오드가 단자를 sign(e)·V_bat에 묶는다(p10mass actuators.md
+  //     §3.3 "역기전력이 V_bat + 다이오드 강하를 넘을 때만 다이오드로 회생한다". 다이오드 강하 ≈ 0.7 V × 2는 무시한다:
+  //     모터 전류 몇 A에서 VNH5050 본체 다이오드 강하가 레일 전압 12 V의 몇 %라 무부하 속도 근처의 제동 시작점만 조금 옮긴다).
+  //   - BRAKE: 단자 단락(0 V). 결정적이다(영역은 지금 ω만으로 정한다).
+  private terminal(
+    stage: PowerStage,
+    voltage: number,
+    e: number
+  ): { u: number | null; region: string } {
+    if (stage.kind === 'brake') return { u: 0, region: 'b' }
+    const d = stage.kind === 'duty' ? stage.duty : 0
+    if (d === 0) {
+      const open = stage.kind === 'float' ? 'f' : '0'
+      if (Math.abs(e) <= voltage) return { u: null, region: open }
+      return { u: Math.sign(e) * voltage, region: stage.kind === 'float' ? 'F' : 'z' }
     }
+    const s = Math.sign(d)
+    const ahead = s * e
+    if (Math.abs(d) >= 1 || ahead <= Math.abs(d) * voltage) return { u: d * voltage, region: 'l' }
+    if (ahead > voltage) return { u: s * voltage, region: 'g' }
+    return { u: null, region: 'c' }
   }
 
-  // 단자 전류(A, 부호 있음): 선형 영역 (dV − Ke·ω_m)/R, BRAKE −Ke·ω_m/R, 자른 영역·FLOAT 0
+  // 출력축 전기 토크(효율 없이 G·τ_m)를 출력축 각속도 ω에 대해 선형으로: τ = G·Kt·(u − Ke·G·ω)/R. 단자 전압 u는 전력단 모델
+  // (terminal)이 정하고, 전류가 흐르지 않는 구간(자름·FLOAT 아래)은 힘·감쇠 0이다.
+  terms(stage: PowerStage, voltage: number, omega: number): MotorTerms {
+    const g = this.gearbox
+    const { u, region } = this.terminal(stage, voltage, this.backEmfConstant * g * omega)
+    if (u === null) return { force: 0, damping: 0, region }
+    const k = (this.torqueConstant * this.backEmfConstant) / this.resistance
+    return { force: (g * this.torqueConstant * u) / this.resistance, damping: g * g * k, region }
+  }
+
+  // 단자 전류(A, 부호 있음): (u − Ke·ω_m)/R, 전류가 흐르지 않는 구간은 0
   current(stage: PowerStage, voltage: number, omega: number): number {
-    const ke = this.backEmfConstant * this.gearbox * omega
-    if (stage.kind === 'float') return 0
-    if (stage.kind === 'brake') return -ke / this.resistance
-    const d = stage.duty
-    if (d === 0) return 0
-    const drive = d * voltage - ke
-    if (Math.abs(d) < 1 && drive * d <= 0) return 0
-    return drive / this.resistance
+    const e = this.backEmfConstant * this.gearbox * omega
+    const { u } = this.terminal(stage, voltage, e)
+    return u === null ? 0 : (u - e) / this.resistance
   }
 }
 
