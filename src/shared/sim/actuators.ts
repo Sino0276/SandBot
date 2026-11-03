@@ -1,5 +1,5 @@
 import type { DeviceValues } from '../sidecarProtocol'
-import { NOMINAL_VOLTAGE, type MotorOutputs } from './motorModel'
+import { NOMINAL_VOLTAGE, type MotorOutputs } from './motorOutputs'
 import {
   MAX_SERVO_PULSE_US,
   MIN_SERVO_PULSE_US,

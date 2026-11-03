@@ -1,4 +1,4 @@
-import type { DeviceValues } from '../sidecarProtocol'
+import { NOMINAL_VOLTAGE, type MotorOutputs } from './motorOutputs'
 import {
   hubMaxTicksPerSecond,
   motorType,
@@ -29,63 +29,10 @@ export const TAU_BRAKE = 0.05
 export const TAU_FLOAT = 0.5
 export const KP_POSITION = 2.4
 
-// 기준 배터리 전압(V): 형식의 maxRPM은 12 V 무부하 값이다
-export const NOMINAL_VOLTAGE = 12
-
 // 이보다 작은 속도(rad/s)는 목표가 0이면 0으로 둔다(지수 감쇠가 끝없이 작은 움직임을 만들지 않게)
 const REST_OMEGA = 1e-9
 // RUN_TO_POSITION에서 이만큼(틱) 안이고 거의 멈췄으면 목표에 붙인다
 const REST_TICKS = 1e-6
-
-export type MotorMode =
-  'RUN_WITHOUT_ENCODER' | 'RUN_USING_ENCODER' | 'RUN_TO_POSITION' | 'STOP_AND_RESET_ENCODER'
-
-// 사이드카 motor 출력에서 시뮬레이터가 쓰는 것(없거나 형식이 틀리면 꺼진 모터로 본다)
-export type MotorOutputs = {
-  mode: MotorMode
-  // 허브 power(−1..1): 엔코더 없음이면 정전력 값
-  power: number
-  // 엔코더 모드의 목표 속도(틱/s, 허브 부호), 아니면 null
-  velocity: number | null
-  enabled: boolean
-  zeroPower: 'BRAKE' | 'FLOAT'
-  // 허브 틱(리셋 기준), 받은 적 없으면 null
-  targetPosition: number | null
-  // 마지막 STOP_AND_RESET_ENCODER 때의 원시 틱
-  encoderOffset: number
-  // 허브에 보낸 STOP_AND_RESET_ENCODER 횟수(리셋마다 1씩, 원시 틱이 그대로여도 는다)
-  encoderResets: number
-}
-
-const MODES: readonly MotorMode[] = [
-  'RUN_WITHOUT_ENCODER',
-  'RUN_USING_ENCODER',
-  'RUN_TO_POSITION',
-  'STOP_AND_RESET_ENCODER'
-]
-
-const finiteOr = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback
-
-export function readMotorOutputs(values: DeviceValues | undefined): MotorOutputs {
-  const mode = values?.mode
-  const velocity = values?.velocity
-  const target = values?.targetPosition
-  return {
-    mode: MODES.includes(mode as MotorMode) ? (mode as MotorMode) : 'RUN_WITHOUT_ENCODER',
-    power: Math.max(-1, Math.min(1, finiteOr(values?.power, 0))),
-    velocity: typeof velocity === 'number' && Number.isFinite(velocity) ? velocity : null,
-    enabled: values?.enabled === true,
-    zeroPower: values?.zeroPower === 'FLOAT' ? 'FLOAT' : 'BRAKE',
-    targetPosition: typeof target === 'number' && Number.isFinite(target) ? target : null,
-    encoderOffset: finiteOr(values?.encoderOffset, 0),
-    encoderResets: finiteOr(values?.encoderResets, 0)
-  }
-}
-
-export function isEncoderMode(mode: MotorMode): boolean {
-  return mode === 'RUN_USING_ENCODER' || mode === 'RUN_TO_POSITION'
-}
 
 // 한 구간의 명령. position이 있으면(RUN_TO_POSITION) 하위 단계마다 지금 틱으로 ω*를 다시 정한다.
 export type MotorCommand = {

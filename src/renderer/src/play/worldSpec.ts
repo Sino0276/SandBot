@@ -1,6 +1,6 @@
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
-import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorModel'
+import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
 import {
   MAX_WORLD_MOTORS,
   MAX_WORLD_SENSORS,

@@ -26,13 +26,8 @@ import {
 import { Articulation, type DriveForces } from './articulation'
 import { HubVelocityWindow } from './encoderVelocity'
 import { WALL_INNER_HALF } from './field'
-import {
-  isEncoderMode,
-  MotorModel,
-  readMotorOutputs,
-  type MotorCommand,
-  type MotorOutputs
-} from './motorModel'
+import { MotorModel, type MotorCommand } from './motorModel'
+import { isEncoderMode, readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import { jointEncoderTicksPerOutputRev } from './actuatorData'
 import { motorType, rotationSign } from './motorTypes'
 import type {
