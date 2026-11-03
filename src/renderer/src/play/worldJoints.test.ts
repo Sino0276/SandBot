@@ -486,6 +486,34 @@ describe('세계 설명의 관절', () => {
     }
   })
 
+  it('편집 자세의 펄스는 서보 컴포넌트의 방향·범위 비율·펄스 범위를 SDK ServoImpl처럼 거친다', () => {
+    // 팀 코드가 편집 자세에서 setPosition(0.35)를 주면 SDK가 내는 펄스와 같아야 편집 자세가 CAD 자세다:
+    // REVERSE → 1 − p, scaleRange(min, max) → min + p(max − min), PwmRange(standard 600–2400, fullRange 500–2500)
+    const zeroPulse = (props: Record<string, string | number>): number => {
+      const objects = liftRobot()
+      objects.drive = {
+        ...objects.drive,
+        components: objects.drive.components!.map((c) =>
+          c.id === 's-wrist' ? { ...c, props: { ...c.props, ...props } } : c
+        )
+      }
+      const arm = build(objects).joints[2]
+      if (arm.drive.kind !== 'servo') throw new Error('servo drive expected')
+      return arm.drive.zeroPulseUs
+    }
+    expect(zeroPulse({})).toBeCloseTo(600 + 0.35 * 1800, 9)
+    expect(zeroPulse({ direction: 'reverse' })).toBeCloseTo(600 + 0.65 * 1800, 9)
+    expect(zeroPulse({ pulseRange: 'fullRange' })).toBeCloseTo(500 + 0.35 * 2000, 9)
+    expect(zeroPulse({ scaleMin: 0.2, scaleMax: 0.8 })).toBeCloseTo(
+      600 + (0.2 + 0.35 * 0.6) * 1800,
+      9
+    )
+    // 셋을 함께: REVERSE 뒤 비율, 그다음 펄스 범위(ServoImpl.setPosition 순서)
+    expect(
+      zeroPulse({ direction: 'reverse', scaleMin: 0.1, scaleMax: 0.9, pulseRange: 'fullRange' })
+    ).toBeCloseTo(500 + (0.1 + 0.65 * 0.8) * 2000, 9)
+  })
+
   it('서보 하나를 두 관절이 쓰면 앞 관절만 구동한다(세계 설명 전체를 잃지 않는다)', () => {
     const objects = liftRobot()
     objects.claw = group('claw', 'armMass', [0.1, 0, 0], {

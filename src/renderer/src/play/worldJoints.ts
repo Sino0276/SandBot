@@ -4,7 +4,6 @@ import {
   resolveServoParams,
   type MotorOverrides
 } from '../../../shared/sim/actuatorData'
-import { servoPositionPulseUs } from '../../../shared/sim/actuators'
 import {
   MAX_WORLD_JOINTS,
   type SimInertia,
@@ -175,6 +174,30 @@ export function servoComponentParams(
   kind: 'servo' | 'crServo'
 ): SimServoParams {
   return resolveServoParams(props.servoModel, kind)
+}
+
+// 서보 컴포넌트의 펄스 범위(µs): 구성 XML 태그 Servo·ServoFullRange(configXml.ts deviceTag)의 @ServoType PwmRange와 같다
+// (사이드카 SandbotHardware.SERVO_TYPES).
+const SERVO_PULSE_RANGES = { standard: [600, 2400], fullRange: [500, 2500] } as const
+
+// 팀 코드가 setPosition(position)을 주었을 때 허브가 내는 펄스(µs). 생성 하드웨어 클래스가 인스펙터 값으로 setDirection·
+// scaleRange를 부르고 구성 XML이 펄스 범위를 정하므로, SDK ServoImpl.setPosition과 같은 순서로 거친다: 0..1로 자르고,
+// REVERSE면 1 − p, Range.scale(p, 0, 1, scaleMin, scaleMax), 그다음 PwmRange(lo + p·(hi − lo), ServoImplEx). 팀 코드가
+// 실행 중 다른 방향·범위를 쓰는 것은 인스펙터 기준이라 따르지 않는다(모터 방향과 같은 규칙). 범위 비율이 맞지 않으면
+// (min ≥ max: 하드웨어 검증 오류라 생성이 막힌다) 비율 없이 센다.
+export function servoEditPulseUs(position: number, props: HardwareComponent['props']): number {
+  let p = Math.min(1, Math.max(0, position))
+  if (props.direction === 'reverse') p = 1 - p
+  const unit = (value: unknown, fallback: number): number => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : fallback
+  }
+  const min = unit(props.scaleMin, 0)
+  const max = unit(props.scaleMax, 1)
+  if (min < max) p = min + p * (max - min)
+  const [lo, hi] =
+    props.pulseRange === 'fullRange' ? SERVO_PULSE_RANGES.fullRange : SERVO_PULSE_RANGES.standard
+  return lo + p * (hi - lo)
 }
 
 // 관절 오브젝트로 보는 것: 관절 설정이 있고 관절을 둘 수 있는 오브젝트(로봇·바퀴 오브젝트에 남은 설정은 쓰지 않는다)
@@ -397,13 +420,13 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
         const params = servoComponentParams(component.props, drive.kind)
         if (drive.kind === 'crServo')
           return { kind: 'crServo', device, ratio, params, direction: drive.direction }
-        // 편집 자세의 서보 위치(0..1, SDK 기본 PWM 범위)를 펄스로(0.5 = 1500 µs)
+        // 편집 자세의 서보 위치(팀 코드의 setPosition 값)를 그 컴포넌트 설정을 거친 펄스로
         return {
           kind: 'servo',
           device,
           ratio,
           params,
-          zeroPulseUs: servoPositionPulseUs(drive.editPosition),
+          zeroPulseUs: servoEditPulseUs(drive.editPosition, component.props),
           direction: drive.direction
         }
       }

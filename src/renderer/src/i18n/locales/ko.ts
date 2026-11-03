@@ -1682,12 +1682,12 @@ const ko = {
     gearRatioHint: '장치 출력축에서 관절까지의 감속비입니다(직결이면 1).',
     servoEditPosition: '편집 자세의 서보 위치',
     servoEditPositionHint:
-      '씬의 편집 자세(관절 값 0)일 때 팀 코드가 주는 servo.setPosition 값입니다(0–1, SDK 기본 PWM 범위 600–2400 µs, 기본 0.5 = 1500 µs). 서보 혼을 끼운 각에 맞춥니다. 예: 집게를 닫힌 채 모델링했고 코드가 setPosition(0.35)로 닫으면 0.35입니다.',
+      '씬의 편집 자세(관절 값 0)일 때 팀 코드가 주는 servo.setPosition 값입니다(0–1, 기본 0.5). 서보 혼을 끼운 각에 맞춥니다. 예: 집게를 닫힌 채 모델링했고 코드가 setPosition(0.35)로 닫으면 0.35입니다. 펄스는 SDK처럼 이 서보 컴포넌트의 방향(REVERSE), 범위 비율(scaleRange), 펄스 범위(표준 600–2400 µs, 전체 500–2500 µs)를 거쳐 셉니다. 팀 코드가 실행 중 다른 방향·범위를 쓰면 편집 자세가 그만큼 어긋납니다.',
     servoDirection: '+펄스 방향',
     servoDirectionHint:
-      '서보 위치를 늘릴 때(펄스가 늘 때) 관절이 도는 방향입니다. 팀 코드의 setDirection(REVERSE)는 이것과 따로 실제처럼 반대로 돌립니다.',
+      '펄스가 길어질 때 관절이 도는 방향입니다(서보를 끼운 방향). 서보 컴포넌트·팀 코드의 setDirection(REVERSE)는 setPosition이 펄스가 되는 쪽을 바꾸므로 이것과 따로 실제처럼 반대로 돌립니다.',
     crServoDirectionHint:
-      'power를 +로 줄 때(펄스가 늘 때) 관절이 도는 방향입니다. 멈춤은 늘 power 0(1500 µs)입니다. 팀 코드의 setDirection(REVERSE)는 이것과 따로 실제처럼 반대로 돌립니다.',
+      '펄스가 길어질 때(방향 FORWARD에서 power +) 관절이 도는 방향입니다(서보를 끼운 방향). 멈춤은 늘 power 0(1500 µs)입니다. 서보 컴포넌트·팀 코드의 setDirection(REVERSE)는 이것과 따로 실제처럼 반대로 돌립니다.',
     servoDirections: {
       forward: '관절 + 방향',
       reverse: '관절 − 방향'
