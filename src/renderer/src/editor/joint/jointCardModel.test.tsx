@@ -582,7 +582,16 @@ describe('관절 카드 그리기', () => {
     expect(html).toContain('위 한계 (mm)')
     expect(html).toContain('value="500.0"')
     expect(html).toContain('로봇 기준 축: +Z (위)')
-    expect(html).toContain('마찰 (Joint Friction) (N)')
+    // 단위는 이름 칸(좁으면 말줄임표로 잘림)이 아니라 입력칸 옆에 둔다
+    expect(html).toContain('<span class="hw-row-label">마찰 (Joint Friction)</span>')
+    expect(html).toMatch(
+      /aria-label="마찰 \(Joint Friction\)"[^>]*\/><\/label><span class="hw-unit">N<\/span>/
+    )
+    expect(html).toContain('<span class="hw-unit">N·s/m</span>')
+    // 앵커의 [피벗으로] 버튼은 벡터 칸과 같은 줄(.hw-inline)에서 줄어들지 않는다(main.css)
+    expect(html).toMatch(
+      /<div class="hw-inline"><div class="vector-row-fields">.*?<button type="button" class="panel-button"[^>]*>피벗으로<\/button>/
+    )
     // 모터 체크 상자(지운 모터 참조는 남긴 채 뗄 수 있게), 바퀴 모터도 후보지만 경고
     expect(html).toMatch(/<input type="checkbox" checked=""\/>lift/)
     expect(html).toContain('(찾을 수 없는 모터)')

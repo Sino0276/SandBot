@@ -280,35 +280,42 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
             />
           </div>
         ))}
+      {/* 단위는 이름 칸이 아니라 입력칸 옆에 둔다(이름 칸은 좁으면 말줄임표로 잘리므로 단위가 사라지지 않게) */}
       <div className="hw-row" title={t('joint.frictionHint')}>
-        <span className="hw-row-label">{`${t('joint.friction')} (${forceUnit})`}</span>
-        <NumberField
-          ariaLabel={t('joint.friction')}
-          value={joint.friction.coulomb}
-          digits={3}
-          onCommit={(input) =>
-            update({
-              ...joint,
-              friction: { ...joint.friction, coulomb: nonNegativeJointValue('coulomb', input) }
-            })
-          }
-        />
+        <span className="hw-row-label">{t('joint.friction')}</span>
+        <div className="hw-inline">
+          <NumberField
+            ariaLabel={t('joint.friction')}
+            value={joint.friction.coulomb}
+            digits={3}
+            onCommit={(input) =>
+              update({
+                ...joint,
+                friction: { ...joint.friction, coulomb: nonNegativeJointValue('coulomb', input) }
+              })
+            }
+          />
+          <span className="hw-unit">{forceUnit}</span>
+        </div>
       </div>
       <div className="hw-row" title={t('joint.dampingHint')}>
-        <span className="hw-row-label">
-          {`${t('joint.damping')} (${prismatic ? t('joint.units.linearDamping') : t('joint.units.rotaryDamping')})`}
-        </span>
-        <NumberField
-          ariaLabel={t('joint.damping')}
-          value={joint.friction.viscous}
-          digits={4}
-          onCommit={(input) =>
-            update({
-              ...joint,
-              friction: { ...joint.friction, viscous: nonNegativeJointValue('viscous', input) }
-            })
-          }
-        />
+        <span className="hw-row-label">{t('joint.damping')}</span>
+        <div className="hw-inline">
+          <NumberField
+            ariaLabel={t('joint.damping')}
+            value={joint.friction.viscous}
+            digits={4}
+            onCommit={(input) =>
+              update({
+                ...joint,
+                friction: { ...joint.friction, viscous: nonNegativeJointValue('viscous', input) }
+              })
+            }
+          />
+          <span className="hw-unit">
+            {prismatic ? t('joint.units.linearDamping') : t('joint.units.rotaryDamping')}
+          </span>
+        </div>
       </div>
       <SpringRows joint={joint} valueUnit={valueUnit} forceUnit={forceUnit} update={update} />
       <DriveRows
