@@ -248,15 +248,55 @@ function sourceIndex(objects: SceneObjects, lookup: MassLookup, caches: NameCach
 }
 
 // 원래 노드 → 지금 계층에서 그 노드를 대표하는 오브젝트. 그 노드의 메시(source.nodeMeshes)마다 위로 그 노드의 메시만 품은
-// (다른 메시가 없는) 오브젝트를 따라 올라가며, 노드 메시를 더 많이 품게 되는 가장 아래 오브젝트를 고른다(더 품지 않는
-// 상위는 감싼 그룹이나, 나머지를 옮겨 낸 CAD 루트다). 메시마다 고른 것 중 노드 메시를 가장 많이 품은 것(같으면 문서 순서로
-// 앞 메시의 것)이다. 불러온 그대로면 노드에서 만든 오브젝트이고, 메시 일부를 다른 어셈블리·그룹으로 옮겨도 남은 쪽(원래
-// 어셈블리)이며, 노드를 그룹으로 감싸도 그 그룹이 아니다. 로봇은 고르지 않는다. 메시가 없는 노드는 null.
+// (다른 메시가 없는) 오브젝트를 따라 올라가며 후보를 모은다(로봇은 고르지 않는다).
+// 1. 후보 중 그 노드에서 만든 CAD 오브젝트(그룹이 아님, madeFrom)가 있으면 그것이다(여럿이면 노드 메시를 가장 많이 품은
+//    것, 같으면 먼저 본 것). 메시 일부를 지우거나 다른 어셈블리·그룹으로 옮겨 원래 어셈블리에 메시가 하나만 남아도 원래
+//    어셈블리이고, 노드를 그룹으로 감싸도 그 그룹이 아니다.
+// 2. 없으면(그 노드의 CAD 오브젝트를 지움) 메시마다 노드 메시를 더 많이 품게 되는 가장 아래 후보를 고르고(더 품지 않는
+//    상위는 감싼 그룹이나 나머지를 옮겨 낸 CAD 루트다), 그중 노드 메시를 가장 많이 품은 것(같으면 문서 순서로 앞 메시의
+//    것)이다. 노드 메시를 모두 품은 그룹이 여기서 주인이 된다.
+// 메시가 없는 노드는 null.
 function nodeHomes(objects: SceneObjects, source: SourceIndex): (key: string) => string | null {
   // 오브젝트마다 하위(자신 포함)의 메시 수. 처음 쓸 때 한 번 센다.
   let meshCounts: Map<string, number> | null = null
   const countUp = (counts: Map<string, number>, id: string): void => {
     for (const at of [id, ...ancestorIds(objects, id)]) counts.set(at, (counts.get(at) ?? 0) + 1)
+  }
+  // 오브젝트를 만든 원래 노드(오브젝트 계층 = 불러온 노드 계층, buildSceneObjects): 메시 파트는 경로의 마지막 노드, CAD
+  // 루트는 첫 노드, 어셈블리는 하위 메시 경로의 공통 앞부분에서 가장 깊은 중간 노드(CAD 루트·파트 노드가 아닌 것)다.
+  // 어셈블리는 하위에 메시가 하나만 남아도 그 메시 경로의 부모 노드라 그대로다.
+  const madeFrom = new Map<string, string | null>()
+  const nodeOf = (id: string): string | null => {
+    const cached = madeFrom.get(id)
+    if (cached !== undefined) return cached
+    const object = objects[id]
+    let result: string | null = null
+    if (object.visual?.type === 'mesh') result = source.paths.get(id)?.at(-1)?.key ?? null
+    else {
+      // 하위 메시 경로의 공통 앞부분
+      let common: readonly SourceNode[] | null = null
+      let single = true
+      for (const at of subtreeIds(objects, id)) {
+        const path = source.paths.get(at)
+        if (!path) continue
+        if (!common) {
+          common = path
+          continue
+        }
+        single = false
+        let n = 0
+        while (n < common.length && n < path.length && common[n].key === path[n].key) n++
+        common = common.slice(0, n)
+      }
+      if (common && object.cad) result = common[0]?.key ?? null
+      else if (common) {
+        // 메시가 하나면 공통 앞부분의 끝은 그 파트 노드라 뺀다. 첫 칸은 CAD 루트 노드다.
+        const interior = single ? common.slice(0, -1) : common
+        result = interior.length >= 2 ? interior[interior.length - 1].key : null
+      }
+    }
+    madeFrom.set(id, result)
+    return result
   }
   const homes = new Map<string, string | null>()
   return (key) => {
@@ -271,15 +311,21 @@ function nodeHomes(objects: SceneObjects, source: SourceIndex): (key: string) =>
     const nodeCounts = new Map<string, number>()
     const meshes = source.nodeMeshes.get(key) ?? []
     for (const id of meshes) countUp(nodeCounts, id)
+    let made: string | null = null
+    let madeCount = 0
     let home: string | null = null
     let best = 0
     for (const id of meshes) {
       let candidate = id
       let count = nodeCounts.get(id) ?? 0
-      for (const at of ancestorIds(objects, id)) {
+      for (const at of [id, ...ancestorIds(objects, id)]) {
         if (objects[at].kind === 'robot') break
         const inside = nodeCounts.get(at) ?? 0
         if (inside !== totals.get(at)) break
+        if (objects[at].kind !== 'group' && inside > madeCount && nodeOf(at) === key) {
+          made = at
+          madeCount = inside
+        }
         if (inside > count) {
           candidate = at
           count = inside
@@ -290,8 +336,9 @@ function nodeHomes(objects: SceneObjects, source: SourceIndex): (key: string) =>
         home = candidate
       }
     }
-    homes.set(key, home)
-    return home
+    const result = made ?? home
+    homes.set(key, result)
+    return result
   }
 }
 

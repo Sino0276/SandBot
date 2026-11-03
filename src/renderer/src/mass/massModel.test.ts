@@ -836,6 +836,77 @@ describe('질량 추정: 덮어쓰기와 COTS', () => {
       const origin = computeMassModel(imported, lookup).objects.B.centerOfMass
       expect(model.objects.B.centerOfMass[2] - origin[2]).toBeCloseTo(0.3, 9)
     })
+
+    describe('제품 솔리드를 지우거나 옮겨 원래 어셈블리에 하나만 남아도 그 어셈블리가 주인이다', () => {
+      const centered: SceneObjects = {
+        ...imported,
+        B: { ...imported.B, mass: { centerOfMass: [0, 0, 0.3] } },
+        M: { ...imported.M, mass: { centerOfMass: [0, 0, 0.3] } }
+      }
+      const before = computeMassModel(centered, lookup)
+      const group = node('G', 'R', { kind: 'group', name: 'Lift' })
+      const expectSameCenter = (objects: SceneObjects): void => {
+        const after = computeMassModel(objects, lookup)
+        expect(after.robots.R.notices).toEqual([])
+        expect(after.robots.R.mass).toBeCloseTo(before.robots.R.mass, 12)
+        for (let k = 0; k < 3; k++)
+          expect(after.robots.R.centerOfMass[k], `com ${k}`).toBeCloseTo(
+            before.robots.R.centerOfMass[k],
+            12
+          )
+      }
+
+      it('배터리 셀 하나를 그룹으로 옮겨도 배터리 어셈블리의 무게중심 덮어쓰기를 쓴다', () => {
+        expect(before.robots.R.notices).toEqual([])
+        const moved: SceneObjects = {
+          ...centered,
+          G: group,
+          B1: { ...centered.B1, parentId: 'G', cadOrigin: 'C' }
+        }
+        expect(computeMassModel(moved, lookup).objects.B1.inheritedFrom).toBe('B')
+        expectSameCenter(moved)
+      })
+
+      it('배터리 셀 하나를 지워도 남은 셀이 아니라 배터리 어셈블리가 주인이다', () => {
+        const deleted: SceneObjects = { ...centered }
+        delete deleted.B1
+        const model = computeMassModel(deleted, lookup)
+        expect(model.robots.R.notices).toEqual([])
+        expect(model.objects.B2).toMatchObject({ source: 'cots', inheritedFrom: 'B' })
+        expect(model.objects.B.mass).toBeCloseTo(0.597, 12)
+        const origin = computeMassModel(imported, lookup).objects.B.centerOfMass
+        expect(model.objects.B.centerOfMass[2] - origin[2]).toBeCloseTo(0.3, 9)
+      })
+
+      it('모터 솔리드 셋 중 둘을 그룹으로 옮겨도 모터 어셈블리가 주인이다(그룹이 아니다)', () => {
+        const moved: SceneObjects = {
+          ...centered,
+          G: group,
+          M1: { ...centered.M1, parentId: 'G', cadOrigin: 'C' },
+          M2: { ...centered.M2, parentId: 'G', cadOrigin: 'C' }
+        }
+        expect(computeMassModel(moved, lookup).objects.M1.inheritedFrom).toBe('M')
+        expectSameCenter(moved)
+      })
+
+      it('제품의 CAD 오브젝트가 모두 사라지면 제품 메시를 모두 품은 그룹이 주인이다', () => {
+        const regrouped: SceneObjects = {
+          ...imported,
+          G: node('G', 'R', {
+            kind: 'group',
+            name: 'Battery',
+            mass: { centerOfMass: [0, 0, 0.3] }
+          }),
+          B1: { ...imported.B1, parentId: 'G', cadOrigin: 'C' },
+          B2: { ...imported.B2, parentId: 'G', cadOrigin: 'C' }
+        }
+        delete regrouped.B
+        const model = computeMassModel(regrouped, lookup)
+        expect(model.robots.R.notices).toEqual([])
+        expect(model.objects.B1).toMatchObject({ source: 'cots', inheritedFrom: 'G' })
+        expect(model.objects.G.mass).toBeCloseTo(0.597, 12)
+      })
+    })
   })
 
   describe('컴포넌트·바퀴 COTS도 하위가 그 부품 하나로 볼 수 있을 때만 하위를 덮는다', () => {
