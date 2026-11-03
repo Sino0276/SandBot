@@ -363,7 +363,8 @@ describe('세계 설명 경고(console.notices.world*)', () => {
       'worldTooManyDeadWheels',
       'worldTooManyPinpoints',
       'worldTooManyOtos',
-      'worldTooManyImus'
+      'worldTooManyImus',
+      'worldTooManyJoints'
     ])
     for (const key of keys) {
       const entry = consoleEntry(

@@ -33,6 +33,7 @@ import {
   type MaterialKey,
   type MeshMassProps,
   type ObjectMass,
+  type OwnMass,
   type CotsIgnoredReason,
   type RobotMass,
   type SourceNode,
@@ -1019,8 +1020,45 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
 
   return {
     objects: objectMasses(objects, matrices, partsByObject, defaultRobots, uncounted),
-    robots
+    robots,
+    own: ownMasses(objects, matrices, partsByObject, uncounted)
   }
+}
+
+// 오브젝트마다 자기 몫(자기 파트·점질량)의 질량·무게중심·관성(objects 키 순서). 관성은 파트마다 무게중심 기준 관성(단위
+// 밀도 관성 × 밀도)을 평행축 정리로 자기 몫의 무게중심에 모은다(로봇 관성 합성과 같은 식).
+function ownMasses(
+  objects: SceneObjects,
+  matrices: Map<string, Matrix4>,
+  partsByObject: Map<string, Part[]>,
+  uncounted: Map<string, number>
+): Record<string, OwnMass> {
+  const result: Record<string, OwnMass> = {}
+  for (const id of Object.keys(objects)) {
+    const list = partsByObject.get(id) ?? []
+    const pendingMeshes = uncounted.get(id) ?? 0
+    if (list.length === 0 && pendingMeshes === 0) continue
+    let mass = 0
+    const moment: Vec3 = [0, 0, 0]
+    for (const part of list) {
+      mass += part.mass
+      for (let k = 0; k < 3; k++) moment[k] += part.mass * part.com[k]
+    }
+    const centerOfMass: Vec3 =
+      mass > 0
+        ? [moment[0] / mass, moment[1] / mass, moment[2] / mass]
+        : applyPoint(matrices.get(id) ?? new Matrix4(), [0, 0, 0])
+    const inertia: SymMatrix3 = [0, 0, 0, 0, 0, 0]
+    for (const part of list) {
+      if (part.mass === 0) continue
+      const own =
+        part.volume > 0 ? scaled3(part.unitInertia, part.mass / part.volume) : ZERO_INERTIA
+      const d: Vec3 = [0, 1, 2].map((k) => part.com[k] - centerOfMass[k]) as Vec3
+      addParallelAxis(inertia, own, part.mass, d)
+    }
+    result[id] = { mass, centerOfMass, inertia, pendingMeshes }
+  }
+  return result
 }
 
 // 덩어리 하나를 푼다(안쪽 덩어리는 이미 풀렸다). 남은 질량을 자기 형상에 부피 비율로 나누고, 형상이 없으면 점질량을 둔다.

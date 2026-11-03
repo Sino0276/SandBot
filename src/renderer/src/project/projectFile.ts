@@ -12,6 +12,8 @@ import {
   isInSubtree,
   type CadSource,
   type HardwareComponent,
+  type JointDrive,
+  type JointSettings,
   type RobotHardwareSettings,
   type SceneObject,
   type SceneObjects,
@@ -25,6 +27,7 @@ import {
   sanitizeMass,
   sanitizeRigidbody
 } from '../scene/massSettings'
+import { canHaveJoint, isJointAxis, isJointType, sanitizeJoint } from '../scene/joint'
 import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
@@ -36,9 +39,11 @@ export const PROJECT_FORMAT = 'sandbot-project'
 // 6: 바퀴 wheel({ kind, diameter, motor, gearRatio, angle, rollers }, 시뮬레이터 설정, assembly·part·group에만),
 // 7: 질량 mass({ material?, infill?, mass?, centerOfMass? }, robot이 아닌 오브젝트)와 로봇 rigidbody
 //    ({ weighedMass?, defaultMaterial? }). 둘 다 시뮬레이터 설정이다(scene/massSettings.ts).
-// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음).
+// 8: 관절 joint({ type, anchor, axis, axisSign, limits, friction, spring, drive }, 시뮬레이터 설정, robot이 아니고 바퀴가
+//    없는 오브젝트에만, scene/joint.ts).
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 7
+export const PROJECT_VERSION = 8
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -110,7 +115,7 @@ function parseProps(
         ? typeof raw === 'string' && def.options.includes(raw)
         : def.kind === 'number'
           ? isFiniteNumber(raw)
-          : def.kind === 'length'
+          : def.kind === 'length' || def.kind === 'angle'
             ? isFiniteNumber(raw) && raw >= def.min && raw <= def.max
             : typeof raw === 'string'
     props[def.key] = valid ? (raw as string | number) : def.default
@@ -199,6 +204,107 @@ function parseRigidbody(value: unknown, index: number): RigidbodySettings | null
   return sanitizeRigidbody(value)
 }
 
+const isNumber = (value: unknown): value is number => typeof value === 'number'
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string')
+
+// 관절 구동(v8). 종류마다 필드의 형식만 보고, 범위는 sanitizeJoint가 맞춘다. 형식이 틀리면 null(파일 오류).
+function parseJointDrive(value: unknown): JointDrive | null {
+  if (!isRecord(value)) return null
+  switch (value.kind) {
+    case 'none':
+    case 'stage':
+      return { kind: value.kind }
+    case 'motor': {
+      const { motors, gearRatio, spoolDiameter, rigging } = value
+      if (
+        !isStringList(motors) ||
+        !isNumber(gearRatio) ||
+        !isNumber(spoolDiameter) ||
+        !isRecord(rigging)
+      )
+        return null
+      if (rigging.kind === 'direct')
+        return { kind: 'motor', motors, gearRatio, spoolDiameter, rigging: { kind: 'direct' } }
+      if (
+        (rigging.kind !== 'cascade' && rigging.kind !== 'continuous') ||
+        !isStringList(rigging.stages)
+      )
+        return null
+      return {
+        kind: 'motor',
+        motors,
+        gearRatio,
+        spoolDiameter,
+        rigging: { kind: rigging.kind, stages: rigging.stages }
+      }
+    }
+    case 'servo':
+      return typeof value.servo === 'string' && isNumber(value.gearRatio)
+        ? { kind: 'servo', servo: value.servo, gearRatio: value.gearRatio }
+        : null
+    case 'crServo':
+      return typeof value.servo === 'string' &&
+        isNumber(value.gearRatio) &&
+        isNumber(value.spoolDiameter)
+        ? {
+            kind: 'crServo',
+            servo: value.servo,
+            gearRatio: value.gearRatio,
+            spoolDiameter: value.spoolDiameter
+          }
+        : null
+    default:
+      return null
+  }
+}
+
+function parseJointSpring(value: unknown): JointSettings['spring'] | undefined {
+  if (value === null) return null
+  if (!isRecord(value)) return undefined
+  if (value.kind === 'constantForce' && isNumber(value.force))
+    return { kind: 'constantForce', force: value.force }
+  if (value.kind === 'linear' && isNumber(value.stiffness) && isNumber(value.rest))
+    return { kind: 'linear', stiffness: value.stiffness, rest: value.rest }
+  return undefined
+}
+
+// 관절(v8). 모양·형식이 틀리면(객체가 아님, 모르는 종류·축, 수가 아닌 값) 바퀴처럼 파일 오류이고, 범위 밖 수는 기본값으로
+// 바꾼다(sanitizeJoint). 장치·관절 id는 그대로 둔다(지운 모터·관절을 가리켜도 세계 설명을 만들 때 경고한다).
+function parseJoint(value: unknown, index: number): JointSettings {
+  if (!isRecord(value)) invalid(index, 'joint')
+  const { type, anchor, axis, axisSign, limits, friction } = value
+  const spring = parseJointSpring(value.spring)
+  const drive = parseJointDrive(value.drive)
+  if (
+    !isJointType(type) ||
+    !Array.isArray(anchor) ||
+    anchor.length !== 3 ||
+    !anchor.every(isNumber) ||
+    !isJointAxis(axis) ||
+    (axisSign !== 1 && axisSign !== -1) ||
+    (limits !== null &&
+      (!isRecord(limits) || !isNumber(limits.lower) || !isNumber(limits.upper))) ||
+    !isRecord(friction) ||
+    !isNumber(friction.coulomb) ||
+    !isNumber(friction.viscous) ||
+    spring === undefined ||
+    drive === null
+  )
+    invalid(index, 'joint')
+  return sanitizeJoint({
+    type,
+    anchor: [anchor[0], anchor[1], anchor[2]],
+    axis,
+    axisSign,
+    limits:
+      limits === null ? null : { lower: limits.lower as number, upper: limits.upper as number },
+    friction: { coulomb: friction.coulomb, viscous: friction.viscous },
+    spring,
+    drive
+  })
+}
+
 // 패키지까지 붙인 클래스 이름(점으로 이은 Java 식별자)
 const QUALIFIED_CLASS =
   /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*(\.[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*)*$/u
@@ -253,7 +359,8 @@ function parseObject(
     scripts,
     wheel,
     mass,
-    rigidbody
+    rigidbody,
+    joint
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -352,6 +459,11 @@ function parseObject(
     if (!canHaveRigidbody(object)) invalid(index, 'rigidbody')
     const settings = parseRigidbody(rigidbody, index)
     if (settings) object.rigidbody = settings
+  }
+  // 관절은 robot과 바퀴가 있는 오브젝트에는 두지 않는다(scene/joint.ts canHaveJoint)
+  if (joint !== undefined) {
+    if (!canHaveJoint(object)) invalid(index, 'joint')
+    object.joint = parseJoint(joint, index)
   }
   return object
 }

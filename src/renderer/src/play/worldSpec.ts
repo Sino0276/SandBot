@@ -41,12 +41,14 @@ import {
   type WheelSettings
 } from '../scene/model'
 import { wrapAngle } from '../scene/wheel'
+import type { MassModel } from '../mass/types'
 import type { ConsoleNoticeKey } from './consoleModel'
+import { buildWorldJoints } from './worldJoints'
 
 // 운동학 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
-// 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트에서 온다. 이름은 사이드카 장치 이름(구성 이름을
-// Java trim, sidecarDeviceName)이다. 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점 로봇 중심 바닥)이고, 형상 로딩과
-// 관계없이 씬 문서만으로 정해진다(결정적).
+// 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
+// 온다. 이름은 사이드카 장치 이름(구성 이름을 Java trim, sidecarDeviceName)이다. 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점
+// 로봇 중심 바닥)이고, 형상 로딩과 관계없이 씬 문서만으로 정해진다(결정적). 관절 몸체 질량만 넘겨받은 질량 모델을 쓴다.
 
 // Console 경고(console.notices.world*)
 export type WorldWarningKey = Extract<ConsoleNoticeKey, `world${string}`>
@@ -239,17 +241,30 @@ function capped<T>(items: T[], max: number, key: TooManyKey, warnings: WorldWarn
   return items.slice(0, max)
 }
 
-export type WorldSpecResult = { spec: WorldSpec | null; warnings: WorldWarning[] }
+// jointObjectIds: 세계 설명의 관절 순번 → 관절 오브젝트 id(spec이 null이면 빈 목록)
+export type WorldSpecResult = {
+  spec: WorldSpec | null
+  warnings: WorldWarning[]
+  jointObjectIds: string[]
+}
+
+// 로봇 하위에 관절(SceneObject.joint)이 있는지. 관절 몸체의 질량 모델은 계산이 무거우므로(큰 CAD 60–100 ms) 있을 때만 만든다.
+export function robotHasJoints(objects: SceneObjects, robotId: string): boolean {
+  return !!objects[robotId] && subtreeIds(objects, robotId).some((id) => !!objects[id].joint)
+}
 
 // 고른 로봇의 세계 설명과 Console 경고. 로봇이 없으면 null. 만든 값은 메인과 같은 parseWorldSpec으로 확인하고,
 // 받지 않을 값(로봇을 필드에서 아주 멀리 둠 등)이면 null과 worldInvalid 경고를 돌려준다(실행은 시뮬레이터 없이 계속).
+// mass는 관절 몸체의 질량 성질(MassModel.own)이고, null이면 몸체를 대체 질량으로 두고 질량 경고를 내지 않는다
+// (play/worldJoints.ts).
 export function buildWorldSpec(
   objects: SceneObjects,
   robotId: string,
-  settings: Pick<PlaySettings, 'batteryVoltage'>
+  settings: Pick<PlaySettings, 'batteryVoltage'>,
+  mass: MassModel | null = null
 ): WorldSpecResult {
   const robot = objects[robotId]
-  if (!robot || robot.kind !== 'robot') return { spec: null, warnings: [] }
+  if (!robot || robot.kind !== 'robot') return { spec: null, warnings: [], jointObjectIds: [] }
   const warnings: WorldWarning[] = []
   const entries: ComponentEntry[] = robotComponents(objects, robotId).filter((entry) =>
     isComponentType(entry.component.type)
@@ -369,6 +384,20 @@ export function buildWorldSpec(
     .map(({ component }) => ({ device: sidecarDeviceName(component.name) }))
     .filter((imu) => imu.device !== '')
 
+  // 관절(3b): 바퀴를 구동하는 모터는 관절에 쓰지 않는다
+  const joints = buildWorldJoints({
+    objects,
+    robotId,
+    entries,
+    motorDevices,
+    wheelMotorIds: new Set(
+      resolved.flatMap((w) => (w.motorState === 'ok' && w.motor ? [w.motor.id] : []))
+    ),
+    wheelObjects: resolved.map((w) => ({ objectId: w.objectId, name: w.name })),
+    mass
+  })
+  warnings.push(...joints.warnings)
+
   const [x, y] = robot.transform.position
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
@@ -384,13 +413,12 @@ export function buildWorldSpec(
     pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
     otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
     imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
-    // 관절(3b): 갈래 C가 씬의 관절 설정으로 채운다
-    joints: []
+    joints: joints.joints
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
     warnings.push({ key: 'worldInvalid', params: { detail: checked } })
-    return { spec: null, warnings }
+    return { spec: null, warnings, jointObjectIds: [] }
   }
-  return { spec: checked, warnings }
+  return { spec: checked, warnings, jointObjectIds: joints.objectIds }
 }

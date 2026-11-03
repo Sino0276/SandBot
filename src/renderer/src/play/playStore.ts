@@ -137,6 +137,8 @@ export type PlayRun = {
   libraryReported: boolean
   // 프로젝트를 다시 열어 새 씬과 떼어 놓은 실행(끝나기를 기다리는 중). Dashboard 오버레이·설정은 받지 않는다.
   detached: boolean
+  // 세계 설명의 관절 순번 → 관절 오브젝트 id(INIT 때 정해짐, pose 이벤트 joints의 순서). 세계 설명이 없으면 비어 있다.
+  joints: readonly string[]
 }
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
@@ -313,6 +315,7 @@ export function newRun(options: {
   configPath: string | null
   speed: PlaySpeed
   paused: boolean
+  joints?: readonly string[]
 }): PlayRun {
   return {
     runId: options.runId,
@@ -336,7 +339,8 @@ export function newRun(options: {
     finished: null,
     libraryProgress: null,
     libraryReported: false,
-    detached: false
+    detached: false,
+    joints: options.joints ?? []
   }
 }
 

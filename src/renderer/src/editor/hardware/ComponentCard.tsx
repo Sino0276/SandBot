@@ -30,14 +30,18 @@ import {
   findRobotId,
   type HardwareComponent,
   type HubId,
+  type JointType,
   type SceneObjects
 } from '../../scene/model'
+import { DEG } from '../../scene/coordinates'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import {
+  ANGLE_DIGITS,
   formatNumber,
   fromDisplayLength,
   LENGTH_DIGITS,
+  parseAngle,
   parseLength,
   toDisplayLength
 } from '../../units/units'
@@ -230,7 +234,10 @@ function ComponentCard({
             onCommit={(input) =>
               setProp(
                 property.key,
-                Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
+                // 0이 기본값인 덮어쓰기 칸은 아주 작은 값을 기본으로 돌린다(zeroBelow)
+                input < (property.zeroBelow ?? -Infinity)
+                  ? 0
+                  : Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
               )
             }
           />
@@ -256,6 +263,22 @@ function ComponentCard({
           />
         )
       }
+      case 'angle':
+        return (
+          <NumberField
+            ariaLabel={label}
+            value={Number(value) / DEG}
+            digits={ANGLE_DIGITS}
+            title={t('units.angleInputHint')}
+            parse={(text) => {
+              const radians = parseAngle(text)
+              return radians === null ? null : radians / DEG
+            }}
+            onCommit={(input) =>
+              setProp(property.key, Math.min(property.max, Math.max(property.min, input * DEG)))
+            }
+          />
+        )
       case 'text':
         return (
           <TextField
@@ -288,7 +311,11 @@ function ComponentCard({
   const rowLabel = (property: PropertyDef): string =>
     property.kind === 'length'
       ? `${tl(propertyLabelKey(property.key))} (${t(`units.symbols.${lengthUnit}`)})`
-      : tl(propertyLabelKey(property.key))
+      : property.kind === 'angle'
+        ? `${tl(propertyLabelKey(property.key))} (°)`
+        : tl(propertyLabelKey(property.key))
+  // 리밋 스위치 칸은 연결한 관절의 형식을 따른다(visibleWhenJoint)
+  const jointTypeOf = (id: string): JointType | null => objects[id]?.joint?.type ?? null
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
@@ -375,7 +402,7 @@ function ComponentCard({
         </>
       )}
       {def.properties
-        .filter((property) => isPropertyVisible(property, component.props))
+        .filter((property) => isPropertyVisible(property, component.props, jointTypeOf))
         .map((property) => (
           <FieldRow
             key={property.key}

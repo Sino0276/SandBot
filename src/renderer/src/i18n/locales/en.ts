@@ -808,8 +808,49 @@ const en: Messages = {
         'There are more OTOS sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
       worldTooManyImus:
         'There are more IMUs than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyJoints:
+        'There are more joints than the simulator limit ({{max}}); only the first {{max}} in hierarchy order are used. The rest move with their outer joint.',
+      // Joints (3b, play/worldJoints.ts)
+      worldJointNoMass:
+        'The body mass of joint {{name}} is unknown (no shapes, or not loaded yet), so 1 g is used. Enter a mass in the mass card.',
+      worldJointMassPending:
+        'The body of joint {{name}} still has {{count}} mesh(es) loading; their mass is left out.',
+      worldJointNoMotor:
+        'No motor is chosen for the motor drive of joint {{name}}, so it is not driven.',
+      worldJointMotorMissing:
+        'A drive motor of joint {{name}} is not in this robot (deleted, on another robot, or a duplicate name), so that motor is not used.',
+      worldJointMotorOnWheel:
+        'Motor {{motor}} drives a wheel, so it does not also drive joint {{name}}.',
+      worldJointMotorShared:
+        'Motor {{motor}} already drives an earlier joint, so joint {{name}} does not use it.',
+      worldJointMotorsDiffer:
+        'The motors driving joint {{name}} have different types or gear ratios; the first motor’s values are used.',
+      worldJointServoMissing:
+        'The servo of joint {{name}} is not in this robot (deleted, a different kind, or on another robot), so the joint is not driven.',
+      worldJointServoShared:
+        'Servo {{servo}} already drives an earlier joint or shares its name with another device, so joint {{name}} is not driven. A servo drives only one joint (model a two-finger claw as one joint).',
+      worldJointRatioRange:
+        'The drive ratio of joint {{name}} from its gear ratio and spool diameter is outside the simulator range, so the joint is not driven.',
+      worldJointServoOnSlide:
+        'A position servo drives only revolute joints. Drive prismatic joint {{name}} with a CR servo and a spool.',
+      worldJointStageInvalid:
+        'Stage {{stage}} of slide {{name}} is not a prismatic joint (drive: stage) directly under the stage below it, so stages from there on are not linked.',
+      worldJointStageOrphan:
+        'Joint {{name}} is a stage but no slide drive includes it, so it is not driven.',
+      worldLimitSwitchJointMissing:
+        'The joint of limit switch {{name}} is not in this robot, so the switch is never pressed.',
+      worldLimitSwitchNoLimit:
+        'Joint {{joint}} of limit switch {{name}} has no limits, so the switch is never pressed.',
+      worldLimitSwitchDuplicate:
+        'The device name of limit switch {{name}} is shared with another device, so the switch is never pressed.',
+      worldLimitSwitchTooMany:
+        'Joint {{joint}} has more limit switches than the simulator limit ({{max}}), so {{name}} is never pressed.',
+      worldSensorOnJoint:
+        '{{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
+      worldWheelOnJoint:
+        'Wheel {{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
       worldGenerationStale:
-        'Device names may differ from the generated configuration, so the wheels may not move.',
+        'Device names may differ from the generated configuration, so the wheels and joints may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
       generationBlocked:
         'The last save did not generate code because of {{count}} hardware error(s). Running with the previous hardware class and configuration left in TeamCode.',
@@ -1172,7 +1213,14 @@ const en: Messages = {
       reversed: 'Encoder reversed',
       gearbox: 'Gearbox ratio',
       podDiameter: 'Pod wheel diameter',
-      podCpr: 'Encoder CPR'
+      podCpr: 'Encoder CPR',
+      stallTorque: 'Stall torque (N·m, 0 = datasheet)',
+      freeSpeed: 'Free speed (rpm, 0 = datasheet)',
+      servoModel: 'Servo model',
+      limitJoint: 'Limit switch joint',
+      limitAt: 'Pressed at',
+      limitDistance: 'Press distance (0 = 2 mm)',
+      limitAngle: 'Press angle (0 = 1°)'
     },
     options: {
       motorModel: {
@@ -1240,6 +1288,19 @@ const en: Messages = {
       reversed: {
         no: 'No',
         yes: 'Yes'
+      },
+      servoModel: {
+        gobildaTorque: 'goBILDA 2000 Torque (25-2)',
+        gobildaSpeed: 'goBILDA 2000 Speed (25-3)',
+        gobildaSuperSpeed: 'goBILDA 2000 Super Speed (25-4)',
+        axonMax: 'Axon MAX',
+        axonMini: 'Axon MINI',
+        axonMicro: 'Axon MICRO',
+        revSmartServo: 'REV Smart Robot Servo'
+      },
+      limitAt: {
+        lower: 'Lower limit',
+        upper: 'Upper limit'
       }
     },
     hints: {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGroup, moveObjects } from '../scene/hierarchy'
-import type { SceneObjects } from '../scene/model'
+import type { JointSettings, SceneObjects } from '../scene/model'
 import { parseProject, PROJECT_VERSION, ProjectFileError, serializeProject } from './projectFile'
 
 const objects: SceneObjects = {
@@ -51,7 +51,9 @@ const objects: SceneObjects = {
           direction: 'reverse',
           runMode: 'usingEncoder',
           zeroPowerBehavior: 'brake',
-          gearbox: 19.2
+          gearbox: 19.2,
+          stallTorque: 0,
+          freeSpeed: 0
         }
       }
     ]
@@ -72,7 +74,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 7 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 8 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -503,8 +505,131 @@ describe('질량 설정(버전 7)', () => {
     const { objects: loaded } = parseProject(JSON.stringify(v6))
     expect(loaded).toEqual(objects)
     expect(Object.values(loaded).some((object) => object.mass || object.rigidbody)).toBe(false)
-    // 다시 저장하면 버전 7이 된다
-    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(7)
+    // 다시 저장하면 지금 버전이 된다
+    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(PROJECT_VERSION)
+  })
+})
+
+describe('관절(버전 8)', () => {
+  const JOINT: JointSettings = {
+    type: 'prismatic',
+    anchor: [0, 0.02, -0.1],
+    axis: 'z',
+    axisSign: -1,
+    limits: { lower: 0, upper: 0.488 },
+    friction: { coulomb: 1, viscous: 0.5 },
+    spring: { kind: 'constantForce', force: 35.2 },
+    drive: {
+      kind: 'motor',
+      motors: ['m1', 'deleted-motor'],
+      gearRatio: 1,
+      spoolDiameter: 0.0357,
+      rigging: { kind: 'continuous', stages: ['stage2'] }
+    }
+  }
+  const withJoint = (): SceneObjects => ({
+    ...objects,
+    plate: { ...objects.plate, joint: structuredClone(JOINT) },
+    cad: { ...objects.cad, joint: { ...structuredClone(JOINT), type: 'revolute', limits: null } }
+  })
+  // 저장한 파일의 오브젝트(index)에 joint를 넣는다
+  const fileWith = (index: number, joint: unknown, version = 8): string => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.version = version
+    data.objects[index].joint = joint
+    return JSON.stringify(data)
+  }
+
+  it('관절을 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다, 끊긴 id는 남긴다)', () => {
+    const content = serializeProject(withJoint(), relativize)
+    expect(JSON.parse(content).objects[2].joint).toEqual(JOINT)
+    const { objects: loaded } = parseProject(content)
+    expect(loaded).toEqual(withJoint())
+    expect(serializeProject(loaded, relativize)).toBe(content)
+  })
+
+  it('모든 구동 종류와 스프링 종류를 읽는다', () => {
+    const drives: JointSettings['drive'][] = [
+      { kind: 'none' },
+      { kind: 'stage' },
+      { kind: 'servo', servo: 's1', gearRatio: 2 },
+      { kind: 'crServo', servo: 's2', gearRatio: 1, spoolDiameter: 0.03 },
+      { ...(JOINT.drive as object), rigging: { kind: 'direct' } } as JointSettings['drive']
+    ]
+    for (const drive of drives)
+      for (const spring of [null, { kind: 'linear', stiffness: 20, rest: 0.1 }] as const) {
+        const joint = { ...JOINT, drive, spring }
+        expect(parseProject(fileWith(2, joint)).objects.plate.joint).toEqual(joint)
+      }
+  })
+
+  it('범위 밖 수는 기본값으로 바꾼다', () => {
+    const { objects: loaded } = parseProject(
+      fileWith(2, {
+        ...JOINT,
+        anchor: [0, 0, 20],
+        limits: null,
+        friction: { coulomb: -1, viscous: 0.5 },
+        spring: { kind: 'constantForce', force: -3 },
+        drive: { ...JOINT.drive, gearRatio: 0 }
+      })
+    )
+    expect(loaded.plate.joint).toMatchObject({
+      anchor: [0, 0, 0],
+      // 직선 관절은 한계가 늘 있다
+      limits: { lower: 0, upper: 0.5 },
+      friction: { coulomb: 1, viscous: 0.5 },
+      spring: null,
+      drive: { gearRatio: 1 }
+    })
+  })
+
+  it('로봇의 관절, 바퀴와 같은 오브젝트의 관절, 모양·형식이 틀린 관절은 invalidData', () => {
+    expect(() => parseProject(fileWith(0, JOINT))).toThrow(ProjectFileError)
+    const data = JSON.parse(fileWith(2, JOINT))
+    data.objects[2].wheel = {
+      kind: 'mecanum',
+      diameter: 0.104,
+      motor: '',
+      gearRatio: 1,
+      angle: 0,
+      rollers: 'auto'
+    }
+    expect(() => parseProject(JSON.stringify(data))).toThrow(ProjectFileError)
+    for (const joint of [
+      'revolute',
+      [JOINT],
+      null,
+      { ...JOINT, type: 'spherical' },
+      { ...JOINT, anchor: [0, 0] },
+      { ...JOINT, anchor: [0, '0', 0] },
+      { ...JOINT, axis: 'w' },
+      { ...JOINT, axisSign: 0 },
+      { ...JOINT, limits: { lower: 0 } },
+      { ...JOINT, limits: 0.5 },
+      { ...JOINT, friction: { coulomb: 1 } },
+      { ...JOINT, spring: { kind: 'gas', force: 1 } },
+      { ...JOINT, spring: { kind: 'linear', stiffness: 1 } },
+      { ...JOINT, drive: { kind: 'magic' } },
+      { ...JOINT, drive: { ...JOINT.drive, motors: 'm1' } },
+      { ...JOINT, drive: { ...JOINT.drive, motors: [1] } },
+      { ...JOINT, drive: { ...JOINT.drive, rigging: { kind: 'cascade' } } },
+      { ...JOINT, drive: { ...JOINT.drive, rigging: { kind: 'belt', stages: [] } } },
+      { ...JOINT, drive: { kind: 'servo', servo: 3, gearRatio: 1 } },
+      { ...JOINT, drive: { kind: 'crServo', servo: 's', gearRatio: 1 } }
+    ]) {
+      expect(() => parseProject(fileWith(2, joint))).toThrow(ProjectFileError)
+    }
+  })
+
+  it('관절이 없으면 joint를 쓰지 않고, 버전 7 파일은 관절 없이 그대로 읽는다', () => {
+    for (const object of JSON.parse(serializeProject(objects, relativize)).objects)
+      expect(object).not.toHaveProperty('joint')
+    const v7 = JSON.parse(serializeProject(objects, relativize))
+    v7.version = 7
+    const { objects: loaded } = parseProject(JSON.stringify(v7))
+    expect(loaded).toEqual(objects)
+    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(8)
   })
 })
 
@@ -546,8 +671,10 @@ describe('버전과 하위 호환', () => {
       direction: 'forward',
       runMode: 'withoutEncoder',
       zeroPowerBehavior: 'brake',
-      // 시뮬레이터 전용 속성(v6)도 기본값(0 = 모델 기본)으로 채운다
-      gearbox: 0
+      // 시뮬레이터 전용 속성(v6·v8)도 기본값(0 = 모델 기본·데이터시트)으로 채운다
+      gearbox: 0,
+      stallTorque: 0,
+      freeSpeed: 0
     })
   })
 
@@ -591,6 +718,26 @@ describe('버전과 하위 호환', () => {
       0.048, 0.035, 0.035, 0.035, 0.035
     ])
     expect(loaded.plate.components![1].props.podCpr).toBe(4000)
+  })
+
+  it('리밋 스위치의 거리(길이)·각도(라디안)는 범위 밖이거나 수가 아니면 0(기본)으로 채운다', () => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    const values: unknown[] = [0.005, 2, -0.1, '0.01', null]
+    values.forEach((value, i) =>
+      data.objects[2].components.push({
+        id: `ls${i}`,
+        type: 'touchSensor',
+        name: `ls${i}`,
+        hub: 'controlHub',
+        port: i,
+        props: { limitJoint: 'j', limitAt: 'upper', limitDistance: value, limitAngle: value }
+      })
+    )
+    const { objects: loaded } = parseProject(JSON.stringify(data))
+    const switches = loaded.plate.components!.slice(1)
+    expect(switches.map((c) => c.props.limitDistance)).toEqual([0.005, 0, 0, 0, 0])
+    expect(switches.map((c) => c.props.limitAngle)).toEqual([0.005, 0, 0, 0, 0])
+    expect(switches[0].props.limitAt).toBe('upper')
   })
 })
 
