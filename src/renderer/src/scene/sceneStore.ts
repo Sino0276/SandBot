@@ -16,6 +16,7 @@ import {
   constrainTransform,
   isCodeGroup,
   type HardwareComponent,
+  type JointSettings,
   type RobotHardwareSettings,
   type SceneObject,
   type SceneObjects,
@@ -187,6 +188,9 @@ type SceneState = {
   setObjectMass: (id: string, settings: MassSettings | null) => void
   // 로봇의 Rigidbody(저울 무게·기본 재질). robot에만, null이거나 정리한 결과가 비면 뗀다(sanitizeRigidbody).
   setRobotRigidbody: (id: string, settings: RigidbodySettings | null) => void
+  // 관절(시뮬레이터 설정, scene/model.ts의 JointSettings)을 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
+  // 계약 단계: 정리(sanitizeJoint·canHaveJoint)는 갈래 C가 넣는다.
+  setJoint: (id: string, settings: JointSettings | null) => void
   // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
   // (없는 오브젝트, 이미 있는 경로, 없는 연결, 연결할 수 없는 경로) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   // 같은 경로를 이미 연결했으면 더하지 않는다. 경로는 NFC로 바꿔 둔다(프로젝트 파일 읽기와 같은 규칙).
@@ -356,6 +360,14 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       if (sameRigidbody(object.rigidbody, rigidbody)) return state
       const next: SceneObject = { ...object, rigidbody }
       if (!rigidbody) delete next.rigidbody
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setJoint: (id, settings) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object || object.kind === 'robot') return state
+      const next: SceneObject = { ...object, joint: settings ?? undefined }
+      if (!settings) delete next.joint
       return { objects: { ...state.objects, [id]: next } }
     }),
   addScriptLink: (objectId, input) =>

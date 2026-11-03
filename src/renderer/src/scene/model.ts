@@ -108,7 +108,45 @@ export type SceneObject = {
   mass?: MassSettings
   // 로봇 전체 질량 설정(robot에만, Unity Rigidbody)
   rigidbody?: RigidbodySettings
+  // 메커니즘 관절(Unity ArticulationBody, group·assembly·part·CAD 루트에, robot·바퀴 오브젝트에는 두지 않는다,
+  // PROJECT_VERSION 8). 시뮬레이터 전용 설정이라 생성 코드·구성 XML·검증과 관계없다.
+  joint?: JointSettings
 }
+
+// 관절(spec-3b §2). 편집 자세가 q = 0이다. 회전 관절은 rad, 직선 관절은 m.
+export type JointType = 'revolute' | 'prismatic'
+export type JointAxis = 'x' | 'y' | 'z'
+export type JointSettings = {
+  type: JointType
+  // 이 오브젝트 로컬 좌표의 앵커(관절 원점), m
+  anchor: Vec3
+  // 이 오브젝트 로컬 축 중 하나와 부호(회전은 그 축 둘레 오른손 +, 직선은 그 방향 +)
+  axis: JointAxis
+  axisSign: 1 | -1
+  // 편집 자세 기준 한계. null이면 제한 없음(회전 관절만)
+  limits: { lower: number; upper: number } | null
+  // 관절 좌표 단위: 쿨롱(N·m 또는 N), 점성(N·m·s/rad 또는 N·s/m)
+  friction: { coulomb: number; viscous: number }
+  spring:
+    | null
+    | { kind: 'constantForce'; force: number }
+    | { kind: 'linear'; stiffness: number; rest: number }
+  drive: JointDrive
+}
+// motors·servo는 같은 로봇의 하드웨어 컴포넌트 id. gearRatio는 장치 출력축 → 관절(외부 감속), spoolDiameter는 직선 관절(m).
+// rigging.stages는 이 관절 위의 단(위 단 관절 오브젝트 id, 아래에서 위 순서), 위 단은 drive 'stage'다.
+export type JointDrive =
+  | { kind: 'none' }
+  | {
+      kind: 'motor'
+      motors: string[]
+      gearRatio: number
+      spoolDiameter: number
+      rigging: { kind: 'direct' } | { kind: 'cascade' | 'continuous'; stages: string[] }
+    }
+  | { kind: 'servo'; servo: string; gearRatio: number }
+  | { kind: 'crServo'; servo: string; gearRatio: number; spoolDiameter: number }
+  | { kind: 'stage' }
 
 // 스크립트 연결. path는 TeamCode 기준 상대 경로('/' 구분, src/shared/teamCodePaths.ts의 isLinkableJavaPath),
 // className은 연결할 때의 패키지까지 붙인 클래스 이름(파일 이름 = public 최상위 클래스 이름)이다.

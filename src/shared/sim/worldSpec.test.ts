@@ -59,7 +59,8 @@ function valid(): WorldSpec {
       }
     ],
     otos: [{ device: 'otos', position: { x: 0.1, y: 0 }, mountingAngle: -Math.PI / 2 }],
-    imus: [{ device: 'imu' }]
+    imus: [{ device: 'imu' }],
+    joints: []
   }
 }
 
@@ -73,7 +74,7 @@ describe('parseWorldSpec', () => {
 
   it.each([
     ['not an object', null],
-    ['version', { ...valid(), version: 2 }],
+    ['version', { ...valid(), version: 1 }],
     ['robot.footprint', { ...valid(), robot: { ...valid().robot, footprint: [{ x: 0, y: 0 }] } }],
     ['robot.start', { ...valid(), robot: { ...valid().robot, start: { x: 99, y: 0, yaw: 0 } } }],
     ['robot.start.yaw', { ...valid(), robot: { ...valid().robot, start: { x: 0, y: 0 } } }],

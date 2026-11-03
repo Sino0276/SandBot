@@ -383,7 +383,9 @@ export function buildWorldSpec(
     deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'worldTooManyDeadWheels', warnings),
     pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
     otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
-    imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings)
+    imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
+    // 관절(3b): 갈래 C가 씬의 관절 설정으로 채운다
+    joints: []
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {

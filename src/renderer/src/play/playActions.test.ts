@@ -429,7 +429,7 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     await initPlay()
     const { world } = lastRequest()
     expect(world).toMatchObject({
-      version: 1,
+      version: 2,
       robot: { start: { x: 0, y: 0, yaw: 0 } },
       batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
       hubs: ['Control Hub'],

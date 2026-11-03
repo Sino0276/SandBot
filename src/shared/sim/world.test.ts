@@ -65,6 +65,7 @@ function mecanumSpec(change: Partial<WorldSpec> = {}): WorldSpec {
     pinpoints: [],
     otos: [],
     imus: [{ device: 'imu' }],
+    joints: [],
     ...change
   }
 }

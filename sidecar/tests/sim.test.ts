@@ -79,7 +79,8 @@ const SPEC: WorldSpec = {
     }
   ],
   otos: [],
-  imus: [{ device: 'imu' }]
+  imus: [{ device: 'imu' }],
+  joints: []
 }
 
 const BUTTONS = [
