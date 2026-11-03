@@ -566,7 +566,14 @@ export function buildWorldSpec(
     robot: {
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
       footprint,
-      body: chassisBody(mass, robotId, joints.bodyMasses, footprint, warnings)
+      // 바퀴가 없으면 기저가 고정이라 섀시 몸체를 쓰지 않는다(spec-3c §3): 기본 상자로 대신해도 알리지 않는다
+      body: chassisBody(
+        mass,
+        robotId,
+        joints.bodyMasses,
+        footprint,
+        cappedWheels.length > 0 ? warnings : []
+      )
     },
     batteryVoltage: settings.batteryVoltage,
     hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),

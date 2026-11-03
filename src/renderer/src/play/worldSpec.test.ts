@@ -688,6 +688,43 @@ describe('섀시 몸체·바퀴 질량·접점(3c)', () => {
     expect(clipped.spec!.wheels[0].spinInertia).toBeCloseTo(own(2), 15)
   })
 
+  it('바퀴가 없는 로봇(고정 기저의 관절 실험대)은 섀시가 기본 상자로 바뀌어도 알리지 않는다', () => {
+    // 저울 무게를 관절 몸체(팔 14 kg)가 다 가져간다: 바퀴가 있으면 worldChassisMass인 상황
+    const objects: SceneObjects = {
+      R: {
+        id: 'R',
+        name: 'Robot',
+        kind: 'robot',
+        parentId: null,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+      },
+      arm: pointGroup('arm', 'R', [0, 0, 0.3], { joint: defaultJoint('revolute') }),
+      armMass: pointGroup('armMass', 'arm', [0.2, 0, 0], { mass: { mass: 14 } })
+    }
+    const mass = computeMassModel(objects, NO_GEOMETRY)
+    const { spec, warnings } = buildWorldSpec(objects, 'R', SETTINGS, mass)
+    expect(keys(warnings)).toEqual(['worldNoWheels'])
+    expect(spec!.robot.body).toEqual(placeholderChassisBody(spec!.robot.footprint))
+    expect(spec!.joints[0].body.mass).toBeCloseTo(14, 12)
+    // 같은 로봇에 바퀴 넷을 달면 알린다
+    const wheeled: SceneObjects = { ...objects }
+    ;[
+      [0.15, 0.15],
+      [0.15, -0.15],
+      [-0.15, 0.15],
+      [-0.15, -0.15]
+    ].forEach(([x, y], i) => {
+      wheeled[`w${i}`] = pointGroup(`w${i}`, 'R', [x, y, 0.05], { wheel: defaultWheel('traction') })
+    })
+    const withWheels = buildWorldSpec(
+      wheeled,
+      'R',
+      SETTINGS,
+      computeMassModel(wheeled, NO_GEOMETRY)
+    )
+    expect(keys(chassisWarnings(withWheels.warnings))).toContain('worldChassisMass')
+  })
+
   it('남은 질량이 0.1 kg보다 작으면 기본 상자와 경고, 질량 모델이 없거나 그 로봇이 없으면 경고 없이 기본 상자', () => {
     // 관절 몸체(팔 2 kg)가 저울 무게를 거의 다 가져간다: 남는 것은 배터리 자리의 50 g
     const objects = pointRobot()
