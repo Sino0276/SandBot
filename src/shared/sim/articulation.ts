@@ -834,15 +834,14 @@ export class Articulation {
       low[c] = Math.max(low[c], Math.min(a, b))
       high[c] = Math.min(high[c], Math.max(a, b))
     })
-    // 멈출 좌표와 그 바깥 속도(지우기 전)
+    // 멈출 좌표와 그 바깥 속도(지우기 전). 이미 멈춰 있던(속도 0) 한계 위 좌표도 넣어, 다른 좌표를 멈추는 충격이 그것을
+    // 한계 밖으로 밀지 않게 한다(예전처럼 한계 위 좌표는 이 하위 단계를 속도 0으로 끝낸다).
     const stopped: number[] = []
     const outward: number[] = []
     const stop = (c: number, limit: number): void => {
       z[c] = limit
-      if (v[c] !== 0) {
-        stopped.push(c)
-        outward.push(v[c])
-      }
+      stopped.push(c)
+      outward.push(v[c])
       // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
       v[c] = 0
     }
@@ -852,7 +851,7 @@ export class Articulation {
       else if (z[c] < low[c]) z[c] = low[c]
       else if (z[c] > high[c]) z[c] = high[c]
     }
-    if (stopped.length === 0) return
+    if (outward.every((x) => x === 0)) return
     // y_k = M̂⁻¹e_{C_k}, A = J·M̂⁻¹·Jᵀ(양정치 부분 행렬), λ = A⁻¹(−v_C)
     const unit = (c: number): number[] => {
       const e = new Array<number>(m).fill(0)
