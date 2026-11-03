@@ -409,9 +409,18 @@ describe('관절 카드 보기 계산', () => {
     expect(robotAxisName([Math.SQRT1_2, Math.SQRT1_2, 0])).toBeNull()
   })
 
-  it('한계 칸은 아래 ≤ 위를 지키고, 미리보기 범위는 한계(한계 없으면 ±180°)', () => {
-    expect(withLimit({ lower: 0, upper: 0.5 }, 'lower', 0.7)).toEqual({ lower: 0.5, upper: 0.5 })
+  it('한계 칸은 아래 ≤ 0 ≤ 위(편집 자세가 한계 안)를 지키고, 미리보기 범위는 한계(한계 없으면 ±180°)', () => {
+    // 세계 설명 검증은 lower ≤ 0 ≤ upper만 받는다. 0을 넘는 아래 한계·0 아래의 위 한계는 0으로 자른다
+    expect(withLimit({ lower: 0, upper: 0.5 }, 'lower', 0.7)).toEqual({ lower: 0, upper: 0.5 })
+    expect(withLimit({ lower: 0, upper: 0.5 }, 'lower', 0.05)).toEqual({ lower: 0, upper: 0.5 })
+    expect(withLimit({ lower: 0, upper: 0.5 }, 'lower', -0.1)).toEqual({ lower: -0.1, upper: 0.5 })
     expect(withLimit({ lower: 0, upper: 0.5 }, 'upper', -1)).toEqual({ lower: 0, upper: 0 })
+    const tenDeg = (10 * Math.PI) / 180
+    expect(withLimit({ lower: -1, upper: 1 }, 'upper', -tenDeg)).toEqual({ lower: -1, upper: 0 })
+    expect(withLimit({ lower: -1, upper: 1 }, 'upper', 2)).toEqual({ lower: -1, upper: 2 })
+    // −0은 0으로 둔다(저장 글자·비교가 흔들리지 않게)
+    expect(Object.is(withLimit({ lower: -1, upper: 1 }, 'upper', -0).upper, 0)).toBe(true)
+    expect(Object.is(withLimit({ lower: -1, upper: 1 }, 'lower', -0).lower, 0)).toBe(true)
     expect(previewRange({ limits: { lower: -1, upper: 2 } })).toEqual({ min: -1, max: 2 })
     expect(previewRange({ limits: null })).toEqual({ min: -Math.PI, max: Math.PI })
   })

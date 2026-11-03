@@ -343,15 +343,16 @@ export function previewRange(joint: Pick<JointSettings, 'limits'>): { min: numbe
     : { min: -Math.PI, max: Math.PI }
 }
 
-// 한계 칸 하나를 고칠 때: 아래 ≤ 위를 지키도록 반대쪽 값으로 자른다
+// 한계 칸 하나를 고칠 때: 편집 자세(q = 0)가 한계 안에 있도록 아래 ≤ 0 ≤ 위로 자르고(세계 설명 검증은 그 밖을 받지
+// 않고, scene/joint.ts의 정리는 가까운 쪽을 말없이 0으로 넓힌다), 아래 ≤ 위를 지킨다. `|| 0`은 −0을 0으로 둔다
 export function withLimit(
   limits: { lower: number; upper: number },
   edge: 'lower' | 'upper',
   value: number
 ): { lower: number; upper: number } {
   return edge === 'lower'
-    ? { lower: Math.min(value, limits.upper), upper: limits.upper }
-    : { lower: limits.lower, upper: Math.max(value, limits.lower) }
+    ? { lower: Math.min(value, 0, limits.upper) || 0, upper: limits.upper }
+    : { lower: limits.lower, upper: Math.max(value, 0, limits.lower) || 0 }
 }
 
 // 마찰·스프링 칸의 상한(위 jointDefaults의 한도)

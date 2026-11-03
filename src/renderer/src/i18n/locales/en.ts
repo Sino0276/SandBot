@@ -1562,7 +1562,7 @@ const en: Messages = {
     lower: 'Lower Limit',
     upper: 'Upper Limit',
     limitsHint:
-      'The edit pose (the pose in the scene now) is 0. The joint stops at a limit without bouncing.',
+      'The edit pose (the pose in the scene now) is 0 and the limits must include it, so the lower limit is kept at 0 or below and the upper limit at 0 or above. The joint stops at a limit without bouncing.',
     friction: 'Joint Friction',
     frictionHint:
       'Constant (Coulomb) friction against motion, N·m for revolute and N for prismatic joints. Motor and servo gear friction is computed separately, so enter only the bearing or slide share.',
