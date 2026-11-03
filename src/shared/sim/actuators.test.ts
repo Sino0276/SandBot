@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BODY_DIODE_DROP,
   BRAKE,
   DcGearMotor,
   DEFAULT_VELOCITY_PIDF,
@@ -72,45 +73,59 @@ describe('DcGearMotor', () => {
     expect(motor.current({ kind: 'duty', duty: 1 }, 12, 1.2 * PARAMS.freeSpeed)).toBeLessThan(0)
   })
 
-  it('역기전력이 배터리 전압을 넘으면 단자가 레일에 묶여 회생 제동한다(FLOAT·부분 듀티·듀티 0, 본체 다이오드)', () => {
+  it('역기전력이 배터리 전압 + 본체 다이오드 강하를 넘으면 회생 제동한다(FLOAT·듀티 0은 다이오드 둘, 부분 듀티의 꺼짐 구간은 하나)', () => {
     const k = (g * g * motor.torqueConstant * motor.backEmfConstant) / motor.resistance
-    // 역기전력이 12 V가 되는 출력축 속도
-    const rail = 12 / (motor.backEmfConstant * g)
+    const vf = BODY_DIODE_DROP
+    expect(vf).toBe(0.7)
+    // 역기전력이 e가 되는 출력축 속도
+    const at = (e: number): number => e / (motor.backEmfConstant * g)
     const torque = (t: ReturnType<typeof motor.terms>, omega: number): number =>
       t.force - t.damping * omega
-    for (const [stage, region] of [
-      [FLOAT, 'F'],
-      [{ kind: 'duty', duty: 0 }, 'z'],
-      [{ kind: 'duty', duty: 0.3 }, 'g'],
-      [{ kind: 'duty', duty: 0.99 }, 'g']
+    for (const [stage, region, clamp] of [
+      [FLOAT, 'F', 12 + 2 * vf],
+      [{ kind: 'duty', duty: 0 }, 'z', 12 + 2 * vf],
+      // 켜짐 구간(|d|)은 FET로 레일 V, 꺼짐 구간(1 − |d|)은 다이오드 하나로 V + Vf: 평균 V + (1 − |d|)·Vf
+      [{ kind: 'duty', duty: 0.3 }, 'g', 12 + 0.7 * vf],
+      [{ kind: 'duty', duty: 0.99 }, 'g', 12 + 0.01 * vf]
     ] as const) {
-      // 레일 바로 아래는 전류 0, 위는 (V − e)/R의 회생(제동, ω 반대 토크)
-      expect(motor.current(stage, 12, 0.999 * rail)).toBe(0)
-      const above = motor.terms(stage, 12, 1.3 * rail)
+      // 묶이는 전압 바로 아래(레일 위여도)는 전류 0, 위는 (u − e)/R의 회생(제동, ω 반대 토크)
+      expect(motor.current(stage, 12, at(12.0001))).toBe(0)
+      expect(motor.current(stage, 12, at(clamp * 0.9999))).toBe(0)
+      const omega = at(clamp * 1.3)
+      const above = motor.terms(stage, 12, omega)
       expect(above.region).toBe(region)
       expect(above.damping).toBeCloseTo(k, 12)
-      expect(torque(above, 1.3 * rail)).toBeLessThan(0)
-      expect(motor.current(stage, 12, 1.3 * rail)).toBeCloseTo(
-        (12 - motor.backEmfConstant * g * 1.3 * rail) / motor.resistance,
+      expect(torque(above, omega)).toBeLessThan(0)
+      expect(motor.current(stage, 12, omega)).toBeCloseTo(
+        (clamp - motor.backEmfConstant * g * omega) / motor.resistance,
         12
       )
-      // 거꾸로 돌려져도 같다(대칭: FLOAT·듀티 0은 레일 −V, 부분 듀티는 명령 쪽이 아니면 선형)
+      // 거꾸로 돌려져도 같다(대칭: FLOAT·듀티 0은 −(V + 2Vf), 부분 듀티는 명령 쪽이 아니면 선형)
       if (stage.kind !== 'duty' || stage.duty === 0)
-        expect(torque(motor.terms(stage, 12, -1.3 * rail), -1.3 * rail)).toBeCloseTo(
-          -torque(above, 1.3 * rail),
+        expect(torque(motor.terms(stage, 12, -omega), -omega)).toBeCloseTo(
+          -torque(above, omega),
           12
         )
     }
-    // 레일 위에서 듀티 0.99·1.0·FLOAT는 같은 직선이고, 아래로 레일을 지나도 토크가 연속이다
-    for (const omega of [1.01 * rail, 1.5 * rail, 3 * rail])
-      expect(torque(motor.terms({ kind: 'duty', duty: 0.99 }, 12, omega), omega)).toBeCloseTo(
-        torque(motor.terms({ kind: 'duty', duty: 1 }, 12, omega), omega),
-        12
+    // 듀티 1은 꺼짐 구간이 없어 레일 V 그대로이고, 듀티 0.99는 레일 위에서 거의 같다(차이 0.01·Vf)
+    for (const omega of [at(13), at(18), at(36)]) {
+      const near = torque(motor.terms({ kind: 'duty', duty: 0.99 }, 12, omega), omega)
+      const one = torque(motor.terms({ kind: 'duty', duty: 1 }, 12, omega), omega)
+      expect(Math.abs(near - one)).toBeLessThanOrEqual(
+        ((0.01 * vf * g * motor.torqueConstant) / motor.resistance) * (1 + 1e-9)
       )
-    for (const stage of [FLOAT, { kind: 'duty', duty: 0.5 }, { kind: 'duty', duty: 0.99 }] as const)
-      for (const edge of [0.5 * rail, 0.99 * rail, rail]) {
-        const below = torque(motor.terms(stage, 12, edge * (1 - 1e-9)), edge * (1 - 1e-9))
-        const above = torque(motor.terms(stage, 12, edge * (1 + 1e-9)), edge * (1 + 1e-9))
+    }
+    // 영역 경계를 지나도 토크가 연속이다
+    for (const [stage, edges] of [
+      [FLOAT, [12 + 2 * vf]],
+      [{ kind: 'duty', duty: 0.5 }, [6, 12 + 0.5 * vf]],
+      [{ kind: 'duty', duty: 0.99 }, [0.99 * 12, 12 + 0.01 * vf]]
+    ] as const)
+      for (const e of edges) {
+        const lo = at(e) * (1 - 1e-9)
+        const hi = at(e) * (1 + 1e-9)
+        const below = torque(motor.terms(stage, 12, lo), lo)
+        const above = torque(motor.terms(stage, 12, hi), hi)
         expect(Math.abs(below - above)).toBeLessThan(1e-6)
       }
   })

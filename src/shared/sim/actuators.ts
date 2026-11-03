@@ -27,6 +27,11 @@ export const DUTY_FULL_SCALE = 32767
 // WPILib ExpansionHubVelocityConstants "The motor control period is 10ms"에 맞춘다(data §4.2). 0 ns부터 고정 격자에서 표본을 뜬다.
 export const HUB_CONTROL_PERIOD_NANOS = 10_000_000
 
+// 허브 H-브리지(VNH5050) 본체 다이오드의 순방향 강하(V). 가정: 실리콘 본체 다이오드의 보통 값 0.7 V(이 세션에서 VNH5050A-E
+// 데이터시트(ST DocID 16009)의 free-wheeling diode 순방향 전압 표를 열지 못했다 — 회생 전류 몇 A에서 0.7–1 V 범위로 본다).
+// 회생 전류가 레일로 돌아가려면 단자 전압이 레일보다 이만큼(FLOAT·듀티 0은 두 번) 높아야 한다.
+export const BODY_DIODE_DROP = 0.7
+
 // [p, i, d, f]
 export type Pidf = [number, number, number, number]
 // 허브 LegacyPID 기본 계수(spec-3b §3): 속도 P10·I3·D0, 위치 P10·I0.05·D0. SDK 12.0 RevRoboticsCoreHexMotor의
@@ -85,18 +90,20 @@ export class DcGearMotor {
   }
 
   // 전력단(H-브리지와 본체 다이오드)이 모터 단자에 거는 평균 전압(V), 전류가 흐르지 않으면 null. e는 역기전력 Ke·G·ω(V).
-  // 모델(가정, 인덕턴스와 다이오드 강하는 무시한다):
+  // 모델(가정, 인덕턴스는 무시한다, 다이오드 강하는 BODY_DIODE_DROP 하나로 둔다):
   //   - VNH5050은 비동기(asynchronous)로 PWM한다: 켜짐 구간은 FET가 단자를 ±V_bat에 잇고(전류는 양쪽으로 흐른다), 꺼짐 구간은
   //     FET를 끄고 본체 다이오드로만 환류한다(gm0 control-system-internals "does not brake the H-bridge during the PWM off
-  //     cycle", [ACT] §3.3). 다이오드는 단자 전압이 레일을 넘을 때만 전도하므로 단자 전압은 늘 [−V_bat, V_bat] 안이다.
+  //     cycle", [ACT] §3.3). 다이오드는 단자 전압이 레일을 다이오드 강하만큼 넘을 때만 전도한다.
   //   - 0 < |d| < 1의 평균 단자 전압은 d·V다(연속 전도의 평균, 3b 비평 §4.3-14). 역기전력이 명령 쪽으로 d·V를 넘으면 전류가
-  //     역전해야 하는데 꺼짐 구간의 다이오드가 그 길을 막으므로 전류 0으로 자른다(회생 없음). 역기전력이 V_bat를 넘으면
-  //     (중력이 리프트를 끌어내림, 큰 관성이 명령보다 빨리 돎) 켜짐 구간의 FET와 꺼짐 구간의 다이오드 모두 단자를 같은 레일
-  //     sign(d)·V_bat에 묶으므로 회생 전류 (sign(d)·V − e)/R가 흐르며 제동한다. |d| = 1은 이 두 직선이 같아 자르는 구간이 없고,
-  //     |d| → 1에서 토크가 연속이다(d = 0.99와 1.0이 거의 같다).
-  //   - FLOAT(단자 열림)·듀티 0: |e| ≤ V_bat이면 전류 0, 넘으면 다이오드가 단자를 sign(e)·V_bat에 묶는다(p10mass actuators.md
-  //     §3.3 "역기전력이 V_bat + 다이오드 강하를 넘을 때만 다이오드로 회생한다". 다이오드 강하 ≈ 0.7 V × 2는 무시한다:
-  //     모터 전류 몇 A에서 VNH5050 본체 다이오드 강하가 레일 전압 12 V의 몇 %라 무부하 속도 근처의 제동 시작점만 조금 옮긴다).
+  //     역전해야 하는데 꺼짐 구간의 다이오드가 그 길을 막으므로 전류 0으로 자른다(회생 없음). 역기전력이 더 커서(중력이
+  //     리프트를 끌어내림, 큰 관성이 명령보다 빨리 돎) 켜짐 구간에는 FET가 단자를 sign(d)·V_bat에, 꺼짐 구간에는 반대쪽 다리의
+  //     켜진 아래 FET와 본체 다이오드 하나가 sign(d)·(V_bat + Vf)에 묶으면 회생 전류가 흐르며 제동한다. 평균 단자 전압은
+  //     u = sign(d)·(V_bat + (1 − |d|)·Vf)이고 sign(d)·e가 그것을 넘을 때 흐른다(경계에서 전류 0이라 토크가 연속이다).
+  //     |d| = 1은 꺼짐 구간이 없어 직선 d·V 그대로이고 |d| → 1에서 연속이다(d = 0.99와 1.0의 차이는 0.01·Vf).
+  //   - FLOAT(단자 열림)·듀티 0: FET가 모두 꺼져 회생 전류는 본체 다이오드 둘을 거친다. |e| ≤ V_bat + 2·Vf이면 전류 0,
+  //     넘으면 단자가 sign(e)·(V_bat + 2·Vf)에 묶인다(p10mass actuators.md §3.3 "역기전력이 V_bat + 다이오드 강하를 넘을 때만
+  //     다이오드로 회생한다"). 1.4 V는 무부하 속도의 역기전력(≈ 11.7 V)의 약 12 %라 FLOAT로 내리는 속도를 어느 부하에서나
+  //     약 0.12·ω_free 올린다(무시하면 시뮬레이터가 실제보다 느리게 내린다).
   //   - BRAKE: 단자 단락(0 V). 결정적이다(영역은 지금 ω만으로 정한다).
   private terminal(
     stage: PowerStage,
@@ -107,13 +114,15 @@ export class DcGearMotor {
     const d = stage.kind === 'duty' ? stage.duty : 0
     if (d === 0) {
       const open = stage.kind === 'float' ? 'f' : '0'
-      if (Math.abs(e) <= voltage) return { u: null, region: open }
-      return { u: Math.sign(e) * voltage, region: stage.kind === 'float' ? 'F' : 'z' }
+      const clamp = voltage + 2 * BODY_DIODE_DROP
+      if (Math.abs(e) <= clamp) return { u: null, region: open }
+      return { u: Math.sign(e) * clamp, region: stage.kind === 'float' ? 'F' : 'z' }
     }
     const s = Math.sign(d)
     const ahead = s * e
     if (Math.abs(d) >= 1 || ahead <= Math.abs(d) * voltage) return { u: d * voltage, region: 'l' }
-    if (ahead > voltage) return { u: s * voltage, region: 'g' }
+    const clamp = voltage + (1 - Math.abs(d)) * BODY_DIODE_DROP
+    if (ahead > clamp) return { u: s * clamp, region: 'g' }
     return { u: null, region: 'c' }
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
-import { DcGearMotor } from './actuators'
+import { BODY_DIODE_DROP, DcGearMotor } from './actuators'
 import { resolveMotorParams, resolveServoParams } from './actuatorData'
 import { Articulation, MIN_COORDINATE_INERTIA, type DriveForces } from './articulation'
 import { motorType, rotationSign } from './motorTypes'
@@ -412,10 +412,14 @@ describe('continuous 리깅 리프트', () => {
 
 describe('전력단 발전 제동(본체 다이오드)', () => {
   // goBILDA 5203 19.2:1, 스풀 Ø38.2 mm(goBILDA 3407 계열), 1.5 kg 짐, 단 마찰 spec-3b 기본값(1 N·0.5 N·s/m), 0.8 m 행정.
-  // 2 s 동안 power 1로 올린 뒤 내린다. 중력이 돕는 하강은 역기전력이 배터리 전압을 넘으면 브리지(켜짐 구간은 FET,
-  // 꺼짐 구간·FLOAT는 본체 다이오드)가 단자를 레일에 묶어 회생 전류가 흐르므로 무부하 속도 근처에서 묶인다.
+  // 2 s 동안 power 1로 올린 뒤 내린다. 중력이 돕는 하강은 역기전력이 단자를 묶는 전압을 넘으면 회생 전류가 흐르므로 무부하
+  // 속도 근처에서 묶인다. 묶는 전압은 power −1이 레일 V(FET), 부분 듀티가 V + (1 − |d|)·Vf(꺼짐 구간은 다이오드 하나),
+  // FLOAT·꺼짐·듀티 0이 V + 2·Vf(다이오드 둘)라, 그만큼 빨리 내린다(속도 차 ≤ ΔV/(Ke·G)·반지름).
   const radius = 0.0382 / 2
   const free = PARAMS.freeSpeed * radius
+  const motor = new DcGearMotor(PARAMS)
+  const shift = (volts: number): number =>
+    (volts / (motor.backEmfConstant * PARAMS.gearbox)) * radius
   const spec = world([
     lift({
       limits: { lower: 0, upper: 0.8 },
@@ -442,12 +446,13 @@ describe('전력단 발전 제동(본체 다이오드)', () => {
     return { peak, peakTicks }
   }
   const full = lowering(motorOut(-1))
-  const cases: [string, Record<string, DeviceValues>][] = [
-    ['FLOAT', motorOut(0, { zeroPower: 'FLOAT' })],
-    ['꺼짐', motorOut(0, { enabled: false })],
-    ['power −0.05', motorOut(-0.05)],
-    ['power −0.3', motorOut(-0.3)],
-    ['power −0.99', motorOut(-0.99)]
+  const vf = BODY_DIODE_DROP
+  const cases: [string, Record<string, DeviceValues>, number][] = [
+    ['FLOAT', motorOut(0, { zeroPower: 'FLOAT' }), 2 * vf],
+    ['꺼짐', motorOut(0, { enabled: false }), 2 * vf],
+    ['power −0.05', motorOut(-0.05), 0.95 * vf],
+    ['power −0.3', motorOut(-0.3), 0.7 * vf],
+    ['power −0.99', motorOut(-0.99), 0.01 * vf]
   ]
 
   it('power −1은 무부하 속도 근처에서 묶인다', () => {
@@ -455,14 +460,20 @@ describe('전력단 발전 제동(본체 다이오드)', () => {
     expect(full.peak).toBeLessThan(1.2 * free)
   })
 
-  for (const [label, down] of cases)
-    it(`${label}로 내리면 무부하 속도 근처에서 묶이고 power −1보다 빠르지 않다`, () => {
+  for (const [label, down, drop] of cases)
+    it(`${label}로 내리면 무부하 속도 근처에서 묶이고 power −1보다 다이오드 강하만큼만 빠르다`, () => {
       const { peak, peakTicks } = lowering(down)
-      expect(peak).toBeLessThan(1.2 * free)
-      expect(peak).toBeLessThanOrEqual(full.peak * (1 + 1e-3))
-      // 허브 엔코더 속도도 무부하(28 틱 × 6000 rpm ÷ 60 = 2800 틱/s)의 1.2배 안
-      expect(peakTicks).toBeLessThan(1.2 * 2800)
+      expect(peak).toBeLessThanOrEqual(full.peak + shift(drop) * (1 + 1e-3))
+      if (drop > 0.1) expect(peak).toBeGreaterThan(full.peak + 0.5 * shift(drop))
+      expect(peak).toBeLessThan(1.35 * free)
+      // 허브 엔코더 속도도 무부하(28 틱 × 6000 rpm ÷ 60 = 2800 틱/s)의 1.35배 안
+      expect(peakTicks).toBeLessThan(1.35 * 2800)
     })
+
+  it('FLOAT는 다이오드 강하(2·Vf ≈ 무부하 역기전력의 12 %)만큼 power −1보다 빨리 내린다', () => {
+    expect(shift(2 * vf) / free).toBeGreaterThan(0.11)
+    expect(shift(2 * vf) / free).toBeLessThan(0.13)
+  })
 
   it('듀티 0.99와 1.0은 거의 같다(연속)', () => {
     const near = lowering(motorOut(-0.99))
