@@ -173,6 +173,41 @@ describe('기어모터 물리 값', () => {
     expect(ticks('TetrixMotor', 40)).toBeCloseTo(960, 9)
     // Studica Maverick 61:1: 6 펄스 × 61 × 4 = 1464
     expect(ticks('StudicaMaverick', 'default')).toBeCloseTo(1464, 9)
+    // goBILDA 5201 53:1(실제 53.475): 엔코더축 28, 출력축 1,497.325(goBILDA 5201-0002-0053 Specs "Encoder Countable Events
+    // Per Revolution"). SDK 형식(1500 ÷ 54 = 27.78 × 53.475 = 1485.4)이 아니다.
+    expect(ticks('goBILDA5201SeriesMotor', 'default')).toBeCloseTo(1497.3, 1)
+    expect(ticks('goBILDA5201SeriesMotor', 'default')).toBeCloseTo(28 * 53.475, 9)
+    // NeveRest Classic 40·60: 7 펄스 × 4 = 28 × 40·60 = 1120·1680
+    expect(ticks('NeveRest40Gearmotor', 'default')).toBeCloseTo(1120, 9)
+    expect(ticks('NeveRest60Gearmotor', 'default')).toBeCloseTo(1680, 9)
+    // NeveRest Orbital 3.7: 같은 NeveRest 맨 모터·엔코더(7 펄스 × 4 = 28) × 3.7 = 103.6(SDK 형식 44.4 = 12 × 3.7이 아니다)
+    expect(ticks('NeveRest3.7v1Gearmotor', 'default')).toBeCloseTo(103.6, 9)
+    // MATRIX 12V: goBILDA와 같은 맨 모터·엔코더 28 × 52.8 = 1478.4(SDK 형식과 같다)
+    expect(ticks('Matrix12vMotor', 'default')).toBeCloseTo(1478.4, 9)
+    // 형식을 모르는 모터는 goBILDA 계열로 본다: 28 × SDK Motor gearing 52
+    expect(ticks('Motor', 'default')).toBeCloseTo(28 * 52, 9)
+    // 모든 계열의 모터축 카운트는 데이터시트 값(goBILDA·REV·NeveRest·MATRIX 28, Core Hex 4, TETRIX·Maverick 24)이다
+    const counts: Record<string, number> = {
+      goBILDA5201SeriesMotor: 28,
+      goBILDA5202SeriesMotor: 28,
+      Matrix12vMotor: 28,
+      NeveRest20Gearmotor: 28,
+      'NeveRest3.7v1Gearmotor': 28,
+      NeveRest40Gearmotor: 28,
+      NeveRest60Gearmotor: 28,
+      RevRobotics20HDHexMotor: 28,
+      RevRobotics40HDHexMotor: 28,
+      RevRoboticsCoreHexMotor: 4,
+      RevRoboticsUltraplanetaryHDHexMotor: 28,
+      StudicaMaverick: 24,
+      TetrixMotor: 24,
+      Motor: 28
+    }
+    for (const tag of Object.keys(MOTOR_TYPES)) {
+      expect(counts[tag]).toBeDefined()
+      for (const gearbox of [1, 3.7, 20, 100])
+        expect(jointEncoderTicksPerOutputRev(tag, gearbox)).toBeCloseTo(counts[tag] * gearbox, 9)
+    }
   })
 
   it('모든 SDK 형식과 모르는 태그가 유한한 양수 값을 낸다(모르는 태그는 지정 안 함과 같다)', () => {

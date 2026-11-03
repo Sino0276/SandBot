@@ -61,10 +61,11 @@ type MotorFamily = {
   // 모터 gearbox 속성이 0(모델 기본)일 때의 실제 감속비. SDK gearing이 실제와 다른 형식(Core Hex 36.25 대 72, UltraPlanetary
   // 20 대 18.93)은 실제 값이다.
   defaultRatio: number
-  // 모터축 1회전의 엔코더 카운트(쿼드러처). 없으면 SDK 형식의 ticksPerRev ÷ gearing(엔코더가 모터축에 있는 형식은 이것이 곧
-  // 모터축 카운트다: goBILDA 2786 ÷ 99.5 = 28, HD Hex·UltraPlanetary·NeveRest 560 ÷ 20 = 28). SDK gearing이 실제 감속비가
-  // 아닌 형식만 제조사 값을 둔다.
-  encoderCountsPerMotorRev?: number
+  // 모터축 1회전의 엔코더 카운트(쿼드러처, 제조사 값). SDK 형식의 ticksPerRev ÷ gearing은 쓰지 않는다: 그 비가 모터축 값과
+  // 같은 형식(goBILDA 2786 ÷ 99.5 = 28, HD Hex·UltraPlanetary·NeveRest 560 ÷ 20 = 28)도 있지만, SDK gearing이 실제 감속비가
+  // 아니거나(goBILDA 5201 1500 ÷ 54 = 27.78, Core Hex 288 ÷ 36.25 = 7.9) 옛 모터 값인(TETRIX 1440 ÷ 52, NeveRest 3.7 44.4 ÷
+  // 3.7 = 12) 형식이 있어서다.
+  encoderCountsPerMotorRev: number
   // A, 12 V
   stallCurrent: number
   freeCurrent: number
@@ -105,6 +106,8 @@ const GOBILDA: MotorFamily = {
   ],
   // SDK goBILDA5202Series gearing 99.5
   defaultRatio: S17 * S11 * S11,
+  // 엔코더 28 카운트(모터축, goBILDA 5203 Specs "Encoder Countable Events Per Revolution (Encoder Shaft)", [ACT] §2.1)
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 9.2,
   freeCurrent: 0.25,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -155,6 +158,8 @@ const ULTRA_PLANETARY: MotorFamily = {
   rows: ultraPlanetaryRows(),
   // SDK RevRoboticsUltraplanetaryHDHexMotor gearing 20 = 4:1 + 5:1 카트리지(실제 18.93:1)
   defaultRatio: (76 / 21) * (68 / 13),
+  // REV motor-based-encoders "At the motor - 28 counts/revolution"
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 8.5,
   freeCurrent: 0.4,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -168,6 +173,8 @@ const ULTRA_PLANETARY: MotorFamily = {
 const hdHex = (ratio: number, stallTorque: number, freeRpm: number): MotorFamily => ({
   rows: [row(ratio, stallTorque * SPUR_EFFICIENCY, freeRpm, 0)],
   defaultRatio: ratio,
+  // HD Hex 맨 모터의 엔코더 28 카운트(REV 표의 출력축 560·1120 = 28 × 20·40)
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 8.5,
   freeCurrent: 0.4,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -204,6 +211,8 @@ const NEVEREST_STALL = 0.062
 const neverestClassic = (ratio: number, stallTorque: number, freeRpm: number): MotorFamily => ({
   rows: [row(ratio, stallTorque * SPUR_EFFICIENCY, freeRpm, 0)],
   defaultRatio: ratio,
+  // NeveRest 맨 모터의 엔코더 7 ppr × 4 = 28 카운트([ACT] §2.4, AndyMark neverest-classic-motor-only)
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 11.5,
   freeCurrent: 0.4,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -218,6 +227,9 @@ const neverestOrbital = (ratio: number, freeRpm: number, stages: number): MotorF
     row(ratio, NEVEREST_STALL * ratio * PLANETARY_STAGE_EFFICIENCY ** stages, freeRpm, stages)
   ],
   defaultRatio: ratio,
+  // 같은 NeveRest 맨 모터·엔코더(7 ppr × 4 = 28). SDK NeveRest3.7v1Gearmotor의 ticksPerRev 44.4(= 12 × 3.7)는 이 엔코더와
+  // 맞지 않아 쓰지 않는다(가정: AndyMark Orbital 3.7 페이지의 출력축 카운트는 이 세션에서 열지 못했다)
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 11,
   freeCurrent: 0.4,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -249,6 +261,8 @@ const TETRIX: MotorFamily = {
 const MAVERICK: MotorFamily = {
   rows: [row(61, 708 * OZIN, 100, 0)],
   defaultRatio: 61,
+  // 6 펄스 × 4 = 24 카운트(SDK StudicaMaverick 1464 = 24 × 61과 같다)
+  encoderCountsPerMotorRev: 24,
   stallCurrent: 11,
   freeCurrent: 0.6,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -263,6 +277,8 @@ const MATRIX_RATIO = 52.8
 const MATRIX: MotorFamily = {
   rows: [row(MATRIX_RATIO, 1.47 * KGCM * MATRIX_RATIO * SPUR_EFFICIENCY, 6000 / MATRIX_RATIO, 0)],
   defaultRatio: MATRIX_RATIO,
+  // goBILDA와 같은 맨 모터·엔코더 28 카운트(SDK Matrix12vMotor 1478.4 = 28 × 52.8과 같다)
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 9.2,
   freeCurrent: 0.25,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -272,10 +288,12 @@ const MATRIX: MotorFamily = {
 }
 
 // goBILDA 5201(단종, SKU 5201-0002-0053): 53.475:1 평기어, 105 rpm, 51.8 kg·cm, 정지 9.2 A, 무부하 0.25 A
-// (https://www.gobilda.com/5201-series-53-1-ratio-105-rpm-spur-gear-motor-w-encoder )
+// (https://www.gobilda.com/5201-series-53-1-ratio-105-rpm-spur-gear-motor-w-encoder ). 엔코더는 같은 페이지 Specs의
+// "Encoder Countable Events Per Revolution" 엔코더축 28, 출력축 1,497.325(= 28 × 53.475)다(SDK 형식 1500 ÷ 54 = 27.78이 아니다).
 const GOBILDA_5201: MotorFamily = {
   rows: [row(53.475, 51.8 * KGCM, 105, 0)],
   defaultRatio: 53.475,
+  encoderCountsPerMotorRev: 28,
   stallCurrent: 9.2,
   freeCurrent: 0.25,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -396,17 +414,12 @@ export function resolveMotorParams(
   }
 }
 
-// 관절 모터의 출력축 1회전 엔코더 틱: 모터축 카운트(encoderCountsPerMotorRev, 없으면 SDK ticksPerRev ÷ gearing) × 물리
-// 감속비(resolveMotorParams의 gearbox, 토크·속도와 같은 값). 구동계 바퀴의 규칙(ticksPerRev ÷ SDK gearing × gearbox,
-// motorTypes.ts)과 같이 "엔코더는 모터축에 있다"이고, 감속비만 관절 동역학이 쓰는 실제 값이다. 그래서 UltraPlanetary 기본
-// (실제 18.93:1)은 530, NeveRest Orbital 20(19.2:1)은 537.6, Core Hex 72:1은 288로 제조사 출력축 카운트와 같다.
+// 관절 모터의 출력축 1회전 엔코더 틱: 모터축 카운트(encoderCountsPerMotorRev, 제조사 값) × 물리 감속비(resolveMotorParams의
+// gearbox, 토크·속도와 같은 값). 구동계 바퀴의 규칙(ticksPerRev ÷ SDK gearing × gearbox, motorTypes.ts)과 같이 "엔코더는
+// 모터축에 있다"이고, 카운트와 감속비만 관절 동역학이 쓰는 실제 값이다. 그래서 UltraPlanetary 기본(실제 18.93:1)은 530,
+// NeveRest Orbital 20(19.2:1)은 537.6, Core Hex 72:1은 288, goBILDA 5201 53:1은 1,497.3으로 제조사 출력축 카운트와 같다.
 export function jointEncoderTicksPerOutputRev(modelTag: string, gearbox: number): number {
-  const family = motorFamily(modelTag)
-  const tag = Object.prototype.hasOwnProperty.call(MOTOR_TYPES, modelTag)
-    ? modelTag
-    : UNSPECIFIED_MOTOR_TAG
-  const sdk = MOTOR_TYPES[tag]
-  return (family.encoderCountsPerMotorRev ?? sdk.ticksPerRev / sdk.gearing) * gearbox
+  return motorFamily(modelTag).encoderCountsPerMotorRev * gearbox
 }
 
 // ---- 서보 ----
