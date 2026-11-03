@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { DashConfigNode } from '../../shared/dashboard'
 import type { PlayEvent, SimNoticeCode } from '../../shared/play'
 import type { DeviceValues, RunRequest, TickMessage } from '../../shared/sidecarProtocol'
+import { MAX_WORLD_JOINTS } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
 import { MAX_LAG_MS, SidecarSession, type SessionOptions } from './session'
@@ -818,6 +819,23 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
     expect(steps).toEqual([0, 5 * MS])
   })
 
+  it('boolean 입력(리밋 스위치의 touch pressed·digital state)은 그대로 싣고, 배열은 입력으로 보내지 않는다', () => {
+    const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
+      t === 0
+        ? { limit: { pressed: true }, home: { state: false }, m: { pidf: [1, 2] } }
+        : { limit: { pressed: false } }
+    )
+    const { proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    expect(proc.replies().map((r) => r.inputs)).toEqual([
+      { limit: { pressed: true }, home: { state: false } },
+      { limit: { pressed: false } }
+    ])
+    expect(of('devices')[0].inputs).toEqual({ limit: { pressed: true }, home: { state: false } })
+  })
+
   it('답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다', () => {
     const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
       t === 5 * MS ? { a: { x: 1, y: 1 } } : t === 10 * MS ? { a: { y: 2 }, b: { z: 3 } } : {}
@@ -900,6 +918,116 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       s.clock.advance(20)
     }
     expect(s.of('pose')).toHaveLength(1)
+  })
+
+  it('pose: 관절 값(joints)은 관절이 있을 때만 싣고, 관절만 움직여도 보낸다', () => {
+    let last = 0
+    // 로봇은 서 있고 관절 하나만 움직이는 세계. 세계가 같은 배열을 다시 써도 보낸 값은 바뀌지 않아야 한다.
+    const joints = [0, 0.5]
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => {
+        joints[0] = last / 1e9
+        return { x: 1, y: 2, yaw: 0, blocked: false, joints }
+      },
+      drainNotices: () => []
+    }
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    expect(of('pose')).toEqual([
+      {
+        type: 'pose',
+        runId: 'run-1',
+        tNanos: 0,
+        x: 1,
+        y: 2,
+        yaw: 0,
+        blocked: false,
+        joints: [0, 0.5]
+      }
+    ])
+    for (let k = 1; k < 4; k++) proc.line(tick(k))
+    clock.advance(16)
+    expect(of('pose').map((p) => p.tNanos)).toEqual([0, 15 * MS])
+    expect(of('pose')[1].joints).toEqual([0.015, 0.5])
+    // 먼저 보낸 이벤트의 배열은 세계가 그 뒤에 바꾼 값을 따라가지 않는다
+    expect(of('pose')[0].joints).toEqual([0, 0.5])
+    // 관절도 그대로면 다시 보내지 않는다
+    const still: SimWorld = {
+      ...world,
+      pose: () => ({ x: 1, y: 2, yaw: 0, blocked: false, joints: [0.25] })
+    }
+    const s = setup({ speed: 'max', world: still })
+    boot(s.proc)
+    for (let k = 0; k < 3; k++) {
+      s.proc.line(tick(k))
+      s.clock.advance(20)
+    }
+    expect(s.of('pose')).toHaveLength(1)
+  })
+
+  it('pose: 관절이 없는 세계는 joints 키가 없고, 유한하지 않은 관절 값이나 너무 많은 관절은 그 자세를 버린다', () => {
+    let joints: unknown = undefined
+    const world: SimWorld = {
+      step: () => ({}),
+      pose: () => ({ x: 0, y: 0, yaw: 0, blocked: false, joints: joints as number[] }),
+      drainNotices: () => []
+    }
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    expect(of('pose')).toHaveLength(1)
+    expect(Object.hasOwn(of('pose')[0], 'joints')).toBe(false)
+    for (const [k, bad] of [
+      [1, [0, Number.NaN]],
+      [2, [Number.POSITIVE_INFINITY]],
+      [3, ['0.1']],
+      [4, Array.from({ length: MAX_WORLD_JOINTS + 1 }, () => 0)],
+      [5, 'joints']
+    ] as const) {
+      joints = bad
+      proc.line(tick(k))
+      clock.advance(20)
+    }
+    expect(of('pose')).toHaveLength(1)
+    // 버린 동안에도 마지막 좋은 자세는 남아 있고, 다음 좋은 자세는 보낸다
+    joints = Array.from({ length: MAX_WORLD_JOINTS }, (_, i) => i)
+    proc.line(tick(6))
+    clock.advance(20)
+    expect(of('pose').map((p) => [p.tNanos, p.joints?.length])).toEqual([
+      [0, undefined],
+      [30 * MS, MAX_WORLD_JOINTS]
+    ])
+  })
+
+  it('pose: 관절 값도 일시 정지·끝에서 바로 보낸다', () => {
+    let last = 0
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => ({ x: 0, y: 0, yaw: 0, blocked: false, joints: [last / MS] }),
+      drainNotices: () => []
+    }
+    const { proc, session, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    session.command({ type: 'pause', paused: true })
+    expect(of('pose').map((p) => p.joints)).toEqual([[0], [5]])
+    session.command({ type: 'pause', paused: false })
+    proc.line(tick(2))
+    proc.line({ type: 'finished', tNanos: 10 * MS, reason: 'returned' })
+    const order = events
+      .filter((e) => ['pose', 'phase', 'finished'].includes(e.type))
+      .slice(-3)
+      .map((e) => (e.type === 'pose' ? `pose ${e.joints?.join()}` : e.type))
+    expect(order).toEqual(['pose 10', 'phase', 'finished'])
   })
 
   it('pose: 일시 정지·Step이 멈출 때·끝날 때(phase·finished 전) 바로 보낸다', () => {
