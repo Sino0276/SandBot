@@ -1024,7 +1024,12 @@ const ko = {
     inputs: '센서 값',
     inputsHint:
       '시뮬레이터가 보낸 허브 원시 값(엔코더 틱, IMU 각 등)입니다. 팀 코드가 읽는 값은 SDK가 방향·단위를 적용한 값입니다.',
-    selectHint: '누르면 {{name}}을(를) 고릅니다.'
+    selectHint: '누르면 {{name}}을(를) 고릅니다.',
+    joints: '관절',
+    jointName: '관절',
+    jointType: '종류',
+    jointValue: '값',
+    jointsHint: '시뮬레이터가 보낸 관절 위치입니다(편집 자세가 0). 누르면 그 오브젝트를 고릅니다.'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
@@ -1513,6 +1518,148 @@ const ko = {
       cadSummary: '{{name}}: {{parts}}',
       notices: '쓰지 못한 질량 설정',
       hint: 'CAD에 없는 무거운 부품(배터리·허브 등)은 그 자리에 빈 그룹을 만들고(Create Empty) 질량을 직접 넣으면 그 위치의 점질량이 됩니다. 저울 무게 맞추기는 형상 전체에 비율로 퍼뜨리므로 무게중심을 그쪽으로 옮기지 않습니다.'
+    }
+  },
+  // 관절 카드(Unity ArticulationBody, editor/joint/). 시뮬레이터 설정이라 생성 코드와 관계없다.
+  joint: {
+    addOption: '관절',
+    title: 'Articulation Body',
+    orphan: '로봇에 속하지 않은 오브젝트라 시뮬레이터가 쓰지 않습니다.',
+    type: '관절 종류',
+    types: {
+      revolute: '회전 (Revolute)',
+      prismatic: '직선 (Prismatic)'
+    },
+    anchor: '앵커',
+    anchorHint:
+      '관절 원점입니다. 이 오브젝트의 로컬 좌표(이 오브젝트 자신의 축)로 넣습니다. 회전 관절은 이 점을 지나는 축 둘레로 돌고, 직선 관절에는 위치가 상관없습니다.',
+    anchorReset: '피벗으로',
+    anchorResetHint: '앵커를 이 오브젝트의 피벗(원점)에 둡니다.',
+    axis: '축',
+    axisSign: '축 방향',
+    axisHint:
+      '이 오브젝트의 로컬 축입니다. 회전 관절은 그 축 둘레 오른손 방향이, 직선 관절은 그 방향이 +입니다. CAD 파트의 축은 CAD 파일의 축입니다.',
+    robotAxis: '로봇 기준 축: {{axis}}',
+    fieldAxis: '필드 기준 축: {{axis}}',
+    robotAxes: {
+      '+x': '+X (앞)',
+      '-x': '−X (뒤)',
+      '+y': '+Y (왼쪽)',
+      '-y': '−Y (오른쪽)',
+      '+z': '+Z (위)',
+      '-z': '−Z (아래)'
+    },
+    robotAxisVector: '({{x}}, {{y}}, {{z}})',
+    limits: '한계 (Motion)',
+    limited: '한계 있음',
+    limitedHint:
+      '끄면 끝없이 도는 관절입니다(Unity의 Motion: Free). 직선 관절은 늘 한계가 있습니다.',
+    lower: '아래 한계',
+    upper: '위 한계',
+    limitsHint: '편집 자세(지금 씬의 자세)가 0입니다. 한계에 닿으면 멈추고 튀지 않습니다.',
+    friction: '마찰 (Joint Friction)',
+    frictionHint:
+      '움직임을 막는 일정한 마찰(쿨롱)입니다. 회전 관절은 N·m, 직선 관절은 N입니다. 모터·서보 기어의 마찰은 따로 계산하므로 베어링·슬라이드 몫만 넣습니다.',
+    damping: '감쇠 (Damping)',
+    dampingHint: '속도에 비례하는 마찰(점성)입니다.',
+    units: {
+      torque: 'N·m',
+      force: 'N',
+      rotaryDamping: 'N·m·s/rad',
+      linearDamping: 'N·s/m',
+      rotaryStiffness: 'N·m/rad',
+      linearStiffness: 'N/m'
+    },
+    spring: '스프링',
+    springHint: '관절에 거는 스프링입니다(고무줄로 거든 팔, 정하중 스프링을 단 리프트 등).',
+    springKinds: {
+      none: '없음',
+      constantForce: '정하중 (Constant Force)',
+      linear: '선형 (Linear)'
+    },
+    springForce: '힘',
+    springForceHint:
+      '위치와 관계없이 + 방향으로 미는 힘(직선, N)이나 토크(회전, N·m)입니다. − 방향이면 음수로 넣습니다.',
+    springStiffness: '강성',
+    springStiffnessHint: '기준 위치에서 벗어난 만큼 되돌리는 힘의 비율입니다.',
+    springRest: '기준 위치',
+    springRestHint: '스프링 힘이 0인 관절 위치입니다(편집 자세가 0).',
+    drive: '구동 (Drive)',
+    driveHint:
+      '관절을 움직이는 허브 장치입니다. 목표·이득은 팀 코드와 허브 펌웨어가 정합니다(Unity 드라이브의 목표·강성 대신).',
+    driveKinds: {
+      none: '없음',
+      motor: 'DC 모터',
+      servo: '서보',
+      crServo: '연속 회전 서보',
+      stage: '위 단 (다단 슬라이드)'
+    },
+    motors: '모터',
+    motorsHint:
+      '이 관절을 같이 구동하는 모터입니다(양쪽 리프트처럼 최대 {{max}}개). 모터 방향(인스펙터)은 +power면 관절이 + 방향으로 가는 방향으로 봅니다.',
+    noMotorOptions: '이 로봇에 DC 모터가 없습니다.',
+    motorMissing: '(찾을 수 없는 모터)',
+    device: '장치',
+    deviceNone: '(고르지 않음)',
+    deviceMissing: '(찾을 수 없는 장치)',
+    gearRatio: '외부 감속비',
+    gearRatioHint: '장치 출력축에서 관절까지의 감속비입니다(직결이면 1).',
+    spoolDiameter: '스풀 지름',
+    spoolDiameterHint:
+      '줄을 감는 스풀(풀리)의 지름입니다. 한 바퀴에 둘레만큼 움직입니다. 기본값은 둘레 112 mm 풀리입니다.',
+    rigging: '리깅',
+    riggingHint:
+      '다단 슬라이드의 줄 걸기입니다. 캐스케이드는 모든 단이 같이 펴지고(맨 위 단이 단 수배 빠름), 연속은 줄 하나가 단들을 차례로 폅니다.',
+    riggingKinds: {
+      direct: '한 단',
+      cascade: '캐스케이드',
+      continuous: '연속'
+    },
+    stages: '위 단',
+    stagesHint:
+      '이 관절 위의 단을 아래에서 위 순서로 넣습니다. 단마다 바로 아래 단의 하위에 있는 직선 관절이고 구동이 "위 단"이어야 합니다.',
+    stageAdd: '단 추가…',
+    stageRemove: '단 빼기',
+    stageRemoveLabel: '{{name}} 빼기',
+    stageMissing: '(찾을 수 없는 관절)',
+    stageNone:
+      '이 오브젝트 하위에 직선 관절이 없습니다. 위 단 오브젝트에 직선 관절(구동: 위 단)을 붙이세요.',
+    stageOf: '아래 단 {{name}}의 구동을 따라 움직입니다.',
+    maxSpeedMotor: '최고 속도 ≈ {{speed}} {{unit}} (무부하, {{volts}} V)',
+    maxSpeedServo: '최고 속도 ≈ {{speed}} {{unit}} (무부하)',
+    maxSpeedUnknown: '장치의 무부하 속도를 몰라 최고 속도를 보이지 않습니다.',
+    endSpeed: '맨 위 단 ≈ {{speed}} {{unit}}',
+    load: '중력 부하 (편집 자세) ≈ {{load}} {{unit}}',
+    loadNone: '편집 자세에서 중력 부하가 없습니다.',
+    loadHint:
+      '편집 자세에서 이 관절(다단이면 위 단까지)이 버텨야 하는 중력과 스프링의 힘입니다. 질량 모델의 질량·무게중심으로 계산합니다.',
+    capacity: '정지 토크 ≈ {{capacity}} {{unit}}',
+    capacityMargin: '정지 토크 ≈ {{capacity}} {{unit}} · 여유 ×{{margin}}',
+    capacityUnknown: '장치의 정지 토크를 몰라 여유를 보이지 않습니다.',
+    capacityHint:
+      '장치의 정지 토크를 관절 좌표로 옮긴 값(모터 여럿이면 합)과 중력 부하에 대한 비입니다. 1보다 작으면 멈춰 버티지 못합니다.',
+    preview: '미리보기',
+    previewHint:
+      '씬 뷰에서 관절을 움직여 봅니다. 보기만 바꾸고 씬·저장·실행 취소와 관계없습니다. 다른 오브젝트를 고르면 편집 자세로 돌아갑니다.',
+    previewReset: '0으로',
+    hint: '관절은 시뮬레이터 설정입니다. 생성 코드·구성 XML과 관계없습니다. 이 오브젝트와 하위가 한 몸체로 움직이고, 안쪽 관절의 하위는 그 관절의 몸체입니다.',
+    warnings: {
+      noMotor: '구동 모터를 고르지 않아 실행할 때 구동하지 않습니다.',
+      motorMissing:
+        '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 그 모터는 쓰지 않습니다.',
+      motorOnWheel: '모터 {{motor}}은(는) 바퀴를 구동하므로 이 관절에서는 쓰지 않습니다.',
+      motorShared:
+        '모터 {{motor}}은(는) 관절 {{joint}}이(가) 이미 구동하므로 이 관절에서는 쓰지 않습니다.',
+      servoMissing: '구동 장치를 이 로봇에서 찾을 수 없어 실행할 때 구동하지 않습니다.',
+      servoOnSlide:
+        '위치 서보는 회전 관절만 구동합니다. 직선 관절은 연속 회전 서보와 스풀로 구동하세요.',
+      stageInvalid:
+        '위 단 {{stage}}이(가) 바로 아래 단의 하위에 있는 직선 관절(구동: 위 단)이 아니어서 그 단부터는 묶지 않습니다.',
+      stageOrphan: '어느 다단 슬라이드 구동에도 들지 않아 구동하지 않습니다.',
+      noMass:
+        '몸체 질량을 알 수 없어(형상이 없거나 질량 0) 시뮬레이터가 1 g으로 둡니다. 질량 카드에서 질량을 넣으세요.',
+      massPending: '아직 읽는 중인 메시 {{count}}개의 질량이 빠져 있습니다.',
+      cannotHold: '정지 토크가 편집 자세의 중력 부하보다 작아 버티지 못합니다.'
     }
   }
 }
