@@ -1,6 +1,7 @@
 // 하드웨어 컴포넌트 카탈로그. XML 태그·Java 클래스·I2C 주소는 FTC SDK 12.0 소스(10.3·11.1과 동일)에서 확인한 값만 쓴다.
 // 구성 XML 태그는 대소문자를 구분하고, 틀리면 SDK가 오류 없이 장치를 버리므로 추측한 값을 넣지 않는다.
 
+import { DEFAULT_SERVO_MODEL, SERVO_MODEL_KEYS } from '../../../shared/sim/actuatorData'
 import { motorType } from '../../../shared/sim/motorTypes'
 
 // 장치가 차지하는 자리
@@ -146,6 +147,28 @@ export const DEAD_WHEEL_POD_TYPES = ['fourBar', 'swingarm', 'revThroughBore', 'c
 const POD_DIAMETER = { default: 0.035, min: 0.005, max: 0.2 } as const
 const POD_CPR = { default: REV_THROUGH_BORE_CPR, min: 1, max: 1000000 } as const
 
+// 모터 정지 토크·무부하 속도 덮어쓰기의 상한(goBILDA 188:1 정지 24.5 N·m, 맨 모터 6000 rpm을 넉넉히 넘는다)
+export const MAX_STALL_TORQUE = 100
+export const MAX_FREE_SPEED_RPM = 20000
+
+// 서보·CR 서보의 모델(시뮬레이터 전용, 관절 구동의 토크·속도·각 범위 표 src/shared/sim/actuatorData.ts와 질량 표)
+const SERVO_MODEL = {
+  key: 'servoModel',
+  kind: 'enum',
+  options: SERVO_MODEL_KEYS,
+  default: DEFAULT_SERVO_MODEL,
+  simulation: true
+} as const
+
+// 리밋 스위치(touch·digital, 시뮬레이터 전용): 같은 로봇의 관절 오브젝트(limitJoint)의 한계(limitAt) 근처 limitWithin 안에서
+// 눌린다(touch pressed true, digital state false). limitWithin은 그 관절의 단위(직선 m, 회전 rad)이고 0이면 기본값
+// (scene/joint.ts DEFAULT_LIMIT_WITHIN: 2 mm·1°).
+const LIMIT_SWITCH = [
+  { key: 'limitJoint', kind: 'object', default: '', simulation: true },
+  { key: 'limitAt', kind: 'enum', options: ['lower', 'upper'], default: 'lower', simulation: true },
+  { key: 'limitWithin', kind: 'number', default: 0, min: 0, max: 1, digits: 4, simulation: true }
+] as const
+
 export const HUB_DIRECTIONS = ['up', 'down', 'forward', 'backward', 'left', 'right'] as const
 
 export const COMPONENT_TYPES = {
@@ -183,6 +206,26 @@ export const COMPONENT_TYPES = {
         max: MAX_GEARBOX,
         digits: 2,
         simulation: true
+      },
+      // 관절 구동(3b)의 기어모터 값 덮어쓰기: 12 V 출력축 정지 토크(N·m)와 무부하 속도(rpm). 0은 데이터시트
+      // (src/shared/sim/actuatorData.ts). 시뮬레이터 전용.
+      {
+        key: 'stallTorque',
+        kind: 'number',
+        default: 0,
+        min: 0,
+        max: MAX_STALL_TORQUE,
+        digits: 3,
+        simulation: true
+      },
+      {
+        key: 'freeSpeed',
+        kind: 'number',
+        default: 0,
+        min: 0,
+        max: MAX_FREE_SPEED_RPM,
+        digits: 0,
+        simulation: true
       }
     ]
   },
@@ -197,7 +240,8 @@ export const COMPONENT_TYPES = {
       { key: 'pulseRange', kind: 'enum', options: ['standard', 'fullRange'], default: 'standard' },
       DIRECTION,
       { key: 'scaleMin', kind: 'number', default: 0, min: 0, max: 1, digits: 2 },
-      { key: 'scaleMax', kind: 'number', default: 1, min: 0, max: 1, digits: 2 }
+      { key: 'scaleMax', kind: 'number', default: 1, min: 0, max: 1, digits: 2 },
+      SERVO_MODEL
     ]
   },
   crServo: {
@@ -209,7 +253,7 @@ export const COMPONENT_TYPES = {
       'com.qualcomm.robotcore.hardware.CRServo',
       'com.qualcomm.robotcore.hardware.DcMotorSimple'
     ],
-    properties: [DIRECTION]
+    properties: [DIRECTION, SERVO_MODEL]
   },
   sparkMini: {
     category: 'actuator',
@@ -261,7 +305,7 @@ export const COMPONENT_TYPES = {
     defaultName: 'touch',
     javaType: 'TouchSensor',
     imports: ['com.qualcomm.robotcore.hardware.TouchSensor'],
-    properties: []
+    properties: [...LIMIT_SWITCH]
   },
   digitalDevice: {
     category: 'sensor',
@@ -269,7 +313,10 @@ export const COMPONENT_TYPES = {
     defaultName: 'digital',
     javaType: 'DigitalChannel',
     imports: ['com.qualcomm.robotcore.hardware.DigitalChannel'],
-    properties: [{ key: 'mode', kind: 'enum', options: ['input', 'output'], default: 'input' }]
+    properties: [
+      { key: 'mode', kind: 'enum', options: ['input', 'output'], default: 'input' },
+      ...LIMIT_SWITCH
+    ]
   },
   analogInput: {
     category: 'sensor',

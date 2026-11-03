@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HardwareComponent, SceneObjects } from '../scene/model'
+import { defaultJoint } from '../scene/joint'
 import { defaultWheel } from '../scene/wheel'
 import { COMPONENT_TYPE_KEYS, componentDef, type ComponentType } from './catalog'
 import { createComponent } from './components'
@@ -79,7 +80,7 @@ describe('생성 파일 출력 고정', () => {
     }
   })
 
-  it('시뮬레이터 전용 속성(감속비·포드 종류 등)과 바퀴는 생성 파일을 바꾸지 않는다', () => {
+  it('시뮬레이터 전용 속성(감속비·포드 종류·서보 모델·리밋 스위치 등)과 바퀴·관절은 생성 파일을 바꾸지 않는다', () => {
     const objects = everyComponentScene()
     const before = generateTeamCodeFiles(objects).files
     const simulated: string[] = []
@@ -89,7 +90,11 @@ describe('생성 파일 출력 고정', () => {
         {
           ...object,
           ...(object.kind !== 'robot' && {
-            wheel: { ...defaultWheel('traction'), motor: 'c0', angle: 1 }
+            wheel: { ...defaultWheel('traction'), motor: 'c0', angle: 1 },
+            joint: {
+              ...defaultJoint('prismatic'),
+              drive: { kind: 'servo', servo: 'c1', gearRatio: 2 }
+            }
           }),
           components: object.components?.map((component) => {
             const props = { ...component.props }
@@ -103,7 +108,9 @@ describe('생성 파일 출력 고정', () => {
                     ? property.max
                     : property.kind === 'number'
                       ? (property.max ?? 0) / 2
-                      : props[property.key]
+                      : property.kind === 'object'
+                        ? 'p0'
+                        : props[property.key]
             }
             return { ...component, props }
           })
@@ -112,6 +119,16 @@ describe('생성 파일 출력 고정', () => {
     )
     expect([...new Set(simulated)]).toEqual([
       'motor.gearbox',
+      'motor.stallTorque',
+      'motor.freeSpeed',
+      'servo.servoModel',
+      'crServo.servoModel',
+      'touchSensor.limitJoint',
+      'touchSensor.limitAt',
+      'touchSensor.limitWithin',
+      'digitalDevice.limitJoint',
+      'digitalDevice.limitAt',
+      'digitalDevice.limitWithin',
       'deadWheel.podType',
       'deadWheel.podDiameter',
       'deadWheel.podCpr'

@@ -1173,7 +1173,13 @@ const ko = {
       reversed: '엔코더 반전',
       gearbox: '기어박스 감속비',
       podDiameter: '포드 바퀴 지름',
-      podCpr: '엔코더 CPR'
+      podCpr: '엔코더 CPR',
+      stallTorque: '정지 토크 (N·m, 0 = 데이터시트)',
+      freeSpeed: '무부하 속도 (rpm, 0 = 데이터시트)',
+      servoModel: '서보 모델',
+      limitJoint: '리밋 스위치 관절',
+      limitAt: '눌리는 끝',
+      limitWithin: '눌리는 거리 (m·rad, 0 = 2 mm·1°)'
     },
     options: {
       motorModel: {
@@ -1241,6 +1247,19 @@ const ko = {
       reversed: {
         no: '아니오',
         yes: '예'
+      },
+      servoModel: {
+        gobildaTorque: 'goBILDA 2000 Torque (25-2)',
+        gobildaSpeed: 'goBILDA 2000 Speed (25-3)',
+        gobildaSuperSpeed: 'goBILDA 2000 Super Speed (25-4)',
+        axonMax: 'Axon MAX',
+        axonMini: 'Axon MINI',
+        axonMicro: 'Axon MICRO',
+        revSmartServo: 'REV Smart Robot Servo'
+      },
+      limitAt: {
+        lower: '아래 한계',
+        upper: '위 한계'
       }
     },
     hints: {

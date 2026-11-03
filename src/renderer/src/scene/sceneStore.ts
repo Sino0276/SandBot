@@ -33,6 +33,7 @@ import {
   sanitizeMass,
   sanitizeRigidbody
 } from './massSettings'
+import { canHaveJoint, sameJoint, sanitizeJoint } from './joint'
 import { canHaveWheel, sameWheel, sanitizeWheel } from './wheel'
 
 // CAD를 불러오기 전까지 보여 주는 임시 씬: 18 in 상자 로봇과 앞쪽에 달린 웹캠
@@ -66,7 +67,8 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
       !object.hardware &&
       !object.wheel &&
       !object.mass &&
-      !object.rigidbody
+      !object.rigidbody &&
+      !object.joint
   )
 }
 
@@ -180,7 +182,7 @@ type SceneState = {
   removeComponent: (objectId: string, componentId: string) => void
   setRobotHardware: (robotId: string, settings: RobotHardwareSettings) => void
   // 바퀴(시뮬레이터 설정, scene/wheel.ts)를 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
-  // robot·CAD 루트에는 붙이지 않는다. 범위 밖 수는 기본값으로 바꾼다(sanitizeWheel). 바뀐 것이 없으면 그대로 둔다.
+  // robot·CAD 루트·관절 오브젝트에는 붙이지 않는다. 범위 밖 수는 기본값으로 바꾼다(sanitizeWheel). 바뀐 것이 없으면 그대로 둔다.
   setWheel: (id: string, settings: WheelSettings | null) => void
   // 질량 설정(시뮬레이터 설정, mass/types.ts)을 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
   // robot에는 붙이지 않는다(로봇은 setRobotRigidbody). 모르는 재질·범위 밖 수는 그 필드만 버린다(sanitizeMass).
@@ -189,7 +191,8 @@ type SceneState = {
   // 로봇의 Rigidbody(저울 무게·기본 재질). robot에만, null이거나 정리한 결과가 비면 뗀다(sanitizeRigidbody).
   setRobotRigidbody: (id: string, settings: RigidbodySettings | null) => void
   // 관절(시뮬레이터 설정, scene/model.ts의 JointSettings)을 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
-  // 계약 단계: 정리(sanitizeJoint·canHaveJoint)는 갈래 C가 넣는다.
+  // 붙일 수 없는 오브젝트(로봇, 바퀴가 있는 오브젝트, scene/joint.ts canHaveJoint)면 그대로 두고, 범위 밖 수는 기본값으로
+  // 바꾼다(sanitizeJoint). 바뀐 것이 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   setJoint: (id: string, settings: JointSettings | null) => void
   // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
   // (없는 오브젝트, 이미 있는 경로, 없는 연결, 연결할 수 없는 경로) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
@@ -335,7 +338,8 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
   setWheel: (id, settings) =>
     set((state) => {
       const object = state.objects[id]
-      if (!object || !canHaveWheel(object)) return state
+      // 떼기는 늘 받는다(붙일 수 없는 오브젝트에 남은 바퀴도 뗄 수 있게)
+      if (!object || (settings && !canHaveWheel(object))) return state
       const wheel = settings ? sanitizeWheel(settings) : undefined
       if (sameWheel(object.wheel, wheel)) return state
       const next: SceneObject = { ...object, wheel }
@@ -365,9 +369,12 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
   setJoint: (id, settings) =>
     set((state) => {
       const object = state.objects[id]
-      if (!object || object.kind === 'robot') return state
-      const next: SceneObject = { ...object, joint: settings ?? undefined }
-      if (!settings) delete next.joint
+      // 떼기는 늘 받는다(붙일 수 없는 오브젝트에 남은 관절도 뗄 수 있게)
+      if (!object || (settings && !canHaveJoint(object))) return state
+      const joint = settings ? sanitizeJoint(settings) : undefined
+      if (sameJoint(object.joint, joint)) return state
+      const next: SceneObject = { ...object, joint }
+      if (!joint) delete next.joint
       return { objects: { ...state.objects, [id]: next } }
     }),
   addScriptLink: (objectId, input) =>

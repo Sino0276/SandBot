@@ -1172,7 +1172,13 @@ const en: Messages = {
       reversed: 'Encoder reversed',
       gearbox: 'Gearbox ratio',
       podDiameter: 'Pod wheel diameter',
-      podCpr: 'Encoder CPR'
+      podCpr: 'Encoder CPR',
+      stallTorque: 'Stall torque (N·m, 0 = datasheet)',
+      freeSpeed: 'Free speed (rpm, 0 = datasheet)',
+      servoModel: 'Servo model',
+      limitJoint: 'Limit switch joint',
+      limitAt: 'Pressed at',
+      limitWithin: 'Press distance (m·rad, 0 = 2 mm·1°)'
     },
     options: {
       motorModel: {
@@ -1240,6 +1246,19 @@ const en: Messages = {
       reversed: {
         no: 'No',
         yes: 'Yes'
+      },
+      servoModel: {
+        gobildaTorque: 'goBILDA 2000 Torque (25-2)',
+        gobildaSpeed: 'goBILDA 2000 Speed (25-3)',
+        gobildaSuperSpeed: 'goBILDA 2000 Super Speed (25-4)',
+        axonMax: 'Axon MAX',
+        axonMini: 'Axon MINI',
+        axonMicro: 'Axon MICRO',
+        revSmartServo: 'REV Smart Robot Servo'
+      },
+      limitAt: {
+        lower: 'Lower limit',
+        upper: 'Upper limit'
       }
     },
     hints: {
