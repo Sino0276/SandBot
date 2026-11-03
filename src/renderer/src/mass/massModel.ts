@@ -20,7 +20,7 @@ import {
   wheelCotsKey
 } from './cotsTable'
 import { DEFAULT_MATERIAL, effectiveDensity, MATERIALS } from './materials'
-import { matchNameRule, type NameRule } from './nameRules'
+import { matchAncestorRule, matchNameRule, type NameRule } from './nameRules'
 import {
   DEFAULT_INFILL,
   DEFAULT_ROBOT_MASS,
@@ -55,7 +55,8 @@ import {
 //    노드 이름을 바꿨든). 제품의 메시 일부가 1·2의 덩어리 안에 있으면, 같은 부품의 컴포넌트 COTS(sameCotsItem) 덩어리면
 //    나머지 메시도 그 덩어리에 넣고, 아니면 덩어리 안 몫(부피 비율)을 제품 질량에서 뺀다(두 번 세지 않게).
 // 3. 재질 × 부피: 위로 가장 가까운 mass.material(지금 계층), 없으면 이름 규칙(nameRules.ts), 없으면 로봇 기본 재질.
-//    이름 규칙은 메시의 원래 이름 경로만 본다(파트 노드부터 CAD 루트 쪽으로 가장 가까운 규칙). 지금 오브젝트 이름과
+//    이름 규칙은 메시의 원래 이름 경로만 본다(파트 노드부터 CAD 루트 쪽으로 가장 가까운 규칙, 상위 노드는 재질 낱말과
+//    SKU 시리즈만이고 부품 종류 낱말은 파트 노드 자신의 이름에서만 쓴다). 지금 오브젝트 이름과
 //    그룹(팀이 지은 메커니즘 이름, 생성 Java 클래스)은 보지 않는다(이름을 바꾸거나 IntakeRoller 그룹으로 옮긴 파트의
 //    재질이 바뀌지 않게). 붙인 "노드 + 순번" 이름은 CAD 이름이 아니라 건너뛴다.
 // 무게중심 덮어쓰기(mass.centerOfMass)는 질량을 정한 오브젝트(1·2)에서만 쓰고, 덩어리 전체의 무게중심을 그 점에 둔다
@@ -488,30 +489,28 @@ function cotsRejection(
 // 이름 규칙·SKU 찾기는 같은 이름이 되풀이되므로(goBILDA 예제 STEP의 PRODUCT 이름 374개 중 고유한 것 144개)
 // 한 번 계산 안에서 이름마다 한 번만 한다
 type NameCaches = {
+  // 파트 노드 이름의 규칙(matchNameRule)
   rule: (name: string) => NameRule | null
+  // 상위 노드 이름의 규칙(matchAncestorRule: 부품 종류 낱말을 보지 않는다)
+  ancestorRule: (name: string) => NameRule | null
   sku: (name: string) => string | null
 }
 
+function memo<T>(compute: (name: string) => T): (name: string) => T {
+  const results = new Map<string, T>()
+  return (name) => {
+    if (results.has(name)) return results.get(name) as T
+    const result = compute(name)
+    results.set(name, result)
+    return result
+  }
+}
+
 function nameCaches(): NameCaches {
-  const rules = new Map<string, NameRule | null>()
-  const skus = new Map<string, string | null>()
   return {
-    rule: (name) => {
-      let result = rules.get(name)
-      if (result === undefined) {
-        result = matchNameRule([name])
-        rules.set(name, result)
-      }
-      return result
-    },
-    sku: (name) => {
-      let result = skus.get(name)
-      if (result === undefined) {
-        result = skuCotsKey(name)
-        skus.set(name, result)
-      }
-      return result
-    }
+    rule: memo((name) => matchNameRule([name])),
+    ancestorRule: memo(matchAncestorRule),
+    sku: memo(skuCotsKey)
   }
 }
 
@@ -645,9 +644,11 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     for (let i = path.length - 1; i >= 0; i--) {
       const node = path[i]
       if (node.generated) continue
-      const matched = caches.rule(node.name)
+      const leaf = i === path.length - 1
+      // 상위 노드(어셈블리·CAD 루트) 이름의 부품 종류 낱말은 그 아래 솔리드에 내려가지 않는다(재질 낱말·SKU 시리즈만)
+      const matched = leaf ? caches.rule(node.name) : caches.ancestorRule(node.name)
       if (!matched) continue
-      const owner = i === path.length - 1 ? null : nodeHome(node.key)
+      const owner = leaf ? null : nodeHome(node.key)
       return {
         material: matched.material,
         source: 'nameRule',

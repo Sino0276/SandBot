@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { goBildaSkus, matchNameRule, nameRuleMaterial, nameWords, WORD_RULES } from './nameRules'
+import {
+  goBildaSkus,
+  matchAncestorRule,
+  matchNameRule,
+  nameRuleMaterial,
+  nameWords,
+  WORD_RULES
+} from './nameRules'
 import { MATERIAL_KEYS } from './types'
 
 const rule = (...names: string[]): string | null => matchNameRule(names)?.name ?? null
@@ -38,13 +45,12 @@ describe('이름 규칙', () => {
 
   it('규칙 이름은 맞은 낱말열이다(규칙의 첫 낱말이 아니라)', () => {
     expect(rule('tires')).toBe('tire')
-    expect(rule('RollerCore')).toBe('roller')
     expect(rule('PLATE')).toBe('plate')
     expect(rule('Axles')).toBe('axle')
     expect(rule('M4 Bolt')).toBe('bolt')
     expect(rule('Snap Ring')).toBe('snap ring')
     expect(rule('Carbon Fiber Plate')).toBe('carbon fiber')
-    // 같은 규칙의 낱말이 여럿 맞으면 규칙에 적은 순서로 첫 것
+    // 중심 명사(가장 오른쪽 낱말)의 낱말열이다
     expect(rule('Tire Belt')).toBe('belt')
     expect(nameRuleMaterial('tire')).toBe('rubber')
     expect(nameRuleMaterial('snap ring')).toBe('steel')
@@ -74,6 +80,54 @@ describe('이름 규칙', () => {
     expect(material('Bearing')).toBe('steel')
   })
 
+  it('부품 종류 낱말은 중심 명사(가장 오른쪽 낱말)일 때만 맞고, 수식어는 정하지 않는다', () => {
+    // 중심 명사가 규칙에 없으면 앞의 수식어(nut·chain·roller·bearing·shaft·belt)로 정하지 않는다
+    for (const name of [
+      'Nut Strip',
+      'Chain Guard',
+      'RollerCore',
+      'Roller Arm',
+      'Intake Roller Arm',
+      'Bearing Housing',
+      'Shaft Support',
+      'Belt Tensioner',
+      'Belt Guard'
+    ])
+      expect(rule(name), name).toBeNull()
+    // 뒤에 붙은 치수·번호·판·자리 낱말은 건너뛰고 그 앞이 중심 명사다
+    expect(rule('Shaft 8mm')).toBe('shaft')
+    expect(rule('Bracket (1)')).toBe('bracket')
+    expect(rule('Plate v2')).toBe('plate')
+    expect(rule('Side Plate Left')).toBe('plate')
+    expect(rule('Gusset Plate B')).toBe('plate')
+  })
+
+  it('가정한 일반 낱말(mount·block·hub)은 규칙이 아니다(로봇 기본 재질을 따른다)', () => {
+    for (const name of [
+      'Camera Mount',
+      'Motor Mount',
+      'Battery Mount',
+      'Bearing Block',
+      'Sensor Block',
+      'Servo Hub',
+      'Tire Hub'
+    ])
+      expect(rule(name), name).toBeNull()
+    // 출처가 있는 긴 낱말열은 그대로다
+    expect(material('Control Hub')).toBe('polycarbonate')
+  })
+
+  it('어셈블리 이름(상위 노드)은 재질 낱말·라벨·SKU 시리즈만 보고 부품 종류 낱말은 보지 않는다', () => {
+    const ancestor = (name: string): string | null => matchAncestorRule(name)?.name ?? null
+    for (const name of ['Roller Intake', 'Chain Lift', 'Belt Drive', 'Shaft Assy', 'Screw Kit'])
+      expect(ancestor(name), name).toBeNull()
+    expect(ancestor('Steel Frame')).toBe('steel')
+    expect(matchAncestorRule('Labels')).toEqual({ name: 'label', material: null })
+    expect(ancestor('1611-0514-0006')).toBe('gobilda-1611')
+    // 재질 낱말은 SKU 시리즈보다 먼저다(이름 하나의 규칙과 같은 순서)
+    expect(matchAncestorRule('1120-0001-0048 PLA')?.material).toBe('pla')
+  })
+
   it('부품 종류 낱말이 여럿이면 가장 오른쪽 낱말(영어 이름의 중심 명사)의 규칙이다', () => {
     // 수식어(bearing·shaft·belt·roller)보다 뒤의 부품 종류가 재질을 정한다
     expect(rule('Bearing Plate')).toBe('plate')
@@ -85,11 +139,7 @@ describe('이름 규칙', () => {
     expect(rule('Roller Bracket')).toBe('bracket')
     expect(rule('Shaft Spacer')).toBe('spacer')
     expect(rule('Axle Plate')).toBe('plate')
-    expect(rule('Bearing Block')).toBe('block')
-    expect(rule('Motor Mount')).toBe('mount')
-    expect(rule('Tire Hub')).toBe('hub')
-    expect(material('Tire Hub')).toBe('aluminum6061')
-    // 뒤에 규칙 없는 낱말이 와도 규칙 있는 가장 오른쪽 낱말이다
+    // 뒤에 치수 낱말이 와도 그 앞의 중심 명사다
     expect(rule('Screw M4x10')).toBe('screw')
     expect(rule('Bearing 8mm ID')).toBe('bearing')
     // 같은 자리에서 끝나는 낱말열은 긴 것이 먼저다(set screw collar는 강철, pinion gear는 강철)

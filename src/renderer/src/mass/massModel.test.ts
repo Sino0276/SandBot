@@ -252,7 +252,7 @@ describe('질량 추정: 재질', () => {
 describe('질량 추정: 이름 규칙', () => {
   it('원래 이름 경로를 파트 노드부터 CAD 루트까지 본다(붙인 이름은 건너뛴다)', () => {
     const cadRoot = node('C', 'R', {
-      name: 'Screw Kit',
+      name: 'Steel Kit',
       cad: {
         fileName: 'kit.step',
         absolutePath: '/kit.step',
@@ -291,9 +291,60 @@ describe('질량 추정: 이름 규칙', () => {
       })
     expect(model.objects.P4).toMatchObject({
       source: 'nameRule',
-      detail: 'screw',
+      detail: 'steel',
       inheritedFrom: 'C'
     })
+  })
+
+  it('어셈블리 이름의 부품 종류 낱말은 그 아래 붙인 이름·이름 없는 솔리드에 내려가지 않는다(재질 낱말만)', () => {
+    const cad = {
+      fileName: 'robot.step',
+      absolutePath: '/robot.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [1, 1, 1] as Vec3 },
+      meshCount: 6
+    }
+    // 평탄화된 서브시스템: 최상위 컴포넌트 이름 아래 붙인 이름과 Onshape 기본 이름('Part 1')의 솔리드
+    const subsystem = (id: string, name: string): SceneObject[] => [
+      node(id, 'C', { name }),
+      part(`${id}1`, id, [0, 0, 0], { name: `${name} 1` }),
+      part(`${id}2`, id, [0, 0, 0], { name: 'Part 1' })
+    ]
+    const objects = scene(
+      robot(),
+      node('C', 'R', { name: 'Robot', cad }),
+      ...subsystem('L', 'Chain Lift'),
+      ...subsystem('I', 'Roller Intake'),
+      ...subsystem('S', 'Steel Arm')
+    )
+    const ids = ['L1', 'L2', 'I1', 'I2', 'S1', 'S2']
+    const props = Object.fromEntries(ids.map((id) => [`g:${id}`, box(0.3, 0.1, 0.004)]))
+    const generated = { 'g:L1': '', 'g:I1': '', 'g:S1': '' }
+    const model = computeMassModel(objects, lookupOf(props, generated))
+    for (const id of ['L1', 'L2', 'I1', 'I2'])
+      expect(model.objects[id], id).toMatchObject({ source: 'default', detail: 'aluminum6061' })
+    for (const id of ['S1', 'S2'])
+      expect(model.objects[id], id).toMatchObject({
+        source: 'nameRule',
+        detail: 'steel',
+        inheritedFrom: 'S'
+      })
+  })
+
+  it('가정한 일반 낱말(mount·block·hub)이 없어져 출력 재질 로봇의 마운트는 로봇 기본 재질이다', () => {
+    const objects = scene(
+      robot({ rigidbody: { defaultMaterial: 'petg' } }),
+      part('M', 'R', [0, 0, 0], { name: 'Camera Mount' }),
+      part('B', 'R', [0, 0, 0], { name: 'Sensor Block' }),
+      part('H', 'R', [0, 0, 0], { name: 'Servo Hub' })
+    )
+    const props = Object.fromEntries(
+      ['M', 'B', 'H'].map((id) => [`g:${id}`, box(0.06, 0.04, 0.02)])
+    )
+    const model = computeMassModel(objects, lookupOf(props))
+    for (const id of ['M', 'B', 'H'])
+      expect(model.objects[id], id).toMatchObject({ source: 'default', detail: 'petg' })
   })
 
   it('이름 규칙은 지금 이름·그룹 이름을 보지 않고, 옮기거나 이름을 바꿔도 원래 경로의 규칙이다', () => {
@@ -308,7 +359,7 @@ describe('질량 추정: 이름 규칙', () => {
     const imported = scene(
       robot(),
       node('C', 'R', { name: 'Kit', cad }),
-      node('B', 'C', { name: 'Bearing Kit' }),
+      node('B', 'C', { name: 'Steel Kit' }),
       part('P1', 'B', [0, 0, 0], { name: '1120-0010-0264' }),
       part('P2', 'B', [0, 0, 0], { name: 'Thing' }),
       part('P3', 'C', [0, 0, 0], { name: 'Thing 2' })
@@ -323,13 +374,13 @@ describe('질량 추정: 이름 규칙', () => {
     )
     const before = computeMassModel(imported, lookupOf(props, {}, paths))
     expect(before.objects.P1).toMatchObject({ source: 'nameRule', detail: 'gobilda-1120' })
-    expect(before.objects.P2).toMatchObject({ source: 'nameRule', detail: 'bearing' })
+    expect(before.objects.P2).toMatchObject({ source: 'nameRule', detail: 'steel' })
     expect(before.objects.P3).toMatchObject({ source: 'default' })
     const edited: SceneObjects = {
       ...imported,
       // 규칙 낱말이 든 새 이름(원래 SKU 규칙이 그대로 이긴다)
       P1: { ...imported.P1, name: 'steel bolt plate' },
-      // 부모 어셈블리 이름을 바꿔도 원래 이름(bearing)이다
+      // 부모 어셈블리 이름을 바꿔도 원래 이름(steel)이다
       B: { ...imported.B, name: 'Intake Roller' },
       // 그룹(팀이 지은 메커니즘 이름)으로 옮긴 파트도 원래 경로다
       G: node('G', 'R', { kind: 'group', name: 'IntakeRoller' }),
@@ -355,7 +406,7 @@ describe('질량 추정: 이름 규칙', () => {
     const imported = scene(
       robot(),
       node('C', 'R', { name: 'Kit', cad }),
-      node('B', 'C', { name: 'Bearing Kit' }),
+      node('B', 'C', { name: 'Steel Kit' }),
       part('P1', 'B', [0, 0, 0], { name: 'Thing' }),
       part('P2', 'B', [0, 0, 0], { name: 'Thing 2' }),
       part('P3', 'B', [0, 0, 0], { name: 'Thing 3' })
@@ -376,7 +427,7 @@ describe('질량 추정: 이름 규칙', () => {
     for (const id of ['P1', 'P2', 'P3'])
       expect(model.objects[id], id).toMatchObject({
         source: 'nameRule',
-        detail: 'bearing',
+        detail: 'steel',
         inheritedFrom: 'B'
       })
   })
