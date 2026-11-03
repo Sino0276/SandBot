@@ -381,6 +381,43 @@ describe('continuous 리깅 리프트', () => {
       expect(last.velocity).toBe(0)
     }
   })
+
+  for (const zeroPower of ['BRAKE', 'FLOAT'] as const)
+    it(`단 마찰(쿨롱 1 N·점성 0.5)이 있어도 위 한계에 닿은 뒤 ${zeroPower}로 바꿔도 한계를 넘지 않고 수치 오류가 없다`, () => {
+      // 쿨롱 마찰 행이 같은 단의 한계 행과 평행해 구속 행렬이 특이하다(예전에는 LCP가 순환해 맨 위 단이 µm 넘었다).
+      // 단 마찰 값은 spec-3b 기본값, 그 밖은 위 시험과 같다.
+      const friction = { coulomb: 1, viscous: 0.5 }
+      const spec = world([
+        stage(-1, {
+          friction,
+          drive: {
+            kind: 'motor',
+            devices: ['lift'],
+            ratio: SPOOL,
+            params: {
+              ...PARAMS,
+              gearbox: 13.7336,
+              stallTorque: 1.834,
+              freeSpeed: (435 * 2 * Math.PI) / 60
+            },
+            rigging: { kind: 'continuous', stages: [1] }
+          }
+        }),
+        stage(0, { friction, drive: { kind: 'stage' } })
+      ])
+      const r = run(spec, 4, (k) => (k * 0.005 < 2 ? motorOut(1) : motorOut(0, { zeroPower })))
+      expect(r.world.drainNotices()).toEqual([])
+      for (const q of r.q)
+        for (const x of q) {
+          expect(x).toBeLessThanOrEqual(0.244 + 1e-9)
+          expect(x).toBeGreaterThanOrEqual(-1e-9)
+        }
+      // 2 s 뒤 두 단 모두 위 한계, 끝에는 BRAKE는 위 근처에서 천천히 처지고 FLOAT는 아래 한계까지 떨어진다
+      expect(r.q[400][0] + r.q[400][1]).toBeCloseTo(0.488, 6)
+      const [q1, q2] = r.q[r.q.length - 1]
+      if (zeroPower === 'BRAKE') expect(q1 + q2).toBeGreaterThan(0.4)
+      else expect(q1 + q2).toBeLessThan(1e-6)
+    })
 })
 
 describe('강성·유계', () => {
