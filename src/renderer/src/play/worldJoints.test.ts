@@ -13,7 +13,12 @@ import type {
   Vec3
 } from '../scene/model'
 import { defaultWheel } from '../scene/wheel'
-import { buildWorldJoints, FALLBACK_BODY_MASS, MIN_BODY_INERTIA } from './worldJoints'
+import {
+  buildWorldJoints,
+  FALLBACK_BODY_MASS,
+  MAX_JOINT_SWITCHES,
+  MIN_BODY_INERTIA
+} from './worldJoints'
 import { buildWorldSpec, type WorldWarning } from './worldSpec'
 
 // 3b 계약 단계의 parseWorldSpec은 빈 관절 목록만 받는다(갈래 A가 관절 검증을 채운다). 그 빈 구현의 거부('joints')일 때만
@@ -417,6 +422,66 @@ describe('세계 설명의 관절', () => {
     }
   })
 
+  it('서보 하나를 두 관절이 쓰면 앞 관절만 구동한다(세계 설명 전체를 잃지 않는다)', () => {
+    const objects = liftRobot()
+    objects.claw = group('claw', 'armMass', [0.1, 0, 0], {
+      name: 'Claw',
+      mass: { mass: 0.1 },
+      joint: joint({ drive: { kind: 'servo', servo: 's-wrist', gearRatio: 2 } })
+    })
+    const { joints, warnings } = build(objects)
+    expect(joints[2].drive).toMatchObject({ kind: 'servo', device: 'wrist' })
+    expect(joints[3].drive).toEqual({ kind: 'none' })
+    expect(warnings).toEqual([
+      { key: 'worldJointServoShared', params: { name: 'Claw', servo: 'wrist' } }
+    ])
+  })
+
+  it('전달 비가 세계 설명 범위(1e-6–1e3) 밖이면 구동하지 않고 모터를 차지하지 않는다', () => {
+    const objects = liftRobot()
+    const drive = objects.lift.joint!.drive as Extract<JointSettings['drive'], { kind: 'motor' }>
+    // 1 mm 스풀 × 1000:1 → 0.0005 / 1000 = 5e-7 m/rad
+    objects.lift = {
+      ...objects.lift,
+      joint: {
+        ...objects.lift.joint!,
+        drive: { ...drive, spoolDiameter: 0.001, gearRatio: 1000 }
+      }
+    }
+    objects.arm = {
+      ...objects.arm,
+      joint: {
+        ...defaultJoint(),
+        drive: {
+          kind: 'motor',
+          motors: ['m-lift'],
+          gearRatio: 1,
+          spoolDiameter: 0.03,
+          rigging: { kind: 'direct' }
+        }
+      }
+    }
+    const { joints, warnings } = build(objects)
+    expect(joints[0].drive).toEqual({ kind: 'none' })
+    expect(joints[2].drive).toMatchObject({ kind: 'motor', devices: ['lift'], ratio: 1 })
+    expect(keys(warnings)).toEqual(['worldJointRatioRange', 'worldJointStageOrphan'])
+  })
+
+  it('문서에 정리되지 않은 값이 있어도 검증 한도 안으로 정리해 넣는다', () => {
+    const objects = liftRobot()
+    objects.arm = {
+      ...objects.arm,
+      joint: {
+        ...objects.arm.joint!,
+        limits: { lower: 0.2, upper: 1 },
+        friction: { coulomb: 2e4, viscous: 0 }
+      }
+    }
+    const { joints } = build(objects)
+    expect(joints[2].limits).toEqual({ lower: 0, upper: 1 })
+    expect(joints[2].friction).toEqual({ coulomb: 1e4, viscous: 0 })
+  })
+
   it('다단 슬라이드: 위 단은 바로 아래 단의 자식인 직선 관절이어야 하고, 맞지 않는 단부터 묶지 않는다', () => {
     const objects = liftRobot()
     // arm을 직선 위 단으로 바꿔도 stage2를 건너뛰고 lift에 바로 묶을 수는 없다
@@ -485,6 +550,35 @@ describe('세계 설명의 관절', () => {
       components: [component('touchSensor', 't-arm', 'armDown', { limitJoint: 'arm' })]
     }
     expect(build(revolute).joints[2].switches[0].within).toBeCloseTo(Math.PI / 180, 15)
+  })
+
+  it(`리밋 스위치: 이름이 겹치는 장치는 한 번만, 관절마다 ${MAX_JOINT_SWITCHES}개까지`, () => {
+    const objects = liftRobot()
+    objects.drive = {
+      ...objects.drive,
+      components: [
+        ...objects.drive.components!,
+        // 같은 이름(생성이 막힌 구성)의 스위치·모터 이름과 같은 스위치
+        component('touchSensor', 't-dup', 'liftDown', { limitJoint: 'lift' }),
+        component('digitalDevice', 'd-motor', 'lift', { limitJoint: 'lift' }),
+        ...Array.from({ length: MAX_JOINT_SWITCHES }, (_, k) =>
+          component('touchSensor', `t-${k}`, `stop${k}`, { limitJoint: 'lift' })
+        )
+      ]
+    }
+    const { joints, warnings } = build(objects)
+    expect(joints[0].switches.map((s) => s.device)).toEqual([
+      'liftDown',
+      ...Array.from({ length: MAX_JOINT_SWITCHES - 1 }, (_, k) => `stop${k}`)
+    ])
+    expect(warnings).toEqual([
+      { key: 'worldLimitSwitchDuplicate', params: { name: 'liftDown' } },
+      { key: 'worldLimitSwitchDuplicate', params: { name: 'lift' } },
+      {
+        key: 'worldLimitSwitchTooMany',
+        params: { name: `stop${MAX_JOINT_SWITCHES - 1}`, joint: 'Lift', max: MAX_JOINT_SWITCHES }
+      }
+    ])
   })
 
   it('관절 하위의 센서·포드·바퀴는 경고한다(로봇 몸체에 붙은 것으로 계산)', () => {

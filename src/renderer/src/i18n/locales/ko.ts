@@ -835,6 +835,10 @@ const ko = {
         '관절 {{name}}을(를) 함께 구동하는 모터들의 형식·감속비가 달라 첫 모터의 값으로 계산합니다.',
       worldJointServoMissing:
         '관절 {{name}}의 서보를 이 로봇에서 찾을 수 없어(지웠거나 다른 종류·다른 로봇의 장치) 구동하지 않습니다.',
+      worldJointServoShared:
+        '서보 {{servo}}을(를) 앞의 관절이 이미 구동하거나 다른 장치와 이름이 겹쳐 관절 {{name}}은(는) 구동하지 않습니다. 서보 하나는 관절 하나만 구동합니다(두 손가락 집게는 한 관절로 두세요).',
+      worldJointRatioRange:
+        '관절 {{name}}의 감속비·스풀 지름으로 정한 전달 비가 시뮬레이터 범위 밖이라 구동하지 않습니다.',
       worldJointServoOnSlide:
         '위치 서보는 회전 관절만 구동합니다. 직선 관절 {{name}}은(는) CR 서보와 스풀로 구동하세요.',
       worldJointStageInvalid:
@@ -845,6 +849,10 @@ const ko = {
         '리밋 스위치 {{name}}의 관절을 이 로봇에서 찾을 수 없어 누르지 않습니다.',
       worldLimitSwitchNoLimit:
         '리밋 스위치 {{name}}의 관절 {{joint}}에 한계가 없어 누르지 않습니다.',
+      worldLimitSwitchDuplicate:
+        '리밋 스위치 {{name}}의 장치 이름이 다른 장치와 겹쳐 누르지 않습니다.',
+      worldLimitSwitchTooMany:
+        '관절 {{joint}}의 리밋 스위치가 시뮬레이터 한도({{max}}개)를 넘어 {{name}}은(는) 누르지 않습니다.',
       worldSensorOnJoint:
         '{{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
       worldWheelOnJoint:

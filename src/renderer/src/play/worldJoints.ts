@@ -16,7 +16,7 @@ import { isMotorModel, MAX_GEARBOX, MIN_GEARBOX, MOTOR_MODEL_TAGS } from '../har
 import type { ComponentEntry } from '../hardware/components'
 import { sidecarDeviceName } from '../hardware/naming'
 import type { MassModel, SymMatrix3 } from '../mass/types'
-import { canHaveJoint, DEFAULT_LIMIT_WITHIN } from '../scene/joint'
+import { canHaveJoint, DEFAULT_LIMIT_WITHIN, sanitizeJoint } from '../scene/joint'
 import {
   frameMatrix,
   matrixToTransform,
@@ -39,6 +39,11 @@ export const FALLBACK_BODY_MASS = 0.001
 // 몸체 관성의 대각 하한(kg·m²): 1 g 질량을 반지름 1 cm 구로 본 관성(2/5 · 0.001 · 0.01²). 점질량 몸체(형상이 없는 그룹의
 // 질량 덮어쓰기)가 관절 축 위에 있어도 질량 행렬이 특이하지 않게 한다(가정, 보통 몸체 관성 1e-4–1e-2보다 훨씬 작다).
 export const MIN_BODY_INERTIA = 4e-8
+// 관절 하나의 리밋 스위치 수와 구동 전달 비 |ratio| 범위. 세계 설명 검증(parseWorldSpec)의 한도와 같다(가정: 넉넉한 한도라
+// 틀린 단위·폭주 값만 막는다). 직선 관절의 ratio는 스풀 반지름 ÷ 외부 감속이라 1 mm 스풀 × 1000:1이면 5e-7로 범위 밖이다.
+export const MAX_JOINT_SWITCHES = 8
+const MIN_DRIVE_RATIO = 1e-6
+const MAX_DRIVE_RATIO = 1e3
 
 export type JointBuildInput = {
   objects: SceneObjects
@@ -152,7 +157,8 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   for (const id of robotTree) {
     const object = objects[id]
     if (id === robotId || !object.joint || !canHaveJoint(object)) continue
-    candidates.push({ objectId: id, name: object.name, joint: object.joint })
+    // 문서의 관절은 스토어·프로젝트 파일이 이미 정리했지만, 세계 설명이 검증을 통과하도록 한 번 더 정리한다(같은 값이면 그대로)
+    candidates.push({ objectId: id, name: object.name, joint: sanitizeJoint(object.joint) })
   }
   if (candidates.length > MAX_WORLD_JOINTS)
     warnings.push({ key: 'worldTooManyJoints', params: { max: MAX_WORLD_JOINTS } })
@@ -232,6 +238,12 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   const components = new Map(entries.map((entry) => [entry.component.id, entry.component]))
   // 이미 한 관절이 쓰는 모터(두 관절이 한 모터를 쓰지 않는다)
   const usedMotors = new Set<string>()
+  // 이미 쓴 서보·리밋 스위치 장치 이름(세계 설명에서 장치 하나는 한 관절의 서보나 스위치 하나다. 모터 이름과도 겹치지 않는다)
+  const motorNames = new Set(motorDevices.values())
+  const usedDevices = new Set<string>()
+  // 전달 비가 세계 설명 범위 밖이면 구동하지 않는다
+  const ratioInRange = (ratio: number): boolean =>
+    Number.isFinite(ratio) && ratio >= MIN_DRIVE_RATIO && ratio <= MAX_DRIVE_RATIO
   // 다단 슬라이드 위 단으로 쓰인 관절
   const claimedStages = new Set<number>()
   const drives = kept.map((candidate, i): SimJointDriveSpec => {
@@ -243,6 +255,16 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
       case 'stage':
         return { kind: drive.kind }
       case 'motor': {
+        // 회전: 출력축 rad당 관절 rad, 직선: 출력축 rad당 m(스풀 반지름 ÷ 외부 감속). 부호는 + 그대로다(+power면 관절 +
+        // 방향, 방향은 모터의 인스펙터 방향과 관절 축 부호가 정한다). 범위 밖이면 모터를 차지하기 전에 뺀다.
+        const ratio =
+          joint.type === 'revolute'
+            ? 1 / drive.gearRatio
+            : drive.spoolDiameter / 2 / drive.gearRatio
+        if (!ratioInRange(ratio)) {
+          warnings.push({ key: 'worldJointRatioRange', params: { name } })
+          return { kind: 'none' }
+        }
         const devices: string[] = []
         let params: SimMotorParams | null = null
         let differ = false
@@ -273,12 +295,6 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
         }
         if (differ) warnings.push({ key: 'worldJointMotorsDiffer', params: { name } })
         if (!params || devices.length === 0) return { kind: 'none' }
-        // 회전: 출력축 rad당 관절 rad, 직선: 출력축 rad당 m(스풀 반지름 ÷ 외부 감속). 부호는 + 그대로다(+power면 관절 +
-        // 방향, 방향은 모터의 인스펙터 방향과 관절 축 부호가 정한다).
-        const ratio =
-          joint.type === 'revolute'
-            ? 1 / drive.gearRatio
-            : drive.spoolDiameter / 2 / drive.gearRatio
         return {
           kind: 'motor',
           devices,
@@ -304,6 +320,16 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
           drive.kind === 'crServo' && joint.type === 'prismatic'
             ? drive.spoolDiameter / 2 / drive.gearRatio
             : 1 / drive.gearRatio
+        if (!ratioInRange(ratio)) {
+          warnings.push({ key: 'worldJointRatioRange', params: { name } })
+          return { kind: 'none' }
+        }
+        // 한 서보는 관절 하나만 구동한다(서보 하나로 집게 두 손가락을 움직이는 것은 한 관절과 기어로 나타낸다)
+        if (usedDevices.has(device) || motorNames.has(device)) {
+          warnings.push({ key: 'worldJointServoShared', params: { name, servo: component.name } })
+          return { kind: 'none' }
+        }
+        usedDevices.add(device)
         return {
           kind: drive.kind,
           device,
@@ -381,6 +407,19 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     }
     const device = sidecarDeviceName(component.name)
     if (!device) continue
+    // 같은 이름의 장치(이름이 겹쳐 생성이 막힌 구성)는 한 번만 쓴다
+    if (usedDevices.has(device) || motorNames.has(device)) {
+      warnings.push({ key: 'worldLimitSwitchDuplicate', params: { name: component.name } })
+      continue
+    }
+    if (switches[i].length === MAX_JOINT_SWITCHES) {
+      warnings.push({
+        key: 'worldLimitSwitchTooMany',
+        params: { name: component.name, joint: kept[i].name, max: MAX_JOINT_SWITCHES }
+      })
+      continue
+    }
+    usedDevices.add(device)
     const within = Number(component.props.limitWithin)
     switches[i].push({
       device,

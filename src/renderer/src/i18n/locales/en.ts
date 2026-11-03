@@ -827,6 +827,10 @@ const en: Messages = {
         'The motors driving joint {{name}} have different types or gear ratios; the first motor’s values are used.',
       worldJointServoMissing:
         'The servo of joint {{name}} is not in this robot (deleted, a different kind, or on another robot), so the joint is not driven.',
+      worldJointServoShared:
+        'Servo {{servo}} already drives an earlier joint or shares its name with another device, so joint {{name}} is not driven. A servo drives only one joint (model a two-finger claw as one joint).',
+      worldJointRatioRange:
+        'The drive ratio of joint {{name}} from its gear ratio and spool diameter is outside the simulator range, so the joint is not driven.',
       worldJointServoOnSlide:
         'A position servo drives only revolute joints. Drive prismatic joint {{name}} with a CR servo and a spool.',
       worldJointStageInvalid:
@@ -837,6 +841,10 @@ const en: Messages = {
         'The joint of limit switch {{name}} is not in this robot, so the switch is never pressed.',
       worldLimitSwitchNoLimit:
         'Joint {{joint}} of limit switch {{name}} has no limits, so the switch is never pressed.',
+      worldLimitSwitchDuplicate:
+        'The device name of limit switch {{name}} is shared with another device, so the switch is never pressed.',
+      worldLimitSwitchTooMany:
+        'Joint {{joint}} has more limit switches than the simulator limit ({{max}}), so {{name}} is never pressed.',
       worldSensorOnJoint:
         '{{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
       worldWheelOnJoint:
