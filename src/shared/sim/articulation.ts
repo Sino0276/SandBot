@@ -20,8 +20,9 @@ import type { SimJointSpec, Vec3 } from './worldSpec'
 //      (M + hD + h²K)·v⁺ = M·v + h·(f − c) + Jᵀλ, z⁺ = z + h·v⁺. D는 역기전력·BRAKE·점성·서보 D, K는 서보 P·스프링(대각 또는
 //      SᵀdiagS). f는 지금 z에서의 힘(−K(z − 기준) 포함).
 //   4. 구속(Jᵀλ): 한계(반발 0, 예측 간격 J·v⁺ ≥ −간격/h)와 쿨롱 마찰(상자 |λ| ≤ h·F)을 한 상자 LCP로 정확히 푼다
-//      (solveBoxLcp: 블록 주축 전환 + Murty 대체). 한계 행은 한계 근처면 늘 넣는다(결합 관절에서 행을 v*로 고르면
-//      떨린다 — 3b 비평 §2.5). 풀고 난 뒤 빠진 한계가 넘으면 그 행을 더해 다시 푼다.
+//      (solveBoxLcp: 정칙화한 행렬로 블록 주축 전환 + Murty 대체, 근접점 반복으로 원래 문제에 맞춤). 한계 행은 한계
+//      근처면 늘 넣는다(결합 관절에서 행을 v*로 고르면 떨린다 — 3b 비평 §2.5). 풀고 난 뒤 빠진 한계가 넘으면 그 행을 더해
+//      다시 푼다.
 //   5. 위치 자르기는 z 공간에서만 한다: 한계 관절의 S 행이 z 성분 하나일 때만 그 z를 한계로 자른다(리깅 구속을 깨지 않게).
 //   힘이 영역(모터 회생 자르기·서보 포화)에 따라 다르면 지금 v로 정한 영역으로 풀고, v⁺의 영역이 다르면 그 영역으로 한 번 더
 //   푼다(많아야 두 번, 결정적).
@@ -226,20 +227,28 @@ export function ldlSolve(f: { l: number[][]; d: number[] }, rhs: readonly number
 
 // 블록 주축 전환이 감염 수를 줄이지 못한 채 모두 바꾸기를 허락하는 횟수(Júdice–Pires의 p̄, 가정: 문헌의 보통 값 3–10)
 const BPP_TRIES = 3
-// 자유 행의 부분 행렬이 거의 특이할 때(같은 방향의 행: 한계와 마찰, continuous 리깅의 세 행) 대각에 더하는 정칙화(대각 최대의
-// 이 비율)와 그 판정 피벗(같은 비율). 가정: 결과 속도에 주는 차이가 1e-10 상대 아래라 위치·엔코더에 보이지 않는다.
-const LCP_REGULARIZATION = 1e-10
-const LCP_MIN_PIVOT = 1e-12
-// 반복 상한(넘으면 마지막 값을 상자로 자른다). 가정: Murty 단일 주축은 P 행렬에서 유한하고, 행이 50개 아래면 이만큼 들지 않는다.
+// 구속 정칙화: 행마다 대각에 LCP_REGULARIZATION·A_ii를 더한 행렬로 주축 전환을 한다(ODE의 CFM, MuJoCo의 구속 정칙화 R과 같은
+// 방식 — https://mujoco.readthedocs.io/en/stable/computation/index.html#soft-constraints). 같은 방향의 행(한 관절의 쿨롱
+// 마찰과 한계, 단일 좌표 관절의 모터 손실 상자와 한계, continuous 리깅의 세 행)이 있으면 A가 특이한 양반정치라 주축 전환이
+// 끝난다는 보장이 없다(Murty·블록 주축 전환은 P 행렬에서만 유한하다). 정칙화한 행렬은 대칭 양정치(P 행렬)라 끝나고 해가
+// 하나다. 그 뒤 근접점 반복(Rockafellar 1976: LCP(A + E, b − E·λ_k), 단조 LCP에서 원래 해로 수렴)으로 정칙화가 남긴 차이를
+// 지운다. 가정: 1e-9면 조건수 1e9라 배정밀도 LDLᵀ가 다루고, 근접점 반복은 한 번에 차이를 약 1e-9배로 줄인다.
+export const LCP_REGULARIZATION = 1e-9
+// 근접점 반복 상한. 가정: 특이하지 않은 방향의 차이가 한 번에 1e-9배로 줄어 2–3번이면 반올림 수준이다. 그래도 남으면 정칙화한
+// 해(행마다 차이가 1e-9 × 그 행의 충격만으로 생기는 속도 변화 아래)를 쓴다.
+const LCP_PROXIMAL_STEPS = 8
+// 한 번의 주축 전환 반복 상한. 정칙화한 문제는 P 행렬이라 유한하지만 반올림으로 순환하면 여기서 멈추고 던진다(조용히 상자로
+// 자르지 않는다 — world.ts가 관절을 멈추고 worldError로 알린다). 가정: 행이 50개 아래면 보통 10번 안에 끝난다.
 const LCP_MAX_ITERATIONS = 2000
 
 // 행의 끝 상태: 아래 경계, 자유(w = 0), 위 경계
 export type LcpState = 'lower' | 'free' | 'upper'
 
-// w = A·λ + b, lo ≤ λ ≤ hi에서 λ = lo면 w ≥ 0, λ = hi면 w ≤ 0, 그 사이면 w = 0인 λ(상자 혼합 LCP). A는 대칭 양반정치다.
-// 블록 주축 전환(Júdice & Pires 1994, 상자 제약)으로 풀고, 감염 수가 줄지 않으면 Murty의 최소 첨자 규칙(가장 큰 첨자 하나만
-// 바꿈)으로 바꾼다. 자유 행의 부분 행렬이 거의 특이하면 그 풀이만 정칙화한다(그러면 P 행렬이라 끝난다). 사칙연산만이라 결정적이다.
-// start는 행마다 처음 상태(앞 하위 단계의 답, 없으면 λ = 0에 가까운 상태)다. 해는 시작과 관계없고 반복 수만 줄어든다.
+// w = A·λ + b, lo ≤ λ ≤ hi에서 λ = lo면 w ≥ 0, λ = hi면 w ≤ 0, 그 사이면 w = 0인 λ(상자 혼합 LCP). A는 대각이 양수인 대칭
+// 양반정치다(특이해도 된다). 정칙화한 행렬로 블록 주축 전환(Júdice & Pires 1994, 상자 제약)을 하고, 감염 수가 줄지 않으면
+// Murty의 최소 첨자 규칙(가장 큰 첨자 하나만 바꿈)으로 바꾼다. 그 뒤 근접점 반복으로 원래 A의 해에 맞춘다(위 주석). 사칙연산만이라
+// 결정적이다. start는 행마다 처음 상태(앞 하위 단계의 답, 없으면 λ = 0에 가까운 상태)다. w(따라서 속도)는 시작과 관계없고
+// 반복 수만 줄어든다. 주축 전환이 반복 상한을 넘으면 던진다.
 export function solveBoxLcp(
   a: readonly (readonly number[])[],
   b: readonly number[],
@@ -249,21 +258,9 @@ export function solveBoxLcp(
 ): { lambda: number[]; states: LcpState[] } {
   const n = b.length
   if (n === 0) return { lambda: [], states: [] }
-  let maxDiag = 0
-  for (let i = 0; i < n; i++) maxDiag = Math.max(maxDiag, a[i][i])
-  const scale = maxDiag > 0 ? maxDiag : 1
-  const eps = LCP_REGULARIZATION * scale
-  const solveFree = (free: number[], rhs: number[]): number[] => {
-    const sub = free.map((i) => free.map((j) => a[i][j]))
-    try {
-      return ldlSolve(ldlFactor(sub, LCP_MIN_PIVOT * scale), rhs)
-    } catch {
-      return ldlSolve(
-        ldlFactor(sub.map((row, k) => row.map((x, l) => (k === l ? x + eps : x)))),
-        rhs
-      )
-    }
-  }
+  for (let i = 0; i < n; i++)
+    if (!(a[i][i] > 0)) throw new Error('joint dynamics: constraint row has no effect')
+  const shift = a.map((row, i) => row[i] * LCP_REGULARIZATION)
   let bScale = 1
   let lScale = 1
   for (let i = 0; i < n; i++) {
@@ -283,48 +280,69 @@ export function solveBoxLcp(
     else state[i] = lo[i] === 0 ? 0 : hi[i] === 0 ? 2 : 1
   }
   const lambda = new Array<number>(n).fill(0)
-  let best = n + 1
-  let tries = BPP_TRIES
-  for (let iteration = 0; iteration < LCP_MAX_ITERATIONS; iteration++) {
-    const free: number[] = []
-    for (let i = 0; i < n; i++) {
-      if (state[i] === 1) free.push(i)
-      else lambda[i] = state[i] === 0 ? lo[i] : hi[i]
-    }
-    if (free.length > 0) {
-      const rhs = free.map((i) => {
-        let s = -b[i]
-        for (let j = 0; j < n; j++) if (state[j] !== 1) s -= a[i][j] * lambda[j]
-        return s
-      })
-      const x = solveFree(free, rhs)
-      free.forEach((i, k) => (lambda[i] = x[k]))
-    }
-    const bad: number[] = []
-    for (let i = 0; i < n; i++) {
-      if (state[i] === 1) {
-        if (lambda[i] < lo[i] - tolL || lambda[i] > hi[i] + tolL) bad.push(i)
-        continue
+  // 정칙화한 LCP(A + E, c)를 state에서 시작해 푼다(lambda·state를 바꾼다)
+  const pivot = (c: readonly number[]): void => {
+    let best = n + 1
+    let tries = BPP_TRIES
+    for (let iteration = 0; ; iteration++) {
+      if (iteration >= LCP_MAX_ITERATIONS)
+        throw new Error('joint dynamics: constraint solve did not converge')
+      const free: number[] = []
+      for (let i = 0; i < n; i++) {
+        if (state[i] === 1) free.push(i)
+        else lambda[i] = state[i] === 0 ? lo[i] : hi[i]
       }
-      let w = b[i]
-      for (let j = 0; j < n; j++) w += a[i][j] * lambda[j]
-      if ((state[i] === 0 && w < -tolW) || (state[i] === 2 && w > tolW)) bad.push(i)
-    }
-    if (bad.length === 0) break
-    let flip = bad
-    if (bad.length < best) {
-      best = bad.length
-      tries = BPP_TRIES
-    } else if (tries > 0) {
-      tries--
-    } else {
-      flip = [bad[bad.length - 1]]
-    }
-    for (const i of flip) {
-      if (state[i] === 1) state[i] = lambda[i] < lo[i] ? 0 : 2
-      else state[i] = 1
+      if (free.length > 0) {
+        const sub = free.map((i) => free.map((j) => (i === j ? a[i][j] + shift[i] : a[i][j])))
+        const rhs = free.map((i) => {
+          let s = -c[i]
+          for (let j = 0; j < n; j++) if (state[j] !== 1) s -= a[i][j] * lambda[j]
+          return s
+        })
+        const x = ldlSolve(ldlFactor(sub), rhs)
+        free.forEach((i, k) => (lambda[i] = x[k]))
+      }
+      const bad: number[] = []
+      for (let i = 0; i < n; i++) {
+        if (state[i] === 1) {
+          if (lambda[i] < lo[i] - tolL || lambda[i] > hi[i] + tolL) bad.push(i)
+          continue
+        }
+        let w = c[i] + shift[i] * lambda[i]
+        for (let j = 0; j < n; j++) w += a[i][j] * lambda[j]
+        if ((state[i] === 0 && w < -tolW) || (state[i] === 2 && w > tolW)) bad.push(i)
+      }
+      if (bad.length === 0) return
+      let flip = bad
+      if (bad.length < best) {
+        best = bad.length
+        tries = BPP_TRIES
+      } else if (tries > 0) {
+        tries--
+      } else {
+        flip = [bad[bad.length - 1]]
+      }
+      for (const i of flip) {
+        if (state[i] === 1) state[i] = lambda[i] < lo[i] ? 0 : 2
+        else state[i] = 1
+      }
     }
   }
+  // 원래 A에서 상보성을 어기는 가장 큰 양(w 단위)
+  const violation = (): number => {
+    let worst = 0
+    for (let i = 0; i < n; i++) {
+      let w = b[i]
+      for (let j = 0; j < n; j++) w += a[i][j] * lambda[j]
+      const v = state[i] === 1 ? Math.abs(w) : state[i] === 0 ? -w : w
+      worst = Math.max(worst, v)
+    }
+    return worst
+  }
+  pivot(b)
+  for (let step = 0; step < LCP_PROXIMAL_STEPS && violation() > tolW; step++)
+    pivot(b.map((x, i) => x - shift[i] * lambda[i]))
+  // 자유 행의 λ가 허용 오차 안에서 상자를 살짝 넘은 것만 경계로 맞춘다(반올림)
   for (let i = 0; i < n; i++) lambda[i] = Math.min(hi[i], Math.max(lo[i], lambda[i]))
   const names: LcpState[] = ['lower', 'free', 'upper']
   return { lambda, states: state.map((s) => names[s]) }

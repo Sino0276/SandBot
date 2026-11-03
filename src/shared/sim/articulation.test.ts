@@ -6,6 +6,7 @@ import {
   ldlSolve,
   solveBoxLcp,
   type DriveForces,
+  type LcpState,
   type DriveModel
 } from './articulation'
 import { GRAVITY } from './physics'
@@ -174,6 +175,103 @@ describe('solveBoxLcp', () => {
     const w = [0, 1].map((i) => 3 + (i === 1 ? 0.5 : 0) + a[i][0] * lambda[0] + a[i][1] * lambda[1])
     expect(lambda[0]).toBeCloseTo(-1, 9)
     expect(w[1]).toBeGreaterThanOrEqual(-1e-9)
+  })
+
+  it('평행한 행이 여럿인 특이 양반정치 문제도 끝나고 원래 A에서 상보성을 지킨다', () => {
+    // 관절 구속처럼 만든다: A = J·M⁻¹·Jᵀ(M⁻¹ 양정치), 마찰 행(상자)과 한계 행(λ ≥ 0, 목표 −간격/h ≤ 0이라 v = 0이
+    // 가능한 해)이 같은 방향이거나 반대 방향(continuous 리깅의 [1, −r]·[−r, 1]처럼)이다. λ는 하나가 아니므로 해를 대조하지
+    // 않고 원래 A에서 상보성만 본다.
+    let seed = 2024
+    const rand = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    for (let trial = 0; trial < 300; trial++) {
+      const m = 1 + (trial % 3)
+      const g = Array.from({ length: m }, () => Array.from({ length: m }, () => rand() * 2 - 1))
+      const minv = g.map((_, i) =>
+        g.map((__, j) => g[i].reduce((s, v, k) => s + v * g[j][k], 0) + (i === j ? 0.05 : 0))
+      )
+      const rows: { j: number[]; lo: number; hi: number; target: number }[] = []
+      const nBase = 1 + (trial % 3)
+      for (let r = 0; r < nBase; r++) {
+        const j = Array.from({ length: m }, () => rand() * 2 - 1)
+        const f = rand() * 0.01
+        rows.push({ j, lo: -f, hi: f, target: 0 })
+        // 같은 J의 아래 한계와 반대 J의 위 한계(간격은 가끔 0)
+        const gap = trial % 4 === 0 ? 0 : rand() * 0.002
+        rows.push({ j: j.map((x) => x * (0.5 + rand())), lo: 0, hi: Infinity, target: -gap })
+        if (trial % 2 === 0)
+          rows.push({
+            j: j.map((x) => -x * (0.5 + rand())),
+            lo: 0,
+            hi: Infinity,
+            target: -rand() * 0.002
+          })
+      }
+      const vStar = Array.from({ length: m }, () => rand() * 2 - 1)
+      const dot = (x: number[], y: number[]): number => x.reduce((s, v, k) => s + v * y[k], 0)
+      const mj = rows.map((r) => minv.map((row) => dot(row, r.j)))
+      const a = rows.map((r) => mj.map((col) => dot(r.j, col)))
+      const b = rows.map((r) => dot(r.j, vStar) - r.target)
+      const lo = rows.map((r) => r.lo)
+      const hi = rows.map((r) => r.hi)
+      const { lambda, states } = solveBoxLcp(a, b, lo, hi)
+      rows.forEach((_, i) => {
+        const w = b[i] + dot(a[i], lambda)
+        expect(lambda[i]).toBeGreaterThanOrEqual(lo[i])
+        expect(lambda[i]).toBeLessThanOrEqual(hi[i])
+        if (states[i] === 'free') expect(Math.abs(w)).toBeLessThan(1e-9)
+        else if (states[i] === 'lower') expect(w).toBeGreaterThan(-1e-9)
+        else expect(w).toBeLessThan(1e-9)
+      })
+    }
+  })
+
+  it('continuous 리깅에서 잡은 순환 사례(마찰·손실 상자·한계 행이 평행)를 풀고 상보성을 지킨다', () => {
+    // 2단 continuous 리프트(쿨롱 1 N)가 위 한계에서 BRAKE로 바꾼 뒤의 하위 단계 문제(시험 기록). 행 0과 3은 정확히 반대
+    // 방향(같은 단의 마찰 상자와 한계)이라 A가 특이하다. 예전 풀이는 이 시작 상태에서 두 상태 사이를 오가며 상한(2000번)까지
+    // 돌았고, 자유 행의 w가 −0.002였다(맨 위 단이 위 한계를 넘었다).
+    const a = [
+      [
+        3.3222603792896015, -186.33601734159214, 0.04235410284807764, -3.3222603792896015,
+        3.3215054024288104
+      ],
+      [
+        -186.33601734159217, 11881.437960681182, 1428.0118324753562, 186.33601734159217,
+        -211.79083323799503
+      ],
+      [
+        0.04235410284807764, 1428.0118324753562, 1430.3878920888724, -0.04235410284807764,
+        -25.45481589640287
+      ],
+      [
+        -3.3222603792896015, 186.33601734159214, -0.04235410284807764, 3.3222603792896015,
+        -3.3215054024288104
+      ],
+      [
+        3.32150540242881, -211.790833237995, -25.45481589640287, -3.32150540242881,
+        3.775246497274358
+      ]
+    ]
+    const b = [
+      -0.01811614673533502, 0.4996788046232623, -0.516634650646081, 0.058012356706942166,
+      -0.008906951392000413
+    ]
+    const lo = [-0.001, -1.7825353626292277e-5, -3.3348663526946834e-5, 0, 0]
+    const hi = [0.001, 1.7825353626292277e-5, 3.1509999999999995e-5, Infinity, Infinity]
+    const start: LcpState[] = ['upper', 'lower', 'upper', 'lower', 'free']
+    const { lambda, states } = solveBoxLcp(a, b, lo, hi, start)
+    b.forEach((bi, i) => {
+      const w = bi + a[i].reduce((s, x, j) => s + x * lambda[j], 0)
+      if (states[i] === 'free') expect(Math.abs(w)).toBeLessThan(1e-12)
+      else if (states[i] === 'lower') expect(w).toBeGreaterThan(-1e-12)
+      else expect(w).toBeLessThan(1e-12)
+    })
+  })
+
+  it('효과가 없는 행(대각 0)은 조용히 풀지 않고 던진다', () => {
+    expect(() => solveBoxLcp([[0]], [1], [0], [Infinity])).toThrow()
   })
 })
 
