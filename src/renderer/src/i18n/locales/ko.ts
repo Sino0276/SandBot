@@ -1109,6 +1109,7 @@ const ko = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB 포트',
     objectNone: '(없음)',
+    objectMissing: '(찾을 수 없는 오브젝트)',
     // 시뮬레이터 전용 속성(생성 코드와 관계없음)
     simulationOnly: '시뮬레이터 전용 설정입니다(생성 코드·구성 XML에는 쓰지 않습니다).',
     gearboxModelDefault: '모델 기본',
@@ -1224,8 +1225,14 @@ const ko = {
       servoModel: '서보 모델',
       limitJoint: '리밋 스위치 관절',
       limitAt: '눌리는 끝',
-      limitDistance: '눌리는 거리 (0 = 2 mm)',
-      limitAngle: '눌리는 각도 (0 = 1°)'
+      limitDistance: '눌리는 거리',
+      limitAngle: '눌리는 각도'
+    },
+    // 속성 칸의 도움말(catalog의 hint)
+    propHints: {
+      limitDistance:
+        '연결한 직선 관절이 고른 끝에서 이 거리 안이면 눌립니다. 0이면 기본값 2 mm입니다.',
+      limitAngle: '연결한 회전 관절이 고른 끝에서 이 각도 안이면 눌립니다. 0이면 기본값 1°입니다.'
     },
     options: {
       motorModel: {

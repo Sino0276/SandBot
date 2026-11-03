@@ -4,7 +4,8 @@ import {
   COMPONENT_CATEGORIES,
   COMPONENT_TYPE_KEYS,
   componentDef,
-  isComponentType
+  isComponentType,
+  type ObjectPick
 } from '../../hardware/catalog'
 import {
   createComponent,
@@ -13,7 +14,7 @@ import {
   type ComponentEntry
 } from '../../hardware/components'
 import { useSceneIssues } from '../../hardware/sceneIssues'
-import { ancestorIds, findRobotId, subtreeIds, type SceneObject } from '../../scene/model'
+import { findRobotId, type SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { openScriptPicker } from '../dialogStore'
 import JointCard from '../joint/JointCard'
@@ -23,6 +24,7 @@ import { canAddMass } from '../mass/massCardModel'
 import MassEstimateLine from '../mass/MassEstimateLine'
 import ScriptCard from '../scripts/ScriptCard'
 import ComponentCard from './ComponentCard'
+import { objectOptions, objectPicksOf, type ObjectOption } from './objectOptions'
 import { canAddWheel, newWheel } from './wheelCardModel'
 import WheelCard from './WheelCard'
 
@@ -54,20 +56,14 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   const expansionHubEnabled = robotId
     ? robotHardwareSettings(objects, robotId).expansionHub.enabled
     : false
-  // 포드로 고를 수 있는 파트: 같은 로봇의 파트·어셈블리(깊이만큼 들여 쓴다). Pinpoint 카드만 쓴다.
-  const needsPicker = components.some((component) => component.type === 'pinpoint')
-  const pickableObjects = useMemo(
-    () =>
-      robotId && needsPicker
-        ? subtreeIds(objects, robotId)
-            .filter((id) => id !== robotId)
-            .map((id) => ({
-              id,
-              label: `${'\u00a0\u00a0'.repeat(ancestorIds(objects, id).length - 1)}${objects[id].name}`
-            }))
-        : [],
-    [objects, robotId, needsPicker]
-  )
+  // object 속성으로 고를 수 있는 오브젝트: Pinpoint 포드는 같은 로봇의 오브젝트, 리밋 스위치는 같은 로봇의 관절 오브젝트
+  const picks = objectPicksOf(components.map((component) => component.type)).join(',')
+  const pickable = useMemo(() => {
+    const result: Partial<Record<ObjectPick, ObjectOption[]>> = {}
+    for (const pick of picks ? (picks.split(',') as ObjectPick[]) : [])
+      result[pick] = objectOptions(objects, robotId, pick)
+    return result
+  }, [objects, robotId, picks])
 
   const add = (type: string): void => {
     if (!isComponentType(type)) return
@@ -101,7 +97,7 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               objectId={object.id}
               component={component}
               siblings={siblings}
-              pickableObjects={pickableObjects}
+              objectOptions={pickable}
               expansionHubEnabled={expansionHubEnabled}
               issues={issues.filter((issue) => issue.componentId === component.id)}
             />

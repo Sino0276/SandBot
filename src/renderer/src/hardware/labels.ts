@@ -22,6 +22,11 @@ export function propertyLabelKey(propertyKey: string): string {
   return `hardware.props.${propertyKey}`
 }
 
+// 속성 칸의 도움말(catalog PropertyDef.hint가 있는 속성만)
+export function propertyHintKey(propertyKey: string): string {
+  return `hardware.propHints.${propertyKey}`
+}
+
 // 설명(hardware.hints.*)과 계산값(hardware.derived.*)이 있는 종류
 export const HINT_TYPES = [
   'imu',

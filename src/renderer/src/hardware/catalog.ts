@@ -33,12 +33,17 @@ export const EMBEDDED_IMU_BUS = 0
 export const CONTROL_HUB_ADDRESS = 173
 export const DEFAULT_EXPANSION_HUB_ADDRESS = 2
 
+// object 속성이 고를 수 있는 오브젝트의 종류
+export type ObjectPick = 'any' | 'joint'
+
 // 속성 공통 표시 정보
 type PropertyMeta = {
   // 다른 enum 속성이 이 값들 중 하나일 때만 인스펙터에 보인다(값은 늘 저장한다)
   visibleWhen?: { key: string; values: readonly string[] }
   // 다른 object 속성(key)이 관절이 있는 오브젝트를 가리킬 때만 보인다. types가 있으면 그 관절 형식일 때만(값은 늘 저장한다).
   visibleWhenJoint?: { key: string; types?: readonly JointType[] }
+  // 칸 설명(hardware.propHints.<key>, 인스펙터 행의 도움말). labels.test.ts가 ko·en에 있는지 확인한다.
+  hint?: true
   // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
   // 바이트 단위로 같아야 한다(generatedOutput.test.ts가 확인).
   simulation?: true
@@ -63,8 +68,9 @@ export type PropertyDef = PropertyMeta &
     // 각도(내부 라디안). 인스펙터는 도(°)로 보이고, 입력칸은 °·rad를 붙인 값도 받는다.
     | { key: string; kind: 'angle'; default: number; min: number; max: number }
     | { key: string; kind: 'text'; default: string }
-    // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''.
-    | { key: string; kind: 'object'; default: '' }
+    // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''. pick은 고를 수 있는 것:
+    // 'any'(기본) 같은 로봇의 오브젝트, 'joint' 같은 로봇의 관절 오브젝트(리밋 스위치)
+    | { key: string; kind: 'object'; default: ''; pick?: ObjectPick }
   )
 
 export type ComponentCategory = 'actuator' | 'sensor' | 'imu' | 'odometry' | 'vision' | 'other'
@@ -178,7 +184,7 @@ const SERVO_MODEL = {
 // limitAngle(각도, °)이고 0이면 기본값(scene/joint.ts DEFAULT_LIMIT_WITHIN: 2 mm·1°)이다. 인스펙터는 연결한 관절의
 // 형식에 맞는 칸만 보인다.
 const LIMIT_SWITCH = [
-  { key: 'limitJoint', kind: 'object', default: '', simulation: true },
+  { key: 'limitJoint', kind: 'object', default: '', pick: 'joint', simulation: true },
   {
     key: 'limitAt',
     kind: 'enum',
@@ -194,6 +200,7 @@ const LIMIT_SWITCH = [
     min: 0,
     max: MAX_LIMIT_WITHIN,
     visibleWhenJoint: { key: 'limitJoint', types: ['prismatic'] },
+    hint: true,
     simulation: true
   },
   {
@@ -203,6 +210,7 @@ const LIMIT_SWITCH = [
     min: 0,
     max: MAX_LIMIT_WITHIN,
     visibleWhenJoint: { key: 'limitJoint', types: ['revolute'] },
+    hint: true,
     simulation: true
   }
 ] as const

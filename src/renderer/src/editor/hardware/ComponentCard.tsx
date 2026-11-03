@@ -10,6 +10,7 @@ import {
   motorOutput,
   PORT_RANGES,
   type ComponentType,
+  type ObjectPick,
   type PropertyDef
 } from '../../hardware/catalog'
 import { componentCodePath } from '../../hardware/codeScopes'
@@ -18,7 +19,13 @@ import {
   sharesPortClass,
   type ComponentEntry
 } from '../../hardware/components'
-import { hasHint, looseT, optionLabelKey, propertyLabelKey } from '../../hardware/labels'
+import {
+  hasHint,
+  looseT,
+  optionLabelKey,
+  propertyHintKey,
+  propertyLabelKey
+} from '../../hardware/labels'
 import {
   MM_PER_METER,
   otosOffsetInchDeg,
@@ -49,6 +56,7 @@ import NumberField from '../NumberField'
 import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
 import IssueList from './IssueList'
+import type { ObjectOption } from './objectOptions'
 
 const HUBS: HubId[] = ['controlHub', 'expansionHub']
 
@@ -75,8 +83,8 @@ type ComponentCardProps = {
   component: HardwareComponent
   // 같은 로봇의 모든 컴포넌트(포트 사용 표시). 로봇 밖이면 이 오브젝트의 컴포넌트만.
   siblings: ComponentEntry[]
-  // 포드 파트로 고를 수 있는 오브젝트(같은 로봇의 파트·어셈블리)
-  pickableObjects: { id: string; label: string }[]
+  // object 속성으로 고를 수 있는 오브젝트(고르기 종류마다, editor/hardware/objectOptions.ts). 없는 종류는 빈 목록이다.
+  objectOptions: Partial<Record<ObjectPick, ObjectOption[]>>
   expansionHubEnabled: boolean
   issues: Issue[]
 }
@@ -144,7 +152,7 @@ function ComponentCard({
   objectId,
   component,
   siblings,
-  pickableObjects,
+  objectOptions,
   expansionHubEnabled,
   issues
 }: ComponentCardProps): React.JSX.Element | null {
@@ -287,22 +295,29 @@ function ComponentCard({
             onCommit={(input) => setProp(property.key, input.trim())}
           />
         )
-      case 'object':
+      case 'object': {
+        const options = objectOptions[property.pick ?? 'any'] ?? []
+        const current = String(value ?? '')
         return (
           <select
             className="field-select"
             aria-label={label}
-            value={String(value ?? '')}
+            value={current}
             onChange={(event) => setProp(property.key, event.target.value)}
           >
             <option value="">{t('hardware.objectNone')}</option>
-            {pickableObjects.map((object) => (
+            {/* 지웠거나 고를 수 없게 된 오브젝트: 참조는 남기고(세계 설명이 경고한다) 그렇다고 보인다 */}
+            {current !== '' && !options.some((object) => object.id === current) && (
+              <option value={current}>{t('hardware.objectMissing')}</option>
+            )}
+            {options.map((object) => (
               <option key={object.id} value={object.id}>
                 {object.label}
               </option>
             ))}
           </select>
         )
+      }
     }
   }
 
@@ -314,8 +329,11 @@ function ComponentCard({
       : property.kind === 'angle'
         ? `${tl(propertyLabelKey(property.key))} (°)`
         : tl(propertyLabelKey(property.key))
-  // 리밋 스위치 칸은 연결한 관절의 형식을 따른다(visibleWhenJoint)
-  const jointTypeOf = (id: string): JointType | null => objects[id]?.joint?.type ?? null
+  // 리밋 스위치 칸은 연결한 관절의 형식을 따른다(visibleWhenJoint). 같은 로봇의 관절 오브젝트만 관절로 본다(세계 설명과 같다)
+  const jointTypeOf = (id: string): JointType | null =>
+    objectOptions.joint?.some((option) => option.id === id)
+      ? (objects[id]?.joint?.type ?? null)
+      : null
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
@@ -408,7 +426,14 @@ function ComponentCard({
             key={property.key}
             label={rowLabel(property)}
             // 시뮬레이터 전용 속성은 생성 코드에 쓰지 않는다
-            title={property.simulation ? t('hardware.simulationOnly') : undefined}
+            title={
+              [
+                property.hint ? tl(propertyHintKey(property.key)) : '',
+                property.simulation ? t('hardware.simulationOnly') : ''
+              ]
+                .filter((text) => text !== '')
+                .join(' ') || undefined
+            }
           >
             {propertyControl(property)}
           </FieldRow>

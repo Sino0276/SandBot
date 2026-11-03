@@ -1109,6 +1109,7 @@ const en: Messages = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB port',
     objectNone: '(none)',
+    objectMissing: '(object not found)',
     // Simulator-only properties (not in the generated code)
     simulationOnly:
       'Simulator-only setting (not written to the generated code or configuration XML).',
@@ -1225,8 +1226,14 @@ const en: Messages = {
       servoModel: 'Servo model',
       limitJoint: 'Limit switch joint',
       limitAt: 'Pressed at',
-      limitDistance: 'Press distance (0 = 2 mm)',
-      limitAngle: 'Press angle (0 = 1°)'
+      limitDistance: 'Press distance',
+      limitAngle: 'Press angle'
+    },
+    propHints: {
+      limitDistance:
+        'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
+      limitAngle:
+        'The switch is pressed while the linked revolute joint is within this angle of the chosen end. 0 means the default, 1°.'
     },
     options: {
       motorModel: {
