@@ -19,6 +19,7 @@ import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
+import { defaultJoint } from '../scene/joint'
 import { defaultWheel } from '../scene/wheel'
 import {
   confirmRegisteredConsent,
@@ -53,6 +54,18 @@ import {
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
+// 3b 계약 단계의 parseWorldSpec은 빈 관절 목록만 받는다(갈래 A가 관절 검증을 채운다). 그 빈 구현의 거부('joints')일 때만
+// 만든 세계 설명을 그대로 돌려준다. A의 검증이 들어오면 이 대체는 쓰이지 않고 실제 검증을 거친다.
+vi.mock('../../../shared/sim/worldSpec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../shared/sim/worldSpec')>()
+  return {
+    ...actual,
+    parseWorldSpec: (value: unknown) => {
+      const result = actual.parseWorldSpec(value)
+      return result === 'joints' ? value : result
+    }
+  }
+})
 
 const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
 
@@ -455,6 +468,41 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     useProjectStore.setState({ generation: { status: 'blocked', errors: 1 } })
     await initPlay()
     expect(notices()).toEqual(['generationBlocked', 'worldGenerationStale'])
+  })
+
+  it('관절은 세계 설명에 들어가고 실행이 관절 순번 → 오브젝트 id를 기억한다(몸체 질량은 질량 모델에서)', async () => {
+    useSceneStore.setState({
+      objects: {
+        ...withWheel(),
+        lift: {
+          id: 'lift',
+          name: 'Lift',
+          kind: 'group',
+          parentId: 'bot',
+          transform: { position: [0, 0, 0.1], rotation: [0, 0, 0] },
+          joint: { ...defaultJoint('prismatic'), axis: 'z' }
+        },
+        payload: {
+          id: 'payload',
+          name: 'Payload',
+          kind: 'group',
+          parentId: 'lift',
+          transform: { position: [0, 0, 0.2], rotation: [0, 0, 0] },
+          mass: { mass: 1.5 }
+        }
+      }
+    })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world!.joints).toHaveLength(1)
+    expect(world!.joints[0]).toMatchObject({
+      parent: -1,
+      type: 'prismatic',
+      axis: { x: 0, y: 0, z: 1 },
+      body: { mass: 1.5, centerOfMass: { x: 0, y: 0, z: expect.closeTo(0.2, 12) } }
+    })
+    expect(usePlayStore.getState().run?.joints).toEqual(['lift'])
+    expect(notices()).toEqual([])
   })
 
   it('하드웨어가 있는 로봇이 없으면 세계도 없다', async () => {

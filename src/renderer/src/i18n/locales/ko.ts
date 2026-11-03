@@ -817,8 +817,40 @@ const ko = {
         'Pinpoint 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyOtos: 'OTOS 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyImus: 'IMU 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyJoints:
+        '관절 수가 시뮬레이터 한도({{max}}개)를 넘어 하이어라키 순서로 앞의 {{max}}개만 씁니다. 나머지는 바깥 관절과 함께 움직입니다.',
+      // 관절(3b, play/worldJoints.ts)
+      worldJointNoMass:
+        '관절 {{name}}의 몸체 질량을 알 수 없어(형상이 없거나 아직 읽지 못함) 1 g으로 둡니다. 질량 카드에서 질량을 넣으세요.',
+      worldJointMassPending:
+        '관절 {{name}}의 몸체에 아직 읽는 중인 메시 {{count}}개가 있어 그 질량을 빼고 계산합니다.',
+      worldJointNoMotor: '관절 {{name}}의 모터 구동에 모터를 고르지 않아 구동하지 않습니다.',
+      worldJointMotorMissing:
+        '관절 {{name}}의 구동 모터를 이 로봇에서 찾을 수 없어(지웠거나 다른 로봇의 모터, 이름이 겹침) 그 모터를 쓰지 않습니다.',
+      worldJointMotorOnWheel:
+        '모터 {{motor}}이(가) 바퀴를 구동하므로 관절 {{name}}을(를) 함께 구동하지 않습니다.',
+      worldJointMotorShared:
+        '모터 {{motor}}을(를) 앞의 관절이 이미 구동해 관절 {{name}}에서는 쓰지 않습니다.',
+      worldJointMotorsDiffer:
+        '관절 {{name}}을(를) 함께 구동하는 모터들의 형식·감속비가 달라 첫 모터의 값으로 계산합니다.',
+      worldJointServoMissing:
+        '관절 {{name}}의 서보를 이 로봇에서 찾을 수 없어(지웠거나 다른 종류·다른 로봇의 장치) 구동하지 않습니다.',
+      worldJointServoOnSlide:
+        '위치 서보는 회전 관절만 구동합니다. 직선 관절 {{name}}은(는) CR 서보와 스풀로 구동하세요.',
+      worldJointStageInvalid:
+        '다단 슬라이드 {{name}}의 단 {{stage}}이(가) 바로 아래 단의 자식인 직선 관절(구동: 위 단)이 아니어서 그 단부터는 묶지 않습니다.',
+      worldJointStageOrphan:
+        '관절 {{name}}은(는) 위 단인데 어느 다단 슬라이드 구동에도 들지 않아 구동하지 않습니다.',
+      worldLimitSwitchJointMissing:
+        '리밋 스위치 {{name}}의 관절을 이 로봇에서 찾을 수 없어 누르지 않습니다.',
+      worldLimitSwitchNoLimit:
+        '리밋 스위치 {{name}}의 관절 {{joint}}에 한계가 없어 누르지 않습니다.',
+      worldSensorOnJoint:
+        '{{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
+      worldWheelOnJoint:
+        '바퀴 {{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
       worldGenerationStale:
-        '장치 이름이 생성 구성과 다를 수 있어 바퀴가 움직이지 않을 수 있습니다.',
+        '장치 이름이 생성 구성과 다를 수 있어 바퀴·관절이 움직이지 않을 수 있습니다.',
       worldInvalid: '시뮬레이터 세계를 만들지 못해 로봇이 움직이지 않습니다 ({{detail}}).',
       generationBlocked:
         '마지막 저장에서 하드웨어 설정 오류 {{count}}개 때문에 생성 코드를 만들지 않았습니다. TeamCode에 남아 있는 이전 하드웨어 클래스·구성으로 실행합니다.',
