@@ -115,6 +115,8 @@ export type JointCardView = {
   // 편집 자세(q = 0)에서 중력(+스프링)을 버티는 데 드는 힘·토크의 크기(관절 좌표), 장치의 정지 토크를 관절 좌표로 옮긴
   // 것(구동 장치가 없으면 null), 둘의 비(여유, 부하가 없으면 null)
   load: number
+  // load에 스프링 힘이 들어 있는지(이 관절이나 다단 슬라이드의 위 단에 스프링이 있다)
+  loadIncludesSpring: boolean
   capacity: number | null
   margin: number | null
   // drive가 'stage'일 때 이 단을 rigging에 넣은 아래 단 관절의 id(없으면 null)
@@ -230,6 +232,7 @@ export function jointCardView(
   const stageForces = [objectId, ...stages].map(
     (id) => gravityForce(objects, frame, id, masses) + springForce(objects[id].joint!)
   )
+  const loadIncludesSpring = [objectId, ...stages].some((id) => objects[id].joint!.spring !== null)
   // 캐스케이드: 단마다 상대 이동이 같아(q_k = z) 단 k의 하위 짐이 모두 z에 걸린다(Σ). 연속: 줄 장력 하나가 모든 단에 같이
   // 걸려 가장 무거운 짐(첫 단이 진 전체)을 버텨야 다 펴진다(max). direct는 그 관절만. method §3.1, data §5.3.
   const continuous = drive.kind === 'motor' && drive.rigging.kind === 'continuous'
@@ -329,6 +332,7 @@ export function jointCardView(
     maxSpeed,
     endSpeed,
     load,
+    loadIncludesSpring,
     capacity,
     margin,
     stageOf,

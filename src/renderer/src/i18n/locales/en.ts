@@ -1697,13 +1697,17 @@ const en: Messages = {
     maxSpeedServo: 'Top speed ≈ {{speed}} {{unit}} (no load)',
     endSpeed: 'Top stage ≈ {{speed}} {{unit}}',
     load: 'Gravity load (edit pose) ≈ {{load}} {{unit}}',
+    loadWithSpring: 'Gravity and spring load (edit pose) ≈ {{load}} {{unit}}',
     loadNone: 'There is no gravity load in the edit pose.',
+    loadNoneWithSpring: 'Gravity and the spring cancel out in the edit pose, so there is no load.',
     loadHint:
-      'The gravity and spring force this joint (with the upper stages of a multi-stage slide) must hold in the edit pose, from the mass and center of mass of the mass model.',
+      'The force this joint (with the upper stages of a multi-stage slide) must hold in the edit pose: gravity from the mass and center of mass of the mass model, plus the spring force if there is a spring.',
     capacity: 'Stall torque ≈ {{capacity}} {{unit}}',
     capacityMargin: 'Stall torque ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
+    capacityForce: 'Stall force ≈ {{capacity}} {{unit}}',
+    capacityForceMargin: 'Stall force ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
     capacityHint:
-      "The device's datasheet stall torque in joint coordinates and its ratio to the load. Motors linked together count as the first motor's value × the number of motors (as in the simulator). Below 1 the joint cannot hold still.",
+      "The device's datasheet stall torque in joint coordinates (for a prismatic joint, the force at the spool) and its ratio to the load. Motors linked together count as the first motor's value × the number of motors (as in the simulator). Below 1 the joint cannot hold still.",
     preview: 'Preview',
     previewHint:
       'Moves the joint in the scene view to try it. It changes only the view, not the scene, saving or undo. Selecting another object returns to the edit pose.',

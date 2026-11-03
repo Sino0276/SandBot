@@ -768,7 +768,16 @@ function StageList({
   )
 }
 
-// 계산값: 최고 속도(무부하), 편집 자세의 중력 부하와 장치 정지 토크, 여유
+// 정지 토크 줄의 문구: 직선 관절은 스풀이 내는 힘(N)이라 "정지 힘"
+function capacityKey(
+  prismatic: boolean,
+  withMargin: boolean
+): 'joint.capacity' | 'joint.capacityMargin' | 'joint.capacityForce' | 'joint.capacityForceMargin' {
+  if (prismatic) return withMargin ? 'joint.capacityForceMargin' : 'joint.capacityForce'
+  return withMargin ? 'joint.capacityMargin' : 'joint.capacity'
+}
+
+// 계산값: 최고 속도(무부하), 편집 자세의 중력(+스프링) 부하와 장치 정지 토크(직선은 힘), 여유
 function DerivedLines({
   joint,
   view,
@@ -808,12 +817,15 @@ function DerivedLines({
       )}
       <p className="hw-derived" title={t('joint.loadHint')}>
         {view.load > 0
-          ? t('joint.load', { load: force(view.load), unit: forceUnit })
-          : t('joint.loadNone')}
+          ? t(view.loadIncludesSpring ? 'joint.loadWithSpring' : 'joint.load', {
+              load: force(view.load),
+              unit: forceUnit
+            })
+          : t(view.loadIncludesSpring ? 'joint.loadNoneWithSpring' : 'joint.loadNone')}
       </p>
       {view.capacity !== null && (
         <p className="hw-derived" title={t('joint.capacityHint')}>
-          {t(view.margin === null ? 'joint.capacity' : 'joint.capacityMargin', {
+          {t(capacityKey(prismatic, view.margin !== null), {
             capacity: force(view.capacity),
             unit: forceUnit,
             margin: view.margin === null ? '' : formatNumber(view.margin, 1)

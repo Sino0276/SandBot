@@ -328,6 +328,9 @@ describe('관절 카드 보기 계산', () => {
       axis: 'z',
       spring: { kind: 'linear', stiffness: 100, rest: 0.1 }
     })
+    expect(cardView(base, 'lift', masses)!.loadIncludesSpring).toBe(true)
+    expect(cardView(scene(), 'lift', masses)).toBeNull()
+    expect(cardView(withJoint(scene(), 'lift'), 'lift', masses)!.loadIncludesSpring).toBe(false)
     expect(cardView(linear, 'lift', masses)!.load).toBeCloseTo(3 * GRAVITY - 10, 9)
   })
 
@@ -570,6 +573,28 @@ describe('관절 카드 그리기', () => {
     expect(html).toContain('리깅')
     expect(html).toContain('미리보기')
     expect(html).toContain('구동 모터를 이 로봇에서 찾을 수 없습니다')
+  })
+
+  it('직선 관절의 정지 값은 힘(정지 힘, N), 스프링이 있으면 부하 줄이 스프링을 넣었다고 말한다', () => {
+    const objects = withJoint(scene(), 'lift', {
+      type: 'prismatic',
+      axis: 'z',
+      drive: motorDrive({ motors: ['liftMotor'] })
+    })
+    const html = render(objects, 'lift')
+    expect(html).toMatch(/정지 힘 ≈ [\d.,]+ N/)
+    expect(html).not.toContain('>정지 토크')
+    expect(html).toContain('편집 자세에서 중력 부하가 없습니다.')
+    const sprung = withJoint(objects, 'lift', {
+      type: 'prismatic',
+      axis: 'z',
+      spring: { kind: 'constantForce', force: 5 },
+      drive: motorDrive({ motors: ['liftMotor'] })
+    })
+    expect(render(sprung, 'lift')).toContain('중력·스프링 부하 (편집 자세) ≈ 5.0 N')
+    // 회전 관절은 정지 토크(N·m)
+    const arm = withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['armMotor'] }) })
+    expect(render(arm, 'arm')).toMatch(/정지 토크 ≈ [\d.,]+ N·m/)
   })
 
   it('회전 관절은 한계 끄기 칸과 ° 단위, 위치 서보 구동', () => {
