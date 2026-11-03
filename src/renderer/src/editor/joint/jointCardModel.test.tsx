@@ -645,27 +645,27 @@ describe('관절 카드 그리기', () => {
     expect(cr).not.toContain('편집 자세의 서보 위치')
   })
 
-  it('모터의 정지 토크·무부하 속도 덮어쓰기는 같은 로봇의 관절을 구동하는 모터에만 보인다', () => {
-    const count = (html: string, text: string): number => html.split(text).length - 1
+  it('모터의 정지 토크·무부하 속도 덮어쓰기는 모든 모터 카드에 보인다(3c: 모든 모터가 데이터시트 기어모터로 돈다)', () => {
     const labels = ['정지 토크 (N·m, 0 = 데이터시트)', '무부하 속도 (rpm, 0 = 데이터시트)']
-    const section = (objects: SceneObjects, id: string): string => {
+    const cards = (objects: SceneObjects, id: string): string[] => {
       setStore(useSceneStore, { objects })
       return renderToStaticMarkup(<HardwareComponentsSection object={objects[id]} />)
+        .split('<li class="hw-card"')
+        .slice(1)
+        .filter((card) => card.includes('data-component-type="motor"'))
     }
-    // 관절이 없으면 어느 모터에도 없다(바퀴 모터 포함)
-    for (const label of labels) {
-      expect(count(section(scene(), 'base'), label)).toBe(0)
-      expect(count(section(scene(), 'wheel'), label)).toBe(0)
-    }
-    // 팔 관절이 armMotor를 고르면 그 모터 카드에만(liftMotor·바퀴 모터에는 없다), 도움말은 관절 구동만 쓴다고 말한다
+    // 관절이 없어도(바퀴 모터·어디에도 붙지 않은 모터), 관절을 구동해도 모든 모터 카드에 있다
     const driven = withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['armMotor'] }) })
-    const html = section(driven, 'base')
-    const cards = html.split('<li class="hw-card"').slice(1)
-    for (const label of labels)
-      expect(cards.map((card) => card.includes(label))).toEqual([true, false, false])
-    expect(cards[0]).toContain('value="arm"')
-    expect(html).toContain('이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다')
-    for (const label of labels) expect(count(section(driven, 'wheel'), label)).toBe(0)
+    for (const objects of [scene(), driven])
+      for (const id of ['base', 'wheel']) {
+        const motors = cards(objects, id)
+        expect(motors.length).toBeGreaterThan(0)
+        for (const label of labels) expect(motors.every((card) => card.includes(label))).toBe(true)
+      }
+    // 도움말은 관절만 쓴다고 말하지 않는다
+    const html = cards(driven, 'base').join('')
+    expect(html).toContain('시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 토크에 쓰는 값입니다')
+    expect(html).not.toContain('동역학만 쓰는 값입니다')
     expect(motorDrivesJoint(driven, 'base', 'armMotor')).toBe(true)
     expect(motorDrivesJoint(driven, 'base', 'liftMotor')).toBe(false)
     // 다른 로봇의 관절이 고른 id는 세지 않는다(세계 설명처럼 같은 로봇만)
@@ -710,11 +710,14 @@ describe('관절 카드 그리기', () => {
     })
     setStore(useSceneStore, { objects })
     const card = renderToStaticMarkup(<HardwareComponentsSection object={objects.wheel} />)
-    expect(card).toContain('출력축 300 RPM (무부하, 12 V) · 560.0 틱/회전')
+    // 바퀴 모터 줄: 데이터시트 무부하 속도(실제 18.93:1) · SDK 규칙 틱(560) · 토크·속도의 실제 감속비
+    expect(card).toContain(
+      '출력축 317 RPM (무부하, 12 V) · 560.0 틱/회전 · 토크·속도는 실제 감속비 18.93:1'
+    )
     expect(card).not.toContain('관절:')
     expect(card.match(/aria-label="기어박스 감속비" value="([^"]*)"/)![1]).toBe('20.00')
-    expect(card).not.toContain('정지 토크 (N·m, 0 = 데이터시트)')
-    expect(card).not.toContain('무부하 속도 (rpm, 0 = 데이터시트)')
+    // 덮어쓰기 칸은 바퀴 모터에도 있다(구동계 동역학도 그 값을 쓴다)
+    expect(card).toContain('aria-label="정지 토크 (N·m, 0 = 데이터시트)" value="5.000"')
   })
 
   it('motorDrivesJoint는 세계 설명이 관절에 쓰는 모터와 같다(관절을 둘 수 없는 오브젝트·범위 밖 감속·먼저 온 관절)', () => {
@@ -781,7 +784,10 @@ describe('관절 카드 그리기', () => {
     expect(ultra[0]).toContain('관절: 출력축 317 RPM')
     expect(ultra[0]).toContain('530.1 틱/회전')
     expect(ultra[0]).toContain('실제 감속비 18.93:1')
-    expect(ultra[1]).toContain('출력축 300 RPM (무부하, 12 V) · 560.0 틱/회전')
+    // 관절이 없는 모터도 데이터시트 무부하 속도(317 rpm)로 돌고, 틱은 SDK 규칙이라 실제 감속비를 따로 보인다
+    expect(ultra[1]).toContain(
+      '출력축 317 RPM (무부하, 12 V) · 560.0 틱/회전 · 토크·속도는 실제 감속비 18.93:1'
+    )
     expect(ultra[1]).not.toContain('관절:')
     // 감속비 칸의 "모델 기본"도 관절이면 실제 감속비, 아니면 SDK gearing이다
     const gearboxValue = (card: string): string =>

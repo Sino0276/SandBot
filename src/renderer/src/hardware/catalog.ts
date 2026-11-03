@@ -42,8 +42,6 @@ type PropertyMeta = {
   visibleWhen?: { key: string; values: readonly string[] }
   // 다른 object 속성(key)이 관절이 있는 오브젝트를 가리킬 때만 보인다. types가 있으면 그 관절 형식일 때만(값은 늘 저장한다).
   visibleWhenJoint?: { key: string; types?: readonly JointType[] }
-  // 이 모터 컴포넌트를 같은 로봇의 관절 구동(DC 모터)이 고를 때만 보인다(관절 구동만 읽는 값, 값은 늘 저장한다)
-  visibleWhenDrivesJoint?: true
   // 칸 설명(hardware.propHints.<key>, 인스펙터 행의 도움말). labels.test.ts가 ko·en에 있는지 확인한다.
   hint?: true
   // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
@@ -255,9 +253,9 @@ export const COMPONENT_TYPES = {
         digits: 2,
         simulation: true
       },
-      // 관절 구동(3b)의 기어모터 값 덮어쓰기: 12 V 출력축 정지 토크(N·m)와 무부하 속도(rpm). 0은 데이터시트
+      // 기어모터 값 덮어쓰기: 12 V 출력축 정지 토크(N·m)와 무부하 속도(rpm). 0은 데이터시트
       // (src/shared/sim/actuatorData.ts). 받는 하한보다 작은 값은 0으로 저장한다(표시 자릿수 한 칸). 시뮬레이터 전용.
-      // 구동계 바퀴 모터(운동학, motorModel.ts)는 읽지 않으므로 관절을 구동하는 모터에만 보인다.
+      // 3c부터 모든 모터(바퀴·관절·어디에도 붙지 않은 모터)가 데이터시트 기어모터로 돌므로 모든 모터 카드에 보인다.
       {
         key: 'stallTorque',
         kind: 'number',
@@ -266,7 +264,6 @@ export const COMPONENT_TYPES = {
         max: MAX_STALL_TORQUE_OVERRIDE,
         digits: 3,
         zeroBelow: MIN_STALL_TORQUE_OVERRIDE,
-        visibleWhenDrivesJoint: true,
         hint: true,
         simulation: true
       },
@@ -278,7 +275,6 @@ export const COMPONENT_TYPES = {
         max: MAX_FREE_SPEED_OVERRIDE_RPM,
         digits: 0,
         zeroBelow: MIN_FREE_SPEED_OVERRIDE_RPM,
-        visibleWhenDrivesJoint: true,
         hint: true,
         simulation: true
       }
@@ -528,18 +524,15 @@ export function propertyDefaults(type: ComponentType): Record<string, string | n
   return Object.fromEntries(componentDef(type).properties.map((p) => [p.key, p.default]))
 }
 
-// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen, visibleWhenJoint, visibleWhenDrivesJoint). jointTypeOf는
-// 오브젝트 id → 그 관절 형식(없는 오브젝트나 관절이 없으면 null), drivesJoint는 이 컴포넌트를 같은 로봇의 관절 모터
-// 구동이 고르는지다.
+// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen, visibleWhenJoint). jointTypeOf는 오브젝트 id → 그 관절
+// 형식(없는 오브젝트나 관절이 없으면 null)이다.
 export function isPropertyVisible(
   property: PropertyDef,
   props: Record<string, string | number>,
-  jointTypeOf: (objectId: string) => JointType | null = () => null,
-  drivesJoint = false
+  jointTypeOf: (objectId: string) => JointType | null = () => null
 ): boolean {
   const when = property.visibleWhen
   if (when && !when.values.includes(String(props[when.key]))) return false
-  if (property.visibleWhenDrivesJoint && !drivesJoint) return false
   const joint = property.visibleWhenJoint
   if (!joint) return true
   const target = props[joint.key]

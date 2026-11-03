@@ -1170,6 +1170,7 @@ const ko = {
       wheelMass: '바퀴 질량 {{mass}} · 회전 관성 {{inertia}} kg·m²',
       staticLoad: '정지 하중 ≈ {{load}} N · 견인 한계 ≈ {{limit}} N',
       staticLoadUnknown: '로봇 질량을 계산하면 정지 하중을 보입니다.',
+      frictionRejected: '{{min}}–{{max}} 사이의 마찰 계수를 넣으세요. 비우면 종류 기본값을 씁니다.',
       motorMissingWarning:
         '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 이 바퀴는 굴리지 않습니다.',
       rollersAmbiguousWarning:
@@ -1183,6 +1184,8 @@ const ko = {
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
       traction: '견인 한계 가속 ≈ {{accel}} m/s² ({{g}} g)',
+      topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
+      topSpeedRange: '최고 속도 ≈ {{min}}–{{max}} {{unit}}/s (바퀴마다 다름, 무부하, {{volts}} V)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'
     },
     categories: {
@@ -1252,9 +1255,9 @@ const ko = {
     // 속성 칸의 도움말(catalog의 hint)
     propHints: {
       stallTorque:
-        '이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 구동계 바퀴 시뮬레이션과 생성 코드는 쓰지 않습니다.',
+        '시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 토크에 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 생성 코드는 쓰지 않습니다.',
       freeSpeed:
-        '이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 구동계 바퀴 시뮬레이션과 생성 코드는 쓰지 않습니다.',
+        '시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 속도에 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 생성 코드는 쓰지 않습니다.',
       limitDistance:
         '연결한 직선 관절이 고른 끝에서 이 거리 안이면 눌립니다. 0이면 기본값 2 mm입니다.',
       limitAngle: '연결한 회전 관절이 고른 끝에서 이 각도 안이면 눌립니다. 0이면 기본값 1°입니다.'
@@ -1357,6 +1360,9 @@ const ko = {
       otos: '오프셋: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: '위치: X {{x}} mm, Y {{y}} mm',
       motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
+      // 데이터시트 실제 감속비가 SDK 감속비(엔코더 틱)와 다를 때(UltraPlanetary·Core Hex 모델 기본 등)
+      motorOutputRatio:
+        '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 토크·속도는 실제 감속비 {{ratio}}:1',
       jointMotorOutput:
         '관절: 출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 실제 감속비 {{ratio}}:1',
       deadWheelPod: '포드 해상도: {{ticks}} 틱/mm'

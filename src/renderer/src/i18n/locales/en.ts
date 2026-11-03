@@ -1168,6 +1168,8 @@ const en: Messages = {
       wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
       staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
       staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
+      frictionRejected:
+        'Enter a friction coefficient from {{min}} to {{max}}. Leave it empty to use the kind default.',
       motorMissingWarning:
         'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
       rollersAmbiguousWarning:
@@ -1181,6 +1183,9 @@ const en: Messages = {
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
       traction: 'Traction-limited acceleration ≈ {{accel}} m/s² ({{g}} g)',
+      topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
+      topSpeedRange:
+        'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',
       none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
     },
     categories: {
@@ -1249,9 +1254,9 @@ const en: Messages = {
     },
     propHints: {
       stallTorque:
-        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+        'The torque the simulator uses for this motor (wheel, joint, intake and so on). 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The generated code does not use it.',
       freeSpeed:
-        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+        'The speed the simulator uses for this motor (wheel, joint, intake and so on). 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The generated code does not use it.',
       limitDistance:
         'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
       limitAngle:
@@ -1355,6 +1360,8 @@ const en: Messages = {
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      motorOutputRatio:
+        'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · torque and speed use the actual ratio {{ratio}}:1',
       jointMotorOutput:
         'Joint: output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · actual ratio {{ratio}}:1',
       deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
