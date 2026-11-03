@@ -4,6 +4,7 @@ import { cadRootTransform } from '../cad/alignment'
 import { clearHistory, initHistory, undo, useHistoryStore } from '../editor/history'
 import { childrenInDocument, worldMatrix, type SceneObjects, type Vec3 } from './model'
 import { isPlaceholderScene, useSceneStore } from './sceneStore'
+import { defaultJoint } from './joint'
 import { defaultWheel } from './wheel'
 
 const BOUNDS: { min: Vec3; max: Vec3 } = { min: [-0.2, 0, -0.1], max: [0.2, 0.3, 0.1] }
@@ -447,6 +448,86 @@ describe('질량 설정', () => {
     expect(isPlaceholderScene(state().objects)).toBe(false)
     state().replaceObjects(placeholder)
     state().setObjectMass('webcam', {})
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+  })
+})
+
+describe('관절', () => {
+  beforeEach(() => {
+    initHistory()
+    state().replaceObjects(objects)
+    clearHistory()
+  })
+
+  it('파트·그룹·CAD 루트에 붙이고 바꾸고 떼며, 각 변경은 실행 취소 한 단계다', () => {
+    const before = state().objects
+    state().setJoint('G', defaultJoint('prismatic'))
+    expect(state().objects.G.joint).toEqual(defaultJoint('prismatic'))
+    expect(state().objects.P1).toBe(before.P1)
+    expect(before.G.joint).toBeUndefined()
+    state().setJoint('C', defaultJoint())
+    state().setJoint('P1', { ...defaultJoint(), axis: 'y', axisSign: -1 })
+    state().setJoint('G', null)
+    expect(state().objects.G).not.toHaveProperty('joint')
+
+    expect(undo()).toBe(true)
+    expect(state().objects.G.joint?.type).toBe('prismatic')
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.joint).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(state().objects.C.joint).toBeUndefined()
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('로봇·바퀴가 있는 오브젝트·없는 오브젝트는 거부하고, 바뀐 것이 없으면 씬을 그대로 둔다', () => {
+    state().setWheel('P1', defaultWheel())
+    const before = state().objects
+    state().setJoint('R', defaultJoint())
+    state().setJoint('P1', defaultJoint())
+    state().setJoint('nope', defaultJoint())
+    state().setJoint('P2', null)
+    expect(state().objects).toBe(before)
+    state().setJoint('P2', defaultJoint())
+    const withJoint = state().objects
+    state().setJoint('P2', { ...defaultJoint(), anchor: [0, 0, 0] })
+    expect(state().objects).toBe(withJoint)
+    // 관절이 있는 오브젝트에는 바퀴를 붙이지 않는다
+    state().setWheel('P2', defaultWheel())
+    expect(state().objects).toBe(withJoint)
+  })
+
+  it('범위 밖 수는 기본값으로 바꾼다', () => {
+    state().setJoint('G', {
+      ...defaultJoint('prismatic'),
+      anchor: [0, 11, 0],
+      limits: null,
+      friction: { coulomb: -1, viscous: Number.NaN },
+      drive: {
+        kind: 'motor',
+        motors: ['a', 'a', '', 'b', 'c', 'd', 'e'],
+        gearRatio: 0,
+        spoolDiameter: 2,
+        rigging: { kind: 'cascade', stages: ['s1', 's1'] }
+      }
+    })
+    expect(state().objects.G.joint).toEqual({
+      ...defaultJoint('prismatic'),
+      drive: {
+        kind: 'motor',
+        motors: ['a', 'b', 'c', 'd'],
+        gearRatio: 1,
+        spoolDiameter: 0.112 / Math.PI,
+        rigging: { kind: 'cascade', stages: ['s1'] }
+      }
+    })
+  })
+
+  it('관절을 붙인 씬은 임시 씬이 아니다', () => {
+    const placeholder = useSceneStore.getInitialState().objects
+    state().replaceObjects(placeholder)
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().setJoint('webcam', defaultJoint())
     expect(isPlaceholderScene(state().objects)).toBe(false)
   })
 })

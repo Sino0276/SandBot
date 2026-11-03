@@ -12,7 +12,7 @@ const MIN_RADIUS = 0.05
 
 // 포커스 요청(F 키, 하이어라키 더블클릭, 임포트 직후)이 오면 지금 보는 방향을 유지한 채 대상이 화면에 꽉 차게
 // 카메라를 옮긴다. 여러 오브젝트면(F로 선택 전체) Unity처럼 합친 경계에 맞춘다. 실행 중인 로봇은 씬 뷰에 그린
-// 시뮬레이터 자세로 계산한다(문서 자세가 아니라 보이는 자리로 간다).
+// 시뮬레이터 자세(관절 자세 포함)로 계산한다(문서 자세가 아니라 보이는 자리로 간다).
 function FocusController(): null {
   const get = useThree((state) => state.get)
   const request = useEditorStore((state) => state.focusRequest)
@@ -21,10 +21,11 @@ function FocusController(): null {
     if (!request) return
     const { camera, controls, invalidate } = get()
     if (!isOrbitControls(controls)) return
+    const objects = useSceneStore.getState().objects
     const bounds = selectionWorldBounds(
-      useSceneStore.getState().objects,
+      objects,
       request.ids,
-      displayRootOverride(usePlayStore.getState())
+      displayRootOverride(usePlayStore.getState(), objects)
     )
     if (!bounds) return
 

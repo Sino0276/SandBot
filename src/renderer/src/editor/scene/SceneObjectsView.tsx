@@ -1,12 +1,13 @@
 import { Edges } from '@react-three/drei'
 import { useThree, type ThreeEvent } from '@react-three/fiber'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import {
   BoxGeometry,
   Color,
   EdgesGeometry,
   LineBasicMaterial,
   MeshStandardMaterial,
+  Quaternion,
   SRGBColorSpace,
   Vector3,
   type Group
@@ -16,12 +17,27 @@ import { simPoseOf, usePlayStore } from '../../play/playStore'
 import { ROBOT_SIZE } from '../../scene/coordinates'
 import { getGeometry } from '../../scene/geometryRegistry'
 import { cadMeshRaycast } from '../../scene/meshBvh'
-import { childrenInDocument, type ObjectVisual, type Transform, type Vec3 } from '../../scene/model'
+import {
+  childrenInDocument,
+  findRobotId,
+  type JointSettings,
+  type ObjectVisual,
+  type Transform,
+  type Vec3
+} from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
+import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { isHiddenInScene, useSceneVisibilityStore } from '../sceneVisibility'
 import { objectWorldBounds } from './bounds'
-import { bindPoseDisplay, GHOST_MESH_LIMIT, meshCount } from './poseDisplay'
+import {
+  bindJointDisplay,
+  bindPoseDisplay,
+  ghostJointMatrix,
+  GHOST_MESH_LIMIT,
+  jointValueSource,
+  meshCount
+} from './poseDisplay'
 
 const SELECTED_COLOR = '#4c8dff'
 const HIGHLIGHT_EMISSIVE = new Color('#1d4ed8')
@@ -148,6 +164,30 @@ const IDENTITY_POSITION: Vec3 = [0, 0, 0]
 const IDENTITY_ROTATION: [number, number, number, 'ZYX'] = [0, 0, 0, 'ZYX']
 const IDENTITY_TRANSFORM: Transform = { position: [0, 0, 0], rotation: [0, 0, 0] }
 
+// 관절 오브젝트의 형상·자식을 감싸는 안쪽 그룹(관절 자세 A·M(q)·A⁻¹). 실행 중 시뮬레이터 값이나 관절 카드의 미리보기 값을
+// 명령형으로 쓴다(poseDisplay.ts의 bindJointDisplay, 약 60 Hz로 React를 다시 그리지 않음). 그리기 전에 맞추고(바뀐 프레임에
+// 이전 자세가 한 번 보이지 않게), 관절 설정이 바뀌면 다시 묶는다. 관절이 없는 오브젝트에는 두지 않아 장면 트리가 그대로다.
+function JointMotionGroup({
+  id,
+  joint,
+  children
+}: {
+  id: string
+  joint: JointSettings
+  children: React.ReactNode
+}): React.JSX.Element {
+  const inner = useRef<Group>(null)
+  const invalidate = useThree((state) => state.invalidate)
+  const robotId = useSceneStore((state) => findRobotId(state.objects, id))
+  useLayoutEffect(() => {
+    const group = inner.current
+    if (!group) return
+    const source = jointValueSource(id, robotId, joint, usePlayStore, useJointPreviewStore)
+    return bindJointDisplay(group, joint, source, invalidate)
+  }, [id, robotId, joint, invalidate])
+  return <group ref={inner}>{children}</group>
+}
+
 function ObjectNode({
   id,
   parentHighlighted,
@@ -180,17 +220,28 @@ function ObjectNode({
     if (event.delta <= 2) select(id)
   }
 
-  return (
-    <group
-      position={identity ? IDENTITY_POSITION : object.transform.position}
-      rotation={identity ? IDENTITY_ROTATION : [rx, ry, rz, 'ZYX']}
-    >
+  const content = (
+    <>
       {object.visual && !hidden && (
         <Visual visual={object.visual} highlighted={highlighted} onClick={handleClick} />
       )}
       {childIds.map((childId) => (
         <ObjectNode key={childId} id={childId} parentHighlighted={highlighted} />
       ))}
+    </>
+  )
+  return (
+    <group
+      position={identity ? IDENTITY_POSITION : object.transform.position}
+      rotation={identity ? IDENTITY_ROTATION : [rx, ry, rz, 'ZYX']}
+    >
+      {object.joint ? (
+        <JointMotionGroup id={id} joint={object.joint}>
+          {content}
+        </JointMotionGroup>
+      ) : (
+        content
+      )}
     </group>
   )
 }
@@ -268,7 +319,40 @@ function GhostVisual({ visual }: { visual: ObjectVisual }): React.JSX.Element {
   )
 }
 
-function GhostNode({ id, root }: { id: string; root: boolean }): React.JSX.Element | null {
+// 잔상의 관절 오브젝트 안쪽 그룹(끝난 실행의 마지막 관절 값, 정적)
+function GhostJointGroup({
+  joint,
+  q,
+  children
+}: {
+  joint: JointSettings
+  q: number | undefined
+  children: React.ReactNode
+}): React.JSX.Element {
+  const pose = useMemo(() => {
+    const matrix = ghostJointMatrix(joint, q)
+    if (!matrix) return { position: IDENTITY_POSITION, quaternion: new Quaternion() }
+    const position = new Vector3()
+    const quaternion = new Quaternion()
+    matrix.decompose(position, quaternion, new Vector3())
+    return { position: position.toArray() as Vec3, quaternion }
+  }, [joint, q])
+  return (
+    <group position={pose.position} quaternion={pose.quaternion}>
+      {children}
+    </group>
+  )
+}
+
+function GhostNode({
+  id,
+  root,
+  joints
+}: {
+  id: string
+  root: boolean
+  joints: Readonly<Record<string, number>> | undefined
+}): React.JSX.Element | null {
   const object = useSceneStore((state) => state.objects[id])
   const childIds = useSceneStore(
     useShallow((state) => childrenInDocument(state.objects, id).map((child) => child.id))
@@ -279,15 +363,26 @@ function GhostNode({ id, root }: { id: string; root: boolean }): React.JSX.Eleme
   )
   if (!object) return null
   const [rx, ry, rz] = object.transform.rotation
+  const content = (
+    <>
+      {object.visual && !hidden && <GhostVisual visual={object.visual} />}
+      {childIds.map((childId) => (
+        <GhostNode key={childId} id={childId} root={false} joints={joints} />
+      ))}
+    </>
+  )
   return (
     <group
       position={root ? IDENTITY_POSITION : object.transform.position}
       rotation={root ? IDENTITY_ROTATION : [rx, ry, rz, 'ZYX']}
     >
-      {object.visual && !hidden && <GhostVisual visual={object.visual} />}
-      {childIds.map((childId) => (
-        <GhostNode key={childId} id={childId} root={false} />
-      ))}
+      {object.joint ? (
+        <GhostJointGroup joint={object.joint} q={joints?.[id]}>
+          {content}
+        </GhostJointGroup>
+      ) : (
+        content
+      )}
     </group>
   )
 }
@@ -340,7 +435,11 @@ function GhostRobot(): React.JSX.Element | null {
   if (!ghost || !exists) return null
   return (
     <group position={[ghost.x, ghost.y, 0]} rotation={[0, 0, ghost.yaw, 'ZYX']}>
-      {tooMany ? <GhostBox robotId={ghost.robotId} /> : <GhostNode id={ghost.robotId} root />}
+      {tooMany ? (
+        <GhostBox robotId={ghost.robotId} />
+      ) : (
+        <GhostNode id={ghost.robotId} root joints={ghost.joints} />
+      )}
     </group>
   )
 }

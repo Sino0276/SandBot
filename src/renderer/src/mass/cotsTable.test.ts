@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SERVO_MODEL_KEYS } from '../../../shared/sim/actuatorData'
 import type { HardwareComponent } from '../scene/model'
 import { defaultWheel } from '../scene/wheel'
 import {
@@ -75,7 +76,7 @@ describe('COTS 질량 표', () => {
       expect(componentCotsKey(component(type))).toBeNull()
   })
 
-  it('서보는 모델 속성이 없어 goBILDA 2000 Torque 60 g, Pinpoint 40 g, 포드, Limelight 93 g', () => {
+  it('서보는 기본 모델 goBILDA 2000 Torque 60 g, Pinpoint 40 g, 포드, Limelight 93 g', () => {
     expect(grams(componentCotsKey(component('servo')))).toBe(60)
     expect(grams(componentCotsKey(component('crServo')))).toBe(60)
     expect(grams(componentCotsKey(component('pinpoint')))).toBe(40)
@@ -83,6 +84,28 @@ describe('COTS 질량 표', () => {
     expect(grams(pinpointPodCotsKey('fourBar'))).toBe(84)
     expect(grams(pinpointPodCotsKey('swingarm'))).toBe(121)
     expect(grams(pinpointPodCotsKey(undefined))).toBe(84)
+  })
+
+  it('서보·CR 서보의 질량은 servoModel마다 다르고, 모르는 모델은 기본 모델이다', () => {
+    const servo = (type: string, servoModel: string): HardwareComponent =>
+      component(type, { servoModel })
+    const table: [string, number][] = [
+      ['gobildaTorque', 60],
+      ['gobildaSpeed', 58],
+      ['gobildaSuperSpeed', 58],
+      ['axonMax', 78],
+      ['axonMini', 67],
+      ['axonMicro', 21],
+      ['revSmartServo', 62],
+      ['nope', 60]
+    ]
+    for (const [model, mass] of table) {
+      expect(grams(componentCotsKey(servo('servo', model)))).toBe(mass)
+      expect(grams(componentCotsKey(servo('crServo', model)))).toBe(mass)
+    }
+    // 카탈로그의 모든 모델이 표에 있다
+    for (const model of SERVO_MODEL_KEYS)
+      expect(cotsEntry(componentCotsKey(servo('servo', model))!)).toBeDefined()
   })
 
   it('메카넘 바퀴는 104 mm·96 mm ±1.5 mm만 맞는다', () => {

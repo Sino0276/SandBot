@@ -808,8 +808,49 @@ const en: Messages = {
         'There are more OTOS sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
       worldTooManyImus:
         'There are more IMUs than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyJoints:
+        'There are more joints than the simulator limit ({{max}}); only the first {{max}} in hierarchy order are used. The rest move with their outer joint.',
+      // Joints (3b, play/worldJoints.ts)
+      worldJointNoMass:
+        'The body mass of joint {{name}} is unknown (no shapes, or not loaded yet), so 1 g is used. Enter a mass in the mass card.',
+      worldJointMassPending:
+        'The body of joint {{name}} still has {{count}} mesh(es) loading; their mass is left out.',
+      worldJointNoMotor:
+        'No motor is chosen for the motor drive of joint {{name}}, so it is not driven.',
+      worldJointMotorMissing:
+        'A drive motor of joint {{name}} is not in this robot (deleted, on another robot, or a duplicate name), so that motor is not used.',
+      worldJointMotorOnWheel:
+        'Motor {{motor}} drives a wheel, so it does not also drive joint {{name}}.',
+      worldJointMotorShared:
+        'Motor {{motor}} already drives an earlier joint, so joint {{name}} does not use it.',
+      worldJointMotorsDiffer:
+        'The motors driving joint {{name}} have different types or gear ratios; the first motor’s values are used.',
+      worldJointServoMissing:
+        'The servo of joint {{name}} is not in this robot (deleted, a different kind, or on another robot), so the joint is not driven.',
+      worldJointServoShared:
+        'Servo {{servo}} already drives an earlier joint or shares its name with another device, so joint {{name}} is not driven. A servo drives only one joint (model a two-finger claw as one joint).',
+      worldJointRatioRange:
+        'The drive ratio of joint {{name}} from its gear ratio and spool diameter is outside the simulator range, so the joint is not driven.',
+      worldJointServoOnSlide:
+        'A position servo drives only revolute joints. Drive prismatic joint {{name}} with a CR servo and a spool.',
+      worldJointStageInvalid:
+        'Stage {{stage}} of slide {{name}} is not a prismatic joint (drive: stage) directly under the stage below it, so stages from there on are not linked.',
+      worldJointStageOrphan:
+        'Joint {{name}} is a stage but no slide drive includes it, so it is not driven.',
+      worldLimitSwitchJointMissing:
+        'The joint of limit switch {{name}} is not in this robot, so the switch is never pressed.',
+      worldLimitSwitchNoLimit:
+        'Joint {{joint}} of limit switch {{name}} has no limits, so the switch is never pressed.',
+      worldLimitSwitchDuplicate:
+        'The device name of limit switch {{name}} is shared with another device, so the switch is never pressed.',
+      worldLimitSwitchTooMany:
+        'Joint {{joint}} has more limit switches than the simulator limit ({{max}}), so {{name}} is never pressed.',
+      worldSensorOnJoint:
+        '{{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
+      worldWheelOnJoint:
+        'Wheel {{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
       worldGenerationStale:
-        'Device names may differ from the generated configuration, so the wheels may not move.',
+        'Device names may differ from the generated configuration, so the wheels and joints may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
       generationBlocked:
         'The last save did not generate code because of {{count}} hardware error(s). Running with the previous hardware class and configuration left in TeamCode.',
@@ -1022,7 +1063,13 @@ const en: Messages = {
     inputs: 'Sensor values',
     inputsHint:
       'Raw hub values sent by the simulator (encoder ticks, IMU angles and so on). Team code reads them after the SDK applies direction and units.',
-    selectHint: 'Click to select {{name}}.'
+    selectHint: 'Click to select {{name}}.',
+    joints: 'Joints',
+    jointName: 'Joint',
+    jointType: 'Type',
+    jointValue: 'Value',
+    jointsHint:
+      'Joint positions sent by the simulator (the edit pose is 0). Click to select the object.'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
@@ -1062,12 +1109,15 @@ const en: Messages = {
     portUsedBy: '{{port}} · {{names}}',
     usb: 'Control Hub USB port',
     objectNone: '(none)',
+    objectMissing: '(object not found)',
     // Simulator-only properties (not in the generated code)
     simulationOnly:
       'Simulator-only setting (not written to the generated code or configuration XML).',
     gearboxModelDefault: 'Model default',
     gearboxReset: 'Model default',
     gearboxResetHint: 'Go back to the SDK gear ratio of the motor type.',
+    gearboxResetHintJoint:
+      'Go back to the datasheet gear ratio of the motor type (the actual value the joint simulation uses).',
     // Wheel (simulator setting, attached to wheel parts like a Unity WheelCollider)
     wheel: {
       addGroup: 'Simulation',
@@ -1172,7 +1222,24 @@ const en: Messages = {
       reversed: 'Encoder reversed',
       gearbox: 'Gearbox ratio',
       podDiameter: 'Pod wheel diameter',
-      podCpr: 'Encoder CPR'
+      podCpr: 'Encoder CPR',
+      stallTorque: 'Stall torque (N·m, 0 = datasheet)',
+      freeSpeed: 'Free speed (rpm, 0 = datasheet)',
+      servoModel: 'Servo model',
+      limitJoint: 'Limit switch joint',
+      limitAt: 'Pressed at',
+      limitDistance: 'Press distance',
+      limitAngle: 'Press angle'
+    },
+    propHints: {
+      stallTorque:
+        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+      freeSpeed:
+        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+      limitDistance:
+        'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
+      limitAngle:
+        'The switch is pressed while the linked revolute joint is within this angle of the chosen end. 0 means the default, 1°.'
     },
     options: {
       motorModel: {
@@ -1240,6 +1307,19 @@ const en: Messages = {
       reversed: {
         no: 'No',
         yes: 'Yes'
+      },
+      servoModel: {
+        gobildaTorque: 'goBILDA 2000 Torque (25-2)',
+        gobildaSpeed: 'goBILDA 2000 Speed (25-3)',
+        gobildaSuperSpeed: 'goBILDA 2000 Super Speed (25-4)',
+        axonMax: 'Axon MAX',
+        axonMini: 'Axon MINI',
+        axonMicro: 'Axon MICRO',
+        revSmartServo: 'REV Smart Robot Servo'
+      },
+      limitAt: {
+        lower: 'Lower limit',
+        upper: 'Upper limit'
       }
     },
     hints: {
@@ -1259,6 +1339,8 @@ const en: Messages = {
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      jointMotorOutput:
+        'Joint: output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · actual ratio {{ratio}}:1',
       deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
     },
     robot: {
@@ -1517,6 +1599,167 @@ const en: Messages = {
       cadSummary: '{{name}}: {{parts}}',
       notices: 'Mass settings not used',
       hint: 'For heavy parts missing from CAD (battery, hubs, …), create an empty group in that place (Create Empty) and enter its mass: it becomes a point mass there. Scaling to the weighed mass spreads over all shapes, so it does not move the center of mass toward them.'
+    }
+  },
+  // 관절 카드(Unity ArticulationBody, editor/joint/). 시뮬레이터 설정이라 생성 코드와 관계없다.
+  joint: {
+    addOption: 'Joint',
+    title: 'Articulation Body',
+    orphan: 'This object is not part of a robot, so the simulator does not use it.',
+    type: 'Joint Type',
+    types: {
+      revolute: 'Revolute',
+      prismatic: 'Prismatic'
+    },
+    anchor: 'Anchor',
+    anchorHint:
+      "The joint origin, in this object's local coordinates (its own axes). A revolute joint turns about an axis through this point; a prismatic joint does not depend on it.",
+    anchorReset: 'To pivot',
+    anchorResetHint: "Puts the anchor at this object's pivot (origin).",
+    axis: 'Axis',
+    axisSign: 'Axis direction',
+    axisHint:
+      "One of this object's local axes. A revolute joint is + by the right-hand rule about it; a prismatic joint is + along it. A CAD part's axes are the CAD file's axes.",
+    robotAxis: 'Robot axis: {{axis}}',
+    fieldAxis: 'Field axis: {{axis}}',
+    robotAxes: {
+      '+x': '+X (forward)',
+      '-x': '−X (back)',
+      '+y': '+Y (left)',
+      '-y': '−Y (right)',
+      '+z': '+Z (up)',
+      '-z': '−Z (down)'
+    },
+    robotAxisVector: '({{x}}, {{y}}, {{z}})',
+    limits: 'Motion',
+    limited: 'Limited',
+    limitedHint:
+      'Turn off for a joint that spins without end (Unity Motion: Free). Prismatic joints are always limited.',
+    lower: 'Lower Limit',
+    upper: 'Upper Limit',
+    limitsHint:
+      'The edit pose (the pose in the scene now) is 0 and the limits must include it, so the lower limit is kept at 0 or below and the upper limit at 0 or above. The joint stops at a limit without bouncing.',
+    friction: 'Joint Friction',
+    frictionHint:
+      'Constant (Coulomb) friction against motion, N·m for revolute and N for prismatic joints. Motor and servo gear friction is computed separately, so enter only the bearing or slide share.',
+    damping: 'Damping',
+    dampingHint: 'Friction proportional to speed (viscous).',
+    units: {
+      torque: 'N·m',
+      force: 'N',
+      rotaryDamping: 'N·m·s/rad',
+      linearDamping: 'N·s/m',
+      rotaryStiffness: 'N·m/rad',
+      linearStiffness: 'N/m'
+    },
+    spring: 'Spring',
+    springHint:
+      'A spring on the joint (surgical tubing helping an arm, a constant-force spring on a lift and so on).',
+    springKinds: {
+      none: 'None',
+      constantForce: 'Constant Force',
+      linear: 'Linear'
+    },
+    springForce: 'Force',
+    springForceHint:
+      'A force (prismatic, N) or torque (revolute, N·m), 0 or more, pushing in the + direction at every position. To push in the − direction, flip the axis sign (the limits then follow that direction too).',
+    springStiffness: 'Stiffness',
+    springStiffnessHint: 'How strongly the spring pulls back per unit away from the rest position.',
+    springRest: 'Rest Position',
+    springRestHint: 'The joint position where the spring force is 0 (the edit pose is 0).',
+    drive: 'Drive',
+    driveHint:
+      'The hub device that moves the joint. Targets and gains come from team code and the hub firmware (instead of the target and stiffness of a Unity drive).',
+    driveKinds: {
+      none: 'None',
+      motor: 'DC motor',
+      servo: 'Servo',
+      crServo: 'Continuous rotation servo',
+      stage: 'Upper stage (multi-stage slide)'
+    },
+    motors: 'Motors',
+    motorsHint:
+      "Motors that drive this joint together (up to {{max}}, like a two-sided lift). The motor's direction in the inspector is the one where +power moves the joint in its + direction.",
+    noMotorOptions: 'This robot has no DC motors.',
+    motorMissing: '(motor not found)',
+    device: 'Device',
+    deviceNone: '(none)',
+    deviceMissing: '(device not found)',
+    gearRatio: 'External gear ratio',
+    gearRatioHint: "Reduction from the device's output shaft to the joint (1 if direct).",
+    servoEditPosition: 'Edit-pose position',
+    servoEditPositionHint:
+      "The servo.setPosition value your code gives when the joint is at the edit pose in the scene (joint value 0). Range 0–1, default 0.5. Match it to how the servo horn is mounted. Example: if the claw is modelled closed and your code closes it with setPosition(0.35), enter 0.35. As in the SDK, the pulse goes through this servo component's direction (REVERSE), scale range (scaleRange) and pulse range (standard 600–2400 µs, full 500–2500 µs). If your code sets a different direction or range at run time, the edit pose is off by that much.",
+    servoDirection: '+pulse direction',
+    servoDirectionHint:
+      'The way the joint turns when the pulse gets longer (how the servo is mounted). setDirection(REVERSE) on the servo component or in your code changes how setPosition becomes a pulse, so it reverses the joint on top of this, as on the real robot.',
+    crServoDirectionHint:
+      'The way the joint turns when the pulse gets longer (positive power with direction FORWARD), which is how the servo is mounted. Power 0 (1500 µs) always stops. setDirection(REVERSE) on the servo component or in your code reverses it on top of this, as on the real robot.',
+    servoDirections: {
+      forward: 'Joint + direction',
+      reverse: 'Joint − direction'
+    },
+    spoolDiameter: 'Spool diameter',
+    spoolDiameterHint:
+      'Diameter of the spool (pulley) that winds the string. One turn moves one circumference. The default is a pulley with a 112 mm circumference.',
+    rigging: 'Rigging',
+    riggingHint:
+      'How a multi-stage slide is strung. Cascade extends all stages together (the top stage moves the number of stages times faster); continuous extends the stages one after another with one string.',
+    riggingKinds: {
+      direct: 'Single stage',
+      cascade: 'Cascade',
+      continuous: 'Continuous'
+    },
+    stages: 'Upper stages',
+    stagesHint:
+      'The stages above this joint, from bottom to top. Each must be a prismatic joint under the stage right below it, with the drive "Upper stage".',
+    stageAdd: 'Add stage…',
+    stageRemove: 'Remove stage',
+    stageRemoveLabel: 'Remove {{name}}',
+    stageMissing: '(joint not found)',
+    stageNone:
+      'There is no prismatic joint under this object. Add a prismatic joint (drive: Upper stage) to the upper stage object.',
+    stageOf: 'Moves with the drive of the lower stage {{name}}.',
+    maxSpeedMotor: 'Top speed ≈ {{speed}} {{unit}} (no load, {{volts}} V)',
+    maxSpeedServo: 'Top speed ≈ {{speed}} {{unit}} (no load)',
+    endSpeed: 'Top stage ≈ {{speed}} {{unit}}',
+    load: 'Gravity load (edit pose) ≈ {{load}} {{unit}}',
+    loadWithSpring: 'Gravity and spring load (edit pose) ≈ {{load}} {{unit}}',
+    loadNone: 'There is no gravity load in the edit pose.',
+    loadNoneWithSpring: 'Gravity and the spring cancel out in the edit pose, so there is no load.',
+    loadHint:
+      'The force this joint (with the upper stages of a multi-stage slide) must hold in the edit pose: gravity from the mass and center of mass of the mass model, plus the spring force if there is a spring.',
+    capacity: 'Stall torque ≈ {{capacity}} {{unit}}',
+    capacityMargin: 'Stall torque ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
+    capacityForce: 'Stall force ≈ {{capacity}} {{unit}}',
+    capacityForceMargin: 'Stall force ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
+    capacityHint:
+      "The device's datasheet stall torque in joint coordinates (for a prismatic joint, the force at the spool) and its ratio to the load. Motors linked together count as the first motor's value × the number of motors (as in the simulator). Below 1 the joint cannot hold still.",
+    preview: 'Preview',
+    previewHint:
+      'Moves the joint in the scene view to try it. It changes only the view, not the scene, saving or undo. Selecting another object returns to the edit pose.',
+    previewReset: 'To 0',
+    hint: "A joint is a simulator setting. It does not affect generated code or the configuration XML. This object and its children move as one body; the children of an inner joint are that joint's body.",
+    warnings: {
+      noMotor: 'No drive motor is selected, so the joint is not driven when running.',
+      motorMissing:
+        'A drive motor was not found in this robot (deleted, or on another robot). That motor is not used when running.',
+      motorOnWheel: 'Motor {{motor}} drives a wheel, so this joint does not use it.',
+      motorShared: 'Joint {{joint}} already drives motor {{motor}}, so this joint does not use it.',
+      motorsDiffer:
+        'The linked motors differ in type, gearbox or overridden values, so the simulator computes every motor with the values of the first one.',
+      servoMissing:
+        'The drive device was not found in this robot, so the joint is not driven when running.',
+      servoOnSlide:
+        'A position servo drives only revolute joints. Drive a prismatic joint with a continuous rotation servo and a spool.',
+      stageInvalid:
+        'Upper stage {{stage}} is not a prismatic joint (drive: Upper stage) under the stage right below it, so stages from there on are not linked.',
+      stageOrphan: 'This stage is not in any multi-stage slide drive, so it is not driven.',
+      noMass:
+        "The body's mass (this object and its children, without the children of inner joints) is unknown (no geometry or zero mass), so the simulator uses 1 g. Enter a mass in a Mass card.",
+      massPending: 'The mass of {{count}} meshes of the body still loading is missing.',
+      cannotHold:
+        'The stall torque (force) is less than the load in the edit pose, so the joint cannot hold.'
     }
   }
 }

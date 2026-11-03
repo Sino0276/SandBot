@@ -151,9 +151,26 @@ export type RobotMass = {
   notices?: MassNotice[]
 }
 
+// 오브젝트 자기 몫(하위 오브젝트 제외: 이 오브젝트에 매인 메시 파트와 덮어쓰기 점질량만)의 질량 성질. 저울 맞추기 비율이
+// 곱해진 값이다. 관절(3b) 몸체는 관절 오브젝트 하위에서 안쪽 관절의 하위를 뺀 오브젝트들의 자기 몫을 합친다
+// (play/worldSpec.ts). 정보 없는 로봇의 외곽 상자 질량(defaultMass)은 어느 오브젝트의 몫도 아니다.
+export type OwnMass = {
+  // kg
+  mass: number
+  // m, 로봇 좌표(로봇 밖 오브젝트는 필드 좌표). 질량이 0이면 오브젝트 원점
+  centerOfMass: Vec3
+  // 무게중심 기준, 로봇 좌표, kg·m²
+  inertia: SymMatrix3
+  // 자기 메시 중 형상 질량 성질이 아직 없어 mass에 들어가지 않은 것의 수(ObjectMass.pendingMeshes의 자기 몫)
+  pendingMeshes: number
+}
+
 export type MassModel = {
   objects: Record<string, ObjectMass>
   robots: Record<string, RobotMass>
+  // 자기 몫이 있는(파트·점질량·읽는 중 메시가 매인) 오브젝트만, objects 키 순서. 없는 오브젝트의 자기 몫은 0이다.
+  // computeMassModel은 늘 채운다. 계약 뒤에 더한 선택 필드다(시험용 가짜 모델이 그대로 맞게).
+  own?: Record<string, OwnMass>
 }
 
 // 불러올 때의 CAD 노드 하나(메시의 원래 이름 경로의 한 칸, cad/stepImport.ts의 meshSourcePaths). 하이어라키에서 이름을

@@ -876,7 +876,8 @@ describe('PlayController + 가짜 사이드카', () => {
       deadWheels: [],
       pinpoints: [],
       otos: [],
-      imus: []
+      imus: [],
+      joints: []
     }
     const request = opModeRequest('Normal', { world })
     expect(await controller.init(request, owner)).toEqual({ ok: true })

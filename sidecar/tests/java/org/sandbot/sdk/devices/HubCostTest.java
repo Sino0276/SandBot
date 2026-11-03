@@ -11,6 +11,7 @@ import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
+import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.TouchSensor;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
@@ -79,6 +80,30 @@ public final class HubCostTest {
         Check.equal(ms(3 * 1.5), elapsed(() -> m0.setPower(0.25)), "stale LastKnown resends");
         Check.equal(ms(1.5), elapsed(() -> m0.setTargetPosition(100)), "target position is always sent");
         Check.equal(ms(1.5), elapsed(() -> m0.setTargetPosition(100)), "target position is not cached");
+        bot.stop();
+    }
+
+    public static void testPidfCommandsAreNotCached() {
+        // 실제 LynxDcMotorController는 PIDF 계수를 LastKnown으로 기억하지 않는다: 쓰기·읽기마다 명령을 보낸다
+        Bot bot = new Bot();
+        DcMotorEx m0 = bot.get(DcMotorEx.class, "m0");
+        // 그 모드의 첫 쓰기는 원래 계수 읽기(originalPIDParams) + 쓰기
+        Check.equal(ms(2 * 1.5), elapsed(() -> m0.setVelocityPIDFCoefficients(1, 0.1, 0, 10)), "first velocity PIDF: read original + set");
+        Check.equal(ms(1.5), elapsed(() -> m0.setVelocityPIDFCoefficients(1, 0.1, 0, 10)), "same coefficients are sent again");
+        Check.equal(ms(2 * 1.5), elapsed(() -> m0.setPositionPIDFCoefficients(5)), "first position PIDF: read original + set");
+        Check.equal(ms(1.5), elapsed(() -> m0.getPIDFCoefficients(DcMotor.RunMode.RUN_TO_POSITION)), "getPIDFCoefficients: one command");
+        // getPIDCoefficients는 PID 명령으로 묻고, F가 0이 아니면 허브가 NACK해 PIDF 명령으로 다시 묻는다
+        Check.equal(ms(1.5), elapsed(() -> m0.getPIDCoefficients(DcMotor.RunMode.RUN_TO_POSITION)), "getPIDCoefficients with F = 0");
+        Check.equal(ms(2 * 1.5), elapsed(() -> m0.getPIDCoefficients(DcMotor.RunMode.RUN_USING_ENCODER)), "getPIDCoefficients with F != 0");
+        // 거부한 계수도 원래 계수는 이미 읽었고 쓰기는 보내지 않는다
+        DcMotorEx m1 = bot.get(DcMotorEx.class, "m1");
+        Check.equal(ms(1.5), elapsed(() -> {
+            try {
+                m1.setPIDFCoefficients(DcMotor.RunMode.RUN_TO_POSITION, new PIDFCoefficients(5, 1, 0, 0));
+            } catch (UnsupportedOperationException expected) {
+                // 실제 SDK도 던진다
+            }
+        }), "refused coefficients: only the original read");
         bot.stop();
     }
 

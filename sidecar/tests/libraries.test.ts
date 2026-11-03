@@ -180,7 +180,8 @@ const SPEC: WorldSpec = {
     }
   ],
   otos: [],
-  imus: [{ device: 'imu' }]
+  imus: [{ device: 'imu' }],
+  joints: []
 }
 
 // ---- 결정적 호스트 ----

@@ -1,3 +1,4 @@
+import type { Matrix4 } from 'three'
 import { create } from 'zustand'
 import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { LibraryProgress } from '../../../shared/libraries'
@@ -11,7 +12,8 @@ import type {
   RegistrarInfo
 } from '../../../shared/play'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
-import type { Transform } from '../scene/model'
+import { jointMotionMatrix } from '../scene/jointMotion'
+import type { RootOverride, SceneObjects, Transform } from '../scene/model'
 import {
   appendConsole,
   consoleLevel,
@@ -137,6 +139,8 @@ export type PlayRun = {
   libraryReported: boolean
   // 프로젝트를 다시 열어 새 씬과 떼어 놓은 실행(끝나기를 기다리는 중). Dashboard 오버레이·설정은 받지 않는다.
   detached: boolean
+  // 세계 설명의 관절 순번 → 관절 오브젝트 id(INIT 때 정해짐, pose 이벤트 joints의 순서). 세계 설명이 없으면 비어 있다.
+  joints: readonly string[]
 }
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
@@ -149,10 +153,19 @@ export type SimPoseState = {
   yaw: number
   // 벽에 막혔다
   blocked: boolean
+  // 관절 값(rad 또는 m, run.joints의 순서). 관절이 없는 세계·모양이 맞지 않는 값이면 키가 없다(관절은 편집 자세로 그린다).
+  joints?: readonly number[]
 }
 
-// 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다.
-export type GhostPose = { robotId: string; x: number; y: number; yaw: number }
+// 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다. joints는 관절 오브젝트 id →
+// 마지막 관절 값(끝날 때 run.joints로 풀어 둔다, 다음 실행의 순번과 섞이지 않게). 관절 값이 없었으면 키가 없다.
+export type GhostPose = {
+  robotId: string
+  x: number
+  y: number
+  yaw: number
+  joints?: Readonly<Record<string, number>>
+}
 
 // ---- FTC Dashboard(라이브러리 L2) ----
 // 패킷은 약 30 Hz로 오므로 run과 따로 둔다(run을 구독하는 툴바·장치 탭이 그때마다 다시 그리지 않게).
@@ -286,10 +299,38 @@ export function simPoseOf(data: Pick<PlayData, 'run' | 'simPose'>): SimPoseState
 function endPose(data: PlayData, run: PlayRun): Pick<PlayData, 'simPose' | 'ghostPose'> {
   const pose = data.simPose
   if (!pose || pose.robotId !== run.robotId) return { simPose: null, ghostPose: data.ghostPose }
-  return {
-    simPose: null,
-    ghostPose: { robotId: pose.robotId, x: pose.x, y: pose.y, yaw: pose.yaw }
+  const ghostPose: GhostPose = { robotId: pose.robotId, x: pose.x, y: pose.y, yaw: pose.yaw }
+  if (pose.joints) {
+    const joints: Record<string, number> = {}
+    run.joints.forEach((id, index) => (joints[id] = pose.joints![index]))
+    ghostPose.joints = joints
   }
+  return { simPose: null, ghostPose }
+}
+
+// pose 이벤트의 관절 값: 실행의 관절 수와 같은 길이의 유한 수 목록만 받는다(메인이 확인하지만 렌더러도 모양이 다른 값으로
+// 다른 관절을 움직이지 않게)
+function poseJoints(
+  run: PlayRun,
+  joints: readonly number[] | undefined
+): { joints?: readonly number[] } {
+  if (!Array.isArray(joints) || run.joints.length === 0 || joints.length !== run.joints.length)
+    return {}
+  return joints.every((q) => typeof q === 'number' && Number.isFinite(q))
+    ? { joints: [...joints] }
+    : {}
+}
+
+// 씬 뷰가 이 관절 오브젝트를 그릴 시뮬레이터 관절 값(실행 중이고 자세를 받았을 때). 아니면 null(편집 자세나 미리보기).
+// 관절은 많아야 MAX_WORLD_JOINTS(16)개라 순번을 그때마다 찾는다.
+export function simJointValue(
+  data: Pick<PlayData, 'run' | 'simPose'>,
+  objectId: string
+): number | null {
+  const pose = simPoseOf(data)
+  if (!pose?.joints) return null
+  const index = data.run!.joints.indexOf(objectId)
+  return index < 0 ? null : (pose.joints[index] ?? null)
 }
 
 // 필드 자세 → 최상위 로봇의 transform(바닥 위, 요만)
@@ -297,12 +338,24 @@ export function poseTransform(pose: { x: number; y: number; yaw: number }): Tran
   return { position: [pose.x, pose.y, 0], rotation: [0, 0, pose.yaw] }
 }
 
-// 씬 뷰 표시용 worldMatrix 덮어쓰기(scene/model.ts). F 포커스·IMU 표시가 실행 중 로봇을 표시 자세로 계산한다.
+// 씬 뷰 표시용 worldMatrix 덮어쓰기(scene/model.ts). F 포커스·IMU·무게중심 표시가 실행 중 로봇을 표시 자세로 계산한다.
+// objects를 주면 관절 값도 넣는다(관절의 앵커·축은 지금 문서의 관절 설정, 씬 뷰가 그리는 것과 같다).
 export function displayRootOverride(
-  data: Pick<PlayData, 'run' | 'simPose'>
-): { id: string; transform: Transform } | null {
+  data: Pick<PlayData, 'run' | 'simPose'>,
+  objects?: SceneObjects
+): RootOverride | null {
   const pose = simPoseOf(data)
-  return pose ? { id: pose.robotId, transform: poseTransform(pose) } : null
+  if (!pose) return null
+  const override: RootOverride = { id: pose.robotId, transform: poseTransform(pose) }
+  if (objects && pose.joints) {
+    const joints = new Map<string, Matrix4>()
+    data.run!.joints.forEach((id, index) => {
+      const joint = objects[id]?.joint
+      if (joint) joints.set(id, jointMotionMatrix(joint, pose.joints![index]))
+    })
+    if (joints.size > 0) override.joints = joints
+  }
+  return override
 }
 
 export function newRun(options: {
@@ -313,6 +366,7 @@ export function newRun(options: {
   configPath: string | null
   speed: PlaySpeed
   paused: boolean
+  joints?: readonly string[]
 }): PlayRun {
   return {
     runId: options.runId,
@@ -336,7 +390,8 @@ export function newRun(options: {
     finished: null,
     libraryProgress: null,
     libraryReported: false,
-    detached: false
+    detached: false,
+    joints: options.joints ?? []
   }
 }
 
@@ -481,7 +536,8 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
           x: event.x,
           y: event.y,
           yaw: event.yaw,
-          blocked: event.blocked
+          blocked: event.blocked,
+          ...poseJoints(run, event.joints)
         }
       }
     }

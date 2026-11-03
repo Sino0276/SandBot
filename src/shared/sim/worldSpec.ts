@@ -3,15 +3,27 @@
 // 메인은 렌더러를 믿지 않고 parseWorldSpec으로 모양·유한 수·한도를 확인한다.
 // 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙, Z 위.
 
-export const WORLD_SPEC_VERSION = 1
+import { symmetricEigen3 } from './drivetrain'
+
+export const WORLD_SPEC_VERSION = 2
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
 export const MAX_WORLD_WHEELS = 32
 export const MAX_WORLD_SENSORS = 32
 export const MAX_FOOTPRINT_POINTS = 64
+// 관절(3b, 메커니즘). FTC 로봇은 보통 2–8개(리프트 2–3단, 팔, 손목, 집게)
+export const MAX_WORLD_JOINTS = 16
+// 한 관절을 같이 구동하는 모터(양쪽 리프트 등)
+export const MAX_JOINT_MOTORS = 4
+// 서보 펄스(µs): 허브 서보 포트 출력 범위(REV Control Hub 서보 포트 사양 500–2500 µs, actuators.ts와 같다)
+export const MIN_SERVO_PULSE_US = 500
+export const MAX_SERVO_PULSE_US = 2500
 
 export type Vec2 = { x: number; y: number }
+export type Vec3 = { x: number; y: number; z: number }
+// 관성 행렬 성분 [Ixx, Iyy, Izz, Ixy, Ixz, Iyz](행렬 값 그대로, Ixy = −∫xy dm), kg·m²
+export type SimInertia = [number, number, number, number, number, number]
 
 // 필드 좌표의 로봇 자세(최상위 로봇 transform의 x·y와 요)
 export type Pose2 = { x: number; y: number; yaw: number }
@@ -104,10 +116,100 @@ export type WorldSpec = {
   pinpoints: SimPinpointSpec[]
   otos: SimOtosSpec[]
   imus: SimImuSpec[]
+  // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 운동학 2단계와 같다.
+  joints: SimJointSpec[]
+}
+
+// ---- 관절(3b, spec-3b §4, Unity ArticulationBody 하나 = 관절 하나 = 움직이는 몸체 하나) ----
+
+// 기어모터 하나의 물리 값(렌더러가 데이터시트 표에서 풀어 넣는다). 출력축 기준 토크·속도·전류, 모터축 기준 관성·마찰.
+export type SimMotorParams = {
+  // N·m, 12 V 정지 토크(출력축, 기어 효율 포함한 제조사 값)
+  stallTorque: number
+  // rad/s, 12 V 무부하 속도(출력축)
+  freeSpeed: number
+  // A
+  stallCurrent: number
+  freeCurrent: number
+  // 모터축 → 출력축 감속비(실제 기어박스)
+  gearbox: number
+  // 0–1, 모터가 밀 때의 기어 효율
+  efficiency: number
+  // kg·m², 모터축 회전자 관성
+  rotorInertia: number
+  // N·m, 모터축 역구동 마찰(쿨롱)
+  backdriveFriction: number
+}
+
+export type SimServoParams = {
+  // N·m, 정지 토크(서보 출력축)
+  stallTorque: number
+  // rad/s, 무부하 속도
+  freeSpeed: number
+  // rad, SDK 기본 PWM 범위(600–2400 µs) 전체의 서보 각(CR 서보는 0)
+  rangeAngle: number
+  // µs
+  deadbandUs: number
+  // 내부 위치 제어 근사(N·m/rad, N·m·s/rad)
+  kp: number
+  kd: number
+  // CR 서보가 최대 속도에 닿는 |power|(SDK 범위 기준), 위치 서보는 1
+  crFullPower: number
+  // N·m, PWM이 꺼졌을 때 남는 기어 마찰
+  limpFriction: number
+}
+
+export type SimJointDriveSpec =
+  | { kind: 'none' }
+  // devices: motors의 장치 이름(1–MAX_JOINT_MOTORS). ratio: 회전 관절은 모터 출력축 rad당 관절 rad(부호 포함),
+  // 직선 관절은 출력축 rad당 m(스풀 반지름 × 외부 감속). rigging: 다단 슬라이드(stages는 위 단 관절 순번, 아래에서 위)
+  | {
+      kind: 'motor'
+      devices: string[]
+      ratio: number
+      params: SimMotorParams
+      rigging: { kind: 'direct' } | { kind: 'cascade' | 'continuous'; stages: number[] }
+    }
+  // 서보: ratio는 서보 출력축 rad당 관절 rad 또는 m(양수), direction은 +펄스가 관절 +축(1)·−축(−1)으로 도는지,
+  // zeroPulseUs는 편집 자세(q = 0)의 펄스(위치 서보만, 허브 출력 범위 500–2500 µs). CR 서보의 정지 펄스는 늘 1500 µs다.
+  | {
+      kind: 'servo'
+      device: string
+      ratio: number
+      params: SimServoParams
+      zeroPulseUs: number
+      direction: 1 | -1
+    }
+  | { kind: 'crServo'; device: string; ratio: number; params: SimServoParams; direction: 1 | -1 }
+  // 다단 슬라이드의 위 단(아래 단 구동의 rigging.stages에 들어 있다)
+  | { kind: 'stage' }
+
+export type SimJointSpec = {
+  // 부모 관절 순번(자기보다 앞), −1이면 로봇(움직이지 않는 뿌리)
+  parent: number
+  type: 'revolute' | 'prismatic'
+  // q = 0(편집 자세)의 관절 틀: 부모 몸체 틀 기준(부모가 로봇이면 로봇 좌표). 회전은 ZYX 오일러 rad
+  origin: { position: Vec3; rotation: Vec3 }
+  // 관절 틀의 단위 축(회전은 오른손 +, 직선은 그 방향 +)
+  axis: Vec3
+  // q = 0 기준(rad 또는 m). null이면 제한 없음(회전 관절만)
+  limits: { lower: number; upper: number } | null
+  // 이 관절 몸체만(안쪽 관절 몸체 제외)의 질량 성질, 관절 틀 기준
+  body: { mass: number; centerOfMass: Vec3; inertia: SimInertia }
+  // 관절 좌표 단위: 쿨롱(N·m 또는 N), 점성(N·m·s/rad 또는 N·s/m)
+  friction: { coulomb: number; viscous: number }
+  spring:
+    | null
+    | { kind: 'constantForce'; force: number }
+    | { kind: 'linear'; stiffness: number; rest: number }
+  drive: SimJointDriveSpec
+  // 한계 근처에서 눌리는 리밋 스위치: touch는 pressed true, digital은 state false
+  switches: { device: string; kind: 'touch' | 'digital'; at: 'lower' | 'upper'; within: number }[]
 }
 
 // 시뮬레이터가 렌더러에 보이는 로봇 자세(필드 좌표). blocked: 이번 틱에 필드 벽에 막혔다.
-export type SimPose = { x: number; y: number; yaw: number; blocked: boolean }
+// joints: 관절 순번 순 q(rad 또는 m). 관절이 없는 세계는 키를 넣지 않는다.
+export type SimPose = { x: number; y: number; yaw: number; blocked: boolean; joints?: number[] }
 
 // ---- 검증(메인이 렌더러에서 받은 값을 확인한다) ----
 
@@ -230,6 +332,294 @@ function imu(value: unknown, i: number): SimImuSpec {
   return { device: value.device }
 }
 
+// ---- 관절 검증 ----
+
+// 관절 값 한도(가정: FTC 메커니즘보다 넉넉히 두고 틀린 단위·폭주 값만 막는다)
+// 몸체 질량(kg)·관성 성분(kg·m²)
+const MAX_BODY_MASS = 1000
+const MAX_INERTIA = 1000
+// 관절 마찰·스프링 힘(N 또는 N·m), 점성(N·s/m 또는 N·m·s/rad), 강성(N/m 또는 N·m/rad)
+const MAX_JOINT_FORCE = 1e4
+const MAX_JOINT_DAMPING = 1e4
+const MAX_JOINT_STIFFNESS = 1e6
+// 전달 비 |ratio|(rad/rad 또는 m/rad)
+const MIN_RATIO = 1e-6
+const MAX_RATIO = 1e3
+// 관절 하나의 리밋 스위치 수
+const MAX_JOINT_SWITCHES = 8
+// 단위 축 길이 허용(받으면 정규화한다)
+const AXIS_TOLERANCE = 1e-3
+// 관성 유효성 허용(주관성 값의 음수·삼각 부등식, 대각 합에 대한 비율)
+const INERTIA_TOLERANCE = 1e-9
+
+function vec3(value: unknown, what: string, max = MAX_COORD): Vec3 {
+  if (!isRecord(value)) fail(what)
+  const { x, y, z } = value
+  if (!inRange(x, -max, max) || !inRange(y, -max, max) || !inRange(z, -max, max)) fail(what)
+  return { x, y, z }
+}
+
+function unitAxis(value: unknown, what: string): Vec3 {
+  const a = vec3(value, what, 2)
+  const length = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+  if (!(Math.abs(length - 1) <= AXIS_TOLERANCE)) fail(what)
+  return { x: a.x / length, y: a.y / length, z: a.z / length }
+}
+
+// 무게중심 기준 관성: 유한·한도 안이고, 대칭 양반정치(주관성 값 ≥ 0)이며 주관성 값이 삼각 부등식(I1 + I2 ≥ I3)을 지킨다
+function inertia(value: unknown, what: string): SimInertia {
+  if (!Array.isArray(value) || value.length !== 6) fail(what)
+  const v: unknown[] = value
+  if (!v.every((x) => inRange(x, -MAX_INERTIA, MAX_INERTIA))) fail(what)
+  const [xx, yy, zz, xy, xz, yz] = v as number[]
+  const { values } = symmetricEigen3([
+    [xx, xy, xz],
+    [xy, yy, yz],
+    [xz, yz, zz]
+  ])
+  const tol = INERTIA_TOLERANCE * (Math.abs(xx) + Math.abs(yy) + Math.abs(zz))
+  if (values.some((x) => x < -tol)) fail(what)
+  const [a, b, c] = values
+  if (a + b < c - tol || a + c < b - tol || b + c < a - tol) fail(what)
+  return [xx, yy, zz, xy, xz, yz]
+}
+
+function motorParams(value: unknown, what: string): SimMotorParams {
+  if (!isRecord(value)) fail(what)
+  const p = value
+  if (!inRange(p.stallTorque, 1e-6, 1e3)) fail(`${what}.stallTorque`)
+  if (!inRange(p.freeSpeed, 1e-3, 1e5)) fail(`${what}.freeSpeed`)
+  if (!inRange(p.stallCurrent, 1e-3, 1e3)) fail(`${what}.stallCurrent`)
+  // 무부하 전류 < 정지 전류여야 역기전력 상수가 양수다(actuators.ts DcGearMotor)
+  if (!inRange(p.freeCurrent, 0, 1e3) || !(p.freeCurrent < p.stallCurrent))
+    fail(`${what}.freeCurrent`)
+  if (!inRange(p.gearbox, 0.01, 10000)) fail(`${what}.gearbox`)
+  if (!inRange(p.efficiency, 0.01, 1)) fail(`${what}.efficiency`)
+  if (!inRange(p.rotorInertia, 0, 1)) fail(`${what}.rotorInertia`)
+  if (!inRange(p.backdriveFriction, 0, 10)) fail(`${what}.backdriveFriction`)
+  return {
+    stallTorque: p.stallTorque,
+    freeSpeed: p.freeSpeed,
+    stallCurrent: p.stallCurrent,
+    freeCurrent: p.freeCurrent,
+    gearbox: p.gearbox,
+    efficiency: p.efficiency,
+    rotorInertia: p.rotorInertia,
+    backdriveFriction: p.backdriveFriction
+  }
+}
+
+function servoParams(value: unknown, what: string): SimServoParams {
+  if (!isRecord(value)) fail(what)
+  const p = value
+  if (!inRange(p.stallTorque, 1e-6, 1e3)) fail(`${what}.stallTorque`)
+  if (!inRange(p.freeSpeed, 1e-3, 1e4)) fail(`${what}.freeSpeed`)
+  if (!inRange(p.rangeAngle, 0, 4 * Math.PI)) fail(`${what}.rangeAngle`)
+  if (!inRange(p.deadbandUs, 0, 100)) fail(`${what}.deadbandUs`)
+  if (!inRange(p.kp, 0, 1e6)) fail(`${what}.kp`)
+  if (!inRange(p.kd, 0, 1e4)) fail(`${what}.kd`)
+  if (!inRange(p.crFullPower, 0.01, 1)) fail(`${what}.crFullPower`)
+  if (!inRange(p.limpFriction, 0, 1e3)) fail(`${what}.limpFriction`)
+  return {
+    stallTorque: p.stallTorque,
+    freeSpeed: p.freeSpeed,
+    rangeAngle: p.rangeAngle,
+    deadbandUs: p.deadbandUs,
+    kp: p.kp,
+    kd: p.kd,
+    crFullPower: p.crFullPower,
+    limpFriction: p.limpFriction
+  }
+}
+
+const ratio = (value: unknown): value is number =>
+  finite(value) && Math.abs(value) >= MIN_RATIO && Math.abs(value) <= MAX_RATIO
+
+type MotorRigging = Extract<SimJointDriveSpec, { kind: 'motor' }>['rigging']
+
+function rigging(value: unknown, what: string): MotorRigging {
+  if (!isRecord(value)) fail(what)
+  if (value.kind === 'direct') return { kind: 'direct' }
+  if (value.kind !== 'cascade' && value.kind !== 'continuous') fail(what)
+  const stages = list(value.stages, MAX_WORLD_JOINTS - 1, `${what}.stages`, (v, k) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : fail(`${what}.stages[${k}]`)
+  )
+  if (stages.length === 0) fail(`${what}.stages`)
+  return { kind: value.kind, stages }
+}
+
+function jointDrive(value: unknown, what: string): SimJointDriveSpec {
+  if (!isRecord(value)) fail(what)
+  switch (value.kind) {
+    case 'none':
+      return { kind: 'none' }
+    case 'stage':
+      return { kind: 'stage' }
+    case 'servo':
+    case 'crServo': {
+      if (!name(value.device)) fail(`${what}.device`)
+      if (!ratio(value.ratio)) fail(`${what}.ratio`)
+      if (value.direction !== 1 && value.direction !== -1) fail(`${what}.direction`)
+      const params = servoParams(value.params, `${what}.params`)
+      if (value.kind === 'crServo')
+        return {
+          kind: 'crServo',
+          device: value.device,
+          ratio: value.ratio,
+          params,
+          direction: value.direction
+        }
+      if (!inRange(value.zeroPulseUs, MIN_SERVO_PULSE_US, MAX_SERVO_PULSE_US))
+        fail(`${what}.zeroPulseUs`)
+      return {
+        kind: 'servo',
+        device: value.device,
+        ratio: value.ratio,
+        params,
+        zeroPulseUs: value.zeroPulseUs,
+        direction: value.direction
+      }
+    }
+    case 'motor': {
+      const devices = list(value.devices, MAX_JOINT_MOTORS, `${what}.devices`, (v, k) =>
+        name(v) ? v : fail(`${what}.devices[${k}]`)
+      )
+      if (devices.length === 0) fail(`${what}.devices`)
+      if (!ratio(value.ratio)) fail(`${what}.ratio`)
+      return {
+        kind: 'motor',
+        devices,
+        ratio: value.ratio,
+        params: motorParams(value.params, `${what}.params`),
+        rigging: rigging(value.rigging, `${what}.rigging`)
+      }
+    }
+    default:
+      fail(`${what}.kind`)
+  }
+}
+
+type JointSwitch = SimJointSpec['switches'][number]
+
+function jointSwitch(value: unknown, what: string, limits: SimJointSpec['limits']): JointSwitch {
+  if (!isRecord(value)) fail(what)
+  const { device, kind, at, within } = value
+  if (!name(device)) fail(`${what}.device`)
+  if (kind !== 'touch' && kind !== 'digital') fail(`${what}.kind`)
+  // 한계가 없는 관절(제한 없는 회전)에는 끝이 없다
+  if ((at !== 'lower' && at !== 'upper') || limits === null) fail(`${what}.at`)
+  if (!inRange(within, 0, 1)) fail(`${what}.within`)
+  return { device, kind, at, within }
+}
+
+function joint(value: unknown, i: number): SimJointSpec {
+  const what = `joints[${i}]`
+  if (!isRecord(value)) fail(what)
+  const { parent, type, origin, body, friction } = value
+  // 부모가 먼저 온다(순환 없음)
+  if (typeof parent !== 'number' || !Number.isInteger(parent) || parent < -1 || parent >= i)
+    fail(`${what}.parent`)
+  if (type !== 'revolute' && type !== 'prismatic') fail(`${what}.type`)
+  if (!isRecord(origin)) fail(`${what}.origin`)
+  let limits: SimJointSpec['limits'] = null
+  const l = value.limits
+  if (l !== null) {
+    const range = type === 'revolute' ? 4 * Math.PI : MAX_COORD
+    // 편집 자세(q = 0)가 한계 안이어야 시작부터 튀지 않는다
+    if (!isRecord(l) || !inRange(l.lower, -range, 0) || !inRange(l.upper, 0, range))
+      fail(`${what}.limits`)
+    limits = { lower: l.lower, upper: l.upper }
+  } else if (type === 'prismatic') fail(`${what}.limits`)
+  if (!isRecord(body) || !inRange(body.mass, 1e-9, MAX_BODY_MASS)) fail(`${what}.body`)
+  if (
+    !isRecord(friction) ||
+    !inRange(friction.coulomb, 0, MAX_JOINT_FORCE) ||
+    !inRange(friction.viscous, 0, MAX_JOINT_DAMPING)
+  )
+    fail(`${what}.friction`)
+  let spring: SimJointSpec['spring'] = null
+  const s = value.spring
+  if (s !== null) {
+    if (isRecord(s) && s.kind === 'constantForce' && inRange(s.force, 0, MAX_JOINT_FORCE))
+      spring = { kind: 'constantForce', force: s.force }
+    else if (
+      isRecord(s) &&
+      s.kind === 'linear' &&
+      inRange(s.stiffness, 0, MAX_JOINT_STIFFNESS) &&
+      inRange(s.rest, -4 * Math.PI, 4 * Math.PI)
+    )
+      spring = { kind: 'linear', stiffness: s.stiffness, rest: s.rest }
+    else fail(`${what}.spring`)
+  }
+  return {
+    parent,
+    type,
+    origin: {
+      position: vec3(origin.position, `${what}.origin.position`),
+      rotation: vec3(origin.rotation, `${what}.origin.rotation`, 4 * Math.PI)
+    },
+    axis: unitAxis(value.axis, `${what}.axis`),
+    limits,
+    body: {
+      mass: body.mass,
+      centerOfMass: vec3(body.centerOfMass, `${what}.body.centerOfMass`),
+      inertia: inertia(body.inertia, `${what}.body.inertia`)
+    },
+    friction: { coulomb: friction.coulomb, viscous: friction.viscous },
+    spring,
+    drive: jointDrive(value.drive, `${what}.drive`),
+    switches: list(value.switches, MAX_JOINT_SWITCHES, `${what}.switches`, (v, k) =>
+      jointSwitch(v, `${what}.switches[${k}]`, limits)
+    )
+  }
+}
+
+// 관절 사이의 참조. 구동 모터는 motors에 있고 바퀴·다른 관절과 겹치지 않는다. 서보·스위치 장치는 한 곳에서만 쓴다.
+// 다단 리깅의 단은 drive 'stage'인 직선 관절이고 구동 관절(직선) 하나에만 들어 있다.
+function checkJointReferences(spec: WorldSpec, motorNames: Set<string>): void {
+  const wheelMotors = new Set(spec.wheels.flatMap((w) => (w.motor === null ? [] : [w.motor])))
+  const usedMotors = new Set<string>()
+  const usedDevices = new Set<string>()
+  const stageOwners = new Set<number>()
+  spec.joints.forEach((j, i) => {
+    const what = `joints[${i}].drive`
+    const drive = j.drive
+    if (drive.kind === 'motor') {
+      drive.devices.forEach((device, k) => {
+        if (!motorNames.has(device)) fail(`${what}.devices[${k}]: unknown device`)
+        if (wheelMotors.has(device)) fail(`${what}.devices[${k}]: wheel motor`)
+        if (usedMotors.has(device)) fail(`${what}.devices[${k}]: duplicate device`)
+        usedMotors.add(device)
+      })
+      if (drive.rigging.kind === 'direct') return
+      if (j.type !== 'prismatic') fail(`${what}.rigging`)
+      drive.rigging.stages.forEach((stage, k) => {
+        const target = stage < spec.joints.length ? spec.joints[stage] : undefined
+        if (
+          stage === i ||
+          target === undefined ||
+          target.drive.kind !== 'stage' ||
+          target.type !== 'prismatic' ||
+          stageOwners.has(stage)
+        )
+          fail(`${what}.rigging.stages[${k}]`)
+        stageOwners.add(stage)
+      })
+    } else if (drive.kind === 'servo' || drive.kind === 'crServo') {
+      if (usedDevices.has(drive.device)) fail(`${what}.device: duplicate device`)
+      usedDevices.add(drive.device)
+    }
+  })
+  spec.joints.forEach((j, i) => {
+    if (j.drive.kind === 'stage' && !stageOwners.has(i)) fail(`joints[${i}].drive: unused stage`)
+    j.switches.forEach((s, k) => {
+      if (usedDevices.has(s.device) || motorNames.has(s.device))
+        fail(`joints[${i}].switches[${k}].device: duplicate device`)
+      usedDevices.add(s.device)
+    })
+  })
+}
+
 // 모양이 맞으면 새 객체(받은 값의 다른 키는 버린다), 아니면 무엇이 틀렸는지 글자로 돌려준다
 export function parseWorldSpec(value: unknown): WorldSpec | string {
   try {
@@ -261,13 +651,15 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
       deadWheels: list(value.deadWheels, MAX_WORLD_SENSORS, 'deadWheels', deadWheel),
       pinpoints: list(value.pinpoints, MAX_WORLD_SENSORS, 'pinpoints', pinpoint),
       otos: list(value.otos, MAX_WORLD_SENSORS, 'otos', otos),
-      imus: list(value.imus, MAX_WORLD_SENSORS, 'imus', imu)
+      imus: list(value.imus, MAX_WORLD_SENSORS, 'imus', imu),
+      joints: list(value.joints, MAX_WORLD_JOINTS, 'joints', joint)
     }
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')
     spec.wheels.forEach((w, i) => {
       if (w.motor !== null && !motorNames.has(w.motor)) fail(`wheels[${i}].motor: unknown device`)
     })
+    checkJointReferences(spec, motorNames)
     return spec
   } catch (error) {
     if (error instanceof SpecError) return error.message

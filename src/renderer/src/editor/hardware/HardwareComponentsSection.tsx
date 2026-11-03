@@ -4,7 +4,8 @@ import {
   COMPONENT_CATEGORIES,
   COMPONENT_TYPE_KEYS,
   componentDef,
-  isComponentType
+  isComponentType,
+  type ObjectPick
 } from '../../hardware/catalog'
 import {
   createComponent,
@@ -13,30 +14,35 @@ import {
   type ComponentEntry
 } from '../../hardware/components'
 import { useSceneIssues } from '../../hardware/sceneIssues'
-import { ancestorIds, findRobotId, subtreeIds, type SceneObject } from '../../scene/model'
+import { findRobotId, type SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { openScriptPicker } from '../dialogStore'
+import JointCard from '../joint/JointCard'
+import { canAddJoint, newJoint } from '../joint/jointCardModel'
 import MassCard from '../mass/MassCard'
 import { canAddMass } from '../mass/massCardModel'
 import MassEstimateLine from '../mass/MassEstimateLine'
 import ScriptCard from '../scripts/ScriptCard'
 import ComponentCard from './ComponentCard'
+import { objectOptions, objectPicksOf, type ObjectOption } from './objectOptions'
 import { canAddWheel, newWheel } from './wheelCardModel'
 import WheelCard from './WheelCard'
 
-// Add Component 선택 상자에서 스크립트 선택창을 여는 항목·바퀴·질량 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)
+// Add Component 선택 상자에서 스크립트 선택창을 여는 항목·바퀴·관절·질량 항목의 값(컴포넌트 종류 이름과 겹치지 않는다)
 const SCRIPT_OPTION = '#script'
 const WHEEL_OPTION = '#wheel'
+const JOINT_OPTION = '#joint'
 const MASS_OPTION = '#mass'
 
-// 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 바퀴·질량 카드
-// (시뮬레이터 설정), 그 뒤에 연결한 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류, 바퀴, 질량, TeamCode
+// 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 바퀴·관절·질량 카드
+// (시뮬레이터 설정), 그 뒤에 연결한 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류, 바퀴, 관절, 질량, TeamCode
 // 스크립트(검색 선택창)를 고른다. 질량 카드가 없으면 맨 아래에 추정 질량 한 줄을 보인다(누르면 카드를 붙인다).
 function HardwareComponentsSection({ object }: { object: SceneObject }): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const addComponent = useSceneStore((state) => state.addComponent)
   const setWheel = useSceneStore((state) => state.setWheel)
+  const setJoint = useSceneStore((state) => state.setJoint)
   const setObjectMass = useSceneStore((state) => state.setObjectMass)
   const issues = useSceneIssues()
 
@@ -50,20 +56,14 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   const expansionHubEnabled = robotId
     ? robotHardwareSettings(objects, robotId).expansionHub.enabled
     : false
-  // 포드로 고를 수 있는 파트: 같은 로봇의 파트·어셈블리(깊이만큼 들여 쓴다). Pinpoint 카드만 쓴다.
-  const needsPicker = components.some((component) => component.type === 'pinpoint')
-  const pickableObjects = useMemo(
-    () =>
-      robotId && needsPicker
-        ? subtreeIds(objects, robotId)
-            .filter((id) => id !== robotId)
-            .map((id) => ({
-              id,
-              label: `${'\u00a0\u00a0'.repeat(ancestorIds(objects, id).length - 1)}${objects[id].name}`
-            }))
-        : [],
-    [objects, robotId, needsPicker]
-  )
+  // object 속성으로 고를 수 있는 오브젝트: Pinpoint 포드는 같은 로봇의 오브젝트, 리밋 스위치는 같은 로봇의 관절 오브젝트
+  const picks = objectPicksOf(components.map((component) => component.type)).join(',')
+  const pickable = useMemo(() => {
+    const result: Partial<Record<ObjectPick, ObjectOption[]>> = {}
+    for (const pick of picks ? (picks.split(',') as ObjectPick[]) : [])
+      result[pick] = objectOptions(objects, robotId, pick)
+    return result
+  }, [objects, robotId, picks])
 
   const add = (type: string): void => {
     if (!isComponentType(type)) return
@@ -82,7 +82,11 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
       {!robotId && components.length > 0 && (
         <p className="inspector-note">{t('hardware.orphan')}</p>
       )}
-      {components.length === 0 && scripts.length === 0 && !object.wheel && !object.mass ? (
+      {components.length === 0 &&
+      scripts.length === 0 &&
+      !object.wheel &&
+      !object.joint &&
+      !object.mass ? (
         <p className="inspector-note">{t('inspector.componentsEmpty')}</p>
       ) : (
         <ul className="hw-cards">
@@ -93,12 +97,13 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               objectId={object.id}
               component={component}
               siblings={siblings}
-              pickableObjects={pickableObjects}
+              objectOptions={pickable}
               expansionHubEnabled={expansionHubEnabled}
               issues={issues.filter((issue) => issue.componentId === component.id)}
             />
           ))}
           {object.wheel && <WheelCard object={object} />}
+          {object.joint && <JointCard object={object} />}
           {object.mass && <MassCard object={object} />}
           {scripts.map((link) => (
             <ScriptCard key={link.path} objectId={object.id} link={link} />
@@ -121,7 +126,9 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             return
           }
           if (event.target.value === WHEEL_OPTION) setWheel(object.id, newWheel(objects, object.id))
-          else if (event.target.value === MASS_OPTION) {
+          else if (event.target.value === JOINT_OPTION) {
+            if (canAddJoint(object)) setJoint(object.id, newJoint())
+          } else if (event.target.value === MASS_OPTION) {
             if (canAddMass(object)) setObjectMass(object.id, {})
           } else add(event.target.value)
           // 포커스가 남아 있으면 방향키가 값을 바꿔 컴포넌트가 또 추가된다
@@ -142,10 +149,14 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             )}
           </optgroup>
         ))}
-        {/* 바퀴는 오브젝트마다 하나, 로봇·CAD 루트에는 붙이지 않는다. 질량도 하나, 로봇에는 붙이지 않는다(Rigidbody 카드) */}
+        {/* 바퀴는 오브젝트마다 하나, 로봇·CAD 루트에는 붙이지 않는다. 관절도 하나, 로봇·바퀴 오브젝트에는 붙이지 않는다.
+            질량도 하나, 로봇에는 붙이지 않는다(Rigidbody 카드) */}
         <optgroup label={t('hardware.wheel.addGroup')}>
           <option value={WHEEL_OPTION} disabled={!canAddWheel(object)}>
             {t('hardware.wheel.addOption')}
+          </option>
+          <option value={JOINT_OPTION} disabled={!canAddJoint(object)}>
+            {t('joint.addOption')}
           </option>
           <option value={MASS_OPTION} disabled={!canAddMass(object)}>
             {t('mass.addOption')}

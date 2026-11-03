@@ -22,6 +22,8 @@ import com.qualcomm.robotcore.hardware.Gyroscope;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.NormalizedRGBA;
+import com.qualcomm.robotcore.hardware.MotorControlAlgorithm;
+import com.qualcomm.robotcore.hardware.PIDCoefficients;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.TouchSensor;
@@ -43,6 +45,7 @@ import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.testing.Check;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.sandbot.sdk.devices.SimTestSupport.CLOCK;
@@ -319,6 +322,96 @@ public final class DeviceBehaviorTest {
         Check.near(2500, hex.getCurrent(org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit.MILLIAMPS), 1e-6, "current");
         hex.setCurrentAlert(2, org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit.AMPS);
         Check.isTrue(hex.isOverCurrent(), "over the current alert");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    static final String PIDF_MOTORS =
+            "            <goBILDA5202SeriesMotor name=\"gobilda\" port=\"0\" />\n"
+            + "            <RevRoboticsCoreHexMotor name=\"coreHex\" port=\"1\" />\n";
+
+    /** 허브 고정소수점(×65536 반올림)으로 보낸 뒤 읽힌 계수(실제 LynxSetMotorPIDControlLoopCoefficientsCommand) */
+    static List<Double> hubPidf(double p, double i, double d, double f) {
+        List<Double> result = new ArrayList<>();
+        for (double c : new double[] {p, i, d, f})
+            result.add(SimDcMotorController.externalCoefficientFromInternal(SimDcMotorController.internalCoefficientFromExternal(c)));
+        return result;
+    }
+
+    public static void testPidfOutputs() {
+        Bot bot = new Bot(null, PIDF_MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotorEx coreHex = bot.get(DcMotorEx.class, "coreHex");
+        // 받은 적 없으면 펌웨어 기본값(LegacyPID 속도 P10 I3, 위치 P10 I0.05). 0.05는 3277/65536으로 읽힌다.
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("gobilda", "velocityPidf"), "default velocity coefficients are always sent");
+        Check.equal(hubPidf(10, 0.05, 0, 0), bot.out("gobilda", "positionPidf"), "default position coefficients are always sent");
+        Check.equal(0.0500030517578125, ((List<?>) bot.out("gobilda", "positionPidf")).get(1), "hub fixed point");
+        Check.equal("LegacyPID", bot.out("gobilda", "velocityAlgorithm"), "default velocity algorithm");
+        Check.equal("LegacyPID", bot.out("gobilda", "positionAlgorithm"), "default position algorithm");
+        // Core Hex 형식 주석(@ExpansionHubMotorControllerVelocityParams·PositionParams)이 setMotorType 때 보낸 값
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("coreHex", "velocityPidf"), "Core Hex type velocity params");
+        Check.equal(hubPidf(10, 0.05, 0, 0), bot.out("coreHex", "positionPidf"), "Core Hex type position params");
+        // DcMotorEx.setVelocityPIDFCoefficients: RUN_USING_ENCODER, PIDF 알고리즘
+        gobilda.setVelocityPIDFCoefficients(1.17, 0.117, 0, 11.7);
+        Check.equal(hubPidf(1.17, 0.117, 0, 11.7), bot.out("gobilda", "velocityPidf"), "team velocity PIDF");
+        Check.equal("PIDF", bot.out("gobilda", "velocityAlgorithm"), "setVelocityPIDFCoefficients uses PIDF");
+        PIDFCoefficients read = gobilda.getPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER);
+        Check.equal(hubPidf(1.17, 0.117, 0, 11.7), Arrays.asList(read.p, read.i, read.d, read.f),
+                "getPIDFCoefficients returns what the hub stored");
+        Check.equal(hubPidf(10, 0.05, 0, 0), bot.out("gobilda", "positionPidf"), "position untouched");
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("coreHex", "velocityPidf"), "other ports untouched");
+        // DcMotorEx.setPositionPIDFCoefficients: RUN_TO_POSITION P만, PIDF 알고리즘
+        gobilda.setPositionPIDFCoefficients(5);
+        Check.equal(hubPidf(5, 0, 0, 0), bot.out("gobilda", "positionPidf"), "team position P");
+        Check.equal("PIDF", bot.out("gobilda", "positionAlgorithm"), "setPositionPIDFCoefficients uses PIDF");
+        // setPIDCoefficients는 F 0의 LegacyPID, 옛 모드 이름(RUN_USING_ENCODERS)도 받는다
+        coreHex.setPIDCoefficients(DcMotor.RunMode.RUN_USING_ENCODERS, new PIDCoefficients(2, 0.5, 0.25));
+        Check.equal(hubPidf(2, 0.5, 0.25, 0), bot.out("coreHex", "velocityPidf"), "setPIDCoefficients");
+        Check.equal("LegacyPID", bot.out("coreHex", "velocityAlgorithm"), "setPIDCoefficients is LegacyPID");
+        // setPIDFCoefficients 그대로, 음수도 부호를 지킨다
+        coreHex.setPIDFCoefficients(DcMotor.RunMode.RUN_TO_POSITION, new PIDFCoefficients(-4, 0, 0, 0, MotorControlAlgorithm.LegacyPID));
+        Check.equal(hubPidf(-4, 0, 0, 0), bot.out("coreHex", "positionPidf"), "setPIDFCoefficients");
+        // PIDF 알고리즘의 RUN_TO_POSITION에 I·D·F를 주면 실제 SDK처럼 거부하고 허브 값은 그대로다
+        boolean refused = false;
+        try {
+            gobilda.setPIDFCoefficients(DcMotor.RunMode.RUN_TO_POSITION, new PIDFCoefficients(5, 1, 0, 0));
+        } catch (UnsupportedOperationException e) {
+            refused = true;
+        }
+        Check.isTrue(refused, "unreasonable RUN_TO_POSITION coefficients are refused");
+        Check.equal(hubPidf(5, 0, 0, 0), bot.out("gobilda", "positionPidf"), "refused coefficients are not sent");
+        boolean badMode = false;
+        try {
+            gobilda.setPIDFCoefficients(DcMotor.RunMode.RUN_WITHOUT_ENCODER, new PIDFCoefficients(1, 0, 0, 0));
+        } catch (IllegalArgumentException e) {
+            badMode = true;
+        }
+        Check.isTrue(badMode, "RUN_WITHOUT_ENCODER is not a PID mode");
+        // 다음 OpMode: SDK가 처음 쓰기 전의 계수(originalPIDParams)를 다시 보낸다(실제 resetDeviceConfigurationForOpMode)
+        SandbotHardware.afterStop(bot.map);
+        Check.equal(hubPidf(1.17, 0.117, 0, 11.7), bot.out("gobilda", "velocityPidf"), "fail safe keeps the hub coefficients");
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("gobilda", "velocityPidf"), "next OpMode restores the original velocity coefficients");
+        Check.equal(hubPidf(10, 0.05, 0, 0), bot.out("gobilda", "positionPidf"), "next OpMode restores the original position coefficients");
+        Check.equal("LegacyPID", bot.out("gobilda", "velocityAlgorithm"), "original algorithm restored");
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("coreHex", "velocityPidf"), "Core Hex type params again");
+        Check.equal(hubPidf(10, 0.05, 0, 0), bot.out("coreHex", "positionPidf"), "Core Hex type position params again");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testPidfNullAlgorithm() {
+        // 알고리즘이 null이면 실제 SDK(InternalMotorControlAlgorithm.fromExternal의 switch)처럼 보내기 전에 던지고 허브 값·출력은
+        // 그대로다. 실제 SDK는 그 계수를 desiredPIDParams에 남겨 다음 OpMode의 초기화에서도 던지므로 여기서 끝낸다.
+        Bot bot = new Bot(null, PIDF_MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        boolean refused = false;
+        try {
+            gobilda.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(1, 0, 0, 0, null));
+        } catch (NullPointerException e) {
+            refused = true;
+        }
+        Check.isTrue(refused, "null algorithm is refused");
+        Check.equal("LegacyPID", bot.out("gobilda", "velocityAlgorithm"), "hub algorithm unchanged");
+        Check.equal(hubPidf(10, 3, 0, 0), bot.out("gobilda", "velocityPidf"), "hub coefficients unchanged");
         SandbotHardware.afterStop(bot.map);
     }
 

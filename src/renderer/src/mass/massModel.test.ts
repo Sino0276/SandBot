@@ -1567,6 +1567,80 @@ describe('질량 추정: 합성(평행축 정리)', () => {
   })
 })
 
+describe('질량 추정: 오브젝트 자기 몫(관절 몸체)', () => {
+  const unit = box(1, 1, 1)
+
+  it('자기 파트만 센다(하위 오브젝트 제외)이고, 자기 몫을 다 더하면 로봇 전체와 같다', () => {
+    const objects = scene(
+      robot(),
+      node('A', 'R', { kind: 'group' }, [0.5, 0, 0]),
+      part('P', 'A', [0, 0.25, 0], { mass: { mass: 2 } }),
+      part('Q', 'R', [-0.5, 0, 0.1], { mass: { mass: 1 } }),
+      // 형상이 없는 그룹의 덮어쓰기는 점질량이고 그 그룹의 몫이다
+      node('B', 'R', { kind: 'group', mass: { mass: 0.5 } }, [0, 0, 0.3])
+    )
+    const model = computeMassModel(objects, lookupOf({ 'g:P': unit, 'g:Q': box(1, 2, 3) }))
+    const own = model.own!
+    expect(Object.keys(own)).toEqual(['P', 'Q', 'B'])
+    expect(own.P).toMatchObject({ mass: 2, pendingMeshes: 0 })
+    expect(own.P.centerOfMass).toEqual([0.5, 0.25, 0].map((v) => expect.closeTo(v, 14)))
+    // 정육면체 2 kg의 무게중심 기준 관성 2/6
+    own.P.inertia.forEach((value, i) => expect(value).toBeCloseTo(i < 3 ? 2 / 6 : 0, 13))
+    expect(own.B).toEqual({
+      mass: 0.5,
+      centerOfMass: [0, 0, 0.3].map((v) => expect.closeTo(v, 14)),
+      inertia: [0, 0, 0, 0, 0, 0],
+      pendingMeshes: 0
+    })
+    // 하위 전체(objects.A)는 자기 몫이 없는 그룹 A에도 있다
+    expect(own.A).toBeUndefined()
+    expect(model.objects.A.mass).toBe(2)
+
+    // 자기 몫을 평행축 정리로 합치면 로봇 관성
+    const r = model.robots.R
+    let mass = 0
+    const moment = [0, 0, 0]
+    for (const entry of Object.values(own)) {
+      mass += entry.mass
+      for (let k = 0; k < 3; k++) moment[k] += entry.mass * entry.centerOfMass[k]
+    }
+    expect(mass).toBeCloseTo(r.mass, 14)
+    const com = moment.map((m) => m / mass)
+    const sum: number[] = [0, 0, 0, 0, 0, 0]
+    for (const entry of Object.values(own)) {
+      const [dx, dy, dz] = [0, 1, 2].map((k) => entry.centerOfMass[k] - com[k])
+      const m = entry.mass
+      const parallel = [
+        dy * dy + dz * dz,
+        dx * dx + dz * dz,
+        dx * dx + dy * dy,
+        -dx * dy,
+        -dx * dz,
+        -dy * dz
+      ]
+      for (let i = 0; i < 6; i++) sum[i] += entry.inertia[i] + m * parallel[i]
+    }
+    sum.forEach((value, i) => expect(value).toBeCloseTo(r.inertia[i], 12))
+  })
+
+  it('저울 맞추기 비율이 곱해지고, 읽는 중인 자기 메시를 센다', () => {
+    const objects = scene(
+      robot({ rigidbody: { weighedMass: 2 * 2700 * 0.001 } }),
+      part('P', 'R', [0, 0, 0]),
+      part('L', 'R', [0.2, 0, 0])
+    )
+    // 알루미늄 6061(2700 kg/m³) 1 L 하나: 저울 무게가 그 두 배라 비율 2, L은 읽는 중
+    const model = computeMassModel(objects, lookupOf({ 'g:P': box(0.1, 0.1, 0.1) }))
+    expect(model.own!.P.mass).toBeCloseTo(2 * 2.7, 12)
+    expect(model.own!.L).toEqual({
+      mass: 0,
+      centerOfMass: [0.2, 0, 0].map((v) => expect.closeTo(v, 14)),
+      inertia: [0, 0, 0, 0, 0, 0],
+      pendingMeshes: 1
+    })
+  })
+})
+
 describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
   it('형상·질량 정보가 없는 로봇(임시 씬)은 13.6 kg 상자로 둔다', () => {
     const placeholder = useSceneStore.getInitialState().objects

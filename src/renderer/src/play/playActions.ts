@@ -8,6 +8,7 @@ import type {
   PlaySpeed
 } from '../../../shared/play'
 import { openPreferences, showDialog } from '../editor/dialogStore'
+import { massModelFor } from '../editor/mass/useMassModel'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
 import { commitFocusedInput } from '../editor/useDraft'
@@ -52,7 +53,7 @@ import {
   type RegisteredProblem
 } from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
-import { buildWorldSpec, type WorldSpecResult } from './worldSpec'
+import { buildWorldSpec, robotHasJoints, type WorldSpecResult } from './worldSpec'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -441,13 +442,14 @@ async function runInit(): Promise<void> {
       robotId: config?.robotId ?? null,
       configPath,
       speed: play.settings.speed,
-      paused: play.paused
+      paused: play.paused,
+      joints: world?.jointObjectIds ?? []
     })
   })
   const { addConsole } = usePlayStore.getState()
   addConsole({ type: 'run', name: opMode.name, config: configPath })
   if (warning) addConsole({ type: 'notice', ...warning }, null, 'warning')
-  if (warning && world?.spec && world.spec.wheels.length > 0)
+  if (warning && world?.spec && (world.spec.wheels.length > 0 || world.spec.joints.length > 0))
     addConsole({ type: 'notice', key: 'worldGenerationStale', params: {} }, null, 'warning')
   for (const notice of world?.warnings ?? [])
     addConsole({ type: 'notice', ...notice }, null, 'warning')
@@ -519,13 +521,18 @@ async function runInit(): Promise<void> {
 }
 
 // 세계 설명을 만들다 예상하지 못한 오류가 나도 실행은 시뮬레이터 없이 계속한다(Console에 알림)
+// 관절이 있으면 몸체 질량에 질량 모델(인스펙터와 같은 마지막 계산, 문서 밖 형상 정보)을 쓴다.
 function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecResult {
   try {
-    return buildWorldSpec(useSceneStore.getState().objects, robotId, settings)
+    const { objects, geometryRevision } = useSceneStore.getState()
+    const mass = robotHasJoints(objects, robotId) ? massModelFor(objects, geometryRevision) : null
+    return buildWorldSpec(objects, robotId, settings, mass)
   } catch (error) {
     return {
       spec: null,
-      warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }]
+      warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }],
+      jointObjectIds: [],
+      jointMotorIds: []
     }
   }
 }

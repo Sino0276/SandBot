@@ -4,12 +4,15 @@ import {
   componentDef,
   deadWheelTicksPerMeter,
   isComponentType,
+  isMotorModel,
   isPropertyVisible,
   MIN_GEARBOX,
+  MOTOR_MODEL_TAGS,
   motorGearbox,
   motorOutput,
   PORT_RANGES,
   type ComponentType,
+  type ObjectPick,
   type PropertyDef
 } from '../../hardware/catalog'
 import { componentCodePath } from '../../hardware/codeScopes'
@@ -18,7 +21,13 @@ import {
   sharesPortClass,
   type ComponentEntry
 } from '../../hardware/components'
-import { hasHint, looseT, optionLabelKey, propertyLabelKey } from '../../hardware/labels'
+import {
+  hasHint,
+  looseT,
+  optionLabelKey,
+  propertyHintKey,
+  propertyLabelKey
+} from '../../hardware/labels'
 import {
   MM_PER_METER,
   otosOffsetInchDeg,
@@ -30,14 +39,21 @@ import {
   findRobotId,
   type HardwareComponent,
   type HubId,
+  type JointType,
   type SceneObjects
 } from '../../scene/model'
+import { DEG } from '../../scene/coordinates'
+import { motorComponentParams } from '../../play/worldJoints'
+import { motorDrivesJoint } from '../../play/worldSpec'
+import { jointEncoderTicksPerOutputRev } from '../../../../shared/sim/actuatorData'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import {
+  ANGLE_DIGITS,
   formatNumber,
   fromDisplayLength,
   LENGTH_DIGITS,
+  parseAngle,
   parseLength,
   toDisplayLength
 } from '../../units/units'
@@ -45,6 +61,7 @@ import NumberField from '../NumberField'
 import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
 import IssueList from './IssueList'
+import type { ObjectOption } from './objectOptions'
 
 const HUBS: HubId[] = ['controlHub', 'expansionHub']
 
@@ -71,8 +88,8 @@ type ComponentCardProps = {
   component: HardwareComponent
   // 같은 로봇의 모든 컴포넌트(포트 사용 표시). 로봇 밖이면 이 오브젝트의 컴포넌트만.
   siblings: ComponentEntry[]
-  // 포드 파트로 고를 수 있는 오브젝트(같은 로봇의 파트·어셈블리)
-  pickableObjects: { id: string; label: string }[]
+  // object 속성으로 고를 수 있는 오브젝트(고르기 종류마다, editor/hardware/objectOptions.ts). 없는 종류는 빈 목록이다.
+  objectOptions: Partial<Record<ObjectPick, ObjectOption[]>>
   expansionHubEnabled: boolean
   issues: Issue[]
 }
@@ -116,10 +133,31 @@ function derivedText(
   }
 }
 
-// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다.
-function simulationText(t: ReturnType<typeof looseT>, component: HardwareComponent): string | null {
+// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다. 관절을 구동하는 모터는
+// 관절 시뮬레이션이 쓰는 값(데이터시트 기어모터 표의 실제 감속비·무부하 속도와 덮어쓰기, 출력축 틱 = 모터축 카운트 × 실제
+// 감속비 — world.ts와 같은 jointEncoderTicksPerOutputRev)이고, 구동계 바퀴 규칙(SDK ticksPerRev ÷ gearing × gearbox)과
+// 다를 수 있어(UltraPlanetary 560 → 530, Core Hex 72:1은 288) 실제 감속비를 함께 보인다.
+function simulationText(
+  t: ReturnType<typeof looseT>,
+  component: HardwareComponent,
+  drivesJoint: boolean
+): string | null {
   switch (component.type) {
     case 'motor': {
+      if (drivesJoint) {
+        const params = motorComponentParams(component.props)
+        const model = isMotorModel(component.props.motorModel)
+          ? component.props.motorModel
+          : 'unspecified'
+        return t('hardware.derived.jointMotorOutput', {
+          rpm: formatNumber((params.freeSpeed * 60) / (2 * Math.PI), 0),
+          ticks: formatNumber(
+            jointEncoderTicksPerOutputRev(MOTOR_MODEL_TAGS[model], params.gearbox),
+            1
+          ),
+          ratio: formatNumber(params.gearbox, 2)
+        })
+      }
       const output = motorOutput(component.props)
       return t('hardware.derived.motorOutput', {
         rpm: formatNumber(output.freeRpm, 0),
@@ -140,7 +178,7 @@ function ComponentCard({
   objectId,
   component,
   siblings,
-  pickableObjects,
+  objectOptions,
   expansionHubEnabled,
   issues
 }: ComponentCardProps): React.JSX.Element | null {
@@ -156,6 +194,10 @@ function ComponentCard({
   const update = (patch: Partial<HardwareComponent>): void =>
     updateComponent(objectId, component.id, patch)
   const setProp = (key: string, value: string | number): void => update({ props: { [key]: value } })
+  // 정지 토크·무부하 속도 덮어쓰기는 관절 구동만 읽는다(visibleWhenDrivesJoint). 관절을 구동하는 모터의 감속비 "모델
+  // 기본"과 출력축 줄은 관절 시뮬레이션의 값(데이터시트 실제 감속비)이다.
+  const drivesJoint = type === 'motor' && motorDrivesJoint(objects, objectId, component.id)
+  const simulated = simulationText(tl, component, drivesJoint)
 
   // 포트 번호 옆에 같은 자리를 쓰는 다른 장치 이름을 보여 준다
   const portLabel = (port: number): string => {
@@ -191,14 +233,20 @@ function ComponentCard({
           </select>
         )
       case 'number':
-        // 감속비 0은 모델 기본(motorGearbox): 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다
+        // 감속비 0은 모델 기본: 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다. 구동계 바퀴는 SDK
+        // gearing(motorGearbox), 관절 구동은 데이터시트 표의 실제 감속비(UltraPlanetary 18.93, Core Hex 72)다. 그래서 보이는
+        // 값을 그대로 다시 넣어도 관절 물리가 같다(SDK gearing 36.25를 넣으면 Core Hex 관절이 36.25:1이 되던 함정).
         if (property.key === 'gearbox') {
           const modelDefault = Number(value) < MIN_GEARBOX
           return (
             <div className="hw-inline">
               <NumberField
                 ariaLabel={label}
-                value={motorGearbox(component.props)}
+                value={
+                  modelDefault && drivesJoint
+                    ? motorComponentParams(component.props).gearbox
+                    : motorGearbox(component.props)
+                }
                 digits={property.digits}
                 onCommit={(input) =>
                   setProp(
@@ -213,7 +261,9 @@ function ComponentCard({
                 <button
                   type="button"
                   className="panel-button"
-                  title={t('hardware.gearboxResetHint')}
+                  title={t(
+                    drivesJoint ? 'hardware.gearboxResetHintJoint' : 'hardware.gearboxResetHint'
+                  )}
                   onClick={() => setProp(property.key, 0)}
                 >
                   {t('hardware.gearboxReset')}
@@ -230,7 +280,10 @@ function ComponentCard({
             onCommit={(input) =>
               setProp(
                 property.key,
-                Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
+                // 0이 기본값인 덮어쓰기 칸은 아주 작은 값을 기본으로 돌린다(zeroBelow)
+                input < (property.zeroBelow ?? -Infinity)
+                  ? 0
+                  : Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
               )
             }
           />
@@ -256,6 +309,22 @@ function ComponentCard({
           />
         )
       }
+      case 'angle':
+        return (
+          <NumberField
+            ariaLabel={label}
+            value={Number(value) / DEG}
+            digits={ANGLE_DIGITS}
+            title={t('units.angleInputHint')}
+            parse={(text) => {
+              const radians = parseAngle(text)
+              return radians === null ? null : radians / DEG
+            }}
+            onCommit={(input) =>
+              setProp(property.key, Math.min(property.max, Math.max(property.min, input * DEG)))
+            }
+          />
+        )
       case 'text':
         return (
           <TextField
@@ -264,31 +333,44 @@ function ComponentCard({
             onCommit={(input) => setProp(property.key, input.trim())}
           />
         )
-      case 'object':
+      case 'object': {
+        const options = objectOptions[property.pick ?? 'any'] ?? []
+        const current = String(value ?? '')
         return (
           <select
             className="field-select"
             aria-label={label}
-            value={String(value ?? '')}
+            value={current}
             onChange={(event) => setProp(property.key, event.target.value)}
           >
             <option value="">{t('hardware.objectNone')}</option>
-            {pickableObjects.map((object) => (
+            {/* 지웠거나 고를 수 없게 된 오브젝트: 참조는 남기고(세계 설명이 경고한다) 그렇다고 보인다 */}
+            {current !== '' && !options.some((object) => object.id === current) && (
+              <option value={current}>{t('hardware.objectMissing')}</option>
+            )}
+            {options.map((object) => (
               <option key={object.id} value={object.id}>
                 {object.label}
               </option>
             ))}
           </select>
         )
+      }
     }
   }
 
   const derived = derivedText(tl, objects, objectId, component)
-  const simulated = simulationText(tl, component)
   const rowLabel = (property: PropertyDef): string =>
     property.kind === 'length'
       ? `${tl(propertyLabelKey(property.key))} (${t(`units.symbols.${lengthUnit}`)})`
-      : tl(propertyLabelKey(property.key))
+      : property.kind === 'angle'
+        ? `${tl(propertyLabelKey(property.key))} (°)`
+        : tl(propertyLabelKey(property.key))
+  // 리밋 스위치 칸은 연결한 관절의 형식을 따른다(visibleWhenJoint). 같은 로봇의 관절 오브젝트만 관절로 본다(세계 설명과 같다)
+  const jointTypeOf = (id: string): JointType | null =>
+    objectOptions.joint?.some((option) => option.id === id)
+      ? (objects[id]?.joint?.type ?? null)
+      : null
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
@@ -375,13 +457,22 @@ function ComponentCard({
         </>
       )}
       {def.properties
-        .filter((property) => isPropertyVisible(property, component.props))
+        .filter((property) =>
+          isPropertyVisible(property, component.props, jointTypeOf, drivesJoint)
+        )
         .map((property) => (
           <FieldRow
             key={property.key}
             label={rowLabel(property)}
             // 시뮬레이터 전용 속성은 생성 코드에 쓰지 않는다
-            title={property.simulation ? t('hardware.simulationOnly') : undefined}
+            title={
+              [
+                property.hint ? tl(propertyHintKey(property.key)) : '',
+                property.simulation ? t('hardware.simulationOnly') : ''
+              ]
+                .filter((text) => text !== '')
+                .join(' ') || undefined
+            }
           >
             {propertyControl(property)}
           </FieldRow>

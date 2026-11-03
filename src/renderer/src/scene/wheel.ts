@@ -39,9 +39,10 @@ export function isWheelRollers(value: unknown): value is WheelRollers {
   return typeof value === 'string' && (WHEEL_ROLLERS as readonly string[]).includes(value)
 }
 
-// 바퀴를 붙일 수 있는 오브젝트: assembly·part·group(CAD 루트·로봇은 아님. CAD 루트 transform은 정렬이라 바퀴 자리가 아니다)
+// 바퀴를 붙일 수 있는 오브젝트: assembly·part·group(CAD 루트·로봇은 아님. CAD 루트 transform은 정렬이라 바퀴 자리가 아니다).
+// 관절이 있는 오브젝트에도 두지 않는다(scene/joint.ts canHaveJoint와 짝, 바퀴는 로봇 몸체에 붙은 것으로 계산한다).
 export function canHaveWheel(object: SceneObject): boolean {
-  return object.kind !== 'robot' && !object.cad
+  return object.kind !== 'robot' && !object.cad && !object.joint
 }
 
 // 각을 (−π, π]로 감는다

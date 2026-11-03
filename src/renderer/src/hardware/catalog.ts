@@ -1,7 +1,16 @@
 // 하드웨어 컴포넌트 카탈로그. XML 태그·Java 클래스·I2C 주소는 FTC SDK 12.0 소스(10.3·11.1과 동일)에서 확인한 값만 쓴다.
 // 구성 XML 태그는 대소문자를 구분하고, 틀리면 SDK가 오류 없이 장치를 버리므로 추측한 값을 넣지 않는다.
 
+import {
+  DEFAULT_SERVO_MODEL,
+  MAX_FREE_SPEED_OVERRIDE_RPM,
+  MAX_STALL_TORQUE_OVERRIDE,
+  MIN_FREE_SPEED_OVERRIDE_RPM,
+  MIN_STALL_TORQUE_OVERRIDE,
+  SERVO_MODEL_KEYS
+} from '../../../shared/sim/actuatorData'
 import { motorType } from '../../../shared/sim/motorTypes'
+import type { JointType } from '../scene/model'
 
 // 장치가 차지하는 자리
 // - motor/servo/digital/analog: 허브의 해당 포트(번호 범위는 PORT_RANGES)
@@ -24,10 +33,19 @@ export const EMBEDDED_IMU_BUS = 0
 export const CONTROL_HUB_ADDRESS = 173
 export const DEFAULT_EXPANSION_HUB_ADDRESS = 2
 
+// object 속성이 고를 수 있는 오브젝트의 종류
+export type ObjectPick = 'any' | 'joint'
+
 // 속성 공통 표시 정보
 type PropertyMeta = {
   // 다른 enum 속성이 이 값들 중 하나일 때만 인스펙터에 보인다(값은 늘 저장한다)
   visibleWhen?: { key: string; values: readonly string[] }
+  // 다른 object 속성(key)이 관절이 있는 오브젝트를 가리킬 때만 보인다. types가 있으면 그 관절 형식일 때만(값은 늘 저장한다).
+  visibleWhenJoint?: { key: string; types?: readonly JointType[] }
+  // 이 모터 컴포넌트를 같은 로봇의 관절 구동(DC 모터)이 고를 때만 보인다(관절 구동만 읽는 값, 값은 늘 저장한다)
+  visibleWhenDrivesJoint?: true
+  // 칸 설명(hardware.propHints.<key>, 인스펙터 행의 도움말). labels.test.ts가 ko·en에 있는지 확인한다.
+  hint?: true
   // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
   // 바이트 단위로 같아야 한다(generatedOutput.test.ts가 확인).
   simulation?: true
@@ -44,12 +62,17 @@ export type PropertyDef = PropertyMeta &
         max?: number
         // 표시 소수 자릿수
         digits: number
+        // 이보다 작은 값을 넣으면 0(기본)으로 저장한다(0이 '기본값'인 덮어쓰기 칸)
+        zeroBelow?: number
       }
     // 길이(내부 미터). 인스펙터는 표시 단위(units/units.ts)로 보이고, 입력칸은 단위를 붙인 값도 받는다.
     | { key: string; kind: 'length'; default: number; min: number; max: number }
+    // 각도(내부 라디안). 인스펙터는 도(°)로 보이고, 입력칸은 °·rad를 붙인 값도 받는다.
+    | { key: string; kind: 'angle'; default: number; min: number; max: number }
     | { key: string; kind: 'text'; default: string }
-    // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''.
-    | { key: string; kind: 'object'; default: '' }
+    // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''. pick은 고를 수 있는 것:
+    // 'any'(기본) 같은 로봇의 오브젝트, 'joint' 같은 로봇의 관절 오브젝트(리밋 스위치)
+    | { key: string; kind: 'object'; default: ''; pick?: ObjectPick }
   )
 
 export type ComponentCategory = 'actuator' | 'sensor' | 'imu' | 'odometry' | 'vision' | 'other'
@@ -146,6 +169,54 @@ export const DEAD_WHEEL_POD_TYPES = ['fourBar', 'swingarm', 'revThroughBore', 'c
 const POD_DIAMETER = { default: 0.035, min: 0.005, max: 0.2 } as const
 const POD_CPR = { default: REV_THROUGH_BORE_CPR, min: 1, max: 1000000 } as const
 
+// 리밋 스위치가 눌리는 거리·각도의 상한(m·rad). 세계 설명이 받는 스위치 within 상한(1)과 같다.
+export const MAX_LIMIT_WITHIN = 1
+
+// 서보·CR 서보의 모델(시뮬레이터 전용, 관절 구동의 토크·속도·각 범위 표 src/shared/sim/actuatorData.ts와 질량 표)
+const SERVO_MODEL = {
+  key: 'servoModel',
+  kind: 'enum',
+  options: SERVO_MODEL_KEYS,
+  default: DEFAULT_SERVO_MODEL,
+  simulation: true
+} as const
+
+// 리밋 스위치(touch·digital, 시뮬레이터 전용): 같은 로봇의 관절 오브젝트(limitJoint)의 한계(limitAt) 근처에서 눌린다
+// (touch pressed true, digital state false). 눌리는 범위는 직선 관절이면 limitDistance(길이, 표시 단위), 회전 관절이면
+// limitAngle(각도, °)이고 0이면 기본값(scene/joint.ts DEFAULT_LIMIT_WITHIN: 2 mm·1°)이다. 인스펙터는 연결한 관절의
+// 형식에 맞는 칸만 보인다.
+const LIMIT_SWITCH = [
+  { key: 'limitJoint', kind: 'object', default: '', pick: 'joint', simulation: true },
+  {
+    key: 'limitAt',
+    kind: 'enum',
+    options: ['lower', 'upper'],
+    default: 'lower',
+    visibleWhenJoint: { key: 'limitJoint' },
+    simulation: true
+  },
+  {
+    key: 'limitDistance',
+    kind: 'length',
+    default: 0,
+    min: 0,
+    max: MAX_LIMIT_WITHIN,
+    visibleWhenJoint: { key: 'limitJoint', types: ['prismatic'] },
+    hint: true,
+    simulation: true
+  },
+  {
+    key: 'limitAngle',
+    kind: 'angle',
+    default: 0,
+    min: 0,
+    max: MAX_LIMIT_WITHIN,
+    visibleWhenJoint: { key: 'limitJoint', types: ['revolute'] },
+    hint: true,
+    simulation: true
+  }
+] as const
+
 export const HUB_DIRECTIONS = ['up', 'down', 'forward', 'backward', 'left', 'right'] as const
 
 export const COMPONENT_TYPES = {
@@ -183,6 +254,33 @@ export const COMPONENT_TYPES = {
         max: MAX_GEARBOX,
         digits: 2,
         simulation: true
+      },
+      // 관절 구동(3b)의 기어모터 값 덮어쓰기: 12 V 출력축 정지 토크(N·m)와 무부하 속도(rpm). 0은 데이터시트
+      // (src/shared/sim/actuatorData.ts). 받는 하한보다 작은 값은 0으로 저장한다(표시 자릿수 한 칸). 시뮬레이터 전용.
+      // 구동계 바퀴 모터(운동학, motorModel.ts)는 읽지 않으므로 관절을 구동하는 모터에만 보인다.
+      {
+        key: 'stallTorque',
+        kind: 'number',
+        default: 0,
+        min: 0,
+        max: MAX_STALL_TORQUE_OVERRIDE,
+        digits: 3,
+        zeroBelow: MIN_STALL_TORQUE_OVERRIDE,
+        visibleWhenDrivesJoint: true,
+        hint: true,
+        simulation: true
+      },
+      {
+        key: 'freeSpeed',
+        kind: 'number',
+        default: 0,
+        min: 0,
+        max: MAX_FREE_SPEED_OVERRIDE_RPM,
+        digits: 0,
+        zeroBelow: MIN_FREE_SPEED_OVERRIDE_RPM,
+        visibleWhenDrivesJoint: true,
+        hint: true,
+        simulation: true
       }
     ]
   },
@@ -197,7 +295,8 @@ export const COMPONENT_TYPES = {
       { key: 'pulseRange', kind: 'enum', options: ['standard', 'fullRange'], default: 'standard' },
       DIRECTION,
       { key: 'scaleMin', kind: 'number', default: 0, min: 0, max: 1, digits: 2 },
-      { key: 'scaleMax', kind: 'number', default: 1, min: 0, max: 1, digits: 2 }
+      { key: 'scaleMax', kind: 'number', default: 1, min: 0, max: 1, digits: 2 },
+      SERVO_MODEL
     ]
   },
   crServo: {
@@ -209,7 +308,7 @@ export const COMPONENT_TYPES = {
       'com.qualcomm.robotcore.hardware.CRServo',
       'com.qualcomm.robotcore.hardware.DcMotorSimple'
     ],
-    properties: [DIRECTION]
+    properties: [DIRECTION, SERVO_MODEL]
   },
   sparkMini: {
     category: 'actuator',
@@ -261,7 +360,7 @@ export const COMPONENT_TYPES = {
     defaultName: 'touch',
     javaType: 'TouchSensor',
     imports: ['com.qualcomm.robotcore.hardware.TouchSensor'],
-    properties: []
+    properties: [...LIMIT_SWITCH]
   },
   digitalDevice: {
     category: 'sensor',
@@ -269,7 +368,10 @@ export const COMPONENT_TYPES = {
     defaultName: 'digital',
     javaType: 'DigitalChannel',
     imports: ['com.qualcomm.robotcore.hardware.DigitalChannel'],
-    properties: [{ key: 'mode', kind: 'enum', options: ['input', 'output'], default: 'input' }]
+    properties: [
+      { key: 'mode', kind: 'enum', options: ['input', 'output'], default: 'input' },
+      ...LIMIT_SWITCH
+    ]
   },
   analogInput: {
     category: 'sensor',
@@ -426,13 +528,23 @@ export function propertyDefaults(type: ComponentType): Record<string, string | n
   return Object.fromEntries(componentDef(type).properties.map((p) => [p.key, p.default]))
 }
 
-// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen)
+// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen, visibleWhenJoint, visibleWhenDrivesJoint). jointTypeOf는
+// 오브젝트 id → 그 관절 형식(없는 오브젝트나 관절이 없으면 null), drivesJoint는 이 컴포넌트를 같은 로봇의 관절 모터
+// 구동이 고르는지다.
 export function isPropertyVisible(
   property: PropertyDef,
-  props: Record<string, string | number>
+  props: Record<string, string | number>,
+  jointTypeOf: (objectId: string) => JointType | null = () => null,
+  drivesJoint = false
 ): boolean {
   const when = property.visibleWhen
-  return !when || when.values.includes(String(props[when.key]))
+  if (when && !when.values.includes(String(props[when.key]))) return false
+  if (property.visibleWhenDrivesJoint && !drivesJoint) return false
+  const joint = property.visibleWhenJoint
+  if (!joint) return true
+  const target = props[joint.key]
+  const type = typeof target === 'string' && target ? jointTypeOf(target) : null
+  return type !== null && (!joint.types || joint.types.includes(type))
 }
 
 // 데드휠의 원시 엔코더 틱/m(podType). 지름·CPR이 범위 밖이면 그 속성의 기본값을 쓴다.

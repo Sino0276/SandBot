@@ -727,6 +727,24 @@ body {
   flex: 1;
 }
 
+/* 줄 안의 벡터 입력칸은 남은 너비를 쓴다 */
+.hw-inline > .vector-row-fields {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 줄 안의 버튼(관절 카드 앵커의 [피벗으로] 등)과 입력칸 옆 단위는 줄어들어 글자마다 줄을 바꾸지 않는다 */
+.hw-inline > .panel-button,
+.hw-unit {
+  flex: none;
+  white-space: nowrap;
+}
+
+.hw-unit {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
 .hw-check {
   display: flex;
   flex: none;
@@ -808,6 +826,33 @@ body {
 
 .mass-center > .vector-row-fields {
   margin-bottom: 4px;
+}
+
+/* 관절 카드(editor/joint)의 장치 목록(모터 체크 상자·다단 슬라이드의 위 단)과 미리보기 슬라이더 */
+.joint-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.joint-stage {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.joint-stage-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.joint-preview {
+  flex: 1;
+  min-width: 0;
 }
 
 /* 질량 카드가 없는 오브젝트의 추정 질량 한 줄(누르면 카드를 붙인다) */
@@ -2812,6 +2857,11 @@ button.usage-header:hover {
 .devices-table tr:focus-visible {
   outline: 1px solid var(--color-accent);
   outline-offset: -1px;
+}
+
+/* 장치 표 아래의 관절 값 표(3b) */
+.devices-joints {
+  margin-top: 8px;
 }
 
 .devices-name {

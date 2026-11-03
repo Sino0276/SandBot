@@ -14,6 +14,7 @@ import {
   type MotorModel,
   type PropertyDef
 } from './catalog'
+import type { JointType } from '../scene/model'
 
 // 사이드카의 모터 형식 표(SDK 애너테이션 값을 옮긴 것). 카탈로그의 SDK 값이 이와 같아야 한다.
 const MOTOR_TYPES_JAVA = resolve(
@@ -113,5 +114,51 @@ describe('오도메트리 포드 해상도(시뮬레이터)', () => {
     expect(visible('swingarm')).toEqual(['podType'])
     expect(visible('revThroughBore')).toEqual(['podType', 'podDiameter'])
     expect(visible('custom')).toEqual(['podType', 'podDiameter', 'podCpr'])
+  })
+
+  it('모터의 정지 토크·무부하 속도 덮어쓰기는 관절을 구동할 때만 보인다(관절 구동만 읽는다)', () => {
+    const properties: readonly PropertyDef[] = COMPONENT_TYPES.motor.properties
+    const visible = (drivesJoint: boolean): string[] =>
+      properties
+        .filter((property) =>
+          isPropertyVisible(property, propertyDefaults('motor'), () => null, drivesJoint)
+        )
+        .map((property) => property.key)
+    expect(visible(false)).not.toContain('stallTorque')
+    expect(visible(false)).not.toContain('freeSpeed')
+    expect(visible(false)).toContain('gearbox')
+    expect(visible(true)).toEqual([...visible(false), 'stallTorque', 'freeSpeed'])
+  })
+
+  it('리밋 스위치는 관절을 연결해야 끝·범위가 보이고, 범위 칸은 관절 형식(직선 길이, 회전 각도)을 따른다', () => {
+    const jointTypes: Record<string, JointType> = { lift: 'prismatic', arm: 'revolute' }
+    const jointTypeOf = (id: string): JointType | null => jointTypes[id] ?? null
+    for (const type of ['touchSensor', 'digitalDevice'] as const) {
+      const properties: readonly PropertyDef[] = COMPONENT_TYPES[type].properties.filter(
+        (property: PropertyDef) => property.key.startsWith('limit')
+      )
+      const visible = (limitJoint: string): string[] =>
+        properties
+          .filter((property) =>
+            isPropertyVisible(property, { ...propertyDefaults(type), limitJoint }, jointTypeOf)
+          )
+          .map((property) => property.key)
+      expect(visible('')).toEqual(['limitJoint'])
+      // 지운 오브젝트·관절 없는 오브젝트
+      expect(visible('gone')).toEqual(['limitJoint'])
+      expect(visible('lift')).toEqual(['limitJoint', 'limitAt', 'limitDistance'])
+      expect(visible('arm')).toEqual(['limitJoint', 'limitAt', 'limitAngle'])
+      // 관절 형식을 모르면(기본 jointTypeOf) 연결 칸만
+      expect(
+        properties
+          .filter((property) =>
+            isPropertyVisible(property, { ...propertyDefaults(type), limitJoint: 'lift' })
+          )
+          .map((property) => property.key)
+      ).toEqual(['limitJoint'])
+      const kinds = Object.fromEntries(properties.map((p) => [p.key, p.kind]))
+      expect(kinds.limitDistance).toBe('length')
+      expect(kinds.limitAngle).toBe('angle')
+    }
   })
 })

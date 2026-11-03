@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import en from '../i18n/locales/en'
 import ko, { type Messages } from '../i18n/locales/ko'
 import { COMPONENT_TYPE_KEYS, componentDef } from './catalog'
-import { HINT_TYPES, optionLabelKey, propertyLabelKey } from './labels'
+import { HINT_TYPES, optionLabelKey, propertyHintKey, propertyLabelKey } from './labels'
 
 function lookup(messages: Messages, key: string): unknown {
   return key.split('.').reduce<unknown>((node, part) => {
@@ -16,6 +16,7 @@ describe('하드웨어 카탈로그 번역', () => {
   for (const type of COMPONENT_TYPE_KEYS) {
     for (const property of componentDef(type).properties) {
       keys.push(propertyLabelKey(property.key))
+      if (property.hint) keys.push(propertyHintKey(property.key))
       if (property.kind === 'enum') {
         for (const option of property.options) keys.push(optionLabelKey(property.key, option))
       }

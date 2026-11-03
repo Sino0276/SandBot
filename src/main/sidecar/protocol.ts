@@ -13,18 +13,19 @@ import {
   type DashOpType,
   type DashVariableType
 } from '../../shared/dashboard'
-import type {
-  CompileDiagnostic,
-  DeviceValues,
-  FinishReason,
-  LinkWarning,
-  LinkWarningKind,
-  OpModePhase,
-  RegisteredOpMode,
-  SidecarMessage,
-  SidecarNoticeCode,
-  SimErrorKind,
-  StackFrame
+import {
+  MAX_DEVICE_ARRAY,
+  type CompileDiagnostic,
+  type DeviceValues,
+  type FinishReason,
+  type LinkWarning,
+  type LinkWarningKind,
+  type OpModePhase,
+  type RegisteredOpMode,
+  type SidecarMessage,
+  type SidecarNoticeCode,
+  type SimErrorKind,
+  type StackFrame
 } from '../../shared/sidecarProtocol'
 
 // 사이드카 stdout(JSON 줄) 읽기. 사이드카는 우리가 빌드한 것이지만 팀 코드가 같은 JVM에서 돈다(System.out은
@@ -214,15 +215,24 @@ function registeredOpMode(value: unknown): RegisteredOpMode {
   }
 }
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+// 장치 출력 값: 스칼라, 또는 유한 수 배열(모터 PIDF 계수 [p, i, d, f], MAX_DEVICE_ARRAY까지, 복사해 둔다)
 function deviceValues(value: unknown): DeviceValues {
   if (!isObject(value)) fail('tick.outputs')
   const out: DeviceValues = {}
   for (const [key, field] of Object.entries(value)) {
+    if (Array.isArray(field)) {
+      if (field.length > MAX_DEVICE_ARRAY || !field.every(isFiniteNumber)) fail('tick.outputs')
+      out[key] = [...field]
+      continue
+    }
     if (
       field !== null &&
       typeof field !== 'boolean' &&
       typeof field !== 'string' &&
-      !(typeof field === 'number' && Number.isFinite(field))
+      !isFiniteNumber(field)
     )
       fail('tick.outputs')
     out[key] = field
