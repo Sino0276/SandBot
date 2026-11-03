@@ -187,6 +187,13 @@ const ko = {
       m: 'm',
       in: 'in'
     },
+    // 질량 기호(units.ts formatMass가 받는 글자. 질량 단위는 길이 표시 단위를 따른다)
+    massSymbols: {
+      g: 'g',
+      kg: 'kg',
+      lb: 'lb',
+      oz: 'oz'
+    },
     names: {
       mm: 'mm (밀리미터)',
       cm: 'cm (센티미터)',
@@ -1330,6 +1337,182 @@ const ko = {
         '{{names}}: Java 클래스 이름 {{className}}이(가) 겹칩니다. 같은 클래스 안의 그룹은 대소문자만 달라서는 안 되고, 그룹을 감싸는 클래스(로봇 클래스 포함)와 같은 이름도 쓸 수 없습니다.',
       reservedFileName:
         '클래스 이름 {{className}}은(는) Windows의 장치 이름이라 파일 이름({{className}}.java)으로 쓸 수 없습니다. 다른 이름을 쓰세요.'
+    }
+  },
+  // 질량(시뮬레이터 설정, editor/mass). 질량 숫자는 표시 단위(formatMass)로 바꿔 넣는다.
+  mass: {
+    addOption: '질량',
+    title: '질량',
+    orphan: '로봇에 속하지 않은 오브젝트라 로봇 질량에 들어가지 않습니다.',
+    material: '재질',
+    materialHint:
+      '이 오브젝트와 하위 파트의 재질입니다. 하위가 다시 정하면 그것을 씁니다. 비우면 위 오브젝트의 재질, 이름 규칙(나사·베어링 등), 로봇 기본 재질 순으로 정합니다.',
+    materialGroups: {
+      stock: '재료',
+      printed: '3D 출력'
+    },
+    materials: {
+      aluminum6061: '알루미늄 6061',
+      aluminum7075: '알루미늄 7075',
+      steel: '강철',
+      stainless: '스테인리스강',
+      brass: '황동',
+      polycarbonate: '폴리카보네이트',
+      acetal: '아세탈 (POM)',
+      hdpe: 'HDPE',
+      nylon: '나일론',
+      carbonFiber: '탄소섬유',
+      plywood: '합판',
+      rubber: '고무',
+      foam: '폼',
+      pla: 'PLA',
+      petg: 'PETG',
+      abs: 'ABS',
+      tpu: 'TPU'
+    },
+    inheritObject: '상속: {{material}} ({{owner}})',
+    inheritRobot: '상속: {{material}} (로봇 기본)',
+    inheritBuiltIn: '상속: {{material}} (기본)',
+    inheritNameRule: '상속: 이름 규칙 ‘{{rule}}’',
+    infill: '채움률 (%)',
+    infillHint:
+      '슬라이서의 채움률입니다. 벽과 위아래 면(약 1.1 mm)은 꽉 찬 것으로 보고, 그 안쪽에만 채움률을 씁니다. 하위 파트로 물려줍니다.',
+    infillInherited: '상속 {{percent}}',
+    infillDefault: '기본 {{percent}}',
+    override: '질량 직접 입력',
+    overrideHint:
+      '이 오브젝트 하위 전체의 질량입니다(저울에 단 서브어셈블리, 데이터시트 값). 하위 형상의 부피 비율로 나눠 놓습니다. 비우면 추정합니다.',
+    overridePlaceholder: '추정 {{mass}}',
+    massInputHint:
+      '단위를 붙여 입력할 수 있습니다 (예: 437g, 1.2kg, 3lb, 8oz). 단위가 없으면 {{unit}}입니다.',
+    massInputRejected:
+      '받지 않은 값이라 바꾸지 않았습니다. 0보다 크고 {{max}} 이하인 질량을 넣으세요(단위가 없으면 {{unit}}). Esc로 되돌립니다.',
+    infillRejected:
+      '받지 않은 값이라 바꾸지 않았습니다. 0–100 사이의 채움률(%)을 넣으세요. Esc로 되돌립니다.',
+    centerOfMass: '무게중심',
+    centerOfMassAuto: '자동',
+    centerOfMassUnused:
+      '이 무게중심은 지금 쓰이지 않습니다. 질량을 직접 입력했거나 이 오브젝트에 데이터시트 질량이 있을 때만 씁니다.',
+    centerOfMassHint:
+      '직접 입력한 질량(또는 데이터시트 질량)의 무게중심입니다. 이 오브젝트 기준(로컬) 값이고, 자동이면 하위 형상의 무게중심입니다.',
+    result: '결과: {{mass}} · {{source}}',
+    resultNone: '아직 계산한 질량이 없습니다.',
+    scaledTag: '(저울 무게에 맞춤)',
+    loadingTag: '(형상을 읽는 중, 일부만 셈)',
+    massLoading: '—',
+    resultCenterRobot: '무게중심 (로봇 기준)',
+    resultCenterField: '무게중심 (필드 기준)',
+    resultCenterHint: '이 오브젝트 하위 전체의 무게중심입니다. 계산한 값이라 고칠 수 없습니다.',
+    hint: '질량은 시뮬레이터 설정입니다. 생성 코드·구성 XML과 관계없고, 씬 뷰에 이 오브젝트의 무게중심(작은 흰 점)과 로봇의 무게중심(청록 십자)을 보입니다.',
+    estimateLine: '질량(추정) {{mass}} · {{source}}',
+    estimateHint: '누르면 질량 카드를 붙여 재질·질량을 정할 수 있습니다.',
+    source: {
+      from: '{{text}} ({{owner}})',
+      override: '직접 입력',
+      cots: '데이터시트: {{product}}',
+      ratio: '{{product}} {{ratio}}:1',
+      cartridges: '{{product}} (카트리지 {{count}}개)',
+      material: '재질: {{material}}',
+      nameRule: '이름 규칙: ‘{{rule}}’',
+      nameRuleMaterial: '이름 규칙: ‘{{rule}}’ → {{material}}',
+      nameRuleZero: '이름 규칙: ‘{{rule}}’ (질량 없음)',
+      robotDefault: '로봇 기본 재질: {{material}}',
+      defaultMass: '기본값 (질량 정보 없음)',
+      none: '질량 없음 (형상 없음 또는 표면 메시)',
+      loading: '형상을 읽는 중'
+    },
+    warnings: {
+      scaleUnusual:
+        '저울 무게에 맞추려면 추정한 질량에 {{scale}}배를 곱해야 합니다. CAD에 없는 전선·나사·허브(보통 전체의 5–15%)보다 큰 차이라 재질·채움률·빠진 부품을 확인하세요.',
+      scaleImpossible:
+        '직접 입력·데이터시트 질량({{fixed}})이 저울 무게({{weighed}}) 이상이거나 추정할 형상이 없어 저울 무게에 맞추지 않았습니다.',
+      defaultMass:
+        '질량을 셀 수 있는 형상이 없어 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게)을 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 저울 무게를 넣거나 솔리드로 된 CAD를 불러오세요.',
+      defaultMassFixed:
+        '질량을 셀 수 있는 형상이 없어 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게) 가운데 직접 입력·데이터시트 질량 {{fixed}}은 제자리에 두고 나머지 {{rest}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 저울 무게를 넣거나 솔리드로 된 CAD를 불러오세요.',
+      defaultMassCovered:
+        '질량을 셀 수 있는 형상이 없지만 직접 입력·데이터시트 질량 {{fixed}}이 기본값 {{mass}} 이상이라 그 질량만 쓰고 외곽 상자를 더하지 않습니다. 저울 무게를 넣거나 솔리드로 된 CAD를 불러오세요.',
+      defaultMassLoadingDefault:
+        '형상을 읽는 동안 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게)를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 다 읽으면 형상으로 계산합니다.',
+      defaultMassLoadingDefaultFixed:
+        '형상을 읽는 동안 기본값 {{mass}}(FTC 대회 로봇에 흔한 무게) 가운데 직접 입력·데이터시트 질량 {{fixed}}은 제자리에 두고 나머지 {{rest}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 다 읽으면 형상으로 계산합니다.',
+      defaultMassLoadingCovered:
+        '형상을 읽는 동안 직접 입력·데이터시트 질량 {{fixed}}만 씁니다(기본값 {{mass}} 이상이라 외곽 상자를 더하지 않습니다). 다 읽으면 형상으로 계산합니다.',
+      defaultMassWeighed:
+        '질량을 셀 수 있는 형상이 없어 저울 무게 {{mass}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 솔리드로 된 CAD를 불러오면 형상으로 나눕니다.',
+      defaultMassLoading:
+        '형상을 읽는 동안 저울 무게 {{mass}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 다 읽으면 형상으로 나눕니다.',
+      defaultMassLoadingFixed:
+        '형상을 읽는 동안 저울 무게 {{mass}} 가운데 직접 입력·데이터시트 질량 {{fixed}}은 제자리에 두고, 나머지 {{rest}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 다 읽으면 형상으로 나눕니다.',
+      defaultMassWeighedFixed:
+        '질량을 셀 수 있는 형상이 없어 저울 무게 {{mass}} 가운데 직접 입력·데이터시트 질량 {{fixed}}은 제자리에 두고, 나머지 {{rest}}를 로봇 외곽 상자에 고르게 둡니다(무게중심·관성은 상자로 근사). 솔리드로 된 CAD를 불러오면 형상으로 나눕니다.',
+      pending: '형상을 읽는 중인 메시 {{count}}개는 아직 계산에 들어가지 않았습니다.',
+      missing:
+        '형상 정보가 없는 메시 {{count}}개는 계산에 들어가지 않았습니다. CAD를 읽지 못했거나 취소했으면 그 CAD 루트에서 다시 불러오거나 파일을 다시 찾으세요.',
+      pendingCovered:
+        '직접 입력·데이터시트 질량을 정한 오브젝트 안의 메시 {{count}}개는 형상을 읽는 중이라, 그 질량을 읽은 형상에(없으면 그 오브젝트 원점에) 둡니다.',
+      missingCovered:
+        '직접 입력·데이터시트 질량을 정한 오브젝트 안의 메시 {{count}}개는 형상 정보가 없어, 그 질량을 남은 형상에(없으면 그 오브젝트 원점에) 둡니다.'
+    },
+    notices: {
+      innerMassExceeds:
+        '{{object}} 안의 질량 직접 입력 합({{inner}})이 {{object}}의 질량({{mass}})보다 커서 안쪽 값을 그대로 씁니다.',
+      centerOfMassIgnored:
+        '{{object}}의 무게중심 덮어쓰기는 쓰이지 않습니다. 질량을 직접 입력했거나 데이터시트 질량을 정한 오브젝트에서만 쓰고, 안쪽 직접 입력이 질량을 다 쓰면 옮길 몫이 없습니다.',
+      podIgnored:
+        '{{object}}을(를) {{pinpoint}}의 Pinpoint 포드로 볼 수 없어 포드 질량을 쓰지 않고 추정합니다({{reason}}).',
+      cotsIgnored:
+        '{{object}}의 하위를 {{product}} 하나로 볼 수 없어 데이터시트 질량을 쓰지 않고 형상으로 추정합니다({{reason}}). 그 부품의 형상만 품은 오브젝트에 붙이세요.',
+      cotsReasons: {
+        otherRobot: 'Pinpoint와 다른 로봇에 있음',
+        containsPinpoint: 'Pinpoint 자신이거나 그 상위',
+        containsCots: '하위에 다른 상용 부품(모터·서보·바퀴·포드·SKU 이름)이 있음',
+        containsCad: '하위에 CAD 루트가 있음',
+        tooLarge: '형상이 그 부품 하나로 보기에 너무 큼'
+      }
+    },
+    rigidbody: {
+      title: 'Rigidbody',
+      simulationOnly: '시뮬레이터',
+      mass: '질량',
+      massNone: '—',
+      breakdown: '직접 입력·데이터시트 {{fixed}} + 추정 {{estimated}}',
+      breakdownDefault: '기본값 (질량을 셀 형상 없음, 외곽 상자로 근사)',
+      breakdownDefaultLoading: '기본값 (형상을 읽는 중, 외곽 상자로 근사)',
+      breakdownDefaultFixed:
+        '기본값: 직접 입력·데이터시트 {{fixed}} + 나머지 {{rest}} (질량을 셀 형상 없음, 외곽 상자로 근사)',
+      breakdownDefaultLoadingFixed:
+        '기본값: 직접 입력·데이터시트 {{fixed}} + 형상을 읽는 중인 나머지 {{rest}} (외곽 상자로 근사)',
+      breakdownWeighedBox: '저울 무게 (질량을 셀 형상 없음, 외곽 상자로 근사)',
+      breakdownWeighedFixed:
+        '저울 무게: 직접 입력·데이터시트 {{fixed}} + 형상을 읽는 중인 나머지 {{rest}} (외곽 상자로 근사)',
+      breakdownWeighedBoxFixed:
+        '저울 무게: 직접 입력·데이터시트 {{fixed}} + 나머지 {{rest}} (질량을 셀 형상 없음, 외곽 상자로 근사)',
+      breakdownWeighedLoading: '저울 무게 (형상을 읽는 중, 외곽 상자로 근사)',
+      scaled: '· 추정에 ×{{scale}} (저울 무게에 맞춤)',
+      weighed: '저울 무게',
+      weighedHint:
+        '저울에 단 로봇 전체 무게입니다. 넣으면 직접 입력·데이터시트 질량을 뺀 나머지에 맞게 추정한 파트의 질량에 같은 비율을 곱합니다.',
+      weighedPlaceholder: '비우면 추정 그대로',
+      defaultMaterial: '기본 재질',
+      defaultMaterialHint:
+        '재질을 정하지 않았고 이름 규칙에도 맞지 않는 파트의 재질입니다. FTC 로봇 구조재는 대개 알루미늄입니다.',
+      defaultMaterialBuiltIn: '{{material}} (기본)',
+      centerOfMass: '무게중심',
+      centerOfMassHint:
+        '로봇 원점(중심 바닥)에서 본 무게중심입니다. X 앞 · Y 왼쪽 · Z 위. 계산한 값이라 고칠 수 없습니다.',
+      principalMoments: '주관성',
+      principal1: 'I₁',
+      principal2: 'I₂',
+      principal3: 'I₃',
+      inertiaUnit: 'kg·m²',
+      principalMomentsHint: '무게중심 기준 관성 행렬의 주값(kg·m²)입니다. 계산한 값입니다.',
+      openMeshes: '열린 메시 {{count}}개 (부피의 {{percent}}%, 근사)',
+      surfaceMeshes: '표면 메시 {{count}}개 (질량 0)',
+      pendingMeshes: '읽는 중 {{count}}개',
+      cadSummary: '{{name}}: {{parts}}',
+      notices: '쓰지 못한 질량 설정',
+      hint: 'CAD에 없는 무거운 부품(배터리·허브 등)은 그 자리에 빈 그룹을 만들고(Create Empty) 질량을 직접 넣으면 그 위치의 점질량이 됩니다. 저울 무게 맞추기는 형상 전체에 비율로 퍼뜨리므로 무게중심을 그쪽으로 옮기지 않습니다.'
     }
   }
 }

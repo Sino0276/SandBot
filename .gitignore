@@ -38,3 +38,6 @@ resources/step-converter/
 # JVM 사이드카: 받은 FTC SDK·생성한 stub·클래스(sidecar/build)와 빌드한 jar(scripts/build-sidecar.mjs)
 sidecar/build/
 resources/sidecar/
+
+# tsc 증분 빌드 캐시(typecheck는 --composite false로 만들지 않는다)
+*.tsbuildinfo

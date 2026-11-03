@@ -72,7 +72,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 6 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 7 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -403,10 +403,108 @@ describe('바퀴(버전 6)', () => {
     expect(Object.values(loaded).some((object) => object.wheel)).toBe(false)
   })
 
-  it('더 새 버전(7)은 열지 않는다', () => {
+  it('더 새 버전은 열지 않는다', () => {
     expect(() => parseProject(fileWith(2, WHEEL, PROJECT_VERSION + 1))).toThrow(
       expect.objectContaining({ code: 'newerVersion' })
     )
+  })
+})
+
+describe('질량 설정(버전 7)', () => {
+  const withMass = (): SceneObjects => ({
+    ...objects,
+    robot: { ...objects.robot, rigidbody: { weighedMass: 14.2, defaultMaterial: 'pla' } },
+    cad: { ...objects.cad, mass: { material: 'petg', infill: 0.4 } },
+    plate: { ...objects.plate, mass: { mass: 0.437, centerOfMass: [0, 0.01, -0.02] } }
+  })
+  // 저장한 파일의 오브젝트(index)에 field 값을 넣는다
+  const fileWith = (index: number, field: string, value: unknown, version = 7): string => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    data.version = version
+    data.objects[index][field] = value
+    return JSON.stringify(data)
+  }
+
+  it('질량 설정과 Rigidbody를 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다)', () => {
+    const content = serializeProject(withMass(), relativize)
+    const stored = JSON.parse(content).objects
+    expect(stored[0].rigidbody).toEqual({ weighedMass: 14.2, defaultMaterial: 'pla' })
+    expect(stored[1].mass).toEqual({ material: 'petg', infill: 0.4 })
+    const { objects: loaded } = parseProject(content)
+    expect(loaded).toEqual(withMass())
+    expect(serializeProject(loaded, relativize)).toBe(content)
+  })
+
+  it('빈 질량 설정(카드만 붙임)은 남기고, 빈 Rigidbody는 버린다', () => {
+    const { objects: loaded } = parseProject(fileWith(2, 'mass', {}))
+    expect(loaded.plate.mass).toEqual({})
+    const { objects: robot } = parseProject(fileWith(0, 'rigidbody', {}))
+    expect(robot.robot).not.toHaveProperty('rigidbody')
+  })
+
+  it('설정이 없으면 mass·rigidbody를 쓰지 않는다', () => {
+    for (const object of JSON.parse(serializeProject(objects, relativize)).objects) {
+      expect(object).not.toHaveProperty('mass')
+      expect(object).not.toHaveProperty('rigidbody')
+    }
+  })
+
+  it('모르는 재질 키와 범위 밖·형식이 틀린 값은 그 필드만 버린다', () => {
+    const { objects: loaded } = parseProject(
+      fileWith(2, 'mass', {
+        material: 'vibranium',
+        infill: 2,
+        mass: 101,
+        centerOfMass: [0, 0, 50],
+        extra: true
+      })
+    )
+    expect(loaded.plate.mass).toEqual({})
+    const { objects: partial } = parseProject(
+      fileWith(2, 'mass', { material: 'steel', infill: '0.2', mass: 0.3, centerOfMass: [1, 2] })
+    )
+    expect(partial.plate.mass).toEqual({ material: 'steel', mass: 0.3 })
+    const { objects: robot } = parseProject(
+      fileWith(0, 'rigidbody', { weighedMass: 500, defaultMaterial: 'aluminum7075' })
+    )
+    expect(robot.robot.rigidbody).toEqual({ defaultMaterial: 'aluminum7075' })
+  })
+
+  it('로봇의 질량 설정, 로봇이 아닌 오브젝트의 Rigidbody, 객체가 아닌 값은 invalidData', () => {
+    expect(() => parseProject(fileWith(0, 'mass', {}))).toThrow(ProjectFileError)
+    expect(() => parseProject(fileWith(1, 'rigidbody', { weighedMass: 1 }))).toThrow(
+      ProjectFileError
+    )
+    for (const value of ['steel', [1], null, 3]) {
+      expect(() => parseProject(fileWith(2, 'mass', value))).toThrow(ProjectFileError)
+      expect(() => parseProject(fileWith(0, 'rigidbody', value))).toThrow(ProjectFileError)
+    }
+  })
+
+  it('CAD 루트·그룹에도 둘 수 있다', () => {
+    const scene: SceneObjects = {
+      ...objects,
+      cad: { ...objects.cad, mass: { mass: 3 } },
+      battery: {
+        id: 'battery',
+        name: 'Battery',
+        kind: 'group',
+        parentId: 'robot',
+        transform: { position: [0, 0, 0.05], rotation: [0, 0, 0] },
+        mass: { mass: 0.597 }
+      }
+    }
+    expect(parseProject(serializeProject(scene, relativize)).objects).toEqual(scene)
+  })
+
+  it('버전 6 파일은 질량 설정 없이 그대로 읽는다', () => {
+    const v6 = JSON.parse(serializeProject(objects, relativize))
+    v6.version = 6
+    const { objects: loaded } = parseProject(JSON.stringify(v6))
+    expect(loaded).toEqual(objects)
+    expect(Object.values(loaded).some((object) => object.mass || object.rigidbody)).toBe(false)
+    // 다시 저장하면 버전 7이 된다
+    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(7)
   })
 })
 

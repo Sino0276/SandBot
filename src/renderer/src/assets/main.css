@@ -313,6 +313,11 @@ body {
   border-color: var(--color-accent);
 }
 
+/* 받지 않은 입력(OptionalField: 범위 밖·읽지 못함)을 남겨 둔 칸. TextField의 is-invalid와 같은 색 */
+.number-field.is-invalid {
+  border-color: #ff6b6b;
+}
+
 .number-field-label {
   flex: none;
   width: 16px;
@@ -782,6 +787,51 @@ body {
 .hw-issue.is-warning {
   border-color: #e0b341;
   background: rgb(224 179 65 / 12%);
+}
+
+.hw-issue.is-info {
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* 질량 카드·Rigidbody 카드(editor/mass)의 읽기 전용 세 축 값: 인스펙터의 "로봇 중심 기준"(.robot-center)처럼 이름을 한
+   줄에 두고 값 칸은 폭 전체를 쓴다(한 줄에 나누면 값 칸이 좁아 "-10.00"·영어 이름이 잘린다) */
+.mass-vector {
+  margin-bottom: 4px;
+}
+
+.mass-vector > .hw-row-label {
+  display: block;
+  margin-bottom: 2px;
+  white-space: normal;
+}
+
+.mass-center > .vector-row-fields {
+  margin-bottom: 4px;
+}
+
+/* 질량 카드가 없는 오브젝트의 추정 질량 한 줄(누르면 카드를 붙인다) */
+.mass-estimate {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 2px 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mass-estimate:hover {
+  color: var(--color-text);
+  text-decoration: underline;
 }
 
 .hw-issue-link {

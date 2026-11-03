@@ -5,6 +5,7 @@ import { keepSceneViewFocus, useKeyboardPadStore } from '../../play/keyboardGame
 import { isRunActive, usePlayStore } from '../../play/playStore'
 import { isRecentHandleInteraction, useEditorStore, type HandleSpace } from '../editorStore'
 import { useFlyStore } from '../flyStore'
+import CenterOfMassIndicator from '../mass/CenterOfMassIndicator'
 import { exitIsolation, useSceneVisibilityStore } from '../sceneVisibility'
 import { shortcutLabel } from '../shortcuts'
 import PanelFrame from '../PanelFrame'
@@ -145,6 +146,8 @@ function ScenePanel(): React.JSX.Element {
         <SceneObjectsView />
         <FrameAxes />
         <ImuIndicators />
+        {/* 활성 오브젝트의 로봇 무게중심과 그 오브젝트의 무게중심(질량 모델) */}
+        <CenterOfMassIndicator />
         <TransformHandles />
         <EditorCameraControls />
         <FocusController />
