@@ -74,6 +74,9 @@ export type JointBuildResult = {
   joints: SimJointSpec[]
   // 관절 순번 → 관절 오브젝트 id(씬 뷰가 실행 중 자세를 그릴 때, 세계 설명에는 씬 id를 넣지 않는다)
   objectIds: string[]
+  // 관절을 실제로 구동하는 모터 컴포넌트 id(관절 순서, 바퀴 모터·다른 관절이 먼저 쓴 모터·범위 밖 구동은 없다). 인스펙터
+  // 모터 카드가 관절 값을 보일지 이것으로 정한다(motorDrivesJoint)
+  motorIds: string[]
   warnings: WorldWarning[]
 }
 
@@ -327,6 +330,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   const components = new Map(entries.map((entry) => [entry.component.id, entry.component]))
   // 이미 한 관절이 쓰는 모터(두 관절이 한 모터를 쓰지 않는다)
   const usedMotors = new Set<string>()
+  const motorIds: string[] = []
   // 이미 쓴 서보·리밋 스위치 장치 이름(세계 설명에서 장치 하나는 한 관절의 서보나 스위치 하나다. 모터 이름과도 겹치지 않는다)
   const motorNames = new Set(motorDevices.values())
   const usedDevices = new Set<string>()
@@ -382,6 +386,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
         const motorParams = jointMotorParams(driving)
         if (motorParams?.differ) warnings.push({ key: 'worldJointMotorsDiffer', params: { name } })
         if (!motorParams) return { kind: 'none' }
+        motorIds.push(...driving.map((component) => component.id))
         return {
           kind: 'motor',
           devices,
@@ -579,5 +584,10 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
       switches: switches[i]
     }
   })
-  return { joints, objectIds: kept.map((candidate) => candidate.objectId), warnings }
+  return {
+    joints,
+    objectIds: kept.map((candidate) => candidate.objectId),
+    motorIds,
+    warnings
+  }
 }

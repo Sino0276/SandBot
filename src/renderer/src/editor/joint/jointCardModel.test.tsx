@@ -5,15 +5,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createComponent } from '../../hardware/components'
 import ko from '../../i18n/locales/ko'
 import type { MassModel, ObjectMass, OwnMass } from '../../mass/types'
-import { buildWorldSpec } from '../../play/worldSpec'
+import { buildWorldSpec, motorDrivesJoint } from '../../play/worldSpec'
 import { jointBodyIds, motorComponentParams, servoComponentParams } from '../../play/worldJoints'
-import {
-  defaultJoint,
-  defaultJointDrive,
-  jointTypePatch,
-  motorDrivesJoint,
-  sanitizeJoint
-} from '../../scene/joint'
+import { defaultJoint, defaultJointDrive, jointTypePatch, sanitizeJoint } from '../../scene/joint'
 import type {
   HardwareComponent,
   JointDrive,
@@ -676,6 +670,88 @@ describe('관절 카드 그리기', () => {
     // 다른 로봇의 관절이 고른 id는 세지 않는다(세계 설명처럼 같은 로봇만)
     const elsewhere = withJoint(scene(), 'other', { drive: motorDrive({ motors: ['armMotor'] }) })
     expect(motorDrivesJoint(elsewhere, 'base', 'armMotor')).toBe(false)
+  })
+
+  it('바퀴를 구동하는 모터를 관절에도 고르면 모터 카드는 구동계 값이다(세계 설명이 그 모터를 관절에 쓰지 않는다)', () => {
+    // 바퀴 모터 fl(UltraPlanetary, 모델 기본, 정지 토크 덮어쓰기 5)을 팔 관절 모터 목록에도 넣는다
+    const base = scene()
+    const objects = withJoint(
+      {
+        ...base,
+        wheel: {
+          ...base.wheel,
+          components: [
+            {
+              ...base.wheel.components![0],
+              props: {
+                ...base.wheel.components![0].props,
+                motorModel: 'revUltraPlanetary',
+                stallTorque: 5
+              }
+            }
+          ]
+        }
+      },
+      'arm',
+      { drive: motorDrive({ motors: ['fl', 'armMotor'] }) }
+    )
+    expect(motorDrivesJoint(objects, 'wheel', 'fl')).toBe(false)
+    expect(motorDrivesJoint(objects, 'base', 'armMotor')).toBe(true)
+    // 세계 설명도 fl을 관절에 쓰지 않고 경고한다
+    const { spec, warnings } = buildWorldSpec(objects, 'R', { batteryVoltage: 12 })
+    const drive = spec!.joints[0].drive
+    expect(drive.kind === 'motor' && drive.devices).toEqual(['arm'])
+    expect(warnings.map((w) => w.key)).toContain('worldJointMotorOnWheel')
+    // 관절 카드도 경고한다
+    expect(cardView(objects, 'arm', {})!.warnings).toContainEqual({
+      key: 'motorOnWheel',
+      motor: 'leftFront'
+    })
+    setStore(useSceneStore, { objects })
+    const card = renderToStaticMarkup(<HardwareComponentsSection object={objects.wheel} />)
+    expect(card).toContain('출력축 300 RPM (무부하, 12 V) · 560.0 틱/회전')
+    expect(card).not.toContain('관절:')
+    expect(card.match(/aria-label="기어박스 감속비" value="([^"]*)"/)![1]).toBe('20.00')
+    expect(card).not.toContain('정지 토크 (N·m, 0 = 데이터시트)')
+    expect(card).not.toContain('무부하 속도 (rpm, 0 = 데이터시트)')
+  })
+
+  it('motorDrivesJoint는 세계 설명이 관절에 쓰는 모터와 같다(관절을 둘 수 없는 오브젝트·범위 밖 감속·먼저 온 관절)', () => {
+    const drivenIds = (objects: SceneObjects): string[] => {
+      const { spec } = buildWorldSpec(objects, 'R', { batteryVoltage: 12 })
+      const devices = new Set(
+        (spec?.joints ?? []).flatMap((j) => (j.drive.kind === 'motor' ? j.drive.devices : []))
+      )
+      const names: Record<string, string> = { armMotor: 'arm', liftMotor: 'lift', fl: 'leftFront' }
+      return Object.keys(names).filter((id) => devices.has(names[id]))
+    }
+    const claimed = (objects: SceneObjects): string[] =>
+      ['armMotor', 'liftMotor', 'fl'].filter((id) =>
+        motorDrivesJoint(objects, id === 'fl' ? 'wheel' : 'base', id)
+      )
+    const cases: SceneObjects[] = [
+      withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['armMotor'] }) }),
+      // 바퀴 오브젝트에 남은 관절 설정(파일에서 읽은 것)은 관절이 아니다
+      withJoint(scene(), 'wheel', { drive: motorDrive({ motors: ['armMotor'] }) }),
+      // 로봇에 남은 관절 설정도
+      withJoint(scene(), 'R', { drive: motorDrive({ motors: ['liftMotor'] }) }),
+      // 두 관절이 같은 모터를 고르면 먼저 온 관절이 쓴다(그래도 관절을 구동한다)
+      withJoint(
+        withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['armMotor'] }) }),
+        'lift',
+        {
+          drive: motorDrive({ motors: ['armMotor', 'liftMotor'] })
+        }
+      ),
+      // 범위 밖 전달 비(직선 1 mm 스풀 × 1000:1)는 구동 없음
+      withJoint(scene(), 'lift', {
+        type: 'prismatic',
+        limits: { lower: 0, upper: 0.5 },
+        drive: motorDrive({ motors: ['liftMotor'], spoolDiameter: 0.001, gearRatio: 1000 })
+      }),
+      withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['fl', 'liftMotor'] }) })
+    ]
+    for (const objects of cases) expect(claimed(objects)).toEqual(drivenIds(objects))
   })
 
   it('관절을 구동하는 모터 카드의 출력축 줄은 관절 시뮬레이션이 세는 실제 감속비·속도·틱이다', () => {

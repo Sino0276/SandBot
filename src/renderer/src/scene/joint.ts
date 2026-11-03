@@ -1,13 +1,10 @@
 import { MAX_JOINT_MOTORS, MAX_WORLD_JOINTS } from '../../../shared/sim/worldSpec'
 import {
-  findRobotId,
-  subtreeIds,
   type JointAxis,
   type JointDrive,
   type JointSettings,
   type JointType,
   type SceneObject,
-  type SceneObjects,
   type Vec3
 } from './model'
 
@@ -145,21 +142,6 @@ export function isJointAxis(value: unknown): value is JointAxis {
 // 두지 않는다(바퀴는 로봇 몸체에 붙은 것으로 계산한다).
 export function canHaveJoint(object: SceneObject): boolean {
   return object.kind !== 'robot' && !object.wheel
-}
-
-// 모터 컴포넌트를 같은 로봇의 관절 구동(DC 모터)이 고르는지(세계 설명처럼 같은 로봇의 관절만 본다). 모터의 정지 토크·무부하
-// 속도 덮어쓰기는 관절 구동만 읽으므로 인스펙터가 이것으로 그 칸을 보인다.
-export function motorDrivesJoint(
-  objects: SceneObjects,
-  objectId: string,
-  componentId: string
-): boolean {
-  const robotId = findRobotId(objects, objectId)
-  if (!robotId) return false
-  return subtreeIds(objects, robotId).some((id) => {
-    const drive = objects[id]?.joint?.drive
-    return drive?.kind === 'motor' && drive.motors.includes(componentId)
-  })
 }
 
 const finiteIn = (value: number, min: number, max: number): boolean =>

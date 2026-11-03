@@ -1,5 +1,6 @@
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
+import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorModel'
 import {
   MAX_WORLD_MOTORS,
   MAX_WORLD_SENSORS,
@@ -246,6 +247,42 @@ export type WorldSpecResult = {
   spec: WorldSpec | null
   warnings: WorldWarning[]
   jointObjectIds: string[]
+  // 관절을 실제로 구동하는 모터 컴포넌트 id(spec이 null이면 빈 목록)
+  jointMotorIds: string[]
+}
+
+// 세계 설명을 만들어 관절을 구동하는 모터 id를 센다(문서·로봇마다 한 번, 씬 문서는 불변이라 문서로 캐시한다)
+const jointMotorCache = new WeakMap<SceneObjects, Map<string, ReadonlySet<string>>>()
+
+// 모터 컴포넌트가 시뮬레이션 세계에서 관절을 구동하는지: 그 로봇의 세계 설명(buildWorldSpec, 질량 없이)이 관절 구동에 쓰는
+// 모터인지다. 바퀴를 구동하는 모터, 앞 관절이 이미 쓴 모터, 관절을 둘 수 없는 오브젝트(로봇·바퀴)에 남은 관절, 범위 밖 전달
+// 비는 관절을 구동하지 않으므로 아니다. 인스펙터 모터 카드가 관절 값(실제 감속비·출력축 줄·정지 토크·무부하 속도 덮어쓰기)을
+// 이것으로 보인다(세계와 같은 규칙이라 카드가 시뮬레이터가 쓰지 않는 값을 보이지 않는다).
+export function motorDrivesJoint(
+  objects: SceneObjects,
+  objectId: string,
+  componentId: string
+): boolean {
+  const robotId = findRobotId(objects, objectId)
+  if (!robotId || !robotHasJoints(objects, robotId)) return false
+  let byRobot = jointMotorCache.get(objects)
+  if (!byRobot) {
+    byRobot = new Map()
+    jointMotorCache.set(objects, byRobot)
+  }
+  let ids = byRobot.get(robotId)
+  if (!ids) {
+    // 세계 설명을 만들지 못하면(실행도 시뮬레이터 없이 한다) 관절을 구동하는 모터가 없다
+    try {
+      ids = new Set(
+        buildWorldSpec(objects, robotId, { batteryVoltage: NOMINAL_VOLTAGE }).jointMotorIds
+      )
+    } catch {
+      ids = new Set()
+    }
+    byRobot.set(robotId, ids)
+  }
+  return ids.has(componentId)
 }
 
 // 로봇 하위에 관절(SceneObject.joint)이 있는지. 관절 몸체의 질량 모델은 계산이 무거우므로(큰 CAD 60–100 ms) 있을 때만 만든다.
@@ -264,7 +301,8 @@ export function buildWorldSpec(
   mass: MassModel | null = null
 ): WorldSpecResult {
   const robot = objects[robotId]
-  if (!robot || robot.kind !== 'robot') return { spec: null, warnings: [], jointObjectIds: [] }
+  if (!robot || robot.kind !== 'robot')
+    return { spec: null, warnings: [], jointObjectIds: [], jointMotorIds: [] }
   const warnings: WorldWarning[] = []
   const entries: ComponentEntry[] = robotComponents(objects, robotId).filter((entry) =>
     isComponentType(entry.component.type)
@@ -418,7 +456,12 @@ export function buildWorldSpec(
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
     warnings.push({ key: 'worldInvalid', params: { detail: checked } })
-    return { spec: null, warnings, jointObjectIds: [] }
+    return { spec: null, warnings, jointObjectIds: [], jointMotorIds: [] }
   }
-  return { spec: checked, warnings, jointObjectIds: joints.objectIds }
+  return {
+    spec: checked,
+    warnings,
+    jointObjectIds: joints.objectIds,
+    jointMotorIds: joints.motorIds
+  }
 }

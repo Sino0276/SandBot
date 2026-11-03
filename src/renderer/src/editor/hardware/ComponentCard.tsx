@@ -43,8 +43,8 @@ import {
   type SceneObjects
 } from '../../scene/model'
 import { DEG } from '../../scene/coordinates'
-import { motorDrivesJoint } from '../../scene/joint'
 import { motorComponentParams } from '../../play/worldJoints'
+import { motorDrivesJoint } from '../../play/worldSpec'
 import { jointEncoderTicksPerOutputRev } from '../../../../shared/sim/actuatorData'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'

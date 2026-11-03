@@ -531,7 +531,8 @@ function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecRes
     return {
       spec: null,
       warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }],
-      jointObjectIds: []
+      jointObjectIds: [],
+      jointMotorIds: []
     }
   }
 }
