@@ -25,9 +25,10 @@ import {
 
 // 인스펙터 바퀴 카드·Add Component·로봇 카드 구동계 요약의 보기 계산(그리기와 나눠 시험한다)
 
-// Add Component의 "바퀴"를 고를 수 있는지(이미 있거나 로봇·CAD 루트면 비활성)
+// Add Component의 "바퀴"를 고를 수 있는지(이미 있거나 로봇·CAD 루트·관절 오브젝트면 비활성. 바퀴는 로봇 몸체에 붙은
+// 것으로 계산하므로 관절과 같은 오브젝트에 두지 않는다, spec-3b §2)
 export function canAddWheel(object: SceneObject): boolean {
-  return canHaveWheel(object) && !object.wheel
+  return canHaveWheel(object) && !object.wheel && !object.joint
 }
 
 // 새 바퀴. 이 오브젝트나 하위에 모터가 하나뿐이면 그 모터를 구동 모터로 제안한다(모터와 바퀴를 같은 파트·그룹에 둔 경우).

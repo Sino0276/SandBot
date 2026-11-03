@@ -224,8 +224,14 @@ export function childrenInDocument(
 }
 
 // 최상위 오브젝트 하나의 transform 덮어쓰기(씬 문서를 복사하지 않고). 실행 중 씬 뷰가 로봇을 시뮬레이터 자세로
-// 그릴 때 F 포커스·IMU 표시가 그 자세로 계산하려고 쓴다. 하이어라키·인스펙터·코드 생성은 쓰지 않는다(문서 자세 그대로).
-export type RootOverride = { id: string; transform: Transform }
+// 그릴 때 F 포커스·IMU·무게중심 표시가 그 자세로 계산하려고 쓴다. 하이어라키·인스펙터·코드 생성은 쓰지 않는다(문서 자세 그대로).
+// joints: 관절 오브젝트 id → 그 관절의 지금 움직임(오브젝트 로컬의 A·M(q)·A⁻¹, scene/jointMotion.ts). 오브젝트의 로컬
+// 행렬 뒤에 곱한다(씬 뷰가 관절 오브젝트 노드 안쪽 그룹에 두는 것과 같은 순서). 없으면 문서 자세 그대로다.
+export type RootOverride = {
+  id: string
+  transform: Transform
+  joints?: ReadonlyMap<string, Matrix4>
+}
 
 export function worldMatrix(
   objects: SceneObjects,
@@ -238,6 +244,8 @@ export function worldMatrix(
       ? rootOverride.transform
       : object.transform
   const local = transformToMatrix(transform)
+  const joint = rootOverride?.joints?.get(id)
+  if (joint) local.multiply(joint)
   return object.parentId
     ? worldMatrix(objects, object.parentId, rootOverride).multiply(local)
     : local

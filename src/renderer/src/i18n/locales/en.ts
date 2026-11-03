@@ -1063,7 +1063,13 @@ const en: Messages = {
     inputs: 'Sensor values',
     inputsHint:
       'Raw hub values sent by the simulator (encoder ticks, IMU angles and so on). Team code reads them after the SDK applies direction and units.',
-    selectHint: 'Click to select {{name}}.'
+    selectHint: 'Click to select {{name}}.',
+    joints: 'Joints',
+    jointName: 'Joint',
+    jointType: 'Type',
+    jointValue: 'Value',
+    jointsHint:
+      'Joint positions sent by the simulator (the edit pose is 0). Click to select the object.'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
@@ -1578,6 +1584,151 @@ const en: Messages = {
       cadSummary: '{{name}}: {{parts}}',
       notices: 'Mass settings not used',
       hint: 'For heavy parts missing from CAD (battery, hubs, …), create an empty group in that place (Create Empty) and enter its mass: it becomes a point mass there. Scaling to the weighed mass spreads over all shapes, so it does not move the center of mass toward them.'
+    }
+  },
+  // 관절 카드(Unity ArticulationBody, editor/joint/). 시뮬레이터 설정이라 생성 코드와 관계없다.
+  joint: {
+    addOption: 'Joint',
+    title: 'Articulation Body',
+    orphan: 'This object is not part of a robot, so the simulator does not use it.',
+    type: 'Joint Type',
+    types: {
+      revolute: 'Revolute',
+      prismatic: 'Prismatic'
+    },
+    anchor: 'Anchor',
+    anchorHint:
+      "The joint origin, in this object's local coordinates (its own axes). A revolute joint turns about an axis through this point; a prismatic joint does not depend on it.",
+    anchorReset: 'To pivot',
+    anchorResetHint: "Puts the anchor at this object's pivot (origin).",
+    axis: 'Axis',
+    axisSign: 'Axis direction',
+    axisHint:
+      "One of this object's local axes. A revolute joint is + by the right-hand rule about it; a prismatic joint is + along it. A CAD part's axes are the CAD file's axes.",
+    robotAxis: 'Robot axis: {{axis}}',
+    fieldAxis: 'Field axis: {{axis}}',
+    robotAxes: {
+      '+x': '+X (forward)',
+      '-x': '−X (back)',
+      '+y': '+Y (left)',
+      '-y': '−Y (right)',
+      '+z': '+Z (up)',
+      '-z': '−Z (down)'
+    },
+    robotAxisVector: '({{x}}, {{y}}, {{z}})',
+    limits: 'Motion',
+    limited: 'Limited',
+    limitedHint:
+      'Turn off for a joint that spins without end (Unity Motion: Free). Prismatic joints are always limited.',
+    lower: 'Lower Limit',
+    upper: 'Upper Limit',
+    limitsHint:
+      'The edit pose (the pose in the scene now) is 0 and the limits must include it, so the lower limit is kept at 0 or below and the upper limit at 0 or above. The joint stops at a limit without bouncing.',
+    friction: 'Joint Friction',
+    frictionHint:
+      'Constant (Coulomb) friction against motion, N·m for revolute and N for prismatic joints. Motor and servo gear friction is computed separately, so enter only the bearing or slide share.',
+    damping: 'Damping',
+    dampingHint: 'Friction proportional to speed (viscous).',
+    units: {
+      torque: 'N·m',
+      force: 'N',
+      rotaryDamping: 'N·m·s/rad',
+      linearDamping: 'N·s/m',
+      rotaryStiffness: 'N·m/rad',
+      linearStiffness: 'N/m'
+    },
+    spring: 'Spring',
+    springHint:
+      'A spring on the joint (surgical tubing helping an arm, a constant-force spring on a lift and so on).',
+    springKinds: {
+      none: 'None',
+      constantForce: 'Constant Force',
+      linear: 'Linear'
+    },
+    springForce: 'Force',
+    springForceHint:
+      'A force (prismatic, N) or torque (revolute, N·m), 0 or more, pushing in the + direction at every position. To push in the − direction, flip the axis sign (the limits then follow that direction too).',
+    springStiffness: 'Stiffness',
+    springStiffnessHint: 'How strongly the spring pulls back per unit away from the rest position.',
+    springRest: 'Rest Position',
+    springRestHint: 'The joint position where the spring force is 0 (the edit pose is 0).',
+    drive: 'Drive',
+    driveHint:
+      'The hub device that moves the joint. Targets and gains come from team code and the hub firmware (instead of the target and stiffness of a Unity drive).',
+    driveKinds: {
+      none: 'None',
+      motor: 'DC motor',
+      servo: 'Servo',
+      crServo: 'Continuous rotation servo',
+      stage: 'Upper stage (multi-stage slide)'
+    },
+    motors: 'Motors',
+    motorsHint:
+      "Motors that drive this joint together (up to {{max}}, like a two-sided lift). The motor's direction in the inspector is the one where +power moves the joint in its + direction.",
+    noMotorOptions: 'This robot has no DC motors.',
+    motorMissing: '(motor not found)',
+    device: 'Device',
+    deviceNone: '(none)',
+    deviceMissing: '(device not found)',
+    gearRatio: 'External gear ratio',
+    gearRatioHint: "Reduction from the device's output shaft to the joint (1 if direct).",
+    spoolDiameter: 'Spool diameter',
+    spoolDiameterHint:
+      'Diameter of the spool (pulley) that winds the string. One turn moves one circumference. The default is a pulley with a 112 mm circumference.',
+    rigging: 'Rigging',
+    riggingHint:
+      'How a multi-stage slide is strung. Cascade extends all stages together (the top stage moves the number of stages times faster); continuous extends the stages one after another with one string.',
+    riggingKinds: {
+      direct: 'Single stage',
+      cascade: 'Cascade',
+      continuous: 'Continuous'
+    },
+    stages: 'Upper stages',
+    stagesHint:
+      'The stages above this joint, from bottom to top. Each must be a prismatic joint under the stage right below it, with the drive "Upper stage".',
+    stageAdd: 'Add stage…',
+    stageRemove: 'Remove stage',
+    stageRemoveLabel: 'Remove {{name}}',
+    stageMissing: '(joint not found)',
+    stageNone:
+      'There is no prismatic joint under this object. Add a prismatic joint (drive: Upper stage) to the upper stage object.',
+    stageOf: 'Moves with the drive of the lower stage {{name}}.',
+    maxSpeedMotor: 'Top speed ≈ {{speed}} {{unit}} (no load, {{volts}} V)',
+    maxSpeedServo: 'Top speed ≈ {{speed}} {{unit}} (no load)',
+    maxSpeedUnknown: "The device's free speed is unknown, so the top speed is not shown.",
+    endSpeed: 'Top stage ≈ {{speed}} {{unit}}',
+    load: 'Gravity load (edit pose) ≈ {{load}} {{unit}}',
+    loadNone: 'There is no gravity load in the edit pose.',
+    loadHint:
+      'The gravity and spring force this joint (with the upper stages of a multi-stage slide) must hold in the edit pose, from the mass and center of mass of the mass model.',
+    capacity: 'Stall torque ≈ {{capacity}} {{unit}}',
+    capacityMargin: 'Stall torque ≈ {{capacity}} {{unit}} · margin ×{{margin}}',
+    capacityUnknown: "The device's stall torque is unknown, so the margin is not shown.",
+    capacityHint:
+      "The device's stall torque in joint coordinates (summed over motors) and its ratio to the gravity load. Below 1 the joint cannot hold still.",
+    preview: 'Preview',
+    previewHint:
+      'Moves the joint in the scene view to try it. It changes only the view, not the scene, saving or undo. Selecting another object returns to the edit pose.',
+    previewReset: 'To 0',
+    hint: "A joint is a simulator setting. It does not affect generated code or the configuration XML. This object and its children move as one body; the children of an inner joint are that joint's body.",
+    warnings: {
+      noMotor: 'No drive motor is selected, so the joint is not driven when running.',
+      motorMissing:
+        'A drive motor was not found in this robot (deleted, or on another robot). That motor is not used when running.',
+      motorOnWheel: 'Motor {{motor}} drives a wheel, so this joint does not use it.',
+      motorShared: 'Joint {{joint}} already drives motor {{motor}}, so this joint does not use it.',
+      servoMissing:
+        'The drive device was not found in this robot, so the joint is not driven when running.',
+      servoOnSlide:
+        'A position servo drives only revolute joints. Drive a prismatic joint with a continuous rotation servo and a spool.',
+      stageInvalid:
+        'Upper stage {{stage}} is not a prismatic joint (drive: Upper stage) under the stage right below it, so stages from there on are not linked.',
+      stageOrphan: 'This stage is not in any multi-stage slide drive, so it is not driven.',
+      noMass:
+        "The body's mass is unknown (no geometry or zero mass), so the simulator uses 1 g. Enter a mass in a Mass card.",
+      massPending: 'The mass of {{count}} meshes still loading is missing.',
+      cannotHold:
+        'The stall torque is less than the gravity load in the edit pose, so the joint cannot hold.'
     }
   }
 }

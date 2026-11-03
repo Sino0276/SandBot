@@ -2,7 +2,8 @@ import type { DeviceValues } from '../../../shared/sidecarProtocol'
 import { isComponentType, type ComponentType } from '../hardware/catalog'
 import { robotComponents } from '../hardware/components'
 import { sidecarDeviceName } from '../hardware/naming'
-import type { SceneObjects } from '../scene/model'
+import type { JointType, SceneObjects } from '../scene/model'
+import type { GhostPose, PlayData } from './playStore'
 
 // 장치 탭의 표. 사이드카가 보낸 출력(구성 이름 → 값)과 시뮬레이터가 보낸 센서 값(허브 원시 값)을 씬의 컴포넌트
 // 순서(하이어라키)로 놓고, 행마다 그 컴포넌트가 붙은 오브젝트를 알려 준다(누르면 고른다). 같은 구성 이름(같은 포트의
@@ -56,5 +57,41 @@ export function deviceRows(
     .sort((a, b) => a.localeCompare(b, 'en'))
   for (const name of rest)
     rows.push({ name, objectId: null, type: null, values: valuesOf(name), inputs: inputsOf(name) })
+  return rows
+}
+
+// 장치 탭의 관절 표(3b): 세계 설명의 관절 순서(run.joints)로 관절 오브젝트와 시뮬레이터가 보낸 관절 값(rad 또는 m).
+// 실행 중이면 지금 자세의 값, 끝났으면 잔상의 마지막 값이다. 씬에서 지운 관절 오브젝트는 이름 없이 남기지 않고 뺀다.
+// 프로젝트를 다시 열어 새 씬과 떼어 놓은 실행(robotId null)은 관절도 보이지 않는다.
+export type JointRow = {
+  objectId: string
+  name: string
+  type: JointType
+  value: number | null
+}
+
+export function jointRows(
+  objects: SceneObjects,
+  data: Pick<PlayData, 'run' | 'simPose'> & { ghostPose: GhostPose | null }
+): JointRow[] {
+  const { run, simPose, ghostPose } = data
+  if (!run || run.robotId === null || run.joints.length === 0) return []
+  const live = simPose && simPose.robotId === run.robotId && simPose.joints ? simPose.joints : null
+  const ghost =
+    run.phase === 'finished' && ghostPose && ghostPose.robotId === run.robotId
+      ? ghostPose.joints
+      : undefined
+  const rows: JointRow[] = []
+  run.joints.forEach((objectId, index) => {
+    const object = objects[objectId]
+    if (!object?.joint) return
+    const value = live ? live[index] : ghost?.[objectId]
+    rows.push({
+      objectId,
+      name: object.name,
+      type: object.joint.type,
+      value: value === undefined || !Number.isFinite(value) ? null : value
+    })
+  })
   return rows
 }
