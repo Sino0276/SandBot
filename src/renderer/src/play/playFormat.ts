@@ -43,16 +43,19 @@ export function formatRatio(value: number): string {
   return String(Math.round(value * 100) / 100)
 }
 
-// 장치 출력 값. 숫자는 소수 넷째 자리까지(뒤의 0은 뺀다), null은 값 없음(—).
+// 장치 출력 값. 숫자는 소수 넷째 자리까지(뒤의 0은 뺀다), null은 값 없음(—), 숫자 배열(모터 PIDF 계수)은 [10, 3, 0, 0].
 export function formatDeviceValue(value: DeviceValues[string]): string {
   if (value === null) return '—'
   if (typeof value === 'boolean') return value ? 'true' : 'false'
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return String(value)
-    if (Number.isInteger(value)) return String(value)
-    return String(Number(value.toFixed(4)))
-  }
-  return value
+  if (typeof value === 'number') return formatDeviceNumber(value)
+  if (typeof value === 'string') return value
+  return `[${value.map(formatDeviceNumber).join(', ')}]`
+}
+
+function formatDeviceNumber(value: number): string {
+  if (!Number.isFinite(value)) return String(value)
+  if (Number.isInteger(value)) return String(value)
+  return String(Number(value.toFixed(4)))
 }
 
 const ENTITIES: Record<string, string> = {

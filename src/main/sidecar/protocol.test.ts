@@ -10,9 +10,11 @@ import {
   type DashConfigNode,
   type DashOp
 } from '../../shared/dashboard'
+import { MAX_DEVICE_ARRAY } from '../../shared/sidecarProtocol'
 import { parseSidecarLine, ProtocolError } from './protocol'
 
-// 사이드카 메시지 읽기 중 FTC Dashboard(dash·dashConfig)와 사이드카 안내(notice). 나머지는 session.test.ts가 세션과 함께 본다.
+// 사이드카 메시지 읽기 중 FTC Dashboard(dash·dashConfig), 사이드카 안내(notice), 틱의 장치 출력 값 모양.
+// 나머지는 session.test.ts가 세션과 함께 본다.
 
 const parse = (message: Record<string, unknown>): unknown =>
   parseSidecarLine(JSON.stringify(message))
@@ -294,5 +296,50 @@ describe('사이드카 메시지: notice', () => {
       },
       'notice.params'
     )
+  })
+})
+
+describe('사이드카 메시지: tick 장치 출력', () => {
+  const tick = (outputs: unknown): Record<string, unknown> => ({
+    type: 'tick',
+    tick: 0,
+    tNanos: 0,
+    phase: 'init',
+    loops: 0,
+    outputs
+  })
+
+  it('스칼라와 유한 수 배열(모터 PIDF 계수)을 받는다', () => {
+    const outputs = {
+      lift: {
+        mode: 'RUN_TO_POSITION',
+        power: -0.5,
+        enabled: true,
+        targetPosition: null,
+        velocityPidf: [10, 3, 0, 0],
+        positionPidf: [10, 0.0500030517578125, 0, 0]
+      }
+    }
+    expect(parse(tick(outputs))).toEqual({ ...tick(outputs), type: 'tick' })
+    expect(parse(tick({ m: { empty: [] } }))).toMatchObject({ outputs: { m: { empty: [] } } })
+    const long = Array.from({ length: MAX_DEVICE_ARRAY }, (_, i) => i)
+    expect(parse(tick({ m: { long } }))).toMatchObject({ outputs: { m: { long } } })
+  })
+
+  it('숫자가 아니거나 유한하지 않은 원소, 중첩, 한도를 넘는 배열은 프로토콜 오류', () => {
+    rejects(tick({ m: { pidf: [10, 'x', 0, 0] } }), 'tick.outputs')
+    rejects(tick({ m: { pidf: [10, null, 0, 0] } }), 'tick.outputs')
+    rejects(tick({ m: { pidf: [[10]] } }), 'tick.outputs')
+    rejects(tick({ m: { pidf: { p: 10 } } }), 'tick.outputs')
+    rejects(
+      tick({ m: { pidf: Array.from({ length: MAX_DEVICE_ARRAY + 1 }, () => 0) } }),
+      'tick.outputs'
+    )
+    // JSON에는 NaN·무한대가 없으므로 아주 큰 지수로 만든 Infinity로 본다
+    expect(() =>
+      parseSidecarLine(
+        '{"type":"tick","tick":0,"tNanos":0,"phase":"init","loops":0,"outputs":{"m":{"pidf":[1e999]}}}'
+      )
+    ).toThrow('tick.outputs')
   })
 })
