@@ -230,7 +230,10 @@ function ComponentCard({
             onCommit={(input) =>
               setProp(
                 property.key,
-                Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
+                // 0이 기본값인 덮어쓰기 칸은 아주 작은 값을 기본으로 돌린다(zeroBelow)
+                input < (property.zeroBelow ?? -Infinity)
+                  ? 0
+                  : Math.min(property.max ?? Infinity, Math.max(property.min ?? -Infinity, input))
               )
             }
           />

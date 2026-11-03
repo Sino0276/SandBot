@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { resolveMotorParams, resolveServoParams } from '../../../shared/sim/actuatorData'
 import { MAX_WORLD_JOINTS, type SimInertia } from '../../../shared/sim/worldSpec'
+import { propertyDefaults } from '../hardware/catalog'
 import { createComponent } from '../hardware/components'
 import { computeMassModel } from '../mass/massModel'
 import type { MassLookup, MeshMassProps } from '../mass/types'
@@ -17,7 +18,8 @@ import {
   buildWorldJoints,
   FALLBACK_BODY_MASS,
   MAX_JOINT_SWITCHES,
-  MIN_BODY_INERTIA
+  MIN_BODY_INERTIA,
+  motorComponentParams
 } from './worldJoints'
 import { buildWorldSpec, type WorldWarning } from './worldSpec'
 
@@ -400,6 +402,25 @@ describe('세계 설명의 관절', () => {
       params: resolveServoParams('gobildaSpeed', 'crServo')
     })
     expect(keys(warnings)).toEqual(['worldJointStageOrphan'])
+  })
+
+  it('모터 덮어쓰기가 받는 범위 밖(아주 작은 값, 손으로 고친 큰 값)이면 데이터시트(세계 설명을 깨지 않음)', () => {
+    const datasheet = resolveMotorParams('goBILDA5202SeriesMotor', 19.2)
+    const motor = (props: Record<string, number>): HardwareComponent['props'] => ({
+      ...propertyDefaults('motor'),
+      gearbox: 19.2,
+      ...props
+    })
+    const outOfRange: Record<string, number>[] = [
+      { stallTorque: 1e-7 },
+      { stallTorque: 0.0004 },
+      { freeSpeed: 0.001 },
+      { stallTorque: 1e6, freeSpeed: 1e7 }
+    ]
+    for (const props of outOfRange) expect(motorComponentParams(motor(props))).toEqual(datasheet)
+    const custom = motorComponentParams(motor({ stallTorque: 2, freeSpeed: 200 }))
+    expect(custom.stallTorque).toBe(2)
+    expect(custom.freeSpeed).toBeCloseTo((200 * 2 * Math.PI) / 60, 12)
   })
 
   it('서보: 없는 서보·다른 종류·직선 관절의 위치 서보는 구동 없음', () => {

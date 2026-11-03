@@ -1,7 +1,14 @@
 // 하드웨어 컴포넌트 카탈로그. XML 태그·Java 클래스·I2C 주소는 FTC SDK 12.0 소스(10.3·11.1과 동일)에서 확인한 값만 쓴다.
 // 구성 XML 태그는 대소문자를 구분하고, 틀리면 SDK가 오류 없이 장치를 버리므로 추측한 값을 넣지 않는다.
 
-import { DEFAULT_SERVO_MODEL, SERVO_MODEL_KEYS } from '../../../shared/sim/actuatorData'
+import {
+  DEFAULT_SERVO_MODEL,
+  MAX_FREE_SPEED_OVERRIDE_RPM,
+  MAX_STALL_TORQUE_OVERRIDE,
+  MIN_FREE_SPEED_OVERRIDE_RPM,
+  MIN_STALL_TORQUE_OVERRIDE,
+  SERVO_MODEL_KEYS
+} from '../../../shared/sim/actuatorData'
 import { motorType } from '../../../shared/sim/motorTypes'
 
 // 장치가 차지하는 자리
@@ -45,6 +52,8 @@ export type PropertyDef = PropertyMeta &
         max?: number
         // 표시 소수 자릿수
         digits: number
+        // 이보다 작은 값을 넣으면 0(기본)으로 저장한다(0이 '기본값'인 덮어쓰기 칸)
+        zeroBelow?: number
       }
     // 길이(내부 미터). 인스펙터는 표시 단위(units/units.ts)로 보이고, 입력칸은 단위를 붙인 값도 받는다.
     | { key: string; kind: 'length'; default: number; min: number; max: number }
@@ -147,10 +156,6 @@ export const DEAD_WHEEL_POD_TYPES = ['fourBar', 'swingarm', 'revThroughBore', 'c
 const POD_DIAMETER = { default: 0.035, min: 0.005, max: 0.2 } as const
 const POD_CPR = { default: REV_THROUGH_BORE_CPR, min: 1, max: 1000000 } as const
 
-// 모터 정지 토크·무부하 속도 덮어쓰기의 상한(goBILDA 188:1 정지 24.5 N·m, 맨 모터 6000 rpm을 넉넉히 넘는다)
-export const MAX_STALL_TORQUE = 100
-export const MAX_FREE_SPEED_RPM = 20000
-
 // 서보·CR 서보의 모델(시뮬레이터 전용, 관절 구동의 토크·속도·각 범위 표 src/shared/sim/actuatorData.ts와 질량 표)
 const SERVO_MODEL = {
   key: 'servoModel',
@@ -208,14 +213,15 @@ export const COMPONENT_TYPES = {
         simulation: true
       },
       // 관절 구동(3b)의 기어모터 값 덮어쓰기: 12 V 출력축 정지 토크(N·m)와 무부하 속도(rpm). 0은 데이터시트
-      // (src/shared/sim/actuatorData.ts). 시뮬레이터 전용.
+      // (src/shared/sim/actuatorData.ts). 받는 하한보다 작은 값은 0으로 저장한다(표시 자릿수 한 칸). 시뮬레이터 전용.
       {
         key: 'stallTorque',
         kind: 'number',
         default: 0,
         min: 0,
-        max: MAX_STALL_TORQUE,
+        max: MAX_STALL_TORQUE_OVERRIDE,
         digits: 3,
+        zeroBelow: MIN_STALL_TORQUE_OVERRIDE,
         simulation: true
       },
       {
@@ -223,8 +229,9 @@ export const COMPONENT_TYPES = {
         kind: 'number',
         default: 0,
         min: 0,
-        max: MAX_FREE_SPEED_RPM,
+        max: MAX_FREE_SPEED_OVERRIDE_RPM,
         digits: 0,
+        zeroBelow: MIN_FREE_SPEED_OVERRIDE_RPM,
         simulation: true
       }
     ]

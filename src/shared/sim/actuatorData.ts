@@ -315,6 +315,18 @@ function efficiencyOf(family: MotorFamily, stages: number): number {
 // 모터 컴포넌트에서 팀이 덮어쓴 값(0이면 데이터시트). 출력축 기준, 12 V.
 export type MotorOverrides = { stallTorque: number; freeSpeedRpm: number }
 
+// 덮어쓰기로 받는 범위. 밖의 값(0, 음수, NaN, 손으로 고친 프로젝트 파일의 너무 크거나 작은 값)은 데이터시트를 쓴다.
+// 하한은 인스펙터 표시 자릿수 한 칸(0.001 N·m, 1 rpm)이라 0처럼 보이는 값이 데이터시트와 다르게 돌지 않고, 세계 설명이
+// 받는 하한(정지 토크 1e-6 N·m, 무부하 속도 1e-3 rad/s ≈ 0.0095 rpm)보다 커서 덮어쓰기가 세계 설명을 깨지 않는다.
+// 상한은 goBILDA 188:1 정지 24.5 N·m, 맨 모터 6000 rpm을 넉넉히 넘고 세계 설명 상한(1e3 N·m, 1e5 rad/s)보다 작다.
+export const MIN_STALL_TORQUE_OVERRIDE = 0.001
+export const MAX_STALL_TORQUE_OVERRIDE = 100
+export const MIN_FREE_SPEED_OVERRIDE_RPM = 1
+export const MAX_FREE_SPEED_OVERRIDE_RPM = 20000
+
+const overrideOr = (value: number, min: number, max: number, fallback: number): number =>
+  Number.isFinite(value) && value >= min && value <= max ? value : fallback
+
 // 기어모터의 물리 값. gearbox는 모터 gearbox 속성(실제 감속비), 'default'면 그 형식의 모델 기본(실제 감속비).
 // 표의 감속비(실제 값이나 팀이 흔히 쓰는 이름, ±1.5 %)면 그 줄의 제조사 값을, 아니면 가장 가까운 줄(로그 거리)에서 감속비와
 // 효율 비율로 늘이거나 줄인다(같은 맨 모터: 토크 ∝ 감속비 × 효율, 속도 ∝ 1/감속비).
@@ -352,13 +364,20 @@ export function resolveMotorParams(
       (efficiencyOf(family, stages) / efficiencyOf(family, nearest.stages))
     freeRpm = (nearest.freeRpm * nearest.ratio) / ratio
   }
-  const torqueOverride = overrides.stallTorque
-  const speedOverride = overrides.freeSpeedRpm
   return {
-    stallTorque:
-      Number.isFinite(torqueOverride) && torqueOverride > 0 ? torqueOverride : stallTorque,
+    stallTorque: overrideOr(
+      overrides.stallTorque,
+      MIN_STALL_TORQUE_OVERRIDE,
+      MAX_STALL_TORQUE_OVERRIDE,
+      stallTorque
+    ),
     freeSpeed:
-      (Number.isFinite(speedOverride) && speedOverride > 0 ? speedOverride : freeRpm) * RPM,
+      overrideOr(
+        overrides.freeSpeedRpm,
+        MIN_FREE_SPEED_OVERRIDE_RPM,
+        MAX_FREE_SPEED_OVERRIDE_RPM,
+        freeRpm
+      ) * RPM,
     stallCurrent: family.stallCurrent,
     freeCurrent: family.freeCurrent,
     gearbox: ratio,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_SERVO_MODEL,
+  MAX_FREE_SPEED_OVERRIDE_RPM,
+  MAX_STALL_TORQUE_OVERRIDE,
+  MIN_FREE_SPEED_OVERRIDE_RPM,
+  MIN_STALL_TORQUE_OVERRIDE,
   resolveMotorParams,
   resolveServoParams,
   SERVO_MODEL_KEYS
@@ -113,6 +117,35 @@ describe('기어모터 물리 값', () => {
       freeSpeedRpm: Number.NaN
     })
     expect(none.freeSpeed).toBeCloseTo(312 * RPM, 12)
+  })
+
+  it('받는 범위 밖의 덮어쓰기는 데이터시트를 쓴다(세계 설명 하한 1e-6 N·m·1e-3 rad/s 아래로 가지 않음)', () => {
+    const datasheet = resolveMotorParams('goBILDA5202SeriesMotor', 19.2)
+    for (const stallTorque of [1e-7, 0.0004, -1, MAX_STALL_TORQUE_OVERRIDE * 2, Infinity]) {
+      expect(
+        resolveMotorParams('goBILDA5202SeriesMotor', 19.2, { stallTorque, freeSpeedRpm: 0 })
+      ).toEqual(datasheet)
+    }
+    for (const freeSpeedRpm of [0.001, 0.5, -300, MAX_FREE_SPEED_OVERRIDE_RPM * 2]) {
+      expect(
+        resolveMotorParams('goBILDA5202SeriesMotor', 19.2, { stallTorque: 0, freeSpeedRpm })
+      ).toEqual(datasheet)
+    }
+    // 경계 값은 덮어쓴다
+    const low = resolveMotorParams('goBILDA5202SeriesMotor', 19.2, {
+      stallTorque: MIN_STALL_TORQUE_OVERRIDE,
+      freeSpeedRpm: MIN_FREE_SPEED_OVERRIDE_RPM
+    })
+    expect(low.stallTorque).toBe(MIN_STALL_TORQUE_OVERRIDE)
+    expect(low.freeSpeed).toBeCloseTo(MIN_FREE_SPEED_OVERRIDE_RPM * RPM, 15)
+    expect(low.stallTorque).toBeGreaterThanOrEqual(1e-6)
+    expect(low.freeSpeed).toBeGreaterThanOrEqual(1e-3)
+    const high = resolveMotorParams('goBILDA5202SeriesMotor', 19.2, {
+      stallTorque: MAX_STALL_TORQUE_OVERRIDE,
+      freeSpeedRpm: MAX_FREE_SPEED_OVERRIDE_RPM
+    })
+    expect(high.stallTorque).toBeLessThanOrEqual(1e3)
+    expect(high.freeSpeed).toBeLessThanOrEqual(1e5)
   })
 
   it('모든 SDK 형식과 모르는 태그가 유한한 양수 값을 낸다(모르는 태그는 지정 안 함과 같다)', () => {
