@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { DcGearMotor } from './actuators'
-import { resolveServoParams } from './actuatorData'
+import { resolveMotorParams, resolveServoParams } from './actuatorData'
 import { Articulation, MIN_COORDINATE_INERTIA, type DriveForces } from './articulation'
 import { motorType, rotationSign } from './motorTypes'
 import { GRAVITY } from './physics'
@@ -468,6 +468,48 @@ describe('전력단 발전 제동(본체 다이오드)', () => {
     const near = lowering(motorOut(-0.99))
     expect(Math.abs(near.peak / full.peak - 1)).toBeLessThan(0.02)
   })
+})
+
+describe('관절 모터 엔코더 해상도', () => {
+  // 가벼운 수평 팔(중력 토크 없음)을 power 1로 돌리고, 출력축 1회전에 센 원시 틱을 제조사 출력축 카운트와 맞춘다
+  for (const [tag, perRev] of [
+    ['RevRoboticsUltraplanetaryHDHexMotor', 28 * (76 / 21) * (68 / 13)],
+    ['NeveRest20Gearmotor', 537.6],
+    ['RevRoboticsCoreHexMotor', 288]
+  ] as const)
+    it(`${tag}(모델 기본 감속비): 출력축 1회전 = ${perRev.toFixed(1)}틱`, () => {
+      const params = resolveMotorParams(tag, 'default')
+      const arm: SimJointSpec = {
+        ...lift({}, params),
+        type: 'revolute',
+        axis: { x: 0, y: 0, z: 1 },
+        limits: null,
+        body: { mass: 0.1, centerOfMass: ZERO, inertia: [1e-4, 1e-4, 1e-4, 0, 0, 0] },
+        drive: { kind: 'motor', devices: ['lift'], ratio: 1, params, rigging: { kind: 'direct' } }
+      }
+      const spec = world([arm], {
+        motors: [
+          { device: 'lift', modelTag: tag, gearbox: motorType(tag).gearing, directionSign: 1 }
+        ]
+      })
+      const r = run(spec, 1, () => ({
+        lift: {
+          mode: 'RUN_WITHOUT_ENCODER',
+          power: 1,
+          velocity: null,
+          enabled: true,
+          zeroPower: 'BRAKE',
+          targetPosition: null,
+          targetTolerance: 5,
+          encoderOffset: 0,
+          encoderResets: 0
+        }
+      }))
+      const turns = Math.abs(r.q[r.q.length - 1][0]) / (2 * Math.PI)
+      const ticks = Math.abs(latestAt(r.inputs, r.inputs.length - 1).lift.position as number)
+      expect(turns).toBeGreaterThan(1)
+      expect(Math.abs(ticks - perRev * turns)).toBeLessThanOrEqual(1)
+    })
 })
 
 describe('강성·유계', () => {

@@ -32,7 +32,8 @@ import {
   type MotorCommand,
   type MotorOutputs
 } from './motorModel'
-import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
+import { jointEncoderTicksPerOutputRev } from './actuatorData'
+import { motorType, rotationSign } from './motorTypes'
 import type {
   Pose2,
   SimDeadWheelSpec,
@@ -93,7 +94,7 @@ type JointMotor = {
   // Articulation 좌표 순번
   coordinate: number
   dc: DcGearMotor
-  // 출력축 1 rad의 엔코더 틱(SDK 형식과 spec.gearbox, motorModel.ts와 같은 규칙)
+  // 출력축 1 rad의 엔코더 틱: 모터축 카운트 × 관절 동역학의 실제 감속비(actuatorData.ts jointEncoderTicksPerOutputRev)
   ticksPerRad: number
   controller: HubMotorController
   // 제어기가 보는 축 엔코더의 50 ms 창(포드와 포트를 함께 써도 펌웨어는 축 엔코더로 돈다고 가정한다)
@@ -249,7 +250,7 @@ export class KinematicWorld {
         joint: {
           coordinate: driven.coordinate,
           dc: driven.dc,
-          ticksPerRad: ticksPerOutputRev(motorType(m.modelTag), m.gearbox) / (2 * Math.PI),
+          ticksPerRad: jointEncoderTicksPerOutputRev(m.modelTag, driven.dc.gearbox) / (2 * Math.PI),
           controller: new HubMotorController(),
           control,
           out: readMotorOutputs(undefined),

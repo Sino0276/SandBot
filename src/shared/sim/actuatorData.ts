@@ -58,9 +58,13 @@ type GearmotorRow = {
 
 type MotorFamily = {
   rows: readonly GearmotorRow[]
-  // 모터 gearbox 속성이 0(모델 기본)일 때의 실제 감속비. SDK gearing이 실제와 다른 형식(Core Hex 36.25 대 72)은 실제 값이다.
-  // 엔코더 틱은 SDK 형식을 그대로 따른다(motorTypes.ts, 실제 하드웨어도 출력축 1회전 틱이 SDK ticksPerRev와 같다).
+  // 모터 gearbox 속성이 0(모델 기본)일 때의 실제 감속비. SDK gearing이 실제와 다른 형식(Core Hex 36.25 대 72, UltraPlanetary
+  // 20 대 18.93)은 실제 값이다.
   defaultRatio: number
+  // 모터축 1회전의 엔코더 카운트(쿼드러처). 없으면 SDK 형식의 ticksPerRev ÷ gearing(엔코더가 모터축에 있는 형식은 이것이 곧
+  // 모터축 카운트다: goBILDA 2786 ÷ 99.5 = 28, HD Hex·UltraPlanetary·NeveRest 560 ÷ 20 = 28). SDK gearing이 실제 감속비가
+  // 아닌 형식만 제조사 값을 둔다.
+  encoderCountsPerMotorRev?: number
   // A, 12 V
   stallCurrent: number
   freeCurrent: number
@@ -175,9 +179,12 @@ const hdHex = (ratio: number, stallTorque: number, freeRpm: number): MotorFamily
 // REV Core Hex(REV-41-1300): 72:1, 125 rpm, 3.2 N·m, 정지 4.4 A
 // (https://docs.revrobotics.com/duo-build/motion/motors/core-hex-motor). REV 페이지에 무부하 전류가 없어 gm0 motor-power
 // 표의 Core Hex 줄(제품 값, 0.2 A)을 쓴다.
+// 엔코더는 모터축 4 카운트, 출력축 288(같은 REV 페이지 "Encoder Counts per Revolution"). SDK 형식(288, gearing 36.25)의
+// 288 ÷ 36.25 = 7.9는 모터축 값이 아니다.
 const CORE_HEX: MotorFamily = {
   rows: [row(72, 3.2, 125, 0)],
   defaultRatio: 72,
+  encoderCountsPerMotorRev: 4,
   stallCurrent: 4.4,
   freeCurrent: 0.2,
   rotorInertia: CORE_HEX_ROTOR_INERTIA,
@@ -223,9 +230,11 @@ const neverestOrbital = (ratio: number, freeRpm: number, stages: number): MotorF
 // TetrixMotor(옛 W39530, 52:1 165 rpm)의 데이터시트는 찾지 못해 모델 기본은 60:1로 둔다(가정). 무부하 전류는 공개되지
 // 않아 0.3 A(가정: 같은 급 goBILDA 0.25 A와 NeveRest 0.4 A 사이, gm0 다이노는 0.2 A), 기어 형식도 공개되지 않아 평기어
 // 효율로 가정한다.
+// 엔코더는 같은 데이터시트의 출력축 480·960·1440 cpr(20·40·60:1)이라 모터축 24다(SDK TetrixMotor 1440 ÷ 52 = 27.7은 옛 모터 값).
 const TETRIX: MotorFamily = {
   rows: [row(20, 233 * OZIN, 300, 0), row(40, 466 * OZIN, 150, 0), row(60, 700 * OZIN, 100, 0)],
   defaultRatio: 60,
+  encoderCountsPerMotorRev: 24,
   stallCurrent: 8.7,
   freeCurrent: 0.3,
   rotorInertia: RS555_ROTOR_INERTIA,
@@ -385,6 +394,19 @@ export function resolveMotorParams(
     rotorInertia: family.rotorInertia,
     backdriveFriction: family.backdriveFriction
   }
+}
+
+// 관절 모터의 출력축 1회전 엔코더 틱: 모터축 카운트(encoderCountsPerMotorRev, 없으면 SDK ticksPerRev ÷ gearing) × 물리
+// 감속비(resolveMotorParams의 gearbox, 토크·속도와 같은 값). 구동계 바퀴의 규칙(ticksPerRev ÷ SDK gearing × gearbox,
+// motorTypes.ts)과 같이 "엔코더는 모터축에 있다"이고, 감속비만 관절 동역학이 쓰는 실제 값이다. 그래서 UltraPlanetary 기본
+// (실제 18.93:1)은 530, NeveRest Orbital 20(19.2:1)은 537.6, Core Hex 72:1은 288로 제조사 출력축 카운트와 같다.
+export function jointEncoderTicksPerOutputRev(modelTag: string, gearbox: number): number {
+  const family = motorFamily(modelTag)
+  const tag = Object.prototype.hasOwnProperty.call(MOTOR_TYPES, modelTag)
+    ? modelTag
+    : UNSPECIFIED_MOTOR_TAG
+  const sdk = MOTOR_TYPES[tag]
+  return (family.encoderCountsPerMotorRev ?? sdk.ticksPerRev / sdk.gearing) * gearbox
 }
 
 // ---- 서보 ----

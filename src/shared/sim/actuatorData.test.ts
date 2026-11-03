@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_SERVO_MODEL,
+  jointEncoderTicksPerOutputRev,
   MAX_FREE_SPEED_OVERRIDE_RPM,
   MAX_STALL_TORQUE_OVERRIDE,
   MIN_FREE_SPEED_OVERRIDE_RPM,
@@ -146,6 +147,32 @@ describe('기어모터 물리 값', () => {
     })
     expect(high.stallTorque).toBeLessThanOrEqual(1e3)
     expect(high.freeSpeed).toBeLessThanOrEqual(1e5)
+  })
+
+  it('관절 모터 엔코더: 출력축 1회전 틱 = 모터축 카운트 × 물리 감속비(제조사 출력축 카운트와 같다)', () => {
+    const ticks = (tag: string, gearbox: number | 'default'): number =>
+      jointEncoderTicksPerOutputRev(tag, resolveMotorParams(tag, gearbox).gearbox)
+    // REV UltraPlanetary 4:1 + 5:1(실제 18.93:1): 모터축 28 카운트(REV motor-based-encoders "At the motor - 28 counts/
+    // revolution") × 18.93 = 530.05(SDK 형식의 560이 아니다)
+    expect(ticks('RevRoboticsUltraplanetaryHDHexMotor', 'default')).toBeCloseTo(
+      28 * (76 / 21) * (68 / 13),
+      9
+    )
+    // AndyMark NeveRest Orbital 20(19.2:1): 7 펄스 × 4 = 28 카운트 × 19.2 = 537.6
+    expect(ticks('NeveRest20Gearmotor', 'default')).toBeCloseTo(537.6, 9)
+    // REV Core Hex 72:1: 모터축 4 카운트, 출력축 288(REV core-hex-motor). SDK 형식(288 ÷ 36.25)이 아니다.
+    expect(ticks('RevRoboticsCoreHexMotor', 'default')).toBeCloseTo(288, 9)
+    expect(ticks('RevRoboticsCoreHexMotor', 72)).toBeCloseTo(288, 9)
+    // goBILDA 5203 19.2:1: 28 × 19.2032 = 537.7(SDK 형식 2786 ÷ 99.5 × 19.2 = 537.6과 0.02 % 안)
+    expect(ticks('goBILDA5202SeriesMotor', 19.2)).toBeCloseTo(28 * (1 + 46 / 17) * (1 + 46 / 11), 9)
+    // REV HD Hex 20:1·40:1: 560·1120(REV 표)
+    expect(ticks('RevRobotics20HDHexMotor', 'default')).toBeCloseTo(560, 9)
+    expect(ticks('RevRobotics40HDHexMotor', 'default')).toBeCloseTo(1120, 9)
+    // TETRIX TorqueNADO 60:1·40:1: 1440·960 cpr(Pitsco 데이터시트, 모터축 24)
+    expect(ticks('TetrixMotor', 'default')).toBeCloseTo(1440, 9)
+    expect(ticks('TetrixMotor', 40)).toBeCloseTo(960, 9)
+    // Studica Maverick 61:1: 6 펄스 × 61 × 4 = 1464
+    expect(ticks('StudicaMaverick', 'default')).toBeCloseTo(1464, 9)
   })
 
   it('모든 SDK 형식과 모르는 태그가 유한한 양수 값을 낸다(모르는 태그는 지정 안 함과 같다)', () => {
