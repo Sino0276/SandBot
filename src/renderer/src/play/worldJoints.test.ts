@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { resolveMotorParams, resolveServoParams } from '../../../shared/sim/actuatorData'
 import { MAX_WORLD_JOINTS, type SimInertia } from '../../../shared/sim/worldSpec'
 import { propertyDefaults } from '../hardware/catalog'
@@ -22,19 +22,6 @@ import {
   motorComponentParams
 } from './worldJoints'
 import { buildWorldSpec, type WorldWarning } from './worldSpec'
-
-// 3b 계약 단계의 parseWorldSpec은 빈 관절 목록만 받는다(갈래 A가 관절 검증을 채운다). 그 빈 구현의 거부('joints')일 때만
-// 만든 세계 설명을 그대로 돌려준다. A의 검증이 들어오면 이 대체는 쓰이지 않고 실제 검증을 거친다.
-vi.mock('../../../shared/sim/worldSpec', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../shared/sim/worldSpec')>()
-  return {
-    ...actual,
-    parseWorldSpec: (value: unknown) => {
-      const result = actual.parseWorldSpec(value)
-      return result === 'joints' ? value : result
-    }
-  }
-})
 
 const SETTINGS = { batteryVoltage: 12 }
 

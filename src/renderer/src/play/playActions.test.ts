@@ -54,18 +54,6 @@ import {
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
-// 3b 계약 단계의 parseWorldSpec은 빈 관절 목록만 받는다(갈래 A가 관절 검증을 채운다). 그 빈 구현의 거부('joints')일 때만
-// 만든 세계 설명을 그대로 돌려준다. A의 검증이 들어오면 이 대체는 쓰이지 않고 실제 검증을 거친다.
-vi.mock('../../../shared/sim/worldSpec', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../shared/sim/worldSpec')>()
-  return {
-    ...actual,
-    parseWorldSpec: (value: unknown) => {
-      const result = actual.parseWorldSpec(value)
-      return result === 'joints' ? value : result
-    }
-  }
-})
 
 const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
 
