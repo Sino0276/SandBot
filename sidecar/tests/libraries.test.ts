@@ -806,7 +806,7 @@ describe.skipIf(build === null || libraries === null)('실제 라이브러리', 
         ]
       })
       expect(samples.length).toBeGreaterThan(50)
-      // 시뮬레이터의 진짜 속도: 정상 상태(출발 1초 뒤)의 로봇 속도(곧게 앞으로, 미끄럼 없음)
+      // 시뮬레이터의 진짜 속도: 정상 상태(출발 1.5초 뒤)의 로봇 속도(곧게 앞으로, 미끄럼 없음)
       const from = poseAt(run, samples[0].tNanos)
       const to = poseAt(run, samples.at(-1)!.tNanos)
       const steady = run.poses.filter(
@@ -815,7 +815,9 @@ describe.skipIf(build === null || libraries === null)('실제 라이브러리', 
       const speed =
         (steady.at(-1)!.pose.x - steady[0].pose.x) /
         ((steady.at(-1)!.tNanos - steady[0].tNanos) / 1e9)
-      expect(speed).toBeGreaterThan(0.6)
+      // power 0.4의 정상 속도: 동역학(3c)이라 굴림 저항·기어 손실만큼 무부하 × 0.4(0.68 m/s)보다 느리다. 데드휠이 int16을
+      // 넘을 만큼(아래 40,000 틱/s) 빠르면 된다
+      expect(speed).toBeGreaterThan(0.5)
       // 모터가 차례로 출발해 처음에 아주 조금 돌지만 정상 상태에서는 곧게 간다
       expect(Math.abs(to.yaw - from.yaw)).toBeLessThan(1e-6)
       const driveRate = (speed / (2 * Math.PI * RADIUS)) * 537.6

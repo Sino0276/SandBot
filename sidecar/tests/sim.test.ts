@@ -324,10 +324,12 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
           values.yaw
         )
       ).toBeLessThan(1e-4)
-      // 엔코더(팀 코드 기준, 앞으로 구르면 +): 평균은 앞으로 간 만큼 이상(곡선 길이), 왼쪽 회전에서 오른쪽 바퀴가 더 갔다
+      // 엔코더(팀 코드 기준, 앞으로 구르면 +): 평균은 몸체 앞 성분의 굴림(곡선 길이, ≥ 필드 앞 이동)이고, 왼쪽 회전에서 오른쪽
+      // 바퀴가 더 갔다. 동역학(3c)이라 바퀴는 출발에서 헛돌아 더 세고, 서는 동안(BRAKE) 바퀴가 먼저 서고 몸체가 미끄러져 덜 센다:
+      // 그 몫은 몇 cm다(비평 §3.4: 1.6 m/s BRAKE 정지에서 −3.4 cm)
       const ticksPerMeter = 537.6 / (2 * Math.PI * RADIUS)
       const mean = (values.fl + values.fr + values.bl + values.br) / 4
-      expect(mean).toBeGreaterThan((end.x - start.x) * ticksPerMeter * 0.99)
+      expect(mean).toBeGreaterThan((end.x - start.x - 0.05) * ticksPerMeter)
       expect(values.fr - values.fl).toBeGreaterThan(1000)
       expect(values.br - values.bl).toBeGreaterThan(1000)
       // 시뮬레이터 입력은 허브 부호: 오른쪽(FORWARD, CCW 형식)은 팀 코드에서 부호가 바뀌고 왼쪽(REVERSE)은 그대로다.
@@ -397,22 +399,24 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       expect(values.millis).toBeLessThan(4000)
       for (const key of ['fl', 'fr', 'bl', 'br'])
         expect(Math.abs(values[key] - 1000)).toBeLessThanOrEqual(5)
-      // 1000틱 = 1000 / 537.6 바퀴 × 둘레
+      // 1000틱 = 1000 / 537.6 바퀴 × 둘레. 동역학(3c): 몸체 이동은 엔코더 거리 ± 1 cm(서는 동안 바퀴가 먼저 서고 몸체가 조금
+      // 미끄러진다, spec-3c T11)
       const travel = (1000 / 537.6) * 2 * Math.PI * RADIUS
       const end = poseAt(run, tNanos)
-      expect(end.x - SPEC.robot.start.x).toBeCloseTo(travel, 2)
+      expect(Math.abs(end.x - SPEC.robot.start.x - travel)).toBeLessThan(0.01)
       // 모터가 차례로 출발해 잠깐 틀어지지만 같은 굴림으로 끝나므로 거의 돌아온다(허용 오차 5틱 안)
       expect(Math.abs(end.yaw)).toBeLessThan(0.01)
-      // 넘침 없이: 로봇이 목표 거리를 넘지 않았고, 팀 코드 기준 엔코더(오른쪽 = −(허브 − 리셋 오프셋))도 넘지 않았다
+      // 유계: 허브 기본 PIDF(위치 P10·속도 PIDF)는 무거운 구동계에서 조금 넘칠 수 있다(실제 펌웨어도 같다, 3b 리프트와 같은
+      // 기준). 로봇은 목표 거리를 1 cm 넘게, 팀 코드 기준 엔코더(오른쪽 = −(허브 − 리셋 오프셋))는 60틱 넘게 넘지 않는다
       const positions = run.poses.map((p) => p.pose.x - SPEC.robot.start.x)
-      expect(Math.max(...positions)).toBeLessThanOrEqual(travel + 1e-6)
+      expect(Math.max(...positions)).toBeLessThan(travel + 0.01)
       const reset = run.ticks.at(-1)?.outputs.frontRight.encoderOffset as number
       expect(typeof reset).toBe('number')
       // 리셋 횟수는 늘 보내고, 리셋 한 번이면 1(데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)
       expect(run.ticks[0].outputs.frontRight.encoderResets).toBe(0)
       expect(run.ticks.at(-1)?.outputs.frontRight.encoderResets).toBe(1)
       const counted = run.encoders.map((e) => -(e.position.frontRight - reset))
-      expect(Math.max(...counted)).toBeLessThanOrEqual(1000)
+      expect(Math.max(...counted)).toBeLessThan(1000 + 60)
     },
     SIDECAR_TEST_TIMEOUT
   )
