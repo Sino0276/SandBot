@@ -1,6 +1,10 @@
 import i18n from 'i18next'
+import { Vector3 } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { kinematicWorld } from '../../../main/sidecar/world'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
+import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
+import { parseWorldSpec, type WorldSpec } from '../../../shared/sim/worldSpec'
 import type {
   GrantCodeTrustResult,
   ListOpModesResult,
@@ -17,7 +21,7 @@ import { cancelNotice, runNoticeAction, useNoticeStore } from '../editor/noticeS
 import { propertyDefaults } from '../hardware/catalog'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
-import type { SceneObject, SceneObjects } from '../scene/model'
+import { worldMatrix, type SceneObject, type SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { defaultJoint } from '../scene/joint'
 import { defaultWheel } from '../scene/wheel'
@@ -45,10 +49,12 @@ import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
 import { opModeKey } from './opModeList'
 import {
+  displayRootOverride,
   EMPTY_OPMODE_LIST,
   initialPlayData,
   listedOpModes,
   showsRegisteredConsent,
+  simJointValue,
   usePlayStore
 } from './playStore'
 
@@ -491,6 +497,107 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     })
     expect(usePlayStore.getState().run?.joints).toEqual(['lift'])
     expect(notices()).toEqual([])
+  })
+
+  it('관절 세계 끝까지: 빌더 → 실제 parseWorldSpec → 시뮬레이터 → pose.joints → 씬 뷰 관절 자세·잔상', async () => {
+    // 리프트(직선 관절, +Z)를 모터 lift(m2, 바퀴 모터 m과 따로)가 스풀로 끌어 올린다. 1.5 kg 짐은 리프트 하위
+    const base = withWheel()
+    const objects: SceneObjects = {
+      ...base,
+      arm: {
+        ...base.arm,
+        components: [
+          ...base.arm.components!,
+          { ...base.arm.components![0], id: 'm2', name: 'lift', port: 1 }
+        ]
+      },
+      lift: {
+        id: 'lift',
+        name: 'Lift',
+        kind: 'group',
+        parentId: 'bot',
+        transform: { position: [0, 0, 0.1], rotation: [0, 0, 0] },
+        joint: {
+          ...defaultJoint('prismatic'),
+          axis: 'z',
+          drive: {
+            kind: 'motor',
+            motors: ['m2'],
+            gearRatio: 1,
+            spoolDiameter: 0.0357,
+            rigging: { kind: 'direct' }
+          }
+        }
+      },
+      payload: {
+        id: 'payload',
+        name: 'Payload',
+        kind: 'group',
+        parentId: 'lift',
+        transform: { position: [0, 0, 0.2], rotation: [0, 0, 0] },
+        mass: { mass: 1.5 }
+      }
+    }
+    useSceneStore.setState({ objects })
+    await initPlay()
+    expect(notices()).toEqual([])
+    // 메인 프로세스: IPC(구조화 복제와 같은 JSON 모양)로 받은 세계 설명을 실제 검증으로 읽고 실행마다 세계를 만든다
+    const parsed = parseWorldSpec(JSON.parse(JSON.stringify(lastRequest().world)))
+    expect(typeof parsed).not.toBe('string')
+    const world = kinematicWorld(parsed as WorldSpec)
+    const motorSpec = (parsed as WorldSpec).motors.find((m) => m.device === 'lift')!
+    // 허브 power의 부호: +power × 형식 회전 부호 × 인스펙터 방향이 관절 + 방향이다
+    const up = rotationSign(motorType(motorSpec.modelTag)) * motorSpec.directionSign
+    const outputs = {
+      lift: {
+        mode: 'RUN_WITHOUT_ENCODER',
+        power: up,
+        velocity: null,
+        enabled: true,
+        zeroPower: 'BRAKE',
+        targetPosition: null,
+        targetTolerance: 5,
+        encoderOffset: 0,
+        encoderResets: 0
+      }
+    }
+    const TICK = 5_000_000
+    let inputs: Record<string, Record<string, unknown>> = {}
+    for (let k = 0; k <= 100; k++) inputs = { ...inputs, ...world.step(k * TICK, outputs) }
+    const pose = world.pose()!
+    expect(pose.joints).toHaveLength(1)
+    const q = pose.joints![0]
+    // 0.5 s 동안 위로 움직였고 한계(0.5 m) 안이다
+    expect(q).toBeGreaterThan(0.01)
+    expect(q).toBeLessThanOrEqual(0.5 + 1e-9)
+    // 관절 모터는 엔코더(움직인 만큼)와 전류를 보낸다
+    expect(Math.abs(Number(inputs.lift?.position))).toBeGreaterThan(0)
+    expect(Number(inputs.lift?.current)).toBeGreaterThan(0)
+    // 렌더러: pose 이벤트(session이 보내는 모양)를 스토어에 넣으면 관절 순번 → 오브젝트로 풀린다
+    handlePlayEvent({ type: 'pose', runId: runId(), tNanos: 100 * TICK, ...pose })
+    const state = usePlayStore.getState()
+    expect(state.run!.joints).toEqual(['lift'])
+    expect(simJointValue(state, 'lift')).toBe(q)
+    expect(simJointValue(state, 'payload')).toBeNull()
+    // 씬 뷰 표시 덮어쓰기: 짐이 관절 값만큼 위에 그려진다(F 포커스·IMU·무게중심 표시가 같은 행렬을 쓴다)
+    const override = displayRootOverride(state, objects)!
+    expect([...override.joints!.keys()]).toEqual(['lift'])
+    const before = new Vector3().setFromMatrixPosition(worldMatrix(objects, 'payload'))
+    const after = new Vector3().setFromMatrixPosition(worldMatrix(objects, 'payload', override))
+    expect(after.z - before.z).toBeCloseTo(q, 12)
+    expect(after.x - before.x).toBeCloseTo(0, 12)
+    // 끝나면 편집 자세로 돌아가고 마지막 관절 값은 잔상에 오브젝트 id로 남는다
+    handlePlayEvent(
+      event({
+        type: 'finished',
+        tNanos: 100 * TICK,
+        reason: 'stopped',
+        detail: '',
+        preselectTeleOp: ''
+      })
+    )
+    expect(simJointValue(usePlayStore.getState(), 'lift')).toBeNull()
+    expect(usePlayStore.getState().ghostPose?.joints).toEqual({ lift: q })
   })
 
   it('하드웨어가 있는 로봇이 없으면 세계도 없다', async () => {
