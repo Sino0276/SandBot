@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { WALL_INNER_HALF } from './field'
-import { TAU_DRIVE } from './motorModel'
-import { motorType, noLoadOutputRadPerSec, rotationSign, ticksPerOutputRev } from './motorTypes'
-import { testChassis, testMotorParams, testWheelPhysics } from './testkit'
+import { twistBetween } from './drivetrain'
+import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
+import { DcGearMotor } from './actuators'
+import { GRAVITY } from './physics'
+import { TEST_CHASSIS_MASS, testChassis, testMotorParams, testWheelPhysics } from './testkit'
+import { ROLLING_RESISTANCE } from './wheelData'
 import { PhysicsWorld } from './world'
 import {
   WORLD_SPEC_VERSION,
@@ -146,6 +149,21 @@ function latest(inputs: Record<string, DeviceValues>[]): Record<string, DeviceVa
 
 const num = (v: unknown): number => v as number
 
+// 데이터시트 기어모터(world.ts가 바퀴 모터에 쓰는 것과 같은 값)
+const DC = new DcGearMotor(testMotorParams(GOBILDA, GEARBOX))
+// 바퀴 하나의 정적 하중(섀시 무게중심이 가운데: 무게의 1/4)
+const WHEEL_LOAD = (TEST_CHASSIS_MASS * GRAVITY) / 4
+
+// 듀티 d·전압 V로 직진하는 정상 상태의 출력축 각속도(rad/s). 바퀴 좌표의 힘이 0인 점이다: 모터가 밀면 효율 상자가 차서
+// 출력 토크가 η·G·Kt·(dV − Ke·G·ω)/R이고, 모터축 쿨롱 G·τ_c·점성 G²·b·ω·굴림 저항 c_rr·N·r이 그만큼을 먹는다(actuators.ts
+// DcGearMotor, contact.ts). 데이터시트 무부하 속도는 d = 1·12 V·굴림 저항 0에서 정확히 ω_free다(점성을 무부하 전류에 맞춤).
+function steadyRate(duty: number, volts: number, rolling = ROLLING_RESISTANCE): number {
+  const g = DC.gearbox
+  const k = (DC.efficiency * g * DC.torqueConstant) / DC.resistance
+  const drive = k * duty * volts - g * DC.coulomb - rolling * WHEEL_LOAD * RADIUS
+  return drive / (k * DC.backEmfConstant * g + g * g * DC.viscous)
+}
+
 describe('PhysicsWorld 메카넘', () => {
   it('첫 호출은 적분하지 않고 모든 입력, 그 뒤는 바뀐 키만', () => {
     const spec = mecanumSpec()
@@ -153,20 +171,26 @@ describe('PhysicsWorld 메카넘', () => {
     const first = world.step(0, driveOutputs(spec, mecanum(1, 0, 0)))
     expect(Object.keys(first)).toEqual(['Control Hub', 'fl', 'fr', 'bl', 'br', 'imu'])
     expect(first['Control Hub']).toEqual({ voltage: VOLTS })
-    expect(first.fl).toEqual({ position: 0, velocity: 0 })
+    // 모든 모터가 단자 전류를 보낸다(3c: 바퀴 모터도 동역학 기어모터)
+    expect(first.fl).toEqual({ position: 0, velocity: 0, current: 0 })
     expect(first.imu).toEqual({ yaw: 0, pitch: 0, roll: 0, yawRate: 0, pitchRate: 0, rollRate: 0 })
     expect(world.pose()).toEqual({ x: 0, y: 0, yaw: 0, blocked: false })
     // 출력이 바뀌지 않고 아무것도 움직이지 않으면 보낼 것이 없다
     const still = new PhysicsWorld(spec)
     still.step(0, driveOutputs(spec, {}))
     expect(still.step(TICK, driveOutputs(spec, {}))).toEqual({})
-    // 앞 틱의 출력(앞으로)으로 적분했으므로 엔코더·속도만 바뀐다(허브·IMU 값은 그대로). 첫 5 ms는 0.3틱쯤이라 정수
-    // 엔코더가 아직 그대로인 모터가 있으므로 한 틱 더 간다.
+    // 앞 틱의 출력(앞으로)으로 적분했으므로 모터 값만 바뀐다(허브·IMU 값은 그대로)
     world.step(TICK, driveOutputs(spec, mecanum(1, 0, 0)))
     const next = world.step(2 * TICK, driveOutputs(spec, {}))
-    expect(Object.keys(next)).toEqual(['fl', 'fr', 'bl', 'br'])
-    for (const values of Object.values(next))
-      for (const value of Object.values(values)) expect(Number.isInteger(value)).toBe(true)
+    // 대칭 로봇이라 IMU는 반올림 잡음(요 속도 1e-12 rad/s 아래)만 바뀔 수 있다
+    expect(Object.keys(next).filter((key) => key !== 'imu')).toEqual(['fl', 'fr', 'bl', 'br'])
+    if (next.imu) expect(Math.abs(num(next.imu.yawRate ?? 0))).toBeLessThan(1e-12)
+    for (const [device, values] of Object.entries(next)) {
+      if (device === 'imu') continue
+      for (const key of ['position', 'velocity'] as const)
+        if (values[key] !== undefined) expect(Number.isInteger(values[key])).toBe(true)
+      expect(num(values.current)).toBeGreaterThan(0)
+    }
   })
 
   it('앞으로: 표준 메카넘 순방향, 엔코더는 허브 부호(팀 코드에서 앞으로 갈 때 는다)', () => {
@@ -174,6 +198,7 @@ describe('PhysicsWorld 메카넘', () => {
     const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.6, 0, 0)))
     const pose = r.world.pose()
     expect(pose.x).toBeGreaterThan(0.5)
+    // 대칭 로봇: 옆·요는 반올림 잡음뿐
     expect(Math.abs(pose.y)).toBeLessThan(1e-9)
     expect(Math.abs(pose.yaw)).toBeLessThan(1e-9)
     const state = latest(r.inputs)
@@ -182,12 +207,12 @@ describe('PhysicsWorld 메카넘', () => {
     expect(num(state.br.position)).toBeLessThan(0)
     expect(num(state.fl.position)).toBeGreaterThan(0)
     expect(num(state.bl.position)).toBeGreaterThan(0)
-    // 바퀴 굴림 = 로봇 이동(미끄럼 없음): 틱 = 이동 ÷ 둘레 × 출력축 1회전 틱
+    // 바퀴 굴림 ≥ 로봇 이동: power 0.6 출발은 바퀴 힘(≈ 0.6·τ_s/r)이 견인 한계 μ·N보다 커서 처음에 헛돌고, 붙은 뒤에는
+    // 미끄럼이 0이다(정확한 쿨롱 마찰). 헛돈 거리는 몇 cm 안이다.
     const perRev = ticksPerOutputRev(motorType(GOBILDA), GEARBOX)
-    expect(Math.abs(num(state.fr.position))).toBeCloseTo(
-      (pose.x / (2 * Math.PI * RADIUS)) * perRev,
-      -1
-    )
+    const rolled = (Math.abs(num(state.fr.position)) / perRev) * 2 * Math.PI * RADIUS
+    expect(rolled).toBeGreaterThanOrEqual(pose.x)
+    expect(rolled - pose.x).toBeLessThan(0.05)
   })
 
   it('왼쪽 옆 이동과 회전(IMU 요·요 속도, 반시계 +)', () => {
@@ -211,44 +236,44 @@ describe('PhysicsWorld 메카넘', () => {
     expect(Math.abs(turn.world.pose().x)).toBeLessThan(1e-9)
   })
 
-  it('goBILDA 5203 312 RPM: 최고 속도 = 무부하 × 전압/12 × 반지름, 바퀴 한 바퀴 = 537.6 틱', () => {
-    // 1.8 m/s 가까이 내므로 뒤쪽 벽 가까이에서 출발한다
+  it('goBILDA 5203 312 RPM 정상 속도 = 모터 식(데이터시트 무부하에서 굴림 저항만큼 뺌, 0.5 %), 바퀴 한 바퀴 = 537.6 틱', () => {
+    // 1.7 m/s 가까이 내므로 뒤쪽 벽 가까이에서 출발한다
     const spec = mecanumSpec({
       batteryVoltage: 12.5,
       robot: { ...mecanumSpec().robot, start: { x: -1.5, y: 0, yaw: 0 } }
     })
-    const r = run(spec, 0.9, () => driveOutputs(spec, mecanum(1, 0, 0)))
+    const r = run(spec, 1.4, () => driveOutputs(spec, mecanum(1, 0, 0)))
+    const omega = steadyRate(1, 12.5)
+    // 굴림 저항 몫: 바퀴당 c_rr·N·r ≈ 0.12 N·m가 정지 토크 2.38 N·m의 약 5 %라 무부하보다 그만큼 느리다
+    const free = testMotorParams(GOBILDA, GEARBOX).freeSpeed * (12.5 / 12)
+    expect(omega / free).toBeGreaterThan(0.93)
+    expect(omega / free).toBeLessThan(0.97)
     const state = latest(r.inputs)
-    const type = motorType(GOBILDA)
-    const omega = noLoadOutputRadPerSec(type, GEARBOX) * (12.5 / 12)
-    const perRad = ticksPerOutputRev(type, GEARBOX) / (2 * Math.PI)
+    const perRad = ticksPerOutputRev(motorType(GOBILDA), GEARBOX) / (2 * Math.PI)
     // 허브 속도는 50 ms 창의 틱 수 × 20이라 정상 상태에서 진짜 속도와 한 단계(20 틱/s) 안이다
     expect(Math.abs(Math.abs(num(state.fr.velocity)) - omega * perRad)).toBeLessThan(20)
     const x0 = r.world.pose().x
-    const stateAtX0 = latest(r.inputs)
     const more = run(spec, 0.1, () => driveOutputs(spec, mecanum(1, 0, 0)), r)
-    expect((more.world.pose().x - x0) / 0.1).toBeCloseTo(omega * RADIUS, 3)
-    // 한 바퀴 굴리기: 위치 차 537.6틱 ↔ 이동 2πr
-    const before = num(stateAtX0.fr.position)
+    const speed = (more.world.pose().x - x0) / 0.1
+    expect(Math.abs(speed / (omega * RADIUS) - 1)).toBeLessThan(0.005)
+    // 한 바퀴 굴리기: 위치 차 537.6틱 ↔ 이동 2πr(정상 상태 미끄럼 0, 정수 틱 반올림 안)
+    const before = num(state.fr.position)
     const after = num(latest(more.inputs).fr.position)
     const travelled = more.world.pose().x - x0
     expect((Math.abs(after - before) / travelled) * 2 * Math.PI * RADIUS).toBeCloseTo(537.6, -1)
   })
 
-  it('전압에 비례한다', () => {
-    const fast = mecanumSpec({ batteryVoltage: 13 })
-    const slow = mecanumSpec({ batteryVoltage: 10 })
-    const a = run(fast, 2, () => driveOutputs(fast, mecanum(0.3, 0, 0)))
-    const b = run(slow, 2, () => driveOutputs(slow, mecanum(0.3, 0, 0)))
-    // 허브 속도는 20 틱/s 단위라 각각 정상 상태 속도와 한 단계 안이다
-    const type = motorType(GOBILDA)
-    const perRad = ticksPerOutputRev(type, GEARBOX) / (2 * Math.PI)
-    const full = noLoadOutputRadPerSec(type, GEARBOX) * perRad * 0.3
-    const va = Math.abs(num(latest(a.inputs).fr.velocity))
-    const vb = Math.abs(num(latest(b.inputs).fr.velocity))
-    expect(Math.abs(va - (full * 13) / 12)).toBeLessThan(20)
-    expect(Math.abs(vb - (full * 10) / 12)).toBeLessThan(20)
-    expect(latest(a.inputs)['Control Hub'].voltage).toBe(13)
+  it('전압·듀티: 정상 속도가 모터 식과 같다(13 V·10 V, power 0.3, 허브 속도 한 단계 안)', () => {
+    const perRad = ticksPerOutputRev(motorType(GOBILDA), GEARBOX) / (2 * Math.PI)
+    for (const volts of [13, 10]) {
+      const spec = mecanumSpec({ batteryVoltage: volts })
+      const r = run(spec, 2, () => driveOutputs(spec, mecanum(0.3, 0, 0)))
+      const v = Math.abs(num(latest(r.inputs).fr.velocity))
+      expect(Math.abs(v - steadyRate(0.3, volts) * perRad)).toBeLessThan(20)
+      expect(latest(r.inputs)['Control Hub'].voltage).toBe(volts)
+    }
+    // 듀티가 작으면 일정한 손실(쿨롱·굴림 저항)의 몫이 커서 전압에 정확히 비례하지는 않는다
+    expect(steadyRate(0.3, 13) / steadyRate(0.3, 10)).toBeGreaterThan(1.3)
   })
 
   it('실행 중 setDirection을 반대로 하면 뒤로 가고 엔코더는 허브 부호대로 센다', () => {
@@ -268,11 +293,12 @@ describe('PhysicsWorld 메카넘', () => {
     expect(num(state.fl.position)).toBeLessThan(0)
   })
 
-  it('RUN_TO_POSITION: 리셋 오프셋 기준 목표까지 넘침 없이 서고 사이드카 허용 오차 안에 든다', () => {
+  it('RUN_TO_POSITION(허브 위치 P·속도 PIDF): 리셋 오프셋 기준 1000틱에 ±10틱 안으로 서고 유계, 몸체 이동은 엔코더 거리 ± 1 cm(T11)', () => {
     const spec = mecanumSpec()
-    // 먼저 조금 달린 뒤(원시 틱이 0이 아님) 그 자리에서 리셋했다고 보고 1000틱 앞으로
-    const warm = run(spec, 0.3, () => driveOutputs(spec, mecanum(0.4, 0, 0)))
+    // 먼저 조금 달린 뒤 멈춰 서고(원시 틱이 0이 아님) 그 자리에서 리셋했다고 보고 1000틱 앞으로
+    const warm = run(spec, 1, (k) => driveOutputs(spec, k < 60 ? mecanum(0.4, 0, 0) : {}))
     const offsets = latest(warm.inputs)
+    const x0 = warm.world.pose().x
     const target = 1000
     const rtp = (): Record<string, DeviceValues> => {
       const out: Record<string, DeviceValues> = {}
@@ -296,13 +322,16 @@ describe('PhysicsWorld 메카넘', () => {
       if (step.fr?.position === undefined) return
       const counted = -(num(step.fr.position) - num(offsets.fr.position))
       seen.push(counted)
-      if (settledAt < 0 && Math.abs(counted - target) <= 5) settledAt = i
+      if (settledAt < 0 && Math.abs(counted - target) <= 10) settledAt = i
     })
-    expect(Math.max(...seen)).toBeLessThanOrEqual(target)
+    // 허브 기본 PIDF는 이 로봇(13.6 kg, 19.2:1)에서 조금 넘칠 수 있다(실제 펌웨어도 같음, 3b 리프트 시험과 같은 기준)
+    expect(Math.max(...seen)).toBeLessThan(target + 60)
     expect(settledAt).toBeGreaterThan(0)
-    // 5 ms 틱이므로 4초 안
     expect(settledAt * 5).toBeLessThan(4000)
-    expect(Math.abs(seen[seen.length - 1] - target)).toBeLessThanOrEqual(1)
+    expect(Math.abs(seen[seen.length - 1] - target)).toBeLessThanOrEqual(10)
+    const encoderTravel =
+      (target / ticksPerOutputRev(motorType(GOBILDA), GEARBOX)) * 2 * Math.PI * RADIUS
+    expect(Math.abs(r.world.pose().x - x0 - encoderTravel)).toBeLessThan(0.01)
   })
 })
 
@@ -356,7 +385,8 @@ describe('PhysicsWorld 오도메트리', () => {
     const spec = pinpointSpec()
     const spin = (xOff: number, yOff: number): { maxDrift: number; heading: number } => {
       const extra = { pinpoint: pinpointOut(xOff, yOff) }
-      const r = run(spec, 6, () => driveOutputs(spec, mecanum(0, 0, -0.5), extra))
+      // 제자리 회전은 롤러가 √2·a·ω로 미끄러져 롤러 저항을 받는다(동역학): 두 바퀴 넘게 돌도록 power 0.7
+      const r = run(spec, 6, () => driveOutputs(spec, mecanum(0, 0, -0.7), extra))
       let maxDrift = 0
       let state: Record<string, DeviceValues> = {}
       for (const step of r.inputs) {
@@ -547,7 +577,8 @@ describe('PhysicsWorld 오도메트리', () => {
       r = run(spec, 3, rtp(resets, r), r)
       expect(Math.abs(num(latest(r.inputs).fr.position))).toBeLessThanOrEqual(1)
       const pose = r.world.pose()
-      expect(pose.x - x).toBeCloseTo(travel, 3)
+      // 바퀴가 목표에 먼저 서고 몸체가 조금 더 미끄러진다(정확한 쿨롱 마찰, 감속이 견인 한계를 넘음): 엔코더 거리 ± 2 cm
+      expect(Math.abs(pose.x - x - travel)).toBeLessThan(0.02)
       expect(Math.abs(pose.y)).toBeLessThan(1e-3)
       expect(Math.abs(pose.yaw)).toBeLessThan(5e-3)
       x = pose.x
@@ -580,33 +611,18 @@ describe('PhysicsWorld 허브 엔코더 속도', () => {
     })
   }
 
-  it('모터: 지난 50 ms 원시 틱 변화 × 20이라 늘 20의 배수이고, 창 가운데(약 25 ms 전)의 속도다', () => {
+  it('모터: 지난 50 ms 원시 틱 변화 × 20이라 늘 20의 배수이고, 정상 상태에서 진짜 속도와 한 단계 안이다', () => {
     const spec = mecanumSpec()
-    const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.6, 0, 0)))
+    const r = run(spec, 1.5, () => driveOutputs(spec, mecanum(0.6, 0, 0)))
     const fl = perTick(r, 'fl')
     expectHubRule(fl)
     for (const device of ['fr', 'bl', 'br']) expectHubRule(perTick(r, device))
-    // 정지에서 출발한 1차 응답(power는 t = 0부터): 원시 틱 = r∞·(t − τ(1 − e^(−t/τ))), 속도 = r∞·(1 − e^(−t/τ))
-    const type = motorType(GOBILDA)
-    const rInf =
-      (0.6 * noLoadOutputRadPerSec(type, GEARBOX) * ticksPerOutputRev(type, GEARBOX)) /
-      (2 * Math.PI)
-    const raw = (t: number): number => rInf * (t - TAU_DRIVE * -Math.expm1(-t / TAU_DRIVE))
-    const rate = (t: number): number => rInf * -Math.expm1(-t / TAU_DRIVE)
-    // 틱 k(시각 5k ms)의 값은 그 창의 평균 속도와 20 틱/s 안에서 같고, 가속하는 동안은 25 ms 전의 속도에 가깝다
-    for (const k of [10, 20, 40]) {
-      const t = k * 0.005
-      const mean = (raw(t) - raw(t - 0.05)) / 0.05
-      expect(Math.abs(fl[k].velocity - mean), `tick ${k}`).toBeLessThan(20)
-      expect(Math.abs(fl[k].velocity - rate(t - 0.025))).toBeLessThan(
-        Math.abs(fl[k].velocity - rate(t))
-      )
-    }
-    // 처음 50 ms: 시작 전에는 멈춰 있었으므로 시작 position부터 센다(아직 작은 값)
+    // 처음 50 ms: 시작 전에는 멈춰 있었으므로 시작 position부터 센다
     expect(fl[5].velocity).toBe(fl[5].position * 20)
-    expect(fl[5].velocity).toBeLessThan(rate(0.025))
-    // 정상 상태: 진짜 속도(정수가 아니다)와 한 단계(20 틱/s) 안
-    expect(Math.abs(fl[fl.length - 1].velocity - rInf)).toBeLessThan(20)
+    // 가속하는 동안 창 값은 늘고, 정상 상태는 모터 식의 속도(정수가 아니다)와 한 단계(20 틱/s) 안이다
+    expect(fl[20].velocity).toBeGreaterThan(fl[10].velocity)
+    const perRad = ticksPerOutputRev(motorType(GOBILDA), GEARBOX) / (2 * Math.PI)
+    expect(Math.abs(fl[fl.length - 1].velocity - steadyRate(0.6, VOLTS) * perRad)).toBeLessThan(20)
   })
 
   it('데드휠(따로 꽂은 것·모터 포트를 함께 쓰는 것): 같은 규칙, int16을 넘어도 감지 않는다(감기는 가짜 SDK의 short)', () => {
@@ -633,7 +649,7 @@ describe('PhysicsWorld 허브 엔코더 속도', () => {
     // 앞으로 1초, 그다음 왼쪽으로 1초(회전 없음: 포드 이동 = 로봇 이동)
     const world = new PhysicsWorld(spec)
     const inputs: Record<string, DeviceValues>[] = []
-    const poses: { x: number; y: number }[] = []
+    const poses: { x: number; y: number; yaw: number }[] = []
     for (let k = 0; k < 400; k++) {
       inputs.push(
         world.step(k * TICK, driveOutputs(spec, k < 200 ? mecanum(0.6, 0, 0) : mecanum(0, -0.6, 0)))
@@ -645,21 +661,32 @@ describe('PhysicsWorld 허브 엔코더 속도', () => {
     const fr = perTick(r, 'fr')
     expectHubRule(par)
     expectHubRule(fr)
-    // 값은 그 창(지난 50 ms)의 평균 속도와 한 단계(20 틱/s) 안이다
-    const mean = (k: number, axis: 'x' | 'y', sign: number): number =>
-      (sign * (poses[k][axis] - poses[k - WINDOW_TICKS][axis]) * ticksPerMeter) / 0.05
+    // 값은 그 창(지난 50 ms)의 포드 접점 평균 속도와 한 단계(20 틱/s) 안이다. 동역학이라 앞에서 옆으로 바꿀 때 하중이 앞으로
+    // 쏠린 동안 조금 돈다(앞뒤 바퀴의 견인·롤러 감쇠가 달라서): 포드 이동은 로봇 좌표 변위(회전 포함)로 센다
+    const mean = (
+      k: number,
+      pod: { x: number; y: number },
+      measures: 'forward' | 'strafe',
+      sign: number
+    ): number => {
+      const t = twistBetween(poses[k - WINDOW_TICKS], poses[k])
+      const travel = measures === 'forward' ? t.dx - t.dTheta * pod.y : t.dy + t.dTheta * pod.x
+      return (sign * travel * ticksPerMeter) / 0.05
+    }
+    const parPod = { x: 0, y: 0.1 }
+    const frPod = { x: -0.1, y: 0 }
     for (const k of [20, 100, 199]) {
-      expect(Math.abs(par[k].velocity - mean(k, 'x', 1)), `par ${k}`).toBeLessThan(20)
+      expect(Math.abs(par[k].velocity - mean(k, parPod, 'forward', 1)), `par ${k}`).toBeLessThan(20)
       expect(fr[k].velocity).toBe(0)
     }
     for (const k of [220, 300, 399])
-      expect(Math.abs(fr[k].velocity - mean(k, 'y', -1)), `fr ${k}`).toBeLessThan(20)
+      expect(Math.abs(fr[k].velocity - mean(k, frPod, 'strafe', -1)), `fr ${k}`).toBeLessThan(20)
     // 앞으로 갈 때 par는 int16(32767)을 훨씬 넘고, 옆으로 갈 때 fr 포트의 strafe 포드(reversed)가 −로 넘는다
     expect(par[199].velocity).toBeGreaterThan(60_000)
     expect(fr[399].velocity).toBeLessThan(-40_000)
   })
 
-  it('막힌 동안 데드휠 속도는 0이고 모터 엔코더 속도는 돈다', () => {
+  it('막힌 동안 데드휠 속도는 0이고, 전출력이면 바퀴가 헛돌아 모터 엔코더 속도가 돈다', () => {
     const start = { x: WALL_INNER_HALF - HALF, y: 0, yaw: 0 }
     const spec = mecanumSpec({
       robot: { ...mecanumSpec().robot, start },
@@ -673,7 +700,8 @@ describe('PhysicsWorld 허브 엔코더 속도', () => {
         }
       ]
     })
-    const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.5, 0, 0)))
+    // power 1: 바퀴 힘(≈ τ_s/r = 46 N)이 견인 한계 μ·N(= 20 N)보다 커서 헛돈다(power 0.5면 모터가 막힌다: T6b·T17)
+    const r = run(spec, 1, () => driveOutputs(spec, mecanum(1, 0, 0)))
     const state = latest(r.inputs)
     expect(state.par.velocity).toBe(0)
     expect(Math.abs(num(state.fr.velocity))).toBeGreaterThan(1000)
@@ -711,7 +739,8 @@ describe('PhysicsWorld 벽', () => {
     const start = { x: LIMIT - HALF + 0.05, y: 0, yaw: 0 }
     const spec = mecanumSpec({ robot: { ...mecanumSpec().robot, start } })
     const r = run(spec, 0.5, () => driveOutputs(spec, mecanum(0.5, 0, 0)))
-    expect(r.world.pose().x).toBeCloseTo(start.x, 12)
+    // 벽에 닿은 채 시작했다: 밀어내지도 더 들어가지도 않는다(정칙화 잔차만, spec-3c §1.5 침투 상한 1e-6 m)
+    expect(Math.abs(r.world.pose().x - start.x)).toBeLessThan(1e-9)
     expect(r.world.pose().blocked).toBe(true)
     // 뒤로는 자유롭다
     const back = run(spec, 0.5, () => driveOutputs(spec, mecanum(-0.5, 0, 0)), r)
@@ -723,20 +752,22 @@ describe('PhysicsWorld 벽', () => {
     const start = { x: LIMIT - HALF - 0.01, y: 0, yaw: 0 }
     const spec = mecanumSpec({ robot: { ...mecanumSpec().robot, start } })
     // 앞(+x, 벽)과 왼쪽(+y)으로 함께
-    const r = run(spec, 0.8, () => driveOutputs(spec, mecanum(0.4, -0.4, 0)))
+    // 옆/앞 힘 비 1.5가 벽 마찰 μ_w = 0.4보다 크므로 미끄러진다(벽 마찰·롤러 저항만큼 느리다, 경계는 worldDrive.test.ts T6)
+    const r = run(spec, 0.8, () => driveOutputs(spec, mecanum(0.4, -0.6, 0)))
     const pose = r.world.pose()
     expect(pose.x + HALF).toBeCloseTo(LIMIT, 9)
-    expect(pose.y).toBeGreaterThan(0.2)
+    expect(pose.y).toBeGreaterThan(0.05)
     expect(pose.blocked).toBe(true)
     // 반대 벽(−y)도
     const startY = { x: 0, y: -(LIMIT - HALF), yaw: 0 }
     const specY = mecanumSpec({ robot: { ...mecanumSpec().robot, start: startY } })
-    const s = run(specY, 0.5, () => driveOutputs(specY, mecanum(0.3, 0.4, 0)))
+    // 앞 0.5·오른쪽 0.3: 옆으로 미는 바퀴 둘은 앞으로 구르며 굴림 저항·역기전력으로 버티므로 앞 성분이 커야 미끄러진다
+    const s = run(specY, 0.5, () => driveOutputs(specY, mecanum(0.7, 0.25, 0)))
     expect(s.world.pose().y - HALF).toBeCloseTo(-LIMIT, 9)
     expect(s.world.pose().x).toBeGreaterThan(0.1)
   })
 
-  it('막힌 동안 데드휠은 멈추고 모터 엔코더는 계속 돈다', () => {
+  it('막힌 동안 데드휠은 멈추고, 바퀴가 헛돌면(전출력) 모터 엔코더는 계속 돈다', () => {
     const start = { x: LIMIT - HALF, y: 0, yaw: 0 }
     const spec = mecanumSpec({
       robot: { ...mecanumSpec().robot, start },
@@ -750,11 +781,13 @@ describe('PhysicsWorld 벽', () => {
         }
       ]
     })
-    const r = run(spec, 1, () => driveOutputs(spec, mecanum(0.5, 0, 0)))
+    const r = run(spec, 1, () => driveOutputs(spec, mecanum(1, 0, 0)))
     const state = latest(r.inputs)
     expect(state.par.position).toBe(0)
     expect(Math.abs(num(state.fr.position))).toBeGreaterThan(500)
-    expect(r.world.pose().x).toBeCloseTo(start.x, 12)
+    // 벽에 닿은 채 시작했다: 밀어내지도 더 들어가지도 않는다(정칙화 잔차만, spec-3c §1.5 침투 상한 1e-6 m)
+    expect(Math.abs(r.world.pose().x - start.x)).toBeLessThan(1e-9)
+    expect(r.world.pose().blocked).toBe(true)
   })
 })
 

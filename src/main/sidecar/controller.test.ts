@@ -858,7 +858,7 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(finished(request.runId)).toMatchObject({ reason: 'stopped' })
   })
 
-  it('요청의 세계 설명으로 실행마다 운동학 시뮬레이터를 만든다(없으면 빈 세계)', async () => {
+  it('요청의 세계 설명으로 실행마다 시뮬레이터를 만든다(없으면 빈 세계)', async () => {
     controller = make({ world: simulationWorld })
     const world: WorldSpec = {
       version: WORLD_SPEC_VERSION,
@@ -899,13 +899,17 @@ describe('PlayController + 가짜 사이드카', () => {
       blocked: false
     })
     await waitFor(() => of('devices', request.runId).length > 0)
+    // 모든 모터가 동역학 기어모터라 단자 전류도 보낸다(3c)
     expect(of('devices', request.runId)[0].inputs).toEqual({
       'Control Hub': { voltage: 11.5 },
-      motor: { position: 0, velocity: 0 }
+      motor: { position: 0, velocity: 0, current: 0 }
     })
     const firstReply = recorded[0].sent.find((message) => message.type === 'tickReply')
     expect(firstReply).toMatchObject({
-      inputs: { 'Control Hub': { voltage: 11.5 }, motor: { position: 0, velocity: 0 } }
+      inputs: {
+        'Control Hub': { voltage: 11.5 },
+        motor: { position: 0, velocity: 0, current: 0 }
+      }
     })
     controller.command({ type: 'stop' }, owner)
     await waitFor(() => finished(request.runId) !== undefined)

@@ -26,16 +26,27 @@ export function mecanumRollerFriction(apparent: number): number {
   return Math.SQRT2 * apparent
 }
 
+// 롤러·굴림 저항의 맞춤(spec-3c §1.3 맞춤 절차, 구현한 시뮬레이터로): Pedro Pathing 2.1.2 기본값을 낸 것으로 보는 로봇(10.65 kg,
+// goBILDA 5203 13.7:1, GripForce 104 mm, 18 in 정사각, 무게중심 높이 0.1 m, μ 기본)에서 Pedro 튜너 순서로 쟀다(driveTestkit.ts
+// pedroVelocity·pedroDeceleration: 속도는 power 1로 2 s 달린 끝 속도, 감속은 0.762 m/s를 넘으면 power 0 FLOAT로 끊은 뒤
+// 0.0254 m/s까지의 평균). 목표는 forwardZeroPowerAcceleration −34.627 in/s²(0.880 m/s²), 옆/앞 속도 비 65.430/81.341 = 0.804,
+// lateralZeroPowerAcceleration −78.156 in/s²(1.985 m/s²)다(data §3). 앞 감속은 굴림 저항만 정하므로 그것을 먼저 맞추고, 롤러
+// 저항 둘로 나머지 둘을 맞췄다. 점성만으로는 비 0.804에서 옆 감속이 1.30 m/s²(목표보다 35 % 작음)라 쿨롱 상자를 더했다.
+// 결과: 앞 감속 0.879 m/s², 비 0.8043, 옆 감속 1.978 m/s²(셋 다 0.5 % 안). 이 맞춤은 Pedro의 측정 로봇 하나(값을 낸 로봇의
+// 질량·감속비·바퀴는 알려지지 않아 위 로봇으로 가정했다)에 맞춘 것이라 로봇마다 다르다(가정).
+
 // 롤러 자유 방향(메카넘 ẑ × 롤러 축, 옴니 축 방향)의 점성 저항: 힘 = −ROLLER_VISCOUS · N · 미끄럼 속도(s/m, 하중 1 N당).
-// 가정(시작값): Pedro Pathing 2.1.2 기본값(옆/앞 속도 비 0.804, 옆 FLOAT 감속 1.985 m/s²)을 13.7:1·104 mm·10.65 kg 로봇으로
-// 맞춘 값(비평 §2.5: 0.068–0.124). 쿨롱 하나로는 두 목표를 함께 맞추지 못한다. 시뮬레이터 구현 뒤 다시 맞춘다(spec-3c §1.3).
-export const ROLLER_VISCOUS = 0.08
+// 맞춤 값(위). 비평 §2.5의 범위 0.068–0.124보다 작은 것은 쿨롱 몫(ROLLER_COULOMB)을 함께 두었기 때문이다(비평 §3.3의 쿨롱 0.06 +
+// 점성 0.05와 같은 꼴).
+export const ROLLER_VISCOUS = 0.038
+
+// 롤러 자유 방향의 쿨롱 저항 계수(상자 ±c_r·N, 롤러 베어링·고무 변형). 맞춤 값(위).
+export const ROLLER_COULOMB = 0.076
 
 // 굴림 저항 계수(바퀴 좌표의 쿨롱 상자 c_rr·N·r/G). 폼 타일·바퀴 고무 변형과 데드휠 포드 끌림이 섞인 값이다.
-// 가정(시작값): Pedro 2.1.2 forwardZeroPowerAcceleration −34.63 in/s²(0.880 m/s², FLOAT)에 3b 모터 역구동 손실과 회전
-// 관성을 넣어 맞춘 값(비평 §2.4: 0.068–0.073, 둘째 비평 §2.1: 0.08). Matsinos 자유 굴림 0.084(https://arxiv.org/pdf/1211.2323)와
-// 같은 크기다. 시뮬레이터 구현 뒤 다시 맞춘다.
-export const ROLLING_RESISTANCE = 0.07
+// 맞춤 값(위, Pedro FLOAT 앞 감속 0.880 m/s²에 3b 모터 역구동 손실·기어 효율·회전 관성을 넣은 이 시뮬레이터로 맞춤). 비평 §2.4의
+// 0.068–0.073보다 조금 크고 둘째 비평 §2.1의 0.08, Matsinos 자유 굴림 0.084(https://arxiv.org/pdf/1211.2323)와 같은 크기다.
+export const ROLLING_RESISTANCE = 0.087
 
 // 로봇 ↔ 필드 벽 운동 마찰 계수. 가정: 벽은 알루미늄 틀 + 3 mm 폴리카보네이트(AndyMark am-0481), 알루미늄–알루미늄 운동
 // 0.4(Engineering Toolbox), 폴리카보네이트–강철 0.50–0.55의 가운데 쪽(data §7).

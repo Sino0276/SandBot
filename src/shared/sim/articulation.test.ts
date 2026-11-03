@@ -1050,6 +1050,28 @@ describe('Articulation 3c 확장', () => {
     expect(art.q()[0]).toBeCloseTo(Math.atan(a / GRAVITY), 4)
   })
 
+  it('T8 에너지: 접촉·마찰이 없으면 섀시 + 진자 팔의 에너지가 O(h) 안에서 일정하다', () => {
+    const drift = (h: number): number => {
+      const pendulum = rod(0.8, 0.4, {
+        origin: { position: { x: 0.1, y: 0, z: 0.5 }, rotation: ZERO }
+      })
+      const art = floating([pendulum], { x: 0, y: 0, yaw: 0 })
+      art.v[0] = 1.2
+      art.v[2] = 0.8
+      art.z[3] = 0.6
+      const start = energy(art)
+      let worst = 0
+      for (let k = 0; k < Math.round(2 / h); k++) {
+        art.step(h, passive(art))
+        worst = Math.max(worst, Math.abs(energy(art) - start) / start)
+      }
+      return worst
+    }
+    const coarse = drift(0.001)
+    expect(coarse).toBeLessThan(5e-3)
+    expect(coarse / drift(0.0005)).toBeGreaterThan(1.6)
+  })
+
   it('행 점성 감쇠: 힘 −c·v를 암시로 푼다(v⁺ = v / (1 + h·c/m))', () => {
     const art = floating([], { x: 0, y: 0, yaw: 0 }, { body: CENTERED })
     art.v[1] = 1
