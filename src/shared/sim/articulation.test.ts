@@ -891,3 +891,200 @@ describe('Articulation 적분', () => {
     expect(run()).toBe(run())
   })
 })
+
+// ---- 3c: 부유 기저·자유 좌표·밖에서 주는 행 ----
+
+const CHASSIS = {
+  mass: 12,
+  centerOfMass: { x: 0.03, y: -0.02, z: 0.1 },
+  inertia: [0.3, 0.35, 0.4, 0, 0, 0] as SimInertia
+}
+
+function floating(
+  joints: SimJointSpec[] = [],
+  start = { x: 0.5, y: -0.25, yaw: 0.7 },
+  change: { free?: number[]; loadFilterTau?: number; body?: typeof CHASSIS } = {}
+): Articulation {
+  const { body = CHASSIS, ...rest } = change
+  return new Articulation(joints, { base: { body, start }, ...rest })
+}
+
+// 좌표마다 일정한 힘을 주는 구동
+const pushing =
+  (art: Articulation, force: Record<number, number>): DriveModel =>
+  () => {
+    const f = new Array<number>(art.coordinates.length).fill(0)
+    for (const [c, value] of Object.entries(force)) f[Number(c)] = value
+    return forces(art.coordinates.length, f)
+  }
+
+// 무게중심이 로봇 원점 바로 위인 섀시(힘이 요를 돌리지 않는다)
+const CENTERED = { ...CHASSIS, centerOfMass: { x: 0, y: 0, z: 0.1 } }
+
+describe('Articulation 3c 확장', () => {
+  it('자유 좌표를 더해도 관절 좌표의 연산은 3b와 같다(바이트)', () => {
+    const plain = new Articulation([rod(0.4, 0.3)])
+    const extended = new Articulation([rod(0.4, 0.3)], { free: [2e-4, 5e-4] })
+    plain.z[0] = 0.8
+    extended.z[0] = 0.8
+    for (let k = 0; k < 500; k++) {
+      plain.step(0.001, passive(plain))
+      extended.step(0.001, passive(extended))
+    }
+    expect(extended.coordinates.map((c) => c.kind)).toEqual(['joint', 'free', 'free'])
+    expect(extended.freeCoordinates).toEqual([1, 2])
+    expect(extended.z[0]).toBe(plain.z[0])
+    expect(extended.v[0]).toBe(plain.v[0])
+    expect(extended.z.slice(1)).toEqual([0, 0])
+  })
+
+  it('기저 질량 행렬은 평면 강체의 해석식(필드 축, 무게중심 d = R·c)', () => {
+    const start = { x: 0.5, y: -0.25, yaw: 0.7 }
+    const art = floating([], start)
+    expect(art.baseCoordinates).toEqual([0, 1, 2])
+    expect(art.basePose()).toEqual(start)
+    const m = art.massMatrix()
+    const c = Math.cos(start.yaw)
+    const s = Math.sin(start.yaw)
+    const dx = c * CHASSIS.centerOfMass.x - s * CHASSIS.centerOfMass.y
+    const dy = s * CHASSIS.centerOfMass.x + c * CHASSIS.centerOfMass.y
+    const mass = CHASSIS.mass
+    const expected = [
+      [mass, 0, -mass * dy],
+      [0, mass, mass * dx],
+      [-mass * dy, mass * dx, CHASSIS.inertia[2] + mass * (dx * dx + dy * dy)]
+    ]
+    for (let a = 0; a < 3; a++)
+      for (let b = 0; b < 3; b++) expect(m[a][b]).toBeCloseTo(expected[a][b], 12)
+  })
+
+  it('정지 렌치: F_z = m·g, M_x = m·g·c_y, M_y = −m·g·c_x(로봇 축, 자세와 관계없음)', () => {
+    const art = floating([], { x: 1, y: 0.4, yaw: 2.1 }, { loadFilterTau: 0.02 })
+    const w = art.baseWrench()
+    if (!w) throw new Error('wrench')
+    const weight = CHASSIS.mass * GRAVITY
+    expect(w.fz).toBeCloseTo(weight, 10)
+    expect(w.mx).toBeCloseTo(weight * CHASSIS.centerOfMass.y, 10)
+    expect(w.my).toBeCloseTo(-weight * CHASSIS.centerOfMass.x, 10)
+    expect(new Articulation([rod(1, 1)]).baseWrench()).toBeNull()
+  })
+
+  it('일정하게 가속하면 걸러진 가속이 F/m에 닿아 피치 모멘트에 m·a·h가 더해진다(하중 이동)', () => {
+    const art = floating([], { x: 0, y: 0, yaw: 0 }, { loadFilterTau: 0.02, body: CENTERED })
+    const force = 24
+    // 0.3 s = 15τ: 1차 지연의 남은 차이는 e^(−15) ≈ 3e-7 아래
+    for (let k = 0; k < 300; k++) art.step(0.001, pushing(art, { 0: force }))
+    const w = art.baseWrench()
+    if (!w) throw new Error('wrench')
+    const a = force / CENTERED.mass
+    expect(art.basePose()?.yaw).toBe(0)
+    expect(w.fz).toBeCloseTo(CENTERED.mass * GRAVITY, 9)
+    expect(w.my).toBeCloseTo(CENTERED.centerOfMass.z * CENTERED.mass * a, 5)
+    expect(w.mx).toBeCloseTo(0, 12)
+  })
+
+  it('팔을 휘둘러도 접촉이 없으면 계의 무게중심이 거의 그대로다(속도 암시 오일러의 O(h), T7)', () => {
+    // 속도 암시 오일러는 M(q_k)로 운동량을 갱신해서 선운동량 보존이 정확하지 않다: 하위 단계마다 h²·Ṁ·Δv, 전체로 O(h)다
+    // (변분 적분기가 아니다). 그래서 1e-6 m 대신 h를 반으로 하면 어긋남이 반이 되는지(1차 수렴)와 크기를 본다.
+    const armMass = 1.5
+    const arm = jointSpec({
+      origin: { position: { x: 0.1, y: 0, z: 0.3 }, rotation: ZERO },
+      axis: { x: 0, y: 0, z: 1 },
+      body: {
+        mass: armMass,
+        centerOfMass: { x: 0.2, y: 0, z: 0 },
+        inertia: [1e-4, 0.02, 0.02, 0, 0, 0]
+      }
+    })
+    const drift = (h: number, torque: number): { drift: number; momentum: number } => {
+      const art = floating([arm], { x: 0, y: 0, yaw: 0 })
+      const comXY = (): number[] => {
+        const pose = art.basePose() as { x: number; y: number; yaw: number }
+        const c = Math.cos(pose.yaw)
+        const s = Math.sin(pose.yaw)
+        const chassis = [
+          pose.x + c * CHASSIS.centerOfMass.x - s * CHASSIS.centerOfMass.y,
+          pose.y + s * CHASSIS.centerOfMass.x + c * CHASSIS.centerOfMass.y
+        ]
+        const p = bodyPoint(art.bodyPose(0), { x: 0.2, y: 0, z: 0 })
+        const total = CHASSIS.mass + armMass
+        return [0, 1].map((k) => (CHASSIS.mass * chassis[k] + armMass * p[k]) / total)
+      }
+      const before = comXY()
+      // 팔 관절 토크(내력): 0.5 s 밀고 0.5 s 당긴다
+      const steps = Math.round(1 / h)
+      for (let k = 0; k < steps; k++)
+        art.step(h, pushing(art, { 3: k < steps / 2 ? torque : -torque }))
+      const after = comXY()
+      // 선운동량 = (M·v)의 기저 x·y 성분
+      const p = art.massMatrix().map((row) => row.reduce((sum, x, c) => sum + x * art.v[c], 0))
+      return {
+        drift: Math.hypot(after[0] - before[0], after[1] - before[1]),
+        momentum: Math.hypot(p[0], p[1])
+      }
+    }
+    // 서보 팔 정도(최고 약 1.5 rad/s): 1 ms에서 무게중심 어긋남 1e-6 m 아래
+    expect(drift(0.001, 0.02).drift).toBeLessThan(1e-6)
+    // 세게 휘두르면(여러 바퀴) 어긋남이 h에 비례한다
+    const coarse = drift(0.001, 2)
+    const fine = drift(0.0005, 2)
+    expect(coarse.drift / fine.drift).toBeCloseTo(2, 1)
+    expect(coarse.momentum / fine.momentum).toBeCloseTo(2, 1)
+    expect(coarse.drift).toBeLessThan(2e-3)
+  })
+
+  it('기저가 일정하게 가속하면 매달린 자유 팔의 평형각은 atan(a/g)(T7b)', () => {
+    // 피벗 높이 0.5 m에 매달린 막대(축 로봇 Y), 점성으로 흔들림을 끈다. 요는 막아 x 가속만 본다(요 좌표의 큰 관성 대신 힘 0과
+    // 무게중심 위 섀시: 팔이 xz 평면에서만 움직여 요 토크가 없다)
+    const pendulum = rod(0.5, 0.3, {
+      origin: { position: { x: 0, y: 0, z: 0.5 }, rotation: ZERO },
+      friction: { coulomb: 0, viscous: 0.2 }
+    })
+    const art = floating([pendulum], { x: 0, y: 0, yaw: 0 }, { body: CENTERED })
+    const total = CENTERED.mass + 0.5
+    const a = 3
+    for (let k = 0; k < 4000; k++) art.step(0.001, pushing(art, { 0: total * a }))
+    // R_y(q)·(0, 0, −L/2) = (−L/2·sin q, 0, −L/2·cos q): +X로 가속하면 무게중심이 −X로 처지므로 q > 0
+    expect(art.basePose()?.yaw).toBe(0)
+    expect(art.v[0]).toBeCloseTo(a * 4, 1)
+    expect(art.q()[0]).toBeCloseTo(Math.atan(a / GRAVITY), 4)
+  })
+
+  it('행 점성 감쇠: 힘 −c·v를 암시로 푼다(v⁺ = v / (1 + h·c/m))', () => {
+    const art = floating([], { x: 0, y: 0, yaw: 0 }, { body: CENTERED })
+    art.v[1] = 1
+    const c = 30
+    const h = 0.001
+    let expected = 1
+    for (let k = 0; k < 50; k++) {
+      art.step(h, passive(art), { rows: [], damping: [{ j: [0, 1, 0], c }] })
+      expected /= 1 + (h * c) / (CENTERED.mass + 1e-9)
+    }
+    expect(art.v[1]).toBeCloseTo(expected, 12)
+    expect(art.v[0]).toBe(0)
+  })
+
+  it('밖에서 준 한쪽 행과 마찰 행(엇갈림 2회): 옆 힘이 μ·N 아래면 붙고, 넘으면 μ·N만큼 덜 가속한다', () => {
+    const push = 50
+    const mu = 0.4
+    const h = 0.001
+    const run = (side: number): number => {
+      const art = floating([], { x: 0, y: 0, yaw: 0 }, { body: CENTERED })
+      for (let k = 0; k < 200; k++)
+        art.step(h, pushing(art, { 0: push, 1: side }), {
+          rows: [
+            // +x 벽(안쪽 법선 −x, 간격 0)과 그 접선
+            { key: 'n', j: [-1, 0, 0], target: 0, lo: 0, hi: Infinity },
+            { key: 't', j: [0, 1, 0], target: 0, lo: 0, hi: 0, friction: { normal: 'n', mu } }
+          ],
+          damping: []
+        })
+      expect(art.v[0]).toBeCloseTo(0, 12)
+      expect(art.contactImpulse('n') / h).toBeCloseTo(push, 9)
+      return art.v[1]
+    }
+    expect(run(15)).toBeCloseTo(0, 12)
+    // 넘으면 하위 단계마다 2회차가 이번 법선으로 상자를 정하므로 정확한 쿨롱이다
+    expect(run(30)).toBeCloseTo(((30 - mu * push) / (CENTERED.mass + 1e-9)) * 200 * h, 9)
+  })
+})
