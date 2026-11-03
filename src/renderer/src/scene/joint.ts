@@ -35,6 +35,10 @@ export const MAX_JOINT_FORCE = 1e4
 export const MAX_JOINT_DAMPING = 1e4
 export const MAX_JOINT_STIFFNESS = 1e6
 
+// 서보 구동의 편집 자세 서보 위치(0..1) 기본값: SDK 기본 PWM 범위의 가운데(1500 µs). 서보 혼을 가운데에서 끼우는 것이 흔한
+// 조립 방법이지만 팀마다 다르므로 관절 카드에서 고친다.
+export const DEFAULT_SERVO_EDIT_POSITION = 0.5
+
 // 기본 스풀 지름(m): goBILDA 2단 Viper-Slide 키트의 Hub-Mount Winch Pulley 둘레 112 mm(= 지름 35.65 mm)
 // (https://www.gobilda.com/2-stage-viper-slide-kit/ "each rotation of the pulley will cause the slide kit to move
 // that amount", spec-3b data §5.1)
@@ -88,9 +92,15 @@ export function defaultJointDrive(kind: JointDrive['kind']): JointDrive {
         rigging: { kind: 'direct' }
       }
     case 'servo':
-      return { kind, servo: '', gearRatio: 1 }
+      return {
+        kind,
+        servo: '',
+        gearRatio: 1,
+        editPosition: DEFAULT_SERVO_EDIT_POSITION,
+        direction: 1
+      }
     case 'crServo':
-      return { kind, servo: '', gearRatio: 1, spoolDiameter: DEFAULT_SPOOL_DIAMETER }
+      return { kind, servo: '', gearRatio: 1, spoolDiameter: DEFAULT_SPOOL_DIAMETER, direction: 1 }
     case 'none':
     case 'stage':
       return { kind }
@@ -175,6 +185,9 @@ const gearRatio = (value: number): number =>
   finiteIn(value, MIN_JOINT_GEAR_RATIO, MAX_JOINT_GEAR_RATIO) ? value : 1
 const spoolDiameter = (value: number): number =>
   finiteIn(value, MIN_SPOOL_DIAMETER, MAX_SPOOL_DIAMETER) ? value : DEFAULT_SPOOL_DIAMETER
+const servoPosition = (value: number): number =>
+  finiteIn(value, 0, 1) ? value : DEFAULT_SERVO_EDIT_POSITION
+const direction = (value: number): 1 | -1 => (value === -1 ? -1 : 1)
 
 // 빈 id·겹치는 id를 빼고 앞의 max개만 둔다(지운 장치·관절을 가리키는 id는 남긴다: 세계 설명을 만들 때 경고한다)
 function idList(ids: readonly string[], max: number): string[] {
@@ -201,13 +214,20 @@ function sanitizeDrive(drive: JointDrive): JointDrive {
             : { kind: drive.rigging.kind, stages: idList(drive.rigging.stages, MAX_JOINT_STAGES) }
       }
     case 'servo':
-      return { kind: 'servo', servo: drive.servo, gearRatio: gearRatio(drive.gearRatio) }
+      return {
+        kind: 'servo',
+        servo: drive.servo,
+        gearRatio: gearRatio(drive.gearRatio),
+        editPosition: servoPosition(drive.editPosition),
+        direction: direction(drive.direction)
+      }
     case 'crServo':
       return {
         kind: 'crServo',
         servo: drive.servo,
         gearRatio: gearRatio(drive.gearRatio),
-        spoolDiameter: spoolDiameter(drive.spoolDiameter)
+        spoolDiameter: spoolDiameter(drive.spoolDiameter),
+        direction: direction(drive.direction)
       }
     case 'none':
     case 'stage':
@@ -267,13 +287,20 @@ function sameDrive(a: JointDrive, b: JointDrive): boolean {
       )
     }
     case 'servo':
-      return b.kind === 'servo' && a.servo === b.servo && a.gearRatio === b.gearRatio
+      return (
+        b.kind === 'servo' &&
+        a.servo === b.servo &&
+        a.gearRatio === b.gearRatio &&
+        a.editPosition === b.editPosition &&
+        a.direction === b.direction
+      )
     case 'crServo':
       return (
         b.kind === 'crServo' &&
         a.servo === b.servo &&
         a.gearRatio === b.gearRatio &&
-        a.spoolDiameter === b.spoolDiameter
+        a.spoolDiameter === b.spoolDiameter &&
+        a.direction === b.direction
       )
     case 'none':
     case 'stage':

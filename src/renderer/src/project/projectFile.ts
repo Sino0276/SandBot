@@ -27,7 +27,13 @@ import {
   sanitizeMass,
   sanitizeRigidbody
 } from '../scene/massSettings'
-import { canHaveJoint, isJointAxis, isJointType, sanitizeJoint } from '../scene/joint'
+import {
+  canHaveJoint,
+  DEFAULT_SERVO_EDIT_POSITION,
+  isJointAxis,
+  isJointType,
+  sanitizeJoint
+} from '../scene/joint'
 import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
@@ -205,6 +211,9 @@ function parseRigidbody(value: unknown, index: number): RigidbodySettings | null
 }
 
 const isNumber = (value: unknown): value is number => typeof value === 'number'
+// 없으면(나중에 더한 칸) fallback, 수면 그 값, 다른 형식이면 null(그 구동을 받지 않는다)
+const optionalNumber = (value: unknown, fallback: number): number | null =>
+  value === undefined ? fallback : isNumber(value) ? value : null
 const isStringList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 
@@ -239,21 +248,38 @@ function parseJointDrive(value: unknown): JointDrive | null {
         rigging: { kind: rigging.kind, stages: rigging.stages }
       }
     }
-    case 'servo':
-      return typeof value.servo === 'string' && isNumber(value.gearRatio)
-        ? { kind: 'servo', servo: value.servo, gearRatio: value.gearRatio }
-        : null
-    case 'crServo':
+    // editPosition·direction은 PROJECT_VERSION 8 안에서 나중에 더했다: 없으면 기본값(편집 자세 = 위치 0.5, +펄스 = +축)
+    case 'servo': {
+      const editPosition = optionalNumber(value.editPosition, DEFAULT_SERVO_EDIT_POSITION)
+      const direction = optionalNumber(value.direction, 1)
       return typeof value.servo === 'string' &&
         isNumber(value.gearRatio) &&
-        isNumber(value.spoolDiameter)
+        editPosition !== null &&
+        direction !== null
+        ? {
+            kind: 'servo',
+            servo: value.servo,
+            gearRatio: value.gearRatio,
+            editPosition,
+            direction: direction === -1 ? -1 : 1
+          }
+        : null
+    }
+    case 'crServo': {
+      const direction = optionalNumber(value.direction, 1)
+      return typeof value.servo === 'string' &&
+        isNumber(value.gearRatio) &&
+        isNumber(value.spoolDiameter) &&
+        direction !== null
         ? {
             kind: 'crServo',
             servo: value.servo,
             gearRatio: value.gearRatio,
-            spoolDiameter: value.spoolDiameter
+            spoolDiameter: value.spoolDiameter,
+            direction: direction === -1 ? -1 : 1
           }
         : null
+    }
     default:
       return null
   }

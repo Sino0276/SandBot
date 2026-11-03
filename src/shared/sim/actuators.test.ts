@@ -8,6 +8,7 @@ import {
   HubMotorController,
   readPidf,
   servoCommand,
+  servoPositionPulseUs,
   servoTerms,
   type ControlInputs
 } from './actuators'
@@ -217,6 +218,28 @@ describe('서보', () => {
     const cr = servoCommand({ pulseUs: 2100, pwm: true }, SERVO, true)
     expect(cr.kind === 'speed' && cr.fraction).toBeCloseTo(600 / (900 * 0.667), 12)
     expect(servoCommand({ pulseUs: 1502, pwm: true }, SERVO, true)).toEqual({
+      kind: 'speed',
+      fraction: 0
+    })
+  })
+
+  it('편집 자세의 펄스와 방향: 각 = direction × (펄스 − zeroPulseUs) × rangeAngle/1800 µs, CR은 방향만', () => {
+    expect(servoPositionPulseUs(0)).toBe(600)
+    expect(servoPositionPulseUs(0.35)).toBeCloseTo(1230, 9)
+    expect(servoPositionPulseUs(1)).toBe(2400)
+    const at = (pulseUs: number, zero: number, direction: 1 | -1): number => {
+      const c = servoCommand({ pulseUs, pwm: true }, SERVO, false, zero, direction)
+      return c.kind === 'position' ? c.angle : NaN
+    }
+    expect(at(1230, 1230, 1)).toBe(0)
+    expect(at(1500, 1230, 1)).toBeCloseTo((270 / 1800) * SERVO.rangeAngle, 12)
+    expect(at(1500, 1230, -1)).toBeCloseTo((-270 / 1800) * SERVO.rangeAngle, 12)
+    // 허브 출력 범위 밖은 자른다(편집 자세와 관계없이)
+    expect(at(3000, 1500, 1)).toBeCloseTo((1000 / 1800) * SERVO.rangeAngle, 12)
+    // CR: 정지는 늘 1500 µs(zeroPulseUs를 쓰지 않음), 방향만 뒤집는다
+    const cr = servoCommand({ pulseUs: 2100, pwm: true }, SERVO, true, 1230, -1)
+    expect(cr.kind === 'speed' && cr.fraction).toBeCloseTo(-600 / (900 * 0.667), 12)
+    expect(servoCommand({ pulseUs: 1500, pwm: true }, SERVO, true, 1230, -1)).toEqual({
       kind: 'speed',
       fraction: 0
     })

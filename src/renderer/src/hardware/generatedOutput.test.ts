@@ -93,7 +93,7 @@ describe('생성 파일 출력 고정', () => {
             wheel: { ...defaultWheel('traction'), motor: 'c0', angle: 1 },
             joint: {
               ...defaultJoint('prismatic'),
-              drive: { kind: 'servo', servo: 'c1', gearRatio: 2 }
+              drive: { kind: 'servo', servo: 'c1', gearRatio: 2, editPosition: 0.5, direction: 1 }
             }
           }),
           components: object.components?.map((component) => {

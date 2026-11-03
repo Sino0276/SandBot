@@ -142,16 +142,36 @@ describe('관절 설정', () => {
   it('정리: 구동의 감속비·스풀 지름은 범위 밖이면 기본값, 장치·단 id는 겹침과 빈 값만 뺀다', () => {
     const drive = (value: JointSettings['drive']): JointSettings['drive'] =>
       sanitizeJoint({ ...defaultJoint('prismatic'), drive: value }).drive
-    expect(drive({ kind: 'servo', servo: 'gone', gearRatio: 1001 })).toEqual({
+    // 서보: 편집 자세의 서보 위치는 0..1 밖·유한하지 않으면 0.5, 방향은 −1이 아니면 1
+    expect(
+      drive({ kind: 'servo', servo: 'gone', gearRatio: 1001, editPosition: 1.5, direction: 1 })
+    ).toEqual({
       kind: 'servo',
       servo: 'gone',
-      gearRatio: 1
+      gearRatio: 1,
+      editPosition: 0.5,
+      direction: 1
     })
-    expect(drive({ kind: 'crServo', servo: 's', gearRatio: 0.5, spoolDiameter: 0.0005 })).toEqual({
+    expect(
+      drive({ kind: 'servo', servo: 's', gearRatio: 2, editPosition: 0.35, direction: -1 })
+    ).toEqual({ kind: 'servo', servo: 's', gearRatio: 2, editPosition: 0.35, direction: -1 })
+    expect(
+      drive({
+        kind: 'servo',
+        servo: 's',
+        gearRatio: 2,
+        editPosition: NaN,
+        direction: 0 as unknown as 1
+      })
+    ).toMatchObject({ editPosition: 0.5, direction: 1 })
+    expect(
+      drive({ kind: 'crServo', servo: 's', gearRatio: 0.5, spoolDiameter: 0.0005, direction: -1 })
+    ).toEqual({
       kind: 'crServo',
       servo: 's',
       gearRatio: 0.5,
-      spoolDiameter: DEFAULT_SPOOL_DIAMETER
+      spoolDiameter: DEFAULT_SPOOL_DIAMETER,
+      direction: -1
     })
     expect(
       drive({

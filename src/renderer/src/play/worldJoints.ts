@@ -4,6 +4,7 @@ import {
   resolveServoParams,
   type MotorOverrides
 } from '../../../shared/sim/actuatorData'
+import { servoPositionPulseUs } from '../../../shared/sim/actuators'
 import {
   MAX_WORLD_JOINTS,
   type SimInertia,
@@ -393,11 +394,17 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
           return { kind: 'none' }
         }
         usedDevices.add(device)
+        const params = servoComponentParams(component.props, drive.kind)
+        if (drive.kind === 'crServo')
+          return { kind: 'crServo', device, ratio, params, direction: drive.direction }
+        // 편집 자세의 서보 위치(0..1, SDK 기본 PWM 범위)를 펄스로(0.5 = 1500 µs)
         return {
-          kind: drive.kind,
+          kind: 'servo',
           device,
           ratio,
-          params: servoComponentParams(component.props, drive.kind)
+          params,
+          zeroPulseUs: servoPositionPulseUs(drive.editPosition),
+          direction: drive.direction
         }
       }
     }

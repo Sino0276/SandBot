@@ -135,6 +135,8 @@ export type JointSettings = {
 }
 // motors·servo는 같은 로봇의 하드웨어 컴포넌트 id. gearRatio는 장치 출력축 → 관절(외부 감속), spoolDiameter는 직선 관절(m).
 // rigging.stages는 이 관절 위의 단(위 단 관절 오브젝트 id, 아래에서 위 순서), 위 단은 drive 'stage'다.
+// 서보의 editPosition은 편집 자세(q = 0)에 해당하는 서보 위치(setPosition 0..1, SDK 기본 PWM 범위, 기본 0.5)이고,
+// direction은 +펄스(위치·power가 늘 때) 관절이 +축(1)·−축(−1)으로 도는지다. 둘 다 PROJECT_VERSION 8 안에서 더했고 없으면 기본값이다.
 export type JointDrive =
   | { kind: 'none' }
   | {
@@ -144,8 +146,14 @@ export type JointDrive =
       spoolDiameter: number
       rigging: { kind: 'direct' } | { kind: 'cascade' | 'continuous'; stages: string[] }
     }
-  | { kind: 'servo'; servo: string; gearRatio: number }
-  | { kind: 'crServo'; servo: string; gearRatio: number; spoolDiameter: number }
+  | { kind: 'servo'; servo: string; gearRatio: number; editPosition: number; direction: 1 | -1 }
+  | {
+      kind: 'crServo'
+      servo: string
+      gearRatio: number
+      spoolDiameter: number
+      direction: 1 | -1
+    }
   | { kind: 'stage' }
 
 // 스크립트 연결. path는 TeamCode 기준 상대 경로('/' 구분, src/shared/teamCodePaths.ts의 isLinkableJavaPath),

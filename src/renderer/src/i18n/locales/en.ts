@@ -1679,6 +1679,18 @@ const en: Messages = {
     deviceMissing: '(device not found)',
     gearRatio: 'External gear ratio',
     gearRatioHint: "Reduction from the device's output shaft to the joint (1 if direct).",
+    servoEditPosition: 'Servo position at edit pose',
+    servoEditPositionHint:
+      'The servo.setPosition value your code gives when the joint is at the edit pose in the scene (joint value 0). Range 0–1 over the SDK default PWM range 600–2400 µs; the default 0.5 is 1500 µs. Match it to how the servo horn is mounted. Example: if the claw is modelled closed and your code closes it with setPosition(0.35), enter 0.35.',
+    servoDirection: '+pulse direction',
+    servoDirectionHint:
+      "The way the joint turns when the servo position increases (longer pulse). Your code's setDirection(REVERSE) reverses it on top of this, as on the real robot.",
+    crServoDirectionHint:
+      "The way the joint turns for positive power (longer pulse). Power 0 (1500 µs) always stops. Your code's setDirection(REVERSE) reverses it on top of this, as on the real robot.",
+    servoDirections: {
+      forward: 'Joint + direction',
+      reverse: 'Joint − direction'
+    },
     spoolDiameter: 'Spool diameter',
     spoolDiameterHint:
       'Diameter of the spool (pulley) that winds the string. One turn moves one circumference. The default is a pulley with a 112 mm circumference.',

@@ -552,8 +552,8 @@ describe('관절(버전 8)', () => {
     const drives: JointSettings['drive'][] = [
       { kind: 'none' },
       { kind: 'stage' },
-      { kind: 'servo', servo: 's1', gearRatio: 2 },
-      { kind: 'crServo', servo: 's2', gearRatio: 1, spoolDiameter: 0.03 },
+      { kind: 'servo', servo: 's1', gearRatio: 2, editPosition: 0.5, direction: 1 },
+      { kind: 'crServo', servo: 's2', gearRatio: 1, spoolDiameter: 0.03, direction: 1 },
       { ...(JOINT.drive as object), rigging: { kind: 'direct' } } as JointSettings['drive']
     ]
     for (const drive of drives)
@@ -561,6 +561,25 @@ describe('관절(버전 8)', () => {
         const joint = { ...JOINT, drive, spring }
         expect(parseProject(fileWith(2, joint)).objects.plate.joint).toEqual(joint)
       }
+  })
+
+  it('서보 구동의 편집 자세 위치·방향이 없는 예전 v8 파일은 기본값(0.5, +축)으로 읽는다', () => {
+    const old = { ...JOINT, type: 'revolute', limits: null }
+    expect(
+      parseProject(fileWith(2, { ...old, drive: { kind: 'servo', servo: 's1', gearRatio: 2 } }))
+        .objects.plate.joint?.drive
+    ).toEqual({ kind: 'servo', servo: 's1', gearRatio: 2, editPosition: 0.5, direction: 1 })
+    expect(
+      parseProject(
+        fileWith(2, {
+          ...old,
+          drive: { kind: 'crServo', servo: 's2', gearRatio: 1, spoolDiameter: 0.03 }
+        })
+      ).objects.plate.joint?.drive
+    ).toEqual({ kind: 'crServo', servo: 's2', gearRatio: 1, spoolDiameter: 0.03, direction: 1 })
+    // 고친 값은 그대로 읽고 다시 쓴다
+    const drive = { kind: 'servo', servo: 's1', gearRatio: 2, editPosition: 0.35, direction: -1 }
+    expect(parseProject(fileWith(2, { ...old, drive })).objects.plate.joint?.drive).toEqual(drive)
   })
 
   it('범위 밖 수는 기본값으로 바꾼다', () => {
@@ -616,7 +635,13 @@ describe('관절(버전 8)', () => {
       { ...JOINT, drive: { ...JOINT.drive, rigging: { kind: 'cascade' } } },
       { ...JOINT, drive: { ...JOINT.drive, rigging: { kind: 'belt', stages: [] } } },
       { ...JOINT, drive: { kind: 'servo', servo: 3, gearRatio: 1 } },
-      { ...JOINT, drive: { kind: 'crServo', servo: 's', gearRatio: 1 } }
+      { ...JOINT, drive: { kind: 'crServo', servo: 's', gearRatio: 1 } },
+      { ...JOINT, drive: { kind: 'servo', servo: 's', gearRatio: 1, editPosition: '0.5' } },
+      { ...JOINT, drive: { kind: 'servo', servo: 's', gearRatio: 1, direction: 'reverse' } },
+      {
+        ...JOINT,
+        drive: { kind: 'crServo', servo: 's', gearRatio: 1, spoolDiameter: 0.03, direction: null }
+      }
     ]) {
       expect(() => parseProject(fileWith(2, joint))).toThrow(ProjectFileError)
     }

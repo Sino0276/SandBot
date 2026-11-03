@@ -111,7 +111,13 @@ function liftRobot(yaw = 0.7): SceneObjects {
           axis: 'y',
           axisSign: -1,
           anchor: [0.02, 0, 0],
-          drive: { kind: 'servo', servo: 's-wrist', gearRatio: 1 }
+          drive: {
+            kind: 'servo',
+            servo: 's-wrist',
+            gearRatio: 1,
+            editPosition: 0.35,
+            direction: -1
+          }
         })
       }),
       transform: { position: [0.1, 0, 0.3], rotation: [0, 0, Math.PI / 2] }
@@ -198,11 +204,14 @@ describe('세계 설명의 관절', () => {
     expect(arm.axis).toEqual({ x: 0, y: -1, z: 0 })
     expect(Object.is(arm.axis.x, -0)).toBe(false)
     expect(arm.body.centerOfMass).toEqual(close({ x: 0.18, y: 0, z: 0 }))
+    // 편집 자세의 서보 위치 0.35 = 600 + 1800 × 0.35 = 1230 µs, 방향은 그대로
     expect(arm.drive).toEqual({
       kind: 'servo',
       device: 'wrist',
       ratio: 1,
-      params: resolveServoParams('axonMax', 'servo')
+      params: resolveServoParams('axonMax', 'servo'),
+      zeroPulseUs: expect.closeTo(1230, 9),
+      direction: -1
     })
   })
 
@@ -372,7 +381,13 @@ describe('세계 설명의 관절', () => {
       ...objects.lift,
       joint: {
         ...objects.lift.joint!,
-        drive: { kind: 'crServo', servo: 'c-intake', gearRatio: 2, spoolDiameter: 0.04 }
+        drive: {
+          kind: 'crServo',
+          servo: 'c-intake',
+          gearRatio: 2,
+          spoolDiameter: 0.04,
+          direction: -1
+        }
       }
     }
     const { joints, warnings } = build(objects)
@@ -386,6 +401,7 @@ describe('세계 설명의 관절', () => {
       kind: 'crServo',
       device: 'intake',
       ratio: 0.01,
+      direction: -1,
       params: resolveServoParams('gobildaSpeed', 'crServo')
     })
     expect(keys(warnings)).toEqual(['worldJointStageOrphan'])
@@ -412,8 +428,8 @@ describe('세계 설명의 관절', () => {
 
   it('SPARK Mini는 3b의 관절 구동이 아니다: 어떤 구동 종류로 가리켜도 구동 없음(세계 설명에 넣지 않는다)', () => {
     for (const drive of [
-      { kind: 'crServo', servo: 'spark', gearRatio: 1, spoolDiameter: 0.03 },
-      { kind: 'servo', servo: 'spark', gearRatio: 1 },
+      { kind: 'crServo', servo: 'spark', gearRatio: 1, spoolDiameter: 0.03, direction: 1 },
+      { kind: 'servo', servo: 'spark', gearRatio: 1, editPosition: 0.5, direction: 1 },
       {
         kind: 'motor',
         motors: ['spark'],
@@ -440,14 +456,26 @@ describe('세계 설명의 관절', () => {
 
   it('서보: 없는 서보·다른 종류·직선 관절의 위치 서보는 구동 없음', () => {
     const cases: [JointSettings['drive'], 'revolute' | 'prismatic', string][] = [
-      [{ kind: 'servo', servo: 'gone', gearRatio: 1 }, 'revolute', 'worldJointServoMissing'],
       [
-        { kind: 'crServo', servo: 's-wrist', gearRatio: 1, spoolDiameter: 0.03 },
+        { kind: 'servo', servo: 'gone', gearRatio: 1, editPosition: 0.5, direction: 1 },
         'revolute',
         'worldJointServoMissing'
       ],
-      [{ kind: 'servo', servo: 'm-lift', gearRatio: 1 }, 'revolute', 'worldJointServoMissing'],
-      [{ kind: 'servo', servo: 's-wrist', gearRatio: 1 }, 'prismatic', 'worldJointServoOnSlide']
+      [
+        { kind: 'crServo', servo: 's-wrist', gearRatio: 1, spoolDiameter: 0.03, direction: 1 },
+        'revolute',
+        'worldJointServoMissing'
+      ],
+      [
+        { kind: 'servo', servo: 'm-lift', gearRatio: 1, editPosition: 0.5, direction: 1 },
+        'revolute',
+        'worldJointServoMissing'
+      ],
+      [
+        { kind: 'servo', servo: 's-wrist', gearRatio: 1, editPosition: 0.5, direction: 1 },
+        'prismatic',
+        'worldJointServoOnSlide'
+      ]
     ]
     for (const [drive, type, key] of cases) {
       const objects = liftRobot()
@@ -463,7 +491,9 @@ describe('세계 설명의 관절', () => {
     objects.claw = group('claw', 'armMass', [0.1, 0, 0], {
       name: 'Claw',
       mass: { mass: 0.1 },
-      joint: joint({ drive: { kind: 'servo', servo: 's-wrist', gearRatio: 2 } })
+      joint: joint({
+        drive: { kind: 'servo', servo: 's-wrist', gearRatio: 2, editPosition: 0.5, direction: 1 }
+      })
     })
     const { joints, warnings } = build(objects)
     expect(joints[2].drive).toMatchObject({ kind: 'servo', device: 'wrist' })

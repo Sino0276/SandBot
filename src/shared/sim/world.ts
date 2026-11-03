@@ -17,6 +17,7 @@ import {
   HUB_CONTROL_PERIOD_NANOS,
   HubMotorController,
   readPidf,
+  SERVO_CENTER_US,
   servoCommand,
   servoTerms,
   type PowerStage,
@@ -119,6 +120,9 @@ type JointServo = {
   ratio: number
   params: SimServoParams
   continuous: boolean
+  // 편집 자세의 펄스(위치 서보)와 +펄스의 관절 방향(servoCommand)
+  zeroPulseUs: number
+  direction: 1 | -1
   command: ServoCommand
 }
 
@@ -227,6 +231,8 @@ export class KinematicWorld {
           ratio: drive.ratio,
           params: drive.params,
           continuous: drive.kind === 'crServo',
+          zeroPulseUs: drive.kind === 'servo' ? drive.zeroPulseUs : SERVO_CENTER_US,
+          direction: drive.direction,
           command: { kind: 'limp' }
         })
       }
@@ -348,7 +354,9 @@ export class KinematicWorld {
       servo.command = servoCommand(
         own(this.outputsPrev, servo.device),
         servo.params,
-        servo.continuous
+        servo.continuous,
+        servo.zeroPulseUs,
+        servo.direction
       )
     const { starts, ends, hs } = this.articulation
       ? gridSubsteps(tStart, dtNanos)

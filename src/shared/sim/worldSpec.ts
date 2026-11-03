@@ -16,6 +16,9 @@ export const MAX_FOOTPRINT_POINTS = 64
 export const MAX_WORLD_JOINTS = 16
 // 한 관절을 같이 구동하는 모터(양쪽 리프트 등)
 export const MAX_JOINT_MOTORS = 4
+// 서보 펄스(µs): 허브 서보 포트 출력 범위(REV Control Hub 서보 포트 사양 500–2500 µs, actuators.ts와 같다)
+export const MIN_SERVO_PULSE_US = 500
+export const MAX_SERVO_PULSE_US = 2500
 
 export type Vec2 = { x: number; y: number }
 export type Vec3 = { x: number; y: number; z: number }
@@ -167,7 +170,17 @@ export type SimJointDriveSpec =
       params: SimMotorParams
       rigging: { kind: 'direct' } | { kind: 'cascade' | 'continuous'; stages: number[] }
     }
-  | { kind: 'servo' | 'crServo'; device: string; ratio: number; params: SimServoParams }
+  // 서보: ratio는 서보 출력축 rad당 관절 rad 또는 m(양수), direction은 +펄스가 관절 +축(1)·−축(−1)으로 도는지,
+  // zeroPulseUs는 편집 자세(q = 0)의 펄스(위치 서보만, 허브 출력 범위 500–2500 µs). CR 서보의 정지 펄스는 늘 1500 µs다.
+  | {
+      kind: 'servo'
+      device: string
+      ratio: number
+      params: SimServoParams
+      zeroPulseUs: number
+      direction: 1 | -1
+    }
+  | { kind: 'crServo'; device: string; ratio: number; params: SimServoParams; direction: 1 | -1 }
   // 다단 슬라이드의 위 단(아래 단 구동의 rigging.stages에 들어 있다)
   | { kind: 'stage' }
 
@@ -443,15 +456,30 @@ function jointDrive(value: unknown, what: string): SimJointDriveSpec {
     case 'stage':
       return { kind: 'stage' }
     case 'servo':
-    case 'crServo':
+    case 'crServo': {
       if (!name(value.device)) fail(`${what}.device`)
       if (!ratio(value.ratio)) fail(`${what}.ratio`)
+      if (value.direction !== 1 && value.direction !== -1) fail(`${what}.direction`)
+      const params = servoParams(value.params, `${what}.params`)
+      if (value.kind === 'crServo')
+        return {
+          kind: 'crServo',
+          device: value.device,
+          ratio: value.ratio,
+          params,
+          direction: value.direction
+        }
+      if (!inRange(value.zeroPulseUs, MIN_SERVO_PULSE_US, MAX_SERVO_PULSE_US))
+        fail(`${what}.zeroPulseUs`)
       return {
-        kind: value.kind,
+        kind: 'servo',
         device: value.device,
         ratio: value.ratio,
-        params: servoParams(value.params, `${what}.params`)
+        params,
+        zeroPulseUs: value.zeroPulseUs,
+        direction: value.direction
       }
+    }
     case 'motor': {
       const devices = list(value.devices, MAX_JOINT_MOTORS, `${what}.devices`, (v, k) =>
         name(v) ? v : fail(`${what}.devices[${k}]`)

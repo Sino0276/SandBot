@@ -395,11 +395,11 @@ describe('관절 카드 보기 계산', () => {
     expect(cardView(none, 'arm', {})!.warnings).toEqual([{ key: 'noMass' }, { key: 'noMotor' }])
     const slideServo = withJoint(scene(), 'lift', {
       type: 'prismatic',
-      drive: { kind: 'servo', servo: 'claw', gearRatio: 1 }
+      drive: { kind: 'servo', servo: 'claw', gearRatio: 1, editPosition: 0.5, direction: 1 }
     })
     expect(cardView(slideServo, 'lift', masses)!.warnings).toEqual([{ key: 'servoOnSlide' }])
     const missingServo = withJoint(scene(), 'arm', {
-      drive: { kind: 'crServo', servo: 'claw', gearRatio: 1, spoolDiameter: 0.04 }
+      drive: { kind: 'crServo', servo: 'claw', gearRatio: 1, spoolDiameter: 0.04, direction: 1 }
     })
     expect(cardView(missingServo, 'arm', masses)!.warnings).toEqual([{ key: 'servoMissing' }])
     // 위 단의 구동이 '위 단'이 아니면 그 단부터 묶지 않고, 그 단은 어느 슬라이드에도 들지 않는다
@@ -424,7 +424,7 @@ describe('관절 카드 보기 계산', () => {
 
   it('서보는 서보 모델의 데이터시트 값이고 배터리 전압과 관계없다, 구동 장치가 없으면 속도·정지 토크·여유는 null', () => {
     const objects = withJoint(scene(), 'arm', {
-      drive: { kind: 'servo', servo: 'claw', gearRatio: 2 }
+      drive: { kind: 'servo', servo: 'claw', gearRatio: 2, editPosition: 0.5, direction: 1 }
     })
     const masses = { arm: objectMass(1, [0.2, 0, 0.3]) }
     const known = cardView(objects, 'arm', masses, 9)!
@@ -610,14 +610,29 @@ describe('관절 카드 그리기', () => {
   it('회전 관절은 한계 끄기 칸과 ° 단위, 위치 서보 구동', () => {
     const objects = withJoint(scene(), 'arm', {
       limits: null,
-      drive: { kind: 'servo', servo: 'claw', gearRatio: 1 }
+      drive: { kind: 'servo', servo: 'claw', gearRatio: 1, editPosition: 0.35, direction: -1 }
     })
     const html = render(objects, 'arm')
+    // 편집 자세의 서보 위치와 +펄스 방향(도움말에 대응 규칙)
+    expect(html).toContain('편집 자세의 서보 위치')
+    expect(html).toContain('value="0.350"')
+    expect(html).toContain('servo.setPosition 값입니다')
+    expect(html).toContain('<option value="reverse" selected="">관절 − 방향</option>')
     expect(html).toContain('한계 있음')
     expect(html).not.toContain('위 한계')
     expect(html).toContain('<option value="claw" selected="">claw</option>')
     expect(html).not.toContain('리깅')
     expect(html).not.toContain('스풀 지름')
+    // 연속 회전 서보는 방향만(멈춤은 늘 1500 µs라 편집 자세 위치가 없다)
+    const cr = render(
+      withJoint(scene(), 'arm', {
+        drive: { kind: 'crServo', servo: 'claw', gearRatio: 1, spoolDiameter: 0.04, direction: 1 }
+      }),
+      'arm'
+    )
+    expect(cr).toContain('+펄스 방향')
+    expect(cr).toContain('멈춤은 늘 power 0(1500 µs)입니다')
+    expect(cr).not.toContain('편집 자세의 서보 위치')
   })
 
   it('Add Component에 관절이 있고, 로봇·이미 관절이 있는 오브젝트는 비활성', () => {

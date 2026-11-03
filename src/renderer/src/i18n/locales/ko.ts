@@ -1672,6 +1672,18 @@ const ko = {
     deviceMissing: '(찾을 수 없는 장치)',
     gearRatio: '외부 감속비',
     gearRatioHint: '장치 출력축에서 관절까지의 감속비입니다(직결이면 1).',
+    servoEditPosition: '편집 자세의 서보 위치',
+    servoEditPositionHint:
+      '씬의 편집 자세(관절 값 0)일 때 팀 코드가 주는 servo.setPosition 값입니다(0–1, SDK 기본 PWM 범위 600–2400 µs, 기본 0.5 = 1500 µs). 서보 혼을 끼운 각에 맞춥니다. 예: 집게를 닫힌 채 모델링했고 코드가 setPosition(0.35)로 닫으면 0.35입니다.',
+    servoDirection: '+펄스 방향',
+    servoDirectionHint:
+      '서보 위치를 늘릴 때(펄스가 늘 때) 관절이 도는 방향입니다. 팀 코드의 setDirection(REVERSE)는 이것과 따로 실제처럼 반대로 돌립니다.',
+    crServoDirectionHint:
+      'power를 +로 줄 때(펄스가 늘 때) 관절이 도는 방향입니다. 멈춤은 늘 power 0(1500 µs)입니다. 팀 코드의 setDirection(REVERSE)는 이것과 따로 실제처럼 반대로 돌립니다.',
+    servoDirections: {
+      forward: '관절 + 방향',
+      reverse: '관절 − 방향'
+    },
     spoolDiameter: '스풀 지름',
     spoolDiameterHint:
       '줄을 감는 스풀(풀리)의 지름입니다. 한 바퀴에 둘레만큼 움직입니다. 기본값은 둘레 112 mm 풀리입니다.',

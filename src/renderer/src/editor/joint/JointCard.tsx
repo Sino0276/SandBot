@@ -689,6 +689,36 @@ function DriveRows({
             value={drive.gearRatio}
             onCommit={(gearRatio) => setDrive({ ...drive, gearRatio })}
           />
+          {drive.kind === 'servo' && (
+            <div className="hw-row" title={t('joint.servoEditPositionHint')}>
+              <span className="hw-row-label">{t('joint.servoEditPosition')}</span>
+              <NumberField
+                ariaLabel={t('joint.servoEditPosition')}
+                value={drive.editPosition}
+                digits={3}
+                onCommit={(input) => setDrive({ ...drive, editPosition: clamp(input, 0, 1) })}
+              />
+            </div>
+          )}
+          <div
+            className="hw-row"
+            title={t(
+              drive.kind === 'servo' ? 'joint.servoDirectionHint' : 'joint.crServoDirectionHint'
+            )}
+          >
+            <span className="hw-row-label">{t('joint.servoDirection')}</span>
+            <select
+              className="field-select"
+              aria-label={t('joint.servoDirection')}
+              value={drive.direction === -1 ? 'reverse' : 'forward'}
+              onChange={(event) =>
+                setDrive({ ...drive, direction: event.target.value === 'reverse' ? -1 : 1 })
+              }
+            >
+              <option value="forward">{t('joint.servoDirections.forward')}</option>
+              <option value="reverse">{t('joint.servoDirections.reverse')}</option>
+            </select>
+          </div>
           {drive.kind === 'crServo' && prismatic && (
             <SpoolRow
               value={drive.spoolDiameter}

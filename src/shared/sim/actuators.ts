@@ -1,6 +1,11 @@
 import type { DeviceValues } from '../sidecarProtocol'
 import { NOMINAL_VOLTAGE, type MotorOutputs } from './motorModel'
-import type { SimMotorParams, SimServoParams } from './worldSpec'
+import {
+  MAX_SERVO_PULSE_US,
+  MIN_SERVO_PULSE_US,
+  type SimMotorParams,
+  type SimServoParams
+} from './worldSpec'
 
 // 메커니즘 관절의 구동기(3b): 브러시 DC 기어모터, 허브 전력단(VNH5050 H-브리지), 허브 펌웨어 제어 루프, 서보·CR 서보.
 // 모두 순수 함수·작은 상태라 결정적이다. 서보 포트의 모터 컨트롤러(SPARK Mini)로 도는 관절은 3b에 없다(세계 설명 v2의 관절 구동이
@@ -30,11 +35,15 @@ export const DEFAULT_VELOCITY_PIDF: Pidf = [10, 3, 0, 0]
 export const DEFAULT_POSITION_PIDF: Pidf = [10, 0.05, 0, 0]
 
 // 서보 펄스: SDK 기본 범위 600–2400 µs의 가운데와 반폭(PwmControl.PwmRange 기본, [ACT] §5.1). 허브 출력은 500–2500 µs(REV
-// Control Hub 서보 포트 사양)라 그 밖은 자른다. CR 서보는 power −1..1이 600–2400 µs다(CRServoImpl).
-const SERVO_CENTER_US = 1500
+// Control Hub 서보 포트 사양, worldSpec.ts MIN·MAX_SERVO_PULSE_US)라 그 밖은 자른다. CR 서보는 power −1..1이 600–2400 µs다
+// (CRServoImpl).
+export const SERVO_CENTER_US = 1500
 const SERVO_HALF_SPAN_US = 900
-const HUB_PULSE_MIN_US = 500
-const HUB_PULSE_MAX_US = 2500
+
+// 서보 위치(setPosition 0..1, SDK 기본 PWM 범위)의 펄스(µs): 0 → 600, 0.5 → 1500, 1 → 2400(ServoImpl·PwmRange 기본)
+export function servoPositionPulseUs(position: number): number {
+  return SERVO_CENTER_US + (2 * position - 1) * SERVO_HALF_SPAN_US
+}
 
 // ---- DC 기어모터 ----
 
@@ -226,26 +235,37 @@ export class HubMotorController {
 
 export type ServoCommand =
   | { kind: 'limp' }
-  // 서보 출력축 목표 각(rad, 1500 µs가 0, 펄스가 늘면 +)
+  // 서보 출력축 목표 각(rad, 관절 +축 기준, 편집 자세가 0)
   | { kind: 'position'; angle: number }
   // CR 서보: 무부하 속도의 비율(−1..1)
   | { kind: 'speed'; fraction: number }
 
 // 서보 출력(pulseUs·pwm)에서 이번 구간의 명령. 펄스로 정한다(팀이 setPwmRange로 범위를 바꿔도 실제 서보는 펄스만 본다).
+// 서보 혼이 어느 각에 끼워졌는지는 팀마다 다르므로 편집 자세(관절 q = 0)의 펄스 zeroPulseUs(관절 카드의 "편집 자세의 서보
+// 위치", 기본 0.5 = 1500 µs)를 기준으로 재고, direction은 +펄스가 관절 +축(1)·−축(−1)으로 도는지다(데이터시트는 펄스가
+// 늘면 혼이 시계 방향으로 돈다고 하지만 관절 축을 어느 쪽으로 잡았는지에 따라 다르다). 그래서 위치 서보 각 =
+// direction × (펄스 − zeroPulseUs) × rangeAngle/1800 µs. CR 서보의 정지(데드밴드 가운데)는 서보 회로가 정하므로 늘
+// 1500 µs이고 direction만 쓴다.
 export function servoCommand(
   values: DeviceValues | undefined,
   params: SimServoParams,
-  continuous: boolean
+  continuous: boolean,
+  zeroPulseUs = SERVO_CENTER_US,
+  direction: 1 | -1 = 1
 ): ServoCommand {
   const pulse = values?.pulseUs
   // PWM이 꺼지면 허브는 서보 5 V 전원도 끈다(gm0, data §4.4): 힘이 빠진다
   if (values?.pwm !== true || !finiteNumber(pulse)) return { kind: 'limp' }
-  const offset = Math.max(HUB_PULSE_MIN_US, Math.min(HUB_PULSE_MAX_US, pulse)) - SERVO_CENTER_US
+  const clamped = Math.max(MIN_SERVO_PULSE_US, Math.min(MAX_SERVO_PULSE_US, pulse))
   if (!continuous)
-    return { kind: 'position', angle: (offset / (2 * SERVO_HALF_SPAN_US)) * params.rangeAngle }
+    return {
+      kind: 'position',
+      angle: direction * ((clamped - zeroPulseUs) / (2 * SERVO_HALF_SPAN_US)) * params.rangeAngle
+    }
+  const offset = clamped - SERVO_CENTER_US
   if (Math.abs(offset) <= params.deadbandUs / 2) return { kind: 'speed', fraction: 0 }
   const full = SERVO_HALF_SPAN_US * params.crFullPower
-  return { kind: 'speed', fraction: Math.max(-1, Math.min(1, offset / full)) }
+  return { kind: 'speed', fraction: direction * Math.max(-1, Math.min(1, offset / full)) }
 }
 
 // 서보 출력축 일반화 힘: τ = force − damping·ω − stiffness·Δθ(암시), friction은 쿨롱 상자(힘)

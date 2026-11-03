@@ -613,12 +613,16 @@ describe('서보 관절', () => {
     },
     friction: { coulomb: 0, viscous: 0 },
     spring: null,
-    drive: {
-      kind,
-      device: 'wrist',
-      ratio: 1,
-      params: kind === 'servo' ? SERVO : { ...SERVO, crFullPower: 0.667 }
-    },
+    drive:
+      kind === 'servo'
+        ? { kind, device: 'wrist', ratio: 1, params: SERVO, zeroPulseUs: 1500, direction: 1 }
+        : {
+            kind,
+            device: 'wrist',
+            ratio: 1,
+            params: { ...SERVO, crFullPower: 0.667 },
+            direction: 1
+          },
     switches: [],
     ...change
   })
@@ -648,6 +652,56 @@ describe('서보 관절', () => {
     expect(r.q[r.q.length - 1][0]).toBeCloseTo((135 * Math.PI) / 180, 2)
   })
 
+  it('편집 자세의 서보 위치(zeroPulseUs)와 방향: 닫힌 채 모델링한 집게를 setPosition(0.35)로 닫으면 편집 자세에 선다', () => {
+    // 수직 축 팔(중력 토크 없음). 편집 자세 = setPosition(0.35) = 600 + 1800 × 0.35 = 1230 µs
+    const claw = (direction: 1 | -1): SimJointSpec =>
+      arm({
+        axis: { x: 0, y: 0, z: 1 },
+        drive: {
+          kind: 'servo',
+          device: 'wrist',
+          ratio: 1,
+          params: SERVO,
+          zeroPulseUs: 1230,
+          direction
+        }
+      })
+    const at = (pulseUs: number, direction: 1 | -1): number => {
+      const r = run(servoWorld(claw(direction)), 1, servoOut(pulseUs))
+      return r.q[r.q.length - 1][0]
+    }
+    expect(Math.abs(at(1230, 1))).toBeLessThan(1e-9)
+    // setPosition(0.5) = 1500 µs는 편집 자세에서 270 µs × 0.15°/µs = +40.5°, 방향 −1이면 −40.5°
+    const step = (270 / 1800) * SERVO.rangeAngle
+    expect(at(1500, 1)).toBeCloseTo(step, 2)
+    expect(at(1500, -1)).toBeCloseTo(-step, 2)
+  })
+
+  it('CR 서보 방향 −1은 +펄스가 관절 −축으로 돈다', () => {
+    const r = run(
+      servoWorld(
+        arm(
+          {
+            axis: { x: 0, y: 0, z: 1 },
+            drive: {
+              kind: 'crServo',
+              device: 'wrist',
+              ratio: 1,
+              params: { ...SERVO, crFullPower: 0.667 },
+              direction: -1
+            }
+          },
+          'crServo'
+        )
+      ),
+      1,
+      servoOut(2400),
+      1_000_000
+    )
+    const n = r.q.length - 1
+    expect((r.q[n][0] - r.q[n - 100][0]) / 0.1).toBeCloseTo(-SERVO.freeSpeed, 2)
+  })
+
   it('PWM이 꺼지면 힘이 빠져 떨어지고, 기어 마찰이 크면 그대로 있다', () => {
     const limp = run(servoWorld(arm()), 0.3, servoOut(null, false))
     expect(limp.q[limp.q.length - 1][0]).toBeGreaterThan(0.2)
@@ -658,7 +712,9 @@ describe('서보 관절', () => {
             kind: 'servo',
             device: 'wrist',
             ratio: 1,
-            params: { ...SERVO, limpFriction: 0.5 }
+            params: { ...SERVO, limpFriction: 0.5 },
+            zeroPulseUs: 1500,
+            direction: 1
           }
         })
       ),
@@ -684,7 +740,7 @@ describe('서보 관절', () => {
         body: { mass: 0.001, centerOfMass: ZERO, inertia: [inertia, inertia, inertia, 0, 0, 0] },
         friction: { coulomb: 0.02, viscous: 0.001 },
         spring: null,
-        drive: { kind: 'crServo', device: 'intake', ratio: 1, params },
+        drive: { kind: 'crServo', device: 'intake', ratio: 1, params, direction: 1 },
         switches: []
       }
       const r = run(world([intake], { motors: [] }), 2, (k) => ({

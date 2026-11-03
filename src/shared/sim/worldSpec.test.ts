@@ -173,7 +173,9 @@ function withJoints(): WorldSpec {
             kd: 0.05,
             crFullPower: 1,
             limpFriction: 0.05
-          }
+          },
+          zeroPulseUs: 1230,
+          direction: -1
         },
         switches: []
       }
@@ -194,6 +196,7 @@ describe('parseWorldSpec 관절', () => {
   }
   const liftDrive = withJoints().joints[0].drive as Extract<SimJointDriveSpec, { kind: 'motor' }>
   const body = withJoints().joints[0].body
+  const wristDrive = withJoints().joints[2].drive as Extract<SimJointDriveSpec, { kind: 'servo' }>
 
   it.each([
     ['joints[1].parent', joint(1, { parent: 1 })],
@@ -234,6 +237,21 @@ describe('parseWorldSpec 관절', () => {
     [
       'joints[1].switches[0].device: duplicate device',
       joint(1, { switches: [{ device: 'bottom', kind: 'digital', at: 'upper', within: 0.01 }] })
+    ],
+    ['joints[2].drive.zeroPulseUs', joint(2, { drive: { ...wristDrive, zeroPulseUs: 2600 } })],
+    [
+      'joints[2].drive.zeroPulseUs',
+      joint(2, { drive: { ...wristDrive, zeroPulseUs: undefined as unknown as number } })
+    ],
+    [
+      'joints[2].drive.direction',
+      joint(2, { drive: { ...wristDrive, direction: 0 as unknown as 1 } })
+    ],
+    [
+      'joints[2].drive.direction',
+      joint(2, {
+        drive: { kind: 'crServo', device: 'wrist', ratio: 1, params: wristDrive.params } as never
+      })
     ],
     [
       'joints[2].drive.kind',
