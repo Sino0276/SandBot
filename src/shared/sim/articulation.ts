@@ -24,6 +24,7 @@ import type { SimJointSpec, Vec3 } from './worldSpec'
 //      근처면 늘 넣는다(결합 관절에서 행을 v*로 고르면 떨린다 — 3b 비평 §2.5). 풀고 난 뒤 빠진 한계가 넘으면 그 행을 더해
 //      다시 푼다.
 //   5. 위치 자르기는 z 공간에서만 한다: 한계 관절의 S 행이 z 성분 하나일 때만 그 z를 한계로 자른다(리깅 구속을 깨지 않게).
+//      그 좌표의 바깥 속도는 M̂⁻¹을 거친 결합 충격으로 지운다(결합된 자식 관절의 일반화 운동량을 지킨다).
 //   힘이 영역(모터 회생 자르기·서보 포화)에 따라 다르면 지금 v로 정한 영역으로 풀고, v⁺의 영역이 다르면 그 영역으로 한 번 더
 //   푼다(많아야 두 번, 결정적).
 
@@ -637,7 +638,8 @@ export class Articulation {
     const baseStiffness = quadratic(passiveStiffness)
     const momentum = mz.map((row) => row.reduce((sum, x, c) => sum + x * this.v[c], 0))
 
-    const solve = (forces: DriveForces): number[] => {
+    type Solution = { v: number[]; factor: { l: number[][]; d: number[] } }
+    const solve = (forces: DriveForces): Solution => {
       const mhat = mz.map((row, a) =>
         row.map(
           (x, b) =>
@@ -674,17 +676,18 @@ export class Articulation {
             added = true
           }
         })
-        if (!added) return v
+        if (!added) return { v, factor }
       }
     }
 
     const first = drive(this.z, this.v)
-    let v = solve(first)
-    const second = drive(this.z, v)
-    if (second.regions !== first.regions) v = solve(second)
+    let solution = solve(first)
+    const second = drive(this.z, solution.v)
+    if (second.regions !== first.regions) solution = solve(second)
 
+    const v = solution.v
     const z = this.z.map((x, c) => x + h * v[c])
-    this.clampLimits(z, v)
+    this.clampLimits(z, v, solution.factor, h)
     for (let c = 0; c < m; c++)
       if (!Number.isFinite(z[c]) || !Number.isFinite(v[c]))
         throw new Error('joint dynamics diverged')
@@ -805,8 +808,18 @@ export class Articulation {
     return v
   }
 
-  // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다)
-  private clampLimits(z: number[], v: number[]): void {
+  // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다).
+  // 한계에 닿은(넘은) 좌표는 한계에 두고 바깥 속도를 지운다(반발 0: 다음 하위 단계는 멈춘 채 시작한다). 속도를 지우는 것은
+  // 그 좌표들(집합 C)에만 거는 충격 Jᵀλ(J = C의 단위 행)이다: v⁺ = v + M̂⁻¹Jᵀλ, (J·M̂⁻¹·Jᵀ)λ = −v_C. 그래서 결합된 다른 좌표
+  // (한계에 닿은 단이 실은 팔, 리깅으로 묶인 단)도 같은 충격을 받아 그 일반화 운동량이 그대로다(예전에는 v_C만 0으로 바꿔
+  // 자식이 마지막 하위 단계가 한계와 어떻게 맞았는지에 따라 운동량을 0–100 % 잃었다). M̂은 이번 하위 단계의 암시 행렬(LCP와
+  // 같은 계)이고, 다른 좌표의 위치는 바뀐 속도로 다시 적분한다.
+  private clampLimits(
+    z: number[],
+    v: number[],
+    factor: { l: number[][]; d: number[] },
+    h: number
+  ): void {
     const m = this.coordinates.length
     const low = new Array<number>(m).fill(-Infinity)
     const high = new Array<number>(m).fill(Infinity)
@@ -821,15 +834,47 @@ export class Articulation {
       low[c] = Math.max(low[c], Math.min(a, b))
       high[c] = Math.min(high[c], Math.max(a, b))
     })
-    // 한계에 닿은(넘은) 좌표는 한계에 두고 바깥 속도를 지운다(반발 0: 다음 하위 단계는 멈춘 채 시작한다)
+    // 멈출 좌표와 그 바깥 속도(지우기 전)
+    const stopped: number[] = []
+    const outward: number[] = []
+    const stop = (c: number, limit: number): void => {
+      z[c] = limit
+      if (v[c] !== 0) {
+        stopped.push(c)
+        outward.push(v[c])
+      }
+      // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
+      v[c] = 0
+    }
     for (let c = 0; c < m; c++) {
-      if (z[c] <= low[c] && v[c] <= 0) {
-        z[c] = low[c]
-        v[c] = 0
-      } else if (z[c] >= high[c] && v[c] >= 0) {
-        z[c] = high[c]
-        v[c] = 0
-      } else if (z[c] < low[c]) z[c] = low[c]
+      if (z[c] <= low[c] && v[c] <= 0) stop(c, low[c])
+      else if (z[c] >= high[c] && v[c] >= 0) stop(c, high[c])
+      else if (z[c] < low[c]) z[c] = low[c]
+      else if (z[c] > high[c]) z[c] = high[c]
+    }
+    if (stopped.length === 0) return
+    // y_k = M̂⁻¹e_{C_k}, A = J·M̂⁻¹·Jᵀ(양정치 부분 행렬), λ = A⁻¹(−v_C)
+    const unit = (c: number): number[] => {
+      const e = new Array<number>(m).fill(0)
+      e[c] = 1
+      return e
+    }
+    const y = stopped.map((c) => ldlSolve(factor, unit(c)))
+    const a = stopped.map((_, r) => stopped.map((c) => y[r][c]))
+    const lambda = ldlSolve(
+      ldlFactor(a),
+      outward.map((x) => -x)
+    )
+    const isStopped = new Array<boolean>(m).fill(false)
+    for (const c of stopped) isStopped[c] = true
+    for (let c = 0; c < m; c++) {
+      if (isStopped[c]) continue
+      let dv = 0
+      stopped.forEach((_, k) => (dv += y[k][c] * lambda[k]))
+      if (dv === 0) continue
+      v[c] += dv
+      z[c] += h * dv
+      if (z[c] < low[c]) z[c] = low[c]
       else if (z[c] > high[c]) z[c] = high[c]
     }
   }

@@ -535,6 +535,48 @@ describe('Articulation 적분', () => {
     expect(touched).toBeGreaterThan(0)
   })
 
+  it('한계에 닿은 단이 멈출 때 자식 관절의 일반화 운동량을 지킨다(결합 충격, 팔을 실은 리프트 단)', () => {
+    // 수평 리프트 단(x 축 직선, 1 kg, 위 한계 0.1 m)이 수직 축(z) 둘레로 자유롭게 도는 팔(0.3 kg, 무게중심 y 0.2 m)을
+    // 싣고 일정한 속도로 움직인다(중력 토크 없음, 팔은 단에 대해 멈춰 있다). 단이 한계에 닿으면 충격은 단 좌표에만 걸리므로
+    // 팔의 일반화 운동량 M_cp·v₀ + M_cc·v_c가 그대로이고 팔은 v_c = M_cp·v₀/M_cc로 돈다(반발 0).
+    const stage = jointSpec({
+      type: 'prismatic',
+      axis: { x: 1, y: 0, z: 0 },
+      limits: { lower: -1, upper: 0.1 },
+      body: { mass: 1, centerOfMass: ZERO, inertia: [1e-3, 1e-3, 1e-3, 0, 0, 0] }
+    })
+    const arm = jointSpec({
+      parent: 0,
+      axis: { x: 0, y: 0, z: 1 },
+      body: {
+        mass: 0.3,
+        centerOfMass: { x: 0, y: 0.2, z: 0 },
+        inertia: [1e-4, 1e-4, 1e-4, 0, 0, 0]
+      }
+    })
+    const ratios: number[] = []
+    for (let trial = 0; trial < 12; trial++) {
+      const art = new Articulation([stage, arm])
+      const v0 = 0.5 + trial * 0.0731
+      art.v = [v0, 0]
+      let expected = NaN
+      for (let k = 0; k < 2000; k++) {
+        const before = art.q()
+        const m = art.massMatrix(before)
+        const momentum = m[1][0] * art.v[0] + m[1][1] * art.v[1]
+        art.step(1e-3, passive(art))
+        if (art.q()[0] >= 0.1) {
+          expected = momentum / m[1][1]
+          break
+        }
+      }
+      expect(art.q()[0]).toBe(0.1)
+      expect(art.v[0]).toBe(0)
+      ratios.push(art.v[1] / expected)
+    }
+    for (const ratio of ratios) expect(Math.abs(ratio - 1)).toBeLessThan(0.01)
+  })
+
   it('정지 마찰이 미는 힘보다 크면 정확히 멈춰 있고, 작으면 차이만큼 가속한다', () => {
     const slide = (push: number): Articulation => {
       const art = new Articulation([
