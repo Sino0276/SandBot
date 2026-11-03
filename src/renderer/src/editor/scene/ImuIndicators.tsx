@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { ArrowHelper, Matrix4, Quaternion, Vector3 } from 'three'
 import { HUB_DIRECTION_VECTORS, type HubDirection } from '../../hardware/mounting'
-import { poseTransform, simPoseOf, usePlayStore } from '../../play/playStore'
+import { displayRootOverride, simPoseOf, usePlayStore } from '../../play/playStore'
 import {
   ancestorIds,
   findRobotId,
@@ -64,7 +64,8 @@ function imuTargets(objects: SceneObjects, selectedIds: readonly string[]): ImuT
   return targets
 }
 
-// 표시할 자리. 실행 중인 로봇은 씬 뷰가 그리는 시뮬레이터 자세(rootOverride)로 놓는다(약 60 Hz, IMU 수만큼만 계산).
+// 표시할 자리. 실행 중인 로봇은 씬 뷰가 그리는 시뮬레이터 자세(rootOverride, 관절 자세 포함)로 놓는다(약 60 Hz, IMU
+// 수만큼만 계산). 방향은 로봇 기준이라 관절을 따라 돌지 않는다(시뮬레이터도 관절 위 IMU를 로봇 몸체에 붙은 것으로 계산한다).
 function placeIndicators(
   objects: SceneObjects,
   targets: readonly ImuTarget[],
@@ -132,7 +133,8 @@ function ImuIndicators(): React.JSX.Element {
       placeIndicators(
         objects,
         targets,
-        pose ? { id: pose.robotId, transform: poseTransform(pose) } : null
+        // 관절 순번(run.joints)은 실행 동안 바뀌지 않으므로 자세가 올 때 지금 상태에서 읽는다
+        pose ? displayRootOverride({ ...usePlayStore.getState(), simPose: pose }, objects) : null
       ),
     [objects, targets, pose]
   )

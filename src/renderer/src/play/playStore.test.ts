@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { OpModeInfo, PlayDiagnostic, PlayEvent } from '../../../shared/play'
+import { jointMotionMatrix } from '../scene/jointMotion'
+import type { JointSettings, SceneObjects } from '../scene/model'
 import { CONSOLE_LIMIT } from './consoleModel'
 import { DEFAULT_CONSOLE_PREFS, DEFAULT_PLAY_SETTINGS } from './playSettings'
 import {
@@ -16,6 +18,7 @@ import {
   newRun,
   runningRobotId,
   showsRegisteredConsent,
+  simJointValue,
   simPoseOf,
   withEntries,
   withPendingConfig,
@@ -400,6 +403,97 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
     expect(runningRobotId({ run: { ...state.run!, phase: 'finished' } })).toBeNull()
     // INIT부터(자세 전에도) 실행 중인 로봇이다
     expect(runningRobotId({ run: { ...state.run!, phase: 'init' } })).toBe('bot')
+  })
+
+  describe('관절 값(3b)', () => {
+    // 세계 설명의 관절 순번 0 = lift, 1 = wrist
+    const withJoints = (): PlayData => {
+      const base = withRobot()
+      return { ...base, run: { ...base.run!, joints: ['lift', 'wrist'] } }
+    }
+    const finished = {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 9,
+      reason: 'stopped',
+      detail: '',
+      preselectTeleOp: ''
+    } as PlayEvent
+    const hinge: JointSettings = {
+      type: 'revolute',
+      anchor: [0, 0, 0.1],
+      axis: 'y',
+      axisSign: 1,
+      limits: null,
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' }
+    }
+
+    it('pose의 joints를 run.joints 순서 그대로 두고, 관절 오브젝트마다 값을 찾는다', () => {
+      const next = apply(withJoints(), pose(5, 1, { joints: [0.3, -0.2] } as Partial<PlayEvent>))
+      expect(next.simPose!.joints).toEqual([0.3, -0.2])
+      expect(simJointValue(next, 'lift')).toBe(0.3)
+      expect(simJointValue(next, 'wrist')).toBe(-0.2)
+      expect(simJointValue(next, 'other')).toBeNull()
+      // 실행이 끝났거나 지워졌으면 관절도 편집 자세
+      expect(simJointValue({ ...next, run: null }, 'lift')).toBeNull()
+    })
+
+    it('관절 수가 다르거나 유한하지 않은 값은 받지 않는다(키 없음, 다른 관절을 움직이지 않게)', () => {
+      for (const joints of [[0.3], [0.3, NaN], [0.3, Infinity, 1]]) {
+        const next = apply(withJoints(), pose(5, 1, { joints } as Partial<PlayEvent>))
+        expect(next.simPose).not.toHaveProperty('joints')
+        expect(simJointValue(next, 'lift')).toBeNull()
+      }
+      // 관절이 없는 실행은 joints를 보내도 두지 않는다
+      const none = apply(withRobot(), pose(5, 1, { joints: [0.3] } as Partial<PlayEvent>))
+      expect(none.simPose).not.toHaveProperty('joints')
+    })
+
+    it('끝나면 마지막 관절 값을 관절 오브젝트 id로 풀어 잔상에 둔다', () => {
+      const next = apply(
+        withJoints(),
+        pose(5, 1, { joints: [0.1, 0.2] } as Partial<PlayEvent>),
+        pose(9, 1.5, { joints: [0.4, -0.5] } as Partial<PlayEvent>),
+        finished
+      )
+      expect(next.ghostPose).toEqual({
+        robotId: 'bot',
+        x: 1.5,
+        y: 0.5,
+        yaw: 0.25,
+        joints: { lift: 0.4, wrist: -0.5 }
+      })
+    })
+
+    it('표시 덮어쓰기는 문서의 관절 설정으로 관절 오브젝트의 A·M(q)·A⁻¹을 넣는다', () => {
+      const state = apply(withJoints(), pose(5, 1, { joints: [0.3, -0.2] } as Partial<PlayEvent>))
+      const objects: SceneObjects = {
+        lift: {
+          id: 'lift',
+          name: 'Lift',
+          kind: 'group',
+          parentId: 'bot',
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+          joint: hinge
+        },
+        // 관절 설정을 뗀 오브젝트는 넣지 않는다(실행 중 카드를 떼어도 그 관절은 편집 자세로 그린다)
+        wrist: {
+          id: 'wrist',
+          name: 'Wrist',
+          kind: 'part',
+          parentId: 'lift',
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+        }
+      }
+      const override = displayRootOverride(state, objects)!
+      expect(override.transform).toEqual({ position: [1, 0.5, 0], rotation: [0, 0, 0.25] })
+      expect([...override.joints!.keys()]).toEqual(['lift'])
+      expect(override.joints!.get('lift')!.equals(jointMotionMatrix(hinge, 0.3))).toBe(true)
+      // objects를 주지 않으면 루트만(이전 호출과 같은 모양)
+      expect(displayRootOverride(state)).not.toHaveProperty('joints')
+    })
   })
 
   it('devices의 센서 값(inputs)을 함께 둔다', () => {

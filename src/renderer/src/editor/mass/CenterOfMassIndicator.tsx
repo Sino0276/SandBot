@@ -14,14 +14,16 @@ import { simPoseOf, usePlayStore } from '../../play/playStore'
 import { worldMatrix, type SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
-import { bindPoseDisplay } from '../scene/poseDisplay'
+import { bindJointDisplacement, bindPoseDisplay } from '../scene/poseDisplay'
 import { comMarkers, type ComMarkers } from './comMarkers'
 import { useMassModel } from './useMassModel'
 
 // 씬 뷰의 무게중심 표시(spec-3a §6, ImuIndicators와 같은 자리). 활성 오브젝트가 속한 로봇의 무게중심(큰 표시)과 활성
 // 오브젝트 하위 전체의 무게중심(작은 표시)을 그린다. 축 색(빨강·초록·파랑)과 IMU 표시(보라·주황)와 겹치지 않는 색이다.
 // 클릭되지 않고(raycast 없음), CAD 안쪽에 있어도 보이게 깊이 검사를 끈다. 실행 중에는 씬 뷰의 로봇처럼 시뮬레이터 자세를
-// 따른다(poseDisplay.ts의 bindPoseDisplay, 자세마다 invalidate). 숨긴 오브젝트도 질량 계산에는 들어간다(숨김은 보기 상태).
+// 따른다(poseDisplay.ts의 bindPoseDisplay, 자세마다 invalidate). 오브젝트 표시는 관절 자세도 따른다(그 오브젝트를 옮기는
+// 관절들의 움직임, bindJointDisplacement). 로봇 표시는 편집 자세의 무게중심을 로봇 틀로만 옮긴다(관절이 움직여 바뀐 로봇
+// 무게중심은 시뮬레이터가 보내지 않는다). 숨긴 오브젝트도 질량 계산에는 들어간다(숨김은 보기 상태).
 export const ROBOT_COM_COLOR = '#2dd4bf'
 export const OBJECT_COM_COLOR = '#f8fafc'
 
@@ -48,7 +50,41 @@ const RENDER_ORDER = 11
 
 const noRaycast = (): void => {}
 
-function Markers({ markers }: { markers: ComMarkers }): React.JSX.Element {
+// 로봇 틀 안에서 오브젝트를 옮긴 관절의 움직임만큼 따라가는 그룹(실행 중 그 로봇이 자세를 받았을 때만 묶는다)
+function JointFollow({
+  objectId,
+  active,
+  children
+}: {
+  objectId: string
+  active: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const group = useRef<Group>(null)
+  const invalidate = useThree((state) => state.invalidate)
+  useLayoutEffect(() => {
+    const target = group.current
+    if (!active || !target) return
+    return bindJointDisplacement(
+      target,
+      objectId,
+      () => useSceneStore.getState().objects,
+      usePlayStore,
+      invalidate
+    )
+  }, [active, objectId, invalidate])
+  return <group ref={group}>{children}</group>
+}
+
+function Markers({
+  markers,
+  objectId,
+  posed
+}: {
+  markers: ComMarkers
+  objectId: string
+  posed: boolean
+}): React.JSX.Element {
   return (
     <>
       {markers.robot && (
@@ -70,14 +106,16 @@ function Markers({ markers }: { markers: ComMarkers }): React.JSX.Element {
         </group>
       )}
       {markers.object && (
-        <mesh
-          position={markers.object}
-          geometry={SPHERE}
-          material={OBJECT_MATERIAL}
-          scale={OBJECT_MARKER_RADIUS}
-          renderOrder={RENDER_ORDER}
-          raycast={noRaycast}
-        />
+        <JointFollow objectId={objectId} active={posed}>
+          <mesh
+            position={markers.object}
+            geometry={SPHERE}
+            material={OBJECT_MATERIAL}
+            scale={OBJECT_MARKER_RADIUS}
+            renderOrder={RENDER_ORDER}
+            raycast={noRaycast}
+          />
+        </JointFollow>
       )}
     </>
   )
@@ -132,16 +170,22 @@ function SelectedCenterOfMass({ selectedId }: { selectedId: string }): React.JSX
     () => comMarkers(objects, model, selectedId),
     [objects, model, selectedId]
   )
+  // 시작·끝에만 바뀐다(관절 따라가기를 묶을지)
+  const posed = usePlayStore(
+    (state) =>
+      markers !== null && markers.frameId !== null && simPoseOf(state)?.robotId === markers.frameId
+  )
   // frameloop demand: 표시가 바뀌거나 사라지면 다시 그린다(사라진 표시가 화면에 남지 않게)
   useEffect(() => {
     invalidate()
     return () => invalidate()
   }, [markers, invalidate])
   if (!markers) return null
-  if (markers.frameId === null) return <Markers markers={markers} />
+  if (markers.frameId === null)
+    return <Markers markers={markers} objectId={selectedId} posed={false} />
   return (
     <RobotFrame objects={objects} robotId={markers.frameId}>
-      <Markers markers={markers} />
+      <Markers markers={markers} objectId={selectedId} posed={posed} />
     </RobotFrame>
   )
 }

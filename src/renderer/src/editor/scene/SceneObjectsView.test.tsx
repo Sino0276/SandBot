@@ -14,8 +14,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { OpModeInfo } from '../../../../shared/play'
 import { newRun, usePlayStore, type PlayData, type PlayRun } from '../../play/playStore'
 import { disposeAllGeometry, registerGeometry } from '../../scene/geometryRegistry'
-import type { SceneObjects } from '../../scene/model'
+import type { JointSettings, SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import {
+  clearJointPreview,
+  setJointPreview,
+  useJointPreviewStore
+} from '../joint/jointPreviewStore'
 import { resetSceneVisibility, useSceneVisibilityStore } from '../sceneVisibility'
 import { GHOST_MESH_LIMIT } from './poseDisplay'
 import SceneObjectsView from './SceneObjectsView'
@@ -125,6 +130,7 @@ beforeEach(async () => {
   useSceneStore.setState({ objects: SCENE })
   resetSceneVisibility()
   usePlayStore.setState({ run: null, simPose: null, ghostPose: null })
+  useJointPreviewStore.setState({ values: {} })
   draws = 0
   const canvas = {
     style: {},
@@ -315,5 +321,120 @@ describe('StrictMode와 큰 CAD', () => {
       if (object instanceof LineSegments) lines.push(object)
     })
     expect(lines).toHaveLength(1)
+  })
+})
+
+describe('관절 표시(3b)', () => {
+  // 리프트(직선 관절, 로봇 +Z, 로봇 원점) 안에 팔 파트. 팔은 편집 자세에서 필드 (1.2, 0, 0.1)
+  const slide: JointSettings = {
+    type: 'prismatic',
+    anchor: [0, 0, 0],
+    axis: 'z',
+    axisSign: 1,
+    limits: { lower: 0, upper: 0.5 },
+    friction: { coulomb: 1, viscous: 0.5 },
+    spring: null,
+    drive: { kind: 'none' }
+  }
+  const JOINT_SCENE: SceneObjects = {
+    bot: SCENE.bot,
+    lift: {
+      id: 'lift',
+      name: 'Lift',
+      kind: 'group',
+      parentId: 'bot',
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      joint: slide
+    },
+    arm: { ...SCENE.arm, parentId: 'lift' }
+  }
+  const jointRun = (phase: PlayRun['phase'] = 'running'): PlayRun => ({
+    ...run(phase),
+    joints: ['lift']
+  })
+
+  beforeEach(async () => {
+    await act(async () => {
+      useSceneStore.setState({ objects: JOINT_SCENE })
+    })
+  })
+
+  it('미리보기 값은 씬 뷰에만 그리고 씬 문서는 바꾸지 않는다(한계로 자르고, 지우면 편집 자세)', async () => {
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.1)
+    const before = draws
+    await act(async () => setJointPreview('lift', 0.3))
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.4)
+    expect(draws).toBeGreaterThan(before)
+    expect(useSceneStore.getState().objects).toBe(JOINT_SCENE)
+    await act(async () => setJointPreview('lift', 2))
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.6)
+    await act(async () => clearJointPreview('lift'))
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.1)
+  })
+
+  it('실행 중에는 시뮬레이터 관절 값을 따르고(미리보기는 쓰지 않음), 끝나면 편집 자세와 잔상의 마지막 관절 값', async () => {
+    await act(async () => setJointPreview('lift', 0.45))
+    // INIT 직후(자세 전): 실행 중인 로봇의 관절은 편집 자세
+    await setPlay({ run: jointRun('init') })
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.1)
+    await setPlay({ run: jointRun(), simPose: { ...pose(1, 0, 0).simPose!, joints: [0.25] } })
+    let world = worldOf(meshes()[0])
+    expect(world.x).toBeCloseTo(1.2)
+    expect(world.z).toBeCloseTo(0.35)
+    await setPlay({ simPose: { ...pose(1, 0, 0, 5).simPose!, joints: [0.1] } })
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.2)
+    expect(useSceneStore.getState().objects).toBe(JOINT_SCENE)
+
+    await setPlay({
+      run: { ...jointRun(), phase: 'finished' },
+      simPose: null,
+      ghostPose: { robotId: 'bot', x: 0, y: 0, yaw: 0, joints: { lift: 0.25 } }
+    })
+    const [live, ghost] = meshes()
+    // 실행이 끝났으므로 다시 미리보기 값(사용자가 아직 카드를 열어 둔 경우)
+    expect(worldOf(live).z).toBeCloseTo(0.55)
+    world = worldOf(ghost)
+    expect(world.x).toBeCloseTo(0.2)
+    expect(world.z).toBeCloseTo(0.35)
+    await act(async () => clearJointPreview('lift'))
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.1)
+  })
+
+  it('StrictMode가 effect를 정리했다 다시 붙여도 지금 관절 값이 그대로 보인다', async () => {
+    await act(async () => root.unmount())
+    usePlayStore.setState({
+      run: jointRun(),
+      simPose: { ...pose(1, 0, 0).simPose!, joints: [0.2] }
+    })
+    const canvas = {
+      style: {},
+      width: 800,
+      height: 600,
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    } as unknown as HTMLCanvasElement
+    root = createRoot(canvas)
+    await root.configure({
+      gl: fakeRenderer() as never,
+      frameloop: 'never',
+      size: { width: 800, height: 600, top: 0, left: 0 }
+    })
+    await act(async () => {
+      store = root.render(
+        <StrictMode>
+          <SceneObjectsView />
+        </StrictMode>
+      )
+    })
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.3)
+  })
+
+  it('관절 설정을 떼면 안쪽 그룹도 사라지고 편집 자세다', async () => {
+    await act(async () => setJointPreview('lift', 0.3))
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.4)
+    await act(async () => {
+      useSceneStore.getState().setJoint('lift', null)
+    })
+    expect(worldOf(meshes()[0]).z).toBeCloseTo(0.1)
   })
 })
