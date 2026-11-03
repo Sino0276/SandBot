@@ -256,9 +256,26 @@ export type ServoTerms = {
   region: string
 }
 
-// 서보 모델([ACT] §5.4, 가정): 내부 PD τ = kp·e − kd·ω를 모터 직선 τ ∈ [−τs(1 + ω/ωf), τs(1 − ω/ωf)]로 자른다(그래서 속도는
-// 무부하 속도까지, 토크는 정지 토크까지). e는 목표 − 각에서 데드밴드 반폭(deadbandUs/2를 각으로)을 뺀 것이고, 데드밴드 안에서는
-// D만 남는다. CR 서보는 DC 모터 직선 τ = τs·(u − ω/ωf)다. PWM이 꺼지면 힘 0에 기어 마찰(limpFriction)만 남는다.
+// 정지 토크로 자른 출력: 모터 직선 τs·(u − ω/ωf)는 부하가 서보를 명령 반대로 돌리면(역구동, ω가 미는 방향과 반대) τs를
+// 넘는다(맨 DC 모터라면 역기전력이 더해져 정지 전류보다 큰 전류가 흐른다). 서보 출력은 정지 토크까지로 자른다(spec-3b §1.9
+// "토크는 정지 토크까지 … CR 서보도 토크로 자른다". 가정: 서보 내부 구동 회로가 정지 전류를 넘기지 않는다 — 공개 출처 없음,
+// [ACT] §5.4의 포화 모델). 그 구간은 ±τs 일정 힘이고 감쇠가 없다(영역 'H'·'N').
+function saturatedServo(sign: 1 | -1, ts: number, slope: number, omega: number): ServoTerms {
+  if (sign * omega < 0)
+    return { force: sign * ts, damping: 0, stiffness: 0, friction: 0, region: sign > 0 ? 'H' : 'N' }
+  return {
+    force: sign * ts,
+    damping: slope,
+    stiffness: 0,
+    friction: 0,
+    region: sign > 0 ? 'h' : 'n'
+  }
+}
+
+// 서보 모델([ACT] §5.4, 가정): 내부 PD τ = kp·e − kd·ω를 모터 직선 τ ∈ [−τs(1 + ω/ωf), τs(1 − ω/ωf)]와 정지 토크 ±τs로
+// 자른다(그래서 속도는 무부하 속도까지, 토크는 정지 토크까지). e는 목표 − 각에서 데드밴드 반폭(deadbandUs/2를 각으로)을 뺀
+// 것이고, 데드밴드 안에서는 D만 남는다. CR 서보는 DC 모터 직선 τ = τs·(u − ω/ωf)를 ±τs로 자른 것이다. PWM이 꺼지면 힘 0에
+// 기어 마찰(limpFriction)만 남는다.
 export function servoTerms(
   command: ServoCommand,
   params: SimServoParams,
@@ -269,18 +286,22 @@ export function servoTerms(
   const slope = ts / params.freeSpeed
   if (command.kind === 'limp')
     return { force: 0, damping: 0, stiffness: 0, friction: params.limpFriction, region: 'x' }
-  if (command.kind === 'speed')
+  if (command.kind === 'speed') {
+    const torque = ts * command.fraction - slope * omega
+    if (torque > ts) return saturatedServo(1, ts, slope, omega)
+    if (torque < -ts) return saturatedServo(-1, ts, slope, omega)
     return { force: ts * command.fraction, damping: slope, stiffness: 0, friction: 0, region: 'r' }
+  }
   const deadband = (params.deadbandUs / 2) * (params.rangeAngle / (2 * SERVO_HALF_SPAN_US))
   const error = command.angle - theta
   if (Math.abs(error) <= deadband)
     return { force: 0, damping: params.kd, stiffness: 0, friction: 0, region: 'd' }
   const effective = error - Math.sign(error) * deadband
   const torque = params.kp * effective - params.kd * omega
-  const high = ts * (1 - omega / params.freeSpeed)
-  const low = -ts * (1 + omega / params.freeSpeed)
-  if (torque > high) return { force: ts, damping: slope, stiffness: 0, friction: 0, region: 'h' }
-  if (torque < low) return { force: -ts, damping: slope, stiffness: 0, friction: 0, region: 'n' }
+  const high = Math.min(ts, ts * (1 - omega / params.freeSpeed))
+  const low = Math.max(-ts, -ts * (1 + omega / params.freeSpeed))
+  if (torque > high) return saturatedServo(1, ts, slope, omega)
+  if (torque < low) return saturatedServo(-1, ts, slope, omega)
   return {
     force: params.kp * effective,
     damping: params.kd,

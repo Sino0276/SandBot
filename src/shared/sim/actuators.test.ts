@@ -200,4 +200,38 @@ describe('SPARK Mini·서보', () => {
     expect(servoTerms({ kind: 'position', angle: 0.001 }, SERVO, 0, 0).region).toBe('d')
     expect(servoTerms({ kind: 'limp' }, SERVO, 0, 0)).toMatchObject({ force: 0, friction: 0.05 })
   })
+
+  it('역구동되면 출력은 정지 토크 ±τs에서 멈춘다(CR 서보·위치 서보, spec-3b §1.9)', () => {
+    const ts = SERVO.stallTorque
+    const wf = SERVO.freeSpeed
+    // 출력 τ = force − damping·ω
+    const torque = (t: ReturnType<typeof servoTerms>, omega: number): number =>
+      t.force - t.damping * omega
+    // CR: 전진 명령인데 부하가 무부하 속도로 거꾸로 돌리면 직선은 2τs지만 τs로 자른다(감쇠 없음)
+    const back = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, -wf)
+    expect(back).toMatchObject({ force: ts, damping: 0, region: 'H' })
+    expect(torque(back, -wf)).toBe(ts)
+    const backNeg = servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, 0.5 * wf)
+    expect(backNeg).toMatchObject({ force: -ts, damping: 0, region: 'N' })
+    // 명령 방향으로 도는 동안은 직선 그대로(무부하 속도에서 0)
+    const forward = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, 0.5 * wf)
+    expect(forward.region).toBe('r')
+    expect(torque(forward, 0.5 * wf)).toBeCloseTo(0.5 * ts, 12)
+    expect(
+      torque(servoTerms({ kind: 'speed', fraction: 0.5 }, SERVO, 0, -0.4 * wf), -0.4 * wf)
+    ).toBeCloseTo(0.9 * ts, 12)
+    // 위치 서보도 같다: 목표가 멀고 거꾸로 돌려지면 τs
+    const pos = servoTerms({ kind: 'position', angle: 1 }, SERVO, 0, -0.5 * wf)
+    expect(pos).toMatchObject({ force: ts, damping: 0, region: 'H' })
+    for (const omega of [-2 * wf, -wf, -0.1, 0, 0.1, wf, 2 * wf])
+      for (const command of [
+        { kind: 'speed', fraction: 1 },
+        { kind: 'speed', fraction: -1 },
+        { kind: 'position', angle: 1 },
+        { kind: 'position', angle: -1 }
+      ] as const) {
+        const t = servoTerms(command, SERVO, 0, omega)
+        expect(Math.abs(torque(t, omega))).toBeLessThanOrEqual(ts * (1 + 1e-12))
+      }
+  })
 })

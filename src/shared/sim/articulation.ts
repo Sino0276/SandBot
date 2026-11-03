@@ -52,7 +52,9 @@ export const MIN_COORDINATE_INERTIA = 1e-9
 // 한계 근처(행을 늘 넣는 범위): 간격 ≤ |q̇|·h + LIMIT_MARGIN. 가정: FTC 관절이 한 하위 단계(1 ms)에 움직이는 양(1 m/s·10 rad/s
 // 에서 1 mm·0.01 rad)과 같은 크기. 이 밖의 행은 풀이 뒤 넘을 때만 더한다.
 export const LIMIT_MARGIN = 1e-3
-// 풀고 난 위치가 한계를 이만큼(m 또는 rad) 넘으면 빠진 행을 더해 다시 푼다(반올림 잡음은 z 자르기가 맡는다)
+// 풀고 난 위치가 한계를 이만큼(m 또는 rad) 넘으면 빠진 행을 더해 다시 푼다(반올림 잡음은 z 자르기가 맡는다). 가정: FTC
+// 관절 값(1e-3–10 m·rad)의 배정밀도 반올림(상대 2.2e-16 × 그 크기 × 한 하위 단계의 연산 수십 번)보다 크고, 측정할 수 있는
+// 침투(µm)보다 훨씬 작다.
 const LIMIT_TOLERANCE = 1e-12
 
 type V3 = [number, number, number]
@@ -237,6 +239,11 @@ export const LCP_REGULARIZATION = 1e-9
 // 근접점 반복 상한. 가정: 특이하지 않은 방향의 차이가 한 번에 1e-9배로 줄어 2–3번이면 반올림 수준이다. 그래도 남으면 정칙화한
 // 해(행마다 차이가 1e-9 × 그 행의 충격만으로 생기는 속도 변화 아래)를 쓴다.
 const LCP_PROXIMAL_STEPS = 8
+// 상자 LCP의 상대 허용 오차: 상보성 판정(w의 부호)은 1e-12 × max(1, |b|), 경계 판정(λ가 lo·hi에 닿음)은 1e-12 × max(1, |lo|,
+// |hi|)로 본다. 가정(출처 없음): 배정밀도 반올림(2.2e-16)의 약 4500배라 몇십 행의 LDLᵀ 풀이에서 생기는 반올림만으로는 상태를
+// 바꾸지 않고(바꾸면 주축 전환이 오갈 수 있다), 한 하위 단계 속도로 보면 1e-12 m/s 수준이라 침투·엔코더에 보이지 않는다.
+// 근접점 반복도 원래 A에서 이 값 안이 될 때 멈춘다(시험의 무작위 특이 문제와 담아 둔 순환 사례가 이 수준까지 맞는다).
+const LCP_RELATIVE_TOLERANCE = 1e-12
 // 한 번의 주축 전환 반복 상한. 정칙화한 문제는 P 행렬이라 유한하지만 반올림으로 순환하면 여기서 멈추고 던진다(조용히 상자로
 // 자르지 않는다 — world.ts가 관절을 멈추고 worldError로 알린다). 가정: 행이 50개 아래면 보통 10번 안에 끝난다.
 const LCP_MAX_ITERATIONS = 2000
@@ -268,8 +275,8 @@ export function solveBoxLcp(
     if (Number.isFinite(lo[i])) lScale = Math.max(lScale, Math.abs(lo[i]))
     if (Number.isFinite(hi[i])) lScale = Math.max(lScale, Math.abs(hi[i]))
   }
-  const tolW = 1e-12 * bScale
-  const tolL = 1e-12 * lScale
+  const tolW = LCP_RELATIVE_TOLERANCE * bScale
+  const tolL = LCP_RELATIVE_TOLERANCE * lScale
   // 0 = 아래 경계, 1 = 자유(w = 0), 2 = 위 경계
   const state = new Array<number>(n)
   for (let i = 0; i < n; i++) {
