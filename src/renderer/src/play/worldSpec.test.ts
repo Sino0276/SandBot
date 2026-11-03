@@ -9,6 +9,7 @@ import { parseWorldSpec, type Vec2 } from '../../../shared/sim/worldSpec'
 import { cadRootTransform } from '../cad/alignment'
 import { createComponent } from '../hardware/components'
 import { generateConfigXml } from '../hardware/configXml'
+import { componentCotsKey, cotsEntry, wheelCotsKey } from '../mass/cotsTable'
 import { computeMassModel } from '../mass/massModel'
 import { DEFAULT_ROBOT_MASS, type MassLookup, type MassModel } from '../mass/types'
 import { defaultJoint } from '../scene/joint'
@@ -686,6 +687,77 @@ describe('섀시 몸체·바퀴 질량·접점(3c)', () => {
     }
     const clipped = buildWorldSpec(heavy, 'R', SETTINGS, computeMassModel(heavy, NO_GEOMETRY))
     expect(clipped.spec!.wheels[0].spinInertia).toBeCloseTo(own(2), 15)
+  })
+
+  it('바퀴로 도는 질량: 바퀴 하위의 모터 등 하드웨어 데이터시트 질량은 빼고, 표의 메카넘 바퀴는 데이터시트 질량', () => {
+    // 모터를 바퀴 그룹마다 붙인 메카넘 104 mm 4륜(형상 없음): 질량 모델의 바퀴 하위 질량은 모터 + 바퀴 COTS다
+    const motors = ['lf', 'rf', 'lb', 'rb'].map((name, port) =>
+      motor(name, port, { gearbox: 19.2 })
+    )
+    const corners: [number, number][] = [
+      [0.15, 0.17],
+      [0.15, -0.17],
+      [-0.15, 0.17],
+      [-0.15, -0.17]
+    ]
+    const objects: SceneObjects = {
+      R: {
+        id: 'R',
+        name: 'Robot',
+        kind: 'robot',
+        parentId: null,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+      }
+    }
+    corners.forEach(([x, y], i) => {
+      objects[`w${i}`] = pointGroup(`w${i}`, 'R', [x, y, 0.052], {
+        wheel: wheel({ motor: motors[i].id }),
+        components: [motors[i]]
+      })
+    })
+    const r = defaultWheel('mecanum').diameter / 2
+    const own = (m: number): number => WHEEL_SPIN_INERTIA_FACTOR * m * r * r
+    const motorMass = cotsEntry(componentCotsKey(motors[0])!)!.mass
+    const wheelMass = cotsEntry(wheelCotsKey(objects.w0.wheel!)!)!.mass
+    const mass = computeMassModel(objects, NO_GEOMETRY)
+    expect(mass.objects.w0.mass).toBeCloseTo(motorMass + wheelMass, 12)
+    const { spec, warnings } = buildWorldSpec(objects, 'R', SETTINGS, mass)
+    expect(keys(warnings)).toEqual([])
+    for (const w of spec!.wheels) expect(w.spinInertia).toBeCloseTo(own(wheelMass), 15)
+    // 바퀴 오브젝트에 질량을 덮어쓰면 그 값에서 하위 하드웨어를 뺀다
+    const weighed = { ...objects, w0: { ...objects.w0, mass: { mass: motorMass + 0.3 } } }
+    const overridden = buildWorldSpec(
+      weighed,
+      'R',
+      SETTINGS,
+      computeMassModel(weighed, NO_GEOMETRY)
+    )
+    expect(overridden.spec!.wheels[0].spinInertia).toBeCloseTo(own(0.3), 12)
+    // 표에 없는 바퀴(일반 바퀴)는 하위 질량 − 하드웨어, 남는 것이 없으면 종류 기본 질량
+    const traction = (patch: Partial<SceneObject>): SceneObjects => ({
+      ...objects,
+      w1: {
+        ...objects.w1,
+        wheel: wheel({ kind: 'traction', diameter: 0.104, motor: motors[1].id }),
+        ...patch
+      }
+    })
+    const plainWheel = traction({ mass: { mass: motorMass + 0.2 } })
+    const plain = buildWorldSpec(
+      plainWheel,
+      'R',
+      SETTINGS,
+      computeMassModel(plainWheel, NO_GEOMETRY)
+    )
+    expect(plain.spec!.wheels[1].spinInertia).toBeCloseTo(own(0.2), 12)
+    const onlyMotor = traction({})
+    const fallback = buildWorldSpec(
+      onlyMotor,
+      'R',
+      SETTINGS,
+      computeMassModel(onlyMotor, NO_GEOMETRY)
+    )
+    expect(fallback.spec!.wheels[1].spinInertia).toBeCloseTo(own(DEFAULT_WHEEL_MASS.traction), 15)
   })
 
   it('바퀴가 없는 로봇(고정 기저의 관절 실험대)은 섀시가 기본 상자로 바뀌어도 알리지 않는다', () => {

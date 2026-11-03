@@ -44,6 +44,7 @@ import {
 } from '../scene/model'
 import { wrapAngle } from '../scene/wheel'
 import { floorInertia, subtractMassProps, type MassProps } from '../mass/chassis'
+import { componentCotsKey, cotsEntry, wheelCotsKey } from '../mass/cotsTable'
 import { DEFAULT_ROBOT_MASS, type MassModel } from '../mass/types'
 import { effectiveWheelFriction, wheelSpinInertia } from '../../../shared/sim/wheelData'
 import { convexHull } from '../../../shared/sim/wheelLoads'
@@ -308,6 +309,33 @@ function chassisBody(
   return { mass: rest.mass, centerOfMass: { x, y, z }, inertia }
 }
 
+// 바퀴로 도는 질량(kg, 바퀴 회전 관성용, spec-3c §1.7): 질량 모델의 바퀴 오브젝트 하위 질량에서 그 하위에 붙은 하드웨어
+// 컴포넌트(모터·서보·Pinpoint 등)의 데이터시트 질량을 뺀다. 모터 회전자는 전기자 관성(J_rotor·G²)으로 이미 들어가 있고
+// 하우징은 돌지 않는다. 바퀴 설정이 표의 제품(goBILDA 메카넘)이고 바퀴 오브젝트에 질량 덮어쓰기가 없으면 그 제품의
+// 데이터시트 질량 그대로다(하위가 커서 COTS를 거절한 바퀴 그룹도). 질량 모델이 없거나, 그 오브젝트가 없거나, 빼고 남은
+// 것이 0 이하면 null(종류 기본 질량).
+function wheelSpinMass(
+  objects: SceneObjects,
+  objectId: string,
+  wheel: WheelSettings,
+  mass: MassModel | null
+): number | null {
+  const subtree = mass?.objects[objectId]?.mass
+  if (subtree === undefined) return null
+  const product = wheelCotsKey(wheel)
+  const entry = product !== null && objects[objectId].mass?.mass === undefined && cotsEntry(product)
+  if (entry) return entry.mass
+  let hardware = 0
+  for (const id of subtreeIds(objects, objectId)) {
+    for (const component of objects[id].components ?? []) {
+      const key = componentCotsKey(component)
+      hardware += (key !== null && cotsEntry(key)?.mass) || 0
+    }
+  }
+  const rest = subtree - hardware
+  return rest > 0 ? rest : null
+}
+
 // 바퀴 접점이 로봇 무게를 나눌 수 있는지 볼 때의 받침 다각형 최소 폭(m). 가정: 1 cm보다 좁으면 무게중심 높이 0.1 m에서도
 // 0.5 m/s²(g·w/2h)만 가속해도 받침 밖으로 나가 늘 넘어짐 쪽으로 계산된다(같은 자리·일직선 접점과 같다).
 export const MIN_SUPPORT_WIDTH = 0.01
@@ -466,11 +494,11 @@ export function buildWorldSpec(
       radius: w.wheel.diameter / 2,
       gearRatio: w.wheel.gearRatio,
       motor: (w.motor && motorDevices.get(w.motor.id)) || null,
-      // 바퀴 오브젝트 하위 질량(질량 모델, COTS 바퀴면 데이터시트)의 회전 관성. 모르거나 0이면 종류 기본 질량(wheelData.ts)
+      // 바퀴로 도는 질량(wheelSpinMass)의 회전 관성. 모르거나 0이면 종류 기본 질량(wheelData.ts)
       spinInertia: wheelSpinInertia(
         w.wheel.kind,
         w.wheel.diameter / 2,
-        mass?.objects[w.objectId]?.mass ?? null
+        wheelSpinMass(objects, w.objectId, w.wheel, mass)
       ),
       // 잠근 바퀴 겉보기 μ(설정 0 = 종류 기본)
       friction: effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
