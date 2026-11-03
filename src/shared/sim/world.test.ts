@@ -3,7 +3,8 @@ import type { DeviceValues } from '../sidecarProtocol'
 import { WALL_INNER_HALF } from './field'
 import { TAU_DRIVE } from './motorModel'
 import { motorType, noLoadOutputRadPerSec, rotationSign, ticksPerOutputRev } from './motorTypes'
-import { KinematicWorld } from './world'
+import { testChassis, testMotorParams, testWheelPhysics } from './testkit'
+import { PhysicsWorld } from './world'
 import {
   WORLD_SPEC_VERSION,
   type SimMotorSpec,
@@ -24,7 +25,13 @@ const VOLTS = 12
 type Drive = Partial<Record<'fl' | 'fr' | 'bl' | 'br', number>>
 
 function motorSpec(device: string, directionSign: 1 | -1): SimMotorSpec {
-  return { device, modelTag: GOBILDA, gearbox: GEARBOX, directionSign }
+  return {
+    device,
+    modelTag: GOBILDA,
+    gearbox: GEARBOX,
+    directionSign,
+    params: testMotorParams(GOBILDA, GEARBOX)
+  }
 }
 
 function mecanumWheel(device: string, x: number, y: number): SimWheelSpec {
@@ -35,7 +42,8 @@ function mecanumWheel(device: string, x: number, y: number): SimWheelSpec {
     rollers: x > 0 === y > 0 ? 'flbr' : 'frbl',
     radius: RADIUS,
     gearRatio: 1,
-    motor: device
+    motor: device,
+    ...testWheelPhysics('mecanum', RADIUS)
   }
 }
 
@@ -50,7 +58,8 @@ function mecanumSpec(change: Partial<WorldSpec> = {}): WorldSpec {
         { x: -HALF, y: HALF },
         { x: -HALF, y: -HALF },
         { x: HALF, y: -HALF }
-      ]
+      ],
+      body: testChassis()
     },
     batteryVoltage: VOLTS,
     hubs: ['Control Hub'],
@@ -109,7 +118,7 @@ function driveOutputs(
   return { ...out, ...extra }
 }
 
-type Run = { world: KinematicWorld; inputs: Record<string, DeviceValues>[]; t: number }
+type Run = { world: PhysicsWorld; inputs: Record<string, DeviceValues>[]; t: number }
 
 // 틱 k마다 step(k·5 ms, outputs(k)). 첫 호출(t = 0)은 상태만 만든다.
 function run(
@@ -118,7 +127,7 @@ function run(
   outputs: (k: number) => Record<string, DeviceValues>,
   from?: Run
 ): Run {
-  const world = from?.world ?? new KinematicWorld(spec)
+  const world = from?.world ?? new PhysicsWorld(spec)
   const inputs = from?.inputs ?? []
   const first = from ? Math.round(from.t / TICK) + 1 : 0
   const last = first + Math.round((seconds * 1e9) / TICK)
@@ -137,10 +146,10 @@ function latest(inputs: Record<string, DeviceValues>[]): Record<string, DeviceVa
 
 const num = (v: unknown): number => v as number
 
-describe('KinematicWorld 메카넘', () => {
+describe('PhysicsWorld 메카넘', () => {
   it('첫 호출은 적분하지 않고 모든 입력, 그 뒤는 바뀐 키만', () => {
     const spec = mecanumSpec()
-    const world = new KinematicWorld(spec)
+    const world = new PhysicsWorld(spec)
     const first = world.step(0, driveOutputs(spec, mecanum(1, 0, 0)))
     expect(Object.keys(first)).toEqual(['Control Hub', 'fl', 'fr', 'bl', 'br', 'imu'])
     expect(first['Control Hub']).toEqual({ voltage: VOLTS })
@@ -148,7 +157,7 @@ describe('KinematicWorld 메카넘', () => {
     expect(first.imu).toEqual({ yaw: 0, pitch: 0, roll: 0, yawRate: 0, pitchRate: 0, rollRate: 0 })
     expect(world.pose()).toEqual({ x: 0, y: 0, yaw: 0, blocked: false })
     // 출력이 바뀌지 않고 아무것도 움직이지 않으면 보낼 것이 없다
-    const still = new KinematicWorld(spec)
+    const still = new PhysicsWorld(spec)
     still.step(0, driveOutputs(spec, {}))
     expect(still.step(TICK, driveOutputs(spec, {}))).toEqual({})
     // 앞 틱의 출력(앞으로)으로 적분했으므로 엔코더·속도만 바뀐다(허브·IMU 값은 그대로). 첫 5 ms는 0.3틱쯤이라 정수
@@ -297,7 +306,7 @@ describe('KinematicWorld 메카넘', () => {
   })
 })
 
-describe('KinematicWorld 오도메트리', () => {
+describe('PhysicsWorld 오도메트리', () => {
   const PINPOINT_TICKS_PER_MM = 19.89436789
 
   function pinpointSpec(): WorldSpec {
@@ -480,7 +489,7 @@ describe('KinematicWorld 오도메트리', () => {
         }
       ]
     })
-    const world = new KinematicWorld(spec)
+    const world = new PhysicsWorld(spec)
     const out = (): Record<string, DeviceValues> =>
       driveOutputs(spec, {}, { fr: motorOut(0, 1, { mode: 'RUN_USING_ENCODER', velocity: 0 }) })
     world.step(0, driveOutputs(spec, {}))
@@ -546,7 +555,7 @@ describe('KinematicWorld 오도메트리', () => {
   })
 })
 
-describe('KinematicWorld 허브 엔코더 속도', () => {
+describe('PhysicsWorld 허브 엔코더 속도', () => {
   // 50 ms 창 = 5 ms 틱 10개
   const WINDOW_TICKS = 10
 
@@ -622,7 +631,7 @@ describe('KinematicWorld 허브 엔코더 속도', () => {
       ]
     })
     // 앞으로 1초, 그다음 왼쪽으로 1초(회전 없음: 포드 이동 = 로봇 이동)
-    const world = new KinematicWorld(spec)
+    const world = new PhysicsWorld(spec)
     const inputs: Record<string, DeviceValues>[] = []
     const poses: { x: number; y: number }[] = []
     for (let k = 0; k < 400; k++) {
@@ -673,8 +682,8 @@ describe('KinematicWorld 허브 엔코더 속도', () => {
 
   it('결정적: 틱 간격이 달라도 같은 시각의 속도는 같고, 같은 출력열이면 같은 값', () => {
     const spec = mecanumSpec()
-    const a = new KinematicWorld(spec)
-    const b = new KinematicWorld(spec)
+    const a = new PhysicsWorld(spec)
+    const b = new PhysicsWorld(spec)
     const drive = (k: number): Record<string, DeviceValues> =>
       driveOutputs(spec, mecanum(Math.sin(k / 30), 0.3 * Math.cos(k / 50), 0.2))
     const velocityA: number[] = []
@@ -695,7 +704,7 @@ describe('KinematicWorld 허브 엔코더 속도', () => {
   })
 })
 
-describe('KinematicWorld 벽', () => {
+describe('PhysicsWorld 벽', () => {
   const LIMIT = WALL_INNER_HALF
 
   it('시작부터 벽에 걸쳐 있어도 튀지 않고, 더 들어가는 이동만 막는다', () => {
@@ -749,11 +758,11 @@ describe('KinematicWorld 벽', () => {
   })
 })
 
-describe('KinematicWorld 결정성', () => {
+describe('PhysicsWorld 결정성', () => {
   it('dt는 틱 시각 차이: 틱 간격이 달라도 같은 1 ms 하위 단계면 같은 자세', () => {
     const spec = mecanumSpec()
-    const a = new KinematicWorld(spec)
-    const b = new KinematicWorld(spec)
+    const a = new PhysicsWorld(spec)
+    const b = new PhysicsWorld(spec)
     const out = driveOutputs(spec, mecanum(0.5, 0.2, 0.1))
     a.step(0, out)
     b.step(0, out)
@@ -761,7 +770,7 @@ describe('KinematicWorld 결정성', () => {
     for (let k = 1; k <= 100; k++) b.step(k * 2 * TICK, out)
     expect(b.pose()).toEqual(a.pose())
     // 틱이 늦게 와도(긴 구간) 그 시간만큼 적분한다
-    const c = new KinematicWorld(spec)
+    const c = new PhysicsWorld(spec)
     c.step(0, out)
     c.step(1000 * 1_000_000, out)
     expect(c.pose().x).toBeCloseTo(a.pose().x, 9)
@@ -811,7 +820,7 @@ describe('KinematicWorld 결정성', () => {
 
   it('장치 이름이 __proto__여도 프로토타입을 건드리지 않는다', () => {
     const spec = mecanumSpec({ imus: [{ device: '__proto__' }] })
-    const world = new KinematicWorld(spec)
+    const world = new PhysicsWorld(spec)
     const inputs = world.step(0, driveOutputs(spec, {}))
     expect(Object.prototype.hasOwnProperty.call(inputs, '__proto__')).toBe(true)
     expect(Object.getPrototypeOf(inputs)).toBe(Object.prototype)

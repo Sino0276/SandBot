@@ -109,7 +109,8 @@ function scene(): SceneObjects {
         motor: 'fl',
         gearRatio: 1,
         angle: 0,
-        rollers: 'auto'
+        rollers: 'auto',
+        friction: 0
       }
     },
     arm: { id: 'arm', name: 'Arm', kind: 'group', parentId: 'R', transform: at(0.1, 0, 0.3) },

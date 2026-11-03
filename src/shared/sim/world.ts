@@ -178,8 +178,8 @@ function own(outputs: Record<string, DeviceValues>, device: string): DeviceValue
 }
 
 // src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
-// kinematicWorld가 한다).
-export class KinematicWorld {
+// simulationWorld가 한다).
+export class PhysicsWorld {
   private readonly spec: WorldSpec
   private readonly drivetrain: Drivetrain
   private readonly motors: Motor[]

@@ -1,6 +1,6 @@
 // 시뮬레이터 통합 테스트(진짜 JVM): 사이드카(org.sandbot.runtime.Main)에 테스트 구성(opmodes-sim/sandbot_sim_bot.xml)과 팀 코드처럼
 // 쓴 OpMode를 주고, 메인 프로세스의 SidecarSession 대신 작은 결정적 호스트(틱마다 바로 답, 정한 게임패드, 정한 틱에 START)에
-// 운동학 시뮬레이터(src/shared/sim/world.ts의 KinematicWorld)를 붙인다. 틱이 오면 world.step(그 틱의 시각·출력)의 입력을
+// 운동학 시뮬레이터(src/shared/sim/world.ts의 PhysicsWorld)를 붙인다. 틱이 오면 world.step(그 틱의 시각·출력)의 입력을
 // 그 답에 싣는다(SidecarSession과 같은 순서). JDK가 없으면 건너뛴다.
 //  - 메카넘 TeleOp + 고정 게임패드(앞으로 1초, 그다음 왼쪽으로 회전) → 기대 방향 이동, 팀 코드가 읽은 IMU·엔코더·Pinpoint
 //  - RUN_TO_POSITION Autonomous의 while (isBusy())가 정한 가상 시간 안에 끝나고 목표 허용 오차 안에 선다
@@ -16,7 +16,8 @@ import {
   type SidecarMessage,
   type TickMessage
 } from '../../src/shared/sidecarProtocol'
-import { KinematicWorld } from '../../src/shared/sim/world'
+import { testChassis, testMotorParams, testWheelPhysics } from '../../src/shared/sim/testkit'
+import { PhysicsWorld } from '../../src/shared/sim/world'
 import { WORLD_SPEC_VERSION, type SimPose, type WorldSpec } from '../../src/shared/sim/worldSpec'
 import { SIDECAR_TEST_TIMEOUT, sidecarBuild, testTempDir, type SidecarBuild } from './support'
 
@@ -32,6 +33,8 @@ const HALF = 0.2286
 
 // opmodes-sim의 로봇: 왼쪽 모터는 인스펙터 REVERSE(팀 코드의 setDirection과 같음), Pinpoint X 포드는 왼쪽 100 mm,
 // Y 포드는 뒤 80 mm(팀 코드의 setOffsets(100, -80))
+const GOBILDA_19 = testMotorParams('goBILDA5202SeriesMotor', 19.2)
+
 const SPEC: WorldSpec = {
   version: WORLD_SPEC_VERSION,
   robot: {
@@ -41,15 +44,40 @@ const SPEC: WorldSpec = {
       { x: -HALF, y: HALF },
       { x: -HALF, y: -HALF },
       { x: HALF, y: -HALF }
-    ]
+    ],
+    body: testChassis()
   },
   batteryVoltage: 12.5,
   hubs: ['Control Hub'],
   motors: [
-    { device: 'frontLeft', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-    { device: 'frontRight', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: 1 },
-    { device: 'backLeft', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-    { device: 'backRight', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: 1 }
+    {
+      device: 'frontLeft',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: -1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'frontRight',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: 1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'backLeft',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: -1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'backRight',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: 1,
+      params: GOBILDA_19
+    }
   ],
   wheels: (
     [
@@ -65,7 +93,8 @@ const SPEC: WorldSpec = {
     rollers,
     radius: RADIUS,
     gearRatio: 1,
-    motor
+    motor,
+    ...testWheelPhysics('mecanum', RADIUS)
   })),
   deadWheels: [],
   pinpoints: [
@@ -131,7 +160,7 @@ function runSim(
   pad: (tick: number) => GamepadState | null
 ): Promise<SimRun> {
   return new Promise((done, fail) => {
-    const world = new KinematicWorld(SPEC)
+    const world = new PhysicsWorld(SPEC)
     const child = spawn(
       b.java,
       [

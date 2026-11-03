@@ -1,10 +1,10 @@
 import type { DeviceValues } from '../../shared/sidecarProtocol'
 import type { SimNoticeCode } from '../../shared/play'
-import { KinematicWorld } from '../../shared/sim/world'
+import { PhysicsWorld } from '../../shared/sim/world'
 import type { SimPose, WorldSpec } from '../../shared/sim/worldSpec'
 
 // 사이드카 바깥의 세계(운동학 시뮬레이터). 틱이 도착할 때마다 그 틱의 장치 출력을 받아, 그 틱 답(tickReply)에 실을 센서
-// 값(장치 이름 → 값)을 돌려준다. 구현은 src/shared/sim/world.ts의 KinematicWorld(2단계)이고, 세계가 없으면 EMPTY_WORLD.
+// 값(장치 이름 → 값)을 돌려준다. 구현은 src/shared/sim/world.ts의 PhysicsWorld(2단계)이고, 세계가 없으면 EMPTY_WORLD.
 export interface SimWorld {
   // tNanos: 이 틱 경계의 가상 시간(앞으로만 간다). 돌려준 값은 보낸 키만 바꾼다(sidecarProtocol.TickReply.inputs).
   step(tNanos: number, outputs: Record<string, DeviceValues>): Record<string, DeviceValues>
@@ -25,5 +25,4 @@ export type WorldFactory = (spec: WorldSpec | null) => SimWorld
 
 // 앱의 세계(index.ts): 실행마다 새 운동학 시뮬레이터. 세계 설명은 launch.validateRequest가 parseWorldSpec으로 확인한
 // 값이다. 로봇이 없으면 빈 세계(센서는 사이드카 기본값).
-export const kinematicWorld: WorldFactory = (spec) =>
-  spec ? new KinematicWorld(spec) : EMPTY_WORLD
+export const simulationWorld: WorldFactory = (spec) => (spec ? new PhysicsWorld(spec) : EMPTY_WORLD)

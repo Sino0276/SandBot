@@ -1,7 +1,7 @@
 // 라이브러리 통합 시험(진짜 JVM, 라이브러리 L1 갈래 D): 사이드카(org.sandbot.runtime.Main)에 실제 FTC 라이브러리 jar(scripts/
 // fetch-test-libraries.mjs가 고정 해시로 받은 sidecar/build/test-libs/)를 libraryClasspath·compileClasspath로 주고, 팀 코드처럼 쓴
 // 시험 OpMode(sidecar/tests/opmodes-libs/)를 돌린다. 호스트는 sim.test.ts처럼 작은 결정적 호스트(틱마다 바로 답, 정한 틱에 START)이고,
-// 세계 설명을 주면 운동학 시뮬레이터(KinematicWorld)를 붙인다(SidecarSession과 같은 순서로 그 틱의 답에 입력을 싣는다).
+// 세계 설명을 주면 운동학 시뮬레이터(PhysicsWorld)를 붙인다(SidecarSession과 같은 순서로 그 틱의 답에 입력을 싣는다).
 //  - 결정성: 해시 순서 컬렉션(enum·Object 키 HashMap·HashSet, Collectors.toSet·toMap, HashMap::new)이 두 JVM에서 같은 순서
 //  - Pedro Pathing 3.0.2: 메카넘 + Pinpoint 로컬라이저로 Follower가 짧은 경로를 따라가 끝나고, 두 번 돌리면 같은 자세열·메시지
 //  - FTCLib 2.1.1: CommandOpMode + ParallelCommandGroup·MotorEx(두 JVM에서 같은 메시지), RevIMU(BNO055 구성,
@@ -28,7 +28,8 @@ import {
   type RunRequest,
   type SidecarMessage
 } from '../../src/shared/sidecarProtocol'
-import { KinematicWorld } from '../../src/shared/sim/world'
+import { testChassis, testMotorParams, testWheelPhysics } from '../../src/shared/sim/testkit'
+import { PhysicsWorld } from '../../src/shared/sim/world'
 import { WORLD_SPEC_VERSION, type SimPose, type WorldSpec } from '../../src/shared/sim/worldSpec'
 import {
   compileJavaTests,
@@ -133,6 +134,8 @@ const LY = 0.18
 const RADIUS = 0.052
 const HALF = 0.2286
 
+const GOBILDA_19 = testMotorParams('goBILDA5202SeriesMotor', 19.2)
+
 const SPEC: WorldSpec = {
   version: WORLD_SPEC_VERSION,
   robot: {
@@ -142,15 +145,40 @@ const SPEC: WorldSpec = {
       { x: -HALF, y: HALF },
       { x: -HALF, y: -HALF },
       { x: HALF, y: -HALF }
-    ]
+    ],
+    body: testChassis()
   },
   batteryVoltage: 12.5,
   hubs: ['Control Hub'],
   motors: [
-    { device: 'frontLeft', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-    { device: 'frontRight', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: 1 },
-    { device: 'backLeft', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-    { device: 'backRight', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: 1 }
+    {
+      device: 'frontLeft',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: -1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'frontRight',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: 1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'backLeft',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: -1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'backRight',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: 1,
+      params: GOBILDA_19
+    }
   ],
   wheels: (
     [
@@ -166,7 +194,8 @@ const SPEC: WorldSpec = {
     rollers,
     radius: RADIUS,
     gearRatio: 1,
-    motor
+    motor,
+    ...testWheelPhysics('mecanum', RADIUS)
   })),
   deadWheels: [],
   pinpoints: [
@@ -233,7 +262,7 @@ function runRequest(b: SidecarBuild, host: Host): RunRequest {
 
 function runSidecar(b: SidecarBuild, host: Host): Promise<Run> {
   return new Promise((done, fail) => {
-    const world = host.world ? new KinematicWorld(host.world) : null
+    const world = host.world ? new PhysicsWorld(host.world) : null
     const child = spawn(
       b.java,
       [

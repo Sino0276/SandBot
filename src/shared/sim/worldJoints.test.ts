@@ -5,7 +5,8 @@ import { resolveMotorParams, resolveServoParams } from './actuatorData'
 import { Articulation, MIN_COORDINATE_INERTIA, type DriveForces } from './articulation'
 import { motorType, rotationSign } from './motorTypes'
 import { GRAVITY } from './physics'
-import { KinematicWorld } from './world'
+import { testChassis, testMotorParams } from './testkit'
+import { PhysicsWorld } from './world'
 import {
   WORLD_SPEC_VERSION,
   type SimJointSpec,
@@ -64,11 +65,20 @@ function world(joints: SimJointSpec[], change: Partial<WorldSpec> = {}): WorldSp
         { x: -0.2, y: 0.2 },
         { x: -0.2, y: -0.2 },
         { x: 0.2, y: -0.2 }
-      ]
+      ],
+      body: testChassis()
     },
     batteryVoltage: VOLTS,
     hubs: ['Control Hub'],
-    motors: [{ device: 'lift', modelTag: TAG, gearbox: 19.2, directionSign: 1 }],
+    motors: [
+      {
+        device: 'lift',
+        modelTag: TAG,
+        gearbox: 19.2,
+        directionSign: 1,
+        params: testMotorParams(TAG, 19.2)
+      }
+    ],
     wheels: [],
     deadWheels: [],
     pinpoints: [],
@@ -98,7 +108,7 @@ function motorOut(up: number, change: DeviceValues = {}): Record<string, DeviceV
 }
 
 type Run = {
-  world: KinematicWorld
+  world: PhysicsWorld
   inputs: Record<string, DeviceValues>[]
   q: number[][]
   tick: number
@@ -110,7 +120,7 @@ function run(
   outputs: (k: number) => Record<string, DeviceValues>,
   tick = 5_000_000
 ): Run {
-  const w = new KinematicWorld(spec)
+  const w = new PhysicsWorld(spec)
   const inputs: Record<string, DeviceValues>[] = []
   const q: number[][] = []
   for (let k = 0; k <= Math.round((seconds * 1e9) / tick); k++) {
@@ -325,7 +335,7 @@ describe('관절 리프트(모터 구동 직선 관절)', () => {
   })
 
   it('관절이 없는 세계의 자세에는 joints 키가 없다', () => {
-    const w = new KinematicWorld(world([], { motors: [] }))
+    const w = new PhysicsWorld(world([], { motors: [] }))
     w.step(0, {})
     expect(Object.keys(w.pose())).toEqual(['x', 'y', 'yaw', 'blocked'])
   })
@@ -500,7 +510,13 @@ describe('관절 모터 엔코더 해상도', () => {
       }
       const spec = world([arm], {
         motors: [
-          { device: 'lift', modelTag: tag, gearbox: motorType(tag).gearing, directionSign: 1 }
+          {
+            device: 'lift',
+            modelTag: tag,
+            gearbox: motorType(tag).gearing,
+            directionSign: 1,
+            params: testMotorParams(tag, 'default')
+          }
         ]
       })
       const r = run(spec, 1, () => ({

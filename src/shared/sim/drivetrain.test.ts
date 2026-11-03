@@ -8,6 +8,7 @@ import {
   wrapAngle,
   type Twist
 } from './drivetrain'
+import { testWheelPhysics } from './testkit'
 import type { SimWheelSpec } from './worldSpec'
 
 const LX = 0.16
@@ -27,6 +28,7 @@ function wheel(
     radius: 0.048,
     gearRatio: 1,
     motor: 'm',
+    ...testWheelPhysics(kind, 0.048),
     ...extra
   }
 }

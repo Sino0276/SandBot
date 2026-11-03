@@ -787,6 +787,10 @@ const en: Messages = {
       worldNoWheels:
         'The robot has no wheel components, so it will not move. Add [Add component → Wheel] to the wheel parts (or groups).',
       worldWheelNoMotor: 'Wheel {{name}} has no drive motor, so it only rolls along.',
+      worldFewWheels:
+        'The wheel contacts are fewer than three or lie on one line, so the robot weight cannot be split between the wheels. The simulator treats the robot as never tipping over.',
+      worldChassisMass:
+        'The robot body (mass without the joint bodies) is only {{mass}} kg, so the default mass of {{fallback}} kg is used. Enter the weighed mass in the Rigidbody card.',
       worldWheelMotorMissing:
         'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
       worldRollersAmbiguous:
@@ -880,6 +884,10 @@ const en: Messages = {
           'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
         worldError:
           'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).',
+        tipping:
+          'The robot centre of mass went outside what the wheels can support (a real robot may tilt or tip over). The simulator only computes on the floor plane, so the robot does not tip.',
+        wheelLift:
+          'One or more wheels stayed off the floor with no load for more than 0.1 s. Those wheels spin freely meanwhile.',
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -1153,6 +1161,13 @@ const en: Messages = {
         'In the standard layout where the rollers form an X seen from above, the wheels at the front-left and back-right are the front-left/back-right type. Auto uses the quadrant around the center of the mecanum wheels.',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedNoMotor: 'Choose a drive motor to see the top speed.',
+      friction: 'Friction',
+      frictionDefault: 'Kind default ({{value}})',
+      frictionHint:
+        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to the roller-axis coefficient (√2 times). Leave it empty to use the kind default (an assumption, not measured).',
+      wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
+      staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
+      staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
       motorMissingWarning:
         'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
       rollersAmbiguousWarning:
@@ -1165,6 +1180,7 @@ const en: Messages = {
       title: 'Drivetrain (simulator)',
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
+      traction: 'Traction-limited acceleration ≈ {{accel}} m/s² ({{g}} g)',
       none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
     },
     categories: {

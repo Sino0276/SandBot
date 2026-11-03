@@ -12,6 +12,7 @@ import {
   type SimImuSpec,
   type SimMotorSpec,
   type SimOtosSpec,
+  type SimBody,
   type SimPinpointSpec,
   type SimWheelSpec,
   type Vec2,
@@ -42,9 +43,10 @@ import {
   type WheelSettings
 } from '../scene/model'
 import { wrapAngle } from '../scene/wheel'
-import type { MassModel } from '../mass/types'
+import { DEFAULT_ROBOT_MASS, type MassModel } from '../mass/types'
+import { effectiveWheelFriction, wheelSpinInertia } from '../../../shared/sim/wheelData'
 import type { ConsoleNoticeKey } from './consoleModel'
-import { buildWorldJoints } from './worldJoints'
+import { buildWorldJoints, motorComponentParams } from './worldJoints'
 
 // 운동학 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
 // 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
@@ -234,6 +236,33 @@ export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
 
 const xy = (pose: { x: number; y: number }): Vec2 => ({ x: pose.x, y: pose.y })
 
+// 섀시를 모를 때의 몸체(3c): DEFAULT_ROBOT_MASS를 외곽의 경계 상자(높이 0.2 m, 무게중심 높이 0.1 m, 가정)에 고르게 둔 직육면체
+export const PLACEHOLDER_CHASSIS_HEIGHT = 0.2
+export function placeholderChassisBody(footprint: readonly Vec2[]): SimBody {
+  const xs = footprint.map((p) => p.x)
+  const ys = footprint.map((p) => p.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const a = maxX - minX
+  const b = maxY - minY
+  const h = PLACEHOLDER_CHASSIS_HEIGHT
+  const m = DEFAULT_ROBOT_MASS
+  return {
+    mass: m,
+    centerOfMass: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: h / 2 },
+    inertia: [
+      (m * (b * b + h * h)) / 12,
+      (m * (a * a + h * h)) / 12,
+      (m * (a * a + b * b)) / 12,
+      0,
+      0,
+      0
+    ]
+  }
+}
+
 // 한도를 넘는 목록은 앞의 것만 쓰고 알린다(목록마다 문장이 따로 있다: 무엇이 넘었는지도 번역한다)
 type TooManyKey = Extract<WorldWarningKey, `worldTooMany${string}`>
 function capped<T>(items: T[], max: number, key: TooManyKey, warnings: WorldWarning[]): T[] {
@@ -335,7 +364,9 @@ export function buildWorldSpec(
       // 구성 XML과 같은 태그(configXml deviceTag)
       modelTag: MOTOR_MODEL_TAGS[isMotorModel(model) ? model : 'unspecified'],
       gearbox: motorGearbox(component.props),
-      directionSign: component.props.direction === 'reverse' ? -1 : 1
+      directionSign: component.props.direction === 'reverse' ? -1 : 1,
+      // 토크·전류·관성은 실제 감속비로 푼 데이터시트 값(감속비 칸 0 = 그 모델의 실제 감속비, SDK gearing이 아님)
+      params: motorComponentParams(component.props)
     })
   }
 
@@ -355,7 +386,10 @@ export function buildWorldSpec(
       rollers: w.rollers,
       radius: w.wheel.diameter / 2,
       gearRatio: w.wheel.gearRatio,
-      motor: (w.motor && motorDevices.get(w.motor.id)) || null
+      motor: (w.motor && motorDevices.get(w.motor.id)) || null,
+      // 계약: 종류 기본 질량(B가 질량 모델의 바퀴 하위 질량으로 바꾼다)
+      spinInertia: wheelSpinInertia(w.wheel.kind, w.wheel.diameter / 2, null),
+      friction: effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
     }
   })
 
@@ -437,11 +471,14 @@ export function buildWorldSpec(
   warnings.push(...joints.warnings)
 
   const [x, y] = robot.transform.position
+  const footprint = robotFootprint(objects, robotId)
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
     robot: {
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
-      footprint: robotFootprint(objects, robotId)
+      footprint,
+      // 계약: 기본 질량 상자(B가 질량 모델의 로봇 − 관절 몸체로 바꾼다)
+      body: placeholderChassisBody(footprint)
     },
     batteryVoltage: settings.batteryVoltage,
     hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),

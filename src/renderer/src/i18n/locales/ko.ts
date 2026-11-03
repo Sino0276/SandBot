@@ -800,6 +800,11 @@ const ko = {
       worldNoWheels:
         '바퀴 컴포넌트가 없어 로봇이 움직이지 않습니다. 바퀴 파트(또는 그룹)에 [컴포넌트 추가 → 바퀴]를 붙이세요.',
       worldWheelNoMotor: '바퀴 {{name}}에 구동 모터가 없어 굴리지 않습니다(따라 구르기만 합니다).',
+      // 3c 구동계 동역학
+      worldFewWheels:
+        '바퀴 접점이 셋보다 적거나 한 줄에 있어 로봇 무게를 바퀴에 나눌 수 없습니다. 시뮬레이터는 로봇이 넘어지지 않는 것으로 계산합니다.',
+      worldChassisMass:
+        '로봇 몸체(관절 몸체를 뺀 질량)가 {{mass}} kg로 너무 작아 기본 질량 {{fallback}} kg로 계산합니다. Rigidbody 카드에서 저울 무게를 넣으세요.',
       worldWheelMotorMissing:
         '바퀴 {{name}}의 구동 모터를 이 로봇에서 찾을 수 없어(지웠거나 다른 로봇의 모터) 굴리지 않습니다.',
       worldRollersAmbiguous:
@@ -887,6 +892,11 @@ const ko = {
         sharedEncoderMode:
           '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
         worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).',
+        // 3c: 법선 하중(받쳐지지 않은 모멘트·뜬 바퀴가 0.1초 넘게 이어짐, 실행마다 한 번)
+        tipping:
+          '로봇 무게중심이 바퀴가 받칠 수 있는 범위 밖으로 나갔습니다(실제 로봇은 기울거나 넘어질 수 있습니다). 시뮬레이터는 평면에서만 계산해 넘어지지 않습니다.',
+        wheelLift:
+          '바퀴 하나 이상이 하중 없이 바닥에서 뜬 상태가 0.1초 넘게 이어졌습니다. 그동안 그 바퀴는 헛돕니다.',
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
@@ -1152,6 +1162,14 @@ const ko = {
         '위에서 볼 때 롤러가 X를 이루는 표준 배치에서 앞왼쪽·뒤오른쪽 자리의 바퀴가 앞왼·뒤오른형입니다. 자동은 메카넘 바퀴들의 중심에 대한 사분면으로 정합니다.',
       topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
       topSpeedNoMotor: '구동 모터를 고르면 최고 속도를 보입니다.',
+      // 3c: 타일 마찰(Unity WheelCollider Friction 자리)과 계산값
+      friction: '마찰 계수',
+      frictionDefault: '종류 기본 ({{value}})',
+      frictionHint:
+        '잠근 바퀴를 필드 타일에서 끌 때의 마찰 계수(제조사 표기 CoF)입니다. 바퀴가 미끄러질 때 로봇 가속은 약 μ·g입니다. 메카넘은 시뮬레이터가 롤러 축 계수(√2배)로 바꿉니다. 비우면 종류 기본값(측정 없는 가정)을 씁니다.',
+      wheelMass: '바퀴 질량 {{mass}} · 회전 관성 {{inertia}} kg·m²',
+      staticLoad: '정지 하중 ≈ {{load}} N · 견인 한계 ≈ {{limit}} N',
+      staticLoadUnknown: '로봇 질량을 계산하면 정지 하중을 보입니다.',
       motorMissingWarning:
         '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 이 바퀴는 굴리지 않습니다.',
       rollersAmbiguousWarning:
@@ -1164,6 +1182,7 @@ const ko = {
       title: '구동계 (시뮬레이터)',
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
+      traction: '견인 한계 가속 ≈ {{accel}} m/s² ({{g}} g)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'
     },
     categories: {

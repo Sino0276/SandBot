@@ -109,7 +109,7 @@ function solveMatrix(rows: readonly Row[]): number[][] {
 }
 
 // 대칭 반양정치 3×3 행렬의 유사 역행렬 V·Λ⁺·Vᵀ(가장 큰 고유값의 RANK_TOLERANCE배 이하인 고유값은 0으로 본다)
-function pseudoInverse3(m: readonly number[][]): number[][] {
+export function pseudoInverse3(m: readonly number[][]): number[][] {
   const { values, vectors } = symmetricEigen3(m)
   const max = Math.max(values[0], values[1], values[2])
   const result: number[][] = [

@@ -1,10 +1,10 @@
 import i18n from 'i18next'
 import { Vector3 } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { kinematicWorld } from '../../../main/sidecar/world'
+import { simulationWorld } from '../../../main/sidecar/world'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
-import { parseWorldSpec, type WorldSpec } from '../../../shared/sim/worldSpec'
+import { parseWorldSpec, WORLD_SPEC_VERSION, type WorldSpec } from '../../../shared/sim/worldSpec'
 import type {
   GrantCodeTrustResult,
   ListOpModesResult,
@@ -436,7 +436,7 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     await initPlay()
     const { world } = lastRequest()
     expect(world).toMatchObject({
-      version: 2,
+      version: WORLD_SPEC_VERSION,
       robot: { start: { x: 0, y: 0, yaw: 0 } },
       batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
       hubs: ['Control Hub'],
@@ -544,7 +544,7 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     // 메인 프로세스: IPC(구조화 복제와 같은 JSON 모양)로 받은 세계 설명을 실제 검증으로 읽고 실행마다 세계를 만든다
     const parsed = parseWorldSpec(JSON.parse(JSON.stringify(lastRequest().world)))
     expect(typeof parsed).not.toBe('string')
-    const world = kinematicWorld(parsed as WorldSpec)
+    const world = simulationWorld(parsed as WorldSpec)
     const motorSpec = (parsed as WorldSpec).motors.find((m) => m.device === 'lift')!
     // 허브 power의 부호: +power × 형식 회전 부호 × 인스펙터 방향이 관절 + 방향이다
     const up = rotationSign(motorType(motorSpec.modelTag)) * motorSpec.directionSign

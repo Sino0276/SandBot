@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { resolveMotorParams } from '../../../shared/sim/actuatorData'
+import { DEFAULT_WHEEL_FRICTION, WHEEL_SPIN_INERTIA_FACTOR } from '../../../shared/sim/wheelData'
 import { parseWorldSpec } from '../../../shared/sim/worldSpec'
 import { cadRootTransform } from '../cad/alignment'
 import { createComponent } from '../hardware/components'
@@ -80,6 +82,8 @@ function mecanumRobot(): SceneObjects {
   }
 }
 
+const GOBILDA = 'goBILDA5202SeriesMotor'
+
 const keys = (warnings: WorldWarning[]): string[] => warnings.map((w) => w.key)
 
 describe('buildWorldSpec', () => {
@@ -91,13 +95,17 @@ describe('buildWorldSpec', () => {
     expect(spec!.batteryVoltage).toBe(12.5)
     // 구성 XML의 LynxModule 이름(같은 순서)
     expect(spec!.hubs).toEqual(['Expansion Hub 2', 'Control Hub'])
+    const params = expect.any(Object) as unknown
     expect(spec!.motors).toEqual([
-      { device: 'leftFront', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-      { device: 'rightFront', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: 1 },
-      { device: 'leftBack', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
+      { device: 'leftFront', modelTag: GOBILDA, gearbox: 19.2, directionSign: -1, params },
+      { device: 'rightFront', modelTag: GOBILDA, gearbox: 19.2, directionSign: 1, params },
+      { device: 'leftBack', modelTag: GOBILDA, gearbox: 19.2, directionSign: -1, params },
       // 이름은 사이드카처럼 앞뒤 공백을 뺀다
-      { device: 'rightBack', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5, directionSign: 1 }
+      { device: 'rightBack', modelTag: GOBILDA, gearbox: 99.5, directionSign: 1, params }
     ])
+    // 기어모터 값은 실제 감속비로 푼 데이터시트 값(감속비 칸 0 = 모델의 실제 감속비, 엔코더의 SDK gearbox와 따로)
+    expect(spec!.motors[0].params).toEqual(resolveMotorParams(GOBILDA, 19.2))
+    expect(spec!.motors[3].params).toEqual(resolveMotorParams(GOBILDA, 'default'))
     const wheels = spec!.wheels.map((w) => ({ ...w, position: rounded(w.position) }))
     expect(wheels).toEqual([
       {
@@ -107,7 +115,10 @@ describe('buildWorldSpec', () => {
         rollers: 'flbr',
         radius: 0.052,
         gearRatio: 1,
-        motor: 'leftFront'
+        motor: 'leftFront',
+        // 종류 기본 질량(goBILDA GripForce 236 g)의 회전 관성, 종류 기본 마찰(3c)
+        spinInertia: WHEEL_SPIN_INERTIA_FACTOR * 0.236 * 0.052 * 0.052,
+        friction: DEFAULT_WHEEL_FRICTION.mecanum
       },
       expect.objectContaining({ position: { x: 0.25, y: -0.15 }, rollers: 'frbl' }),
       // 로봇 중심으로는 앞쪽이지만 메카넘 중심(x = 0.15)으로는 뒤쪽
@@ -343,7 +354,8 @@ describe('buildWorldSpec', () => {
       device: 'lift',
       modelTag: 'RevRoboticsUltraplanetaryHDHexMotor',
       gearbox: 20,
-      directionSign: 1
+      directionSign: 1,
+      params: resolveMotorParams('RevRoboticsUltraplanetaryHDHexMotor', 'default')
     })
   })
 
