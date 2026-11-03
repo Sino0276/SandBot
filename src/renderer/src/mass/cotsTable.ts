@@ -1,3 +1,8 @@
+import {
+  DEFAULT_SERVO_MODEL,
+  isServoModelKey,
+  type ServoModelKey
+} from '../../../shared/sim/actuatorData'
 import { isMotorModel, motorGearbox } from '../hardware/catalog'
 import type { HardwareComponent, WheelSettings } from '../scene/model'
 
@@ -111,6 +116,8 @@ const entries: Record<string, CotsEntry> = {
   // https://www.gobilda.com/axon-max-servo-mk2/ , https://www.gobilda.com/axon-mini-servo-mk2/
   'servo:axonMaxMk2': { mass: 78 * G, product: 'Axon MAX MK2' },
   'servo:axonMiniMk2': { mass: 67 * G, product: 'Axon MINI MK2' },
+  // Axon MICRO+ 21 g(단종) https://docs.axon-robotics.com/archive/micro.md
+  'servo:axonMicro': { mass: 21 * G, product: 'Axon MICRO+' },
   // REV Smart Robot Servo V2 Balanced 62 g, UltraSpeed 60 g https://www.revrobotics.com/Smart-servo-v2
   'servo:revSrsV2': { mass: 62 * G, product: 'REV Smart Robot Servo V2' },
   'servo:revSrsV2UltraSpeed': { mass: 60 * G, product: 'REV Smart Robot Servo V2 UltraSpeed' },
@@ -213,15 +220,29 @@ function motorCotsKey(props: Record<string, string | number>): string | null {
   }
 }
 
-// 하드웨어 컴포넌트의 표 키. 서보 모델 속성이 카탈로그에 아직 없으므로 servo·crServo는 goBILDA 2000 Torque 하나다
-// (3b에서 모델 속성을 더한다). 표가 없는 종류는 null.
+// 서보 모델(서보·CR 서보 컴포넌트의 servoModel, src/shared/sim/actuatorData.ts) → 표 키. REV Smart Robot Servo는 지금 파는
+// V2 Balanced(62 g)로 본다(V1 REV-41-1097의 질량은 찾지 못했다).
+const SERVO_COTS_KEYS: Readonly<Record<ServoModelKey, string>> = {
+  gobildaTorque: 'servo:gobildaTorque',
+  gobildaSpeed: 'servo:gobildaSpeed',
+  gobildaSuperSpeed: 'servo:gobildaSuperSpeed',
+  axonMax: 'servo:axonMaxMk2',
+  axonMini: 'servo:axonMiniMk2',
+  axonMicro: 'servo:axonMicro',
+  revSmartServo: 'servo:revSrsV2'
+}
+
+// 하드웨어 컴포넌트의 표 키. servo·crServo는 servoModel(없거나 모르는 값이면 기본 goBILDA 2000 Torque)이다. 표가 없는
+// 종류는 null.
 export function componentCotsKey(component: HardwareComponent): string | null {
   switch (component.type) {
     case 'motor':
       return motorCotsKey(component.props)
     case 'servo':
-    case 'crServo':
-      return 'servo:gobildaTorque'
+    case 'crServo': {
+      const model = component.props.servoModel
+      return SERVO_COTS_KEYS[isServoModelKey(model) ? model : DEFAULT_SERVO_MODEL]
+    }
     case 'pinpoint':
       return 'pinpoint'
     case 'limelight':
