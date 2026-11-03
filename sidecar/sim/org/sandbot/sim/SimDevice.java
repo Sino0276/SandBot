@@ -1,7 +1,9 @@
 package org.sandbot.sim;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -9,7 +11,8 @@ import java.util.Map;
  *
  * <p>outputs는 장치가 내보내는 값(모터 power·mode, 서보 position 등)이고 런타임이 틱마다 호스트로 보낸다.
  * inputs는 호스트가 보낸 센서 값(엔코더 position, IMU 각도 등)이고 장치가 읽는다(없으면 기본값).
- * 값은 Number·Boolean·String·null만 쓴다(JSON). 키는 장치 종류(kind)마다 org.sandbot.sdk.devices가 정하고 문서로 남긴다.
+ * 값은 Number·Boolean·String·null과 유한 수의 List(JSON 배열, 출력만: 모터 PIDF 계수 [p, i, d, f], 호스트는 16개까지 받는다)만
+ * 쓴다(JSON). List는 넣을 때 복사해 바꿀 수 없게 둔다. 키는 장치 종류(kind)마다 org.sandbot.sdk.devices가 정하고 문서로 남긴다.
  */
 public final class SimDevice {
     private final String name;
@@ -72,6 +75,15 @@ public final class SimDevice {
 
     private static Object checkValue(Object value) {
         if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String) return value;
-        throw new IllegalArgumentException("device values must be Number, Boolean, String or null: " + value.getClass());
+        if (value instanceof List) {
+            List<Object> copy = new ArrayList<>((List<?>) value);
+            for (Object item : copy) {
+                // JSON에는 NaN·무한대가 없다(Json.write가 null로 쓰면 호스트가 프로토콜 오류로 끝낸다)
+                if (!(item instanceof Number) || !Double.isFinite(((Number) item).doubleValue()))
+                    throw new IllegalArgumentException("device value lists must hold finite numbers: " + item);
+            }
+            return Collections.unmodifiableList(copy);
+        }
+        throw new IllegalArgumentException("device values must be Number, Boolean, String, a list of numbers or null: " + value.getClass());
     }
 }

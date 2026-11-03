@@ -33,7 +33,14 @@
  *         팀 코드의 엔코더 = position − encoderOffset, RUN_TO_POSITION의 원시 목표 = targetPosition + encoderOffset),
  *         encoderResets(허브에 보낸 STOP_AND_RESET_ENCODER 횟수, 정수, 처음 0, 리셋마다 1씩, 늘 보냄, OpMode 사이에도 그대로:
  *         원시 position이 그대로여서 encoderOffset이 같아도, 한 루프에서 리셋 → RUN_TO_POSITION을 해 틱 경계의 mode가
- *         STOP_AND_RESET_ENCODER를 보이지 않아도 리셋을 알 수 있다. 데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다)</td>
+ *         STOP_AND_RESET_ENCODER를 보이지 않아도 리셋을 알 수 있다. 데드휠과 포트를 함께 쓰면 시뮬레이터가 이것으로 축 기준을 잡는다),
+ *         velocityPidf·positionPidf(숫자 4개 배열 [p, i, d, f], 늘 보냄: 허브 펌웨어에 저장된 RUN_USING_ENCODER 속도 루프·RUN_TO_POSITION
+ *         위치 루프 계수. 팀 코드의 setPIDFCoefficients·setVelocityPIDFCoefficients·setPositionPIDFCoefficients·setPIDCoefficients와
+ *         모터 형식 주석(Core Hex)이 실제 허브 명령처럼 바꾸고, 받은 적 없으면 펌웨어 기본값 속도 [10, 3, 0, 0]·위치 [10, 0.05, 0, 0]
+ *         (가정, SimDcMotorController). 값은 허브가 저장하는 16.16 고정소수점에서 되돌린 것이라 getPIDFCoefficients와 같다(0.05는
+ *         3277/65536 = 0.0500030517578125). OpMode마다 SDK가 처음 쓰기 전 계수로 되돌린다(실제 resetDeviceConfigurationForOpMode)),
+ *         velocityAlgorithm·positionAlgorithm(그 계수의 MotorControlAlgorithm: LegacyPID·PIDF·Unknown. 기본과 setPIDCoefficients는
+ *         LegacyPID, DcMotorEx의 setVelocityPIDFCoefficients·setPositionPIDFCoefficients는 PIDF)</td>
  *     <td>position(원시 허브 엔코더 틱: 리셋을 빼기 전 값, 정수), velocity(틱/s, 정수: 허브 펌웨어처럼 지난 50 ms 동안의
  *         원시 position 변화 × 20이라 늘 20의 배수이고 약 25 ms 늦다. 실행 시작 뒤 처음 50 ms는 시작 position부터 센다. int16으로
  *         감기 전 값이고, 가짜 SDK가 실제 bulk read의 short처럼 감아 부호 확장한다: 32767을 넘는 빠른 데드휠은 실제처럼 감긴 값을
@@ -90,7 +97,10 @@
  *   <li>LYNX_COMMAND: 허브에 가는 명령 하나(쓰기, 또는 캐시 없이 읽기). 컨트롤러는 마지막으로 보낸 값을 LastKnown(500 ms 신선)으로
  *       기억해 같은 값이면 보내지 않는다(LynxDcMotorController·LynxServoController·LynxDigitalChannelController). 예: 처음
  *       setPower = 모드 묻기 + power + enable = 명령 3개, 같은 power 다시 = 0개, 다른 power = 1개. setTargetPosition과
- *       디지털 출력 쓰기는 늘 보낸다. 배터리 전압·모터 전류는 늘 명령 하나다.</li>
+ *       디지털 출력 쓰기는 늘 보낸다. 배터리 전압·모터 전류는 늘 명령 하나다. PIDF 계수도 LastKnown이 없어 쓰기·읽기마다 보낸다:
+ *       그 포트·모드의 첫 쓰기는 원래 계수 읽기 + 쓰기 = 2개, 그 뒤 쓰기(같은 값이어도)와 getPIDFCoefficients는 1개,
+ *       getPIDCoefficients는 F가 0이면 1개, 아니면 허브가 NACK해 PIDF로 다시 물어 2개. PIDF 알고리즘의 RUN_TO_POSITION에 I·D·F를 주면
+ *       보내지 않고 UnsupportedOperationException(첫 번째면 원래 계수 읽기 1개).</li>
  *   <li>BULK_READ: LynxGetBulkInputDataCommand. BulkCachingMode(LynxModule)를 따른다: OFF는 엔코더·디지털·아날로그·busy 읽기마다
  *       명령 하나(속도·과전류는 OFF에서도 bulk read), AUTO는 캐시가 없거나 같은 명령(태그 안에서 명령·포트가 같음)을 다시 읽을 때
  *       bulk read(캐시를 비우면 모든 태그의 기록도 지운다), MANUAL은 clearBulkCache() 뒤 첫 읽기, getBulkData()는 늘.

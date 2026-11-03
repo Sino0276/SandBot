@@ -9,7 +9,8 @@ import org.firstinspires.ftc.teamcode.sandbot.ControlBotHardware;
 
 /**
  * 사이드카 장치 테스트(devices.test.ts): SandBot이 만든 하드웨어 클래스로 팀 코드처럼 돈다. MANUAL bulk caching 루프에서
- * 게임패드로 모터를 돌리고 엔코더·IMU를 읽어, 장치 출력·센서 입력·허브 비용(루프 시간)이 런타임을 거쳐 맞는지 본다.
+ * 게임패드로 모터를 돌리고 엔코더·IMU를 읽어, 장치 출력(허브 PIDF 계수 포함)·센서 입력·허브 비용(루프 시간)이 런타임을 거쳐
+ * 맞는지 본다.
  */
 @TeleOp(name = "Devices Drive")
 public class DevicesDrive extends LinearOpMode {
@@ -18,6 +19,9 @@ public class DevicesDrive extends LinearOpMode {
         ControlBotHardware robot = new ControlBotHardware(hardwareMap);
         for (LynxModule hub : hardwareMap.getAll(LynxModule.class)) hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
         robot.lift.claw.claw.setPosition(0.75);
+        // 허브 PIDF 계수는 틱 출력 velocityPidf·positionPidf로 시뮬레이터에 간다(DcMotorEx, PIDF 알고리즘)
+        robot.lift.liftLeft.setVelocityPIDFCoefficients(1.17, 0.117, 0, 11.7);
+        robot.lift.liftLeft.setPositionPIDFCoefficients(5);
         waitForStart();
         int loops = 0;
         long start = System.nanoTime();
