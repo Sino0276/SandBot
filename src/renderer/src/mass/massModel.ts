@@ -585,11 +585,19 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   // 무게중심 덮어쓰기를 쓰지 못한 오브젝트
   const noticeOrder: ({ block: Block } | { unusedCenter: string; robotId: string | null })[] = []
   const matrices = new Map<string, Matrix4>()
-  const pending = new Map<string, number>()
-  // 로봇마다 메시 형상 수(읽었든 읽는 중이든, 덩어리 안이든). 0이면 CAD가 없는 로봇이다(저울 무게 대체값, boxRest).
+  // 형상 정보가 없는 메시(읽는 중·못 읽음). 덩어리 안(inBlock)이거나 읽은 메시가 있는 SKU 제품이면 질량이 들어간다.
+  const unloaded: {
+    objectId: string
+    robotId: string | null
+    inBlock: boolean
+    product: Product | null
+  }[] = []
+  // 로봇마다 메시 형상 수(읽었든 읽는 중이든, 덩어리 안이든). 0이면 CAD가 없는 로봇이다(정보 없음 대체값).
   const shapes = new Map<string, number>()
-  // 오브젝트마다 질량에 들어가지 않은 읽는 중 메시(덩어리 밖, ObjectMass.pendingMeshes)
+  // 오브젝트마다 질량에 들어가지 않은 읽는 중 메시(덩어리 밖, ObjectMass.pendingMeshes). SKU 제품 덩어리를 만든 뒤 센다.
   const uncounted = new Map<string, number>()
+  // 덩어리를 만든(읽은 메시가 있는) SKU 제품: 그 제품의 읽는 중 메시도 제품 질량에 들어 있다
+  const coveredProducts = new Set<Product>()
   // 덩어리 밖의 SKU 제품 파트(지금 계층을 다 본 뒤 제품 덩어리로 묶는다)
   const productParts = new Map<Product, Part[]>()
   // 원래 노드 → 지금 계층에서 그 노드를 대표하는 오브젝트(출처 표시의 상속 오브젝트, 제품 덩어리의 주인)
@@ -736,9 +744,12 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       const shapeRobot = context.robot?.id
       if (shapeRobot) shapes.set(shapeRobot, (shapes.get(shapeRobot) ?? 0) + 1)
       if (!props) {
-        const robotId = context.robot?.id
-        if (robotId) pending.set(robotId, (pending.get(robotId) ?? 0) + 1)
-        if (!context.block) uncounted.set(object.id, (uncounted.get(object.id) ?? 0) + 1)
+        unloaded.push({
+          objectId: object.id,
+          robotId: context.robot?.id ?? null,
+          inBlock: context.block !== null,
+          product: source.productOf.get(object.id) ?? null
+        })
       } else {
         const volume = usableVolume(props)
         const part: Part = {
@@ -788,6 +799,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
   for (const product of source.products) {
     const free = productParts.get(product)
     if (!free) continue
+    coveredProducts.add(product)
     const all = product.meshIds.flatMap((id) => partsByObject.get(id) ?? [])
     let joined: Block | null = null
     for (const part of all) {
@@ -839,6 +851,17 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     productBlocks.push(block)
   }
 
+  // 형상 정보가 없는 메시: 질량이 빠진 것(덩어리 밖, 제품 덩어리도 없음)과 덩어리가 질량을 정한 것을 로봇마다 센다
+  const missingMeshes = new Map<string, number>()
+  const coveredMeshes = new Map<string, number>()
+  for (const entry of unloaded) {
+    const covered = entry.inBlock || (entry.product !== null && coveredProducts.has(entry.product))
+    if (!covered) uncounted.set(entry.objectId, (uncounted.get(entry.objectId) ?? 0) + 1)
+    if (!entry.robotId) continue
+    const counts = covered ? coveredMeshes : missingMeshes
+    counts.set(entry.robotId, (counts.get(entry.robotId) ?? 0) + 1)
+  }
+
   // 덩어리 풀기: 안쪽 덩어리가 먼저(만든 순서의 반대가 곧 안쪽부터다)
   for (let i = blocks.length - 1; i >= 0; i--) resolveBlock(blocks[i], parts, partsByObject)
   for (const block of productBlocks) resolveBlock(block, parts, partsByObject)
@@ -875,7 +898,8 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
       if (block.centerOfMassIgnored)
         notices.push({ kind: 'centerOfMassIgnored', objectId: block.ownerId })
     }
-    const meshes = pending.get(robotId) ?? 0
+    const meshes = missingMeshes.get(robotId) ?? 0
+    const covered = coveredMeshes.get(robotId) ?? 0
     let fixed = 0
     let estimated = 0
     for (const part of list) {
@@ -885,17 +909,27 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
     let scale = 1
     const weighed = objects[robotId].rigidbody?.weighedMass
     const total = fixed + estimated
-    // 저울 무게가 있는데 추정할 질량이 아직 없으면(형상을 모두 읽는 중이거나 CAD가 없음: 메시 형상이 하나도 없는 로봇,
-    // 질량 모델 §3.3 "형상이 없고") 고정 질량(덮어쓰기·COTS)은 그대로 두고 나머지(저울 무게 − 고정)를 외곽 상자에 고르게
-    // 둔다(§3.3의 대체값). 고정 질량이 이미 저울 무게 이상이면 나머지가 없으므로 scaleImpossible이다. 형상을 다 읽었는데
-    // 추정이 0이면(형상이 모두 덩어리 안이거나 표면 메시·라벨 규칙) §3.2대로 맞출 것이 없어 scaleImpossible이다.
-    const noShapes = (shapes.get(robotId) ?? 0) === 0
-    const boxRest =
-      weighed !== undefined &&
-      estimated === 0 &&
-      fixed < weighed &&
-      (meshes > 0 || total === 0 || noShapes)
-    if (weighed !== undefined && total > 0 && !boxRest) {
+    // 정보 없음 대체값(§3.3): 질량을 셀 수 있는 형상(질량이 0이 아닌 추정 파트)이 없고, 질량을 모르는 부분이 있을 때다.
+    // 질량을 모르는 부분은 CAD가 없음(메시 형상이 하나도 없음), 덩어리(덮어쓰기·COTS·SKU 제품) 밖의 형상 정보가 없는
+    // 메시(읽는 중·못 읽음)나 표면 메시, 또는 아무 질량도 없음이다. 덩어리가 덮은 메시는 고정 질량이 이미 셌으므로 상자를
+    // 더하지 않는다(CAD 전체를 덮은 직접 입력은 CAD를 못 찾아도 같은 질량). 그 나머지(저울 무게 − 고정, 없으면
+    // max(0, DEFAULT_ROBOT_MASS − 고정))를 외곽 상자에 고르게 둔다. 저울 무게의 나머지가 0 이하면 scaleImpossible이고
+    // 고정 질량만 쓴다. 질량을 셀 수 있는 형상이 하나라도 있으면 읽은 만큼으로 계산하고 맞춘다(pending 경고).
+    const estimable = list.some((part) => part.estimated && part.mass > 0)
+    const surfaces = list.some((part) => part.block === null && part.volume === 0)
+    const unknown = meshes > 0 || surfaces || (shapes.get(robotId) ?? 0) === 0 || total === 0
+    let rest = 0
+    let defaultBox = false
+    if (!estimable && unknown) {
+      rest = weighed !== undefined ? weighed - fixed : Math.max(0, DEFAULT_ROBOT_MASS - fixed)
+      if (weighed !== undefined && rest <= 0) {
+        rest = 0
+        warnings.push({ kind: 'scaleImpossible', fixed, weighed })
+      } else {
+        warnings.push({ kind: 'defaultMass', weighed: weighed !== undefined, fixed, rest })
+        defaultBox = rest > 0
+      }
+    } else if (weighed !== undefined && total > 0) {
       if (fixed >= weighed || estimated === 0) {
         warnings.push({ kind: 'scaleImpossible', fixed, weighed })
       } else {
@@ -910,13 +944,6 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         estimated *= scale
       }
     }
-
-    // 질량에 드는 형상(부피가 있고, 덩어리 안이거나 질량 0 규칙이 아닌 추정 파트)이 하나도 없는 로봇: CAD가 없거나
-    // 형상을 모두 읽는 중이거나 읽지 못했거나 표면뿐이다. 데이터시트·직접 입력 몇 개(형상 없는 점질량)는 로봇 전체가
-    // 아니므로, 저울 무게가 없으면 기본값(§3.3)에서 그것을 제자리에 두고 나머지를 외곽 상자에 둔다(defaultMass와
-    // pending 경고를 함께 낸다. 카드는 읽는 중인지 읽지 못했는지를 형상 보관소로 가린다).
-    const contributing = list.some((part) => part.volume > 0 && (!part.estimated || part.mass > 0))
-    const defaultBox = boxRest || (weighed === undefined && !contributing)
 
     let mass: number
     let centerOfMass: Vec3
@@ -936,9 +963,7 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         addParallelAxis(inertia, own, part.mass, d)
       }
     } else {
-      // 질량 정보 없음(질량에 드는 형상이 없음): 외곽 상자의 균일 직육면체. 저울 무게가 있으면 그 질량을 쓰고(분포는
-      // 그래도 기본값이다), 없으면 기본값이다. 고정 질량이 있으면 그것은 제자리에 두고 나머지만 상자에 둔다.
-      const rest = weighed !== undefined ? weighed - fixed : Math.max(0, DEFAULT_ROBOT_MASS - fixed)
+      // 질량을 모르는 나머지(rest): 외곽 상자의 균일 직육면체. 고정 질량은 제자리에 둔다.
       mass = fixed + rest
       const { min, max } = robotBox(objects, robotId, matrices)
       const [a, b, c] = [0, 1, 2].map((k) => max[k] - min[k])
@@ -974,10 +999,10 @@ export function computeMassModel(objects: SceneObjects, lookup: MassLookup): Mas
         inertia = boxInertia
       }
       estimated = rest
-      warnings.push({ kind: 'defaultMass' })
       defaultRobots.set(robotId, { mass, com: centerOfMass })
     }
-    if (meshes > 0) warnings.push({ kind: 'pending', meshes })
+    if (meshes > 0 || covered > 0)
+      warnings.push({ kind: 'pending', meshes, ...(covered > 0 ? { covered } : {}) })
     robots[robotId] = {
       robotId,
       mass,

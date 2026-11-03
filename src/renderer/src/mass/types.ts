@@ -80,10 +80,14 @@ export type MassWarning =
   | { kind: 'scaleUnusual'; scale: number }
   // 고정 질량(덮어쓰기·COTS) ≥ 저울 무게이거나 추정 질량이 0이라 맞추지 않음
   | { kind: 'scaleImpossible'; fixed: number; weighed: number }
-  // 질량 정보가 없어 기본값을 씀
-  | { kind: 'defaultMass' }
-  // 형상을 읽는 중인 메시가 있어 그 부분이 빠짐
-  | { kind: 'pending'; meshes: number }
+  // 질량을 셀 수 있는 형상이 없고 질량을 모르는 메시(덩어리 밖의 읽는 중·못 읽음·표면 메시)가 있거나 CAD가 없어, 저울
+  // 무게(weighed, 없으면 DEFAULT_ROBOT_MASS)에서 고정 질량 fixed를 뺀 나머지 rest(kg)를 로봇 외곽 상자에 고르게 둠.
+  // rest가 0이면(저울 무게 없이 고정 질량이 기본값 이상) 상자를 두지 않고 고정 질량만 쓴다. 저울 무게의 나머지가 없으면
+  // 이 경고 대신 scaleImpossible이다.
+  | { kind: 'defaultMass'; weighed: boolean; fixed: number; rest: number }
+  // 형상 정보가 없는 메시(읽는 중·못 읽음). meshes는 질량이 빠진 것(덮어쓰기·COTS 덩어리 밖), covered는 덩어리 안이라
+  // 질량은 들어가고 분포만 남은 형상(없으면 덩어리 원점)으로 근사한 것(0이면 없음)
+  | { kind: 'pending'; meshes: number; covered?: number }
 
 // 설정 일부를 추정에 쓰지 못한 곳(RobotMass.notices). 갈래 사이 계약(MassWarning) 뒤에 더한 것이라 MassWarning과 따로
 // 두었다(경고 문구 switch가 계약의 종류만 다루게).

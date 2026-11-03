@@ -1573,7 +1573,9 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     const model = computeMassModel(placeholder, lookupOf({}))
     const r = model.robots.robot
     expect(r.mass).toBe(DEFAULT_ROBOT_MASS)
-    expect(r.warnings).toEqual([{ kind: 'defaultMass' }])
+    expect(r.warnings).toEqual([
+      { kind: 'defaultMass', weighed: false, fixed: 0, rest: DEFAULT_ROBOT_MASS }
+    ])
     expect(r.centerOfMass[0]).toBeCloseTo(0, 15)
     expect(r.centerOfMass[2]).toBeCloseTo(0.35 * ROBOT_SIZE, 15)
     const side = (DEFAULT_ROBOT_MASS * 2 * ROBOT_SIZE * ROBOT_SIZE) / 12
@@ -1615,8 +1617,8 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     expect(model.objects.A.pendingMeshes).toBe(1)
     expect(model.objects.F).toMatchObject({ source: 'override', mass: 1, pendingMeshes: 0 })
     expect(model.objects.R.pendingMeshes).toBe(1)
-    // 로봇 경고는 읽는 중인 메시를 모두 센다
-    expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 3 }])
+    // 로봇 경고는 질량이 빠진 메시와 덩어리가 질량을 정한 메시를 따로 센다
+    expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 1, covered: 2 }])
   })
 
   it('형상이 하나도 없으면(모두 읽는 중·읽지 못함·표면뿐) 저울 무게가 없어도 기본값(13.6 kg) 상자이고 경고를 함께 낸다', () => {
@@ -1740,7 +1742,7 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
     expect(loading.robots.R).toMatchObject({
       mass: 15,
       estimatedMass: expect.closeTo(15 - fixed, 12),
-      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 3 }]
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2, covered: 1 }]
     })
     expect(loading.robots.R.warnings.some((w) => w.kind === 'scaleImpossible')).toBe(false)
     // 다 읽으면 형상으로 나누고 맞춘다(기본값 경고 없음)
@@ -1755,7 +1757,7 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
       mass: DEFAULT_ROBOT_MASS,
       fixedMass: fixed,
       estimatedMass: expect.closeTo(DEFAULT_ROBOT_MASS - fixed, 12),
-      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 3 }]
+      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2, covered: 1 }]
     })
   })
 
@@ -1804,6 +1806,144 @@ describe('질량 추정: 정보 없음·읽는 중·결정성', () => {
       warnings: [{ kind: 'defaultMass' }]
     })
     expect(fallback.centerOfMass[2]).toBeGreaterThan(0.1)
+  })
+
+  describe('형상이 없는 나머지는 외곽 상자에 두고, 덩어리가 덮은 메시는 상자를 더하지 않는다', () => {
+    const cad = {
+      fileName: 'r.step',
+      absolutePath: '/r.step',
+      upAxis: '+Z' as const,
+      forwardAxis: '+X' as const,
+      bounds: { min: [0, 0, 0] as Vec3, max: [0.4, 0.4, 0.4] as Vec3 },
+      meshCount: 3
+    }
+    // CAD가 없는 로봇: 형상 없는 점질량 그룹(직접 입력 fixed kg)
+    const noCad = (fixed: number, weighedMass?: number): SceneObjects =>
+      scene(
+        robot(weighedMass !== undefined ? { rigidbody: { weighedMass } } : {}),
+        node('Bat', 'R', { kind: 'group', mass: { mass: fixed } }, [0.1, 0, 0.05])
+      )
+    const defaultMass = (weighed: boolean, fixed: number, rest: number): object => ({
+      kind: 'defaultMass',
+      weighed,
+      fixed: expect.closeTo(fixed, 12),
+      rest: expect.closeTo(rest, 12)
+    })
+
+    it('CAD 없음: 저울 무게가 없으면 기본값의 나머지, 있으면 저울 무게의 나머지를 상자에 둔다', () => {
+      expect(computeMassModel(noCad(2), lookupOf({})).robots.R).toMatchObject({
+        mass: expect.closeTo(DEFAULT_ROBOT_MASS, 12),
+        fixedMass: 2,
+        estimatedMass: expect.closeTo(DEFAULT_ROBOT_MASS - 2, 12),
+        warnings: [defaultMass(false, 2, DEFAULT_ROBOT_MASS - 2)]
+      })
+      expect(computeMassModel(noCad(2, 15), lookupOf({})).robots.R).toMatchObject({
+        mass: expect.closeTo(15, 12),
+        estimatedMass: expect.closeTo(13, 12),
+        warnings: [defaultMass(true, 2, 13)]
+      })
+      // 고정 질량이 저울 무게 이상이면 나머지가 없어 맞추지 않는다
+      expect(computeMassModel(noCad(2, 1), lookupOf({})).robots.R).toMatchObject({
+        mass: 2,
+        warnings: [{ kind: 'scaleImpossible', fixed: 2, weighed: 1 }]
+      })
+    })
+
+    it('CAD 없음: 고정 질량이 기본값 이상이면 그 질량만 쓰고 상자를 더하지 않는다고 알린다', () => {
+      const model = computeMassModel(noCad(16), lookupOf({}))
+      expect(model.robots.R).toMatchObject({
+        mass: 16,
+        fixedMass: 16,
+        estimatedMass: 0,
+        warnings: [defaultMass(false, 16, 0)]
+      })
+      // 상자가 없으므로 무게중심은 점질량 자리이고 로봇 출처는 기본값이 아니다
+      expect(model.robots.R.centerOfMass[0]).toBeCloseTo(0.1, 12)
+      expect(model.objects.R).toMatchObject({ mass: 16, source: 'override' })
+    })
+
+    it('표면 메시뿐인 CAD: 저울 무게가 있어도 직접 입력 질량만 남지 않고 나머지를 상자에 둔다', () => {
+      const objects = scene(
+        robot({ rigidbody: { weighedMass: 15 } }),
+        node('C', 'R', { name: 'Robot', cad }),
+        part('S1', 'C', [0.1, 0, 0], { mass: { mass: 2 } }),
+        part('S2', 'C'),
+        part('S3', 'C')
+      )
+      const surface = { ...solid(LITER), closure: 1 }
+      const props = { 'g:S1': surface, 'g:S2': surface, 'g:S3': surface }
+      expect(computeMassModel(objects, lookupOf(props)).robots.R).toMatchObject({
+        mass: expect.closeTo(15, 12),
+        fixedMass: 2,
+        warnings: [defaultMass(true, 2, 13)]
+      })
+      const unweighed = { ...objects, R: robot() }
+      expect(computeMassModel(unweighed, lookupOf(props)).robots.R).toMatchObject({
+        mass: expect.closeTo(DEFAULT_ROBOT_MASS, 12),
+        warnings: [defaultMass(false, 2, DEFAULT_ROBOT_MASS - 2)]
+      })
+    })
+
+    it('CAD 전체를 덮은 직접 입력은 CAD를 못 찾거나 읽는 중이어도 같은 질량이다(상자 없음)', () => {
+      const objects = scene(
+        robot(),
+        node('C', 'R', { name: 'Robot', cad, mass: { mass: 12 } }),
+        node('D', 'C', { name: 'Drive' }),
+        part('P1', 'D', [0.1, 0, 0]),
+        part('P2', 'D', [-0.1, 0, 0]),
+        part('P3', 'C', [0, 0.1, 0])
+      )
+      const props = Object.fromEntries(
+        ['P1', 'P2', 'P3'].map((id) => [`g:${id}`, box(0.2, 0.2, 0.01)])
+      )
+      const loaded = computeMassModel(objects, lookupOf(props)).robots.R
+      expect(loaded).toMatchObject({ mass: 12, warnings: [] })
+      const missing = computeMassModel(objects, lookupOf({}))
+      expect(missing.robots.R).toMatchObject({
+        mass: 12,
+        fixedMass: 12,
+        estimatedMass: 0,
+        // 질량은 들어갔고 분포만 형상 없이 근사한다(빠진 메시가 아니다)
+        warnings: [{ kind: 'pending', meshes: 0, covered: 3 }]
+      })
+      expect(missing.objects.P1.pendingMeshes).toBe(0)
+      // 덮어쓰기가 CAD 일부만 덮으면 나머지 메시는 질량을 모르므로 그 몫을 상자에 둔다
+      const partial = {
+        ...objects,
+        C: { ...objects.C, mass: undefined },
+        D: { ...objects.D, mass: { mass: 12 } }
+      }
+      expect(computeMassModel(partial, lookupOf({})).robots.R).toMatchObject({
+        mass: expect.closeTo(DEFAULT_ROBOT_MASS, 12),
+        warnings: [
+          defaultMass(false, 12, DEFAULT_ROBOT_MASS - 12),
+          { kind: 'pending', meshes: 1, covered: 2 }
+        ]
+      })
+      const weighed = { ...partial, R: robot({ rigidbody: { weighedMass: 15 } }) }
+      expect(computeMassModel(weighed, lookupOf({})).robots.R).toMatchObject({
+        mass: expect.closeTo(15, 12),
+        warnings: [defaultMass(true, 12, 3), { kind: 'pending', meshes: 1, covered: 2 }]
+      })
+    })
+
+    it('읽은 메시가 있는 SKU 제품의 읽는 중 메시는 제품 질량에 들어가 빠진 메시로 세지 않는다', () => {
+      const objects = scene(
+        robot(),
+        node('C', 'R', { name: 'Robot', cad }),
+        node('B', 'C', { name: '3100-0012-0020' }),
+        part('B1', 'B', [0, 0.1, 0]),
+        part('B2', 'B', [0, 0.2, 0]),
+        part('P', 'C')
+      )
+      const model = computeMassModel(
+        objects,
+        lookupOf({ 'g:B1': box(0.02, 0.02, 0.02), 'g:P': solid(LITER) }, { 'g:B1': '', 'g:B2': '' })
+      )
+      expect(model.objects.B.mass).toBeCloseTo(0.597, 12)
+      expect(model.objects.B2.pendingMeshes).toBe(0)
+      expect(model.robots.R.warnings).toEqual([{ kind: 'pending', meshes: 0, covered: 1 }])
+    })
   })
 
   it('같은 입력이면 같은 결과이고, 결과 키는 objects 키 순서다', () => {

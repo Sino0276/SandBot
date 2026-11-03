@@ -1428,22 +1428,32 @@ const en: Messages = {
       scaleImpossible:
         'Not scaled to the weighed mass: the override and datasheet mass ({{fixed}}) is at least the weighed mass ({{weighed}}), or there is no shape to estimate.',
       defaultMass:
-        'No mass information, so the default {{mass}} (typical of FTC competition robots) is used. Enter the weighed mass or import the CAD.',
+        'No shape can be weighed, so the default {{mass}} (typical of FTC competition robots) is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Enter the weighed mass or import a solid CAD.',
       defaultMassFixed:
-        'No shape information, so of the default {{mass}} (typical of FTC competition robots) the override and datasheet mass {{fixed}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Enter the weighed mass or import the CAD.',
+        'No shape can be weighed, so of the default {{mass}} (typical of FTC competition robots) the override and datasheet mass {{fixed}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Enter the weighed mass or import a solid CAD.',
+      defaultMassCovered:
+        'No shape can be weighed, but the override and datasheet mass {{fixed}} is at least the default {{mass}}, so only that mass is used and no bounding box mass is added. Enter the weighed mass or import a solid CAD.',
       defaultMassLoadingDefault:
-        'While the shapes load, the default {{mass}} (typical of FTC competition robots) is used (center of mass and inertia approximated by the robot bounding box). It is computed from the shapes once they have loaded.',
+        'While the shapes load, the default {{mass}} (typical of FTC competition robots) is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is computed from the shapes once they have loaded.',
+      defaultMassLoadingDefaultFixed:
+        'While the shapes load, of the default {{mass}} (typical of FTC competition robots) the override and datasheet mass {{fixed}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is computed from the shapes once they have loaded.',
+      defaultMassLoadingCovered:
+        'While the shapes load, only the override and datasheet mass {{fixed}} is used (it is at least the default {{mass}}, so no bounding box mass is added). It is computed from the shapes once they have loaded.',
       defaultMassWeighed:
-        'No shape information, so the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
+        'No shape can be weighed, so the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import a solid CAD to distribute it by shape.',
       defaultMassLoading:
         'While the shapes load, the weighed mass {{mass}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       defaultMassLoadingFixed:
         'While the shapes load, the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). It is distributed by shape once they have loaded.',
       defaultMassWeighedFixed:
-        'No shape information, so the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import the CAD to distribute it by shape.',
+        'No shape can be weighed, so the override and datasheet mass {{fixed}} of the weighed mass {{mass}} stays in place and the remaining {{rest}} is spread evenly over the robot bounding box (center of mass and inertia approximated by the box). Import a solid CAD to distribute it by shape.',
       pending: '{{count}} mesh(es) still loading are not counted yet.',
       missing:
-        '{{count}} mesh(es) without shape information are not counted. If the CAD failed to load or was cancelled, reload it or locate the file again from its CAD root.'
+        '{{count}} mesh(es) without shape information are not counted. If the CAD failed to load or was cancelled, reload it or locate the file again from its CAD root.',
+      pendingCovered:
+        '{{count}} mesh(es) inside objects with an override or datasheet mass are still loading, so that mass is placed on the loaded shapes (or at the object origin if none).',
+      missingCovered:
+        '{{count}} mesh(es) inside objects with an override or datasheet mass have no shape information, so that mass is placed on the remaining shapes (or at the object origin if none).'
     },
     notices: {
       innerMassExceeds:
@@ -1469,14 +1479,18 @@ const en: Messages = {
       mass: 'Mass',
       massNone: '—',
       breakdown: 'Override/datasheet {{fixed}} + estimated {{estimated}}',
-      breakdownDefault: 'Default (no mass information)',
+      breakdownDefault: 'Default (no shape can be weighed, approximated by the bounding box)',
+      breakdownDefaultLoading: 'Default (shapes loading, approximated by the bounding box)',
       breakdownDefaultFixed:
-        'Default: override and datasheet {{fixed}} + remaining {{rest}} (no mass information, approximated by the bounding box)',
-      breakdownWeighedBox: 'Weighed mass (no shapes, approximated by the bounding box)',
+        'Default: override and datasheet {{fixed}} + remaining {{rest}} (no shape can be weighed, approximated by the bounding box)',
+      breakdownDefaultLoadingFixed:
+        'Default: override and datasheet {{fixed}} + remaining {{rest}} while shapes load (approximated by the bounding box)',
+      breakdownWeighedBox:
+        'Weighed mass (no shape can be weighed, approximated by the bounding box)',
       breakdownWeighedFixed:
         'Weighed mass: override and datasheet {{fixed}} + remaining {{rest}} while shapes load (approximated by the bounding box)',
       breakdownWeighedBoxFixed:
-        'Weighed mass: override and datasheet {{fixed}} + remaining {{rest}} (no shapes, approximated by the bounding box)',
+        'Weighed mass: override and datasheet {{fixed}} + remaining {{rest}} (no shape can be weighed, approximated by the bounding box)',
       breakdownWeighedLoading: 'Weighed mass (shapes loading, approximated by the bounding box)',
       scaled: '· estimate ×{{scale}} (scaled to the weighed mass)',
       weighed: 'Weighed mass',

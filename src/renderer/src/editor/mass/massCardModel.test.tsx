@@ -546,92 +546,121 @@ describe('질량 출처 문구', () => {
     expect(warningText(t, { kind: 'scaleImpossible', fixed: 15, weighed: 12 }, 'mm')).toContain(
       `(${massText(t, 15, 'mm')})이 저울 무게(${massText(t, 12, 'mm')})`
     )
-    expect(warningText(t, { kind: 'defaultMass' }, 'mm')).toContain(
-      `기본값 ${massText(t, 13.6, 'mm')}(FTC 대회 로봇에 흔한 무게)`
-    )
-    // 저울 무게가 있으면 기본값이 아니라 그 무게를 외곽 상자에 둔다고 알린다
-    const weighed = warningText(t, { kind: 'defaultMass' }, 'in', 20)
-    expect(weighed).toContain(`저울 무게 ${massText(t, 20, 'in')}를 로봇 외곽 상자에`)
-    expect(weighed).not.toContain(massText(t, 13.6, 'in'))
-    expect(weighed).not.toContain('저울 무게를 넣거나')
-    expect(warningText(t, { kind: 'pending', meshes: 3 }, 'mm', undefined, true)).toBe(
+    expect(warningText(t, { kind: 'pending', meshes: 3 }, 'mm', true)).toBe(
       '형상을 읽는 중인 메시 3개는 아직 계산에 들어가지 않았습니다.'
     )
     // 질량 모델의 pending은 읽지 못한 CAD(실패·취소·못 찾음)의 메시도 센다. 읽는 중이 아니면 읽는 중이라고 하지 않는다
     const missing = warningText(t, { kind: 'pending', meshes: 3 }, 'mm')
     expect(missing).toContain('형상 정보가 없는 메시 3개는 계산에 들어가지 않았습니다.')
     expect(missing).not.toContain('읽는 중')
+    // 덮어쓰기·데이터시트 덩어리 안의 메시는 질량이 빠지지 않았다고 따로 말한다
+    expect(warningText(t, { kind: 'pending', meshes: 0, covered: 3 }, 'mm')).toBe(
+      '직접 입력·데이터시트 질량을 정한 오브젝트 안의 메시 3개는 형상 정보가 없어, 그 질량을 남은 형상에(없으면 그 오브젝트 원점에) 둡니다.'
+    )
+    const both = warningText(t, { kind: 'pending', meshes: 2, covered: 1 }, 'mm', true)
+    expect(both).toContain('형상을 읽는 중인 메시 2개는 아직 계산에 들어가지 않았습니다.')
+    expect(both).toContain('메시 1개는 형상을 읽는 중이라, 그 질량을 읽은 형상에')
     expect(robotMassBreakdown(t, robotMass(), 'cm')).toBe(
       `직접 입력·데이터시트 ${massText(t, 2.1, 'cm')} + 추정 ${massText(t, 10.2, 'cm')}`
     )
-    // 질량 정보 없음 대체값은 출처별 합계("추정")가 아니다
-    const fallback = robotMass({
-      fixedMass: 0,
-      estimatedMass: 20,
-      warnings: [{ kind: 'defaultMass' }]
+    expect(formatInertia(0.31234)).toBe('0.312')
+  })
+
+  describe('정보 없음 대체값: 경고와 질량 줄은 모델이 한 그대로(저울 무게 유무 × 고정 질량 × 읽는 중)', () => {
+    const fallback = (weighed: boolean, fixed: number, rest: number): RobotMass =>
+      robotMass({
+        mass: fixed + rest,
+        fixedMass: fixed,
+        estimatedMass: rest,
+        warnings: [{ kind: 'defaultMass', weighed, fixed, rest }]
+      })
+    const texts = (robot: RobotMass, loading: boolean): { warning: string; breakdown: string } => ({
+      warning: warningText(t, robot.warnings[0], 'cm', loading),
+      breakdown: robotMassBreakdown(t, robot, 'cm', loading)
     })
-    expect(robotMassBreakdown(t, fallback, 'cm')).toBe('기본값 (질량 정보 없음)')
-    expect(robotMassBreakdown(t, fallback, 'cm', 20)).toBe(
-      '저울 무게 (형상 없음, 외곽 상자로 근사)'
-    )
-    // 저울 무게가 있고 형상을 모두 읽는 중이면(질량 모델이 저울 무게를 상자로 둔다) 읽는 중이라고 알린다
-    const loading = robotMass({
-      fixedMass: 0,
-      estimatedMass: 20,
-      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 4 }]
+    const kg = (mass: number): string => massText(t, mass, 'cm')
+
+    it('저울 무게 없음 · 고정 질량 없음: 기본값 전체를 상자에', () => {
+      const robot = fallback(false, 0, 13.6)
+      const done = texts(robot, false)
+      expect(done.warning).toContain(
+        `기본값 ${kg(13.6)}(FTC 대회 로봇에 흔한 무게)을 로봇 외곽 상자에`
+      )
+      expect(done.breakdown).toBe('기본값 (질량을 셀 형상 없음, 외곽 상자로 근사)')
+      const loading = texts(robot, true)
+      expect(loading.warning).toContain(`형상을 읽는 동안 기본값 ${kg(13.6)}`)
+      expect(loading.warning).toContain('다 읽으면 형상으로 계산합니다')
+      expect(loading.breakdown).toBe('기본값 (형상을 읽는 중, 외곽 상자로 근사)')
     })
-    expect(robotMassBreakdown(t, loading, 'cm', 20, true)).toBe(
-      '저울 무게 (형상을 읽는 중, 외곽 상자로 근사)'
-    )
-    // 같은 결과라도 CAD를 읽지 못했으면(읽는 중 아님) 형상이 없다고 한다
-    expect(robotMassBreakdown(t, loading, 'cm', 20)).toBe('저울 무게 (형상 없음, 외곽 상자로 근사)')
-    expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true)).toContain(
-      `형상을 읽는 동안 저울 무게 ${massText(t, 20, 'cm')}를`
-    )
-    // 데이터시트·직접 입력 질량은 제자리에 두고 나머지만 상자에 둔다(모터가 붙은 파트를 읽는 중)
-    const mixed = robotMass({
-      fixedMass: 0.5,
-      estimatedMass: 19.5,
-      warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 4 }]
+
+    it('저울 무게 없음 · 고정 질량 있음: 고정 질량은 제자리, 기본값의 나머지를 상자에', () => {
+      const robot = fallback(false, 1.6, 12)
+      for (const loading of [false, true]) {
+        const { warning, breakdown } = texts(robot, loading)
+        expect(warning).toContain(`기본값 ${kg(13.6)}`)
+        expect(warning).toContain(
+          `직접 입력·데이터시트 질량 ${kg(1.6)}은 제자리에 두고 나머지 ${kg(12)}를`
+        )
+        expect(warning.includes('형상을 읽는 동안')).toBe(loading)
+        expect(breakdown).toBe(
+          loading
+            ? `기본값: 직접 입력·데이터시트 ${kg(1.6)} + 형상을 읽는 중인 나머지 ${kg(12)} (외곽 상자로 근사)`
+            : `기본값: 직접 입력·데이터시트 ${kg(1.6)} + 나머지 ${kg(12)} (질량을 셀 형상 없음, 외곽 상자로 근사)`
+        )
+      }
     })
-    expect(robotMassBreakdown(t, mixed, 'cm', 20, true)).toBe(
-      `저울 무게: 직접 입력·데이터시트 ${massText(t, 0.5, 'cm')} + 형상을 읽는 중인 나머지 ${massText(t, 19.5, 'cm')} (외곽 상자로 근사)`
-    )
-    expect(warningText(t, { kind: 'defaultMass' }, 'cm', 20, true, 0.5)).toContain(
-      `직접 입력·데이터시트 질량 ${massText(t, 0.5, 'cm')}은 제자리에 두고, 나머지 ${massText(t, 19.5, 'cm')}를`
-    )
-    // CAD가 없는 로봇(읽는 중 아님)도 같지만 읽는 중이라고 하지 않는다
-    const noCad = robotMass({
-      fixedMass: 0.5,
-      estimatedMass: 19.5,
-      warnings: [{ kind: 'defaultMass' }]
+
+    it('저울 무게 없음 · 고정 질량이 기본값 이상: 그 질량만 쓰고 상자를 더하지 않는다', () => {
+      const robot = robotMass({
+        mass: 16,
+        fixedMass: 16,
+        estimatedMass: 0,
+        warnings: [{ kind: 'defaultMass', weighed: false, fixed: 16, rest: 0 }]
+      })
+      for (const loading of [false, true]) {
+        const { warning, breakdown } = texts(robot, loading)
+        expect(warning).toContain(`직접 입력·데이터시트 질량 ${kg(16)}`)
+        expect(warning).toContain('외곽 상자를 더하지 않습니다')
+        expect(warning).not.toContain('나머지')
+        expect(warning.includes('형상을 읽는 동안')).toBe(loading)
+        // 상자가 없으므로 출처별 합계 그대로다
+        expect(breakdown).toBe(`직접 입력·데이터시트 ${kg(16)} + 추정 ${kg(0)}`)
+      }
     })
-    expect(robotMassBreakdown(t, noCad, 'cm', 20)).toBe(
-      `저울 무게: 직접 입력·데이터시트 ${massText(t, 0.5, 'cm')} + 나머지 ${massText(t, 19.5, 'cm')} (형상 없음, 외곽 상자로 근사)`
-    )
-    const noCadWarning = warningText(t, { kind: 'defaultMass' }, 'cm', 20, false, 0.5)
-    expect(noCadWarning).toContain('형상 정보가 없어')
-    expect(noCadWarning).toContain(`나머지 ${massText(t, 19.5, 'cm')}를`)
-    expect(noCadWarning).not.toContain('읽는')
-    // 저울 무게가 없어도 질량에 드는 형상이 없으면 기본값이다: 데이터시트·직접 입력은 제자리, 나머지를 상자에
-    const unweighedFixed = robotMass({
-      mass: 13.6,
-      fixedMass: 1.6,
-      estimatedMass: 12,
-      warnings: [{ kind: 'defaultMass' }]
+
+    it('저울 무게 있음 · 고정 질량 없음: 저울 무게를 상자에', () => {
+      const robot = fallback(true, 0, 20)
+      const done = texts(robot, false)
+      expect(done.warning).toContain(`저울 무게 ${kg(20)}를 로봇 외곽 상자에`)
+      expect(done.warning).not.toContain(kg(13.6))
+      expect(done.warning).not.toContain('저울 무게를 넣거나')
+      expect(done.breakdown).toBe('저울 무게 (질량을 셀 형상 없음, 외곽 상자로 근사)')
+      const loading = texts(robot, true)
+      expect(loading.warning).toContain(`형상을 읽는 동안 저울 무게 ${kg(20)}를`)
+      expect(loading.breakdown).toBe('저울 무게 (형상을 읽는 중, 외곽 상자로 근사)')
     })
-    expect(robotMassBreakdown(t, unweighedFixed, 'cm')).toBe(
-      `기본값: 직접 입력·데이터시트 ${massText(t, 1.6, 'cm')} + 나머지 ${massText(t, 12, 'cm')} (질량 정보 없음, 외곽 상자로 근사)`
-    )
-    const unweighedWarning = warningText(t, { kind: 'defaultMass' }, 'cm', undefined, false, 1.6)
-    expect(unweighedWarning).toContain(`기본값 ${massText(t, 13.6, 'cm')}`)
-    expect(unweighedWarning).toContain(
-      `직접 입력·데이터시트 질량 ${massText(t, 1.6, 'cm')}은 제자리에 두고 나머지 ${massText(t, 12, 'cm')}를`
-    )
-    // 읽는 중이면 다 읽은 뒤 형상으로 계산한다고 알린다(기본값으로 굳지 않는다)
-    const unweighedLoading = warningText(t, { kind: 'defaultMass' }, 'cm', undefined, true)
-    expect(unweighedLoading).toContain(`형상을 읽는 동안 기본값 ${massText(t, 13.6, 'cm')}`)
-    expect(unweighedLoading).toContain('다 읽으면 형상으로 계산합니다')
+
+    it('저울 무게 있음 · 고정 질량 있음: 고정 질량은 제자리, 저울 무게의 나머지를 상자에', () => {
+      const robot = fallback(true, 0.5, 19.5)
+      const done = texts(robot, false)
+      expect(done.warning).toContain('질량을 셀 수 있는 형상이 없어')
+      expect(done.warning).toContain(`저울 무게 ${kg(20)} 가운데`)
+      expect(done.warning).toContain(`나머지 ${kg(19.5)}를`)
+      expect(done.warning).not.toContain('읽는')
+      expect(done.breakdown).toBe(
+        `저울 무게: 직접 입력·데이터시트 ${kg(0.5)} + 나머지 ${kg(19.5)} (질량을 셀 형상 없음, 외곽 상자로 근사)`
+      )
+      const loading = texts(robot, true)
+      expect(loading.warning).toContain(
+        `직접 입력·데이터시트 질량 ${kg(0.5)}은 제자리에 두고, 나머지 ${kg(19.5)}를`
+      )
+      expect(loading.breakdown).toBe(
+        `저울 무게: 직접 입력·데이터시트 ${kg(0.5)} + 형상을 읽는 중인 나머지 ${kg(19.5)} (외곽 상자로 근사)`
+      )
+    })
+  })
+
+  it('관성 형식', () => {
     expect(formatInertia(0.31234)).toBe('0.312')
     expect(formatInertia(0.0012345)).toBe('0.00123')
     expect(formatInertia(12.345)).toBe('12.3')
@@ -1003,13 +1032,16 @@ describe('질량 카드 그리기', () => {
           mass: 15,
           fixedMass: 0,
           estimatedMass: 15,
-          warnings: [{ kind: 'defaultMass' }, { kind: 'pending', meshes: 2 }]
+          warnings: [
+            { kind: 'defaultMass', weighed: true, fixed: 0, rest: 15 },
+            { kind: 'pending', meshes: 2 }
+          ]
         })
       }
     }
     const failed = render({ ...objects, R }, () => <RigidbodyCard robot={R} />)
-    expect(failed).toContain('저울 무게 (형상 없음, 외곽 상자로 근사)')
-    expect(failed).toContain(`형상 정보가 없어 저울 무게 ${massText(t, 15, 'mm')}를`)
+    expect(failed).toContain('저울 무게 (질량을 셀 형상 없음, 외곽 상자로 근사)')
+    expect(failed).toContain(`형상이 없어 저울 무게 ${massText(t, 15, 'mm')}를`)
     expect(failed).toContain('형상 정보가 없는 메시 2개는 계산에 들어가지 않았습니다.')
     expect(failed).not.toContain('읽는 중')
     expect(failed).not.toContain('다 읽으면')
@@ -1092,13 +1124,13 @@ describe('질량 카드 그리기', () => {
           mass: 13.6,
           fixedMass: 0,
           estimatedMass: 13.6,
-          warnings: [{ kind: 'defaultMass' }]
+          warnings: [{ kind: 'defaultMass', weighed: false, fixed: 0, rest: 13.6 }]
         })
       }
     }
     const fallback = render(scene(), () => <RigidbodyCard robot={objects.R} />)
-    expect(fallback).toContain(`질량 정보가 없어 기본값 ${massText(t, 13.6, 'mm')}(FTC`)
-    expect(fallback).toContain('기본값 (질량 정보 없음)')
+    expect(fallback).toContain(`형상이 없어 기본값 ${massText(t, 13.6, 'mm')}(FTC`)
+    expect(fallback).toContain('기본값 (질량을 셀 형상 없음, 외곽 상자로 근사)')
     expect(fallback).not.toContain('+ 추정')
     // 형상 없는 로봇에 저울 무게를 넣으면 그 무게를 쓴다고 알린다(질량 모델은 defaultMass 경고를 그대로 낸다)
     const R: SceneObject = { ...objects.R, rigidbody: { weighedMass: 20 } }
@@ -1109,13 +1141,13 @@ describe('질량 카드 그리기', () => {
           mass: 20,
           fixedMass: 0,
           estimatedMass: 20,
-          warnings: [{ kind: 'defaultMass' }]
+          warnings: [{ kind: 'defaultMass', weighed: true, fixed: 0, rest: 20 }]
         })
       }
     }
     const weighed = render({ ...scene(), R }, () => <RigidbodyCard robot={R} />)
     expect(weighed).toContain(massText(t, 20, 'mm'))
-    expect(weighed).toContain('저울 무게 (형상 없음, 외곽 상자로 근사)')
+    expect(weighed).toContain('저울 무게 (질량을 셀 형상 없음, 외곽 상자로 근사)')
     expect(weighed).toContain(`저울 무게 ${massText(t, 20, 'mm')}를 로봇 외곽 상자에`)
     expect(weighed).not.toContain(massText(t, 13.6, 'mm'))
   })

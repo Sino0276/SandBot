@@ -70,7 +70,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
       </div>
       {mass && (
         <p className="hw-derived">
-          {robotMassBreakdown(t, mass, lengthUnit, settings.weighedMass, loading)}
+          {robotMassBreakdown(t, mass, lengthUnit, loading)}
           {mass.scale !== 1 &&
             ` ${t('mass.rigidbody.scaled', { scale: formatNumber(mass.scale, 3) })}`}
         </p>
@@ -150,7 +150,7 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
                 warning.kind === 'pending' && loading ? 'hw-issue is-info' : 'hw-issue is-warning'
               }
             >
-              {warningText(t, warning, lengthUnit, settings.weighedMass, loading, mass.fixedMass)}
+              {warningText(t, warning, lengthUnit, loading)}
             </li>
           ))}
         </ul>

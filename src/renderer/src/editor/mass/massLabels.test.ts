@@ -2,11 +2,13 @@ import i18n, { type TFunction } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
 import en from '../../i18n/locales/en'
 import ko, { type Messages } from '../../i18n/locales/ko'
+import { computeMassModel } from '../../mass/massModel'
 import { MATERIAL_KEYS, type MassSource, type MassWarning } from '../../mass/types'
-import type { SceneObjects } from '../../scene/model'
+import type { SceneObjects, Transform } from '../../scene/model'
 import {
   massSymbols,
   MATERIAL_GROUPS,
+  massText,
   robotMassBreakdown,
   sourceText,
   warningText
@@ -30,8 +32,16 @@ const SOURCES: MassSource[] = ['override', 'cots', 'material', 'nameRule', 'defa
 const WARNINGS: MassWarning[] = [
   { kind: 'scaleUnusual', scale: 2 },
   { kind: 'scaleImpossible', fixed: 3, weighed: 2 },
-  { kind: 'defaultMass' },
-  { kind: 'pending', meshes: 1 }
+  ...[false, true].flatMap((weighed) =>
+    [
+      [0, 13.6],
+      [1, 12.6],
+      [16, 0]
+    ].map(([fixed, rest]): MassWarning => ({ kind: 'defaultMass', weighed, fixed, rest }))
+  ),
+  { kind: 'pending', meshes: 1 },
+  { kind: 'pending', meshes: 0, covered: 2 },
+  { kind: 'pending', meshes: 1, covered: 2 }
 ]
 
 // 재질 키·묶음은 템플릿 글자로 만든 번역 키라 여기서도 확인한다(hardware/labels.test.ts와 같은 방법)
@@ -88,24 +98,26 @@ describe('질량 카드 번역', () => {
           })
         ),
         ...WARNINGS.map((warning) => warningText(t, warning, 'mm')),
-        // 저울 무게가 있으면 다른 문구
-        ...WARNINGS.map((warning) => warningText(t, warning, 'in', 14)),
-        ...[undefined, 14].map((weighed) =>
-          robotMassBreakdown(
-            t,
-            {
-              robotId: 'R',
-              mass: 1,
-              centerOfMass: [0, 0, 0],
-              inertia: [0, 0, 0, 0, 0, 0],
-              principalMoments: [0, 0, 0],
-              fixedMass: 0,
-              estimatedMass: 1,
-              scale: 1,
-              warnings: [{ kind: 'defaultMass' }]
-            },
-            'mm',
-            weighed
+        // 읽는 중이면 다른 문구
+        ...WARNINGS.map((warning) => warningText(t, warning, 'in', true)),
+        ...WARNINGS.flatMap((warning) =>
+          [false, true].map((loading) =>
+            robotMassBreakdown(
+              t,
+              {
+                robotId: 'R',
+                mass: 1,
+                centerOfMass: [0, 0, 0],
+                inertia: [0, 0, 0, 0, 0, 0],
+                principalMoments: [0, 0, 0],
+                fixedMass: 0,
+                estimatedMass: 1,
+                scale: 1,
+                warnings: [warning]
+              },
+              'mm',
+              loading
+            )
           )
         )
       ]
@@ -115,6 +127,37 @@ describe('질량 카드 번역', () => {
         expect(text).not.toMatch(/^mass\./)
         expect(text).not.toContain('{{')
       }
+    })
+
+    it('경고·질량 줄은 질량 모델이 한 그대로다(CAD 없음, 직접 입력 2 kg)', () => {
+      const transform = (): Transform => ({ position: [0, 0, 0], rotation: [0, 0, 0] })
+      const objects: SceneObjects = {
+        R: { id: 'R', name: 'R', kind: 'robot', parentId: null, transform: transform() },
+        G: {
+          id: 'G',
+          name: 'G',
+          kind: 'group',
+          parentId: 'R',
+          transform: transform(),
+          mass: { mass: 2 }
+        }
+      }
+      const lookup = { props: () => undefined, sourcePath: () => undefined }
+      const kg = (mass: number): string => massText(t, mass, 'mm')
+      const unweighed = computeMassModel(objects, lookup).robots.R
+      const rest = 13.6 - 2
+      expect(unweighed.mass).toBeCloseTo(13.6, 12)
+      expect(robotMassBreakdown(t, unweighed, 'mm')).toContain(kg(2))
+      expect(robotMassBreakdown(t, unweighed, 'mm')).toContain(kg(rest))
+      expect(warningText(t, unweighed.warnings[0], 'mm')).toContain(kg(rest))
+      const weighed = computeMassModel(
+        { ...objects, R: { ...objects.R, rigidbody: { weighedMass: 15 } } },
+        lookup
+      ).robots.R
+      expect(weighed.mass).toBeCloseTo(15, 12)
+      const text = warningText(t, weighed.warnings[0], 'mm')
+      for (const value of [15, 2, 13]) expect(text).toContain(kg(value))
+      expect(text).not.toContain(kg(13.6))
     })
   })
 })

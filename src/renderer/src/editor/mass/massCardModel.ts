@@ -557,23 +557,27 @@ export function formatInertia(value: number): string {
   return formatNumber(value, Math.min(digits, 8))
 }
 
-// 질량 정보 없음 대체값을 쓰는지(질량에 드는 형상이 없음, 질량 모델의 defaultMass 경고)
-export function usesDefaultMass(robot: RobotMass): boolean {
-  return robot.warnings.some((warning) => warning.kind === 'defaultMass')
+// 정보 없음 대체값의 외곽 상자를 두는지(질량 모델의 defaultMass 경고, 나머지 rest > 0). 그 경고면 돌려준다.
+function defaultBox(robot: RobotMass): Extract<MassWarning, { kind: 'defaultMass' }> | null {
+  for (const warning of robot.warnings)
+    if (warning.kind === 'defaultMass' && warning.rest > 0) return warning
+  return null
 }
 
-// 로봇 경고 문구. 질량 정보 없음은 저울 무게가 있으면 그 무게를 외곽 상자에 고르게 둔다(질량 모델 §3.3). 형상을 모두
-// 읽는 중이어도 저울 무게가 있으면 그렇고, 이미 정한 질량(덮어쓰기·데이터시트, fixed kg)이 있으면 그것은 제자리에 두고
-// 나머지만 상자에 둔다. loading은 로봇의 CAD를 지금 읽는 중인지(loadingCad, 등록부의 읽기 상태)다. 질량 모델의 pending
-// 경고는 형상 정보가 없는 메시를 세므로 읽기가 실패·취소됐거나 STEP을 못 찾은 것도 들어가는데, 그때 "다 읽으면"이라고
-// 하지 않는다.
+export function usesDefaultMass(robot: RobotMass): boolean {
+  return defaultBox(robot) !== null
+}
+
+// 로봇 경고 문구. 정보 없음 대체값(defaultMass)은 경고가 담은 그대로 말한다: 저울 무게(weighed) 또는 기본값
+// (DEFAULT_ROBOT_MASS)에서 직접 입력·데이터시트 질량(fixed)은 제자리에 두고 나머지(rest)를 외곽 상자에 두며, rest가 0이면
+// 고정 질량만 쓰고 상자를 더하지 않는다. loading은 로봇의 CAD를 지금 읽는 중인지(loadingCad, 등록부의 읽기 상태)다.
+// pending 경고의 meshes는 질량이 빠진 메시, covered는 덮어쓰기·데이터시트 덩어리 안이라 질량은 들어간 메시다. 형상 정보가
+// 없는 메시에는 읽기가 실패·취소됐거나 STEP을 못 찾은 것도 들어가므로, 읽는 중이 아니면 "다 읽으면"이라고 하지 않는다.
 export function warningText(
   t: TFunction,
   warning: MassWarning,
   unit: LengthUnit,
-  weighedMass?: number,
-  loading = false,
-  fixed = 0
+  loading = false
 ): string {
   switch (warning.kind) {
     case 'scaleUnusual':
@@ -583,68 +587,89 @@ export function warningText(
         fixed: massText(t, warning.fixed, unit),
         weighed: massText(t, warning.weighed, unit)
       })
-    case 'defaultMass':
-      if (weighedMass === undefined) {
-        // 저울 무게 없이 질량에 드는 형상이 없다(CAD 없음·읽는 중·읽지 못함). 고정 질량은 제자리에 둔다
+    case 'defaultMass': {
+      const fixed = massText(t, warning.fixed, unit)
+      const rest = massText(t, warning.rest, unit)
+      if (!warning.weighed) {
         const mass = massText(t, DEFAULT_ROBOT_MASS, unit)
-        if (loading) return t('mass.warnings.defaultMassLoadingDefault', { mass })
-        if (fixed > 0)
-          return t('mass.warnings.defaultMassFixed', {
-            mass,
-            fixed: massText(t, fixed, unit),
-            rest: massText(t, Math.max(0, DEFAULT_ROBOT_MASS - fixed), unit)
-          })
-        return t('mass.warnings.defaultMass', { mass })
+        if (warning.rest <= 0)
+          return t(
+            loading
+              ? 'mass.warnings.defaultMassLoadingCovered'
+              : 'mass.warnings.defaultMassCovered',
+            { mass, fixed }
+          )
+        if (warning.fixed > 0)
+          return t(
+            loading
+              ? 'mass.warnings.defaultMassLoadingDefaultFixed'
+              : 'mass.warnings.defaultMassFixed',
+            { mass, fixed, rest }
+          )
+        return t(
+          loading ? 'mass.warnings.defaultMassLoadingDefault' : 'mass.warnings.defaultMass',
+          { mass }
+        )
       }
-      // 고정 질량을 두고 나머지만 상자에 두는 것(질량 모델의 boxRest)은 형상을 읽는 중이거나 형상 정보가 없을 때다
-      if (fixed > 0)
+      const mass = massText(t, warning.fixed + warning.rest, unit)
+      if (warning.fixed > 0)
         return t(
           loading
             ? 'mass.warnings.defaultMassLoadingFixed'
             : 'mass.warnings.defaultMassWeighedFixed',
-          {
-            mass: massText(t, weighedMass, unit),
-            fixed: massText(t, fixed, unit),
-            rest: massText(t, Math.max(0, weighedMass - fixed), unit)
-          }
+          { mass, fixed, rest }
         )
       return t(loading ? 'mass.warnings.defaultMassLoading' : 'mass.warnings.defaultMassWeighed', {
-        mass: massText(t, weighedMass, unit)
+        mass
       })
-    case 'pending':
-      return t(loading ? 'mass.warnings.pending' : 'mass.warnings.missing', {
-        count: warning.meshes
-      })
+    }
+    case 'pending': {
+      const texts: string[] = []
+      if (warning.meshes > 0)
+        texts.push(
+          t(loading ? 'mass.warnings.pending' : 'mass.warnings.missing', { count: warning.meshes })
+        )
+      if ((warning.covered ?? 0) > 0)
+        texts.push(
+          t(loading ? 'mass.warnings.pendingCovered' : 'mass.warnings.missingCovered', {
+            count: warning.covered
+          })
+        )
+      return texts.join(' ')
+    }
   }
 }
 
-// Rigidbody 카드의 질량 줄: "직접 입력·데이터시트 2.100 kg + 추정 10.200 kg". 질량 정보 없음 대체값이면 출처별 합계가
-// 아니라 기본값(또는 저울 무게)이라고 보인다. 저울 무게의 나머지만 상자에 둔 것이면(고정 질량이 있음) 두 몫을 함께 보인다.
-// loading은 warningText와 같다(카드는 loadingCad를 넘긴다).
+// Rigidbody 카드의 질량 줄: "직접 입력·데이터시트 2.100 kg + 추정 10.200 kg". 정보 없음 대체값의 외곽 상자를 두면
+// 출처별 합계가 아니라 기본값(또는 저울 무게)이라고 보이고, 고정 질량이 있으면 두 몫을 함께 보인다(defaultMass 경고의
+// 값). 상자를 두지 않으면(나머지 0) 출처별 합계 그대로다. loading은 warningText와 같다(카드는 loadingCad를 넘긴다).
 export function robotMassBreakdown(
   t: TFunction,
   robot: RobotMass,
   unit: LengthUnit,
-  weighedMass?: number,
   loading = false
 ): string {
-  if (usesDefaultMass(robot)) {
-    if (weighedMass === undefined)
-      return robot.fixedMass > 0
-        ? t('mass.rigidbody.breakdownDefaultFixed', {
-            fixed: massText(t, robot.fixedMass, unit),
-            rest: massText(t, robot.estimatedMass, unit)
-          })
-        : t('mass.rigidbody.breakdownDefault')
-    if (robot.fixedMass > 0)
+  const box = defaultBox(robot)
+  if (box) {
+    const values = { fixed: massText(t, box.fixed, unit), rest: massText(t, box.rest, unit) }
+    if (!box.weighed) {
+      if (box.fixed > 0)
+        return t(
+          loading
+            ? 'mass.rigidbody.breakdownDefaultLoadingFixed'
+            : 'mass.rigidbody.breakdownDefaultFixed',
+          values
+        )
+      return t(
+        loading ? 'mass.rigidbody.breakdownDefaultLoading' : 'mass.rigidbody.breakdownDefault'
+      )
+    }
+    if (box.fixed > 0)
       return t(
         loading
           ? 'mass.rigidbody.breakdownWeighedFixed'
           : 'mass.rigidbody.breakdownWeighedBoxFixed',
-        {
-          fixed: massText(t, robot.fixedMass, unit),
-          rest: massText(t, robot.estimatedMass, unit)
-        }
+        values
       )
     return loading
       ? t('mass.rigidbody.breakdownWeighedLoading')
