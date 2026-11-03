@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   canHaveJoint,
   DEFAULT_SPOOL_DIAMETER,
+  MAX_JOINT_DAMPING,
+  MAX_JOINT_FORCE,
+  MAX_JOINT_STIFFNESS,
   defaultJoint,
   defaultJointDrive,
   JOINT_DRIVE_KINDS,
@@ -105,6 +108,35 @@ describe('관절 설정', () => {
     })
     expect(spring({ kind: 'linear', stiffness: Infinity, rest: 0 })).toBeNull()
     expect(spring({ kind: 'linear', stiffness: 1, rest: 11 })).toBeNull()
+  })
+
+  it('정리: 한계는 편집 자세(q = 0)를 품도록 가까운 끝을 0으로 넓힌다', () => {
+    const limits = (
+      type: JointSettings['type'],
+      value: JointSettings['limits']
+    ): JointSettings['limits'] => sanitizeJoint({ ...defaultJoint(type), limits: value }).limits
+    expect(limits('prismatic', { lower: 0.1, upper: 0.5 })).toEqual({ lower: 0, upper: 0.5 })
+    expect(limits('revolute', { lower: -1, upper: -0.5 })).toEqual({ lower: -1, upper: 0 })
+    expect(limits('revolute', { lower: 0.2, upper: 0.2 })).toEqual({ lower: 0, upper: 0.2 })
+    // −0은 0으로(저장한 파일에 -0이 쓰이지 않게)
+    expect(Object.is(limits('revolute', { lower: -0, upper: 1 })?.lower, 0)).toBe(true)
+    expect(Object.is(limits('revolute', { lower: -1, upper: -0 })?.upper, 0)).toBe(true)
+  })
+
+  it('정리: 마찰·스프링은 세계 설명 검증의 한도로 자른다', () => {
+    const joint = sanitizeJoint({
+      ...defaultJoint(),
+      friction: { coulomb: 2e4, viscous: 5e4 },
+      spring: { kind: 'linear', stiffness: 1e7, rest: 0 }
+    })
+    expect(joint.friction).toEqual({ coulomb: MAX_JOINT_FORCE, viscous: MAX_JOINT_DAMPING })
+    expect(joint.spring).toEqual({ kind: 'linear', stiffness: MAX_JOINT_STIFFNESS, rest: 0 })
+    expect(
+      sanitizeJoint({ ...defaultJoint(), spring: { kind: 'constantForce', force: 1e9 } }).spring
+    ).toEqual({ kind: 'constantForce', force: MAX_JOINT_FORCE })
+    expect(
+      sanitizeJoint({ ...defaultJoint(), friction: { coulomb: Infinity, viscous: 0 } }).friction
+    ).toEqual({ coulomb: 0.02, viscous: 0 })
   })
 
   it('정리: 구동의 감속비·스풀 지름은 범위 밖이면 기본값, 장치·단 id는 겹침과 빈 값만 뺀다', () => {

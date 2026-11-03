@@ -29,6 +29,11 @@ export const MIN_SPOOL_DIAMETER = 0.001
 export const MAX_SPOOL_DIAMETER = 0.5
 // 다단 슬라이드의 위 단 수(관절 한도에서 아래 단 하나를 뺀 것)
 export const MAX_JOINT_STAGES = MAX_WORLD_JOINTS - 1
+// 마찰·스프링 한도. 세계 설명 검증(parseWorldSpec)의 한도와 같다(가정: FTC 메커니즘보다 넉넉히 두고 틀린 단위·폭주 값만
+// 막는다). 쿨롱 마찰·정전력 스프링 N 또는 N·m, 점성 N·s/m 또는 N·m·s/rad, 강성 N/m 또는 N·m/rad
+export const MAX_JOINT_FORCE = 1e4
+export const MAX_JOINT_DAMPING = 1e4
+export const MAX_JOINT_STIFFNESS = 1e6
 
 // 기본 스풀 지름(m): goBILDA 2단 Viper-Slide 키트의 Hub-Mount Winch Pulley 둘레 112 mm(= 지름 35.65 mm)
 // (https://www.gobilda.com/2-stage-viper-slide-kit/ "each rotation of the pulley will cause the slide kit to move
@@ -125,6 +130,9 @@ export function canHaveJoint(object: SceneObject): boolean {
 const finiteIn = (value: number, min: number, max: number): boolean =>
   Number.isFinite(value) && value >= min && value <= max
 const nonNegative = (value: number): boolean => Number.isFinite(value) && value >= 0
+// 유한한 0 이상이면 한도로 자르고, 아니면 null
+const clampedNonNegative = (value: number, max: number): number | null =>
+  nonNegative(value) ? Math.min(value, max) : null
 
 function sanitizeAnchor(anchor: Vec3): Vec3 {
   return anchor.length === 3 &&
@@ -134,6 +142,8 @@ function sanitizeAnchor(anchor: Vec3): Vec3 {
 }
 
 // 한계: 회전은 null(제한 없음)도 받고, 직선은 늘 있어야 한다. 범위 밖·유한하지 않음·lower > upper면 그 종류의 기본값이다.
+// 한계는 편집 자세(q = 0) 기준이라 0을 품어야 한다(시작 자세가 한계 밖이면 첫 틱에 튄다, 세계 설명 검증도 받지 않는다).
+// 0을 품지 않으면 가까운 끝을 0으로 넓힌다([0.1, 0.5] → [0, 0.5], −0은 0).
 function sanitizeLimits(type: JointType, limits: JointSettings['limits']): JointSettings['limits'] {
   if (limits === null && type === 'revolute') return null
   const max = type === 'revolute' ? MAX_REVOLUTE_LIMIT : MAX_PRISMATIC_LIMIT
@@ -143,18 +153,21 @@ function sanitizeLimits(type: JointType, limits: JointSettings['limits']): Joint
     finiteIn(limits.upper, -max, max) &&
     limits.lower <= limits.upper
   )
-    return { lower: limits.lower, upper: limits.upper }
+    return { lower: Math.min(limits.lower, 0) || 0, upper: Math.max(limits.upper, 0) || 0 }
   const fallback = DEFAULTS[type].limits
   return fallback && { ...fallback }
 }
 
 function sanitizeSpring(type: JointType, spring: JointSettings['spring']): JointSettings['spring'] {
   if (!spring) return null
-  if (spring.kind === 'constantForce')
-    return nonNegative(spring.force) ? { kind: 'constantForce', force: spring.force } : null
+  if (spring.kind === 'constantForce') {
+    const force = clampedNonNegative(spring.force, MAX_JOINT_FORCE)
+    return force === null ? null : { kind: 'constantForce', force }
+  }
+  const stiffness = clampedNonNegative(spring.stiffness, MAX_JOINT_STIFFNESS)
   const max = type === 'revolute' ? MAX_REVOLUTE_LIMIT : MAX_PRISMATIC_LIMIT
-  return nonNegative(spring.stiffness) && finiteIn(spring.rest, -max, max)
-    ? { kind: 'linear', stiffness: spring.stiffness, rest: spring.rest }
+  return stiffness !== null && finiteIn(spring.rest, -max, max)
+    ? { kind: 'linear', stiffness, rest: spring.rest }
     : null
 }
 
@@ -204,9 +217,12 @@ function sanitizeDrive(drive: JointDrive): JointDrive {
 
 // 범위 밖·유한하지 않은 수는 기본값으로 바꾸고 새 객체를 만든다(스토어와 프로젝트 파일 읽기가 같이 쓴다). 키 순서는 늘 같다
 // (저장한 파일이 바이트 단위로 같게 다시 써진다). 장치·관절 id는 남긴다(바퀴의 motor와 같다).
-// 마찰은 유한한 0 이상, 스프링은 힘·강성이 0 이상이고 쉬는 자리가 한계 한도 안이어야 하고 아니면 스프링을 뗀다.
+// 마찰은 유한한 0 이상(한도를 넘으면 한도로 자름, 음수·유한하지 않음은 기본값), 스프링은 힘·강성이 0 이상(한도로 자름)이고
+// 쉬는 자리가 한도 안이어야 하고 아니면 스프링을 뗀다. 그래서 정리한 설정은 늘 세계 설명 검증의 한도 안이다.
 export function sanitizeJoint(joint: JointSettings): JointSettings {
   const fallback = DEFAULTS[joint.type].friction
+  const coulomb = clampedNonNegative(joint.friction.coulomb, MAX_JOINT_FORCE)
+  const viscous = clampedNonNegative(joint.friction.viscous, MAX_JOINT_DAMPING)
   return {
     type: joint.type,
     anchor: sanitizeAnchor(joint.anchor),
@@ -214,8 +230,8 @@ export function sanitizeJoint(joint: JointSettings): JointSettings {
     axisSign: joint.axisSign === -1 ? -1 : 1,
     limits: sanitizeLimits(joint.type, joint.limits),
     friction: {
-      coulomb: nonNegative(joint.friction.coulomb) ? joint.friction.coulomb : fallback.coulomb,
-      viscous: nonNegative(joint.friction.viscous) ? joint.friction.viscous : fallback.viscous
+      coulomb: coulomb ?? fallback.coulomb,
+      viscous: viscous ?? fallback.viscous
     },
     spring: sanitizeSpring(joint.type, joint.spring),
     drive: sanitizeDrive(joint.drive)
