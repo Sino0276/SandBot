@@ -89,6 +89,10 @@ describe('장치 탭의 관절 표', () => {
       jointRows(SCENE, { run: run('finished'), simPose: null, ghostPose }).map((row) => row.value)
     ).toEqual([0.4, 0.1])
     expect(jointRows(SCENE, { run: null, simPose: null, ghostPose })).toEqual([])
+    // 프로젝트를 다시 열어 떼어 놓은 실행
+    expect(
+      jointRows(SCENE, { run: { ...run(), robotId: null }, simPose: null, ghostPose: null })
+    ).toEqual([])
     const plain = { ...run(), joints: [] }
     expect(jointRows(SCENE, { run: plain, simPose: null, ghostPose: null })).toEqual([])
   })

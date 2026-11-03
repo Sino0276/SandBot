@@ -62,6 +62,7 @@ export function deviceRows(
 
 // 장치 탭의 관절 표(3b): 세계 설명의 관절 순서(run.joints)로 관절 오브젝트와 시뮬레이터가 보낸 관절 값(rad 또는 m).
 // 실행 중이면 지금 자세의 값, 끝났으면 잔상의 마지막 값이다. 씬에서 지운 관절 오브젝트는 이름 없이 남기지 않고 뺀다.
+// 프로젝트를 다시 열어 새 씬과 떼어 놓은 실행(robotId null)은 관절도 보이지 않는다.
 export type JointRow = {
   objectId: string
   name: string
@@ -74,7 +75,7 @@ export function jointRows(
   data: Pick<PlayData, 'run' | 'simPose'> & { ghostPose: GhostPose | null }
 ): JointRow[] {
   const { run, simPose, ghostPose } = data
-  if (!run || run.joints.length === 0) return []
+  if (!run || run.robotId === null || run.joints.length === 0) return []
   const live = simPose && simPose.robotId === run.robotId && simPose.joints ? simPose.joints : null
   const ghost =
     run.phase === 'finished' && ghostPose && ghostPose.robotId === run.robotId
