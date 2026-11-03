@@ -1219,7 +1219,8 @@ const ko = {
       servoModel: '서보 모델',
       limitJoint: '리밋 스위치 관절',
       limitAt: '눌리는 끝',
-      limitWithin: '눌리는 거리 (m·rad, 0 = 2 mm·1°)'
+      limitDistance: '눌리는 거리 (0 = 2 mm)',
+      limitAngle: '눌리는 각도 (0 = 1°)'
     },
     options: {
       motorModel: {

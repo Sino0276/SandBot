@@ -55,7 +55,7 @@ const DEFAULTS: Record<JointType, Pick<JointSettings, 'limits' | 'friction'>> = 
   }
 }
 
-// 리밋 스위치가 눌리는 거리 기본값(touch·digital 컴포넌트의 limitWithin이 0일 때): 직선 2 mm, 회전 1°(spec-3b §1-12, 가정)
+// 리밋 스위치가 눌리는 거리 기본값(touch·digital 컴포넌트의 limitDistance·limitAngle이 0일 때): 직선 2 mm, 회전 1°(spec-3b §1-12, 가정)
 export const DEFAULT_LIMIT_WITHIN: Record<JointType, number> = {
   prismatic: 0.002,
   revolute: Math.PI / 180

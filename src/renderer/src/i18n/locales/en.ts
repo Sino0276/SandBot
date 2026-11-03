@@ -1219,7 +1219,8 @@ const en: Messages = {
       servoModel: 'Servo model',
       limitJoint: 'Limit switch joint',
       limitAt: 'Pressed at',
-      limitWithin: 'Press distance (m·rad, 0 = 2 mm·1°)'
+      limitDistance: 'Press distance (0 = 2 mm)',
+      limitAngle: 'Press angle (0 = 1°)'
     },
     options: {
       motorModel: {

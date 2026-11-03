@@ -10,6 +10,7 @@ import {
   SERVO_MODEL_KEYS
 } from '../../../shared/sim/actuatorData'
 import { motorType } from '../../../shared/sim/motorTypes'
+import type { JointType } from '../scene/model'
 
 // 장치가 차지하는 자리
 // - motor/servo/digital/analog: 허브의 해당 포트(번호 범위는 PORT_RANGES)
@@ -36,6 +37,8 @@ export const DEFAULT_EXPANSION_HUB_ADDRESS = 2
 type PropertyMeta = {
   // 다른 enum 속성이 이 값들 중 하나일 때만 인스펙터에 보인다(값은 늘 저장한다)
   visibleWhen?: { key: string; values: readonly string[] }
+  // 다른 object 속성(key)이 관절이 있는 오브젝트를 가리킬 때만 보인다. types가 있으면 그 관절 형식일 때만(값은 늘 저장한다).
+  visibleWhenJoint?: { key: string; types?: readonly JointType[] }
   // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
   // 바이트 단위로 같아야 한다(generatedOutput.test.ts가 확인).
   simulation?: true
@@ -57,6 +60,8 @@ export type PropertyDef = PropertyMeta &
       }
     // 길이(내부 미터). 인스펙터는 표시 단위(units/units.ts)로 보이고, 입력칸은 단위를 붙인 값도 받는다.
     | { key: string; kind: 'length'; default: number; min: number; max: number }
+    // 각도(내부 라디안). 인스펙터는 도(°)로 보이고, 입력칸은 °·rad를 붙인 값도 받는다.
+    | { key: string; kind: 'angle'; default: number; min: number; max: number }
     | { key: string; kind: 'text'; default: string }
     // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''.
     | { key: string; kind: 'object'; default: '' }
@@ -156,6 +161,9 @@ export const DEAD_WHEEL_POD_TYPES = ['fourBar', 'swingarm', 'revThroughBore', 'c
 const POD_DIAMETER = { default: 0.035, min: 0.005, max: 0.2 } as const
 const POD_CPR = { default: REV_THROUGH_BORE_CPR, min: 1, max: 1000000 } as const
 
+// 리밋 스위치가 눌리는 거리·각도의 상한(m·rad). 세계 설명이 받는 스위치 within 상한(1)과 같다.
+export const MAX_LIMIT_WITHIN = 1
+
 // 서보·CR 서보의 모델(시뮬레이터 전용, 관절 구동의 토크·속도·각 범위 표 src/shared/sim/actuatorData.ts와 질량 표)
 const SERVO_MODEL = {
   key: 'servoModel',
@@ -165,13 +173,38 @@ const SERVO_MODEL = {
   simulation: true
 } as const
 
-// 리밋 스위치(touch·digital, 시뮬레이터 전용): 같은 로봇의 관절 오브젝트(limitJoint)의 한계(limitAt) 근처 limitWithin 안에서
-// 눌린다(touch pressed true, digital state false). limitWithin은 그 관절의 단위(직선 m, 회전 rad)이고 0이면 기본값
-// (scene/joint.ts DEFAULT_LIMIT_WITHIN: 2 mm·1°).
+// 리밋 스위치(touch·digital, 시뮬레이터 전용): 같은 로봇의 관절 오브젝트(limitJoint)의 한계(limitAt) 근처에서 눌린다
+// (touch pressed true, digital state false). 눌리는 범위는 직선 관절이면 limitDistance(길이, 표시 단위), 회전 관절이면
+// limitAngle(각도, °)이고 0이면 기본값(scene/joint.ts DEFAULT_LIMIT_WITHIN: 2 mm·1°)이다. 인스펙터는 연결한 관절의
+// 형식에 맞는 칸만 보인다.
 const LIMIT_SWITCH = [
   { key: 'limitJoint', kind: 'object', default: '', simulation: true },
-  { key: 'limitAt', kind: 'enum', options: ['lower', 'upper'], default: 'lower', simulation: true },
-  { key: 'limitWithin', kind: 'number', default: 0, min: 0, max: 1, digits: 4, simulation: true }
+  {
+    key: 'limitAt',
+    kind: 'enum',
+    options: ['lower', 'upper'],
+    default: 'lower',
+    visibleWhenJoint: { key: 'limitJoint' },
+    simulation: true
+  },
+  {
+    key: 'limitDistance',
+    kind: 'length',
+    default: 0,
+    min: 0,
+    max: MAX_LIMIT_WITHIN,
+    visibleWhenJoint: { key: 'limitJoint', types: ['prismatic'] },
+    simulation: true
+  },
+  {
+    key: 'limitAngle',
+    kind: 'angle',
+    default: 0,
+    min: 0,
+    max: MAX_LIMIT_WITHIN,
+    visibleWhenJoint: { key: 'limitJoint', types: ['revolute'] },
+    simulation: true
+  }
 ] as const
 
 export const HUB_DIRECTIONS = ['up', 'down', 'forward', 'backward', 'left', 'right'] as const
@@ -480,13 +513,20 @@ export function propertyDefaults(type: ComponentType): Record<string, string | n
   return Object.fromEntries(componentDef(type).properties.map((p) => [p.key, p.default]))
 }
 
-// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen)
+// 속성이 지금 값들에서 인스펙터에 보이는지(visibleWhen, visibleWhenJoint). jointTypeOf는 오브젝트 id → 그 관절 형식
+// (없는 오브젝트나 관절이 없으면 null)이다.
 export function isPropertyVisible(
   property: PropertyDef,
-  props: Record<string, string | number>
+  props: Record<string, string | number>,
+  jointTypeOf: (objectId: string) => JointType | null = () => null
 ): boolean {
   const when = property.visibleWhen
-  return !when || when.values.includes(String(props[when.key]))
+  if (when && !when.values.includes(String(props[when.key]))) return false
+  const joint = property.visibleWhenJoint
+  if (!joint) return true
+  const target = props[joint.key]
+  const type = typeof target === 'string' && target ? jointTypeOf(target) : null
+  return type !== null && (!joint.types || joint.types.includes(type))
 }
 
 // 데드휠의 원시 엔코더 틱/m(podType). 지름·CPR이 범위 밖이면 그 속성의 기본값을 쓴다.

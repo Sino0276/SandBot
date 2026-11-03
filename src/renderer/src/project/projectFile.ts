@@ -115,7 +115,7 @@ function parseProps(
         ? typeof raw === 'string' && def.options.includes(raw)
         : def.kind === 'number'
           ? isFiniteNumber(raw)
-          : def.kind === 'length'
+          : def.kind === 'length' || def.kind === 'angle'
             ? isFiniteNumber(raw) && raw >= def.min && raw <= def.max
             : typeof raw === 'string'
     props[def.key] = valid ? (raw as string | number) : def.default

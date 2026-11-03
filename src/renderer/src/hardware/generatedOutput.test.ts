@@ -104,7 +104,7 @@ describe('생성 파일 출력 고정', () => {
               props[property.key] =
                 property.kind === 'enum'
                   ? property.options[property.options.length - 1]
-                  : property.kind === 'length'
+                  : property.kind === 'length' || property.kind === 'angle'
                     ? property.max
                     : property.kind === 'number'
                       ? (property.max ?? 0) / 2
@@ -125,10 +125,12 @@ describe('생성 파일 출력 고정', () => {
       'crServo.servoModel',
       'touchSensor.limitJoint',
       'touchSensor.limitAt',
-      'touchSensor.limitWithin',
+      'touchSensor.limitDistance',
+      'touchSensor.limitAngle',
       'digitalDevice.limitJoint',
       'digitalDevice.limitAt',
-      'digitalDevice.limitWithin',
+      'digitalDevice.limitDistance',
+      'digitalDevice.limitAngle',
       'deadWheel.podType',
       'deadWheel.podDiameter',
       'deadWheel.podCpr'

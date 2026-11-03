@@ -548,7 +548,7 @@ describe('세계 설명의 관절', () => {
         component('digitalDevice', 'd-up', 'liftUp', {
           limitJoint: 'stage2',
           limitAt: 'upper',
-          limitWithin: 0.005
+          limitDistance: 0.005
         }),
         component('digitalDevice', 'd-arm', 'armHome', { limitJoint: 'arm' }),
         component('touchSensor', 't-gone', 'oldSwitch', { limitJoint: 'deleted' })
@@ -571,6 +571,25 @@ describe('세계 설명의 관절', () => {
       components: [component('touchSensor', 't-arm', 'armDown', { limitJoint: 'arm' })]
     }
     expect(build(revolute).joints[2].switches[0].within).toBeCloseTo(Math.PI / 180, 15)
+    // 회전 관절은 limitAngle(rad), 직선 관절은 limitDistance(m)만 읽는다
+    revolute.drive = {
+      ...revolute.drive,
+      components: [
+        component('touchSensor', 't-arm', 'armDown', {
+          limitJoint: 'arm',
+          limitDistance: 0.3,
+          limitAngle: 0.05
+        }),
+        component('touchSensor', 't-lift', 'liftDown', {
+          limitJoint: 'stage2',
+          limitDistance: 0.004,
+          limitAngle: 0.5
+        })
+      ]
+    }
+    const switched = build(revolute)
+    expect(switched.joints[2].switches[0].within).toBe(0.05)
+    expect(switched.joints[1].switches[0].within).toBe(0.004)
   })
 
   it(`리밋 스위치: 이름이 겹치는 장치는 한 번만, 관절마다 ${MAX_JOINT_SWITCHES}개까지`, () => {

@@ -719,6 +719,26 @@ describe('버전과 하위 호환', () => {
     ])
     expect(loaded.plate.components![1].props.podCpr).toBe(4000)
   })
+
+  it('리밋 스위치의 거리(길이)·각도(라디안)는 범위 밖이거나 수가 아니면 0(기본)으로 채운다', () => {
+    const data = JSON.parse(serializeProject(objects, relativize))
+    const values: unknown[] = [0.005, 2, -0.1, '0.01', null]
+    values.forEach((value, i) =>
+      data.objects[2].components.push({
+        id: `ls${i}`,
+        type: 'touchSensor',
+        name: `ls${i}`,
+        hub: 'controlHub',
+        port: i,
+        props: { limitJoint: 'j', limitAt: 'upper', limitDistance: value, limitAngle: value }
+      })
+    )
+    const { objects: loaded } = parseProject(JSON.stringify(data))
+    const switches = loaded.plate.components!.slice(1)
+    expect(switches.map((c) => c.props.limitDistance)).toEqual([0.005, 0, 0, 0, 0])
+    expect(switches.map((c) => c.props.limitAngle)).toEqual([0.005, 0, 0, 0, 0])
+    expect(switches[0].props.limitAt).toBe('upper')
+  })
 })
 
 describe('잘못된 프로젝트 파일', () => {

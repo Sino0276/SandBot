@@ -12,7 +12,13 @@ import {
   type SimMotorParams,
   type Vec3 as SimVec3
 } from '../../../shared/sim/worldSpec'
-import { isMotorModel, MAX_GEARBOX, MIN_GEARBOX, MOTOR_MODEL_TAGS } from '../hardware/catalog'
+import {
+  isMotorModel,
+  MAX_GEARBOX,
+  MAX_LIMIT_WITHIN,
+  MIN_GEARBOX,
+  MOTOR_MODEL_TAGS
+} from '../hardware/catalog'
 import type { ComponentEntry } from '../hardware/components'
 import { sidecarDeviceName } from '../hardware/naming'
 import type { MassModel, SymMatrix3 } from '../mass/types'
@@ -420,14 +426,17 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
       continue
     }
     usedDevices.add(device)
-    const within = Number(component.props.limitWithin)
+    // 직선 관절은 limitDistance(m), 회전 관절은 limitAngle(rad)
+    const within = Number(
+      joint.type === 'prismatic' ? component.props.limitDistance : component.props.limitAngle
+    )
     switches[i].push({
       device,
       kind: component.type === 'touchSensor' ? 'touch' : 'digital',
       at: component.props.limitAt === 'upper' ? 'upper' : 'lower',
       within:
         Number.isFinite(within) && within > 0
-          ? Math.min(within, 1)
+          ? Math.min(within, MAX_LIMIT_WITHIN)
           : DEFAULT_LIMIT_WITHIN[joint.type]
     })
   }
