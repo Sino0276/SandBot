@@ -4,10 +4,8 @@ import type { PlaySettings } from '../../../../shared/play'
 import { GRAVITY } from '../../../../shared/sim/physics'
 import {
   DEFAULT_WHEEL_FRICTION,
-  DEFAULT_WHEEL_MASS,
   effectiveWheelFriction,
-  MAX_WHEEL_MASS,
-  MIN_WHEEL_MASS,
+  effectiveWheelMass,
   wheelSpinInertia
 } from '../../../../shared/sim/wheelData'
 import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
@@ -16,6 +14,7 @@ import type { MassModel } from '../../mass/types'
 import {
   buildWorldSpec,
   robotWheels,
+  wheelSpinMass,
   wheelTopSpeed,
   type ResolvedWheel,
   type WorldWarning
@@ -155,18 +154,16 @@ export function parseWheelFriction(text: string): number | null {
   return value >= MIN_WHEEL_FRICTION && value <= MAX_WHEEL_FRICTION ? value : null
 }
 
-// 바퀴 질량(kg): 질량 모델의 바퀴 오브젝트 하위 질량을 [MIN_WHEEL_MASS, MAX_WHEEL_MASS]로 자른 것, 없거나 0이면 종류 기본
-// 질량이다(spec-3c §1.7, wheelData.ts의 wheelSpinInertia와 같은 규칙). fromModel은 질량 모델의 값을 썼는지다.
+// 바퀴 질량(kg): 세계 설명과 같은 도는 질량(play/worldSpec.ts wheelSpinMass: 하위 질량 − 하위 하드웨어 데이터시트 질량, 표의
+// 메카넘은 데이터시트)을 wheelData.ts effectiveWheelMass로 자른 것, 없으면 종류 기본 질량이다(spec-3c §1.7).
+// fromModel은 질량 모델의 값을 썼는지다.
 export function wheelMass(
   wheel: Pick<WheelSettings, 'kind'>,
-  subtreeMass: number | undefined
+  spinMass: number | null | undefined
 ): { mass: number; fromModel: boolean } {
-  if (subtreeMass !== undefined && Number.isFinite(subtreeMass) && subtreeMass > 0)
-    return {
-      mass: Math.min(MAX_WHEEL_MASS, Math.max(MIN_WHEEL_MASS, subtreeMass)),
-      fromModel: true
-    }
-  return { mass: DEFAULT_WHEEL_MASS[wheel.kind], fromModel: false }
+  const fromModel =
+    spinMass !== null && spinMass !== undefined && Number.isFinite(spinMass) && spinMass > 0
+  return { mass: effectiveWheelMass(wheel.kind, spinMass), fromModel }
 }
 
 // 정지한 로봇의 바퀴 하중(N, robotWheels 순서). 질량 모델의 로봇 질량·무게중심(편집 자세)이 바닥에 거는 렌치
@@ -224,7 +221,7 @@ export function wheelPhysicsView(
   const wheel = objects[objectId]?.wheel
   if (!wheel) return null
   const friction = effectiveWheelFriction(wheel.kind, wheel.friction)
-  const { mass, fromModel } = wheelMass(wheel, model?.objects[objectId]?.mass)
+  const { mass, fromModel } = wheelMass(wheel, wheelSpinMass(objects, objectId, wheel, model))
   const robotId = findRobotId(objects, objectId)
   const loads = robotId ? robotStaticLoads(objects, robotId, model) : null
   const load = loads?.wheels.find((entry) => entry.objectId === objectId)?.load ?? null

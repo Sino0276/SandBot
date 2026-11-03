@@ -21,9 +21,11 @@ export function effectiveWheelFriction(kind: WheelKind, setting: number): number
 }
 
 // 메카넘 견인 행(땅에 닿은 롤러의 축 방향)의 마찰 계수. 자유 롤러는 축 방향으로만 힘을 전하므로 잠근 바퀴를 앞이나 옆으로
-// 끌 때 바퀴 하나가 받는 힘은 μ_r·N·cos 45°다(method §4.1, Ether 해석). 그래서 겉보기 μ에서 μ_r = √2·μ다.
-export function mecanumRollerFriction(apparent: number): number {
-  return Math.SQRT2 * apparent
+// 끌 때 바퀴 하나가 받는 힘은 μ_r·N·cos 45°다(method §4.1, Ether 해석). 잠근 바퀴를 끌면 접점이 롤러 축과 자유 방향으로
+// 같이 미끄러져 롤러 쿨롱 저항(ROLLER_COULOMB·N·cos 45°)도 더해지므로, 겉보기 μ가 바퀴 설정 값과 같도록
+// μ_r = √2·μ − ROLLER_COULOMB이다(0 아래는 0). 시뮬레이터(contact.ts)와 인스펙터가 이 값을 같이 쓴다.
+export function mecanumRollerFriction(apparent: number, rollerCoulomb = ROLLER_COULOMB): number {
+  return Math.max(0, Math.SQRT2 * apparent - rollerCoulomb)
 }
 
 // 롤러·굴림 저항의 맞춤(spec-3c §1.3 맞춤 절차, 구현한 시뮬레이터로): Pedro Pathing 2.1.2 기본값을 낸 것으로 보는 로봇(10.65 kg,
@@ -70,11 +72,15 @@ export const MAX_WHEEL_MASS = 2
 
 // 바퀴 회전 관성(kg·m²). mass가 유한한 양수가 아니면 종류 기본 질량을 쓰고, 범위로 자른다.
 export function wheelSpinInertia(kind: WheelKind, radius: number, mass: number | null): number {
-  const m =
-    mass !== null && Number.isFinite(mass) && mass > 0
-      ? Math.min(MAX_WHEEL_MASS, Math.max(MIN_WHEEL_MASS, mass))
-      : DEFAULT_WHEEL_MASS[kind]
-  return WHEEL_SPIN_INERTIA_FACTOR * m * radius * radius
+  return WHEEL_SPIN_INERTIA_FACTOR * effectiveWheelMass(kind, mass) * radius * radius
+}
+
+// 회전 관성에 쓰는 바퀴 질량(kg): 유한한 양수면 [MIN_WHEEL_MASS, MAX_WHEEL_MASS]로 자르고, 아니면 종류 기본 질량.
+// 세계 설명(play/worldSpec.ts)과 인스펙터 바퀴 카드가 같이 쓴다.
+export function effectiveWheelMass(kind: WheelKind, mass: number | null | undefined): number {
+  return mass !== null && mass !== undefined && Number.isFinite(mass) && mass > 0
+    ? Math.min(MAX_WHEEL_MASS, Math.max(MIN_WHEEL_MASS, mass))
+    : DEFAULT_WHEEL_MASS[kind]
 }
 
 // 구동하지 않는 바퀴 좌표의 베어링 쿨롱 마찰(N·m). 가정: 볼 베어링 바퀴 축(굴림 저항이 주된 손실이다).

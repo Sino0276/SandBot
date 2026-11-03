@@ -1,4 +1,4 @@
-// 운동학 시뮬레이터의 세계 설명(렌더러 → 메인). 렌더러가 INIT 때 씬에서 고른 로봇의 바퀴·모터·오도메트리를 이 모양으로
+// 시뮬레이터의 세계 설명(렌더러 → 메인). 렌더러가 INIT 때 씬에서 고른 로봇의 바퀴·모터·오도메트리를 이 모양으로
 // 만들어 PlayInitRequest.world로 보내고, 메인의 PhysicsWorld(src/shared/sim/world.ts)가 틱마다 이것으로 센서 값을 만든다.
 // 메인은 렌더러를 믿지 않고 parseWorldSpec으로 모양·유한 수·한도를 확인한다.
 // 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙, Z 위.
@@ -131,7 +131,7 @@ export type WorldSpec = {
   pinpoints: SimPinpointSpec[]
   otos: SimOtosSpec[]
   imus: SimImuSpec[]
-  // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 운동학 2단계와 같다.
+  // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 관절이 없다.
   joints: SimJointSpec[]
 }
 

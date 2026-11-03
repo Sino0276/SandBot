@@ -44,7 +44,7 @@ type PropertyMeta = {
   visibleWhenJoint?: { key: string; types?: readonly JointType[] }
   // 칸 설명(hardware.propHints.<key>, 인스펙터 행의 도움말). labels.test.ts가 ko·en에 있는지 확인한다.
   hint?: true
-  // 시뮬레이터 전용(운동학 시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
+  // 시뮬레이터 전용(시뮬레이터의 세계 설명만 읽는다). 생성 Java·구성 XML에 쓰지 않으므로 바꿔도 생성 파일이
   // 바이트 단위로 같아야 한다(generatedOutput.test.ts가 확인).
   simulation?: true
 }

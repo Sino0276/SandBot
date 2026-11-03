@@ -314,7 +314,7 @@ function chassisBody(
 // 하우징은 돌지 않는다. 바퀴 설정이 표의 제품(goBILDA 메카넘)이고 바퀴 오브젝트에 질량 덮어쓰기가 없으면 그 제품의
 // 데이터시트 질량 그대로다(하위가 커서 COTS를 거절한 바퀴 그룹도). 질량 모델이 없거나, 그 오브젝트가 없거나, 빼고 남은
 // 것이 0 이하면 null(종류 기본 질량).
-function wheelSpinMass(
+export function wheelSpinMass(
   objects: SceneObjects,
   objectId: string,
   wheel: WheelSettings,

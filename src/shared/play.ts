@@ -183,7 +183,7 @@ export type PlayInitRequest = {
   // 로봇 구성 XML의 TeamCode 기준 경로(src/main/res/xml/sandbot_*.xml, generatedFiles.ts 규칙). 없으면 null.
   configPath: string | null
   settings: PlaySettings
-  // 운동학 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
+  // 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
   world: WorldSpec | null
 }
 

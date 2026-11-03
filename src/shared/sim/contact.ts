@@ -25,7 +25,8 @@ import type { Pose2, SimWheelSpec, Vec2 } from './worldSpec'
 //   - 메카넘: 견인은 롤러 축 a(tractionDirection)에 상자 ±h·μ_r·N(μ_r = √2·μ − c_r, 잠근 바퀴의 겉보기 μ에서), 롤러 자유 방향
 //     f = ẑ × a는 롤러 저항: 점성 행 감쇠(힘 −ROLLER_VISCOUS·N·g_f)와 쿨롱 상자 ±h·ROLLER_COULOMB·N(점성 하나로는 Pedro의
 //     옆걸음 속도 비와 옆 관성 감속을 함께 맞추지 못한다, wheelData.ts). 직진에서는 g_f = 0이라 손실이 없다.
-//   - 옴니: 견인 a = u, ±h·μ·N, 축 방향(ẑ × u)은 같은 점성.
+//   - 옴니: 견인 a = u, ±h·μ·N, 축 방향(ẑ × u)은 메카넘과 같은 롤러 저항(점성 + 쿨롱 상자). 맞춤은 메카넘 로봇으로 했고,
+//     옴니 롤러도 같은 고무 롤러 구름이라 같은 값을 쓴다(가정).
 //   - 일반 바퀴: 마찰 원을 고정 팔각형으로: u 기준 0°·45°·90°·135° 행 넷, 상자마다 ±h·μ·N / (2(cos 22.5° + sin 22.5°))
 //     (민코프스키 합이 원에 내접하는 팔각형, 반지름 오차 최대 7.6 %, 늘 안쪽). 반복 없이 결정적이다.
 //   - 모든 바퀴: 굴림 저항은 바퀴 좌표의 쿨롱 상자 ±ROLLING_RESISTANCE·N·r/G(world.ts가 구동 상자에 더한다: 성분 하나인 행이라
@@ -34,6 +35,7 @@ import type { Pose2, SimWheelSpec, Vec2 } from './worldSpec'
 
 // 팔각형 행 상자의 분모 2(cos 22.5° + sin 22.5°) = 2.6131: 네 방향 상자 b의 합(지지 함수)이 22.5°에서 2.6131·b로 가장 크다
 const OCTAGON_DIVISOR = 2 * (Math.cos(Math.PI / 8) + Math.sin(Math.PI / 8))
+// 행 방향은 u 기준 0°·45°·90°·135°다. 굴림·옆 방향 견인은 원의 cos 22.5° = 0.924배(원 안 7.6 %, 가정 μ의 불확실성보다 작다)
 const OCTAGON_ANGLES = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4]
 
 // 벽 행을 넣는 근방: 간격 ≤ |접근 속도|·h + WALL_MARGIN(m). 가정: 3b 관절 한계 근방(LIMIT_MARGIN 1 mm)과 같은 크기
@@ -80,9 +82,7 @@ export function wheelContact(
     driven,
     traction: tractionDirection(spec),
     tractionFriction:
-      spec.kind === 'mecanum'
-        ? Math.max(0, mecanumRollerFriction(spec.friction) - rollerCoulomb)
-        : spec.friction
+      spec.kind === 'mecanum' ? mecanumRollerFriction(spec.friction, rollerCoulomb) : spec.friction
   }
 }
 

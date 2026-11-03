@@ -400,14 +400,15 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
   it('바퀴 하나: 쓰는 μ(설정 또는 종류 기본), 회전 관성 0.53·m·R², 견인 한계 μ·N', () => {
     const objects = fourWheels()
     const model = massModel(robotMass(10, 0.05), { wfl: objectMass(0.3) })
+    // 104 mm 메카넘은 표의 제품(goBILDA GripForce)이라 세계 설명처럼 데이터시트 질량 236 g이 도는 질량이다
+    // (play/worldSpec.ts wheelSpinMass)
     const fl = wheelPhysicsView(objects, 'wfl', model)!
-    expect(fl).toMatchObject({
-      friction: 0.6,
-      defaultFriction: 0.6,
-      mass: 0.3,
-      massFromModel: true
-    })
-    expect(fl.spinInertia).toBeCloseTo(WHEEL_SPIN_INERTIA_FACTOR * 0.3 * 0.052 ** 2, 15)
+    expect(fl).toMatchObject({ friction: 0.6, defaultFriction: 0.6, massFromModel: true })
+    expect(fl.mass).toBeCloseTo(0.236, 12)
+    expect(fl.spinInertia).toBeCloseTo(WHEEL_SPIN_INERTIA_FACTOR * 0.236 * 0.052 ** 2, 15)
+    // 표에 없는 지름이면 질량 모델의 하위 질량
+    const plain = withWheel(objects, 'wfl', { diameter: 0.09 })
+    expect(wheelPhysicsView(plain, 'wfl', model)!.mass).toBeCloseTo(0.3, 12)
     expect(fl.load).toBeCloseTo((10 * GRAVITY) / 3, 9)
     expect(fl.tractionLimit).toBeCloseTo((0.6 * 10 * GRAVITY) / 3, 9)
     // 마찰을 정하면 그 값, 질량 모델에 바퀴가 없으면 기본 질량

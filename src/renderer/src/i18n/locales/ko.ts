@@ -778,7 +778,7 @@ const ko = {
     revealFile: '폴더에서 보기',
     revealHint: '더블클릭하거나 Enter를 누르면 파일 관리자에서 이 파일을 보입니다.',
     rrTuningHint:
-      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 운동학 모델에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
+      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 시뮬레이터에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
     diagnosticKind: {
       error: '오류',
       warning: '경고',
@@ -796,7 +796,7 @@ const ko = {
     code: '진단 코드',
     // 실행 흐름이 남기는 안내
     notices: {
-      // 운동학 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
+      // 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
       worldNoWheels:
         '바퀴 컴포넌트가 없어 로봇이 움직이지 않습니다. 바퀴 파트(또는 그룹)에 [컴포넌트 추가 → 바퀴]를 붙이세요.',
       worldWheelNoMotor: '바퀴 {{name}}에 구동 모터가 없어 굴리지 않습니다(따라 구르기만 합니다).',

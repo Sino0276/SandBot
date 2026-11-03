@@ -423,7 +423,7 @@ async function runInit(): Promise<void> {
   )
   const configPath = config?.configPath ?? null
   const warning = generationWarning(generation, configPath)
-  // 운동학 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
+  // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
   const world = config ? worldFor(config.robotId, play.settings) : null
   const runId = newRunId()

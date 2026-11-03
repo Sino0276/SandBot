@@ -52,7 +52,7 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   Autonomous는 START 뒤 가상 30초가 된 틱의 답에 STOP을 싣는다(설정). STOP 뒤 kill 시간(실제, 일시 정지로 둔 동안은
 //   세지 않는다) 안에 끝나지 않거나, stall(무한 루프)을 받은 뒤 STOP이면 JVM을 끝낸다(killed). 틱을 주고받기 전
 //   (preparing·compiling)의 STOP은 shutdown을 보낸다.
-// 세계(운동학 시뮬레이터, SimWorld): 틱이 **도착할 때** world.step(그 틱의 시각·출력)을 부르고, 돌려받은 입력을 모아 두었다가
+// 세계(시뮬레이터, SimWorld): 틱이 **도착할 때** world.step(그 틱의 시각·출력)을 부르고, 돌려받은 입력을 모아 두었다가
 //   그 틱의 답(tickReply)에 싣는다. 그래서 답을 늦추거나(속도·일시 정지) 답하지 못한 틱(끝)도 적분은 틱 순서대로 한 번씩
 //   결정적으로 하고, 일시 정지 중의 자세는 둔 틱의 것이다. 답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다(세계는 바뀐 키만
 //   주므로). 세계의 예외는 실행을 멈추지 않는다: simNotice worldError를 한 번 보내고 사이드카는 이전 입력을 계속 쓴다.

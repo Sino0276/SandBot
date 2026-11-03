@@ -765,7 +765,7 @@ const en: Messages = {
     revealFile: 'Show in folder',
     revealHint: 'Double-click or press Enter to show this file in the file manager.',
     rrTuningHint:
-      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (the page for this kind of result under http://192.168.43.1:8080/tuning/): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's kinematic model and do not replace tuning on the real robot.",
+      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (the page for this kind of result under http://192.168.43.1:8080/tuning/): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's simulator and do not replace tuning on the real robot.",
     diagnosticKind: {
       error: 'error',
       warning: 'warning',
