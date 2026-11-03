@@ -18,6 +18,12 @@ export const MAX_SPOOL_DIAMETER = 0.5
 // 기본 스풀 지름(m): goBILDA 2단 Viper-Slide 키트의 Hub-Mount Winch Pulley 둘레 112 mm(= 지름 35.65 mm,
 // https://www.gobilda.com/2-stage-viper-slide-kit/, spec-3b data §5.1)
 export const DEFAULT_SPOOL_DIAMETER = 0.112 / Math.PI
+// 마찰·스프링 한도(spec §2: 유한·≥ 0). 상한은 세계 설명 검증(parseWorldSpec)·갈래 C의 정리와 같은 값(가정: FTC
+// 메커니즘보다 넉넉히 두고 틀린 단위·폭주 값만 막는다). 쿨롱 마찰·정전력 스프링 N 또는 N·m, 점성 N·s/m 또는
+// N·m·s/rad, 강성 N/m 또는 N·m/rad
+export const MAX_JOINT_FORCE = 1e4
+export const MAX_JOINT_DAMPING = 1e4
+export const MAX_JOINT_STIFFNESS = 1e6
 
 // 종류별 기본 한계·마찰(spec-3b §2): 회전은 ±90°·쿨롱 0.02 N·m·점성 0.001 N·m·s/rad(가정: 베어링 축 하나),
 // 직선은 0–0.5 m·쿨롱 1 N(가정: 볼 서랍 슬라이드)·점성 0.5 N·s/m(가정)

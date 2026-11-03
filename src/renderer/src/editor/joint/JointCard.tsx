@@ -30,8 +30,10 @@ import NumberField from '../NumberField'
 import {
   driveOptions,
   jointCardView,
+  nonNegativeJointValue,
   previewRange,
   robotAxisName,
+  springRestValue,
   stageOptions,
   withLimit,
   type DriveOption,
@@ -54,7 +56,6 @@ import { INTERIM_RATINGS } from './jointRatings'
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
-const nonNegative = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0)
 
 const JOINT_TYPES: readonly JointType[] = ['revolute', 'prismatic']
 const JOINT_AXES: readonly JointAxis[] = ['x', 'y', 'z']
@@ -285,7 +286,10 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
           value={joint.friction.coulomb}
           digits={3}
           onCommit={(input) =>
-            update({ ...joint, friction: { ...joint.friction, coulomb: nonNegative(input) } })
+            update({
+              ...joint,
+              friction: { ...joint.friction, coulomb: nonNegativeJointValue('coulomb', input) }
+            })
           }
         />
       </div>
@@ -298,7 +302,10 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
           value={joint.friction.viscous}
           digits={4}
           onCommit={(input) =>
-            update({ ...joint, friction: { ...joint.friction, viscous: nonNegative(input) } })
+            update({
+              ...joint,
+              friction: { ...joint.friction, viscous: nonNegativeJointValue('viscous', input) }
+            })
           }
         />
       </div>
@@ -404,7 +411,12 @@ function SpringRows({
             ariaLabel={t('joint.springForce')}
             value={spring.force}
             digits={2}
-            onCommit={(input) => update({ ...joint, spring: { ...spring, force: input } })}
+            onCommit={(input) =>
+              update({
+                ...joint,
+                spring: { ...spring, force: nonNegativeJointValue('springForce', input) }
+              })
+            }
           />
         </div>
       )}
@@ -419,7 +431,13 @@ function SpringRows({
               value={spring.stiffness}
               digits={3}
               onCommit={(input) =>
-                update({ ...joint, spring: { ...spring, stiffness: nonNegative(input) } })
+                update({
+                  ...joint,
+                  spring: {
+                    ...spring,
+                    stiffness: nonNegativeJointValue('stiffness', input)
+                  }
+                })
               }
             />
           </div>
@@ -432,7 +450,13 @@ function SpringRows({
               parse={valueUnit.parse}
               title={valueUnit.hint}
               onCommit={(input) =>
-                update({ ...joint, spring: { ...spring, rest: valueUnit.fromDisplay(input) } })
+                update({
+                  ...joint,
+                  spring: {
+                    ...spring,
+                    rest: springRestValue(joint.type, valueUnit.fromDisplay(input))
+                  }
+                })
               }
             />
           </div>

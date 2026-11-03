@@ -15,7 +15,15 @@ import {
   type SceneObjects,
   type Vec3
 } from '../../scene/model'
-import { canHaveJoint, defaultJoint } from './jointDefaults'
+import {
+  canHaveJoint,
+  defaultJoint,
+  MAX_JOINT_DAMPING,
+  MAX_JOINT_FORCE,
+  MAX_JOINT_STIFFNESS,
+  MAX_PRISMATIC_LIMIT,
+  MAX_REVOLUTE_LIMIT
+} from './jointDefaults'
 import type { ActuatorRatings } from './jointRatings'
 
 // 인스펙터 관절 카드(Articulation Body)·Add Component의 보기 계산(그리기와 나눠 시험한다). 관절은 시뮬레이터 설정이라
@@ -344,4 +352,25 @@ export function withLimit(
   return edge === 'lower'
     ? { lower: Math.min(value, limits.upper), upper: limits.upper }
     : { lower: limits.lower, upper: Math.max(value, limits.lower) }
+}
+
+// 마찰·스프링 칸의 상한(위 jointDefaults의 한도)
+const NON_NEGATIVE_MAX = {
+  coulomb: MAX_JOINT_FORCE,
+  viscous: MAX_JOINT_DAMPING,
+  springForce: MAX_JOINT_FORCE,
+  stiffness: MAX_JOINT_STIFFNESS
+} as const
+
+// 마찰·스프링 칸이 받는 값: 0 이상·한도 이하로 자른다(spec §2. 세계 설명 검증은 음수를 받지 않고, 스토어의 정리는 음수
+// 스프링을 통째로 뗀다). 정전력 스프링을 − 방향으로 걸려면 축 부호를 바꾼다(카드 도움말)
+export function nonNegativeJointValue(field: keyof typeof NON_NEGATIVE_MAX, value: number): number {
+  return Number.isFinite(value) ? Math.min(NON_NEGATIVE_MAX[field], Math.max(0, value)) : 0
+}
+
+// 선형 스프링 기준 위치(관절 값 단위): 관절 값 한도(회전 ±4π rad, 직선 ±10 m) 안으로 자른다. 밖이면 스토어의 정리가
+// 스프링을 뗀다
+export function springRestValue(type: JointSettings['type'], value: number): number {
+  const max = type === 'prismatic' ? MAX_PRISMATIC_LIMIT : MAX_REVOLUTE_LIMIT
+  return Number.isFinite(value) ? Math.min(max, Math.max(-max, value)) : 0
 }

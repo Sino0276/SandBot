@@ -1586,7 +1586,7 @@ const en: Messages = {
     },
     springForce: 'Force',
     springForceHint:
-      'A force (prismatic, N) or torque (revolute, N·m) pushing in the + direction at every position. Enter a negative value for the − direction.',
+      'A force (prismatic, N) or torque (revolute, N·m), 0 or more, pushing in the + direction at every position. To push in the − direction, flip the axis sign (the limits then follow that direction too).',
     springStiffness: 'Stiffness',
     springStiffnessHint: 'How strongly the spring pulls back per unit away from the rest position.',
     springRest: 'Rest Position',

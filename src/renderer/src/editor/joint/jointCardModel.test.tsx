@@ -22,9 +22,11 @@ import {
   driveOptions,
   GRAVITY,
   jointCardView,
+  nonNegativeJointValue,
   parentJointId,
   previewRange,
   robotAxisName,
+  springRestValue,
   stageOptions,
   withLimit
 } from './jointCardModel'
@@ -412,6 +414,22 @@ describe('관절 카드 보기 계산', () => {
     expect(withLimit({ lower: 0, upper: 0.5 }, 'upper', -1)).toEqual({ lower: 0, upper: 0 })
     expect(previewRange({ limits: { lower: -1, upper: 2 } })).toEqual({ min: -1, max: 2 })
     expect(previewRange({ limits: null })).toEqual({ min: -Math.PI, max: Math.PI })
+  })
+
+  it('마찰·스프링 칸은 0 이상·한도 이하, 기준 위치는 관절 값 한도 안(세계 설명 검증이 받는 값)', () => {
+    // 음수 정전력은 0으로 자른다(− 방향은 축 부호로). 그대로 두면 스토어 정리가 스프링을 통째로 뗀다
+    expect(nonNegativeJointValue('springForce', -5)).toBe(0)
+    expect(Object.is(nonNegativeJointValue('springForce', -0), 0)).toBe(true)
+    expect(nonNegativeJointValue('springForce', 12.5)).toBe(12.5)
+    expect(nonNegativeJointValue('springForce', 1e9)).toBe(1e4)
+    expect(nonNegativeJointValue('coulomb', -1)).toBe(0)
+    expect(nonNegativeJointValue('viscous', 2e4)).toBe(1e4)
+    expect(nonNegativeJointValue('stiffness', 5e6)).toBe(1e6)
+    expect(nonNegativeJointValue('stiffness', Number.NaN)).toBe(0)
+    expect(springRestValue('revolute', 20)).toBe(4 * Math.PI)
+    expect(springRestValue('revolute', -20)).toBe(-4 * Math.PI)
+    expect(springRestValue('prismatic', 12)).toBe(10)
+    expect(springRestValue('prismatic', -0.2)).toBe(-0.2)
   })
 
   it('종류를 바꾸면 기본값 그대로인 한계·마찰을 새 종류의 기본값으로, 스프링은 뗀다', () => {
