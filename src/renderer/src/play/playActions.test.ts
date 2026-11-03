@@ -412,18 +412,22 @@ describe('INIT → START → STOP', () => {
 })
 
 describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
-  // SCENE의 로봇에 구동 바퀴 하나(arm 모터)
+  // SCENE의 로봇에 구동 바퀴 넷(모두 arm 모터, 체인 구동처럼). 바퀴 하나만이면 하중을 나눌 수 없다고 경고한다(3c).
+  const corner = (id: string, x: number, y: number): SceneObject => ({
+    id,
+    name: id,
+    kind: 'part',
+    parentId: 'bot',
+    transform: { position: [x, y, 0.05], rotation: [0, 0, 0] },
+    visual: { type: 'mesh', geometryId: `g:${id}`, color: [1, 1, 1] },
+    wheel: { ...defaultWheel('traction'), motor: 'm' }
+  })
   const withWheel = (): SceneObjects => ({
     ...SCENE,
-    wheel: {
-      id: 'wheel',
-      name: 'Wheel',
-      kind: 'part',
-      parentId: 'bot',
-      transform: { position: [0.1, 0.2, 0.05], rotation: [0, 0, 0] },
-      visual: { type: 'mesh', geometryId: 'g:0', color: [1, 1, 1] },
-      wheel: { ...defaultWheel('traction'), motor: 'm' }
-    }
+    wheel: corner('wheel', 0.1, 0.2),
+    wheelFR: corner('wheelFR', 0.1, -0.2),
+    wheelBL: corner('wheelBL', -0.1, 0.2),
+    wheelBR: corner('wheelBR', -0.1, -0.2)
   })
   const notices = (): unknown[] =>
     usePlayStore
@@ -440,10 +444,47 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       robot: { start: { x: 0, y: 0, yaw: 0 } },
       batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
       hubs: ['Control Hub'],
-      motors: [{ device: 'arm', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5 }],
-      wheels: [{ kind: 'traction', motor: 'arm', radius: 0.048, rollers: null }]
+      motors: [{ device: 'arm', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5 }]
+    })
+    expect(world!.wheels).toHaveLength(4)
+    expect(world!.wheels[0]).toMatchObject({
+      kind: 'traction',
+      motor: 'arm',
+      radius: 0.048,
+      rollers: null
     })
     expect(world!.wheels[0].position.x).toBeCloseTo(0.1, 12)
+    expect(notices()).toEqual([])
+  })
+
+  it('바퀴가 셋보다 적으면 하중을 나눌 수 없다고 경고한다', async () => {
+    const { wheel } = withWheel()
+    useSceneStore.setState({ objects: { ...SCENE, wheel } })
+    await initPlay()
+    expect(notices()).toEqual(['worldFewWheels'])
+  })
+
+  it('바퀴가 있으면 질량 모델로 섀시 몸체를 만든다(형상을 모르는 로봇은 기본 질량 상자, 경고 없음)', async () => {
+    // 바퀴 형상(g:*)은 등록되지 않아 질량 모델은 정보 없는 로봇의 외곽 상자(DEFAULT_ROBOT_MASS)다. 2 kg 짐(점질량)은 섀시에
+    // 들어간다.
+    useSceneStore.setState({
+      objects: {
+        ...withWheel(),
+        battery: {
+          id: 'battery',
+          name: 'Battery',
+          kind: 'group',
+          parentId: 'bot',
+          transform: { position: [0.1, 0, 0.05], rotation: [0, 0, 0] },
+          mass: { mass: 2 }
+        }
+      }
+    })
+    await initPlay()
+    const body = lastRequest().world!.robot.body
+    // 고정 2 kg + 나머지 13.6 − 2 = 11.6 kg 상자
+    expect(body.mass).toBeCloseTo(13.6, 12)
+    expect(body.centerOfMass.x).toBeCloseTo((2 * 0.1) / 13.6, 12)
     expect(notices()).toEqual([])
   })
 
@@ -495,6 +536,8 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       axis: { x: 0, y: 0, z: 1 },
       body: { mass: 1.5, centerOfMass: { x: 0, y: 0, z: expect.closeTo(0.2, 12) } }
     })
+    // 섀시는 로봇 전체(짐 1.5 kg + 외곽 상자 12.1 kg)에서 관절 몸체를 뺀 것
+    expect(world!.robot.body.mass).toBeCloseTo(13.6 - 1.5, 12)
     expect(usePlayStore.getState().run?.joints).toEqual(['lift'])
     expect(notices()).toEqual([])
   })

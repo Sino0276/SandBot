@@ -255,10 +255,12 @@ describe('바퀴 카드 보기 계산', () => {
       { kind: 'mecanum', count: 1 },
       { kind: 'omni', count: 1 }
     ])
-    // 하이어라키 순서: 메카넘 하나는 중심 위에 있어 롤러가 모호하고, 그 아래 옴니는 구동 모터가 없다
+    // 하이어라키 순서: 메카넘 하나는 중심 위에 있어 롤러가 모호하고, 그 아래 옴니는 구동 모터가 없다. 바퀴가 둘뿐이라
+    // 하중을 나눌 수 없다(3c)
     expect(summary.warnings.map((warning) => warning.key)).toEqual([
       'worldRollersAmbiguous',
-      'worldWheelNoMotor'
+      'worldWheelNoMotor',
+      'worldFewWheels'
     ])
     expect(drivetrainSummary(scene(), 'R', { batteryVoltage: 12 })).toMatchObject({
       count: 0,

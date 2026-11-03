@@ -405,11 +405,12 @@ function unitAxis(value: unknown, what: string): Vec3 {
   return { x: a.x / length, y: a.y / length, z: a.z / length }
 }
 
-// 무게중심 기준 관성: 유한·한도 안이고, 대칭 양반정치(주관성 값 ≥ 0)이며 주관성 값이 삼각 부등식(I1 + I2 ≥ I3)을 지킨다
-function inertia(value: unknown, what: string): SimInertia {
-  if (!Array.isArray(value) || value.length !== 6) fail(what)
+// 무게중심 기준 관성: 유한·한도 안이고, 대칭 양반정치(주관성 값 ≥ 0)이며 주관성 값이 삼각 부등식(I1 + I2 ≥ I3)을 지킨다.
+// 렌더러 세계 설명 빌더(섀시 몸체, play/worldSpec.ts)도 이것으로 보내기 전에 확인한다.
+export function isValidInertia(value: unknown): value is SimInertia {
+  if (!Array.isArray(value) || value.length !== 6) return false
   const v: unknown[] = value
-  if (!v.every((x) => inRange(x, -MAX_INERTIA, MAX_INERTIA))) fail(what)
+  if (!v.every((x) => inRange(x, -MAX_INERTIA, MAX_INERTIA))) return false
   const [xx, yy, zz, xy, xz, yz] = v as number[]
   const { values } = symmetricEigen3([
     [xx, xy, xz],
@@ -417,9 +418,14 @@ function inertia(value: unknown, what: string): SimInertia {
     [xz, yz, zz]
   ])
   const tol = INERTIA_TOLERANCE * (Math.abs(xx) + Math.abs(yy) + Math.abs(zz))
-  if (values.some((x) => x < -tol)) fail(what)
+  if (values.some((x) => x < -tol)) return false
   const [a, b, c] = values
-  if (a + b < c - tol || a + c < b - tol || b + c < a - tol) fail(what)
+  return !(a + b < c - tol || a + c < b - tol || b + c < a - tol)
+}
+
+function inertia(value: unknown, what: string): SimInertia {
+  if (!isValidInertia(value)) fail(what)
+  const [xx, yy, zz, xy, xz, yz] = value
   return [xx, yy, zz, xy, xz, yz]
 }
 
