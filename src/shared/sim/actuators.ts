@@ -286,23 +286,14 @@ export type ServoTerms = {
   region: string
 }
 
-// 정지 토크로 자른 출력: 모터 직선 τs·(u − ω/ωf)는 부하가 서보를 명령 반대로 돌리면(역구동, ω가 미는 방향과 반대) τs를
-// 넘는다(맨 DC 모터라면 역기전력이 더해져 정지 전류보다 큰 전류가 흐른다). 서보 출력은 정지 토크까지로 자른다(spec-3b §1.9
-// "토크는 정지 토크까지 … CR 서보도 토크로 자른다". 가정: 서보 내부 구동 회로가 정지 전류를 넘기지 않는다 — 공개 출처 없음,
-// [ACT] §5.4의 포화 모델).
-// 역구동 구간(영역 'H'·'N')은 잘린 토크 ±τs를 지금 속도 ω₀에서 선형화한다: τ = ±τs − (τs/ωf)·(ω − ω₀). 감쇠를 암시 D 항에
-// 그대로 두므로 한 하위 단계의 속도 변화가 많아야 ωf 남짓이고(감쇠 없는 일정 토크였을 때는 관성이 작은 몸체에서 한 하위
-// 단계에 영을 넘어 반대 포화 구간으로 튀고, 그 둘을 오가며 (τs − 마찰)/점성까지 폭주했다), ω₀에서는 정확히 ±τs, 직선과
-// 만나는 경계에서는 직선과 같다(연속). 명령 쪽으로 도는 포화(영역 'h'·'n', 위치 서보의 큰 오차)는 모터 직선의 끝 ±τs − (τs/ωf)·ω다.
-function saturatedServo(sign: 1 | -1, ts: number, slope: number, omega: number): ServoTerms {
-  if (sign * omega < 0)
-    return {
-      force: sign * ts + slope * omega,
-      damping: slope,
-      stiffness: 0,
-      friction: 0,
-      region: sign > 0 ? 'H' : 'N'
-    }
+// 모터 직선의 끝: 내부 PD가 직선을 넘으면 서보 모터는 듀티 ±1이고 출력은 τ = ±τs − (τs/ωf)·ω다([ACT] §5.4의 직선
+// τ ∈ [−τs(1 + ω/ωf), τs(1 − ω/ωf)]). 명령 쪽으로 돌면 무부하 속도에서 0이 되고(속도는 무부하 속도까지), 부하가 서보를 명령
+// 반대로 돌리면(역구동) 역기전력이 더해져 빨리 돌릴수록 더 버틴다(ω = −ωf에서 2τs). 그래서 정지 토크보다 무거운 팔은 정적 평형
+// 근처로 과감쇠로 내려앉고, 역구동 속도는 ωf·(부하/τs − 1)이다. 감쇠 τs/ωf는 늘 암시 D 항이라 하위 단계가 커도 안정하다.
+// 예전에는 spec-3b §1.9 "토크는 정지 토크까지"를 역구동에도 적용해 ±τs에서 잘랐는데, 그러면 역구동 토크가 속도와 관계없이
+// 일정해 과부하 팔이 감쇠 없는 진자처럼 평형을 넘어 흔들리고 무부하 속도보다 빨라졌다. 서보 내부 회로의 전류 제한은 공개
+// 출처가 없어 넣지 않는다(가정).
+function saturatedServo(sign: 1 | -1, ts: number, slope: number): ServoTerms {
   return {
     force: sign * ts,
     damping: slope,
@@ -312,10 +303,10 @@ function saturatedServo(sign: 1 | -1, ts: number, slope: number, omega: number):
   }
 }
 
-// 서보 모델([ACT] §5.4, 가정): 내부 PD τ = kp·e − kd·ω를 모터 직선 τ ∈ [−τs(1 + ω/ωf), τs(1 − ω/ωf)]와 정지 토크 ±τs로
-// 자른다(그래서 속도는 무부하 속도까지, 토크는 정지 토크까지). e는 목표 − 각에서 데드밴드 반폭(deadbandUs/2를 각으로)을 뺀
-// 것이고, 데드밴드 안에서는 D만 남는다. CR 서보는 DC 모터 직선 τ = τs·(u − ω/ωf)를 ±τs로 자른 것이다. PWM이 꺼지면 힘 0에
-// 기어 마찰(limpFriction)만 남는다.
+// 서보 모델([ACT] §5.4, 가정): 내부 PD τ = kp·e − kd·ω를 모터 직선 τ ∈ [−τs(1 + ω/ωf), τs(1 − ω/ωf)]로 자른다(그래서
+// 명령 쪽 속도는 무부하 속도까지, 멈춰 있으면 토크는 정지 토크까지). e는 목표 − 각에서 데드밴드 반폭(deadbandUs/2를 각으로)을
+// 뺀 것이고, 데드밴드 안에서는 D만 남는다. CR 서보는 DC 모터 직선 τ = τs·(u − ω/ωf) 그대로다. PWM이 꺼지면 힘 0에 기어
+// 마찰(limpFriction)만 남는다.
 export function servoTerms(
   command: ServoCommand,
   params: SimServoParams,
@@ -326,22 +317,16 @@ export function servoTerms(
   const slope = ts / params.freeSpeed
   if (command.kind === 'limp')
     return { force: 0, damping: 0, stiffness: 0, friction: params.limpFriction, region: 'x' }
-  if (command.kind === 'speed') {
-    const torque = ts * command.fraction - slope * omega
-    if (torque > ts) return saturatedServo(1, ts, slope, omega)
-    if (torque < -ts) return saturatedServo(-1, ts, slope, omega)
+  if (command.kind === 'speed')
     return { force: ts * command.fraction, damping: slope, stiffness: 0, friction: 0, region: 'r' }
-  }
   const deadband = (params.deadbandUs / 2) * (params.rangeAngle / (2 * SERVO_HALF_SPAN_US))
   const error = command.angle - theta
   if (Math.abs(error) <= deadband)
     return { force: 0, damping: params.kd, stiffness: 0, friction: 0, region: 'd' }
   const effective = error - Math.sign(error) * deadband
   const torque = params.kp * effective - params.kd * omega
-  const high = Math.min(ts, ts * (1 - omega / params.freeSpeed))
-  const low = Math.max(-ts, -ts * (1 + omega / params.freeSpeed))
-  if (torque > high) return saturatedServo(1, ts, slope, omega)
-  if (torque < low) return saturatedServo(-1, ts, slope, omega)
+  if (torque > ts - slope * omega) return saturatedServo(1, ts, slope)
+  if (torque < -ts - slope * omega) return saturatedServo(-1, ts, slope)
   return {
     force: params.kp * effective,
     damping: params.kd,

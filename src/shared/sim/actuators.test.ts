@@ -271,50 +271,46 @@ describe('서보', () => {
     expect(servoTerms({ kind: 'limp' }, SERVO, 0, 0)).toMatchObject({ force: 0, friction: 0.05 })
   })
 
-  it('역구동되면 출력은 정지 토크 ±τs에서 멈춘다(CR 서보·위치 서보, spec-3b §1.9)', () => {
+  it('역구동되면 모터 직선을 따라 빨리 돌릴수록 더 버틴다(CR 서보·위치 서보, 감쇠는 늘 암시 항)', () => {
     const ts = SERVO.stallTorque
     const wf = SERVO.freeSpeed
+    const slope = ts / wf
     // 출력 τ = force − damping·ω
     const torque = (t: ReturnType<typeof servoTerms>, omega: number): number =>
       t.force - t.damping * omega
-    // CR: 전진 명령인데 부하가 무부하 속도로 거꾸로 돌리면 직선은 2τs지만 τs로 자른다. 잘린 토크는 그 속도에서 선형화해
-    // 감쇠(τs/ωf)를 암시 항에 둔다(일정 토크가 아님): 그 속도에서 정확히 τs, 더 빨리 돌면 덜 민다
-    const slope = ts / wf
+    // CR: 전진 명령인데 부하가 거꾸로 돌리면 직선 τs·(1 − ω/ωf): 무부하 속도로 거꾸로면 2τs, 멈추면 τs, 무부하 속도에서 0
     const back = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, -wf)
-    expect(back.region).toBe('H')
+    expect(back.region).toBe('r')
     expect(back.damping).toBeCloseTo(slope, 12)
-    expect(torque(back, -wf)).toBeCloseTo(ts, 12)
-    expect(torque(back, -0.5 * wf)).toBeCloseTo(0.5 * ts, 12)
-    const backNeg = servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, 0.5 * wf)
-    expect(backNeg.region).toBe('N')
-    expect(backNeg.damping).toBeCloseTo(slope, 12)
-    expect(torque(backNeg, 0.5 * wf)).toBeCloseTo(-ts, 12)
-    // 직선과 만나는 경계(u = −1에서 ω = 0)에서 연속
-    const edge = servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, 1e-12)
-    expect(torque(edge, 1e-12)).toBeCloseTo(
-      torque(servoTerms({ kind: 'speed', fraction: -1 }, SERVO, 0, -1e-12), -1e-12),
-      9
-    )
-    // 명령 방향으로 도는 동안은 직선 그대로(무부하 속도에서 0)
-    const forward = servoTerms({ kind: 'speed', fraction: 1 }, SERVO, 0, 0.5 * wf)
-    expect(forward.region).toBe('r')
-    expect(torque(forward, 0.5 * wf)).toBeCloseTo(0.5 * ts, 12)
+    expect(torque(back, -wf)).toBeCloseTo(2 * ts, 12)
+    expect(torque(back, -0.5 * wf)).toBeCloseTo(1.5 * ts, 12)
+    expect(torque(back, 0)).toBeCloseTo(ts, 12)
+    expect(torque(back, wf)).toBeCloseTo(0, 12)
+    // power 0의 CR 서보는 감쇠(브레이크처럼 속도에 비례해 버팀)
+    const idle = servoTerms({ kind: 'speed', fraction: 0 }, SERVO, 0, 3)
+    expect(torque(idle, 3)).toBeCloseTo(-3 * slope, 12)
+    // 명령 방향으로 도는 동안도 같은 직선
     expect(
       torque(servoTerms({ kind: 'speed', fraction: 0.5 }, SERVO, 0, -0.4 * wf), -0.4 * wf)
     ).toBeCloseTo(0.9 * ts, 12)
-    // 위치 서보도 같다: 목표가 멀고 거꾸로 돌려지면 τs
-    const pos = servoTerms({ kind: 'position', angle: 1 }, SERVO, 0, -0.5 * wf)
-    expect(pos.region).toBe('H')
-    expect(torque(pos, -0.5 * wf)).toBeCloseTo(ts, 12)
-    for (const omega of [-2 * wf, -wf, -0.1, 0, 0.1, wf, 2 * wf])
-      for (const command of [
-        { kind: 'speed', fraction: 1 },
-        { kind: 'speed', fraction: -1 },
-        { kind: 'position', angle: 1 },
-        { kind: 'position', angle: -1 }
-      ] as const) {
-        const t = servoTerms(command, SERVO, 0, omega)
-        expect(Math.abs(torque(t, omega))).toBeLessThanOrEqual(ts * (1 + 1e-12))
-      }
+    // 위치 서보: 목표가 멀면 직선 끝 ±τs − (τs/ωf)·ω(역구동이면 τs보다 크다)
+    for (const omega of [-2 * wf, -wf, -0.1, 0, 0.1, wf]) {
+      const pos = servoTerms({ kind: 'position', angle: 1 }, SERVO, 0, omega)
+      expect(pos.region).toBe('h')
+      expect(pos.damping).toBeCloseTo(slope, 12)
+      expect(torque(pos, omega)).toBeCloseTo(ts - slope * omega, 12)
+      const neg = servoTerms({ kind: 'position', angle: -1 }, SERVO, 0, -omega)
+      expect(neg.region).toBe('n')
+      expect(torque(neg, -omega)).toBeCloseTo(-ts + slope * omega, 12)
+    }
+    // PD와 직선의 경계에서 연속(역구동 쪽 ω < 0: 경계 τs·(1 − ω/ωf) > τs)
+    const omega = -0.5 * wf
+    const edge = ts - slope * omega + SERVO.kd * omega
+    const angle = edge / SERVO.kp + (SERVO.deadbandUs / 2) * (SERVO.rangeAngle / 1800)
+    const inside = servoTerms({ kind: 'position', angle: angle * (1 - 1e-9) }, SERVO, 0, omega)
+    const outside = servoTerms({ kind: 'position', angle: angle * (1 + 1e-9) }, SERVO, 0, omega)
+    expect(inside.region).toBe('p')
+    expect(outside.region).toBe('h')
+    expect(Math.abs(torque(inside, omega) - torque(outside, omega))).toBeLessThan(1e-6)
   })
 })

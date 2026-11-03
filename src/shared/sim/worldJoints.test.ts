@@ -772,6 +772,95 @@ describe('서보 관절', () => {
       expect(reversed).toBeLessThan(-8.3)
     })
 
+  // 정지 토크보다 무거운 팔(흔한 설계 실수): 무게중심 0.25 m, 수평에서 중력 토크 = 과부하 × τs. 서보는 수평(1500 µs =
+  // 편집 자세)을 명령한다. 역구동되는 서보는 모터 직선 τ = −τs − (τs/ωf)·ω를 따라 빨리 돌릴수록 더 버티므로(DC 모터를 도는
+  // 방향과 반대로 구동, [ACT] §5.4) 정적 평형 acos(1/과부하) 근처에 내려앉고 무부하 속도 남짓보다 빨리 돌지 않는다. 기준은 같은
+  // 모델(포화한 모터 직선과 관절 마찰)을 작은 간격 RK4로 푼 진자다. 예전에는 역구동 토크가 속도와 관계없이 ±τs라 감쇠 없는
+  // 진자처럼 평형을 0.55 rad 넘어 흔들렸고, 2배 과부하에서는 무부하 속도보다 빨라져 한계에 부딪쳤다. 감쇠 τs/ωf가 팔 관성에
+  // 비해 작으면(goBILDA Speed, 2배) 모터 직선 그대로도 덜 감쇠되어 평형을 한 번 넘는다.
+  for (const model of ['gobildaTorque', 'gobildaSpeed'] as const)
+    for (const overload of [1.3, 2])
+      it(`${model} 서보 팔이 정지 토크의 ${overload}배 부하면 정적 평형 근처로 내려앉고 무부하 속도를 넘지 않는다`, () => {
+        const params = resolveServoParams(model, 'servo')
+        const reach = 0.25
+        const mass = (overload * params.stallTorque) / (GRAVITY * reach)
+        const coulomb = 0.02
+        const viscous = 0.001
+        const heavy: SimJointSpec = {
+          parent: -1,
+          type: 'revolute',
+          origin: { position: { x: 0, y: 0, z: 0.3 }, rotation: ZERO },
+          axis: { x: 0, y: 1, z: 0 },
+          limits: { lower: -1.5, upper: 1.5 },
+          body: {
+            mass,
+            centerOfMass: { x: reach, y: 0, z: 0 },
+            inertia: [1e-6, 1e-6, 1e-6, 0, 0, 0]
+          },
+          friction: { coulomb, viscous },
+          spring: null,
+          drive: {
+            kind: 'servo',
+            device: 'arm',
+            ratio: 1,
+            params,
+            zeroPulseUs: 1500,
+            direction: 1
+          },
+          switches: []
+        }
+        const r = run(world([heavy], { motors: [] }), 3, () => ({
+          arm: { position: 0.5, pulseUs: 1500, pwm: true }
+        }))
+        // 기준 진자(+q가 아래): I·q̈ = m·g·L·cos q + τ_서보 − 점성·q̇ − 쿨롱·sign q̇
+        const ts = params.stallTorque
+        const slope = ts / params.freeSpeed
+        const deadband = (params.deadbandUs / 2) * (params.rangeAngle / 1800)
+        const inertia = mass * reach * reach + 1e-6
+        const accel = (q: number, w: number): number => {
+          const e = -q
+          const pd =
+            Math.abs(e) <= deadband
+              ? -params.kd * w
+              : params.kp * (e - Math.sign(e) * deadband) - params.kd * w
+          const servo = Math.min(ts - slope * w, Math.max(-ts - slope * w, pd))
+          const load = mass * GRAVITY * reach * Math.cos(q) - viscous * w
+          const net = load + servo
+          const friction =
+            w !== 0 ? -Math.sign(w) * coulomb : -Math.sign(net) * Math.min(coulomb, Math.abs(net))
+          return (net + friction) / inertia
+        }
+        let q = 0
+        let w = 0
+        let referencePeak = 0
+        const dt = 1e-5
+        for (let k = 0; k < 3 / dt; k++) {
+          const k1 = [w, accel(q, w)]
+          const k2 = [w + (dt / 2) * k1[1], accel(q + (dt / 2) * k1[0], w + (dt / 2) * k1[1])]
+          const k3 = [w + (dt / 2) * k2[1], accel(q + (dt / 2) * k2[0], w + (dt / 2) * k2[1])]
+          const k4 = [w + dt * k3[1], accel(q + dt * k3[0], w + dt * k3[1])]
+          q += (dt / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
+          w += (dt / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])
+          referencePeak = Math.max(referencePeak, q)
+        }
+        const equilibrium = Math.acos(1 / overload)
+        let highest = -Infinity
+        for (let i = 1; i < r.q.length; i++) {
+          const at = r.q[i][0]
+          highest = Math.max(highest, at)
+          expect(Math.abs(at - r.q[i - 1][0]) / 0.005).toBeLessThanOrEqual(params.freeSpeed * 1.05)
+          expect(at).toBeLessThan(1.5)
+        }
+        expect(Math.abs(highest - referencePeak)).toBeLessThan(0.03)
+        // 끝에는 정적 평형 근처에 멈춰 있다(마찰 0.02 N·m만큼 어긋날 수 있다)
+        const last = r.q[r.q.length - 1][0]
+        expect(Math.abs(last - equilibrium)).toBeLessThan(0.05)
+        expect(Math.abs(last - r.q[r.q.length - 41][0])).toBeLessThan(1e-3)
+        // goBILDA Torque 1.3배는 과감쇠라 평형을 넘지 않는다
+        if (model === 'gobildaTorque' && overload === 1.3)
+          expect(highest).toBeLessThan(equilibrium + 0.02)
+      })
+
   it('CR 서보는 펄스에 비례한 속도로 돌고 최고 속도에서 묶인다', () => {
     const r = run(
       servoWorld(arm({ axis: { x: 0, y: 0, z: 1 } }, 'crServo')),
