@@ -810,10 +810,12 @@ export class Articulation {
 
   // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다).
   // 한계에 닿은(넘은) 좌표는 한계에 두고 바깥 속도를 지운다(반발 0: 다음 하위 단계는 멈춘 채 시작한다). 속도를 지우는 것은
-  // 그 좌표들(집합 C)에만 거는 충격 Jᵀλ(J = C의 단위 행)이다: v⁺ = v + M̂⁻¹Jᵀλ, (J·M̂⁻¹·Jᵀ)λ = −v_C. 그래서 결합된 다른 좌표
-  // (한계에 닿은 단이 실은 팔, 리깅으로 묶인 단)도 같은 충격을 받아 그 일반화 운동량이 그대로다(예전에는 v_C만 0으로 바꿔
-  // 자식이 마지막 하위 단계가 한계와 어떻게 맞았는지에 따라 운동량을 0–100 % 잃었다). M̂은 이번 하위 단계의 암시 행렬(LCP와
-  // 같은 계)이고, 다른 좌표의 위치는 바뀐 속도로 다시 적분한다.
+  // 한계 위 좌표들(집합 C)에만 거는 충격 Jᵀλ(J = C의 단위 행)이다: v⁺ = v + M̂⁻¹Jᵀλ. 그래서 결합된 다른 좌표(한계에 닿은
+  // 단이 실은 팔, 리깅으로 묶인 단)도 같은 충격을 받아 그 일반화 운동량이 그대로다(예전에는 v_C만 0으로 바꿔 자식이 마지막
+  // 하위 단계가 한계와 어떻게 맞았는지에 따라 운동량을 0–100 % 잃었다). 한계는 한쪽 구속이라 행마다 상자 LCP다: 아래 한계면
+  // λ ≥ 0, v⁺ ≥ 0, 위 한계면 λ ≤ 0, v⁺ ≤ 0, 상보(λ ≠ 0이면 v⁺ = 0). 그래서 다른 좌표를 멈추는 충격이 한계에 멈춰 있던 좌표를
+  // 안쪽으로 밀면 그것은 한계에서 떨어지고(두 방향 구속으로 묶으면 그 운동량을 잃는다), 바깥으로 밀면 멈춘 채다. M̂은 이번 하위
+  // 단계의 암시 행렬(LCP와 같은 계)이고, 다른 좌표와 떨어지는 좌표의 위치는 바뀐 속도로 다시 적분한다.
   private clampLimits(
     z: number[],
     v: number[],
@@ -834,42 +836,50 @@ export class Articulation {
       low[c] = Math.max(low[c], Math.min(a, b))
       high[c] = Math.min(high[c], Math.max(a, b))
     })
-    // 멈출 좌표와 그 바깥 속도(지우기 전). 이미 멈춰 있던(속도 0) 한계 위 좌표도 넣어, 다른 좌표를 멈추는 충격이 그것을
-    // 한계 밖으로 밀지 않게 한다(예전처럼 한계 위 좌표는 이 하위 단계를 속도 0으로 끝낸다).
-    const stopped: number[] = []
-    const outward: number[] = []
-    const stop = (c: number, limit: number): void => {
-      z[c] = limit
-      stopped.push(c)
-      outward.push(v[c])
-      // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
-      v[c] = 0
-    }
+    // 한계 위(넘은) 좌표: 한계에 두고 구속 행 후보로 넣는다(side −1 = 아래 한계, +1 = 위 한계)
+    const rows: number[] = []
+    const side: number[] = []
     for (let c = 0; c < m; c++) {
-      if (z[c] <= low[c] && v[c] <= 0) stop(c, low[c])
-      else if (z[c] >= high[c] && v[c] >= 0) stop(c, high[c])
-      else if (z[c] < low[c]) z[c] = low[c]
-      else if (z[c] > high[c]) z[c] = high[c]
+      if (z[c] <= low[c]) {
+        z[c] = low[c]
+        rows.push(c)
+        side.push(-1)
+      } else if (z[c] >= high[c]) {
+        z[c] = high[c]
+        rows.push(c)
+        side.push(1)
+      }
     }
-    if (outward.every((x) => x === 0)) return
-    // y_k = M̂⁻¹e_{C_k}, A = J·M̂⁻¹·Jᵀ(양정치 부분 행렬), λ = A⁻¹(−v_C)
+    // 한계에 멈춰 있는 좌표는 정확히 +0(반올림의 −0 없이). 바깥으로 움직이는 좌표가 없으면 충격이 없다(λ = 0이 해)
+    for (const c of rows) if (v[c] === 0) v[c] = 0
+    if (rows.every((c, k) => side[k] * v[c] <= 0)) return
+    // y_k = M̂⁻¹e_{C_k}, A = J·M̂⁻¹·Jᵀ(양정치 부분 행렬), w = A·λ + v_C = v⁺_C
     const unit = (c: number): number[] => {
       const e = new Array<number>(m).fill(0)
       e[c] = 1
       return e
     }
-    const y = stopped.map((c) => ldlSolve(factor, unit(c)))
-    const a = stopped.map((_, r) => stopped.map((c) => y[r][c]))
-    const lambda = ldlSolve(
-      ldlFactor(a),
-      outward.map((x) => -x)
+    const y = rows.map((c) => ldlSolve(factor, unit(c)))
+    const a = rows.map((_, r) => rows.map((c) => y[r][c]))
+    const { lambda, states } = solveBoxLcp(
+      a,
+      rows.map((c) => v[c]),
+      side.map((s) => (s < 0 ? 0 : -Infinity)),
+      side.map((s) => (s < 0 ? Infinity : 0))
     )
-    const isStopped = new Array<boolean>(m).fill(false)
-    for (const c of stopped) isStopped[c] = true
+    const held = new Array<boolean>(m).fill(false)
+    rows.forEach((c, k) => {
+      // 구속이 걸린(λ ≠ 0) 좌표나, 바깥 속도를 정확히 지운(w = 0) 좌표는 멈춘다
+      if (states[k] === 'free' || lambda[k] !== 0) held[c] = true
+    })
     for (let c = 0; c < m; c++) {
-      if (isStopped[c]) continue
       let dv = 0
-      stopped.forEach((_, k) => (dv += y[k][c] * lambda[k]))
+      rows.forEach((_, k) => (dv += y[k][c] * lambda[k]))
+      if (held[c]) {
+        // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
+        v[c] = 0
+        continue
+      }
       if (dv === 0) continue
       v[c] += dv
       z[c] += h * dv

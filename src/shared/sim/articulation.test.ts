@@ -577,6 +577,62 @@ describe('Articulation 적분', () => {
     for (const ratio of ratios) expect(Math.abs(ratio - 1)).toBeLessThan(0.01)
   })
 
+  it('한계에 멈춰 있던 자식은 결합 충격이 안쪽으로 밀면 떨어지고, 바깥으로 밀면 그대로 멈춘다(한쪽 구속)', () => {
+    // 위 시험의 단과 팔인데 팔이 한계 0에 속도 0으로 멈춰 있다. 단이 하위 단계 끝에 정확히 한계에 닿는 경우(v₀ = 0.5,
+    // 1 ms 200번)도 넣는다. 충격이 팔을 음의 방향으로 민다: 한계가 [−1, 0]이면 팔은 한계에서 떨어져 v_c = M_cp·v₀/M_cc로
+    // 돌고, [0, 1]이면 한계로 밀려 들어가므로 0에 멈춘 채다(예전에는 앞의 경우도 두 방향 구속으로 묶여 운동량을 모두 잃었다).
+    const stage = jointSpec({
+      type: 'prismatic',
+      axis: { x: 1, y: 0, z: 0 },
+      limits: { lower: -1, upper: 0.1 },
+      body: { mass: 1, centerOfMass: ZERO, inertia: [1e-3, 1e-3, 1e-3, 0, 0, 0] }
+    })
+    const armWith = (limits: { lower: number; upper: number }): SimJointSpec =>
+      jointSpec({
+        parent: 0,
+        axis: { x: 0, y: 0, z: 1 },
+        limits,
+        body: {
+          mass: 0.3,
+          centerOfMass: { x: 0, y: 0.2, z: 0 },
+          inertia: [1e-4, 1e-4, 1e-4, 0, 0, 0]
+        }
+      })
+    for (const v0 of [0.5, 0.5731, 0.6462, 0.83]) {
+      for (const separating of [true, false]) {
+        const art = new Articulation([
+          stage,
+          armWith(separating ? { lower: -1, upper: 0 } : { lower: 0, upper: 1 })
+        ])
+        art.v = [v0, 0]
+        let expected = NaN
+        for (let k = 0; k < 2000; k++) {
+          const m = art.massMatrix(art.q())
+          const momentum = m[1][0] * art.v[0] + m[1][1] * art.v[1]
+          art.step(1e-3, passive(art))
+          if (art.q()[0] >= 0.1) {
+            expected = momentum / m[1][1]
+            break
+          }
+        }
+        expect(art.q()[0]).toBe(0.1)
+        expect(art.v[0]).toBe(0)
+        expect(expected).toBeLessThan(-0.5)
+        if (separating) {
+          expect(Math.abs(art.v[1] / expected - 1)).toBeLessThan(0.01)
+          for (let k = 0; k < 20; k++) art.step(1e-3, passive(art))
+          expect(art.q()[1]).toBeLessThan(-0.02)
+        } else {
+          expect(art.q()[1]).toBe(0)
+          expect(art.v[1]).toBe(0)
+          for (let k = 0; k < 20; k++) art.step(1e-3, passive(art))
+          expect(art.q()[1]).toBe(0)
+          expect(art.v[1]).toBe(0)
+        }
+      }
+    }
+  })
+
   it('정지 마찰이 미는 힘보다 크면 정확히 멈춰 있고, 작으면 차이만큼 가속한다', () => {
     const slide = (push: number): Articulation => {
       const art = new Articulation([
