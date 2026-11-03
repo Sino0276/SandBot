@@ -116,6 +116,20 @@ describe('오도메트리 포드 해상도(시뮬레이터)', () => {
     expect(visible('custom')).toEqual(['podType', 'podDiameter', 'podCpr'])
   })
 
+  it('모터의 정지 토크·무부하 속도 덮어쓰기는 관절을 구동할 때만 보인다(관절 구동만 읽는다)', () => {
+    const properties: readonly PropertyDef[] = COMPONENT_TYPES.motor.properties
+    const visible = (drivesJoint: boolean): string[] =>
+      properties
+        .filter((property) =>
+          isPropertyVisible(property, propertyDefaults('motor'), () => null, drivesJoint)
+        )
+        .map((property) => property.key)
+    expect(visible(false)).not.toContain('stallTorque')
+    expect(visible(false)).not.toContain('freeSpeed')
+    expect(visible(false)).toContain('gearbox')
+    expect(visible(true)).toEqual([...visible(false), 'stallTorque', 'freeSpeed'])
+  })
+
   it('리밋 스위치는 관절을 연결해야 끝·범위가 보이고, 범위 칸은 관절 형식(직선 길이, 회전 각도)을 따른다', () => {
     const jointTypes: Record<string, JointType> = { lift: 'prismatic', arm: 'revolute' }
     const jointTypeOf = (id: string): JointType | null => jointTypes[id] ?? null

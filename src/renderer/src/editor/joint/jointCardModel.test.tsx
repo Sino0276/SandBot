@@ -7,7 +7,13 @@ import ko from '../../i18n/locales/ko'
 import type { MassModel, ObjectMass, OwnMass } from '../../mass/types'
 import { buildWorldSpec } from '../../play/worldSpec'
 import { jointBodyIds, motorComponentParams, servoComponentParams } from '../../play/worldJoints'
-import { defaultJoint, defaultJointDrive, jointTypePatch, sanitizeJoint } from '../../scene/joint'
+import {
+  defaultJoint,
+  defaultJointDrive,
+  jointTypePatch,
+  motorDrivesJoint,
+  sanitizeJoint
+} from '../../scene/joint'
 import type {
   HardwareComponent,
   JointDrive,
@@ -633,6 +639,34 @@ describe('관절 카드 그리기', () => {
     expect(cr).toContain('+펄스 방향')
     expect(cr).toContain('멈춤은 늘 power 0(1500 µs)입니다')
     expect(cr).not.toContain('편집 자세의 서보 위치')
+  })
+
+  it('모터의 정지 토크·무부하 속도 덮어쓰기는 같은 로봇의 관절을 구동하는 모터에만 보인다', () => {
+    const count = (html: string, text: string): number => html.split(text).length - 1
+    const labels = ['정지 토크 (N·m, 0 = 데이터시트)', '무부하 속도 (rpm, 0 = 데이터시트)']
+    const section = (objects: SceneObjects, id: string): string => {
+      setStore(useSceneStore, { objects })
+      return renderToStaticMarkup(<HardwareComponentsSection object={objects[id]} />)
+    }
+    // 관절이 없으면 어느 모터에도 없다(바퀴 모터 포함)
+    for (const label of labels) {
+      expect(count(section(scene(), 'base'), label)).toBe(0)
+      expect(count(section(scene(), 'wheel'), label)).toBe(0)
+    }
+    // 팔 관절이 armMotor를 고르면 그 모터 카드에만(liftMotor·바퀴 모터에는 없다), 도움말은 관절 구동만 쓴다고 말한다
+    const driven = withJoint(scene(), 'arm', { drive: motorDrive({ motors: ['armMotor'] }) })
+    const html = section(driven, 'base')
+    const cards = html.split('<li class="hw-card"').slice(1)
+    for (const label of labels)
+      expect(cards.map((card) => card.includes(label))).toEqual([true, false, false])
+    expect(cards[0]).toContain('value="arm"')
+    expect(html).toContain('이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다')
+    for (const label of labels) expect(count(section(driven, 'wheel'), label)).toBe(0)
+    expect(motorDrivesJoint(driven, 'base', 'armMotor')).toBe(true)
+    expect(motorDrivesJoint(driven, 'base', 'liftMotor')).toBe(false)
+    // 다른 로봇의 관절이 고른 id는 세지 않는다(세계 설명처럼 같은 로봇만)
+    const elsewhere = withJoint(scene(), 'other', { drive: motorDrive({ motors: ['armMotor'] }) })
+    expect(motorDrivesJoint(elsewhere, 'base', 'armMotor')).toBe(false)
   })
 
   it('Add Component에 관절이 있고, 로봇·이미 관절이 있는 오브젝트는 비활성', () => {

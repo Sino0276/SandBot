@@ -1230,6 +1230,10 @@ const en: Messages = {
       limitAngle: 'Press angle'
     },
     propHints: {
+      stallTorque:
+        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+      freeSpeed:
+        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
       limitDistance:
         'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
       limitAngle:

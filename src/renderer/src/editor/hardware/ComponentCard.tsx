@@ -41,6 +41,7 @@ import {
   type SceneObjects
 } from '../../scene/model'
 import { DEG } from '../../scene/coordinates'
+import { motorDrivesJoint } from '../../scene/joint'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import {
@@ -334,6 +335,8 @@ function ComponentCard({
     objectOptions.joint?.some((option) => option.id === id)
       ? (objects[id]?.joint?.type ?? null)
       : null
+  // 정지 토크·무부하 속도 덮어쓰기는 관절 구동만 읽는다(visibleWhenDrivesJoint)
+  const drivesJoint = type === 'motor' && motorDrivesJoint(objects, objectId, component.id)
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
@@ -420,7 +423,9 @@ function ComponentCard({
         </>
       )}
       {def.properties
-        .filter((property) => isPropertyVisible(property, component.props, jointTypeOf))
+        .filter((property) =>
+          isPropertyVisible(property, component.props, jointTypeOf, drivesJoint)
+        )
         .map((property) => (
           <FieldRow
             key={property.key}
