@@ -56,12 +56,12 @@ describe('기어모터 물리 값', () => {
     const twenty = resolveMotorParams('RevRoboticsUltraplanetaryHDHexMotor', 20)
     const actual = (76 / 21) * (68 / 13)
     expect(twenty.gearbox).toBeCloseTo(actual, 12)
-    // REV 견본 표: 18.9:1 1.98 N·m·317 rpm
-    expect(twenty.stallTorque).toBeCloseTo(1.98, 1)
+    // REV 견본 표(효율 1의 이론값): 18.9:1 1.98 N·m·317 rpm. 출력 토크는 기어 효율을 곱한 값이다
+    expect(twenty.stallTorque).toBeCloseTo(1.98 * 0.95 ** 2, 1)
     expect(twenty.freeSpeed / RPM).toBeCloseTo(317, 0)
     expect(twenty.efficiency).toBeCloseTo(0.95 ** 2, 12)
     const sixty = resolveMotorParams('RevRoboticsUltraplanetaryHDHexMotor', 60)
-    expect(sixty.stallTorque).toBeCloseTo(5.75, 1)
+    expect(sixty.stallTorque).toBeCloseTo(5.75 * 0.95 ** 3, 1)
     expect(sixty.efficiency).toBeCloseTo(0.95 ** 3, 12)
     expect(resolveMotorParams('RevRoboticsUltraplanetaryHDHexMotor', 18.9).gearbox).toBeCloseTo(
       actual,
@@ -79,8 +79,26 @@ describe('기어모터 물리 값', () => {
     expect(params.freeSpeed).toBeCloseTo(((near.rpm * near.ratio) / 30) * RPM, 12)
     // 평기어 계열은 효율이 감속비와 관계없다
     const neverest = resolveMotorParams('NeveRest40Gearmotor', 20)
-    expect(neverest.stallTorque).toBeCloseTo(2.472 / 2, 12)
+    expect(neverest.stallTorque).toBeCloseTo((2.472 * 0.85) / 2, 12)
     expect(neverest.efficiency).toBe(0.85)
+  })
+
+  it('효율 1의 이론값을 공개하는 계열(REV·NeveRest)은 효율을 곱해, 되돌린 맨 모터 토크가 맨 모터 데이터시트와 같다', () => {
+    // 시뮬레이터가 모터 상수를 τ_stall/(G·η)로 되돌린다(spec-3b 결정 1)
+    const bare = (tag: string, gearbox: number | 'default'): number => {
+      const p = resolveMotorParams(tag, gearbox)
+      return p.stallTorque / (p.gearbox * p.efficiency)
+    }
+    // REV-41-1291 맨 모터 0.105 N·m
+    for (const ratio of [3, 4, 5, 12, 20, 60, 100])
+      expect(bare('RevRoboticsUltraplanetaryHDHexMotor', ratio)).toBeCloseTo(0.105, 12)
+    expect(bare('RevRobotics20HDHexMotor', 'default')).toBeCloseTo(0.105, 12)
+    expect(bare('RevRobotics40HDHexMotor', 'default')).toBeCloseTo(0.105, 12)
+    // NeveRest 맨 모터 0.062 N·m(Classic 표는 반올림이라 1 % 안)
+    expect(bare('NeveRest20Gearmotor', 'default')).toBeCloseTo(0.062, 12)
+    expect(bare('NeveRest3.7v1Gearmotor', 'default')).toBeCloseTo(0.062, 12)
+    expect(bare('NeveRest40Gearmotor', 'default') / 0.062).toBeCloseTo(1, 1)
+    expect(bare('NeveRest60Gearmotor', 'default') / 0.062).toBeCloseTo(1, 1)
   })
 
   it('팀이 덮어쓴 정지 토크·무부하 속도(0 = 데이터시트)', () => {
@@ -135,9 +153,33 @@ describe('서보 물리 값', () => {
     expect(full('gobildaTorque')).toBeCloseTo(2 / 3, 12)
     expect(full('gobildaSpeed')).toBeCloseTo(5 / 9, 12)
     expect(full('axonMax')).toBeCloseTo(0.5, 12)
-    // REV SRS는 500–2500 µs를 속도에 대응: SDK 범위 끝(2400 µs)에서도 최고 속도의 90 %
-    expect(full('revSmartServo')).toBeCloseTo(10 / 9, 12)
     expect(resolveServoParams('axonMini', 'crServo').rangeAngle).toBe(0)
+  })
+
+  it('REV SRS CR(500–2500 µs가 속도): power 1(2400 µs)에서 최고 속도의 90 %라 crFullPower 1에 토크·속도를 0.9배로 둔다', () => {
+    const cr = resolveServoParams('revSmartServo', 'crServo')
+    const position = resolveServoParams('revSmartServo', 'servo')
+    expect(cr.crFullPower).toBe(1)
+    expect(cr.stallTorque).toBeCloseTo(position.stallTorque * 0.9, 12)
+    expect(cr.freeSpeed).toBeCloseTo(position.freeSpeed * 0.9, 12)
+    // 토크-속도 직선의 기울기(와 kd)는 그대로, 기어 마찰은 실제 정지 토크로
+    expect(cr.kd).toBeCloseTo(position.kd, 12)
+    expect(cr.limpFriction).toBe(position.limpFriction)
+    // CR 모델 τ = τs·(u − ω/ωf)가 SDK 범위의 모든 power에서 원래 표현(crFullPower 10/9)과 같다
+    for (const power of [0.1, 0.5, 0.9, 1])
+      for (const omega of [0, 1, 3])
+        expect(
+          cr.stallTorque * (Math.min(1, power / cr.crFullPower) - omega / cr.freeSpeed)
+        ).toBeCloseTo(position.stallTorque * (power * 0.9 - omega / position.freeSpeed), 12)
+  })
+
+  it('모든 모델의 crFullPower는 세계 설명 범위(0.01–1) 안이다', () => {
+    for (const model of SERVO_MODEL_KEYS)
+      for (const kind of ['servo', 'crServo'] as const) {
+        const { crFullPower } = resolveServoParams(model, kind)
+        expect(crFullPower).toBeGreaterThanOrEqual(0.01)
+        expect(crFullPower).toBeLessThanOrEqual(1)
+      }
   })
 
   it('모든 모델이 유한한 양수 값을 낸다', () => {

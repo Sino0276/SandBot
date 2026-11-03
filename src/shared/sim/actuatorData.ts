@@ -7,6 +7,8 @@ import type { SimMotorParams, SimServoParams } from './worldSpec'
 //
 // 근거는 3b 조사(scratchpad p10mass/research/actuators.md = [ACT], p11joint/research/data.md = [DATA])다.
 // - 기어모터 출력의 정지 토크·무부하 속도는 제조사 표 값이다(감속비별, spec-3b 결정 1). 정지·무부하 전류도 제조사 값이다.
+//   정지 토크는 기어 손실을 포함한 출력축 값이다. 제조사가 맨 모터 × 감속비(효율 1의 이론값)로 공개하는 계열(REV HD Hex·
+//   UltraPlanetary, NeveRest)은 그 값에 기어 효율을 곱한다([ACT] §2.2).
 //   gm0 다이노 값(https://gm0.org/en/latest/_sources/docs/power-and-electronics/motor-guide/motor-power.rst.txt,
 //   goBILDA 0.19 N·m·11 A, HD Hex 0.18 N·m·11 A, NeveRest 0.17 N·m·9.8 A)은 쓰지 않는다(데이터시트보다 1.3–2.7배 크다).
 // - 단위 환산: 1 kg·cm = 0.0980665 N·m, 1 oz-in = 0.00706155 N·m, 1 rpm = 2π/60 rad/s.
@@ -110,7 +112,10 @@ const GOBILDA: MotorFamily = {
 // https://docs.revrobotics.com/duo-build/motion/motors/hd-hex-motor ). 카트리지 실제 감속비는 3:1 = 84/29, 4:1 = 76/21,
 // 5:1 = 68/13(https://docs.revrobotics.com/rev-crossover-products/ultraplanetary/cartridge-details.md). REV는 토크를
 // 맨 모터 × 감속비(효율 1의 이론값)로 공개하므로 같은 식으로 만든다(견본 표 5.23:1 0.55 N·m·1147 rpm, 18.9:1 1.98 N·m·
-// 317 rpm, 54.8:1 5.75 N·m·109.5 rpm과 맞는다, [ACT] §2.2).
+// 317 rpm, 54.8:1 5.75 N·m·109.5 rpm과 맞는다, [ACT] §2.2). 출력 정지 토크는 기어 손실을 포함한 값이라야 하므로(SimMotorParams,
+// 시뮬레이터가 τ_stall/(G·η)로 모터 상수를 되돌린다) 이 이론값에 기어 효율을 곱한다([ACT] §2.2 "REV 기어박스에 η를 따로
+// 곱해야 실제에 가깝다"). 그래야 맨 모터 토크가 REV-41-1291의 0.105 N·m로 돌아온다. 무부하 속도는 이론값 그대로다
+// (무부하 손실은 무부하 전류가 나타낸다).
 const HD_HEX_STALL = 0.105
 const HD_HEX_FREE_RPM = 6000
 const UP_CARTRIDGES = [
@@ -125,7 +130,15 @@ function ultraPlanetaryRows(): GearmotorRow[] {
   // 카트리지 조합(같은 것을 여러 번 쓸 수 있고 순서는 관계없다: 작은 것부터 고른 중복 조합)
   const visit = (start: number, ratio: number, nominal: number, count: number): void => {
     if (count > 0)
-      rows.push(row(ratio, HD_HEX_STALL * ratio, HD_HEX_FREE_RPM / ratio, count, nominal))
+      rows.push(
+        row(
+          ratio,
+          HD_HEX_STALL * ratio * PLANETARY_STAGE_EFFICIENCY ** count,
+          HD_HEX_FREE_RPM / ratio,
+          count,
+          nominal
+        )
+      )
     if (count === UP_MAX_CARTRIDGES) return
     for (let i = start; i < UP_CARTRIDGES.length; i++)
       visit(i, ratio * UP_CARTRIDGES[i].ratio, nominal * UP_CARTRIDGES[i].nominal, count + 1)
@@ -147,8 +160,9 @@ const ULTRA_PLANETARY: MotorFamily = {
 
 // REV HD Hex 20:1·40:1(같은 맨 모터, 20:1 2.1 N·m·300 rpm, 40:1 Spur 4.2 N·m·150 rpm, REV 문서 위와 같은 곳).
 // 20:1은 유성(REV-41-1211)과 평기어(REV-41-1298)가 같은 값이고 SDK 형식은 하나라, 효율은 평기어로 가정한다.
+// 표 토크는 0.105 N·m × 감속비(효율 1의 이론값)라 UltraPlanetary처럼 효율을 곱한다.
 const hdHex = (ratio: number, stallTorque: number, freeRpm: number): MotorFamily => ({
-  rows: [row(ratio, stallTorque, freeRpm, 0)],
+  rows: [row(ratio, stallTorque * SPUR_EFFICIENCY, freeRpm, 0)],
   defaultRatio: ratio,
   stallCurrent: 8.5,
   freeCurrent: 0.4,
@@ -179,8 +193,9 @@ const NEVEREST_STALL = 0.062
 // Classic 40(am-2964a): 160 rpm, 2.472 N·m(1.823 ft-lb), 정지 11.5 A, 무부하 0.4 A
 // (https://www.andymark.com/products/neverest-classic-40-gearmotor ). Classic 60(am-3103): 105 rpm, 3.707 N·m
 // (…/neverest-classic-60-gearmotor, 무부하 전류는 같은 맨 모터라 40과 같게 가정). Classic은 평기어 박스다.
+// 표 토크는 맨 모터 × 감속비(0.062 × 40 = 2.48, × 60 = 3.72, 효율 1의 이론값, [ACT] §2.4)와 거의 같아 효율을 곱한다.
 const neverestClassic = (ratio: number, stallTorque: number, freeRpm: number): MotorFamily => ({
-  rows: [row(ratio, stallTorque, freeRpm, 0)],
+  rows: [row(ratio, stallTorque * SPUR_EFFICIENCY, freeRpm, 0)],
   defaultRatio: ratio,
   stallCurrent: 11.5,
   freeCurrent: 0.4,
@@ -190,9 +205,11 @@ const neverestClassic = (ratio: number, stallTorque: number, freeRpm: number): M
   maxStageRatio: ratio
 })
 // Orbital(유성) 20 = 19.2:1 ~344 rpm, 3.7:1 ~1784 rpm, 정지 11 A(https://www.andymark.com/products/neverest-orbital-20-gearmotor ).
-// 감속비별 토크가 페이지에 없어 맨 모터 × 감속비(AndyMark Classic 표와 같은 효율 1의 관례)로 만든다(파생).
+// 감속비별 토크가 페이지에 없어 맨 모터 × 감속비 × 유성 단 효율로 만든다(파생, Classic과 같이 손실을 포함한 값).
 const neverestOrbital = (ratio: number, freeRpm: number, stages: number): MotorFamily => ({
-  rows: [row(ratio, NEVEREST_STALL * ratio, freeRpm, stages)],
+  rows: [
+    row(ratio, NEVEREST_STALL * ratio * PLANETARY_STAGE_EFFICIENCY ** stages, freeRpm, stages)
+  ],
   defaultRatio: ratio,
   stallCurrent: 11,
   freeCurrent: 0.4,
@@ -455,16 +472,25 @@ export function isServoModelKey(value: unknown): value is ServoModelKey {
 }
 
 // 서보의 물리 값. kind 'crServo'는 각 범위를 쓰지 않고(0) crFullPower가 연속 회전 범위에서 나오며, 위치 서보는 crFullPower 1이다.
+// 연속 회전 펄스 범위가 SDK 범위보다 넓은 모델(REV SRS 500–2500 µs)은 power 1(2400 µs)에서도 최고 속도에 닿지 않는다
+// (900/1000 = 90 %). 세계 설명의 crFullPower는 1 이하라서, 그때는 crFullPower 1에 정지 토크·무부하 속도를 그 비율로 줄인다.
+// CR 서보 모델 τ = τs·(u − ω/ωf)(u = |offset|/(900 µs·crFullPower)를 1로 자름)에서 두 표현은 SDK PWM 범위 안의 모든 power에서
+// 같다(τs·(0.9·u′ − ω/ωf) = 0.9·τs·(u′ − ω/(0.9·ωf)), 기울기 τs/ωf와 kd도 같다). 팀이 PWM 범위를 SDK 기본보다 넓히면
+// (2500 µs) 실제는 최고 속도에 닿지만 시뮬레이터는 90 %에서 멈춘다(한계). 기어 마찰(limpFriction)은 실제 정지 토크로 정한다.
 export function resolveServoParams(model: unknown, kind: 'servo' | 'crServo'): SimServoParams {
   const servo = SERVO_MODELS[isServoModelKey(model) ? model : DEFAULT_SERVO_MODEL]
+  const crFull = servo.crHalfRangeUs / SDK_HALF_RANGE_US
+  const reach = kind === 'crServo' && crFull > 1 ? 1 / crFull : 1
+  const stallTorque = servo.stallTorque * reach
+  const freeSpeed = servo.freeSpeed * reach
   return {
-    stallTorque: servo.stallTorque,
-    freeSpeed: servo.freeSpeed,
+    stallTorque,
+    freeSpeed,
     rangeAngle: kind === 'servo' ? servo.rangeDegrees * DEG : 0,
     deadbandUs: servo.deadbandUs,
-    kp: servo.stallTorque / SERVO_SATURATION_ERROR,
-    kd: servo.stallTorque / servo.freeSpeed,
-    crFullPower: kind === 'crServo' ? servo.crHalfRangeUs / SDK_HALF_RANGE_US : 1,
+    kp: stallTorque / SERVO_SATURATION_ERROR,
+    kd: stallTorque / freeSpeed,
+    crFullPower: kind === 'crServo' ? Math.min(crFull, 1) : 1,
     limpFriction: servo.stallTorque * SERVO_LIMP_FRACTION
   }
 }
