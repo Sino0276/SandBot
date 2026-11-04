@@ -201,6 +201,36 @@ describe('3c 구동계: 견인과 미끄럼', () => {
     expect(side / forward).toBeLessThan(2.8)
   })
 
+  it('T3b 받는 μ 범위(0.05–3) 전체에서 메카넘 옆걸음·직진 방향이 명령과 같다(낮은 μ에서 롤러 저항이 견인을 넘지 않는다)', () => {
+    // 3c 리뷰: μ 0.05–0.12에서 롤러 자유 방향 쿨롱·점성이 롤러 축 견인 μ_r = √2·μ − c_r보다 커서 왼쪽 옆걸음이 오른쪽으로 갔다
+    for (const friction of [0.05, 0.08, 0.1, 0.12, 0.14, 0.2, 0.3, 0.45, 0.6, 1, 2, 3])
+      for (const power of [1, 0.3]) {
+        const left = new Runner(robotSpec({ friction, start: { x: 0, y: -1.2, yaw: 0 } })).run(
+          0.5,
+          () => outputs(mecanum(0, -power, 0))
+        )
+        expect(left.pose().y + 1.2, `μ ${friction} power ${power}`).toBeGreaterThan(0)
+        const right = new Runner(robotSpec({ friction, start: { x: 0, y: 1.2, yaw: 0 } })).run(
+          0.5,
+          () => outputs(mecanum(0, power, 0))
+        )
+        expect(right.pose().y - 1.2, `μ ${friction} power ${power}`).toBeLessThan(0)
+        const ahead = new Runner(robotSpec({ friction, start: { x: -1.2, y: 0, yaw: 0 } })).run(
+          0.5,
+          () => outputs(mecanum(power, 0, 0))
+        )
+        expect(ahead.pose().x + 1.2, `μ ${friction} power ${power}`).toBeGreaterThan(0)
+      }
+  })
+
+  it('T2c 낮은 μ(0.1)도 잠근 바퀴 겉보기 μ가 설정 값이다: 미끄러지는 동안 차대 가속 = μ·g(1 %)', () => {
+    const mu = 0.1
+    const spec = robotSpec({ comHeight: 0, friction: mu })
+    const r = new Runner(spec, { rollerViscous: 0 }).run(0.2, () => outputs(mecanum(1, 0, 0)))
+    for (const k of [2, 10, 20])
+      expect(Math.abs(accelAt(r, k) / (mu * GRAVITY) - 1)).toBeLessThan(0.01)
+  })
+
   it('T16 정상 옆걸음: 바퀴 엔코더 거리 = 실제 이동(비 1, 미끄럼 강성이 없는 한계로 적은 동작)', () => {
     const spec = robotSpec({ start: { x: 0, y: -1.2, yaw: 0 } })
     const r = new Runner(spec).run(2, () => outputs(mecanum(0, -0.6, 0)))

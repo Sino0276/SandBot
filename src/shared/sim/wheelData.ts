@@ -20,12 +20,25 @@ export function effectiveWheelFriction(kind: WheelKind, setting: number): number
   return setting > 0 ? setting : DEFAULT_WHEEL_FRICTION[kind]
 }
 
+// 메카넘 롤러 저항(자유 방향 쿨롱·점성)에 곱하는 배율: min(1, μ / μ_기본). 롤러 저항은 바퀴 회전이 미끄럼을 만드는 자유
+// 방향의 힘이라(메카넘은 자유 방향이 굴림과 45°) 견인을 넘으면 차대를 명령의 반대로 민다. 값이 고정이면 μ ≈ 0.13 아래에서
+// 옆걸음이 거꾸로 갔다(3c 리뷰: 저항 c_r + c_v·g가 롤러 축 견인 √2·μ − c_r을 넘음). 미끄러운 바닥에서는 롤러가 구르지 않고
+// 미끄러지므로 롤러가 전하는 저항도 바닥이 주는 마찰을 넘지 못한다. 그래서 기본 μ 아래에서는 저항을 μ에 비례해 줄여, 견인에
+// 대한 비가 기본 μ에서의 비(맞춤 값) 그대로이게 한다(가정: 바닥 μ에 비례하는 꼴은 출처 없음. 기본 μ 이상은 1이라 Pedro 맞춤과
+// 기본 동작이 그대로다). 옆걸음 순 힘은 배율 k로 k·(√2·μ_기본 − 2·c_r − c_v·g)·N/√2라 g < 18 m/s(FTC 바퀴 면 속도의 두 배
+// 넘게)면 늘 명령 방향이다. 옴니는 자유 방향(축)이 굴림과 수직이라 바퀴 회전이 그 미끄럼을 만들지 않고(저항은 차대 운동만
+// 거스른다) 거꾸로 밀 수 없어 배율이 없다.
+export function mecanumRollerScale(apparent: number): number {
+  return Math.min(1, apparent / DEFAULT_WHEEL_FRICTION.mecanum)
+}
+
 // 메카넘 견인 행(땅에 닿은 롤러의 축 방향)의 마찰 계수. 자유 롤러는 축 방향으로만 힘을 전하므로 잠근 바퀴를 앞이나 옆으로
 // 끌 때 바퀴 하나가 받는 힘은 μ_r·N·cos 45°다(method §4.1, Ether 해석). 잠근 바퀴를 끌면 접점이 롤러 축과 자유 방향으로
-// 같이 미끄러져 롤러 쿨롱 저항(ROLLER_COULOMB·N·cos 45°)도 더해지므로, 겉보기 μ가 바퀴 설정 값과 같도록
-// μ_r = √2·μ − ROLLER_COULOMB이다(0 아래는 0). 시뮬레이터(contact.ts)와 인스펙터가 이 값을 같이 쓴다.
+// 같이 미끄러져 롤러 쿨롱 저항(k·ROLLER_COULOMB·N·cos 45°, k = mecanumRollerScale)도 더해지므로, 겉보기 μ가 바퀴 설정 값과
+// 같도록 μ_r = √2·μ − k·ROLLER_COULOMB이다(0 아래는 0: 시험의 덮어쓴 큰 롤러 쿨롱). 시뮬레이터(contact.ts)와 인스펙터가 이
+// 값을 같이 쓴다.
 export function mecanumRollerFriction(apparent: number, rollerCoulomb = ROLLER_COULOMB): number {
-  return Math.max(0, Math.SQRT2 * apparent - rollerCoulomb)
+  return Math.max(0, Math.SQRT2 * apparent - mecanumRollerScale(apparent) * rollerCoulomb)
 }
 
 // 롤러·굴림 저항의 맞춤(spec-3c §1.3 맞춤 절차, 구현한 시뮬레이터로): Pedro Pathing 2.1.2 기본값을 낸 것으로 보는 로봇(10.65 kg,

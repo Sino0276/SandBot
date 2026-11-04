@@ -3,6 +3,7 @@ import { tractionDirection } from './drivetrain'
 import { WALL_INNER_HALF } from './field'
 import {
   mecanumRollerFriction,
+  mecanumRollerScale,
   ROLLER_COULOMB,
   ROLLER_VISCOUS,
   ROLLING_RESISTANCE,
@@ -23,8 +24,9 @@ import type { Pose2, SimWheelSpec, Vec2 } from './worldSpec'
 //
 // 바퀴 종류별 행(정확한 쿨롱 마찰: 법선 하중을 먼저 정하고 그 하중으로 상자를 정한다, 미끄럼 곡선·정칙화 마찰 없음):
 //   - 메카넘: 견인은 롤러 축 a(tractionDirection)에 상자 ±h·μ_r·N(μ_r = √2·μ − c_r, 잠근 바퀴의 겉보기 μ에서), 롤러 자유 방향
-//     f = ẑ × a는 롤러 저항: 점성 행 감쇠(힘 −ROLLER_VISCOUS·N·g_f)와 쿨롱 상자 ±h·ROLLER_COULOMB·N(점성 하나로는 Pedro의
-//     옆걸음 속도 비와 옆 관성 감속을 함께 맞추지 못한다, wheelData.ts). 직진에서는 g_f = 0이라 손실이 없다.
+//     f = ẑ × a는 롤러 저항: 점성 행 감쇠(힘 −k·ROLLER_VISCOUS·N·g_f)와 쿨롱 상자 ±h·k·ROLLER_COULOMB·N(점성 하나로는 Pedro의
+//     옆걸음 속도 비와 옆 관성 감속을 함께 맞추지 못한다, wheelData.ts). 직진에서는 g_f = 0이라 손실이 없다. k는
+//     mecanumRollerScale(μ)(기본 μ 이상 1, 아래는 μ에 비례: 낮은 μ에서 저항이 견인을 넘어 옆걸음이 거꾸로 가지 않게).
 //   - 옴니: 견인 a = u, ±h·μ·N, 축 방향(ẑ × u)은 메카넘과 같은 롤러 저항(점성 + 쿨롱 상자). 맞춤은 메카넘 로봇으로 했고,
 //     옴니 롤러도 같은 고무 롤러 구름이라 같은 값을 쓴다(가정).
 //   - 일반 바퀴: 마찰 원을 고정 팔각형으로: u 기준 0°·45°·90°·135° 행 넷, 상자마다 ±h·μ·N / (2(cos 22.5° + sin 22.5°))
@@ -63,11 +65,14 @@ export type WheelContact = {
   // 견인 방향(로봇 좌표)과 그 행의 마찰 계수(메카넘은 롤러 축 μ_r)
   traction: Vec2
   tractionFriction: number
+  // 롤러 자유 방향 저항(점성·쿨롱)의 배율(메카넘 mecanumRollerScale, 옴니 1, 일반 바퀴는 쓰지 않음)
+  rollerScale: number
 }
 
 // rollerCoulomb: 롤러 자유 방향 쿨롱 계수. 잠근 메카넘 바퀴를 끌면 접점이 롤러 축 a와 자유 방향 f로 같은 크기(cos 45°)만큼
-// 미끄러지므로 앞·옆으로 끄는 힘은 (μ_r + c_r)·N·cos 45°다. 그래서 견인 계수를 μ_r = √2·μ − c_r로 두어 잠근 바퀴의 겉보기 계수가
-// 바퀴 설정 μ 그대로이게 한다(spec-3c §1.3 "입력 μ는 잠근 바퀴의 겉보기 계수", 롤러 쿨롱은 맞춤이 더한 항이다). 옴니의 자유
+// 미끄러지므로 앞·옆으로 끄는 힘은 (μ_r + k·c_r)·N·cos 45°다(k = mecanumRollerScale). 그래서 견인 계수를 μ_r = √2·μ − k·c_r로
+// 두어 잠근 바퀴의 겉보기 계수가 바퀴 설정 μ 그대로이게 한다(spec-3c §1.3 "입력 μ는 잠근 바퀴의 겉보기 계수", 롤러 쿨롱은
+// 맞춤이 더한 항이다). 옴니의 자유
 // 방향은 굴림 방향과 수직이라 굴림 방향 견인에 더해지지 않는다.
 export function wheelContact(
   spec: SimWheelSpec,
@@ -82,7 +87,8 @@ export function wheelContact(
     driven,
     traction: tractionDirection(spec),
     tractionFriction:
-      spec.kind === 'mecanum' ? mecanumRollerFriction(spec.friction, rollerCoulomb) : spec.friction
+      spec.kind === 'mecanum' ? mecanumRollerFriction(spec.friction, rollerCoulomb) : spec.friction,
+    rollerScale: spec.kind === 'mecanum' ? mecanumRollerScale(spec.friction) : 1
   }
 }
 
@@ -149,8 +155,9 @@ export function wheelRows(
         hi: bound
       })
     const free = slipRow(wheel, perpendicular(wheel.traction), yaw, m)
-    if (roller.viscous > 0) damping.push({ j: free, c: roller.viscous * n })
-    const coulomb = h * roller.coulomb * n
+    const viscous = wheel.rollerScale * roller.viscous
+    if (viscous > 0) damping.push({ j: free, c: viscous * n })
+    const coulomb = h * wheel.rollerScale * roller.coulomb * n
     if (coulomb > 0) rows.push({ key: `w${i}f`, j: free, target: 0, lo: -coulomb, hi: coulomb })
   })
   return { rows, damping }
