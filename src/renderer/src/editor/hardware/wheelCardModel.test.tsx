@@ -476,7 +476,7 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
       0.9 * Math.cos(Math.PI / 8) * GRAVITY * (2 / 3),
       9
     )
-    // X 드라이브(옴니 넷, 굴림 ±45°): μ·g가 아니라 (μ + 롤러 쿨롱)·cos 45°·g
+    // X 드라이브(옴니 넷, 굴림 ±45°): μ·g가 아니라 (μ − 롤러 쿨롱)·cos 45°·g(시뮬레이터 약 0.64·μ·g)
     let xDrive = fourWheels({ kind: 'omni', diameter: 0.096 })
     for (const [id, angle] of [
       ['wfl', -45],
@@ -491,10 +491,10 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
         angle: angle * DEG
       })
     expect(drivetrainSummary(xDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
-      (0.8 + ROLLER_COULOMB) * Math.SQRT1_2 * GRAVITY,
+      (0.8 - ROLLER_COULOMB) * Math.SQRT1_2 * GRAVITY,
       9
     )
-    // H 드라이브: 옴니 넷(굴림 0°)과 가운데 옆걸음 옴니(90°). 옆걸음 바퀴는 하중을 가져가지만 앞으로는 μ 없이 롤러 몫만
+    // H 드라이브: 옴니 넷(굴림 0°)과 가운데 옆걸음 옴니(90°). 옆걸음 바퀴는 하중을 가져가지만 앞으로는 밀지 못한다(0)
     const hDrive: SceneObjects = {
       ...fourWheels({ kind: 'omni', diameter: 0.096 }),
       strafe: {
@@ -512,15 +512,15 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     expect(strafeLoad).toBeGreaterThan(0)
     const corners = loads.weight - strafeLoad
     expect(drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
-      (GRAVITY * (0.8 * corners + ROLLER_COULOMB * strafeLoad)) / loads.weight,
+      (GRAVITY * 0.8 * corners) / loads.weight,
       9
     )
-    // 옆걸음 바퀴를 구동하지 않아도 앞 견인은 롤러 몫만큼만 다르다
+    // 옆걸음 바퀴를 구동하든 안 하든 앞 견인은 같다
     const undriven = withWheel(hDrive, 'strafe', { kind: 'omni', diameter: 0.096, angle: 90 * DEG })
-    expect(
-      drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration! -
-        drivetrainSummary(undriven, 'R', settings, model).tractionAcceleration!
-    ).toBeCloseTo((GRAVITY * ROLLER_COULOMB * strafeLoad) / loads.weight, 9)
+    expect(drivetrainSummary(undriven, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration!,
+      12
+    )
     // 외부 감속비가 다른 바퀴가 있으면 최고 속도는 범위다
     const geared = withWheel(objects, 'wbr', { motor: 'fl', gearRatio: 2 })
     const range = drivetrainSummary(geared, 'R', settings, model).topSpeed!

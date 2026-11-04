@@ -16,24 +16,32 @@ describe('바퀴 하나의 앞 방향 견인(하중 1 N당)', () => {
     expect(wheelForwardTraction('mecanum', 0, null, 0.6)).toBeCloseTo(0.6, 12)
   })
 
-  it('X 드라이브 옴니(±45°)는 μ·cos 45°에 롤러 쿨롱 몫 c_r·sin 45°를 더한다', () => {
+  it('X 드라이브 옴니(±45°)는 축 방향 롤러 쿨롱이 차대 운동을 거슬러 (μ − c_r)·cos 45°', () => {
     for (const angle of [45 * DEG, -45 * DEG, 135 * DEG])
       expect(wheelForwardTraction('omni', angle, null, 0.8)).toBeCloseTo(
-        (0.8 + ROLLER_COULOMB) * Math.SQRT1_2,
+        (0.8 - ROLLER_COULOMB) * Math.SQRT1_2,
         12
       )
-    // 굴림 0°는 μ, 옆걸음(90°)은 μ 없이 롤러 몫만
+    // 리뷰 탐침(review/renderer-r1/traction.test.ts)이 시뮬레이터에서 잰 X 드라이브 가속 0.634–0.639·μ·g
+    const ratio = wheelForwardTraction('omni', 45 * DEG, null, 0.8) / 0.8
+    expect(ratio).toBeGreaterThan(0.63)
+    expect(ratio).toBeLessThan(0.645)
+    // 굴림 0°는 μ
     expect(wheelForwardTraction('omni', 0, null, 0.8)).toBeCloseTo(0.8, 12)
-    expect(wheelForwardTraction('omni', 90 * DEG, null, 0.8)).toBeCloseTo(ROLLER_COULOMB, 12)
   })
 
-  it('일반 바퀴는 팔각형 마찰 원: 굴림 방향과 옆 방향 모두 0.924·μ', () => {
+  it('H 드라이브 옆 바퀴(굴림 90°)는 앞으로 밀지 못해 0(옴니·일반 바퀴)', () => {
+    for (const angle of [90 * DEG, -90 * DEG]) {
+      expect(wheelForwardTraction('omni', angle, null, 0.8)).toBe(0)
+      expect(wheelForwardTraction('traction', angle, null, 0.9)).toBe(0)
+    }
+  })
+
+  it('일반 바퀴 굴림 0°는 팔각형의 굴림 방향 지지 0.924·μ', () => {
     expect(wheelForwardTraction('traction', 0, null, 0.9)).toBeCloseTo(0.9 * OCTAGON_ALONG, 12)
-    expect(wheelForwardTraction('traction', 90 * DEG, null, 0.9)).toBeCloseTo(
+    expect(wheelForwardTraction('traction', 180 * DEG, null, 0.9)).toBeCloseTo(
       0.9 * OCTAGON_ALONG,
       12
     )
-    // 22.5°에서는 원에 닿는다(내접 팔각형의 꼭짓점)
-    expect(wheelForwardTraction('traction', 22.5 * DEG, null, 0.9)).toBeCloseTo(0.9, 12)
   })
 })

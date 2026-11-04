@@ -257,7 +257,7 @@ export type DrivetrainSummary = {
   // 앞 방향 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 Σ N_i·t_i(구동하는 바퀴만,
   // 구동하지 않는 바퀴는 따라 구르기만 한다. t_i = wheelForwardTraction: 바퀴 종류·굴림 방향·롤러를 따진 하중 1 N당 앞 방향
   // 견인) ÷ 질량 = g · Σ N_i·t_i / Σ N_i. 굴림 0°의 메카넘이 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다(spec-3c §4 C),
-  // X 드라이브 옴니(±45°)는 cos 45°배쯤, H 드라이브의 옆걸음 옴니는 롤러 몫만 더한다. 로봇 질량을 모르거나 구동하는
+  // X 드라이브 옴니(±45°)는 (μ − 롤러 쿨롱)·cos 45°라 약 0.64배, H 드라이브의 옆걸음 바퀴는 0이다. 로봇 질량을 모르거나 구동하는
   // 바퀴가 없으면 null.
   tractionAcceleration: number | null
   // 구동하는 바퀴들의 무부하 최고 굴림 속도(m/s, play/worldSpec의 wheelTopSpeed)의 최소·최대. 없으면 null.

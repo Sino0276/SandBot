@@ -1194,7 +1194,7 @@ const en: Messages = {
       kindCount: '{{kind}} {{count}}',
       traction: 'Forward traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
       tractionHint:
-        'The force the floor can give toward the robot front (+X) while all wheels slip, divided by the robot mass. Each driven wheel counts with its load at rest, friction coefficient and rolling direction and rollers (mecanum, omni). Wheels rolling at an angle, as in an X-drive, push forward less, and an omni wheel rolling sideways (H-drive) adds only its roller resistance share.',
+        'The force the floor can give toward the robot front (+X) while all wheels slip, divided by the robot mass. Each driven wheel counts with its load at rest, friction coefficient and rolling direction and rollers (mecanum, omni). Wheels rolling at an angle, as in an X-drive, push forward less (on omni wheels the roller resistance opposes the motion and lowers it further), and a wheel rolling sideways (H-drive) does not push forward.',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedRange:
         'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',
