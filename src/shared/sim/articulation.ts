@@ -1,5 +1,5 @@
 import { GRAVITY } from './physics'
-import type { SimJointSpec, Vec3 } from './worldSpec'
+import type { Pose2, SimBody, SimJointSpec, Vec3 } from './worldSpec'
 
 // 메커니즘 관절 동역학(3b): 움직이지 않는 로봇 몸체(뿌리) 위의 관절 나무를 감소 좌표로 푼다(Unity ArticulationBody·PhysX
 // articulation처럼 Featherstone 계열). 순수 TS이고 결정적이다(배열 순서만 쓰고, 벽시계·난수·Map 순서를 쓰지 않는다).
@@ -28,6 +28,21 @@ import type { SimJointSpec, Vec3 } from './worldSpec'
 //      한계(continuous 맨 위 단)도 한계에 있으면 그 충격의 한쪽 구속 행이고, 충격 뒤 다시 적분한 위치가 넘지 않게 한계에 놓는다.
 //   힘이 영역(모터 회생 자르기·서보 포화)에 따라 다르면 지금 v로 정한 영역으로 풀고, v⁺의 영역이 다르면 그 영역으로 한 번 더
 //   푼다(많아야 두 번, 결정적).
+//
+// 구동계 동역학(3c, 옵션. 모두 꺼져 있으면 위 3b와 연산이 같다):
+//   - 평면 부유 기저: 가상 관절 셋(필드 X 직선, 필드 Y 직선, Z 회전, 원점은 시작 자세)을 관절 나무 앞에 둔다. 섀시 몸체는 Z 회전에
+//     달고, 부모가 −1(로봇)인 관절은 섀시의 자식이 된다. 필드 축 직선이라 q̇ = v가 정확해서 CRBA·RNEA·암시 오일러·상자 LCP를
+//     그대로 쓰고, 팔이 기저 가속에서 받는 관성력·팔의 반력·무게중심 이동은 질량 행렬의 비대각과 바이어스로 저절로 들어간다
+//     (spec-3c §1.1). 공개 관절 순번과 q()는 세계 설명 joints 순번 그대로이고, 기저 상태는 basePose()·baseVelocity()로 읽는다.
+//     몸체 틀은 필드 좌표(원점 필드 중앙 바닥)가 되고, 바퀴가 없으면(기저 고정) 지금처럼 로봇 좌표다.
+//   - 관절에 묶이지 않은 좌표(free): armature만 있는 좌표(바퀴 모터의 출력축 각, 구동하지 않는 바퀴, 부하 없는 모터). S 열이 0이라
+//     몸체와는 밖에서 주는 접촉 행으로만 묶인다.
+//   - 밖에서 주는 구속 행(ContactSet.rows): 바퀴 견인·벽 법선·벽 마찰을 3b 행과 같은 상자 LCP에 넣는다. 마찰 행은 법선 행의 충격에
+//     기대는 상자(±μ·λ_n)이고, λ_n은 고정 2회 엇갈림(1회차는 앞 하위 단계의 같은 키 법선 힘, 2회차는 1회차 값)으로 정한다.
+//     5의 한계 충격 풀이에도 같은 행을 넣는다(벽에 붙은 기저를 한계 충격이 벽 안으로 밀지 않게, clampLimits).
+//   - 행 점성 감쇠(ContactSet.damping): 힘 −c·J·v(롤러 자유 방향)를 암시로 M̂에 h·c·JᵀJ로 더한다.
+//   - 기저 렌치(baseWrench): 바닥이 받쳐야 할 (F_z, M_x, M_y)(로봇 좌표 원점 = 로봇 중심 바닥, 로봇 축)를 섀시 관절의 RNEA 공간
+//     힘에서 얻는다. 중력·위치·속도는 지금 값이고, 가속(기저 + 관절)은 앞 하위 단계 가속을 1차 저역 통과한 값이다(spec-3c §1.4).
 
 // 하위 단계마다 관절 좌표 하나에 걸리는 구동 힘(world.ts가 모터·서보 모델로 만든다). 모두 z 좌표 단위다.
 export type DriveForces = {
@@ -46,7 +61,40 @@ export type DriveForces = {
 // z(지금 위치)와 v(영역을 정할 속도)로 구동 힘을 만든다
 export type DriveModel = (z: readonly number[], v: readonly number[]) => DriveForces
 
-export type Coordinate = { kind: 'joint' | 'motor'; joint: number }
+// joint: 세계 설명 joints 순번(기저·자유 좌표는 −1)
+export type Coordinate = { kind: 'joint' | 'motor' | 'base' | 'free'; joint: number }
+
+// 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±mu·(그 키 법선 행의 충격)로 정한다(lo·hi 무시).
+export type ContactRow = {
+  key: string
+  j: number[]
+  target: number
+  lo: number
+  hi: number
+  friction?: { normal: string; mu: number }
+}
+
+// 하위 단계 하나의 밖에서 주는 행과 행 점성 감쇠(힘 = −c·(j·v), c > 0)
+export type ContactSet = {
+  rows: readonly ContactRow[]
+  damping: readonly { j: readonly number[]; c: number }[]
+}
+
+export type ArticulationOptions = {
+  gravity?: number
+  // 평면 부유 기저(3c): 섀시 몸체(로봇 좌표, 무게중심 기준 관성)와 시작 자세(필드)
+  base?: { body: SimBody; start: Pose2 }
+  // 관절에 묶이지 않은 좌표마다 armature(kg·m²). 좌표 순번은 freeCoordinates
+  free?: readonly number[]
+  // 기저 렌치 가속의 저역 통과 시간 상수(s), 기저가 있을 때만 쓴다
+  loadFilterTau?: number
+}
+
+// 바닥이 받쳐야 할 렌치(로봇 좌표 원점 기준, 로봇 축): 수직 힘(N)과 롤·피치 모멘트(N·m)
+export type BaseWrench = { fz: number; mx: number; my: number }
+
+// 부유 기저의 가상 관절 수(필드 X 직선, 필드 Y 직선, Z 회전)
+export const BASE_JOINTS = 3
 
 // 질량 행렬 대각의 바닥(kg·m² 또는 kg). 가정: 1 g 점질량이 1 mm 떨어진 관성. 몸체 관성이 축 둘레로 0이고 회전자도 없는
 // 관절(서보·구동 없음)에서 질량 행렬이 특이해지지 않게 한다.
@@ -247,7 +295,7 @@ const LCP_PROXIMAL_STEPS = 8
 // 근접점 반복도 원래 A에서 이 값 안이 될 때 멈춘다(시험의 무작위 특이 문제와 담아 둔 순환 사례가 이 수준까지 맞는다).
 const LCP_RELATIVE_TOLERANCE = 1e-12
 // 한 번의 주축 전환 반복 상한. 정칙화한 문제는 P 행렬이라 유한하지만 반올림으로 순환하면 여기서 멈추고 던진다(조용히 상자로
-// 자르지 않는다 — world.ts가 관절을 멈추고 worldError로 알린다). 가정: 행이 50개 아래면 보통 10번 안에 끝난다.
+// 자르지 않는다 — world.ts가 그 하위 단계의 속도를 0으로 두고 다음 하위 단계에서 다시 풀며 worldError로 알린다). 가정: 행이 50개 아래면 보통 10번 안에 끝난다.
 const LCP_MAX_ITERATIONS = 2000
 
 // 행의 끝 상태: 아래 경계, 자유(w = 0), 위 경계
@@ -373,35 +421,70 @@ type Body = {
 type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
 
 export class Articulation {
+  // 세계 설명의 관절(공개 순번)
   readonly joints: readonly SimJointSpec[]
-  // z 좌표마다 무엇인지(관절 q 또는 그 관절 모터 구동의 φ)
+  // z 좌표마다 무엇인지(기저, 관절 q, 그 관절 모터 구동의 φ, 관절에 묶이지 않은 좌표)
   readonly coordinates: readonly Coordinate[]
-  // q = S·z (관절 수 × 좌표 수)
+  // 나무 관절 변위 = S·z (나무 관절 수 × 좌표 수). 기저가 있으면 앞 BASE_JOINTS 행이 가상 관절이다.
   readonly s: readonly (readonly number[])[]
-  // 좌표마다 회전자 반사 관성(모터 수 × J_r × 감속비²)
+  // 좌표마다 회전자 반사 관성(모터 수 × J_r × 감속비²) 또는 밖에서 준 armature
   readonly armature: readonly number[]
+  // 관절에 묶이지 않은 좌표의 순번(options.free 순서)
+  readonly freeCoordinates: readonly number[]
+  // 기저 좌표의 순번(필드 X, 필드 Y, 요), 기저가 없으면 빈 배열
+  readonly baseCoordinates: readonly number[]
   z: number[]
   v: number[]
+  // 계산에 쓰는 관절 나무(기저 가상 관절 + 세계 설명 관절, 부모 순번을 옮긴 것)
+  private readonly tree: readonly SimJointSpec[]
+  // 세계 설명 관절 i의 나무 순번 = i + offset
+  private readonly offset: number
+  private readonly start: Pose2 | null
   // 직선 관절 축(관절 틀 단위 벡터)·회전 관절 축
   private readonly axes: V3[]
   private readonly origins: { rotation: M3; position: V3 }[]
   private readonly gravity: number
   // 앞 하위 단계 LCP의 행 상태(이름으로 찾기만 한다)
   private lcpStates = new Map<string, LcpState>()
+  // 앞 하위 단계의 밖에서 준 행 충격(키 → λ)과 그 하위 단계 길이(벽 마찰 엇갈림의 1회차가 쓴다)
+  private contactImpulses = new Map<string, number>()
+  private lastH = 0
+  // 기저 렌치에 쓰는 좌표 가속(저역 통과)과 그 시간 상수
+  private readonly loadFilterTau: number
+  private filteredAccel: number[]
 
-  constructor(joints: readonly SimJointSpec[], gravity = GRAVITY) {
+  constructor(joints: readonly SimJointSpec[], options: ArticulationOptions = {}) {
     this.joints = joints
-    this.gravity = gravity
+    this.gravity = options.gravity ?? GRAVITY
+    const base = options.base ?? null
+    const offset = base ? BASE_JOINTS : 0
+    this.offset = offset
+    this.start = base ? { ...base.start } : null
+    this.loadFilterTau = options.loadFilterTau ?? 0
+    const tree: SimJointSpec[] = base ? baseJoints(base.body, base.start) : []
+    for (const joint of joints)
+      tree.push(
+        offset === 0
+          ? joint
+          : { ...joint, parent: joint.parent >= 0 ? joint.parent + offset : offset - 1 }
+      )
+    this.tree = tree
     const coordinates: Coordinate[] = []
-    const rows: number[][] = joints.map(() => [])
+    const rows: number[][] = tree.map(() => [])
     const armature: number[] = []
-    const add = (kind: 'joint' | 'motor', joint: number, inertia: number): number => {
+    const add = (kind: Coordinate['kind'], joint: number, inertia: number): number => {
       coordinates.push({ kind, joint })
       armature.push(inertia)
       return coordinates.length - 1
     }
     const entry = (joint: number, coordinate: number, value: number): void => {
-      rows[joint][coordinate] = (rows[joint][coordinate] ?? 0) + value
+      rows[joint + offset][coordinate] = (rows[joint + offset][coordinate] ?? 0) + value
+    }
+    const baseCoordinates: number[] = []
+    for (let k = 0; k < offset; k++) {
+      const c = add('base', -1, 0)
+      rows[k][c] = 1
+      baseCoordinates.push(c)
     }
     joints.forEach((joint, i) => {
       const drive = joint.drive
@@ -428,6 +511,8 @@ export class Articulation {
         }
       }
     })
+    this.freeCoordinates = (options.free ?? []).map((inertia) => add('free', -1, inertia))
+    this.baseCoordinates = baseCoordinates
     // 단은 parseWorldSpec가 구동 관절 하나에 들어 있음을 확인한다(아니면 그 관절의 행이 0이라 움직이지 않는다)
     const m = coordinates.length
     this.coordinates = coordinates
@@ -435,16 +520,35 @@ export class Articulation {
     this.armature = armature
     this.z = new Array<number>(m).fill(0)
     this.v = new Array<number>(m).fill(0)
-    this.axes = joints.map((j) => v3(j.axis))
-    this.origins = joints.map((j) => ({
+    this.filteredAccel = new Array<number>(m).fill(0)
+    this.axes = tree.map((j) => v3(j.axis))
+    this.origins = tree.map((j) => ({
       rotation: rotationZYX(j.origin.rotation),
       position: v3(j.origin.position)
     }))
   }
 
-  // 관절 변위 q = S·z
+  // 부유 기저의 필드 자세(시작 자세 + 기저 좌표, 요는 감지 않음). 기저가 없으면 null
+  basePose(z: readonly number[] = this.z): Pose2 | null {
+    if (!this.start) return null
+    return { x: this.start.x + z[0], y: this.start.y + z[1], yaw: this.start.yaw + z[2] }
+  }
+
+  // 부유 기저의 속도(필드 축 vx·vy m/s, 요 속도 rad/s). 기저가 없으면 null
+  baseVelocity(): { vx: number; vy: number; omega: number } | null {
+    if (!this.start) return null
+    return { vx: this.v[0], vy: this.v[1], omega: this.v[2] }
+  }
+
+  // 앞 하위 단계에서 밖에서 준 행 key의 충격(N·s 또는 N·m·s), 그 행이 없었으면 0
+  contactImpulse(key: string): number {
+    return this.contactImpulses.get(key) ?? 0
+  }
+
+  // 관절 변위 q = S·z(세계 설명 관절 순번)
   q(z: readonly number[] = this.z): number[] {
-    return this.s.map((row) => row.reduce((sum, value, c) => sum + value * z[c], 0))
+    const all = this.treeQ(z)
+    return this.offset === 0 ? all : all.slice(this.offset)
   }
 
   // 관절 속도 q̇ = S·v
@@ -452,10 +556,15 @@ export class Articulation {
     return this.q(v)
   }
 
-  // 몸체 자세와 운동 부분공간(로봇 좌표)
+  // 나무 관절(기저 가상 관절 포함) 변위
+  private treeQ(z: readonly number[]): number[] {
+    return this.s.map((row) => row.reduce((sum, value, c) => sum + value * z[c], 0))
+  }
+
+  // 몸체 자세와 운동 부분공간(로봇 좌표, 부유 기저면 필드 좌표). q는 나무 관절 변위
   private bodies(q: readonly number[]): Body[] {
     const bodies: Body[] = []
-    this.joints.forEach((joint, i) => {
+    this.tree.forEach((joint, i) => {
       const parent = joint.parent >= 0 ? bodies[joint.parent] : null
       const pr = parent ? parent.rotation : IDENTITY3
       const po: V3 = parent ? parent.origin : [0, 0, 0]
@@ -481,8 +590,8 @@ export class Articulation {
     return bodies
   }
 
-  // CRBA: 관절 질량 행렬 M_q(q)
-  massMatrix(q: readonly number[] = this.q()): number[][] {
+  // CRBA: 나무 관절 질량 행렬 M_q(q)(q는 나무 관절 변위, 기저가 없으면 세계 설명 관절 그대로)
+  massMatrix(q: readonly number[] = this.treeQ(this.z)): number[][] {
     return this.crba(this.bodies(q))
   }
 
@@ -490,14 +599,14 @@ export class Articulation {
     const n = bodies.length
     const composite = bodies.map((b) => b.inertia.slice())
     for (let i = n - 1; i >= 0; i--) {
-      const parent = this.joints[i].parent
+      const parent = this.tree[i].parent
       if (parent >= 0) for (let k = 0; k < 36; k++) composite[parent][k] += composite[i][k]
     }
     const m = bodies.map(() => new Array<number>(n).fill(0))
     for (let i = 0; i < n; i++) {
       const force = apply66(composite[i], bodies[i].motion)
       m[i][i] = dot6(bodies[i].motion, force)
-      for (let j = this.joints[i].parent; j >= 0; j = this.joints[j].parent) {
+      for (let j = this.tree[i].parent; j >= 0; j = this.tree[j].parent) {
         const value = dot6(bodies[j].motion, force)
         m[i][j] = value
         m[j][i] = value
@@ -506,12 +615,20 @@ export class Articulation {
     return m
   }
 
-  // RNEA(q̈ = 0, 기저 가속 −g): 중력과 코리올리·원심력의 관절 일반화 힘 c_q(q, q̇). M·q̈ + c = τ
-  bias(q: readonly number[] = this.q(), qd: readonly number[] = this.qd()): number[] {
-    return this.rnea(this.bodies(q), qd)
+  // RNEA(q̈ = 0, 기저 가속 −g): 중력과 코리올리·원심력의 나무 관절 일반화 힘 c_q(q, q̇). M·q̈ + c = τ
+  bias(
+    q: readonly number[] = this.treeQ(this.z),
+    qd: readonly number[] = this.treeQ(this.v)
+  ): number[] {
+    return this.rnea(this.bodies(q), qd).tau
   }
 
-  private rnea(bodies: Body[], qd: readonly number[]): number[] {
+  // qdd가 있으면 그 가속을 넣는다(기저 렌치용). root는 섀시 관절(나무 순번 BASE_JOINTS − 1)이 자식을 모두 더한 공간 힘(기저가 없으면 null)
+  private rnea(
+    bodies: Body[],
+    qd: readonly number[],
+    qdd?: readonly number[]
+  ): { tau: number[]; root: S6 | null } {
     const n = bodies.length
     const velocity: S6[] = []
     const accel: S6[] = []
@@ -519,13 +636,15 @@ export class Articulation {
     // 고정 기저를 위로 g만큼 가속하면 모든 몸체에 중력이 걸린다(Featherstone의 표준 처리)
     const baseAccel: S6 = [0, 0, 0, 0, 0, this.gravity]
     for (let i = 0; i < n; i++) {
-      const parent = this.joints[i].parent
+      const parent = this.tree[i].parent
       const vp: S6 = parent >= 0 ? velocity[parent] : [0, 0, 0, 0, 0, 0]
       const ap: S6 = parent >= 0 ? accel[parent] : baseAccel
       const s = bodies[i].motion
       const vi = vp.map((x, k) => x + s[k] * qd[i])
       const sd = crossMotion(vi, s)
-      const ai = ap.map((x, k) => x + sd[k] * qd[i])
+      const ai = qdd
+        ? ap.map((x, k) => x + sd[k] * qd[i] + s[k] * qdd[i])
+        : ap.map((x, k) => x + sd[k] * qd[i])
       const inertia = bodies[i].inertia
       const momentum = apply66(inertia, vi)
       const ia = apply66(inertia, ai)
@@ -535,25 +654,45 @@ export class Articulation {
       force.push(ia.map((x, k) => x + vxf[k]))
     }
     const tau = new Array<number>(n).fill(0)
+    let root: S6 | null = null
     for (let i = n - 1; i >= 0; i--) {
       tau[i] = dot6(bodies[i].motion, force[i])
-      const parent = this.joints[i].parent
+      if (this.offset > 0 && i === this.offset - 1) root = force[i].slice()
+      const parent = this.tree[i].parent
       if (parent >= 0) for (let k = 0; k < 6; k++) force[parent][k] += force[i][k]
     }
-    return tau
+    return { tau, root }
   }
 
-  // 몸체 i의 자세(로봇 좌표, 시험·표시용)
-  bodyPose(i: number, q: readonly number[] = this.q()): { rotation: number[]; origin: number[] } {
-    const b = this.bodies(q)[i]
+  // 바닥이 받쳐야 할 렌치(로봇 좌표 원점 기준, 로봇 축). 섀시 관절이 자식을 모두 더한 공간 힘 f = [n_O; f](필드 원점 기준)을
+  // 로봇 원점 P로 옮기고(n_P = n_O − P × f) 로봇 축으로 돌린다. 바퀴 마찰·벽 힘은 바닥 높이의 수평 힘이라 P 둘레에 z 모멘트만
+  // 내므로 (F_z, M_x, M_y)는 바퀴 법선 하중만 받친다(method §5.1). 중력·q·q̇는 지금 값, 가속은 저역 통과한 앞 하위 단계 값이다.
+  // 기저가 없으면 null.
+  baseWrench(): BaseWrench | null {
+    if (this.offset === 0) return null
+    const bodies = this.bodies(this.treeQ(this.z))
+    const { root } = this.rnea(bodies, this.treeQ(this.v), this.treeQ(this.filteredAccel))
+    const f = root as S6
+    const chassis = bodies[this.offset - 1]
+    const n = add3([f[0], f[1], f[2]], scale3(cross3(chassis.origin, [f[3], f[4], f[5]]), -1))
+    const local = apply3(transpose3(chassis.rotation), n)
+    return { fz: f[5], mx: local[0], my: local[1] }
+  }
+
+  // 세계 설명 관절 i 몸체의 자세(로봇 좌표, 부유 기저면 필드 좌표, 시험·표시용). q는 나무 관절 변위
+  bodyPose(
+    i: number,
+    q: readonly number[] = this.treeQ(this.z)
+  ): { rotation: number[]; origin: number[] } {
+    const b = this.bodies(q)[i + this.offset]
     return { rotation: b.rotation.slice(), origin: b.origin.slice() }
   }
 
-  // 위치 에너지(J, 로봇 좌표 z = 0 기준, 시험용)
-  potentialEnergy(q: readonly number[] = this.q()): number {
+  // 위치 에너지(J, 바닥 z = 0 기준, 섀시 포함, 시험용). q는 나무 관절 변위
+  potentialEnergy(q: readonly number[] = this.treeQ(this.z)): number {
     let energy = 0
     this.bodies(q).forEach((b, i) => {
-      const body = this.joints[i].body
+      const body = this.tree[i].body
       const com = add3(b.origin, apply3(b.rotation, v3(body.centerOfMass)))
       energy += body.mass * this.gravity * com[2]
     })
@@ -589,23 +728,24 @@ export class Articulation {
     return out
   }
 
-  // 하위 단계 하나(h초). drive가 구동 힘을 준다.
-  step(h: number, drive: DriveModel): void {
+  // 하위 단계 하나(h초). drive가 구동 힘을, contacts가 밖에서 주는 행·행 감쇠를 준다(없으면 3b와 같은 연산).
+  step(h: number, drive: DriveModel, contacts?: ContactSet): void {
     const m = this.coordinates.length
     if (m === 0) return
-    const n = this.joints.length
+    const tree = this.tree
+    const n = tree.length
     const s = this.s
-    const q = this.q()
-    const qd = this.qd()
+    const q = this.treeQ(this.z)
+    const qd = this.treeQ(this.v)
     const bodies = this.bodies(q)
     const mz = this.coordinateMass(this.crba(bodies))
-    const cq = this.rnea(bodies, qd)
+    const cq = this.rnea(bodies, qd).tau
 
     // 관절 공간의 수동 힘(점성·스프링)과 쿨롱 상자
     const passiveForce = new Array<number>(n).fill(0)
     const passiveDamping = new Array<number>(n).fill(0)
     const passiveStiffness = new Array<number>(n).fill(0)
-    this.joints.forEach((joint, i) => {
+    tree.forEach((joint, i) => {
       passiveDamping[i] = joint.friction.viscous
       const spring = joint.spring
       if (spring?.kind === 'constantForce') passiveForce[i] = spring.force
@@ -637,9 +777,29 @@ export class Articulation {
     const cz = toZ(cq)
     const baseDamping = quadratic(passiveDamping)
     const baseStiffness = quadratic(passiveStiffness)
+    // 행 점성 감쇠 Σ c·JᵀJ(롤러 자유 방향)는 감쇠와 같이 h를 곱해 M̂에 더한다
+    for (const term of contacts?.damping ?? []) {
+      const j = term.j
+      for (let a = 0; a < m; a++) {
+        if (j[a] === 0) continue
+        for (let b = 0; b < m; b++) if (j[b] !== 0) baseDamping[a][b] += term.c * j[a] * j[b]
+      }
+    }
     const momentum = mz.map((row) => row.reduce((sum, x, c) => sum + x * this.v[c], 0))
+    const contactRows = contacts?.rows ?? []
+    // 마찰 행이 있으면 엇갈림 2회(1회차 법선은 앞 하위 단계의 같은 키 힘을 이번 h로 바꾼 것)
+    const staggered = contactRows.some((row) => row.friction)
+    const previous = (key: string): number =>
+      this.lastH > 0 ? ((this.contactImpulses.get(key) ?? 0) * h) / this.lastH : 0
 
-    type Solution = { v: number[]; factor: { l: number[][]; d: number[] } }
+    type Solution = {
+      v: number[]
+      factor: { l: number[][]; d: number[] }
+      impulses: Map<string, number>
+      // 마지막 풀이의 밖에서 준 행(마찰 상자를 정한 것)과 그 충격(한계 충격 풀이가 이어 쓴다)
+      external: Row[]
+      externalLambda: number[]
+    }
     const solve = (forces: DriveForces): Solution => {
       const mhat = mz.map((row, a) =>
         row.map(
@@ -654,31 +814,42 @@ export class Articulation {
       const vStar = ldlSolve(factor, rhs)
       const friction = this.frictionRows(forces, h)
       const included = new Array<boolean>(2 * n).fill(false)
-      this.joints.forEach((joint, i) => {
+      tree.forEach((joint, i) => {
         if (!joint.limits) return
         const reach = Math.abs(qd[i]) * h + LIMIT_MARGIN
         included[2 * i] = q[i] - joint.limits.lower <= reach
         included[2 * i + 1] = joint.limits.upper - q[i] <= reach
       })
-      for (;;) {
-        const rows = [...friction, ...this.limitRows(q, h, included)]
-        const v = this.constrained(factor, vStar, rows)
-        // 빠진 한계가 넘으면 더해 다시 푼다
-        const qNext = this.q(v).map((rate, i) => q[i] + h * rate)
-        let added = false
-        this.joints.forEach((joint, i) => {
-          if (!joint.limits) return
-          if (!included[2 * i] && qNext[i] < joint.limits.lower - LIMIT_TOLERANCE) {
-            included[2 * i] = true
-            added = true
-          }
-          if (!included[2 * i + 1] && qNext[i] > joint.limits.upper + LIMIT_TOLERANCE) {
-            included[2 * i + 1] = true
-            added = true
-          }
-        })
-        if (!added) return { v, factor }
+      const pass = (normal: (key: string) => number): Solution => {
+        const external = externalRows(contactRows, normal)
+        for (;;) {
+          const rows = [...friction, ...this.limitRows(q, h, included), ...external]
+          const { v, lambda } = this.constrained(factor, vStar, rows)
+          // 빠진 한계가 넘으면 더해 다시 푼다
+          const qNext = this.treeQ(v).map((rate, i) => q[i] + h * rate)
+          let added = false
+          tree.forEach((joint, i) => {
+            if (!joint.limits) return
+            if (!included[2 * i] && qNext[i] < joint.limits.lower - LIMIT_TOLERANCE) {
+              included[2 * i] = true
+              added = true
+            }
+            if (!included[2 * i + 1] && qNext[i] > joint.limits.upper + LIMIT_TOLERANCE) {
+              included[2 * i + 1] = true
+              added = true
+            }
+          })
+          if (added) continue
+          const impulses = new Map<string, number>()
+          const first = rows.length - external.length
+          const externalLambda = external.map((_, k) => lambda[first + k])
+          external.forEach((row, k) => impulses.set(row.key, externalLambda[k]))
+          return { v, factor, impulses, external, externalLambda }
+        }
       }
+      const once = pass(previous)
+      if (!staggered) return once
+      return pass((key) => once.impulses.get(key) ?? 0)
     }
 
     const first = drive(this.z, this.v)
@@ -688,12 +859,21 @@ export class Articulation {
 
     const v = solution.v
     const z = this.z.map((x, c) => x + h * v[c])
-    this.clampLimits(z, v, solution.factor, h)
+    const impulses = this.clampLimits(z, v, solution.factor, h, solution)
     for (let c = 0; c < m; c++)
       if (!Number.isFinite(z[c]) || !Number.isFinite(v[c]))
         throw new Error('joint dynamics diverged')
+    if (this.offset > 0 && this.loadFilterTau > 0) {
+      // 기저 렌치에 쓰는 가속: 이번 하위 단계 가속 (v⁺ − v)/h의 1차 저역 통과(정확한 이산화 α = 1 − e^(−h/τ))
+      const alpha = 1 - Math.exp(-h / this.loadFilterTau)
+      this.filteredAccel = this.filteredAccel.map(
+        (a, c) => a + alpha * ((v[c] - this.v[c]) / h - a)
+      )
+    }
     this.z = z
     this.v = v
+    this.contactImpulses = impulses
+    this.lastH = h
   }
 
   // 마찰 상자 행: 관절 쿨롱(행 S_i)과 구동의 좌표 상자. 같은 방향의 행은 하나로 합친다(상자를 더함).
@@ -724,7 +904,7 @@ export class Articulation {
       keys.push(key)
       rows.push({ key: `f${key}`, j: unit, target: 0, lo: low, hi: high })
     }
-    this.joints.forEach((joint, i) => {
+    this.tree.forEach((joint, i) => {
       const c = joint.friction.coulomb
       if (c > 0) addRow(this.s[i], -c, c)
     })
@@ -742,7 +922,7 @@ export class Articulation {
   // 한계 행(넣기로 한 것만): 아래 J = S_i, J·v ≥ −(q − lo)/h; 위 J = −S_i, J·v ≥ −(hi − q)/h. 충격은 0 이상.
   private limitRows(q: readonly number[], h: number, included: readonly boolean[]): Row[] {
     const rows: Row[] = []
-    this.joints.forEach((joint, i) => {
+    this.tree.forEach((joint, i) => {
       const limits = joint.limits
       if (!limits) return
       if (included[2 * i])
@@ -765,13 +945,13 @@ export class Articulation {
     return rows
   }
 
-  // v⁺ = v* + M̂⁻¹Jᵀλ, λ는 상자 LCP의 해
+  // v⁺ = v* + M̂⁻¹Jᵀλ, λ는 상자 LCP의 해(행 순서)
   private constrained(
     factor: { l: number[][]; d: number[] },
     vStar: number[],
     rows: Row[]
-  ): number[] {
-    if (rows.length === 0) return vStar
+  ): { v: number[]; lambda: number[] } {
+    if (rows.length === 0) return { v: vStar, lambda: [] }
     const m = vStar.length
     const dot = (j: readonly number[], x: readonly number[]): number => {
       let sum = 0
@@ -806,7 +986,7 @@ export class Articulation {
       }
       if (only >= 0) v[only] = row.target / row.j[only]
     })
-    return v
+    return { v, lambda }
   }
 
   // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다).
@@ -822,18 +1002,30 @@ export class Articulation {
   // 멈춰 있던 좌표를 안쪽으로 밀면 그것은 한계에서 떨어지고(두 방향 구속으로 묶으면 그 운동량을 잃는다), 바깥으로 밀면 멈춘
   // 채다. M̂은 이번 하위 단계의 암시 행렬(LCP와 같은 계)이고, 멈추지 않은 좌표의 위치는 바뀐 속도로 다시 적분한다. 그 뒤 걸린
   // 여러 성분 행이나 한계를 넘은 여러 성분 관절은 멈추지 않은 좌표만 움직여(그 행 방향의 최소 이동) 한계에 놓는다.
+  // 밖에서 준 행(3c: 바퀴 견인·롤러 상자, 벽 법선·마찰)도 같은 충격 LCP에 넣는다. 넣지 않으면 부유 기저에서 한계 충격 M̂⁻¹Jᵀλ가
+  // 벽 구속을 푼 뒤의 기저를 벽 쪽으로 옮겨(z += h·Δv), 벽에 붙어 민 채 슬라이드를 한계에 박을 때마다 침투가 쌓인다(걸친 꼭짓점의
+  // 목표가 0이라 되돌아오지 않는다, 3c 리뷰). 본 LCP와 같은 계를 이어 푸는 것이라 행마다 합 λ_본 + λ_충격이 본 LCP의 상자
+  // [lo, hi](마찰 상자는 본 풀이에서 정한 것) 안이고 목표도 같다: 충격 λ ∈ [lo − λ_본, hi − λ_본], w = J·v⁺ − 목표. 벽 법선은
+  // 걸친 꼭짓점 목표 0, 아니면 −간격/h, 합 λ ≥ 0이다(벽이 미는 힘을 줄일 수는 있어도 당기지 않는다). 3b 마찰 상자(관절 쿨롱,
+  // 구동 상자)는 넣지 않는다(3b와 같다). 밖에서 준 행이 없으면(기저 고정) 연산이 3b와 같다. 돌려주는 값은 행마다 이 하위
+  // 단계의 합 충격이다.
   private clampLimits(
     z: number[],
     v: number[],
     factor: { l: number[][]; d: number[] },
-    h: number
-  ): void {
+    h: number,
+    contacts: {
+      impulses: Map<string, number>
+      external: readonly Row[]
+      externalLambda: readonly number[]
+    }
+  ): Map<string, number> {
     const m = this.coordinates.length
     const low = new Array<number>(m).fill(-Infinity)
     const high = new Array<number>(m).fill(Infinity)
     // 여러 성분 한계 관절: 관절 순번, 안쪽 방향(+1 = 아래 한계, −1 = 위 한계)과 그 한계 값
     const coupled: { joint: number; sign: number; limit: number }[] = []
-    this.joints.forEach((joint, i) => {
+    this.tree.forEach((joint, i) => {
       if (!joint.limits) return
       const nonzero = this.s[i].flatMap((x, c) => (x !== 0 ? [c] : []))
       if (nonzero.length > 1) {
@@ -876,19 +1068,24 @@ export class Articulation {
       if (gap(row) > LIMIT_TOLERANCE * Math.max(1, Math.abs(row.limit))) return
       rows.push({ j: this.s[row.joint].map((x) => row.sign * x), coordinate: -1, coupled: k })
     })
-    // 바깥으로 움직이는 행이 없으면 충격이 없다(λ = 0이 해)
+    // 바깥으로 움직이는 한계 행이 없으면 충격이 없다(λ = 0이 해: 밖에서 준 행은 본 LCP가 이미 맞췄다)
     if (rows.every((row) => dot(row.j, v) >= 0)) {
       this.placeCoupled(z, coupled, rows, [], new Array<boolean>(m).fill(false), gap, low, high)
-      return
+      return contacts.impulses
     }
-    // y_k = M̂⁻¹J_kᵀ, A = J·M̂⁻¹·Jᵀ(양반정치), w = A·λ + J·v = J·v⁺
-    const y = rows.map((row) => ldlSolve(factor, row.j))
-    const a = rows.map((row) => y.map((col) => dot(row.j, col)))
+    // 한계 행 뒤에 밖에서 준 행을 둔다. y_k = M̂⁻¹J_kᵀ, A = J·M̂⁻¹·Jᵀ(양반정치), w = A·λ + J·v − 목표 = J·v⁺ − 목표
+    const external = contacts.external
+    const all = [...rows.map((row) => row.j), ...external.map((row) => row.j)]
+    const y = all.map((j) => ldlSolve(factor, j))
+    const a = all.map((j) => y.map((col) => dot(j, col)))
     const { lambda, states } = solveBoxLcp(
       a,
-      rows.map((row) => dot(row.j, v)),
-      rows.map(() => 0),
-      rows.map(() => Infinity)
+      [...rows.map((row) => dot(row.j, v)), ...external.map((row) => dot(row.j, v) - row.target)],
+      [...rows.map(() => 0), ...external.map((row, k) => row.lo - contacts.externalLambda[k])],
+      [
+        ...rows.map(() => Infinity),
+        ...external.map((row, k) => row.hi - contacts.externalLambda[k])
+      ]
     )
     const held = new Array<boolean>(m).fill(false)
     const active: number[] = []
@@ -900,7 +1097,7 @@ export class Articulation {
     })
     for (let c = 0; c < m; c++) {
       let dv = 0
-      rows.forEach((_, k) => (dv += y[k][c] * lambda[k]))
+      y.forEach((col, k) => (dv += col[c] * lambda[k]))
       if (held[c]) {
         // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
         v[c] = 0
@@ -913,6 +1110,13 @@ export class Articulation {
       else if (z[c] > high[c]) z[c] = high[c]
     }
     this.placeCoupled(z, coupled, rows, active, held, gap, low, high)
+    if (external.length === 0) return contacts.impulses
+    const impulses = new Map(contacts.impulses)
+    external.forEach((row, k) => {
+      const extra = lambda[rows.length + k]
+      if (extra !== 0) impulses.set(row.key, contacts.externalLambda[k] + extra)
+    })
+    return impulses
   }
 
   // 걸린 여러 성분 행(active)과 한계를 넘은 여러 성분 관절을 한계에 놓는다. 멈춘 좌표(held)와 한계에 닿은 성분 하나 좌표는
@@ -953,6 +1157,53 @@ export class Articulation {
       if (!moved) return
     }
   }
+}
+
+// 부유 기저의 가상 관절: 필드 X 직선(원점 = 시작 위치) → 필드 Y 직선 → Z 회전(시작 요). 섀시 몸체는 Z 회전에 달고, 직선 관절
+// 몸체는 질량이 없다(MIN_COORDINATE_INERTIA가 특이를 막고, 섀시·자식 질량이 CRBA로 그 대각에 들어온다).
+function baseJoints(body: SimBody, start: Pose2): SimJointSpec[] {
+  const empty: SimBody = {
+    mass: 0,
+    centerOfMass: { x: 0, y: 0, z: 0 },
+    inertia: [0, 0, 0, 0, 0, 0]
+  }
+  const joint = (
+    parent: number,
+    type: 'revolute' | 'prismatic',
+    position: Vec3,
+    yaw: number,
+    axis: Vec3,
+    mass: SimBody
+  ): SimJointSpec => ({
+    parent,
+    type,
+    origin: { position, rotation: { x: 0, y: 0, z: yaw } },
+    axis,
+    limits: null,
+    body: mass,
+    friction: { coulomb: 0, viscous: 0 },
+    spring: null,
+    drive: { kind: 'none' },
+    switches: []
+  })
+  return [
+    joint(-1, 'prismatic', { x: start.x, y: start.y, z: 0 }, 0, { x: 1, y: 0, z: 0 }, empty),
+    joint(0, 'prismatic', { x: 0, y: 0, z: 0 }, 0, { x: 0, y: 1, z: 0 }, empty),
+    joint(1, 'revolute', { x: 0, y: 0, z: 0 }, start.yaw, { x: 0, y: 0, z: 1 }, body)
+  ]
+}
+
+// 밖에서 준 행을 LCP 행으로(마찰 행은 법선 충격 normal(key)로 상자를 정하고, 상자가 0이면 넣지 않는다)
+function externalRows(rows: readonly ContactRow[], normal: (key: string) => number): Row[] {
+  const out: Row[] = []
+  for (const row of rows) {
+    if (row.friction) {
+      const bound = row.friction.mu * Math.max(0, normal(row.friction.normal))
+      if (!(bound > 0)) continue
+      out.push({ key: row.key, j: row.j, target: row.target, lo: -bound, hi: bound })
+    } else out.push({ key: row.key, j: row.j, target: row.target, lo: row.lo, hi: row.hi })
+  }
+  return out
 }
 
 // 시험·표시용: 점 p(몸체 틀)의 로봇 좌표

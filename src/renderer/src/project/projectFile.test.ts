@@ -74,7 +74,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 8 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 9 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -307,7 +307,8 @@ describe('바퀴(버전 6)', () => {
     motor: 'm1',
     gearRatio: 1,
     angle: 0,
-    rollers: 'auto'
+    rollers: 'auto',
+    friction: 0
   } as const
   const withWheel = (): SceneObjects => ({
     ...objects,
@@ -370,7 +371,8 @@ describe('바퀴(버전 6)', () => {
       motor: 'm1',
       gearRatio: 1,
       angle: Math.PI,
-      rollers: 'auto'
+      rollers: 'auto',
+      friction: 0
     })
     const { objects: negative } = parseProject(
       fileWith(2, { ...WHEEL, diameter: -0.1, gearRatio: 1e6, angle: -Math.PI / 2 })
@@ -380,6 +382,22 @@ describe('바퀴(버전 6)', () => {
       gearRatio: 1,
       angle: -Math.PI / 2
     })
+  })
+
+  it('버전 8 이하의 바퀴는 friction 없이 읽고 종류 기본(0)이다. 범위 밖 friction은 0으로 바꾼다(버전 9)', () => {
+    const legacy: Record<string, unknown> = { ...WHEEL }
+    delete legacy.friction
+    expect(parseProject(fileWith(2, legacy, 8)).objects.plate.wheel?.friction).toBe(0)
+    expect(
+      parseProject(fileWith(2, { ...WHEEL, friction: 0.75 }, 9)).objects.plate.wheel?.friction
+    ).toBe(0.75)
+    for (const friction of [0.01, 4, -1, Number.MAX_VALUE])
+      expect(
+        parseProject(fileWith(2, { ...WHEEL, friction }, 9)).objects.plate.wheel?.friction
+      ).toBe(0)
+    expect(() => parseProject(fileWith(2, { ...WHEEL, friction: '0.5' }, 9))).toThrow(
+      ProjectFileError
+    )
   })
 
   it('그룹·어셈블리에도 둘 수 있다', () => {
@@ -654,7 +672,7 @@ describe('관절(버전 8)', () => {
     v7.version = 7
     const { objects: loaded } = parseProject(JSON.stringify(v7))
     expect(loaded).toEqual(objects)
-    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(8)
+    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(PROJECT_VERSION)
   })
 })
 

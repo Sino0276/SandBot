@@ -1,14 +1,6 @@
 import type { SimNoticeCode } from '../play'
 import type { DeviceValues } from '../sidecarProtocol'
-import {
-  applyTwist,
-  compose,
-  Drivetrain,
-  inverse,
-  twistBetween,
-  wrapAngle,
-  type Twist
-} from './drivetrain'
+import { compose, inverse, twistBetween, wrapAngle, type Twist } from './drivetrain'
 import {
   DcGearMotor,
   DEFAULT_POSITION_PIDF,
@@ -23,18 +15,25 @@ import {
   type PowerStage,
   type ServoCommand
 } from './actuators'
-import { Articulation, type DriveForces } from './articulation'
-import { HubVelocityWindow } from './encoderVelocity'
-import { WALL_INNER_HALF } from './field'
+import { Articulation, type ContactRow, type ContactSet, type DriveForces } from './articulation'
 import {
-  isEncoderMode,
-  MotorModel,
-  readMotorOutputs,
-  type MotorCommand,
-  type MotorOutputs
-} from './motorModel'
+  isWallNormal,
+  ROLLER_RESISTANCE,
+  SupportMonitor,
+  wallRows,
+  wheelContact,
+  wheelCoordinateFriction,
+  wheelLoads,
+  wheelRows,
+  type RollerResistance,
+  type WheelContact
+} from './contact'
+import { HubVelocityWindow } from './encoderVelocity'
+import { isEncoderMode, readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import { jointEncoderTicksPerOutputRev } from './actuatorData'
-import { motorType, rotationSign } from './motorTypes'
+import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
+import { GRAVITY } from './physics'
+import { LOAD_FILTER_TAU, ROLLING_RESISTANCE } from './wheelData'
 import type {
   Pose2,
   SimDeadWheelSpec,
@@ -47,39 +46,53 @@ import type {
   WorldSpec
 } from './worldSpec'
 
-// 운동학 시뮬레이터(메인 프로세스가 사이드카 틱마다 부른다, src/main/sidecar/world.ts의 SimWorld). 질량·충돌 물리 없이
-// 모터 출력 → 출력축 회전(motorModel.ts) → 바퀴 굴림 → 로봇 변위(drivetrain.ts, 최소제곱) → 필드 자세를 계산하고,
-// 그 자세로 센서 값(엔코더, IMU, 데드휠, Pinpoint, OTOS)을 만든다. 결과는 입력열(틱 시각과 장치 출력)에만 달려 있다
-// (벽시계·난수·순서가 정해지지 않은 자료 구조를 쓰지 않는다).
+// 시뮬레이터(메인 프로세스가 사이드카 틱마다 부른다, src/main/sidecar/world.ts의 SimWorld). 로봇과 메커니즘을 한 동역학 풀이
+// (articulation.ts, 감소 좌표 관절 나무 + 상자 LCP)로 계산하고, 그 자세로 센서 값(엔코더, IMU, 데드휠, Pinpoint, OTOS, 리밋
+// 스위치)을 만든다. 결과는 입력열(틱 시각과 장치 출력)에만 달려 있다(벽시계·난수·순서가 정해지지 않은 자료 구조를 쓰지 않는다).
 //
 // 시간: step(t, outputs)는 [이전 t, t] 구간을 **이전 틱의 출력**으로 적분한다(사이드카는 틱 경계에서 그 틱의 출력을 보내고,
-// 답의 입력은 그 뒤부터 보이므로 구간 동안 장치가 따른 명령은 앞 틱의 것이다). 구간은 1 ms 이하 하위 단계로 나눈다.
-// 첫 호출은 적분하지 않고 상태만 만든 뒤 모든 입력을 보낸다. 그 뒤는 값이 바뀐 키만 보낸다.
+// 답의 입력은 그 뒤부터 보이므로 구간 동안 장치가 따른 명령은 앞 틱의 것이다). 하위 단계 경계는 0 ns부터의 절대 1 ms 격자와 틱
+// 경계다. 허브 제어 표본(10 ms 격자)이 그 격자 위에 있어 틱 간격이 달라도 같은 시각에 표본을 뜬다. 첫 호출은 적분하지 않고 상태만
+// 만든 뒤 모든 입력을 보낸다. 그 뒤는 값이 바뀐 키만 보낸다.
 //
 // 부호: 모터 power·velocity·position은 허브 부호다(사이드카 package-info.java). 인스펙터 방향(spec.directionSign)은
-// "+power면 바퀴가 앞으로 구른다"는 뜻이므로, 바퀴 앞 굴림 = 허브 각 × 형식 회전 부호 × 인스펙터 방향 부호다.
+// "+power면 바퀴가 앞으로 구른다"는 뜻이므로, 모터 좌표(출력축 각 φ, "앞") = 허브 각 × 형식 회전 부호 × 인스펙터 방향 부호다.
 // 그래서 팀 코드가 인스펙터와 같은 setDirection을 쓰면 getCurrentPosition은 앞으로 갈 때 는다.
 //
+// 모터(모두 동역학, spec-3c §1.2): DC 기어모터 + 허브 전력단 + 허브 펌웨어 제어(actuators.ts). 좌표는 셋 중 하나다.
+//   - 관절 모터: 관절 좌표(3b). 엔코더는 모터축 카운트 × 실제 감속비(actuatorData.ts jointEncoderTicksPerOutputRev).
+//   - 바퀴 모터: 장치마다 출력축 각 φ 하나(armature J_rotor·G² + Σ J_wheel/G_ext²). 그 모터가 구동하는 바퀴들의 접촉 행이 r/G_ext로
+//     이 좌표에 걸린다. 토크·전류·관성은 SimMotorSpec.params(실제 감속비), 엔코더는 SDK 규칙(ticksPerRev ÷ gearing ×
+//     spec.gearbox: 팀의 RR·Pedro 틱/in이 2단계와 같다).
+//   - 관절도 바퀴도 아닌 모터(인테이크 등): armature만 있는 좌표(회전자 + 기어 손실, 부하 없음), 엔코더는 SDK 규칙.
+// 모든 모터가 단자 전류(current)를 보낸다.
+//
+// 구동계(바퀴가 하나라도 있는 로봇, spec-3c §1.1): 평면 부유 기저(필드 X·Y 직선 + Z 회전 가상 관절, 섀시 = robot.body)에 바퀴
+// 접촉 마찰·벽 행(contact.ts)을 걸어 같은 LCP로 푼다. 법선 하중은 하위 단계마다 섀시 관절의 RNEA 렌치(가속은 걸러진 앞 하위 단계
+// 값)를 나눈 것이고, 바퀴가 오래 뜨거나 받쳐지지 않으면 wheelLift·tipping을 한 번 알린다(넘어지지는 않는다). 오도메트리(데드휠·
+// Pinpoint)는 하위 단계마다 실제 자세 변화 twistBetween(전, 후)로 센다. 바퀴가 없는 로봇은 3b처럼 기저가 고정이다(프레임이 바닥에
+// 놓여 있다).
+//
 // 엔코더 속도(모터 포트의 velocity, 데드휠 포함): 허브 펌웨어처럼 지난 50 ms 동안의 원시 틱 변화 × 20이다(encoderVelocity.ts:
-// 늘 20 틱/s의 배수, 약 25 ms 늦음, 처음 50 ms는 시작 position부터 셈). 원시 틱은 하위 단계마다 기록한다. 모터 모델의
-// RUN_USING_ENCODER 제어는 자기 연속 상태(ω)를 쓴다.
+// 늘 20 틱/s의 배수, 약 25 ms 늦음, 처음 50 ms는 시작 position부터 셈). 원시 틱은 하위 단계마다 기록한다.
 //
-// 벽: 외곽 다각형의 꼭짓점이 벽 안쪽 면(±WALL_INNER_HALF)을 넘으면 평행 이동으로만 밀어낸다(회전은 그대로). 이번
-// 하위 단계의 이동이 침투를 늘린 만큼만 되돌리므로 시작부터 벽에 걸쳐 있어도 튀지 않는다. 막혀도 모터 축(엔코더)은
-// 계속 돌고, 실제로 움직인 만큼만 데드휠·Pinpoint 포드·OTOS가 잰다.
-//
-// 메커니즘 관절(3b, spec.joints가 있을 때): 관절 동역학(articulation.ts)을 하위 단계마다 같은 반복에서 푼다. 관절을 구동하는
-// 모터는 DC 기어모터 + 허브 전력단 + 허브 펌웨어 제어(actuators.ts)로 돌고, 원시 틱은 관절 좌표(모터 출력축 각)에서 센다.
-// 바퀴 모터는 지금처럼 motorModel.ts다(같은 OpMode에서 두 모터 모델의 RUN_TO_POSITION이 다르게 군다: 3c까지의 편차).
-// 하위 단계 경계는 절대 1 ms 격자(0 ns부터)와 틱 경계다. 허브 제어 표본(10 ms 격자)이 그 격자 위에 있어 틱 간격이 달라도
-// 같은 시각에 표본을 뜬다. 관절이 없는 세계는 지금처럼 구간을 균등하게 나눠 입력열이 바이트 그대로다.
-// 관절 하위의 센서(IMU·OTOS·데드휠·Pinpoint)는 로봇 몸체에 붙은 것으로 계산한다(3b 한계, 렌더러가 경고한다).
+// 풀이가 실패하면(LCP가 수렴하지 않음 등, Articulation은 상태를 바꾸기 전에 던진다) 그 하위 단계의 모든 속도를 0으로 하고 위치는
+// 그대로 둔 채 다음 하위 단계에서 다시 푼다(worldError, 같은 detail은 실행마다 한 번).
+// 관절 하위의 센서(IMU·OTOS·데드휠·Pinpoint)는 섀시에 붙은 것으로 계산한다(3b 한계, 렌더러가 경고한다).
 
 export const SUBSTEP_NANOS = 1_000_000
 // 한 번에 이보다 많은 하위 단계로 나누지 않는다(아주 긴 구간은 하위 단계가 1 ms보다 길어진다)
 const MAX_SUBSTEPS = 10_000
-// 침투가 이보다 적게 늘면 막힘으로 치지 않는다(부동 소수점 잡음)
-const WALL_EPSILON = 1e-12
+// OTOS 가속도 레지스터 범위: SparkFun OTOS 드라이버의 int16 변환이 선가속 ±16 g, 각가속 ±1000π rad/s²다
+// (sidecar/sdk/com/qualcomm/hardware/sparkfun/SparkFunOTOS.java:119-141의 MPSS_TO_INT16 = 32768 / (16·9.80665),
+// RPSS_TO_INT16 = 32768 / (π·1000), 칩 흉내 OtosChip.java:50의 int16 포화). 동역학에서는 벽 충돌 하위 단계에 수십 g가
+// 나오므로 칩처럼 그 범위로 자른다(spec-3c §1.8).
+const OTOS_MAX_LINEAR_ACCEL = 16 * GRAVITY
+const OTOS_MAX_ANGULAR_ACCEL = 1000 * Math.PI
+// 하위 단계 하나의 포드 이동이 이보다 작으면(틱) 반올림 잡음으로 보고 세지 않는다. 가정: 동역학 풀이의 좌우 비대칭 반올림이
+// 곧게 달리는 로봇에 1e-16 m 수준의 옆 이동을 남기는데, 그것을 floor가 −1틱으로 세지 않게 한다(1e-9틱/ms는 1e-6틱/s라 실제
+// 이동으로는 보이지 않는다).
+const POD_NOISE_TICKS = 1e-9
 
 type Notice = { code: SimNoticeCode; params: Record<string, string> }
 
@@ -90,12 +103,12 @@ type DeadWheel = {
   hubVelocity: HubVelocityWindow
 }
 
-// 관절을 구동하는 모터 하나(동역학). 관절 좌표 φ(모터 출력축 각, 인스펙터 방향의 "앞")를 Articulation이 가진다.
-type JointMotor = {
+// 모터 하나의 동역학 상태. 좌표(관절 φ·바퀴 φ·자유 좌표)를 Articulation이 가진다.
+type DynamicMotor = {
   // Articulation 좌표 순번
   coordinate: number
   dc: DcGearMotor
-  // 출력축 1 rad의 엔코더 틱: 모터축 카운트 × 관절 동역학의 실제 감속비(actuatorData.ts jointEncoderTicksPerOutputRev)
+  // 출력축 1 rad의 엔코더 틱(관절 모터는 3b 규칙, 바퀴·자유 모터는 SDK 규칙)
   ticksPerRad: number
   controller: HubMotorController
   // 제어기가 보는 축 엔코더의 50 ms 창(포드와 포트를 함께 써도 펌웨어는 축 엔코더로 돈다고 가정한다)
@@ -106,7 +119,7 @@ type JointMotor = {
   positionPidf: [number, number, number, number]
   // 이번 하위 단계의 전력단("앞" 부호)
   stage: PowerStage
-  // 원시 허브 틱(소수)
+  // 원시 허브 틱(소수, 축 엔코더)
   raw: number
   // 단자 전류 크기(A)
   current: number
@@ -128,11 +141,8 @@ type JointServo = {
 
 type Motor = {
   spec: SimMotorSpec
-  // 구동계 모터(운동학). 관절 모터면 null
-  model: MotorModel | null
-  // 관절 모터(동역학). 구동계 모터면 null
-  joint: JointMotor | null
-  // 허브 각 → 바퀴 앞 굴림 부호(관절 모터는 허브 각 → φ)
+  dyn: DynamicMotor
+  // 허브 각 → 모터 좌표("앞") 부호
   forwardSign: number
   // 같은 장치 이름의 데드휠(실제 배선: 그 포트의 엔코더는 포드다)
   pod: DeadWheel | null
@@ -172,29 +182,42 @@ type State = Map<string, Map<string, number | boolean>>
 const finite = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
 
+const clamp = (value: number, limit: number): number => Math.max(-limit, Math.min(limit, value))
+
 // 장치 이름으로 출력을 찾는다(자기 속성만: 이름이 '__proto__'여도 프로토타입을 읽지 않게)
 function own(outputs: Record<string, DeviceValues>, device: string): DeviceValues | undefined {
   return Object.prototype.hasOwnProperty.call(outputs, device) ? outputs[device] : undefined
 }
 
+// 시험·맞춤용 물리 값 덮어쓰기(제품 코드는 쓰지 않는다: wheelData.ts 값 그대로)
+export type PhysicsWorldOptions = {
+  // 롤러 자유 방향 점성(s/m, ROLLER_VISCOUS)과 쿨롱 계수(ROLLER_COULOMB)
+  rollerViscous?: number
+  rollerCoulomb?: number
+  // 굴림 저항 계수(ROLLING_RESISTANCE)
+  rollingResistance?: number
+}
+
 // src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
-// kinematicWorld가 한다).
-export class KinematicWorld {
+// simulationWorld가 한다).
+export class PhysicsWorld {
   private readonly spec: WorldSpec
-  private readonly drivetrain: Drivetrain
   private readonly motors: Motor[]
   private readonly deadWheels: DeadWheel[]
   private readonly pinpoints: Pinpoint[]
   private readonly otos: Otos[]
-  // 바퀴 i를 구동하는 모터의 motors 순번(spec.wheels 순서), 없으면 −1
-  private readonly wheelMotors: number[]
-  // 메커니즘 관절(없으면 null: 운동학 2단계와 같은 경로)
+  // 동역학(모터·관절·바퀴가 하나도 없으면 null: 아무것도 움직이지 않는다)
   private readonly articulation: Articulation | null
   private readonly servos: JointServo[]
+  // 바퀴 접촉(spec.wheels 순서). 비어 있으면 기저가 고정이다.
+  private readonly wheels: WheelContact[]
+  // 이번 하위 단계의 바퀴 법선 하중(N)
+  private loads: number[]
+  private readonly support = new SupportMonitor()
+  private readonly roller: RollerResistance
+  private readonly rollingResistance: number
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
-  // 관절 계산이 실패해 관절을 멈췄다
-  private jointsFailed = false
 
   private tPrev: number | null = null
   private outputsPrev: Record<string, DeviceValues> = {}
@@ -204,10 +227,14 @@ export class KinematicWorld {
   private readonly notices: Notice[] = []
   private readonly noticeKeys = new Set<string>()
 
-  constructor(spec: WorldSpec) {
+  constructor(spec: WorldSpec, options: PhysicsWorldOptions = {}) {
     this.spec = spec
+    this.roller = {
+      viscous: options.rollerViscous ?? ROLLER_RESISTANCE.viscous,
+      coulomb: options.rollerCoulomb ?? ROLLER_RESISTANCE.coulomb
+    }
+    this.rollingResistance = options.rollingResistance ?? ROLLING_RESISTANCE
     this.poseNow = { ...spec.robot.start }
-    this.drivetrain = new Drivetrain(spec.wheels)
     this.deadWheels = spec.deadWheels.map((d) => ({
       spec: d,
       raw: 0,
@@ -215,11 +242,42 @@ export class KinematicWorld {
     }))
     const podByName = new Map<string, DeadWheel>()
     for (const pod of this.deadWheels) podByName.set(pod.spec.device, pod)
-    this.articulation = spec.joints.length > 0 ? new Articulation(spec.joints) : null
+    // 관절에 묶이지 않은 좌표의 armature: 관절 모터가 아닌 모터마다 회전자 반사 관성 + 그 모터가 구동하는 바퀴의 회전 관성(외부
+    // 감속비 제곱으로 나눔), 그다음 구동하지 않는 바퀴마다 그 바퀴의 회전 관성(spec.motors 순서, spec.wheels 순서)
+    const jointDevices = new Set<string>()
+    for (const joint of spec.joints)
+      if (joint.drive.kind === 'motor')
+        for (const device of joint.drive.devices) jointDevices.add(device)
+    const free: number[] = []
+    const freeOfMotor = spec.motors.map((m) => {
+      if (jointDevices.has(m.device)) return -1
+      const p = m.params
+      let inertia = p.rotorInertia * p.gearbox * p.gearbox
+      for (const w of spec.wheels)
+        if (w.motor === m.device) inertia += w.spinInertia / (w.gearRatio * w.gearRatio)
+      free.push(inertia)
+      return free.length - 1
+    })
+    const freeOfWheel = spec.wheels.map((w) => {
+      if (w.motor !== null) return -1
+      free.push(w.spinInertia)
+      return free.length - 1
+    })
+    const floating = spec.wheels.length > 0
+    this.articulation =
+      spec.joints.length > 0 || free.length > 0
+        ? new Articulation(spec.joints, {
+            base: floating ? { body: spec.robot.body, start: spec.robot.start } : undefined,
+            free,
+            loadFilterTau: LOAD_FILTER_TAU
+          })
+        : null
+    const art = this.articulation
     // 관절 모터 장치 → (좌표, 기어모터 값). parseWorldSpec가 한 모터를 한 관절에만 두고 바퀴와 겹치지 않음을 확인한다.
     const jointMotors = new Map<string, { coordinate: number; dc: DcGearMotor }>()
     this.servos = []
-    this.articulation?.coordinates.forEach((coordinate, index) => {
+    art?.coordinates.forEach((coordinate, index) => {
+      if (coordinate.joint < 0) return
       const drive = spec.joints[coordinate.joint].drive
       if (coordinate.kind === 'motor' && drive.kind === 'motor') {
         const dc = new DcGearMotor(drive.params)
@@ -237,28 +295,30 @@ export class KinematicWorld {
         })
       }
     })
-    this.motors = spec.motors.map((m) => {
+    this.motors = spec.motors.map((m, i) => {
       const pod = podByName.get(m.device) ?? null
-      const base = {
+      const hubVelocity = pod ? null : new HubVelocityWindow()
+      const driven = jointMotors.get(m.device)
+      const dc = driven ? driven.dc : new DcGearMotor(m.params)
+      const coordinate = driven
+        ? driven.coordinate
+        : (art as Articulation).freeCoordinates[freeOfMotor[i]]
+      const ticksPerRev = driven
+        ? jointEncoderTicksPerOutputRev(m.modelTag, dc.gearbox)
+        : ticksPerOutputRev(motorType(m.modelTag), m.gearbox)
+      return {
         spec: m,
         forwardSign: rotationSign(motorType(m.modelTag)) * m.directionSign,
         pod,
-        hubVelocity: pod ? null : new HubVelocityWindow(),
+        hubVelocity,
         shaftOffset: 0,
-        lastEncoderResets: 0
-      }
-      const driven = jointMotors.get(m.device)
-      if (!driven) return { ...base, model: new MotorModel(m.modelTag, m.gearbox), joint: null }
-      const control = base.hubVelocity ?? new HubVelocityWindow()
-      return {
-        ...base,
-        model: null,
-        joint: {
-          coordinate: driven.coordinate,
-          dc: driven.dc,
-          ticksPerRad: jointEncoderTicksPerOutputRev(m.modelTag, driven.dc.gearbox) / (2 * Math.PI),
+        lastEncoderResets: 0,
+        dyn: {
+          coordinate,
+          dc,
+          ticksPerRad: ticksPerRev / (2 * Math.PI),
           controller: new HubMotorController(),
-          control,
+          control: hubVelocity ?? new HubVelocityWindow(),
           out: readMotorOutputs(undefined),
           velocityPidf: DEFAULT_VELOCITY_PIDF,
           positionPidf: DEFAULT_POSITION_PIDF,
@@ -268,9 +328,18 @@ export class KinematicWorld {
         }
       }
     })
-    this.wheelMotors = spec.wheels.map((w) =>
-      w.motor === null ? -1 : spec.motors.findIndex((m) => m.device === w.motor)
-    )
+    this.wheels = spec.wheels.map((w, i) => {
+      if (w.motor === null)
+        return wheelContact(
+          w,
+          (art as Articulation).freeCoordinates[freeOfWheel[i]],
+          false,
+          this.roller.coulomb
+        )
+      const motor = this.motors.find((m) => m.spec.device === w.motor) as Motor
+      return wheelContact(w, motor.dyn.coordinate, true, this.roller.coulomb)
+    })
+    this.loads = spec.wheels.map(() => 0)
     this.pinpoints = spec.pinpoints.map((p) => ({
       spec: p,
       encX: 0,
@@ -297,7 +366,6 @@ export class KinematicWorld {
     const first = this.tPrev === null
     const dtNanos = first ? 0 : tNanos - (this.tPrev as number)
     this.blocked = false
-    const yawBefore = this.poseNow.yaw
     if (dtNanos > 0) this.integrate(this.tPrev as number, dtNanos)
     if (first) {
       this.recordEncoders(tNanos)
@@ -306,7 +374,7 @@ export class KinematicWorld {
     if (dtNanos > 0 || first) this.tPrev = tNanos
     this.checkSharedPorts(outputs)
     this.outputsPrev = outputs
-    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9, yawBefore), first)
+    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9), first)
   }
 
   pose(): SimPose {
@@ -316,8 +384,13 @@ export class KinematicWorld {
       yaw: this.poseNow.yaw,
       blocked: this.blocked
     }
-    if (this.articulation) pose.joints = this.articulation.q()
+    if (this.articulation && this.spec.joints.length > 0) pose.joints = this.articulation.q()
     return pose
+  }
+
+  // 이번 하위 단계의 바퀴 법선 하중(N, spec.wheels 순서, 시험·표시용)
+  supportLoads(): readonly number[] {
+    return this.loads.slice()
   }
 
   drainNotices(): Notice[] {
@@ -329,7 +402,7 @@ export class KinematicWorld {
   // [tStart, tStart + dtNanos] 구간
   private integrate(tStart: number, dtNanos: number): void {
     const voltage = this.spec.batteryVoltage
-    const commands: (MotorCommand | null)[] = this.motors.map((motor) => {
+    for (const motor of this.motors) {
       const values = own(this.outputsPrev, motor.spec.device)
       const out = readMotorOutputs(values)
       // 포드와 포트를 함께 쓰면 사이드카의 encoderOffset은 포드 틱이다. 시뮬레이터는 축 엔코더로 제어하므로 리셋을
@@ -337,19 +410,15 @@ export class KinematicWorld {
       // 한 루프에서 리셋 → RUN_TO_POSITION을 하면 틱 경계가 STOP_AND_RESET_ENCODER 모드를 보지 못할 수 있다.
       if (motor.pod) {
         if (out.encoderResets !== motor.lastEncoderResets)
-          motor.shaftOffset = Math.floor(rawOf(motor))
+          motor.shaftOffset = Math.floor(motor.dyn.raw)
       } else {
         motor.shaftOffset = out.encoderOffset
       }
       motor.lastEncoderResets = out.encoderResets
-      if (motor.joint) {
-        motor.joint.out = out
-        motor.joint.velocityPidf = readPidf(values, 'velocityPidf', DEFAULT_VELOCITY_PIDF)
-        motor.joint.positionPidf = readPidf(values, 'positionPidf', DEFAULT_POSITION_PIDF)
-        return null
-      }
-      return (motor.model as MotorModel).command(out, voltage, motor.shaftOffset)
-    })
+      motor.dyn.out = out
+      motor.dyn.velocityPidf = readPidf(values, 'velocityPidf', DEFAULT_VELOCITY_PIDF)
+      motor.dyn.positionPidf = readPidf(values, 'positionPidf', DEFAULT_POSITION_PIDF)
+    }
     for (const servo of this.servos)
       servo.command = servoCommand(
         own(this.outputsPrev, servo.device),
@@ -358,75 +427,81 @@ export class KinematicWorld {
         servo.zeroPulseUs,
         servo.direction
       )
-    const { starts, ends, hs } = this.articulation
-      ? gridSubsteps(tStart, dtNanos)
-      : uniformSubsteps(tStart, dtNanos)
-    const rolls = new Array<number>(this.spec.wheels.length).fill(0)
-    const angles = new Array<number>(this.motors.length).fill(0)
+    const { starts, ends, hs } = gridSubsteps(tStart, dtNanos)
     for (let s = 0; s < hs.length; s++) {
-      const h = hs[s]
-      if (this.articulation) this.jointSubstep(this.articulation, starts[s], h, voltage)
-      this.motors.forEach((motor, i) => {
-        const command = commands[i]
-        if (motor.model && command) angles[i] = motor.model.advance(command, h)
-      })
-      this.spec.wheels.forEach((wheel, i) => {
-        const index = this.wheelMotors[i]
-        rolls[i] =
-          index < 0
-            ? 0
-            : ((angles[index] * this.motors[index].forwardSign) / wheel.gearRatio) * wheel.radius
-      })
-      this.moveRobot(this.drivetrain.twist(rolls))
+      if (this.articulation) this.substep(this.articulation, starts[s], hs[s], voltage)
       this.recordEncoders(ends[s])
     }
-    if (this.articulation) this.jointCurrents(this.articulation, voltage)
+    if (this.articulation) this.motorCurrents(this.articulation, voltage)
   }
 
-  // ---- 관절 ----
-
-  // 하위 단계 하나: 표본 시각이면 허브 제어기를 돌리고, 전력단·서보 명령으로 관절 동역학을 h만큼 푼 뒤 원시 틱을 센다
-  private jointSubstep(articulation: Articulation, t: number, h: number, voltage: number): void {
+  // 하위 단계 하나: 표본 시각이면 허브 제어기를 돌리고, 전력단·서보 명령·바퀴 하중으로 동역학을 h만큼 푼 뒤 원시 틱과
+  // 오도메트리를 센다
+  private substep(art: Articulation, t: number, h: number, voltage: number): void {
     if (t >= this.nextSample) {
       this.nextSample = (Math.floor(t / HUB_CONTROL_PERIOD_NANOS) + 1) * HUB_CONTROL_PERIOD_NANOS
       for (const motor of this.motors) {
-        const jm = motor.joint
-        if (!jm) continue
-        jm.controller.sample({
-          out: jm.out,
-          velocityPidf: jm.velocityPidf,
-          positionPidf: jm.positionPidf,
-          position: Math.floor(jm.raw),
-          velocity: jm.control.ticksPerSecond(),
+        const dm = motor.dyn
+        dm.controller.sample({
+          out: dm.out,
+          velocityPidf: dm.velocityPidf,
+          positionPidf: dm.positionPidf,
+          position: Math.floor(dm.raw),
+          velocity: dm.control.ticksPerSecond(),
           rawTarget:
-            jm.out.targetPosition === null ? null : jm.out.targetPosition + motor.shaftOffset
+            dm.out.targetPosition === null ? null : dm.out.targetPosition + motor.shaftOffset
         })
       }
     }
     for (const motor of this.motors) {
-      const jm = motor.joint
-      if (!jm) continue
-      const stage = jm.controller.stage(jm.out)
-      jm.stage =
+      const dm = motor.dyn
+      const stage = dm.controller.stage(dm.out)
+      dm.stage =
         stage.kind === 'duty' ? { kind: 'duty', duty: stage.duty * motor.forwardSign } : stage
     }
-    if (this.jointsFailed) return
+    const from = art.basePose()
+    let walls: ContactRow[] = []
+    let contacts: ContactSet | undefined
+    if (from) {
+      contacts = this.contacts(art, from, h)
+      walls = contacts.rows.filter(isWallNormal)
+    }
     try {
-      articulation.step(h, (z, v) => this.driveForces(z, v, voltage))
+      art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
     } catch (error) {
-      // 수치가 터지면(Articulation은 상태를 바꾸기 전에 던진다) 관절을 그 자리에 멈추고 한 번 알린다. 구동계는 계속 돈다.
-      this.jointsFailed = true
-      articulation.v.fill(0)
+      // 수치가 터지면(Articulation은 상태를 바꾸기 전에 던진다) 이 하위 단계는 모든 속도를 0으로 두고 위치는 그대로 둔다.
+      // 다음 하위 단계에서 다시 푼다(같은 detail은 실행마다 한 번 알린다).
+      art.v.fill(0)
       this.notify('worldError', { detail: error instanceof Error ? error.message : String(error) })
       return
     }
     for (const motor of this.motors) {
-      const jm = motor.joint
-      if (jm) jm.raw = motor.forwardSign * jm.ticksPerRad * articulation.z[jm.coordinate]
+      const dm = motor.dyn
+      dm.raw = motor.forwardSign * dm.ticksPerRad * art.z[dm.coordinate]
+    }
+    const to = art.basePose()
+    if (from && to) {
+      this.moveRobot(from, to)
+      if (walls.some((row) => art.contactImpulse(row.key) > 0)) this.blocked = true
     }
   }
 
-  // 관절 좌표마다 구동 힘(모터: 전기 토크 + 기어 손실·마찰 상자, 서보: PD·포화·풀림)
+  // 이번 하위 단계의 바퀴 하중(걸러진 가속의 기저 렌치를 나눔)·받침 알림·바퀴 행·벽 행
+  private contacts(art: Articulation, pose: Pose2, h: number): ContactSet {
+    const m = art.coordinates.length
+    const wrench = art.baseWrench() as { fz: number; mx: number; my: number }
+    const result = wheelLoads(this.wheels, wrench)
+    this.loads = result.loads
+    const alerts = this.support.update(result, wrench.fz, h)
+    if (alerts.wheelLift) this.notify('wheelLift', {})
+    if (alerts.tipping) this.notify('tipping', {})
+    const wheel = wheelRows(this.wheels, this.loads, pose.yaw, h, m, this.roller)
+    const velocity = art.baseVelocity() as { vx: number; vy: number; omega: number }
+    const walls = wallRows(this.spec.robot.footprint, pose, velocity, h, m)
+    return { rows: [...wheel.rows, ...walls], damping: wheel.damping }
+  }
+
+  // 좌표마다 구동 힘(모터: 전기 토크 + 기어 손실·마찰 상자, 바퀴 좌표: 굴림 저항·베어링 마찰 상자, 서보: PD·포화·풀림)
   private driveForces(z: readonly number[], v: readonly number[], voltage: number): DriveForces {
     const m = z.length
     const forces: DriveForces = {
@@ -438,13 +513,12 @@ export class KinematicWorld {
       regions: ''
     }
     for (const motor of this.motors) {
-      const jm = motor.joint
-      if (!jm) continue
-      const c = jm.coordinate
-      const dc = jm.dc
+      const dm = motor.dyn
+      const c = dm.coordinate
+      const dc = dm.dc
       const g = dc.gearbox
       const omega = v[c]
-      const terms = dc.terms(jm.stage, voltage, omega)
+      const terms = dc.terms(dm.stage, voltage, omega)
       forces.force[c] += terms.force
       forces.damping[c] += terms.damping + g * g * dc.viscous
       // 모터가 미는 쪽으로 움직임을 막는 기어 손실(1 − η)·|τ|(한쪽 상자)와 모터축 쿨롱 마찰 G·τ_c(양쪽)
@@ -455,6 +529,11 @@ export class KinematicWorld {
       forces.boxHi[c] += coulomb + (torque < 0 ? loss : 0)
       forces.regions += terms.region
     }
+    this.wheels.forEach((wheel, i) => {
+      const friction = wheelCoordinateFriction(wheel, this.loads[i], this.rollingResistance)
+      forces.boxLo[wheel.coordinate] -= friction
+      forces.boxHi[wheel.coordinate] += friction
+    })
     for (const servo of this.servos) {
       const c = servo.coordinate
       const r = servo.ratio
@@ -470,69 +549,33 @@ export class KinematicWorld {
   }
 
   // 구간 끝의 단자 전류(크기). 허브 전류 측정(VNH5050 전류 감지)은 크기만 보고한다고 본다(가정).
-  private jointCurrents(articulation: Articulation, voltage: number): void {
+  private motorCurrents(art: Articulation, voltage: number): void {
     for (const motor of this.motors) {
-      const jm = motor.joint
-      if (!jm) continue
-      const current = jm.dc.current(jm.stage, voltage, articulation.v[jm.coordinate])
-      jm.current = Math.abs(current)
+      const dm = motor.dyn
+      dm.current = Math.abs(dm.dc.current(dm.stage, voltage, art.v[dm.coordinate]))
     }
   }
 
   // 하위 단계 끝(과 첫 틱)의 원시 엔코더 틱을 허브 속도 측정에 기록한다
   private recordEncoders(tNanos: number): void {
     for (const motor of this.motors) {
-      const raw = rawOf(motor)
+      const raw = motor.dyn.raw
       motor.hubVelocity?.record(tNanos, raw)
-      // 포드와 포트를 함께 쓰는 관절 모터는 제어기 창을 따로 둔다(아니면 hubVelocity와 같은 창이다)
-      if (motor.joint && motor.joint.control !== motor.hubVelocity)
-        motor.joint.control.record(tNanos, raw)
+      // 포드와 포트를 함께 쓰는 모터는 제어기 창을 따로 둔다(아니면 hubVelocity와 같은 창이다)
+      if (motor.dyn.control !== motor.hubVelocity) motor.dyn.control.record(tNanos, raw)
     }
     for (const pod of this.deadWheels) pod.hubVelocity.record(tNanos, pod.raw)
   }
 
-  // 로봇을 변위만큼 움직이고(벽에 막히면 평행 이동만 줄인다) 실제로 움직인 만큼 오도메트리를 센다
-  private moveRobot(twist: Twist): void {
-    if (twist.dx === 0 && twist.dy === 0 && twist.dTheta === 0) return
-    const from = this.poseNow
-    let to = applyTwist(from, twist)
-    const pushed = this.pushFromWalls(from, to)
-    let actual = twist
-    if (pushed) {
-      to = pushed
-      this.blocked = true
-      actual = twistBetween(from, to)
-    }
+  // 기저가 from에서 to로 움직였다: 실제 변위(로봇 좌표 twist)로 오도메트리를 센다
+  private moveRobot(from: Pose2, to: Pose2): void {
+    const actual = twistBetween(from, to)
     this.poseNow = to
     for (const pod of this.deadWheels)
-      pod.raw += podTravel(actual, pod.spec.position, pod.spec.measures) * podScale(pod.spec)
+      pod.raw += significant(
+        podTravel(actual, pod.spec.position, pod.spec.measures) * podScale(pod.spec)
+      )
     for (const pinpoint of this.pinpoints) this.pinpointStep(pinpoint, actual, from.yaw, to.yaw)
-  }
-
-  // 벽 안쪽 면을 넘은 꼭짓점이 늘었으면 평행 이동으로 되돌린 자세, 아니면 null
-  private pushFromWalls(from: Pose2, to: Pose2): Pose2 | null {
-    const before = extent(this.spec.robot.footprint, from)
-    const after = extent(this.spec.robot.footprint, to)
-    const limit = WALL_INNER_HALF
-    let { x, y } = to
-    let pushed = false
-    const grow = (now: number, then: number): number => {
-      const added = Math.max(0, now) - Math.max(0, then)
-      return added > WALL_EPSILON ? added : 0
-    }
-    const px = grow(after.maxX - limit, before.maxX - limit)
-    const nx = grow(-limit - after.minX, -limit - before.minX)
-    const py = grow(after.maxY - limit, before.maxY - limit)
-    const ny = grow(-limit - after.minY, -limit - before.minY)
-    if (px > 0 || nx > 0) {
-      x += nx - px
-      pushed = true
-    }
-    if (py > 0 || ny > 0) {
-      y += ny - py
-      pushed = true
-    }
-    return pushed ? { x, y, yaw: to.yaw } : null
   }
 
   // Pinpoint 펌웨어: 포드 틱(정수, 팀이 정한 방향 적용)과 팀이 쓴 해상도·오프셋, 내장 IMU 요(진짜 요)로 추적점의 이동을
@@ -544,9 +587,13 @@ export class KinematicWorld {
     const oldX = Math.floor(p.encX)
     const oldY = Math.floor(p.encY)
     if (p.spec.xPod)
-      p.encX += podTravel(actual, p.spec.xPod, 'forward') * scale * (p.spec.xReversed ? -1 : 1)
+      p.encX += significant(
+        podTravel(actual, p.spec.xPod, 'forward') * scale * (p.spec.xReversed ? -1 : 1)
+      )
     if (p.spec.yPod)
-      p.encY += podTravel(actual, p.spec.yPod, 'strafe') * scale * (p.spec.yReversed ? -1 : 1)
+      p.encY += significant(
+        podTravel(actual, p.spec.yPod, 'strafe') * scale * (p.spec.yReversed ? -1 : 1)
+      )
     const out = own(this.outputsPrev, p.spec.device)
     const ticksPerMm = finite(out?.ticksPerMm, 0)
     if (!(ticksPerMm > 0)) return
@@ -583,8 +630,8 @@ export class KinematicWorld {
 
   // ---- 입력 ----
 
-  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0), yawBefore: 구간 시작의 요.
-  private inputs(dt: number, yawBefore: number): State {
+  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0).
+  private inputs(dt: number): State {
     const state: State = new Map()
     const put = (device: string, key: string, value: number | boolean): void => {
       let values = state.get(device)
@@ -601,11 +648,10 @@ export class KinematicWorld {
     for (const motor of this.motors) {
       // 포드와 포트를 함께 쓰면 그 포트의 엔코더는 포드다(아래)
       if (motor.hubVelocity) {
-        put(motor.spec.device, 'position', Math.floor(rawOf(motor)))
+        put(motor.spec.device, 'position', Math.floor(motor.dyn.raw))
         put(motor.spec.device, 'velocity', motor.hubVelocity.ticksPerSecond())
       }
-      // 관절 모터만 단자 전류를 보낸다(구동계 모터 모델에는 토크가 없다)
-      if (motor.joint) put(motor.spec.device, 'current', motor.joint.current)
+      put(motor.spec.device, 'current', motor.dyn.current)
     }
     for (const pod of this.deadWheels) {
       put(pod.spec.device, 'position', Math.floor(pod.raw))
@@ -613,7 +659,7 @@ export class KinematicWorld {
     }
 
     // 리밋 스위치: 그 끝에서 within 안이면 눌림. touch는 pressed true, digital은 state false(풀업 핀이 LOW)
-    if (this.articulation) {
+    if (this.articulation && this.spec.joints.length > 0) {
       const q = this.articulation.q()
       this.spec.joints.forEach((joint, i) => {
         const limits = joint.limits
@@ -629,7 +675,8 @@ export class KinematicWorld {
 
     const start = this.spec.robot.start.yaw
     const yaw = this.poseNow.yaw - start
-    const yawRate = rate(this.poseNow.yaw, yawBefore)
+    // 요 속도: 기저의 지금 각속도(바퀴가 없으면 기저가 고정이라 0)
+    const yawRate = this.articulation?.baseVelocity()?.omega ?? 0
 
     for (const p of this.pinpoints) {
       put(p.spec.device, 'x', p.x)
@@ -692,9 +739,12 @@ export class KinematicWorld {
     put(device, 'vx', velocity.vx)
     put(device, 'vy', velocity.vy)
     put(device, 'vh', velocity.vh)
-    put(device, 'ax', dt > 0 ? (velocity.vx - prev.vx) / dt : 0)
-    put(device, 'ay', dt > 0 ? (velocity.vy - prev.vy) / dt : 0)
-    put(device, 'ah', dt > 0 ? (velocity.vh - prev.vh) / dt : 0)
+    // 가속도는 칩 레지스터 범위로 자른다(OTOS_MAX_LINEAR_ACCEL)
+    const accel = (now: number, then: number, limit: number): number =>
+      dt > 0 ? clamp((now - then) / dt, limit) : 0
+    put(device, 'ax', accel(velocity.vx, prev.vx, OTOS_MAX_LINEAR_ACCEL))
+    put(device, 'ay', accel(velocity.vy, prev.vy, OTOS_MAX_LINEAR_ACCEL))
+    put(device, 'ah', accel(velocity.vh, prev.vh, OTOS_MAX_ANGULAR_ACCEL))
     o.sensorAtTick = sensor
     o.velocity = velocity
   }
@@ -724,29 +774,9 @@ export class KinematicWorld {
   }
 }
 
-// 모터의 원시 허브 틱(소수): 구동계 모터는 운동학 모델, 관절 모터는 관절 좌표에서 센 값
-function rawOf(motor: Motor): number {
-  return motor.model ? motor.model.raw : (motor.joint as JointMotor).raw
-}
-
 type Substeps = { starts: number[]; ends: number[]; hs: number[] }
 
-// 관절이 없는 세계: 구간을 1 ms 이하로 균등하게 나눈다(2단계와 같은 연산이라 입력열이 바이트 그대로다)
-function uniformSubsteps(tStart: number, dtNanos: number): Substeps {
-  const steps = Math.max(1, Math.min(MAX_SUBSTEPS, Math.ceil(dtNanos / SUBSTEP_NANOS)))
-  const h = dtNanos / 1e9 / steps
-  const starts: number[] = []
-  const ends: number[] = []
-  const hs: number[] = []
-  for (let s = 0; s < steps; s++) {
-    starts.push(s === 0 ? tStart : ends[s - 1])
-    ends.push(s + 1 === steps ? tStart + dtNanos : tStart + (dtNanos * (s + 1)) / steps)
-    hs.push(h)
-  }
-  return { starts, ends, hs }
-}
-
-// 관절이 있는 세계: 0 ns부터의 절대 격자(1 ms, 허브 제어 표본 10 ms를 포함)와 구간 끝에서 끊는다. 아주 긴 구간은
+// 하위 단계: 0 ns부터의 절대 격자(1 ms, 허브 제어 표본 10 ms를 포함)와 구간 끝에서 끊는다. 아주 긴 구간은
 // MAX_SUBSTEPS를 넘지 않게 격자를 10배씩 넓힌다(그때 제어 표본은 격자를 지난 첫 하위 단계에서 뜬다).
 function gridSubsteps(tStart: number, dtNanos: number): Substeps {
   const tEnd = tStart + dtNanos
@@ -768,28 +798,11 @@ function podTravel(twist: Twist, p: Vec2, measures: 'forward' | 'strafe'): numbe
   return measures === 'forward' ? twist.dx - twist.dTheta * p.y : twist.dy + twist.dTheta * p.x
 }
 
-function podScale(spec: SimDeadWheelSpec): number {
-  return spec.ticksPerMeter * (spec.reversed ? -1 : 1)
+// 포드 틱 증가(반올림 잡음 POD_NOISE_TICKS 아래는 0)
+function significant(ticks: number): number {
+  return Math.abs(ticks) < POD_NOISE_TICKS ? 0 : ticks
 }
 
-// 외곽 다각형(로봇 좌표)을 자세에 놓았을 때 필드 좌표의 범위
-function extent(
-  footprint: readonly Vec2[],
-  pose: Pose2
-): { minX: number; maxX: number; minY: number; maxY: number } {
-  const cos = Math.cos(pose.yaw)
-  const sin = Math.sin(pose.yaw)
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-  for (const p of footprint) {
-    const x = pose.x + cos * p.x - sin * p.y
-    const y = pose.y + sin * p.x + cos * p.y
-    if (x < minX) minX = x
-    if (x > maxX) maxX = x
-    if (y < minY) minY = y
-    if (y > maxY) maxY = y
-  }
-  return { minX, maxX, minY, maxY }
+function podScale(spec: SimDeadWheelSpec): number {
+  return spec.ticksPerMeter * (spec.reversed ? -1 : 1)
 }

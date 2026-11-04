@@ -765,7 +765,7 @@ const en: Messages = {
     revealFile: 'Show in folder',
     revealHint: 'Double-click or press Enter to show this file in the file manager.',
     rrTuningHint:
-      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (the page for this kind of result under http://192.168.43.1:8080/tuning/): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's kinematic model and do not replace tuning on the real robot.",
+      "A Road Runner tuning OpMode wrote this result to SandBot's simulated storage (where the robot's /sdcard/FIRST would be). SandBot does not serve the Road Runner regression web pages. A robot running Road Runner serves them (the page for this kind of result under http://192.168.43.1:8080/tuning/): connect to the robot and choose this file with [Browse] to see the plot and the fitted values. The values come from SandBot's simulator and do not replace tuning on the real robot.",
     diagnosticKind: {
       error: 'error',
       warning: 'warning',
@@ -787,6 +787,12 @@ const en: Messages = {
       worldNoWheels:
         'The robot has no wheel components, so it will not move. Add [Add component → Wheel] to the wheel parts (or groups).',
       worldWheelNoMotor: 'Wheel {{name}} has no drive motor, so it only rolls along.',
+      worldFewWheels:
+        'The wheel contacts are fewer than three or lie on one line, so the robot weight cannot be split between the wheels. The simulator treats the robot as never tipping over.',
+      worldChassisMass:
+        'The robot body (mass without the joint bodies) is only {{mass}} kg, so the default mass of {{fallback}} kg is used. Enter the weighed mass in the Rigidbody card.',
+      worldChassisMassPending:
+        'The robot body still has {{count}} mesh(es) loading or not loaded, so its mass, center of mass and inertia are computed without them. The robot may accelerate and brake differently from the real one.',
       worldWheelMotorMissing:
         'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
       worldRollersAmbiguous:
@@ -880,6 +886,10 @@ const en: Messages = {
           'The motor {{device}} runs in an encoder mode (RUN_USING_ENCODER or RUN_TO_POSITION). A dead wheel shares its port, so on the real robot it is controlled by the pod encoder, but the simulator assumes the motor shaft encoder.',
         worldError:
           'The simulator failed while computing and keeps sending the previous sensor values ({{detail}}).',
+        tipping:
+          'The robot centre of mass went outside what the wheels can support (a real robot may tilt or tip over). The simulator only computes on the floor plane, so the robot does not tip.',
+        wheelLift:
+          'One or more wheels stayed off the floor with no load for more than 0.1 s. Those wheels spin freely meanwhile.',
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -1153,6 +1163,23 @@ const en: Messages = {
         'In the standard layout where the rollers form an X seen from above, the wheels at the front-left and back-right are the front-left/back-right type. Auto uses the quadrant around the center of the mecanum wheels.',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedNoMotor: 'Choose a drive motor to see the top speed.',
+      friction: 'Friction',
+      frictionDefault: 'Kind default ({{value}})',
+      frictionHint:
+        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to a roller-axis coefficient (√2·μ minus the roller resistance share), so that a locked wheel still drags with this coefficient. Leave it empty to use the kind default (an assumption, not measured).',
+      wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
+      wheelMassDefault:
+        'Wheel mass {{mass}} (kind default, mass unknown) · spin inertia {{inertia}} kg·m²',
+      wheelMassDefaultHint:
+        "The mass model does not know this wheel's mass (shapes loading or not loaded, surface meshes, a group without shapes, or nothing left after subtracting its hardware), so the spin inertia uses the kind's default mass. You can enter a mass in the mass card.",
+      wheelMassClipped:
+        'Wheel mass {{mass}} (clipped from the mass model value {{model}}) · spin inertia {{inertia}} kg·m²',
+      wheelMassClippedHint:
+        'The mass under this wheel is too large or too small for a single wheel, so the spin inertia uses it clipped to {{min}}–{{max}}. Put the wheel component on the wheel part (or a group holding only the wheel).',
+      staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
+      staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
+      frictionRejected:
+        'Enter a friction coefficient from {{min}} to {{max}}. Leave it empty to use the kind default.',
       motorMissingWarning:
         'The drive motor is not in this robot (deleted or on another robot). The wheel is not driven when running.',
       rollersAmbiguousWarning:
@@ -1165,6 +1192,12 @@ const en: Messages = {
       title: 'Drivetrain (simulator)',
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
+      traction: 'Forward traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      tractionHint:
+        'The force the floor can give toward the robot front (+X) while all wheels slip, divided by the robot mass. Each driven wheel counts with its load at rest, friction coefficient and rolling direction and rollers (mecanum, omni). Wheels rolling at an angle, as in an X-drive, push forward less (on omni wheels the roller resistance opposes the motion and lowers it further), and a wheel rolling sideways (H-drive) does not push forward.',
+      topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
+      topSpeedRange:
+        'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',
       none: 'No wheels. Add [Add component → Wheel] to the wheel parts to make the robot move when running.'
     },
     categories: {
@@ -1233,9 +1266,9 @@ const en: Messages = {
     },
     propHints: {
       stallTorque:
-        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+        'The torque the simulator uses for this motor (wheel, joint, intake and so on). 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The generated code does not use it.',
       freeSpeed:
-        'Used only by the dynamics of the joint (Articulation Body) this motor drives. 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The drivetrain wheel simulation and the generated code do not use it.',
+        'The speed the simulator uses for this motor (wheel, joint, intake and so on). 0 uses the datasheet value for the model and ratio; enter a measured value to override it. The generated code does not use it.',
       limitDistance:
         'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
       limitAngle:
@@ -1339,6 +1372,8 @@ const en: Messages = {
       otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
+      motorOutputRatio:
+        'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · torque and speed use the actual ratio {{ratio}}:1',
       jointMotorOutput:
         'Joint: output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · actual ratio {{ratio}}:1',
       deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'

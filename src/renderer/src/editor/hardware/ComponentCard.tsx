@@ -133,10 +133,13 @@ function derivedText(
   }
 }
 
-// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다. 관절을 구동하는 모터는
-// 관절 시뮬레이션이 쓰는 값(데이터시트 기어모터 표의 실제 감속비·무부하 속도와 덮어쓰기, 출력축 틱 = 모터축 카운트 × 실제
-// 감속비 — world.ts와 같은 jointEncoderTicksPerOutputRev)이고, 구동계 바퀴 규칙(SDK ticksPerRev ÷ gearing × gearbox)과
-// 다를 수 있어(UltraPlanetary 560 → 530, Core Hex 72:1은 288) 실제 감속비를 함께 보인다.
+// 시뮬레이터 전용 속성에서 구한 값(모터 출력축 속도·틱, 데드휠 포드 해상도). 생성 코드와 관계없다. 무부하 속도는 모든
+// 모터가 시뮬레이터에서 쓰는 데이터시트 기어모터 값(actuatorData.ts의 실제 감속비·무부하 속도와 덮어쓰기,
+// motorComponentParams — 세계 설명의 SimMotorSpec.params와 같다)이다. 틱은 엔코더 규칙을 따른다:
+// - 관절을 구동하는 모터: 출력축 틱 = 모터축 카운트 × 실제 감속비(world.ts와 같은 jointEncoderTicksPerOutputRev)
+// - 바퀴·어디에도 붙지 않은 모터: SDK 규칙 ticksPerRev ÷ gearing × gearbox(motorOutput, spec-3c §1.2)
+// 두 규칙이 다를 수 있어(UltraPlanetary 560 → 530, Core Hex 72:1은 288) 관절 줄은 늘, 그 밖은 토크·속도의 실제 감속비가
+// 감속비 칸(SDK gearing)과 다를 때만 실제 감속비를 함께 보인다.
 function simulationText(
   t: ReturnType<typeof looseT>,
   component: HardwareComponent,
@@ -158,11 +161,17 @@ function simulationText(
           ratio: formatNumber(params.gearbox, 2)
         })
       }
+      const params = motorComponentParams(component.props)
       const output = motorOutput(component.props)
-      return t('hardware.derived.motorOutput', {
-        rpm: formatNumber(output.freeRpm, 0),
-        ticks: formatNumber(output.ticksPerRev, 1)
-      })
+      const values = {
+        rpm: formatNumber((params.freeSpeed * 60) / (2 * Math.PI), 0),
+        ticks: formatNumber(output.ticksPerRev, 1),
+        ratio: formatNumber(params.gearbox, 2)
+      }
+      // 보이는 자릿수로 비교한다(goBILDA 19.2:1의 실제 19.203은 같은 감속비다)
+      return values.ratio === formatNumber(output.gearbox, 2)
+        ? t('hardware.derived.motorOutput', values)
+        : t('hardware.derived.motorOutputRatio', values)
     }
     case 'deadWheel':
       return t('hardware.derived.deadWheelPod', {
@@ -194,8 +203,8 @@ function ComponentCard({
   const update = (patch: Partial<HardwareComponent>): void =>
     updateComponent(objectId, component.id, patch)
   const setProp = (key: string, value: string | number): void => update({ props: { [key]: value } })
-  // 정지 토크·무부하 속도 덮어쓰기는 관절 구동만 읽는다(visibleWhenDrivesJoint). 관절을 구동하는 모터의 감속비 "모델
-  // 기본"과 출력축 줄은 관절 시뮬레이션의 값(데이터시트 실제 감속비)이다.
+  // 관절을 구동하는 모터의 감속비 "모델 기본"과 출력축 줄은 관절 시뮬레이션의 값(데이터시트 실제 감속비, 엔코더도 그
+  // 감속비)이다. 정지 토크·무부하 속도 덮어쓰기는 모든 모터에 보인다(모든 모터가 데이터시트 기어모터로 돈다).
   const drivesJoint = type === 'motor' && motorDrivesJoint(objects, objectId, component.id)
   const simulated = simulationText(tl, component, drivesJoint)
 
@@ -236,6 +245,8 @@ function ComponentCard({
         // 감속비 0은 모델 기본: 실제로 쓰는 값을 보이고, 아주 작은 값을 넣으면 모델 기본으로 돌린다. 구동계 바퀴는 SDK
         // gearing(motorGearbox), 관절 구동은 데이터시트 표의 실제 감속비(UltraPlanetary 18.93, Core Hex 72)다. 그래서 보이는
         // 값을 그대로 다시 넣어도 관절 물리가 같다(SDK gearing 36.25를 넣으면 Core Hex 관절이 36.25:1이 되던 함정).
+        // 관절이 아닌 모터는 엔코더가 SDK 규칙이라 SDK gearing을 보이고, 토크·속도는 실제 감속비라 두 값이 다른 모델(Core
+        // Hex·TETRIX 등)은 그 값을 넣으면 토크가 바뀐다(spec-3c §1.2가 받아들인 두 출처). 출력축 줄이 실제 감속비를 보인다.
         if (property.key === 'gearbox') {
           const modelDefault = Number(value) < MIN_GEARBOX
           return (
@@ -457,9 +468,7 @@ function ComponentCard({
         </>
       )}
       {def.properties
-        .filter((property) =>
-          isPropertyVisible(property, component.props, jointTypeOf, drivesJoint)
-        )
+        .filter((property) => isPropertyVisible(property, component.props, jointTypeOf))
         .map((property) => (
           <FieldRow
             key={property.key}

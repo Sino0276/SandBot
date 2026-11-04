@@ -47,9 +47,11 @@ export const PROJECT_FORMAT = 'sandbot-project'
 //    ({ weighedMass?, defaultMaterial? }). 둘 다 시뮬레이터 설정이다(scene/massSettings.ts).
 // 8: 관절 joint({ type, anchor, axis, axisSign, limits, friction, spring, drive }, 시뮬레이터 설정, robot이 아니고 바퀴가
 //    없는 오브젝트에만, scene/joint.ts).
-// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음).
+// 9: 바퀴 wheel.friction(잠근 바퀴의 겉보기 타일 마찰 계수, 0이면 종류 기본, 3c 구동계 동역학).
+// 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
+// 8 이하는 바퀴 friction 없음 = 0).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 8
+export const PROJECT_VERSION = 9
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -184,7 +186,8 @@ function parseWheel(value: unknown, index: number): WheelSettings {
     typeof value.motor !== 'string' ||
     typeof value.gearRatio !== 'number' ||
     typeof value.angle !== 'number' ||
-    !isWheelRollers(value.rollers)
+    !isWheelRollers(value.rollers) ||
+    (value.friction !== undefined && typeof value.friction !== 'number')
   )
     invalid(index, 'wheel')
   return sanitizeWheel({
@@ -193,7 +196,9 @@ function parseWheel(value: unknown, index: number): WheelSettings {
     motor: value.motor,
     gearRatio: value.gearRatio,
     angle: value.angle,
-    rollers: value.rollers
+    rollers: value.rollers,
+    // v9에서 더했다: 없으면 종류 기본(0)
+    friction: value.friction ?? 0
   })
 }
 

@@ -80,6 +80,9 @@ export type WheelSettings = {
   // 굴림 방향 각(라디안, 로봇 +X 기준 반시계). CAD 파트의 회전과 관계없다.
   angle: number
   rollers: WheelRollers
+  // 잠근 바퀴를 타일에서 끌 때의 겉보기 마찰 계수(제조사 표기 CoF, Unity WheelCollider Friction 자리). 0이면 종류 기본값
+  // (src/shared/sim/wheelData.ts DEFAULT_WHEEL_FRICTION), 아니면 MIN_WHEEL_FRICTION–MAX_WHEEL_FRICTION(PROJECT_VERSION 9).
+  friction: number
 }
 
 export type SceneObject = {

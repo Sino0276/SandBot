@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { testChassis, testMotorParams, testWheelPhysics } from './testkit'
 import {
   parseWorldSpec,
   WORLD_SPEC_VERSION,
@@ -17,13 +18,26 @@ function valid(): WorldSpec {
         { x: -0.2, y: 0.2 },
         { x: -0.2, y: -0.2 },
         { x: 0.2, y: -0.2 }
-      ]
+      ],
+      body: testChassis()
     },
     batteryVoltage: 12.5,
     hubs: ['Control Hub', 'Expansion Hub 2'],
     motors: [
-      { device: 'fl', modelTag: 'goBILDA5202SeriesMotor', gearbox: 19.2, directionSign: -1 },
-      { device: 'lift', modelTag: 'Motor', gearbox: 52, directionSign: 1 }
+      {
+        device: 'fl',
+        modelTag: 'goBILDA5202SeriesMotor',
+        gearbox: 19.2,
+        directionSign: -1,
+        params: testMotorParams('goBILDA5202SeriesMotor', 19.2)
+      },
+      {
+        device: 'lift',
+        modelTag: 'Motor',
+        gearbox: 52,
+        directionSign: 1,
+        params: testMotorParams('Motor', 'default')
+      }
     ],
     wheels: [
       {
@@ -33,7 +47,8 @@ function valid(): WorldSpec {
         rollers: 'flbr',
         radius: 0.052,
         gearRatio: 1,
-        motor: 'fl'
+        motor: 'fl',
+        ...testWheelPhysics('mecanum', 0.052)
       },
       {
         position: { x: -0.15, y: 0 },
@@ -42,7 +57,8 @@ function valid(): WorldSpec {
         rollers: null,
         radius: 0.05,
         gearRatio: 2,
-        motor: null
+        motor: null,
+        ...testWheelPhysics('omni', 0.05)
       }
     ],
     deadWheels: [

@@ -183,7 +183,7 @@ export type PlayInitRequest = {
   // 로봇 구성 XML의 TeamCode 기준 경로(src/main/res/xml/sandbot_*.xml, generatedFiles.ts 규칙). 없으면 null.
   configPath: string | null
   settings: PlaySettings
-  // 운동학 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
+  // 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
   world: WorldSpec | null
 }
 
@@ -354,6 +354,9 @@ export type PlayEvent =
 // - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
 // - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path, 호스트가 더한
 //   params.file: 모의 저장소 안의 절대 경로. 모의 저장소 밖을 가리키는 path면 없다)
-export type SimNoticeCode = 'sharedEncoderMode' | 'worldError' | SidecarNoticeCode
+// - tipping(3c): 바닥이 받쳐야 할 모멘트가 바퀴 접점 밖이다(넘어질 상황, 시뮬레이터는 넘어지지 않음). params 없음
+// - wheelLift(3c): 바퀴 하나 이상이 하중 0(뜸)인 채 0.1 s 넘게 이어졌다. params 없음
+export type SimNoticeCode =
+  'sharedEncoderMode' | 'worldError' | 'tipping' | 'wheelLift' | SidecarNoticeCode
 
 export type { GamepadState }

@@ -1,7 +1,25 @@
 import { Box3 } from 'three'
 import { robotComponents } from '../../hardware/components'
 import type { PlaySettings } from '../../../../shared/play'
-import { buildWorldSpec, robotWheels, type WorldWarning } from '../../play/worldSpec'
+import { GRAVITY } from '../../../../shared/sim/physics'
+import {
+  DEFAULT_WHEEL_FRICTION,
+  effectiveWheelFriction,
+  effectiveWheelMass,
+  wheelMassClipped,
+  wheelSpinInertia
+} from '../../../../shared/sim/wheelData'
+import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
+import { MAX_WHEEL_FRICTION, MIN_WHEEL_FRICTION } from '../../../../shared/sim/worldSpec'
+import type { MassModel } from '../../mass/types'
+import {
+  buildWorldSpec,
+  robotWheels,
+  wheelSpinMass,
+  wheelTopSpeed,
+  type ResolvedWheel,
+  type WorldWarning
+} from '../../play/worldSpec'
 import { getGeometry } from '../../scene/geometryRegistry'
 import {
   findRobotId,
@@ -22,6 +40,8 @@ import {
   MIN_WHEEL_DIAMETER,
   WHEEL_KINDS
 } from '../../scene/wheel'
+import { formatNumber } from '../../units/units'
+import { wheelForwardTraction } from '../../../../shared/sim/contact'
 
 // 인스펙터 바퀴 카드·Add Component·로봇 카드 구동계 요약의 보기 계산(그리기와 나눠 시험한다)
 
@@ -122,28 +142,167 @@ export function suggestWheelDiameter(objects: SceneObjects, objectId: string): n
   return Math.min(MAX_WHEEL_DIAMETER, Math.max(MIN_WHEEL_DIAMETER, height))
 }
 
+// 마찰 칸(겉보기 μ)의 글자. 기어 감속비 칸처럼 소수 둘이다.
+export function formatWheelFriction(value: number): string {
+  return formatNumber(value, 2)
+}
+
+// 마찰 칸 입력 → 바퀴 설정 friction. 0은 종류 기본(비운 것과 같다), 그 밖은 MIN–MAX_WHEEL_FRICTION 안의 수만 받는다
+// (범위 밖은 null: 칸이 틀렸다고 보이고 값은 그대로다. sanitizeWheel처럼 조용히 기본으로 돌리지 않는다).
+export function parseWheelFriction(text: string): number | null {
+  if (!/^\+?(?:\d+(?:\.\d*)?|\.\d+)$/.test(text.trim())) return null
+  const value = Number(text.trim())
+  if (value === 0) return 0
+  return value >= MIN_WHEEL_FRICTION && value <= MAX_WHEEL_FRICTION ? value : null
+}
+
+// 바퀴 질량(kg): 세계 설명과 같은 도는 질량(play/worldSpec.ts wheelSpinMass: 하위 질량 − 하위 하드웨어 데이터시트 질량, 표의
+// 메카넘은 데이터시트)을 wheelData.ts effectiveWheelMass로 자른 것, 없으면 종류 기본 질량이다(spec-3c §1.7).
+// fromModel은 질량 모델의 값을 썼는지, clipped는 그 값이 범위 밖이라 잘렸는지다(카드가 종류 기본·잘린 값을 계산값과 다르게
+// 보인다).
+export function wheelMass(
+  wheel: Pick<WheelSettings, 'kind'>,
+  spinMass: number | null | undefined
+): { mass: number; fromModel: boolean; clipped: boolean } {
+  const fromModel =
+    spinMass !== null && spinMass !== undefined && Number.isFinite(spinMass) && spinMass > 0
+  return {
+    mass: effectiveWheelMass(wheel.kind, spinMass),
+    fromModel,
+    clipped: wheelMassClipped(spinMass)
+  }
+}
+
+// 정지한 로봇의 바퀴 하중(N, robotWheels 순서). 질량 모델의 로봇 질량·무게중심(편집 자세)이 바닥에 거는 렌치
+// (F_z = m·g, 로봇 원점 둘레 M_x = F_z·y, M_y = −F_z·x)를 시뮬레이터와 같은 분배(wheelLoads.ts)로 나눈다. 로봇 질량을
+// 모르면(질량 모델이 없거나 그 로봇의 질량이 0) null이다.
+export type StaticWheelLoads = {
+  weight: number
+  wheels: { objectId: string; load: number }[]
+  // 받쳐지지 않은 모멘트(N·m, 무게중심이 바퀴 접점의 볼록 껍질 밖)
+  unsupported: number
+}
+
+export function robotStaticLoads(
+  objects: SceneObjects,
+  robotId: string,
+  model: MassModel | null,
+  wheels: readonly ResolvedWheel[] = robotWheels(objects, robotId)
+): StaticWheelLoads | null {
+  const robot = model?.robots[robotId]
+  if (!robot || !(robot.mass > 0) || wheels.length === 0) return null
+  const weight = robot.mass * GRAVITY
+  const [x, y] = robot.centerOfMass
+  const { loads, unsupported } = distributeWheelLoads(
+    wheels.map((w) => w.position),
+    weight,
+    weight * y,
+    -weight * x
+  )
+  return {
+    weight,
+    wheels: wheels.map((w, i) => ({ objectId: w.objectId, load: loads[i] })),
+    unsupported
+  }
+}
+
+// 바퀴 카드의 마찰·질량·하중 계산값
+export type WheelPhysicsView = {
+  // 실행 때 쓰는 겉보기 μ(설정, 0이면 종류 기본)와 종류 기본
+  friction: number
+  defaultFriction: number
+  mass: number
+  // 질량 모델의 값인지(아니면 종류 기본 질량 DEFAULT_WHEEL_MASS: 질량을 모름)
+  massFromModel: boolean
+  // 질량 모델의 값이 범위(MIN·MAX_WHEEL_MASS) 밖이라 잘렸으면 자르기 전 값(kg), 아니면 null
+  clippedFrom: number | null
+  // kg·m², 바퀴 축(외부 감속 전)
+  spinInertia: number
+  // 정지 하중(N)과 견인 한계 μ·N(N, 잠근 바퀴를 끄는 힘). 로봇 밖이거나 로봇 질량을 모르면 null
+  load: number | null
+  tractionLimit: number | null
+}
+
+export function wheelPhysicsView(
+  objects: SceneObjects,
+  objectId: string,
+  model: MassModel | null
+): WheelPhysicsView | null {
+  const wheel = objects[objectId]?.wheel
+  if (!wheel) return null
+  const friction = effectiveWheelFriction(wheel.kind, wheel.friction)
+  const spinMass = wheelSpinMass(objects, objectId, wheel, model)
+  const { mass, fromModel, clipped } = wheelMass(wheel, spinMass)
+  const robotId = findRobotId(objects, objectId)
+  const loads = robotId ? robotStaticLoads(objects, robotId, model) : null
+  const load = loads?.wheels.find((entry) => entry.objectId === objectId)?.load ?? null
+  return {
+    friction,
+    defaultFriction: DEFAULT_WHEEL_FRICTION[wheel.kind],
+    mass,
+    massFromModel: fromModel,
+    clippedFrom: clipped ? spinMass : null,
+    spinInertia: wheelSpinInertia(wheel.kind, wheel.diameter / 2, mass),
+    load,
+    tractionLimit: load === null ? null : friction * load
+  }
+}
+
 export type DrivetrainSummary = {
   count: number
   // 종류별 수(바퀴가 있는 종류만, mecanum·omni·traction 순서)
   kinds: { kind: WheelKind; count: number }[]
   // INIT 때 Console에 남을 경고와 같은 것(생성 상태 경고 제외)
   warnings: WorldWarning[]
+  // 앞 방향 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 Σ N_i·t_i(구동하는 바퀴만,
+  // 구동하지 않는 바퀴는 따라 구르기만 한다. t_i = wheelForwardTraction: 바퀴 종류·굴림 방향·롤러를 따진 하중 1 N당 앞 방향
+  // 견인) ÷ 질량 = g · Σ N_i·t_i / Σ N_i. 굴림 0°의 메카넘이 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다(spec-3c §4 C),
+  // X 드라이브 옴니(±45°)는 (μ − 롤러 쿨롱)·cos 45°라 약 0.64배, H 드라이브의 옆걸음 바퀴는 0이다. 로봇 질량을 모르거나 구동하는
+  // 바퀴가 없으면 null.
+  tractionAcceleration: number | null
+  // 구동하는 바퀴들의 무부하 최고 굴림 속도(m/s, play/worldSpec의 wheelTopSpeed)의 최소·최대. 없으면 null.
+  topSpeed: { min: number; max: number } | null
 }
 
 // 로봇 카드의 구동계 요약
 export function drivetrainSummary(
   objects: SceneObjects,
   robotId: string,
-  settings: Pick<PlaySettings, 'batteryVoltage'>
+  settings: Pick<PlaySettings, 'batteryVoltage'>,
+  model: MassModel | null = null
 ): DrivetrainSummary {
   const wheels = robotWheels(objects, robotId)
   const kinds = WHEEL_KINDS.map((kind) => ({
     kind,
     count: wheels.filter((wheel) => wheel.wheel.kind === kind).length
   })).filter((entry) => entry.count > 0)
+  const driven = wheels.flatMap((w) =>
+    w.motorState === 'ok' && w.motor ? [{ wheel: w, motor: w.motor }] : []
+  )
+  const loads = robotStaticLoads(objects, robotId, model, wheels)
+  let tractionAcceleration: number | null = null
+  if (loads && driven.length > 0) {
+    let force = 0
+    wheels.forEach((w, i) => {
+      if (w.motorState === 'ok' && w.motor)
+        force +=
+          wheelForwardTraction(
+            w.wheel.kind,
+            w.wheel.angle,
+            w.rollers,
+            effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
+          ) * loads.wheels[i].load
+    })
+    tractionAcceleration = (GRAVITY * force) / loads.weight
+  }
+  const speeds = driven.map(({ wheel, motor }) =>
+    wheelTopSpeed(wheel.wheel, motor.props, settings.batteryVoltage)
+  )
   return {
     count: wheels.length,
     kinds,
-    warnings: buildWorldSpec(objects, robotId, settings).warnings
+    warnings: buildWorldSpec(objects, robotId, settings).warnings,
+    tractionAcceleration,
+    topSpeed: speeds.length > 0 ? { min: Math.min(...speeds), max: Math.max(...speeds) } : null
   }
 }

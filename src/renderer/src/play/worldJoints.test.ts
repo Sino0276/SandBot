@@ -215,6 +215,21 @@ describe('세계 설명의 관절', () => {
     })
   })
 
+  it('섀시에서 뺄 관절 몸체 질량 성질은 로봇 좌표(하한 없는 실제 값), 질량을 모르는 몸체는 null', () => {
+    const { bodyMasses } = build(liftRobot())
+    // 리프트 짐은 로봇 (0, 0, 0.3), 2단은 (0, 0, 0.25), 손목 짐은 2단 틀 (0.1, 0.2, 0.3) → 로봇 (0.1, 0.2, 0.45)
+    expect(bodyMasses).toEqual([
+      { mass: 1, centerOfMass: [0, 0, expect.closeTo(0.3, 12)], inertia: [0, 0, 0, 0, 0, 0] },
+      { mass: 0.3, centerOfMass: [0, 0, expect.closeTo(0.25, 12)], inertia: [0, 0, 0, 0, 0, 0] },
+      {
+        mass: 0.5,
+        centerOfMass: [expect.closeTo(0.1, 12), expect.closeTo(0.2, 12), expect.closeTo(0.45, 12)],
+        inertia: [0, 0, 0, 0, 0, 0]
+      }
+    ])
+    expect(build(liftRobot(), false).bodyMasses).toEqual([null, null, null])
+  })
+
   it('로봇 자세와 관계없이 같다(관절 틀은 로봇 좌표·부모 몸체 틀 기준)', () => {
     // 수를 1e-12로 반올림해 비교한다(로봇 자세 행렬을 거친 반올림 오차)
     const rounded = (value: unknown): unknown =>

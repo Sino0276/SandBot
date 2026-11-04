@@ -8,6 +8,10 @@ import { uniqueIssues } from '../../hardware/validation'
 import { useProjectStore, type GenerationResult } from '../../project/projectStore'
 import type { RobotHardwareSettings, SceneObject } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
+import { GRAVITY } from '../../../../shared/sim/physics'
+import { useUnitStore } from '../../units/unitStore'
+import { formatNumber, toDisplayLength } from '../../units/units'
+import { useMassModel } from '../mass/useMassModel'
 import NumberField from '../NumberField'
 import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
@@ -75,15 +79,25 @@ function GeneratedFiles({ paths }: { paths: string[] }): React.JSX.Element {
   )
 }
 
-// 구동계 요약(시뮬레이터): 바퀴 수·종류와 INIT 때 Console에 남을 경고. 바퀴는 생성 코드와 관계없다.
+// 구동계 요약(시뮬레이터): 바퀴 수·종류, 최고 속도, 견인 한계 가속(질량 모델의 정지 하중)과 INIT 때 Console에 남을 경고.
+// 바퀴는 생성 코드와 관계없다.
 function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const batteryVoltage = usePlayStore((state) => state.settings.batteryVoltage)
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  const massModel = useMassModel()
   const summary = useMemo(
-    () => drivetrainSummary(objects, robotId, { batteryVoltage }),
-    [objects, robotId, batteryVoltage]
+    () => drivetrainSummary(objects, robotId, { batteryVoltage }, massModel),
+    [objects, robotId, batteryVoltage, massModel]
   )
+  const unit = t(`units.symbols.${lengthUnit}`)
+  // 바퀴 카드의 최고 속도와 같은 자릿수(견인 한계 가속도 표시 길이 단위로 같은 자릿수)
+  const speedText = (speed: number): string =>
+    formatNumber(toDisplayLength(speed, lengthUnit), lengthUnit === 'm' ? 2 : 1)
+  const volts = formatNumber(batteryVoltage, 1)
+  const topSpeed = summary.topSpeed
+  const sameTopSpeed = topSpeed !== null && speedText(topSpeed.min) === speedText(topSpeed.max)
   // 바퀴가 없다는 경고는 아래 안내 문장이 대신한다
   const warnings = summary.warnings.filter((warning) => warning.key !== 'worldNoWheels')
   return (
@@ -103,6 +117,27 @@ function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
                 })
               )
               .join(', ')
+          })}
+        </span>
+      )}
+      {topSpeed && (
+        <span className="hw-static">
+          {sameTopSpeed
+            ? t('hardware.drivetrain.topSpeed', { speed: speedText(topSpeed.min), unit, volts })
+            : t('hardware.drivetrain.topSpeedRange', {
+                min: speedText(topSpeed.min),
+                max: speedText(topSpeed.max),
+                unit,
+                volts
+              })}
+        </span>
+      )}
+      {summary.tractionAcceleration !== null && (
+        <span className="hw-static" title={t('hardware.drivetrain.tractionHint')}>
+          {t('hardware.drivetrain.traction', {
+            accel: speedText(summary.tractionAcceleration),
+            unit,
+            g: formatNumber(summary.tractionAcceleration / GRAVITY, 2)
           })}
         </span>
       )}

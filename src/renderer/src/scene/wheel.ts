@@ -1,3 +1,4 @@
+import { MAX_WHEEL_FRICTION, MIN_WHEEL_FRICTION } from '../../../shared/sim/worldSpec'
 import type { SceneObject, WheelKind, WheelRollers, WheelSettings } from './model'
 
 // 바퀴(SceneObject.wheel, PROJECT_VERSION 6)의 기본값과 범위. 시뮬레이터 전용 설정이라 생성 코드·구성 XML·검증과 관계없다.
@@ -27,7 +28,8 @@ export function defaultWheel(kind: WheelKind = 'mecanum'): WheelSettings {
     motor: '',
     gearRatio: 1,
     angle: 0,
-    rollers: 'auto'
+    rollers: 'auto',
+    friction: 0
   }
 }
 
@@ -69,7 +71,12 @@ export function sanitizeWheel(wheel: WheelSettings): WheelSettings {
       ? wheel.gearRatio
       : fallback.gearRatio,
     angle: Number.isFinite(wheel.angle) ? wrapAngle(wheel.angle) : fallback.angle,
-    rollers: wheel.rollers
+    rollers: wheel.rollers,
+    // 0(종류 기본)이거나 범위 안의 겉보기 μ. 그 밖은 기본(0)이다.
+    friction:
+      wheel.friction === 0 || finiteIn(wheel.friction, MIN_WHEEL_FRICTION, MAX_WHEEL_FRICTION)
+        ? wheel.friction
+        : fallback.friction
   }
 }
 
@@ -81,6 +88,7 @@ export function sameWheel(a: WheelSettings | undefined, b: WheelSettings | undef
     a.motor === b.motor &&
     a.gearRatio === b.gearRatio &&
     a.angle === b.angle &&
-    a.rollers === b.rollers
+    a.rollers === b.rollers &&
+    a.friction === b.friction
   )
 }

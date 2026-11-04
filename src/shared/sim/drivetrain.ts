@@ -1,7 +1,8 @@
 import type { Pose2, SimWheelSpec, Vec2 } from './worldSpec'
 
-// 구동계 운동학: 바퀴마다 이번 하위 단계의 굴림 변위 s_i(m, 앞으로 구르면 +)에서 로봇 좌표 변위(Δx, Δy, Δθ)를 최소제곱으로
-// 구한다(미끄럼 허용, 질량 없음). 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +.
+// 구동계 운동학: 바퀴마다 굴림 변위 s_i(m, 앞으로 구르면 +)에서 로봇 좌표 변위(Δx, Δy, Δθ)를 최소제곱으로 구한다(미끄럼 허용,
+// 질량 없음). 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +. 2단계의 시뮬레이터였고, 3c부터는 시험 오라클이다: 미끄럼 없는 정상
+// 상태의 동역학(world.ts·contact.ts) 결과가 이 해와 같아야 한다(worldDrive.test.ts T0).
 //
 // 바퀴 i의 굴림 단위 벡터 u_i = (cos angle, sin angle), 구속 방향 a_i(그 방향으로는 미끄러지지 않는다):
 //   메카넘 flbr: a = R(−45°)·u, frbl: a = R(+45°)·u (롤러가 그 방향 성분만 바퀴 회전으로 받는다)
@@ -33,6 +34,17 @@ type Row = {
 
 export type Twist = { dx: number; dy: number; dTheta: number }
 
+// 바퀴가 바닥에 힘을 전하는(미끄러지지 않는) 방향(로봇 좌표 단위 벡터). 메카넘은 땅에 닿은 롤러의 축 방향 R(∓45°)·u(flbr −45°,
+// frbl +45°)다: 자유 롤러는 축 둘레 모멘트를 받지 못하므로 접촉력의 수평 성분이 롤러 축과 평행하다(3c method §4.1). 옴니·일반
+// 바퀴는 굴림 방향 u다. 운동학 오라클(Drivetrain)과 동역학 접촉 행(contact.ts)이 같이 쓴다.
+export function tractionDirection(wheel: Pick<SimWheelSpec, 'angle' | 'kind' | 'rollers'>): Vec2 {
+  const angle =
+    wheel.kind === 'mecanum'
+      ? wheel.angle + (wheel.rollers === 'frbl' ? Math.PI / 4 : -Math.PI / 4)
+      : wheel.angle
+  return { x: Math.cos(angle), y: Math.sin(angle) }
+}
+
 export class Drivetrain {
   private readonly rows: Row[]
   private readonly scale: number
@@ -56,8 +68,7 @@ export class Drivetrain {
       switch (wheel.kind) {
         case 'mecanum': {
           if (!driven) break
-          const angle = wheel.angle + (wheel.rollers === 'frbl' ? Math.PI / 4 : -Math.PI / 4)
-          const a = { x: Math.cos(angle), y: Math.sin(angle) }
+          const a = tractionDirection(wheel)
           add(a, i, a.x * u.x + a.y * u.y)
           break
         }
@@ -109,7 +120,7 @@ function solveMatrix(rows: readonly Row[]): number[][] {
 }
 
 // 대칭 반양정치 3×3 행렬의 유사 역행렬 V·Λ⁺·Vᵀ(가장 큰 고유값의 RANK_TOLERANCE배 이하인 고유값은 0으로 본다)
-function pseudoInverse3(m: readonly number[][]): number[][] {
+export function pseudoInverse3(m: readonly number[][]): number[][] {
   const { values, vectors } = symmetricEigen3(m)
   const max = Math.max(values[0], values[1], values[2])
   const result: number[][] = [

@@ -14,7 +14,7 @@ import {
   type ControlInputs
 } from './actuators'
 import type { DeviceValues } from '../sidecarProtocol'
-import { readMotorOutputs, type MotorOutputs } from './motorModel'
+import { readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import type { SimMotorParams, SimServoParams } from './worldSpec'
 
 // goBILDA 5203 19.2:1(312 RPM) 데이터시트([ACT] §2.1): 2.383 N·m, 9.2 A, 0.25 A, 정확한 비 19.2032, 효율 0.95²(spec-3b §1.2)

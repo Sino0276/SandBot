@@ -778,7 +778,7 @@ const ko = {
     revealFile: '폴더에서 보기',
     revealHint: '더블클릭하거나 Enter를 누르면 파일 관리자에서 이 파일을 보입니다.',
     rrTuningHint:
-      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 운동학 모델에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
+      'Road Runner 튜닝 OpMode가 SandBot의 모의 저장소(로봇의 /sdcard/FIRST 자리)에 쓴 결과입니다. SandBot은 Road Runner 회귀(regression) 웹 페이지를 내주지 않습니다. 그 페이지는 Road Runner를 올린 로봇이 내주므로(http://192.168.43.1:8080/tuning/ 아래에서 이 결과 종류의 페이지) 로봇에 연결해 [Browse]로 이 파일을 고르면 그래프와 맞춘 값을 볼 수 있습니다. 값은 SandBot 시뮬레이터에서 잰 것이라 실제 로봇의 튜닝을 대신하지 않습니다.',
     diagnosticKind: {
       error: '오류',
       warning: '경고',
@@ -796,10 +796,17 @@ const ko = {
     code: '진단 코드',
     // 실행 흐름이 남기는 안내
     notices: {
-      // 운동학 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
+      // 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
       worldNoWheels:
         '바퀴 컴포넌트가 없어 로봇이 움직이지 않습니다. 바퀴 파트(또는 그룹)에 [컴포넌트 추가 → 바퀴]를 붙이세요.',
       worldWheelNoMotor: '바퀴 {{name}}에 구동 모터가 없어 굴리지 않습니다(따라 구르기만 합니다).',
+      // 3c 구동계 동역학
+      worldFewWheels:
+        '바퀴 접점이 셋보다 적거나 한 줄에 있어 로봇 무게를 바퀴에 나눌 수 없습니다. 시뮬레이터는 로봇이 넘어지지 않는 것으로 계산합니다.',
+      worldChassisMass:
+        '로봇 몸체(관절 몸체를 뺀 질량)가 {{mass}} kg로 너무 작아 기본 질량 {{fallback}} kg로 계산합니다. Rigidbody 카드에서 저울 무게를 넣으세요.',
+      worldChassisMassPending:
+        '로봇 몸체에 아직 읽는 중이거나 읽지 못한 메시 {{count}}개가 있어 그 형상 없이 질량·무게중심·관성을 계산합니다. 로봇의 가속·제동이 실제와 다를 수 있습니다.',
       worldWheelMotorMissing:
         '바퀴 {{name}}의 구동 모터를 이 로봇에서 찾을 수 없어(지웠거나 다른 로봇의 모터) 굴리지 않습니다.',
       worldRollersAmbiguous:
@@ -887,6 +894,11 @@ const ko = {
         sharedEncoderMode:
           '{{device}} 모터를 엔코더 모드(RUN_USING_ENCODER·RUN_TO_POSITION)로 돌립니다. 같은 포트에 데드휠이 연결되어 있어 실제 로봇에서는 포드 엔코더로 제어되지만, 시뮬레이터는 모터 축 엔코더로 제어한다고 가정합니다.',
         worldError: '시뮬레이터 계산 중 오류가 나 이전 센서 값을 계속 보냅니다 ({{detail}}).',
+        // 3c: 법선 하중(받쳐지지 않은 모멘트·뜬 바퀴가 0.1초 넘게 이어짐, 실행마다 한 번)
+        tipping:
+          '로봇 무게중심이 바퀴가 받칠 수 있는 범위 밖으로 나갔습니다(실제 로봇은 기울거나 넘어질 수 있습니다). 시뮬레이터는 평면에서만 계산해 넘어지지 않습니다.',
+        wheelLift:
+          '바퀴 하나 이상이 하중 없이 바닥에서 뜬 상태가 0.1초 넘게 이어졌습니다. 그동안 그 바퀴는 헛돕니다.',
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
@@ -1152,6 +1164,22 @@ const ko = {
         '위에서 볼 때 롤러가 X를 이루는 표준 배치에서 앞왼쪽·뒤오른쪽 자리의 바퀴가 앞왼·뒤오른형입니다. 자동은 메카넘 바퀴들의 중심에 대한 사분면으로 정합니다.',
       topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
       topSpeedNoMotor: '구동 모터를 고르면 최고 속도를 보입니다.',
+      // 3c: 타일 마찰(Unity WheelCollider Friction 자리)과 계산값
+      friction: '마찰 계수',
+      frictionDefault: '종류 기본 ({{value}})',
+      frictionHint:
+        '잠근 바퀴를 필드 타일에서 끌 때의 마찰 계수(제조사 표기 CoF)입니다. 바퀴가 미끄러질 때 로봇 가속은 약 μ·g입니다. 메카넘은 시뮬레이터가 롤러 축 계수(√2·μ에서 롤러 저항 몫을 뺀 값)로 바꿔, 잠근 바퀴를 끌 때의 겉보기 계수가 이 값과 같게 합니다. 비우면 종류 기본값(측정 없는 가정)을 씁니다.',
+      wheelMass: '바퀴 질량 {{mass}} · 회전 관성 {{inertia}} kg·m²',
+      wheelMassDefault: '바퀴 질량 {{mass}}(종류 기본, 질량 모름) · 회전 관성 {{inertia}} kg·m²',
+      wheelMassDefaultHint:
+        '질량 모델이 이 바퀴의 질량을 알지 못해(형상을 읽는 중이거나 읽지 못함, 표면 메시, 형상 없는 그룹, 하위 하드웨어를 빼면 남는 것이 없음) 종류 기본 질량으로 회전 관성을 계산합니다. 질량 카드에서 질량을 넣을 수 있습니다.',
+      wheelMassClipped:
+        '바퀴 질량 {{mass}}(질량 모델 값 {{model}}에서 자름) · 회전 관성 {{inertia}} kg·m²',
+      wheelMassClippedHint:
+        '이 바퀴 하위의 질량이 바퀴 하나로 보기에 너무 크거나 작아서 회전 관성에는 {{min}}–{{max}}로 자른 값을 씁니다. 바퀴 컴포넌트는 바퀴 파트(또는 바퀴만 묶은 그룹)에 붙이세요.',
+      staticLoad: '정지 하중 ≈ {{load}} N · 견인 한계 ≈ {{limit}} N',
+      staticLoadUnknown: '로봇 질량을 계산하면 정지 하중을 보입니다.',
+      frictionRejected: '{{min}}–{{max}} 사이의 마찰 계수를 넣으세요. 비우면 종류 기본값을 씁니다.',
       motorMissingWarning:
         '구동 모터를 이 로봇에서 찾을 수 없습니다(지웠거나 다른 로봇의 모터). 실행할 때 이 바퀴는 굴리지 않습니다.',
       rollersAmbiguousWarning:
@@ -1164,6 +1192,11 @@ const ko = {
       title: '구동계 (시뮬레이터)',
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
+      traction: '앞 방향 견인 한계 가속 ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      tractionHint:
+        '모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 ÷ 로봇 질량입니다. 구동하는 바퀴마다 정지 하중과 마찰 계수, 굴림 방향·롤러(메카넘·옴니)를 따집니다. X 드라이브처럼 비스듬히 구르는 바퀴는 앞으로 덜 밀고(옴니는 롤러 저항이 거슬러 더 줄어듭니다), 옆으로 구르는 바퀴(H 드라이브)는 앞으로 밀지 못합니다.',
+      topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
+      topSpeedRange: '최고 속도 ≈ {{min}}–{{max}} {{unit}}/s (바퀴마다 다름, 무부하, {{volts}} V)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'
     },
     categories: {
@@ -1233,9 +1266,9 @@ const ko = {
     // 속성 칸의 도움말(catalog의 hint)
     propHints: {
       stallTorque:
-        '이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 구동계 바퀴 시뮬레이션과 생성 코드는 쓰지 않습니다.',
+        '시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 토크에 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 생성 코드는 쓰지 않습니다.',
       freeSpeed:
-        '이 모터가 구동하는 관절(Articulation Body)의 동역학만 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 구동계 바퀴 시뮬레이션과 생성 코드는 쓰지 않습니다.',
+        '시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 속도에 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 생성 코드는 쓰지 않습니다.',
       limitDistance:
         '연결한 직선 관절이 고른 끝에서 이 거리 안이면 눌립니다. 0이면 기본값 2 mm입니다.',
       limitAngle: '연결한 회전 관절이 고른 끝에서 이 각도 안이면 눌립니다. 0이면 기본값 1°입니다.'
@@ -1338,6 +1371,9 @@ const ko = {
       otos: '오프셋: X {{x}} in, Y {{y}} in, H {{h}}°',
       deadWheel: '위치: X {{x}} mm, Y {{y}} mm',
       motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
+      // 데이터시트 실제 감속비가 SDK 감속비(엔코더 틱)와 다를 때(UltraPlanetary·Core Hex 모델 기본 등)
+      motorOutputRatio:
+        '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 토크·속도는 실제 감속비 {{ratio}}:1',
       jointMotorOutput:
         '관절: 출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 실제 감속비 {{ratio}}:1',
       deadWheelPod: '포드 해상도: {{ticks}} 틱/mm'

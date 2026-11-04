@@ -1,11 +1,11 @@
-// 운동학 시뮬레이터의 세계 설명(렌더러 → 메인). 렌더러가 INIT 때 씬에서 고른 로봇의 바퀴·모터·오도메트리를 이 모양으로
-// 만들어 PlayInitRequest.world로 보내고, 메인의 KinematicWorld(src/shared/sim/world.ts)가 틱마다 이것으로 센서 값을 만든다.
+// 시뮬레이터의 세계 설명(렌더러 → 메인). 렌더러가 INIT 때 씬에서 고른 로봇의 바퀴·모터·오도메트리를 이 모양으로
+// 만들어 PlayInitRequest.world로 보내고, 메인의 PhysicsWorld(src/shared/sim/world.ts)가 틱마다 이것으로 센서 값을 만든다.
 // 메인은 렌더러를 믿지 않고 parseWorldSpec으로 모양·유한 수·한도를 확인한다.
 // 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙, Z 위.
 
 import { symmetricEigen3 } from './drivetrain'
 
-export const WORLD_SPEC_VERSION = 2
+export const WORLD_SPEC_VERSION = 3
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
@@ -28,6 +28,9 @@ export type SimInertia = [number, number, number, number, number, number]
 // 필드 좌표의 로봇 자세(최상위 로봇 transform의 x·y와 요)
 export type Pose2 = { x: number; y: number; yaw: number }
 
+// 강체 하나의 질량 성질: 질량(kg), 무게중심(기준 틀), 무게중심 기준 관성(기준 틀의 축). 관절 몸체는 관절 틀, 섀시는 로봇 좌표다.
+export type SimBody = { mass: number; centerOfMass: Vec3; inertia: SimInertia }
+
 // 모터 하나(구성의 모터 장치). 바퀴든 메커니즘이든 모든 모터 컴포넌트가 들어간다(엔코더 값을 만들려고).
 export type SimMotorSpec = {
   // 구성 이름(hardwareMap 이름 = 사이드카 장치 이름)
@@ -40,6 +43,10 @@ export type SimMotorSpec = {
   gearbox: number
   // 인스펙터의 방향(생성 코드의 setDirection): forward 1, reverse −1. "+power면 바퀴가 앞으로 구르는 방향"으로 본다.
   directionSign: 1 | -1
+  // 기어모터 물리 값(3c): 렌더러가 실제 감속비로 데이터시트 표에서 푼 값(play/worldJoints.ts motorComponentParams). 토크·
+  // 전류·관성은 이것으로 계산하고, 엔코더 틱은 위 SDK 규칙(gearbox)으로 센다(감속비 칸이 0인 Core Hex 등은 둘이 다르다).
+  // 관절 구동 모터는 관절 drive.params(3b)를 쓴다.
+  params: SimMotorParams
 }
 
 export type WheelKind = 'mecanum' | 'omni' | 'traction'
@@ -59,8 +66,14 @@ export type SimWheelSpec = {
   radius: number
   // 모터 출력축 → 바퀴 외부 감속비(> 0, 1이면 직결)
   gearRatio: number
-  // 구동 모터의 장치 이름(motors 중 하나). null이면 구동하지 않는 바퀴(일반 바퀴는 옆 미끄럼만 막는다)
+  // 구동 모터의 장치 이름(motors 중 하나). null이면 구동하지 않는 바퀴(자유롭게 구른다)
   motor: string | null
+  // kg·m², 바퀴 축 둘레 회전 관성(바퀴 쪽, 외부 감속 전. src/shared/sim/wheelData.ts wheelSpinInertia)
+  spinInertia: number
+  // 잠근 바퀴를 타일에서 끌 때의 겉보기 마찰 계수(제조사 표기 CoF, 정지 = 운동). 렌더러가 기본값을 풀어 넣는다
+  // (wheelData.ts effectiveWheelFriction). 메카넘 롤러 축 계수는 √2·μ − ROLLER_COULOMB다(mecanumRollerFriction: 잠근 바퀴를
+  // 끌 때 롤러 쿨롱 저항이 더해져도 겉보기 계수가 이 값과 같게).
+  friction: number
 }
 
 // 데드휠(엔코더 포트의 오도메트리 포드). 장치 이름은 javaCodegen의 deadWheelDeviceName(같은 포트의 모터가 있으면 그 이름).
@@ -103,8 +116,11 @@ export type WorldSpec = {
   robot: {
     // 시작 자세(필드 좌표)
     start: Pose2
-    // 바닥 외곽(로봇 좌표 볼록 다각형, 보통 사각형 4점). 필드 벽 막힘에 쓴다.
+    // 바닥 외곽(로봇 좌표 볼록 다각형, 보통 사각형 4점). 필드 벽 접촉에 쓴다.
     footprint: Vec2[]
+    // 섀시(로봇 전체 − 관절 몸체, 3a 질량 모델): 로봇 좌표, 무게중심 기준 관성. 늘 있고, 바퀴가 없는 세계는 기저가
+    // 고정이라 쓰지 않는다(3c).
+    body: SimBody
   }
   // 배터리 전압(V). 모터 무부하 속도 비율(전압 ÷ 12)과 허브 voltage 입력.
   batteryVoltage: number
@@ -116,7 +132,7 @@ export type WorldSpec = {
   pinpoints: SimPinpointSpec[]
   otos: SimOtosSpec[]
   imus: SimImuSpec[]
-  // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 운동학 2단계와 같다.
+  // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 관절이 없다.
   joints: SimJointSpec[]
 }
 
@@ -195,7 +211,7 @@ export type SimJointSpec = {
   // q = 0 기준(rad 또는 m). null이면 제한 없음(회전 관절만)
   limits: { lower: number; upper: number } | null
   // 이 관절 몸체만(안쪽 관절 몸체 제외)의 질량 성질, 관절 틀 기준
-  body: { mass: number; centerOfMass: Vec3; inertia: SimInertia }
+  body: SimBody
   // 관절 좌표 단위: 쿨롱(N·m 또는 N), 점성(N·m·s/rad 또는 N·s/m)
   friction: { coulomb: number; viscous: number }
   spring:
@@ -214,6 +230,11 @@ export type SimPose = { x: number; y: number; yaw: number; blocked: boolean; joi
 // ---- 검증(메인이 렌더러에서 받은 값을 확인한다) ----
 
 const MAX_NAME = 256
+// 바퀴 회전 관성 한도(kg·m²): FTC 바퀴는 1e-4–1e-3(data §5.1), 넉넉히
+const MAX_SPIN_INERTIA = 1
+// 바퀴 겉보기 마찰 계수 범위(scene/wheel.ts 설정 범위와 같다)
+export const MIN_WHEEL_FRICTION = 0.05
+export const MAX_WHEEL_FRICTION = 3
 // 위치·크기 한도(m): 필드(3.66 m)보다 넉넉히
 const MAX_COORD = 10
 
@@ -262,19 +283,36 @@ function motor(value: unknown, i: number): SimMotorSpec {
   if (!name(modelTag)) fail(`${what}.modelTag`)
   if (!inRange(gearbox, 0.01, 10000)) fail(`${what}.gearbox`)
   if (directionSign !== 1 && directionSign !== -1) fail(`${what}.directionSign`)
-  return { device, modelTag, gearbox, directionSign }
+  return {
+    device,
+    modelTag,
+    gearbox,
+    directionSign,
+    params: motorParams(value.params, `${what}.params`)
+  }
 }
 
 function wheel(value: unknown, i: number): SimWheelSpec {
   const what = `wheels[${i}]`
   if (!isRecord(value)) fail(what)
-  const { position, kind, rollers, radius, gearRatio, motor: motorName } = value
+  const {
+    position,
+    kind,
+    rollers,
+    radius,
+    gearRatio,
+    motor: motorName,
+    spinInertia,
+    friction
+  } = value
   if (kind !== 'mecanum' && kind !== 'omni' && kind !== 'traction') fail(`${what}.kind`)
   if (kind === 'mecanum' ? rollers !== 'flbr' && rollers !== 'frbl' : rollers !== null)
     fail(`${what}.rollers`)
   if (!inRange(radius, 0.001, 1)) fail(`${what}.radius`)
   if (!inRange(gearRatio, 0.001, 1000)) fail(`${what}.gearRatio`)
   if (motorName !== null && !name(motorName)) fail(`${what}.motor`)
+  if (!inRange(spinInertia, 0, MAX_SPIN_INERTIA)) fail(`${what}.spinInertia`)
+  if (!inRange(friction, MIN_WHEEL_FRICTION, MAX_WHEEL_FRICTION)) fail(`${what}.friction`)
   return {
     position: vec2(position, `${what}.position`),
     angle: angle(value.angle, `${what}.angle`),
@@ -282,7 +320,9 @@ function wheel(value: unknown, i: number): SimWheelSpec {
     rollers: rollers as MecanumRollers | null,
     radius,
     gearRatio,
-    motor: motorName
+    motor: motorName,
+    spinInertia,
+    friction
   }
 }
 
@@ -366,11 +406,12 @@ function unitAxis(value: unknown, what: string): Vec3 {
   return { x: a.x / length, y: a.y / length, z: a.z / length }
 }
 
-// 무게중심 기준 관성: 유한·한도 안이고, 대칭 양반정치(주관성 값 ≥ 0)이며 주관성 값이 삼각 부등식(I1 + I2 ≥ I3)을 지킨다
-function inertia(value: unknown, what: string): SimInertia {
-  if (!Array.isArray(value) || value.length !== 6) fail(what)
+// 무게중심 기준 관성: 유한·한도 안이고, 대칭 양반정치(주관성 값 ≥ 0)이며 주관성 값이 삼각 부등식(I1 + I2 ≥ I3)을 지킨다.
+// 렌더러 세계 설명 빌더(섀시 몸체, play/worldSpec.ts)도 이것으로 보내기 전에 확인한다.
+export function isValidInertia(value: unknown): value is SimInertia {
+  if (!Array.isArray(value) || value.length !== 6) return false
   const v: unknown[] = value
-  if (!v.every((x) => inRange(x, -MAX_INERTIA, MAX_INERTIA))) fail(what)
+  if (!v.every((x) => inRange(x, -MAX_INERTIA, MAX_INERTIA))) return false
   const [xx, yy, zz, xy, xz, yz] = v as number[]
   const { values } = symmetricEigen3([
     [xx, xy, xz],
@@ -378,9 +419,14 @@ function inertia(value: unknown, what: string): SimInertia {
     [xz, yz, zz]
   ])
   const tol = INERTIA_TOLERANCE * (Math.abs(xx) + Math.abs(yy) + Math.abs(zz))
-  if (values.some((x) => x < -tol)) fail(what)
+  if (values.some((x) => x < -tol)) return false
   const [a, b, c] = values
-  if (a + b < c - tol || a + c < b - tol || b + c < a - tol) fail(what)
+  return !(a + b < c - tol || a + c < b - tol || b + c < a - tol)
+}
+
+function inertia(value: unknown, what: string): SimInertia {
+  if (!isValidInertia(value)) fail(what)
+  const [xx, yy, zz, xy, xz, yz] = value
   return [xx, yy, zz, xy, xz, yz]
 }
 
@@ -512,10 +558,20 @@ function jointSwitch(value: unknown, what: string, limits: SimJointSpec['limits'
   return { device, kind, at, within }
 }
 
+// 몸체 질량 성질(관절 몸체·섀시): 질량 범위, 무게중심 한도, 관성 유효성
+function body(value: unknown, what: string, minMass: number): SimBody {
+  if (!isRecord(value) || !inRange(value.mass, minMass, MAX_BODY_MASS)) fail(what)
+  return {
+    mass: value.mass,
+    centerOfMass: vec3(value.centerOfMass, `${what}.centerOfMass`),
+    inertia: inertia(value.inertia, `${what}.inertia`)
+  }
+}
+
 function joint(value: unknown, i: number): SimJointSpec {
   const what = `joints[${i}]`
   if (!isRecord(value)) fail(what)
-  const { parent, type, origin, body, friction } = value
+  const { parent, type, origin, friction } = value
   // 부모가 먼저 온다(순환 없음)
   if (typeof parent !== 'number' || !Number.isInteger(parent) || parent < -1 || parent >= i)
     fail(`${what}.parent`)
@@ -530,7 +586,6 @@ function joint(value: unknown, i: number): SimJointSpec {
       fail(`${what}.limits`)
     limits = { lower: l.lower, upper: l.upper }
   } else if (type === 'prismatic') fail(`${what}.limits`)
-  if (!isRecord(body) || !inRange(body.mass, 1e-9, MAX_BODY_MASS)) fail(`${what}.body`)
   if (
     !isRecord(friction) ||
     !inRange(friction.coulomb, 0, MAX_JOINT_FORCE) ||
@@ -560,11 +615,7 @@ function joint(value: unknown, i: number): SimJointSpec {
     },
     axis: unitAxis(value.axis, `${what}.axis`),
     limits,
-    body: {
-      mass: body.mass,
-      centerOfMass: vec3(body.centerOfMass, `${what}.body.centerOfMass`),
-      inertia: inertia(body.inertia, `${what}.body.inertia`)
-    },
+    body: body(value.body, `${what}.body`, 1e-9),
     friction: { coulomb: friction.coulomb, viscous: friction.viscous },
     spring,
     drive: jointDrive(value.drive, `${what}.drive`),
@@ -642,7 +693,9 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
           y: vec2({ x: start.x, y: start.y }, 'robot.start').y,
           yaw: angle(start.yaw, 'robot.start.yaw')
         },
-        footprint
+        footprint,
+        // 섀시 질량 하한(kg): 렌더러는 0.1 kg 아래를 기본 질량으로 대신한다(spec-3c §1.7). 1 g 아래는 잘못된 값이다.
+        body: body(robot.body, 'robot.body', 1e-3)
       },
       batteryVoltage,
       hubs: list(value.hubs, 16, 'hubs', (v, i) => (name(v) ? v : fail(`hubs[${i}]`))),

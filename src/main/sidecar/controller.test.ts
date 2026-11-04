@@ -11,7 +11,8 @@ import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } fr
 import { dashboardJarPath, javaArgs, type SidecarFiles } from './launch'
 import { spawnSidecar, type SidecarProcess, type SpawnSidecar } from './process'
 import { FAKE_SIDECAR_SCRIPT, FakeClock } from './testkit'
-import { kinematicWorld } from './world'
+import { testChassis, testMotorParams } from '../../shared/sim/testkit'
+import { simulationWorld } from './world'
 
 // 진짜 프로세스(node로 돌리는 가짜 사이드카)와 파이프로 호스트 전체(확인 → spawn → 세션 → 이벤트)를 시험한다.
 
@@ -857,8 +858,8 @@ describe('PlayController + 가짜 사이드카', () => {
     expect(finished(request.runId)).toMatchObject({ reason: 'stopped' })
   })
 
-  it('요청의 세계 설명으로 실행마다 운동학 시뮬레이터를 만든다(없으면 빈 세계)', async () => {
-    controller = make({ world: kinematicWorld })
+  it('요청의 세계 설명으로 실행마다 시뮬레이터를 만든다(없으면 빈 세계)', async () => {
+    controller = make({ world: simulationWorld })
     const world: WorldSpec = {
       version: WORLD_SPEC_VERSION,
       robot: {
@@ -867,11 +868,20 @@ describe('PlayController + 가짜 사이드카', () => {
           { x: 0.2, y: 0.2 },
           { x: -0.2, y: 0.2 },
           { x: -0.2, y: -0.2 }
-        ]
+        ],
+        body: testChassis()
       },
       batteryVoltage: 11.5,
       hubs: ['Control Hub'],
-      motors: [{ device: 'motor', modelTag: 'TetrixMotor', gearbox: 52, directionSign: 1 }],
+      motors: [
+        {
+          device: 'motor',
+          modelTag: 'TetrixMotor',
+          gearbox: 52,
+          directionSign: 1,
+          params: testMotorParams('TetrixMotor', 'default')
+        }
+      ],
       wheels: [],
       deadWheels: [],
       pinpoints: [],
@@ -889,13 +899,17 @@ describe('PlayController + 가짜 사이드카', () => {
       blocked: false
     })
     await waitFor(() => of('devices', request.runId).length > 0)
+    // 모든 모터가 동역학 기어모터라 단자 전류도 보낸다(3c)
     expect(of('devices', request.runId)[0].inputs).toEqual({
       'Control Hub': { voltage: 11.5 },
-      motor: { position: 0, velocity: 0 }
+      motor: { position: 0, velocity: 0, current: 0 }
     })
     const firstReply = recorded[0].sent.find((message) => message.type === 'tickReply')
     expect(firstReply).toMatchObject({
-      inputs: { 'Control Hub': { voltage: 11.5 }, motor: { position: 0, velocity: 0 } }
+      inputs: {
+        'Control Hub': { voltage: 11.5 },
+        motor: { position: 0, velocity: 0, current: 0 }
+      }
     })
     controller.command({ type: 'stop' }, owner)
     await waitFor(() => finished(request.runId) !== undefined)

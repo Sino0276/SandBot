@@ -16,7 +16,7 @@ import { PlayController, type ControllerDeps, type PlayOwner } from './controlle
 import { dashboardJarPath, readSidecarFiles, SIM_FILES_DIR, simFirstFolder } from './launch'
 import { spawnSidecar } from './process'
 import { revealSimFile } from './simFiles'
-import { kinematicWorld } from './world'
+import { simulationWorld } from './world'
 
 // 실행(Play) IPC: playInit·playCommand·playGamepads와 렌더러로 가는 playEvent. 사이드카 빌드 결과는 배포 앱이면
 // resources/sidecar(electron-builder의 extraResources), 개발 중이면 저장소의 resources/sidecar(pnpm build:sidecar가
@@ -92,7 +92,7 @@ export function registerPlayIpc(): void {
   setRegisteredOpModes(registered)
   const controller = new PlayController({
     ...deps,
-    world: kinematicWorld,
+    world: simulationWorld,
     makeFirstFolder,
     registrars: (root) => registered.registrarsFor(root),
     registeredPreselect: (root, name) => registered.preselectTeleOp(root, name),

@@ -1,7 +1,8 @@
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
-import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorModel'
+import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
 import {
+  isValidInertia,
   MAX_WORLD_MOTORS,
   MAX_WORLD_SENSORS,
   MAX_WORLD_WHEELS,
@@ -12,6 +13,7 @@ import {
   type SimImuSpec,
   type SimMotorSpec,
   type SimOtosSpec,
+  type SimBody,
   type SimPinpointSpec,
   type SimWheelSpec,
   type Vec2,
@@ -23,7 +25,6 @@ import {
   isMotorModel,
   MOTOR_MODEL_TAGS,
   motorGearbox,
-  motorOutput,
   pinpointPodTicksPerMm
 } from '../hardware/catalog'
 import { robotComponents, robotHardwareSettings, type ComponentEntry } from '../hardware/components'
@@ -42,14 +43,19 @@ import {
   type WheelSettings
 } from '../scene/model'
 import { wrapAngle } from '../scene/wheel'
-import type { MassModel } from '../mass/types'
+import { floorInertia, subtractMassProps, type MassProps } from '../mass/chassis'
+import { componentCotsKey, cotsEntry, wheelCotsKey } from '../mass/cotsTable'
+import { DEFAULT_ROBOT_MASS, type MassModel } from '../mass/types'
+import { effectiveWheelFriction, wheelSpinInertia } from '../../../shared/sim/wheelData'
+import { convexHull } from '../../../shared/sim/wheelLoads'
 import type { ConsoleNoticeKey } from './consoleModel'
-import { buildWorldJoints } from './worldJoints'
+import { buildWorldJoints, motorComponentParams } from './worldJoints'
 
-// 운동학 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
+// 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
 // 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
 // 온다. 이름은 사이드카 장치 이름(구성 이름을 Java trim, sidecarDeviceName)이다. 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점
-// 로봇 중심 바닥)이고, 형상 로딩과 관계없이 씬 문서만으로 정해진다(결정적). 관절 몸체 질량만 넘겨받은 질량 모델을 쓴다.
+// 로봇 중심 바닥)이고, 형상 로딩과 관계없이 씬 문서만으로 정해진다(결정적). 질량(관절 몸체, 섀시 몸체 = 로봇 전체 − 관절
+// 몸체, 바퀴 회전 관성)만 넘겨받은 질량 모델을 쓴다.
 
 // Console 경고(console.notices.world*)
 export type WorldWarningKey = Extract<ConsoleNoticeKey, `world${string}`>
@@ -184,15 +190,16 @@ export function robotWheels(objects: SceneObjects, robotId: string): ResolvedWhe
   })
 }
 
-// 무부하 최고 굴림 속도(m/s): 모터 출력축 무부하 RPM × 전압/12 ÷ 외부 감속비 × 바퀴 둘레. 메카넘도 이상적인 IK에서
-// 앞·옆 최고 속도가 바퀴 표면 속도와 같다.
+// 무부하 최고 굴림 속도(m/s): 모터 출력축 데이터시트 무부하 속도(rad/s, 실제 감속비·덮어쓰기, motorComponentParams) ×
+// 전압/12 × 바퀴 반지름 ÷ 외부 감속비(spec-3c §1.8). 세계 설명의 바퀴 모터가 쓰는 값과 같다(엔코더의 SDK maxRPM이 아니다).
+// 메카넘도 이상적인 IK에서 앞·옆 최고 속도가 바퀴 표면 속도와 같다(롤러 점성·굴림 저항은 빼지 않은 무부하 값).
 export function wheelTopSpeed(
   wheel: WheelSettings,
   motorProps: Record<string, string | number>,
   batteryVoltage: number
 ): number {
-  const { freeRpm } = motorOutput(motorProps)
-  return ((freeRpm / 60) * Math.PI * wheel.diameter * (batteryVoltage / 12)) / wheel.gearRatio
+  const { freeSpeed } = motorComponentParams(motorProps)
+  return (freeSpeed * (batteryVoltage / NOMINAL_VOLTAGE) * (wheel.diameter / 2)) / wheel.gearRatio
 }
 
 // 외곽: 로봇의 CAD 루트들의 경계 상자(cad.bounds, CAD 좌표) 8꼭짓점을 로봇 좌표로 옮긴 바닥 사각형(반시계).
@@ -233,6 +240,140 @@ export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
 }
 
 const xy = (pose: { x: number; y: number }): Vec2 => ({ x: pose.x, y: pose.y })
+
+// 섀시를 모를 때의 몸체(3c): DEFAULT_ROBOT_MASS를 외곽의 경계 상자(높이 0.2 m, 무게중심 높이 0.1 m, 가정)에 고르게 둔 직육면체
+export const PLACEHOLDER_CHASSIS_HEIGHT = 0.2
+export function placeholderChassisBody(footprint: readonly Vec2[]): SimBody {
+  const xs = footprint.map((p) => p.x)
+  const ys = footprint.map((p) => p.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const a = maxX - minX
+  const b = maxY - minY
+  const h = PLACEHOLDER_CHASSIS_HEIGHT
+  const m = DEFAULT_ROBOT_MASS
+  return {
+    mass: m,
+    centerOfMass: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: h / 2 },
+    inertia: [
+      (m * (b * b + h * h)) / 12,
+      (m * (a * a + h * h)) / 12,
+      (m * (a * a + b * b)) / 12,
+      0,
+      0,
+      0
+    ]
+  }
+}
+
+// 섀시 질량 하한(kg): 이보다 작으면 관절 몸체가 로봇 전체 질량을 거의 다 가져간 것(관절 몸체에 덮어쓴 질량이 저울 무게보다
+// 큼 등)이라 기본 질량 상자로 대신한다(spec-3c §1.7, 가정: FTC 로봇 섀시는 수 kg이다).
+export const MIN_CHASSIS_MASS = 0.1
+// 섀시 관성 주관성 값의 하한(kg·m², spec-3c §1.7, 가정): 빼기의 반올림으로 0 근처가 된 축이 기저 질량 행렬을 특이하게
+// 만들지 않게 한다(18 in 정사각 13.6 kg 상자의 요 관성 0.48의 약 50만분의 1).
+export const MIN_CHASSIS_INERTIA = 1e-6
+
+// 섀시 몸체(3c): 질량 모델의 로봇 전체(RobotMass, 정보 없는 로봇의 외곽 상자 질량과 바퀴 질량 포함)에서 관절 몸체(세계
+// 설명의 관절 몸체와 같은 오브젝트 집합, buildWorldJoints의 bodyMasses)를 평행축 정리로 뺀다. 로봇 좌표, 무게중심 기준
+// 관성. 질량 모델이 없으면(인스펙터 경로) 경고 없이 기본 상자다. 남은 질량이 MIN_CHASSIS_MASS보다 작거나 관성이 검증을
+// 통과하지 못하면 기본 상자와 경고 worldChassisMass다. 질량 모델이 형상을 읽는 중·못 읽은 메시(RobotMass의 pending 경고,
+// 덩어리 밖이라 질량이 빠진 것)를 섀시 쪽에 남겼으면(관절 몸체의 것 jointPendingMeshes는 그 관절이 알린다) 경고
+// worldChassisMassPending이다: 섀시 질량·무게중심·관성이 읽은 메시만으로 정해져 가속·제동·하중이 실제와 다를 수 있다
+// (관절 몸체의 worldJointMassPending과 같은 판단). 질량을 셀 수 있는 형상이 하나도 없어 질량 모델이 로봇 외곽 상자로
+// 대신한 로봇(defaultMass: 임시 상자 로봇, 못 찾은 CAD, 아직 아무 메시도 읽지 못함)은 일부가 빠진 것이 아니라 정해진 대체값이라
+// 알리지 않는다(Rigidbody 카드가 알린다).
+function chassisBody(
+  mass: MassModel | null,
+  robotId: string,
+  jointBodies: readonly (MassProps | null)[],
+  jointPendingMeshes: number,
+  footprint: readonly Vec2[],
+  warnings: WorldWarning[]
+): SimBody {
+  const robot = mass?.robots[robotId]
+  if (!robot) return placeholderChassisBody(footprint)
+  const pending = robot.warnings.reduce(
+    (count, warning) => (warning.kind === 'pending' ? count + warning.meshes : count),
+    0
+  )
+  const boxed = robot.warnings.some((warning) => warning.kind === 'defaultMass')
+  if (!boxed && pending - jointPendingMeshes > 0)
+    warnings.push({
+      key: 'worldChassisMassPending',
+      params: { count: pending - jointPendingMeshes }
+    })
+  const parts = jointBodies.filter((body): body is MassProps => body !== null)
+  const rest = subtractMassProps(
+    { mass: robot.mass, centerOfMass: robot.centerOfMass, inertia: robot.inertia },
+    parts
+  )
+  const inertia = rest.mass >= MIN_CHASSIS_MASS && floorInertia(rest.inertia, MIN_CHASSIS_INERTIA)
+  const [x, y, z] = rest.centerOfMass
+  if (!inertia || !isValidInertia(inertia) || ![x, y, z].every(Number.isFinite)) {
+    warnings.push({
+      key: 'worldChassisMass',
+      params: {
+        // g 단위까지(음수는 반올림 잡음이라 0으로 보인다)
+        mass: Number.isFinite(rest.mass) ? Math.max(0, Math.round(rest.mass * 1000) / 1000) : 0,
+        fallback: DEFAULT_ROBOT_MASS
+      }
+    })
+    return placeholderChassisBody(footprint)
+  }
+  return { mass: rest.mass, centerOfMass: { x, y, z }, inertia }
+}
+
+// 바퀴로 도는 질량(kg, 바퀴 회전 관성용, spec-3c §1.7): 질량 모델의 바퀴 오브젝트 하위 질량에서 그 하위에 붙은 하드웨어
+// 컴포넌트(모터·서보·Pinpoint 등)의 데이터시트 질량을 뺀다. 모터 회전자는 전기자 관성(J_rotor·G²)으로 이미 들어가 있고
+// 하우징은 돌지 않는다. 바퀴 설정이 표의 제품(goBILDA 메카넘)이고 바퀴 오브젝트에 질량 덮어쓰기가 없으면 그 제품의
+// 데이터시트 질량 그대로다(하위가 커서 COTS를 거절한 바퀴 그룹도). 질량 모델이 없거나, 그 오브젝트가 없거나, 빼고 남은
+// 것이 0 이하면 null(종류 기본 질량).
+export function wheelSpinMass(
+  objects: SceneObjects,
+  objectId: string,
+  wheel: WheelSettings,
+  mass: MassModel | null
+): number | null {
+  const subtree = mass?.objects[objectId]?.mass
+  if (subtree === undefined) return null
+  const product = wheelCotsKey(wheel)
+  const entry = product !== null && objects[objectId].mass?.mass === undefined && cotsEntry(product)
+  if (entry) return entry.mass
+  let hardware = 0
+  for (const id of subtreeIds(objects, objectId)) {
+    for (const component of objects[id].components ?? []) {
+      const key = componentCotsKey(component)
+      hardware += (key !== null && cotsEntry(key)?.mass) || 0
+    }
+  }
+  const rest = subtree - hardware
+  return rest > 0 ? rest : null
+}
+
+// 바퀴 접점이 로봇 무게를 나눌 수 있는지 볼 때의 받침 다각형 최소 폭(m). 가정: 1 cm보다 좁으면 무게중심 높이 0.1 m에서도
+// 0.5 m/s²(g·w/2h)만 가속해도 받침 밖으로 나가 늘 넘어짐 쪽으로 계산된다(같은 자리·일직선 접점과 같다).
+export const MIN_SUPPORT_WIDTH = 0.01
+
+// 바퀴 접점(로봇 좌표)이 받침 다각형을 이루지 못하는지: 서로 다른 접점이 셋보다 적거나, 볼록 껍질의 폭(변마다 가장 먼
+// 꼭짓점까지 거리의 최솟값)이 MIN_SUPPORT_WIDTH보다 좁다(일직선). 시뮬레이터의 하중 분배(wheelLoads.ts)와 같은 껍질이다.
+export function fewWheelContacts(points: readonly Vec2[]): boolean {
+  const hull = convexHull(points)
+  if (hull.length < 3) return true
+  let width = Infinity
+  for (let k = 0; k < hull.length; k++) {
+    const a = hull[k]
+    const b = hull[(k + 1) % hull.length]
+    const length = Math.hypot(b.x - a.x, b.y - a.y)
+    if (!(length > 0)) continue
+    let far = 0
+    for (const p of hull)
+      far = Math.max(far, Math.abs((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / length)
+    width = Math.min(width, far)
+  }
+  return !(width >= MIN_SUPPORT_WIDTH)
+}
 
 // 한도를 넘는 목록은 앞의 것만 쓰고 알린다(목록마다 문장이 따로 있다: 무엇이 넘었는지도 번역한다)
 type TooManyKey = Extract<WorldWarningKey, `worldTooMany${string}`>
@@ -285,15 +426,26 @@ export function motorDrivesJoint(
   return ids.has(componentId)
 }
 
-// 로봇 하위에 관절(SceneObject.joint)이 있는지. 관절 몸체의 질량 모델은 계산이 무거우므로(큰 CAD 60–100 ms) 있을 때만 만든다.
+// 로봇 하위에 관절(SceneObject.joint)이 있는지
 export function robotHasJoints(objects: SceneObjects, robotId: string): boolean {
   return !!objects[robotId] && subtreeIds(objects, robotId).some((id) => !!objects[id].joint)
 }
 
+// 세계 설명에 질량 모델이 필요한지: 관절(몸체 질량)이나 바퀴(3c 섀시 몸체·바퀴 회전 관성)가 있는 로봇. 질량 모델은 계산이
+// 무거우므로(큰 CAD 60–100 ms) 이때만 만든다(INIT, playActions).
+export function robotNeedsMassModel(objects: SceneObjects, robotId: string): boolean {
+  return (
+    !!objects[robotId] &&
+    subtreeIds(objects, robotId).some(
+      (id) => !!objects[id].joint || (id !== robotId && !!objects[id].wheel)
+    )
+  )
+}
+
 // 고른 로봇의 세계 설명과 Console 경고. 로봇이 없으면 null. 만든 값은 메인과 같은 parseWorldSpec으로 확인하고,
 // 받지 않을 값(로봇을 필드에서 아주 멀리 둠 등)이면 null과 worldInvalid 경고를 돌려준다(실행은 시뮬레이터 없이 계속).
-// mass는 관절 몸체의 질량 성질(MassModel.own)이고, null이면 몸체를 대체 질량으로 두고 질량 경고를 내지 않는다
-// (play/worldJoints.ts).
+// mass는 질량 모델이다: 관절 몸체(MassModel.own), 섀시 몸체(로봇 전체 − 관절 몸체), 바퀴 회전 관성(바퀴 하위 질량). null이면
+// 몸체를 대체 질량·기본 상자로, 바퀴를 종류 기본 질량으로 두고 질량 경고를 내지 않는다(play/worldJoints.ts).
 export function buildWorldSpec(
   objects: SceneObjects,
   robotId: string,
@@ -335,7 +487,9 @@ export function buildWorldSpec(
       // 구성 XML과 같은 태그(configXml deviceTag)
       modelTag: MOTOR_MODEL_TAGS[isMotorModel(model) ? model : 'unspecified'],
       gearbox: motorGearbox(component.props),
-      directionSign: component.props.direction === 'reverse' ? -1 : 1
+      directionSign: component.props.direction === 'reverse' ? -1 : 1,
+      // 토크·전류·관성은 실제 감속비로 푼 데이터시트 값(감속비 칸 0 = 그 모델의 실제 감속비, SDK gearing이 아님)
+      params: motorComponentParams(component.props)
     })
   }
 
@@ -355,7 +509,15 @@ export function buildWorldSpec(
       rollers: w.rollers,
       radius: w.wheel.diameter / 2,
       gearRatio: w.wheel.gearRatio,
-      motor: (w.motor && motorDevices.get(w.motor.id)) || null
+      motor: (w.motor && motorDevices.get(w.motor.id)) || null,
+      // 바퀴로 도는 질량(wheelSpinMass)의 회전 관성. 모르거나 0이면 종류 기본 질량(wheelData.ts)
+      spinInertia: wheelSpinInertia(
+        w.wheel.kind,
+        w.wheel.diameter / 2,
+        wheelSpinMass(objects, w.objectId, w.wheel, mass)
+      ),
+      // 잠근 바퀴 겉보기 μ(설정 0 = 종류 기본)
+      friction: effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
     }
   })
 
@@ -436,17 +598,32 @@ export function buildWorldSpec(
   })
   warnings.push(...joints.warnings)
 
+  const cappedWheels = capped(wheels, MAX_WORLD_WHEELS, 'worldTooManyWheels', warnings)
+  // 바퀴가 있으면 기저가 떠 있고(3c) 하중을 바퀴 접점에 나눈다. 셋보다 적거나 일직선이면 하중이 정해지지 않는다.
+  if (cappedWheels.length > 0 && fewWheelContacts(cappedWheels.map((w) => w.position)))
+    warnings.push({ key: 'worldFewWheels', params: {} })
+
   const [x, y] = robot.transform.position
+  const footprint = robotFootprint(objects, robotId)
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
     robot: {
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
-      footprint: robotFootprint(objects, robotId)
+      footprint,
+      // 바퀴가 없으면 기저가 고정이라 섀시 몸체를 쓰지 않는다(spec-3c §3): 기본 상자로 대신해도 알리지 않는다
+      body: chassisBody(
+        mass,
+        robotId,
+        joints.bodyMasses,
+        joints.bodyPendingMeshes,
+        footprint,
+        cappedWheels.length > 0 ? warnings : []
+      )
     },
     batteryVoltage: settings.batteryVoltage,
     hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),
     motors,
-    wheels: capped(wheels, MAX_WORLD_WHEELS, 'worldTooManyWheels', warnings),
+    wheels: cappedWheels,
     deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'worldTooManyDeadWheels', warnings),
     pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
     otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
