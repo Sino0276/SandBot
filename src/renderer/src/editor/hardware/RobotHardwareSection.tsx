@@ -133,7 +133,7 @@ function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
         </span>
       )}
       {summary.tractionAcceleration !== null && (
-        <span className="hw-static">
+        <span className="hw-static" title={t('hardware.drivetrain.tractionHint')}>
           {t('hardware.drivetrain.traction', {
             accel: speedText(summary.tractionAcceleration),
             unit,

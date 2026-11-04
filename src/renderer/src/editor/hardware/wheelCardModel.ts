@@ -41,6 +41,7 @@ import {
   WHEEL_KINDS
 } from '../../scene/wheel'
 import { formatNumber } from '../../units/units'
+import { wheelForwardTraction } from './wheelTraction'
 
 // 인스펙터 바퀴 카드·Add Component·로봇 카드 구동계 요약의 보기 계산(그리기와 나눠 시험한다)
 
@@ -253,9 +254,11 @@ export type DrivetrainSummary = {
   kinds: { kind: WheelKind; count: number }[]
   // INIT 때 Console에 남을 경고와 같은 것(생성 상태 경고 제외)
   warnings: WorldWarning[]
-  // 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 줄 수 있는 앞 방향 힘 Σ μ_i·N_i(구동하는 바퀴만, 구동하지 않는
-  // 바퀴는 따라 구르기만 한다) ÷ 질량 = g · Σ μ_i·N_i / Σ N_i. 바퀴가 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다
-  // (spec-3c §4 C). 로봇 질량을 모르거나 구동하는 바퀴가 없으면 null.
+  // 앞 방향 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 Σ N_i·t_i(구동하는 바퀴만,
+  // 구동하지 않는 바퀴는 따라 구르기만 한다. t_i = wheelForwardTraction: 바퀴 종류·굴림 방향·롤러를 따진 하중 1 N당 앞 방향
+  // 견인) ÷ 질량 = g · Σ N_i·t_i / Σ N_i. 굴림 0°의 메카넘이 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다(spec-3c §4 C),
+  // X 드라이브 옴니(±45°)는 cos 45°배쯤, H 드라이브의 옆걸음 옴니는 롤러 몫만 더한다. 로봇 질량을 모르거나 구동하는
+  // 바퀴가 없으면 null.
   tractionAcceleration: number | null
   // 구동하는 바퀴들의 무부하 최고 굴림 속도(m/s, play/worldSpec의 wheelTopSpeed)의 최소·최대. 없으면 null.
   topSpeed: { min: number; max: number } | null
@@ -282,7 +285,13 @@ export function drivetrainSummary(
     let force = 0
     wheels.forEach((w, i) => {
       if (w.motorState === 'ok' && w.motor)
-        force += effectiveWheelFriction(w.wheel.kind, w.wheel.friction) * loads.wheels[i].load
+        force +=
+          wheelForwardTraction(
+            w.wheel.kind,
+            w.wheel.angle,
+            w.rollers,
+            effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
+          ) * loads.wheels[i].load
     })
     tractionAcceleration = (GRAVITY * force) / loads.weight
   }

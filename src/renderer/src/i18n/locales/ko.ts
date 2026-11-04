@@ -1192,7 +1192,9 @@ const ko = {
       title: '구동계 (시뮬레이터)',
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
-      traction: '견인 한계 가속 ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      traction: '앞 방향 견인 한계 가속 ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      tractionHint:
+        '모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 ÷ 로봇 질량입니다. 구동하는 바퀴마다 정지 하중과 마찰 계수, 굴림 방향·롤러(메카넘·옴니)를 따집니다. X 드라이브처럼 비스듬히 구르는 바퀴는 앞으로 덜 밀고, 옆으로 구르는 옴니 바퀴(H 드라이브)는 롤러 저항 몫만 더합니다.',
       topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
       topSpeedRange: '최고 속도 ≈ {{min}}–{{max}} {{unit}}/s (바퀴마다 다름, 무부하, {{volts}} V)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'

@@ -4,7 +4,11 @@ import { initReactI18next } from 'react-i18next'
 import { BoxGeometry } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GRAVITY } from '../../../../shared/sim/physics'
-import { DEFAULT_WHEEL_MASS, WHEEL_SPIN_INERTIA_FACTOR } from '../../../../shared/sim/wheelData'
+import {
+  DEFAULT_WHEEL_MASS,
+  ROLLER_COULOMB,
+  WHEEL_SPIN_INERTIA_FACTOR
+} from '../../../../shared/sim/wheelData'
 import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
 import { createComponent } from '../../hardware/components'
 import en from '../../i18n/locales/en'
@@ -454,7 +458,7 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     expect(wheelPhysicsView(objects, 'mount', model)).toBeNull()
   })
 
-  it('로봇 요약: 견인 한계 가속은 구동하는 바퀴의 Σμ·N ÷ 질량, 최고 속도는 wheelTopSpeed', () => {
+  it('로봇 요약: 앞 방향 견인 한계 가속은 구동하는 바퀴의 Σ N·(앞 방향 견인) ÷ 질량, 최고 속도는 wheelTopSpeed', () => {
     const model = massModel(robotMass(10, 0.05))
     const settings = { batteryVoltage: 12 }
     // 모두 같은 μ면 무게중심과 관계없이 μ·g
@@ -463,15 +467,60 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     expect(all.tractionAcceleration).toBeCloseTo(0.6 * GRAVITY, 12)
     const speed = wheelTopSpeed(objects.wfl.wheel!, objects.mount.components![0].props, 12)
     expect(all.topSpeed).toEqual({ min: speed, max: speed })
-    // 앞은 일반 바퀴(μ 0.9)로 구동, 뒤는 구동하지 않는 옴니: 앞 하중(2/3)만 견인한다
+    // 앞은 일반 바퀴(μ 0.9, 팔각형이라 굴림 방향은 0.924·μ)로 구동, 뒤는 구동하지 않는 옴니: 앞 하중(2/3)만 견인한다
     let mixed = fourWheels()
     for (const id of ['wfl', 'wfr'])
       mixed = withWheel(mixed, id, { kind: 'traction', diameter: 0.096, motor: 'fl' })
     for (const id of ['wbl', 'wbr']) mixed = withWheel(mixed, id, { kind: 'omni', motor: '' })
     expect(drivetrainSummary(mixed, 'R', settings, model).tractionAcceleration).toBeCloseTo(
-      0.9 * GRAVITY * (2 / 3),
+      0.9 * Math.cos(Math.PI / 8) * GRAVITY * (2 / 3),
       9
     )
+    // X 드라이브(옴니 넷, 굴림 ±45°): μ·g가 아니라 (μ + 롤러 쿨롱)·cos 45°·g
+    let xDrive = fourWheels({ kind: 'omni', diameter: 0.096 })
+    for (const [id, angle] of [
+      ['wfl', -45],
+      ['wfr', 45],
+      ['wbl', 45],
+      ['wbr', -45]
+    ] as const)
+      xDrive = withWheel(xDrive, id, {
+        kind: 'omni',
+        diameter: 0.096,
+        motor: 'fl',
+        angle: angle * DEG
+      })
+    expect(drivetrainSummary(xDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      (0.8 + ROLLER_COULOMB) * Math.SQRT1_2 * GRAVITY,
+      9
+    )
+    // H 드라이브: 옴니 넷(굴림 0°)과 가운데 옆걸음 옴니(90°). 옆걸음 바퀴는 하중을 가져가지만 앞으로는 μ 없이 롤러 몫만
+    const hDrive: SceneObjects = {
+      ...fourWheels({ kind: 'omni', diameter: 0.096 }),
+      strafe: {
+        id: 'strafe',
+        name: 'strafe',
+        kind: 'part',
+        parentId: 'R',
+        transform: at(0, 0),
+        visual: { type: 'mesh', geometryId: 'strafe:0', color: [1, 1, 1] },
+        wheel: { ...defaultWheel('omni'), motor: 'fl', angle: 90 * DEG }
+      }
+    }
+    const loads = robotStaticLoads(hDrive, 'R', model)!
+    const strafeLoad = loads.wheels.find((w) => w.objectId === 'strafe')!.load
+    expect(strafeLoad).toBeGreaterThan(0)
+    const corners = loads.weight - strafeLoad
+    expect(drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      (GRAVITY * (0.8 * corners + ROLLER_COULOMB * strafeLoad)) / loads.weight,
+      9
+    )
+    // 옆걸음 바퀴를 구동하지 않아도 앞 견인은 롤러 몫만큼만 다르다
+    const undriven = withWheel(hDrive, 'strafe', { kind: 'omni', diameter: 0.096, angle: 90 * DEG })
+    expect(
+      drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration! -
+        drivetrainSummary(undriven, 'R', settings, model).tractionAcceleration!
+    ).toBeCloseTo((GRAVITY * ROLLER_COULOMB * strafeLoad) / loads.weight, 9)
     // 외부 감속비가 다른 바퀴가 있으면 최고 속도는 범위다
     const geared = withWheel(objects, 'wbr', { motor: 'fl', gearRatio: 2 })
     const range = drivetrainSummary(geared, 'R', settings, model).topSpeed!
@@ -548,6 +597,7 @@ describe('바퀴 카드 문구', () => {
     'hardware.wheel.staticLoad',
     'hardware.wheel.staticLoadUnknown',
     'hardware.drivetrain.traction',
+    'hardware.drivetrain.tractionHint',
     'hardware.drivetrain.topSpeed',
     'hardware.drivetrain.topSpeedRange',
     'hardware.derived.motorOutputRatio'
@@ -690,7 +740,7 @@ describe('바퀴 카드 그리기', () => {
     expect(plain).not.toContain('에서 자름')
   })
 
-  it('로봇 카드: 최고 속도와 견인 한계 가속(표시 단위, 바퀴 μ의 하중 가중 평균 × g)', () => {
+  it('로봇 카드: 최고 속도와 앞 방향 견인 한계 가속(표시 단위, 굴림 0° 메카넘은 바퀴 μ의 하중 가중 평균 × g)', () => {
     const objects = fourWheels()
     setStore(useSceneStore, { objects })
     setStore(useUnitStore, { lengthUnit: 'mm' })
@@ -698,10 +748,10 @@ describe('바퀴 카드 그리기', () => {
     const html = renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)
     expect(html).toContain(`최고 속도 ≈ ${(speed * 1000).toFixed(1)} mm/s (무부하, 12.5 V)`)
     // 견인 한계 가속도 표시 길이 단위(0.6·g = 5.884 m/s²)
-    expect(html).toContain('견인 한계 가속 ≈ 5884.0 mm/s² (0.60 g)')
+    expect(html).toContain('앞 방향 견인 한계 가속 ≈ 5884.0 mm/s² (0.60 g)')
     setStore(useUnitStore, { lengthUnit: 'in' })
     expect(renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)).toContain(
-      '견인 한계 가속 ≈ 231.7 in/s² (0.60 g)'
+      '앞 방향 견인 한계 가속 ≈ 231.7 in/s² (0.60 g)'
     )
     setStore(useUnitStore, { lengthUnit: 'mm' })
     // 바퀴마다 최고 속도가 다르면 범위

@@ -1192,7 +1192,9 @@ const en: Messages = {
       title: 'Drivetrain (simulator)',
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
-      traction: 'Traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      traction: 'Forward traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      tractionHint:
+        'The force the floor can give toward the robot front (+X) while all wheels slip, divided by the robot mass. Each driven wheel counts with its load at rest, friction coefficient and rolling direction and rollers (mecanum, omni). Wheels rolling at an angle, as in an X-drive, push forward less, and an omni wheel rolling sideways (H-drive) adds only its roller resistance share.',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedRange:
         'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',
