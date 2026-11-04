@@ -41,7 +41,7 @@ import {
   WHEEL_KINDS
 } from '../../scene/wheel'
 import { formatNumber } from '../../units/units'
-import { wheelForwardTraction } from './wheelTraction'
+import { wheelForwardTraction } from '../../../../shared/sim/contact'
 
 // 인스펙터 바퀴 카드·Add Component·로봇 카드 구동계 요약의 보기 계산(그리기와 나눠 시험한다)
 

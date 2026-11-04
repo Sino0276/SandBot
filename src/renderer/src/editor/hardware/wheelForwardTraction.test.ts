@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ROLLER_COULOMB } from '../../../../shared/sim/wheelData'
-import { wheelForwardTraction } from './wheelTraction'
+import { wheelForwardTraction } from '../../../../shared/sim/contact'
 
 const DEG = Math.PI / 180
 // 일반 바퀴 팔각형의 굴림 방향 지지: (1 + 2 cos 45°) / (2(cos 22.5° + sin 22.5°)) = cos 22.5° = 0.924
