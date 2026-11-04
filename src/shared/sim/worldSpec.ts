@@ -71,7 +71,8 @@ export type SimWheelSpec = {
   // kg·m², 바퀴 축 둘레 회전 관성(바퀴 쪽, 외부 감속 전. src/shared/sim/wheelData.ts wheelSpinInertia)
   spinInertia: number
   // 잠근 바퀴를 타일에서 끌 때의 겉보기 마찰 계수(제조사 표기 CoF, 정지 = 운동). 렌더러가 기본값을 풀어 넣는다
-  // (wheelData.ts effectiveWheelFriction). 메카넘 롤러 축 계수는 √2배다(mecanumRollerFriction).
+  // (wheelData.ts effectiveWheelFriction). 메카넘 롤러 축 계수는 √2·μ − ROLLER_COULOMB다(mecanumRollerFriction: 잠근 바퀴를
+  // 끌 때 롤러 쿨롱 저항이 더해져도 겉보기 계수가 이 값과 같게).
   friction: number
 }
 

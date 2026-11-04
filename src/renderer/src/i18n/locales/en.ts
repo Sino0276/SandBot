@@ -1164,7 +1164,7 @@ const en: Messages = {
       friction: 'Friction',
       frictionDefault: 'Kind default ({{value}})',
       frictionHint:
-        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to the roller-axis coefficient (√2 times). Leave it empty to use the kind default (an assumption, not measured).',
+        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to a roller-axis coefficient (√2·μ minus the roller resistance share), so that a locked wheel still drags with this coefficient. Leave it empty to use the kind default (an assumption, not measured).',
       wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
       staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
       staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
