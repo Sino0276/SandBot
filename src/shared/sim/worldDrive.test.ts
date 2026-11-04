@@ -430,6 +430,66 @@ describe('3c 구동계: 벽', () => {
     expect(Math.max(...corners) - LIMIT).toBeLessThan(0.01 + 1e-6)
   })
 
+  it('T6d 벽에 붙어 미는 채 앞 슬라이드를 위 한계에 거듭 박아도 침투가 늘지 않는다(한계 충격을 벽이 받는다)', () => {
+    // 수평 슬라이드(로봇 +x, 0–0.3 m)를 power 1로 위 한계에 박고 0.12 s만 되돌리기를 12번(벽에 붙인 뒤 인테이크를 뻗는 흔한
+    // 동작). 한계 충격이 기저를 벽 쪽으로 밀면 걸친 꼭짓점의 목표가 0이라 침투가 되돌아오지 않고 쌓인다(3c 리뷰).
+    const penetration = (gearbox: number, mass: number): number => {
+      const params = testMotorParams(TAG, gearbox)
+      const slide: SimJointSpec = {
+        parent: -1,
+        type: 'prismatic',
+        origin: { position: { x: 0, y: 0, z: 0.15 }, rotation: ZERO },
+        axis: { x: 1, y: 0, z: 0 },
+        limits: { lower: 0, upper: 0.3 },
+        body: { mass, centerOfMass: ZERO, inertia: [0.01, 0.01, 0.01, 0, 0, 0] },
+        friction: { coulomb: 0.5, viscous: 0 },
+        spring: null,
+        drive: {
+          kind: 'motor',
+          devices: ['slide'],
+          ratio: 0.019,
+          params,
+          rigging: { kind: 'direct' }
+        },
+        switches: []
+      }
+      const base = robotSpec({ start: touching })
+      const spec = robotSpec(
+        { start: touching },
+        {
+          motors: [
+            ...base.motors,
+            { device: 'slide', modelTag: TAG, gearbox, directionSign: 1, params }
+          ],
+          joints: [slide]
+        }
+      )
+      const slideOut = (power: number): DeviceValues => ({ ...liftOut(power), power })
+      const r = new Runner(spec)
+      for (let k = 0; k < 12; k++) {
+        r.run(0.4, () => ({ ...outputs(mecanum(0.5, 0, 0)), slide: slideOut(-1) }))
+        r.run(0.12, () => ({ ...outputs(mecanum(0.5, 0, 0)), slide: slideOut(0.6) }))
+      }
+      r.run(0.5, () => outputs({}))
+      // 슬라이드가 실제로 위 한계에 닿았는지(충격이 있었는지)
+      expect(r.poses.some((p) => Math.abs((p.joints?.[0] ?? 0) - 0.3) < 1e-9)).toBe(true)
+      let worst = -Infinity
+      for (const p of r.poses) {
+        const c = Math.cos(p.yaw)
+        const s = Math.sin(p.yaw)
+        for (const [x, y] of [
+          [HALF, HALF],
+          [HALF, -HALF]
+        ])
+          worst = Math.max(worst, p.x + c * x - s * y - LIMIT)
+      }
+      return worst
+    }
+    expect(penetration(3.7, 3)).toBeLessThan(1e-6)
+    expect(penetration(13.7, 1)).toBeLessThan(1e-6)
+    expect(penetration(5.2, 1.5)).toBeLessThan(1e-6)
+  })
+
   it('T17 벽 밀기 경계: power 0.5로 밀 때 바퀴 미끄럼 여부가 해석식(바퀴 힘 대 μ·N)과 맞는다', () => {
     // 막힌 바퀴가 미끄러지기 시작하는 힘: (정지 토크·d·V/12 − G·τ_c)/r − 굴림 저항 c_rr·N(바퀴가 돌면 상자가 찬다). 메카넘 한
     // 바퀴가 앞으로 내는 견인 한계는 μ_r·N·cos 45° = μ·N(겉보기 μ). 벽 힘은 바닥 높이라 하중 이동이 없어 N = W/4.

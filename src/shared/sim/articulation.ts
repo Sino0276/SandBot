@@ -39,6 +39,7 @@ import type { Pose2, SimBody, SimJointSpec, Vec3 } from './worldSpec'
 //     몸체와는 밖에서 주는 접촉 행으로만 묶인다.
 //   - 밖에서 주는 구속 행(ContactSet.rows): 바퀴 견인·벽 법선·벽 마찰을 3b 행과 같은 상자 LCP에 넣는다. 마찰 행은 법선 행의 충격에
 //     기대는 상자(±μ·λ_n)이고, λ_n은 고정 2회 엇갈림(1회차는 앞 하위 단계의 같은 키 법선 힘, 2회차는 1회차 값)으로 정한다.
+//     5의 한계 충격 풀이에도 같은 행을 넣는다(벽에 붙은 기저를 한계 충격이 벽 안으로 밀지 않게, clampLimits).
 //   - 행 점성 감쇠(ContactSet.damping): 힘 −c·J·v(롤러 자유 방향)를 암시로 M̂에 h·c·JᵀJ로 더한다.
 //   - 기저 렌치(baseWrench): 바닥이 받쳐야 할 (F_z, M_x, M_y)(로봇 좌표 원점 = 로봇 중심 바닥, 로봇 축)를 섀시 관절의 RNEA 공간
 //     힘에서 얻는다. 중력·위치·속도는 지금 값이고, 가속(기저 + 관절)은 앞 하위 단계 가속을 1차 저역 통과한 값이다(spec-3c §1.4).
@@ -795,6 +796,9 @@ export class Articulation {
       v: number[]
       factor: { l: number[][]; d: number[] }
       impulses: Map<string, number>
+      // 마지막 풀이의 밖에서 준 행(마찰 상자를 정한 것)과 그 충격(한계 충격 풀이가 이어 쓴다)
+      external: Row[]
+      externalLambda: number[]
     }
     const solve = (forces: DriveForces): Solution => {
       const mhat = mz.map((row, a) =>
@@ -838,8 +842,9 @@ export class Articulation {
           if (added) continue
           const impulses = new Map<string, number>()
           const first = rows.length - external.length
-          external.forEach((row, k) => impulses.set(row.key, lambda[first + k]))
-          return { v, factor, impulses }
+          const externalLambda = external.map((_, k) => lambda[first + k])
+          external.forEach((row, k) => impulses.set(row.key, externalLambda[k]))
+          return { v, factor, impulses, external, externalLambda }
         }
       }
       const once = pass(previous)
@@ -854,7 +859,7 @@ export class Articulation {
 
     const v = solution.v
     const z = this.z.map((x, c) => x + h * v[c])
-    this.clampLimits(z, v, solution.factor, h)
+    const impulses = this.clampLimits(z, v, solution.factor, h, solution)
     for (let c = 0; c < m; c++)
       if (!Number.isFinite(z[c]) || !Number.isFinite(v[c]))
         throw new Error('joint dynamics diverged')
@@ -867,7 +872,7 @@ export class Articulation {
     }
     this.z = z
     this.v = v
-    this.contactImpulses = solution.impulses
+    this.contactImpulses = impulses
     this.lastH = h
   }
 
@@ -997,12 +1002,24 @@ export class Articulation {
   // 멈춰 있던 좌표를 안쪽으로 밀면 그것은 한계에서 떨어지고(두 방향 구속으로 묶으면 그 운동량을 잃는다), 바깥으로 밀면 멈춘
   // 채다. M̂은 이번 하위 단계의 암시 행렬(LCP와 같은 계)이고, 멈추지 않은 좌표의 위치는 바뀐 속도로 다시 적분한다. 그 뒤 걸린
   // 여러 성분 행이나 한계를 넘은 여러 성분 관절은 멈추지 않은 좌표만 움직여(그 행 방향의 최소 이동) 한계에 놓는다.
+  // 밖에서 준 행(3c: 바퀴 견인·롤러 상자, 벽 법선·마찰)도 같은 충격 LCP에 넣는다. 넣지 않으면 부유 기저에서 한계 충격 M̂⁻¹Jᵀλ가
+  // 벽 구속을 푼 뒤의 기저를 벽 쪽으로 옮겨(z += h·Δv), 벽에 붙어 민 채 슬라이드를 한계에 박을 때마다 침투가 쌓인다(걸친 꼭짓점의
+  // 목표가 0이라 되돌아오지 않는다, 3c 리뷰). 본 LCP와 같은 계를 이어 푸는 것이라 행마다 합 λ_본 + λ_충격이 본 LCP의 상자
+  // [lo, hi](마찰 상자는 본 풀이에서 정한 것) 안이고 목표도 같다: 충격 λ ∈ [lo − λ_본, hi − λ_본], w = J·v⁺ − 목표. 벽 법선은
+  // 걸친 꼭짓점 목표 0, 아니면 −간격/h, 합 λ ≥ 0이다(벽이 미는 힘을 줄일 수는 있어도 당기지 않는다). 3b 마찰 상자(관절 쿨롱,
+  // 구동 상자)는 넣지 않는다(3b와 같다). 밖에서 준 행이 없으면(기저 고정) 연산이 3b와 같다. 돌려주는 값은 행마다 이 하위
+  // 단계의 합 충격이다.
   private clampLimits(
     z: number[],
     v: number[],
     factor: { l: number[][]; d: number[] },
-    h: number
-  ): void {
+    h: number,
+    contacts: {
+      impulses: Map<string, number>
+      external: readonly Row[]
+      externalLambda: readonly number[]
+    }
+  ): Map<string, number> {
     const m = this.coordinates.length
     const low = new Array<number>(m).fill(-Infinity)
     const high = new Array<number>(m).fill(Infinity)
@@ -1051,19 +1068,24 @@ export class Articulation {
       if (gap(row) > LIMIT_TOLERANCE * Math.max(1, Math.abs(row.limit))) return
       rows.push({ j: this.s[row.joint].map((x) => row.sign * x), coordinate: -1, coupled: k })
     })
-    // 바깥으로 움직이는 행이 없으면 충격이 없다(λ = 0이 해)
+    // 바깥으로 움직이는 한계 행이 없으면 충격이 없다(λ = 0이 해: 밖에서 준 행은 본 LCP가 이미 맞췄다)
     if (rows.every((row) => dot(row.j, v) >= 0)) {
       this.placeCoupled(z, coupled, rows, [], new Array<boolean>(m).fill(false), gap, low, high)
-      return
+      return contacts.impulses
     }
-    // y_k = M̂⁻¹J_kᵀ, A = J·M̂⁻¹·Jᵀ(양반정치), w = A·λ + J·v = J·v⁺
-    const y = rows.map((row) => ldlSolve(factor, row.j))
-    const a = rows.map((row) => y.map((col) => dot(row.j, col)))
+    // 한계 행 뒤에 밖에서 준 행을 둔다. y_k = M̂⁻¹J_kᵀ, A = J·M̂⁻¹·Jᵀ(양반정치), w = A·λ + J·v − 목표 = J·v⁺ − 목표
+    const external = contacts.external
+    const all = [...rows.map((row) => row.j), ...external.map((row) => row.j)]
+    const y = all.map((j) => ldlSolve(factor, j))
+    const a = all.map((j) => y.map((col) => dot(j, col)))
     const { lambda, states } = solveBoxLcp(
       a,
-      rows.map((row) => dot(row.j, v)),
-      rows.map(() => 0),
-      rows.map(() => Infinity)
+      [...rows.map((row) => dot(row.j, v)), ...external.map((row) => dot(row.j, v) - row.target)],
+      [...rows.map(() => 0), ...external.map((row, k) => row.lo - contacts.externalLambda[k])],
+      [
+        ...rows.map(() => Infinity),
+        ...external.map((row, k) => row.hi - contacts.externalLambda[k])
+      ]
     )
     const held = new Array<boolean>(m).fill(false)
     const active: number[] = []
@@ -1075,7 +1097,7 @@ export class Articulation {
     })
     for (let c = 0; c < m; c++) {
       let dv = 0
-      rows.forEach((_, k) => (dv += y[k][c] * lambda[k]))
+      y.forEach((col, k) => (dv += col[c] * lambda[k]))
       if (held[c]) {
         // 멈춘 좌표는 정확히 +0(반올림 잡음·−0 없이)
         v[c] = 0
@@ -1088,6 +1110,13 @@ export class Articulation {
       else if (z[c] > high[c]) z[c] = high[c]
     }
     this.placeCoupled(z, coupled, rows, active, held, gap, low, high)
+    if (external.length === 0) return contacts.impulses
+    const impulses = new Map(contacts.impulses)
+    external.forEach((row, k) => {
+      const extra = lambda[rows.length + k]
+      if (extra !== 0) impulses.set(row.key, contacts.externalLambda[k] + extra)
+    })
+    return impulses
   }
 
   // 걸린 여러 성분 행(active)과 한계를 넘은 여러 성분 관절을 한계에 놓는다. 멈춘 좌표(held)와 한계에 닿은 성분 하나 좌표는
