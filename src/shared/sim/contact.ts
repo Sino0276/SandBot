@@ -12,7 +12,7 @@ import {
   WHEEL_BEARING_FRICTION
 } from './wheelData'
 import { distributeWheelLoads, type WheelLoads } from './wheelLoads'
-import type { Pose2, SimWheelSpec, Vec2 } from './worldSpec'
+import type { MecanumRollers, Pose2, SimWheelSpec, Vec2, WheelKind } from './worldSpec'
 
 // 구동계 동역학(3c)의 접촉: 바퀴–타일 마찰 행, 필드 벽 행, 바퀴 법선 하중과 받침 알림(순수·결정적, 배열 순서만 쓴다).
 // world.ts가 하위 단계마다 부르고, 행은 Articulation(부유 기저)의 상자 LCP에 들어간다(spec-3c §1.3–1.5).
@@ -161,6 +161,49 @@ export function wheelRows(
     if (coulomb > 0) rows.push({ key: `w${i}f`, j: free, target: 0, lo: -coulomb, hi: coulomb })
   })
   return { rows, damping }
+}
+
+// 바퀴 하나가 로봇 +X(앞)로 미는 견인 한계(하중 1 N당 N, 인스펙터 로봇 카드의 견인 한계 가속이 Σ 이 값 × 하중으로 쓴다).
+// wheelRows의 행 그대로다: 행 d(로봇 좌표)마다 상자 계수 b(메카넘 롤러 축 μ_r·자유 방향 k·c_r, 옴니 굴림 μ·축 c_r, 일반 바퀴
+// 팔각형 넷 μ / 2.6131). 바퀴가 헛돌며 미는 동안(바퀴 면 속도 ≫ 차대 속도) 굴림과 묶인 행(d·u ≠ 0)은 미끄럼 방향이 바퀴
+// 회전으로 정해져 힘이 s·sign(d·u)·b·d이고(s = 회전 방향, 앞으로 미는 쪽을 고른다), 굴림과 수직인 행(d·u = 0: 옴니 축 방향,
+// 팔각형 90° 행)은 바퀴 회전이 미끄럼을 만들지 않아 차대가 앞으로 움직이면 b·|d_x|만큼 거스른다. 그래서
+// 견인 = max(0, |Σ_묶인 sign(d·u)·b·d_x| − Σ_수직 b·|d_x|)다. 표준 메카넘(angle 0)은 (μ_r + k·c_r)·cos 45° = μ, 일반 바퀴
+// angle 0은 팔각형 지지 cos 22.5°·μ, X 드라이브 옴니(±45°)는 (μ − c_r)·cos 45°, H 드라이브 옆 바퀴(90°)는 0이다(앞으로 밀지
+// 못하는 바퀴는 0: 거스르는 끌림은 굴림 저항·구동하지 않는 바퀴처럼 이 추정에 넣지 않는다). 롤러 점성은 미끄럼 속도에 따라
+// 달라 넣지 않는다(정지에서 미끄러지기 시작할 때의 값). friction은 겉보기 μ(effectiveWheelFriction으로 푼 값)다.
+export function wheelForwardTraction(
+  kind: WheelKind,
+  angle: number,
+  rollers: MecanumRollers | null,
+  friction: number
+): number {
+  const u: Vec2 = { x: Math.cos(angle), y: Math.sin(angle) }
+  const rows: { d: Vec2; b: number }[] = []
+  if (kind === 'traction') {
+    for (const offset of OCTAGON_ANGLES)
+      rows.push({
+        d: { x: Math.cos(angle + offset), y: Math.sin(angle + offset) },
+        b: friction / OCTAGON_DIVISOR
+      })
+  } else {
+    const a = tractionDirection({ kind, angle, rollers })
+    const mecanum = kind === 'mecanum'
+    rows.push({ d: a, b: mecanum ? mecanumRollerFriction(friction) : friction })
+    rows.push({
+      d: perpendicular(a),
+      b: (mecanum ? mecanumRollerScale(friction) : 1) * ROLLER_COULOMB
+    })
+  }
+  let push = 0
+  let drag = 0
+  for (const { d, b } of rows) {
+    const coupling = d.x * u.x + d.y * u.y
+    // 팔각형 90° 행의 cos·sin 반올림(1e-16)을 수직으로 본다
+    if (Math.abs(coupling) < 1e-9) drag += b * Math.abs(d.x)
+    else push += Math.sign(coupling) * b * d.x
+  }
+  return Math.max(0, Math.abs(push) - drag)
 }
 
 // 바퀴 좌표의 쿨롱 상자(좌표 단위 힘, N·m): 굴림 저항 c_rr·N·r/G, 구동하지 않는 바퀴는 베어링 마찰을 더한다

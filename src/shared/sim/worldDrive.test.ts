@@ -25,6 +25,7 @@ import {
   ZERO,
   type Device
 } from './driveTestkit'
+import { wheelForwardTraction } from './contact'
 import { Drivetrain, twistBetween } from './drivetrain'
 import { WALL_INNER_HALF } from './field'
 import { GRAVITY } from './physics'
@@ -229,6 +230,94 @@ describe('3c 구동계: 견인과 미끄럼', () => {
     const r = new Runner(spec, { rollerViscous: 0 }).run(0.2, () => outputs(mecanum(1, 0, 0)))
     for (const k of [2, 10, 20])
       expect(Math.abs(accelAt(r, k) / (mu * GRAVITY) - 1)).toBeLessThan(0.01)
+  })
+
+  it('T2d wheelForwardTraction(로봇 카드 견인 한계)이 시뮬레이터가 미끄러지며 내는 앞 가속과 같다', () => {
+    // 표준 메카넘(angle 0, 두 롤러 형): 겉보기 μ 그대로(롤러 쿨롱 배율이 1 아래인 μ도)
+    for (const mu of [0.05, 0.1, 0.6, 1.5])
+      for (const rollers of ['flbr', 'frbl'] as const)
+        expect(Math.abs(wheelForwardTraction('mecanum', 0, rollers, mu) - mu)).toBeLessThan(1e-12)
+    // 일반 바퀴 angle 0: 팔각형의 굴림 방향 지지 cos 22.5°·μ(T2b가 그 가속을 잰다)
+    expect(
+      Math.abs(wheelForwardTraction('traction', 0, null, 0.9) - Math.cos(Math.PI / 8) * 0.9)
+    ).toBeLessThan(1e-12)
+    // H 드라이브 옆 바퀴(옴니 90°)는 앞으로 밀지 못한다
+    expect(wheelForwardTraction('omni', Math.PI / 2, null, 0.8)).toBe(0)
+    expect(wheelForwardTraction('traction', Math.PI / 2, null, 0.9)).toBe(0)
+
+    // 하중이 같고(무게중심 높이 0) 롤러 점성이 없으면 미끄러지는 동안의 가속 = 견인 × g
+    const measure = (
+      wheels: (w: SimWheelSpec) => SimWheelSpec,
+      yaw: number,
+      powers: Partial<Record<Device, number>>
+    ): Runner => {
+      const base = robotSpec({ comHeight: 0, kind: 'omni', start: { x: -1.2, y: -1.2, yaw } })
+      const spec = { ...base, wheels: base.wheels.map(wheels) }
+      return new Runner(spec, { rollerViscous: 0 }).run(0.1, () => outputs(powers))
+    }
+    const along = (r: Runner, k: number, heading: number): number =>
+      Math.cos(heading) * accelAt(r, k, 'x') + Math.sin(heading) * accelAt(r, k, 'y')
+
+    // 메카넘 기본 로봇
+    const mecanumRun = new Runner(robotSpec({ comHeight: 0 }), { rollerViscous: 0 }).run(0.1, () =>
+      outputs(mecanum(1, 0, 0))
+    )
+    const mecanumTraction = wheelForwardTraction(
+      'mecanum',
+      0,
+      'flbr',
+      DEFAULT_WHEEL_FRICTION.mecanum
+    )
+    for (const k of [2, 6, 10])
+      expect(Math.abs(accelAt(mecanumRun, k) / (mecanumTraction * GRAVITY) - 1)).toBeLessThan(0.01)
+
+    // X 드라이브: 옴니 넷을 ±45°로(앞왼·뒤오른 −45°), 로봇 앞이 필드 대각선
+    const xAngle: Record<string, number> = {
+      fl: -Math.PI / 4,
+      fr: Math.PI / 4,
+      bl: Math.PI / 4,
+      br: -Math.PI / 4
+    }
+    const heading = Math.PI / 4
+    const x = measure((w) => ({ ...w, angle: xAngle[w.motor as string] }), heading, {
+      fl: 1,
+      fr: 1,
+      bl: 1,
+      br: 1
+    })
+    const omni = DEFAULT_WHEEL_FRICTION.omni
+    const xTraction = wheelForwardTraction('omni', -Math.PI / 4, null, omni)
+    expect(wheelForwardTraction('omni', Math.PI / 4, null, omni)).toBe(xTraction)
+    // (μ − c_r)·cos 45°: 축 방향 롤러 쿨롱은 굴림과 수직이라 차대가 움직이면 거스른다
+    expect(xTraction).toBeLessThan(omni * Math.SQRT1_2)
+    for (const k of [2, 6, 10])
+      expect(Math.abs(along(x, k, heading) / (xTraction * GRAVITY) - 1)).toBeLessThan(0.01)
+
+    // H 드라이브: 앞뒤 옴니 넷(0°) + 가운데 옆 옴니 둘(90°, 'strafe' 모터 하나, 무게중심 줄 위라 돌림 힘이 없다). 옆 바퀴를
+    // 전출력으로 돌려도 앞 가속은 그대로다(그 바퀴의 견인 0. 축 방향 롤러 끌림은 돌든 서든 같다).
+    const hBase = robotSpec({ comHeight: 0, kind: 'omni', start: { x: -1.2, y: 0, yaw: 0 } })
+    const strafeWheel = (y: number): SimWheelSpec => ({
+      ...hBase.wheels[0],
+      position: { x: 0, y },
+      angle: Math.PI / 2,
+      motor: 'strafe'
+    })
+    const hSpec: WorldSpec = {
+      ...hBase,
+      motors: [...hBase.motors, { ...hBase.motors[1], device: 'strafe' }],
+      wheels: [...hBase.wheels, strafeWheel(0.05), strafeWheel(-0.05)]
+    }
+    const hRun = (strafe: number): Runner =>
+      new Runner(hSpec, { rollerViscous: 0 }).run(0.1, () =>
+        outputs({ fl: 1, fr: 1, bl: 1, br: 1 }, {}, { strafe: motorOut('fr', strafe) })
+      )
+    const strafing = hRun(1)
+    const still = hRun(0)
+    for (const k of [2, 6, 10]) {
+      expect(accelAt(strafing, k, 'y')).toBeGreaterThan(0.5)
+      expect(Math.abs(accelAt(still, k, 'y'))).toBeLessThan(1e-9)
+      expect(Math.abs(accelAt(strafing, k) / accelAt(still, k) - 1)).toBeLessThan(1e-6)
+    }
   })
 
   it('T16 정상 옆걸음: 바퀴 엔코더 거리 = 실제 이동(비 1, 미끄럼 강성이 없는 한계로 적은 동작)', () => {
