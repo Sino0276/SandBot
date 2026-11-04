@@ -81,6 +81,9 @@ export type JointBuildResult = {
   // 관절 순번마다 몸체의 질량 성질(로봇 좌표, 무게중심 기준 관성, 질량 모델 자기 몫의 합). 질량을 몰라 대체 질량(1 g)을 둔
   // 몸체는 null이다(질량 모델에 없는 질량이라 섀시에서 빼지 않는다). 섀시 몸체(robot.body)는 로봇 전체에서 이것을 뺀다.
   bodyMasses: (MassProps | null)[]
+  // 관절 몸체들의 형상을 읽는 중·못 읽은 메시 수의 합(질량 모델 자기 몫 pendingMeshes, 각 몸체가 worldJointMassPending으로
+  // 알린 것). 섀시 몸체의 같은 경고(worldChassisMassPending)는 로봇 전체 수에서 이것을 뺀 것만 센다.
+  bodyPendingMeshes: number
   warnings: WorldWarning[]
 }
 
@@ -288,6 +291,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     if (body >= 0) bodyParts[body].push(id)
   }
   const bodyMasses: (MassProps | null)[] = kept.map(() => null)
+  let bodyPendingMeshes = 0
   const bodies = kept.map((candidate, i): SimJointSpec['body'] => {
     let total = 0
     let pending = 0
@@ -298,6 +302,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
       pending += own.pendingMeshes
       for (let k = 0; k < 3; k++) moment[k] += own.mass * own.centerOfMass[k]
     }
+    bodyPendingMeshes += pending
     if (mass && pending > 0)
       warnings.push({
         key: 'worldJointMassPending',
@@ -595,6 +600,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     objectIds: kept.map((candidate) => candidate.objectId),
     motorIds,
     bodyMasses,
+    bodyPendingMeshes,
     warnings
   }
 }

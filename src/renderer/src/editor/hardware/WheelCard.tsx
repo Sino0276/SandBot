@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { MAX_WHEEL_MASS, MIN_WHEEL_MASS } from '../../../../shared/sim/wheelData'
 import { MAX_WHEEL_FRICTION, MIN_WHEEL_FRICTION } from '../../../../shared/sim/worldSpec'
 import { usePlayStore } from '../../play/playStore'
 import { wheelTopSpeed } from '../../play/worldSpec'
@@ -243,12 +244,36 @@ function WheelCard({ object }: { object: SceneObject }): React.JSX.Element | nul
             })
           : t('hardware.wheel.topSpeedNoMotor')}
       </p>
+      {/* 질량 모델의 값, 종류 기본(질량 모름), 범위로 자른 값을 다른 문구로 보인다(잘못 붙인 바퀴를 계산값처럼 보이지 않게) */}
       {physics && (
-        <p className="hw-derived">
-          {t('hardware.wheel.wheelMass', {
-            mass: massText(t, physics.mass, lengthUnit),
-            inertia: formatInertia(physics.spinInertia)
-          })}
+        <p
+          className="hw-derived"
+          title={
+            !physics.massFromModel
+              ? t('hardware.wheel.wheelMassDefaultHint')
+              : physics.clippedFrom !== null
+                ? t('hardware.wheel.wheelMassClippedHint', {
+                    min: massText(t, MIN_WHEEL_MASS, lengthUnit),
+                    max: massText(t, MAX_WHEEL_MASS, lengthUnit)
+                  })
+                : undefined
+          }
+        >
+          {!physics.massFromModel
+            ? t('hardware.wheel.wheelMassDefault', {
+                mass: massText(t, physics.mass, lengthUnit),
+                inertia: formatInertia(physics.spinInertia)
+              })
+            : physics.clippedFrom !== null
+              ? t('hardware.wheel.wheelMassClipped', {
+                  mass: massText(t, physics.mass, lengthUnit),
+                  model: massText(t, physics.clippedFrom, lengthUnit),
+                  inertia: formatInertia(physics.spinInertia)
+                })
+              : t('hardware.wheel.wheelMass', {
+                  mass: massText(t, physics.mass, lengthUnit),
+                  inertia: formatInertia(physics.spinInertia)
+                })}
         </p>
       )}
       {physics && view.inRobot && (

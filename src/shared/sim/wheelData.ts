@@ -99,6 +99,18 @@ export function effectiveWheelMass(kind: WheelKind, mass: number | null | undefi
     : DEFAULT_WHEEL_MASS[kind]
 }
 
+// effectiveWheelMass가 mass를 [MIN_WHEEL_MASS, MAX_WHEEL_MASS]로 잘랐는지(유한한 양수일 때만, 아니면 종류 기본 질량이라
+// 자른 것이 아니다). 인스펙터 바퀴 카드가 잘린 값임을 알린다.
+export function wheelMassClipped(mass: number | null | undefined): boolean {
+  return (
+    mass !== null &&
+    mass !== undefined &&
+    Number.isFinite(mass) &&
+    mass > 0 &&
+    (mass < MIN_WHEEL_MASS || mass > MAX_WHEEL_MASS)
+  )
+}
+
 // 구동하지 않는 바퀴 좌표의 베어링 쿨롱 마찰(N·m). 가정: 볼 베어링 바퀴 축(굴림 저항이 주된 손실이다).
 export const WHEEL_BEARING_FRICTION = 0.002
 

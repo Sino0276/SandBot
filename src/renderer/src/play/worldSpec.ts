@@ -278,16 +278,32 @@ export const MIN_CHASSIS_INERTIA = 1e-6
 // 섀시 몸체(3c): 질량 모델의 로봇 전체(RobotMass, 정보 없는 로봇의 외곽 상자 질량과 바퀴 질량 포함)에서 관절 몸체(세계
 // 설명의 관절 몸체와 같은 오브젝트 집합, buildWorldJoints의 bodyMasses)를 평행축 정리로 뺀다. 로봇 좌표, 무게중심 기준
 // 관성. 질량 모델이 없으면(인스펙터 경로) 경고 없이 기본 상자다. 남은 질량이 MIN_CHASSIS_MASS보다 작거나 관성이 검증을
-// 통과하지 못하면 기본 상자와 경고 worldChassisMass다.
+// 통과하지 못하면 기본 상자와 경고 worldChassisMass다. 질량 모델이 형상을 읽는 중·못 읽은 메시(RobotMass의 pending 경고,
+// 덩어리 밖이라 질량이 빠진 것)를 섀시 쪽에 남겼으면(관절 몸체의 것 jointPendingMeshes는 그 관절이 알린다) 경고
+// worldChassisMassPending이다: 섀시 질량·무게중심·관성이 읽은 메시만으로 정해져 가속·제동·하중이 실제와 다를 수 있다
+// (관절 몸체의 worldJointMassPending과 같은 판단). 질량을 셀 수 있는 형상이 하나도 없어 질량 모델이 로봇 외곽 상자로
+// 대신한 로봇(defaultMass: 임시 상자 로봇, 못 찾은 CAD, 아직 아무 메시도 읽지 못함)은 일부가 빠진 것이 아니라 정해진 대체값이라
+// 알리지 않는다(Rigidbody 카드가 알린다).
 function chassisBody(
   mass: MassModel | null,
   robotId: string,
   jointBodies: readonly (MassProps | null)[],
+  jointPendingMeshes: number,
   footprint: readonly Vec2[],
   warnings: WorldWarning[]
 ): SimBody {
   const robot = mass?.robots[robotId]
   if (!robot) return placeholderChassisBody(footprint)
+  const pending = robot.warnings.reduce(
+    (count, warning) => (warning.kind === 'pending' ? count + warning.meshes : count),
+    0
+  )
+  const boxed = robot.warnings.some((warning) => warning.kind === 'defaultMass')
+  if (!boxed && pending - jointPendingMeshes > 0)
+    warnings.push({
+      key: 'worldChassisMassPending',
+      params: { count: pending - jointPendingMeshes }
+    })
   const parts = jointBodies.filter((body): body is MassProps => body !== null)
   const rest = subtractMassProps(
     { mass: robot.mass, centerOfMass: robot.centerOfMass, inertia: robot.inertia },
@@ -599,6 +615,7 @@ export function buildWorldSpec(
         mass,
         robotId,
         joints.bodyMasses,
+        joints.bodyPendingMeshes,
         footprint,
         cappedWheels.length > 0 ? warnings : []
       )

@@ -791,6 +791,8 @@ const en: Messages = {
         'The wheel contacts are fewer than three or lie on one line, so the robot weight cannot be split between the wheels. The simulator treats the robot as never tipping over.',
       worldChassisMass:
         'The robot body (mass without the joint bodies) is only {{mass}} kg, so the default mass of {{fallback}} kg is used. Enter the weighed mass in the Rigidbody card.',
+      worldChassisMassPending:
+        'The robot body still has {{count}} mesh(es) loading or not loaded, so its mass, center of mass and inertia are computed without them. The robot may accelerate and brake differently from the real one.',
       worldWheelMotorMissing:
         'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
       worldRollersAmbiguous:
@@ -1164,8 +1166,16 @@ const en: Messages = {
       friction: 'Friction',
       frictionDefault: 'Kind default ({{value}})',
       frictionHint:
-        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to the roller-axis coefficient (√2 times). Leave it empty to use the kind default (an assumption, not measured).',
+        'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to a roller-axis coefficient (√2·μ minus the roller resistance share), so that a locked wheel still drags with this coefficient. Leave it empty to use the kind default (an assumption, not measured).',
       wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
+      wheelMassDefault:
+        'Wheel mass {{mass}} (kind default, mass unknown) · spin inertia {{inertia}} kg·m²',
+      wheelMassDefaultHint:
+        "The mass model does not know this wheel's mass (shapes loading or not loaded, surface meshes, a group without shapes, or nothing left after subtracting its hardware), so the spin inertia uses the kind's default mass. You can enter a mass in the mass card.",
+      wheelMassClipped:
+        'Wheel mass {{mass}} (clipped from the mass model value {{model}}) · spin inertia {{inertia}} kg·m²',
+      wheelMassClippedHint:
+        'The mass under this wheel is too large or too small for a single wheel, so the spin inertia uses it clipped to {{min}}–{{max}}. Put the wheel component on the wheel part (or a group holding only the wheel).',
       staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
       staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
       frictionRejected:
@@ -1182,7 +1192,9 @@ const en: Messages = {
       title: 'Drivetrain (simulator)',
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
-      traction: 'Traction-limited acceleration ≈ {{accel}} m/s² ({{g}} g)',
+      traction: 'Forward traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
+      tractionHint:
+        'The force the floor can give toward the robot front (+X) while all wheels slip, divided by the robot mass. Each driven wheel counts with its load at rest, friction coefficient and rolling direction and rollers (mecanum, omni). Wheels rolling at an angle, as in an X-drive, push forward less (on omni wheels the roller resistance opposes the motion and lowers it further), and a wheel rolling sideways (H-drive) does not push forward.',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedRange:
         'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',

@@ -6,6 +6,7 @@ import {
   DEFAULT_WHEEL_FRICTION,
   effectiveWheelFriction,
   effectiveWheelMass,
+  wheelMassClipped,
   wheelSpinInertia
 } from '../../../../shared/sim/wheelData'
 import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
@@ -40,6 +41,7 @@ import {
   WHEEL_KINDS
 } from '../../scene/wheel'
 import { formatNumber } from '../../units/units'
+import { wheelForwardTraction } from './wheelTraction'
 
 // 인스펙터 바퀴 카드·Add Component·로봇 카드 구동계 요약의 보기 계산(그리기와 나눠 시험한다)
 
@@ -156,14 +158,19 @@ export function parseWheelFriction(text: string): number | null {
 
 // 바퀴 질량(kg): 세계 설명과 같은 도는 질량(play/worldSpec.ts wheelSpinMass: 하위 질량 − 하위 하드웨어 데이터시트 질량, 표의
 // 메카넘은 데이터시트)을 wheelData.ts effectiveWheelMass로 자른 것, 없으면 종류 기본 질량이다(spec-3c §1.7).
-// fromModel은 질량 모델의 값을 썼는지다.
+// fromModel은 질량 모델의 값을 썼는지, clipped는 그 값이 범위 밖이라 잘렸는지다(카드가 종류 기본·잘린 값을 계산값과 다르게
+// 보인다).
 export function wheelMass(
   wheel: Pick<WheelSettings, 'kind'>,
   spinMass: number | null | undefined
-): { mass: number; fromModel: boolean } {
+): { mass: number; fromModel: boolean; clipped: boolean } {
   const fromModel =
     spinMass !== null && spinMass !== undefined && Number.isFinite(spinMass) && spinMass > 0
-  return { mass: effectiveWheelMass(wheel.kind, spinMass), fromModel }
+  return {
+    mass: effectiveWheelMass(wheel.kind, spinMass),
+    fromModel,
+    clipped: wheelMassClipped(spinMass)
+  }
 }
 
 // 정지한 로봇의 바퀴 하중(N, robotWheels 순서). 질량 모델의 로봇 질량·무게중심(편집 자세)이 바닥에 거는 렌치
@@ -205,7 +212,10 @@ export type WheelPhysicsView = {
   friction: number
   defaultFriction: number
   mass: number
+  // 질량 모델의 값인지(아니면 종류 기본 질량 DEFAULT_WHEEL_MASS: 질량을 모름)
   massFromModel: boolean
+  // 질량 모델의 값이 범위(MIN·MAX_WHEEL_MASS) 밖이라 잘렸으면 자르기 전 값(kg), 아니면 null
+  clippedFrom: number | null
   // kg·m², 바퀴 축(외부 감속 전)
   spinInertia: number
   // 정지 하중(N)과 견인 한계 μ·N(N, 잠근 바퀴를 끄는 힘). 로봇 밖이거나 로봇 질량을 모르면 null
@@ -221,7 +231,8 @@ export function wheelPhysicsView(
   const wheel = objects[objectId]?.wheel
   if (!wheel) return null
   const friction = effectiveWheelFriction(wheel.kind, wheel.friction)
-  const { mass, fromModel } = wheelMass(wheel, wheelSpinMass(objects, objectId, wheel, model))
+  const spinMass = wheelSpinMass(objects, objectId, wheel, model)
+  const { mass, fromModel, clipped } = wheelMass(wheel, spinMass)
   const robotId = findRobotId(objects, objectId)
   const loads = robotId ? robotStaticLoads(objects, robotId, model) : null
   const load = loads?.wheels.find((entry) => entry.objectId === objectId)?.load ?? null
@@ -230,6 +241,7 @@ export function wheelPhysicsView(
     defaultFriction: DEFAULT_WHEEL_FRICTION[wheel.kind],
     mass,
     massFromModel: fromModel,
+    clippedFrom: clipped ? spinMass : null,
     spinInertia: wheelSpinInertia(wheel.kind, wheel.diameter / 2, mass),
     load,
     tractionLimit: load === null ? null : friction * load
@@ -242,9 +254,11 @@ export type DrivetrainSummary = {
   kinds: { kind: WheelKind; count: number }[]
   // INIT 때 Console에 남을 경고와 같은 것(생성 상태 경고 제외)
   warnings: WorldWarning[]
-  // 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 줄 수 있는 앞 방향 힘 Σ μ_i·N_i(구동하는 바퀴만, 구동하지 않는
-  // 바퀴는 따라 구르기만 한다) ÷ 질량 = g · Σ μ_i·N_i / Σ N_i. 바퀴가 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다
-  // (spec-3c §4 C). 로봇 질량을 모르거나 구동하는 바퀴가 없으면 null.
+  // 앞 방향 견인 한계 가속(m/s²): 모든 바퀴가 미끄러질 때 바닥이 로봇 앞(+X)으로 줄 수 있는 힘 Σ N_i·t_i(구동하는 바퀴만,
+  // 구동하지 않는 바퀴는 따라 구르기만 한다. t_i = wheelForwardTraction: 바퀴 종류·굴림 방향·롤러를 따진 하중 1 N당 앞 방향
+  // 견인) ÷ 질량 = g · Σ N_i·t_i / Σ N_i. 굴림 0°의 메카넘이 모두 구동하면 바퀴 μ의 하중 가중 평균 × g다(spec-3c §4 C),
+  // X 드라이브 옴니(±45°)는 (μ − 롤러 쿨롱)·cos 45°라 약 0.64배, H 드라이브의 옆걸음 바퀴는 0이다. 로봇 질량을 모르거나 구동하는
+  // 바퀴가 없으면 null.
   tractionAcceleration: number | null
   // 구동하는 바퀴들의 무부하 최고 굴림 속도(m/s, play/worldSpec의 wheelTopSpeed)의 최소·최대. 없으면 null.
   topSpeed: { min: number; max: number } | null
@@ -271,7 +285,13 @@ export function drivetrainSummary(
     let force = 0
     wheels.forEach((w, i) => {
       if (w.motorState === 'ok' && w.motor)
-        force += effectiveWheelFriction(w.wheel.kind, w.wheel.friction) * loads.wheels[i].load
+        force +=
+          wheelForwardTraction(
+            w.wheel.kind,
+            w.wheel.angle,
+            w.rollers,
+            effectiveWheelFriction(w.wheel.kind, w.wheel.friction)
+          ) * loads.wheels[i].load
     })
     tractionAcceleration = (GRAVITY * force) / loads.weight
   }

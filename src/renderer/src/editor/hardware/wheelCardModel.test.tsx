@@ -4,7 +4,11 @@ import { initReactI18next } from 'react-i18next'
 import { BoxGeometry } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GRAVITY } from '../../../../shared/sim/physics'
-import { DEFAULT_WHEEL_MASS, WHEEL_SPIN_INERTIA_FACTOR } from '../../../../shared/sim/wheelData'
+import {
+  DEFAULT_WHEEL_MASS,
+  ROLLER_COULOMB,
+  WHEEL_SPIN_INERTIA_FACTOR
+} from '../../../../shared/sim/wheelData'
 import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
 import { createComponent } from '../../hardware/components'
 import en from '../../i18n/locales/en'
@@ -350,12 +354,23 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
   })
 
   it('바퀴 질량: 질량 모델의 하위 질량을 0.01–2 kg로 자르고, 없거나 0이면 종류 기본', () => {
-    expect(wheelMass({ kind: 'mecanum' }, 0.3)).toEqual({ mass: 0.3, fromModel: true })
-    expect(wheelMass({ kind: 'mecanum' }, 5)).toEqual({ mass: 2, fromModel: true })
-    expect(wheelMass({ kind: 'mecanum' }, 0.001)).toEqual({ mass: 0.01, fromModel: true })
+    expect(wheelMass({ kind: 'mecanum' }, 0.3)).toEqual({
+      mass: 0.3,
+      fromModel: true,
+      clipped: false
+    })
+    expect(wheelMass({ kind: 'mecanum' }, 5)).toEqual({ mass: 2, fromModel: true, clipped: true })
+    expect(wheelMass({ kind: 'mecanum' }, 0.001)).toEqual({
+      mass: 0.01,
+      fromModel: true,
+      clipped: true
+    })
+    // 범위 끝은 자른 것이 아니다
+    expect(wheelMass({ kind: 'mecanum' }, 2).clipped).toBe(false)
     expect(wheelMass({ kind: 'omni' }, 0)).toEqual({
       mass: DEFAULT_WHEEL_MASS.omni,
-      fromModel: false
+      fromModel: false,
+      clipped: false
     })
     expect(wheelMass({ kind: 'traction' }, undefined).mass).toBe(DEFAULT_WHEEL_MASS.traction)
     expect(wheelMass({ kind: 'traction' }, NaN).fromModel).toBe(false)
@@ -403,7 +418,12 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     // 104 mm 메카넘은 표의 제품(goBILDA GripForce)이라 세계 설명처럼 데이터시트 질량 236 g이 도는 질량이다
     // (play/worldSpec.ts wheelSpinMass)
     const fl = wheelPhysicsView(objects, 'wfl', model)!
-    expect(fl).toMatchObject({ friction: 0.6, defaultFriction: 0.6, massFromModel: true })
+    expect(fl).toMatchObject({
+      friction: 0.6,
+      defaultFriction: 0.6,
+      massFromModel: true,
+      clippedFrom: null
+    })
     expect(fl.mass).toBeCloseTo(0.236, 12)
     expect(fl.spinInertia).toBeCloseTo(WHEEL_SPIN_INERTIA_FACTOR * 0.236 * 0.052 ** 2, 15)
     // 표에 없는 지름이면 질량 모델의 하위 질량
@@ -414,7 +434,20 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     // 마찰을 정하면 그 값, 질량 모델에 바퀴가 없으면 기본 질량
     const set = withWheel(objects, 'wbr', { motor: 'fl', friction: 1.1 })
     const br = wheelPhysicsView(set, 'wbr', model)!
-    expect(br).toMatchObject({ friction: 1.1, defaultFriction: 0.6, massFromModel: false })
+    expect(br).toMatchObject({
+      friction: 1.1,
+      defaultFriction: 0.6,
+      massFromModel: false,
+      clippedFrom: null
+    })
+    // 질량 모델의 바퀴 질량이 범위 밖이면 자르기 전 값을 함께 준다
+    const heavy = withWheel(objects, 'wfl', { diameter: 0.09 })
+    const clipped = wheelPhysicsView(
+      heavy,
+      'wfl',
+      massModel(robotMass(10, 0.05), { wfl: objectMass(5) })
+    )!
+    expect(clipped).toMatchObject({ mass: 2, massFromModel: true, clippedFrom: 5 })
     expect(br.mass).toBe(DEFAULT_WHEEL_MASS.mecanum)
     expect(br.tractionLimit).toBeCloseTo(1.1 * br.load!, 12)
     // 로봇 질량을 모르면 하중·견인 한계 없음, 바퀴가 없으면 null
@@ -425,7 +458,7 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     expect(wheelPhysicsView(objects, 'mount', model)).toBeNull()
   })
 
-  it('로봇 요약: 견인 한계 가속은 구동하는 바퀴의 Σμ·N ÷ 질량, 최고 속도는 wheelTopSpeed', () => {
+  it('로봇 요약: 앞 방향 견인 한계 가속은 구동하는 바퀴의 Σ N·(앞 방향 견인) ÷ 질량, 최고 속도는 wheelTopSpeed', () => {
     const model = massModel(robotMass(10, 0.05))
     const settings = { batteryVoltage: 12 }
     // 모두 같은 μ면 무게중심과 관계없이 μ·g
@@ -434,14 +467,59 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     expect(all.tractionAcceleration).toBeCloseTo(0.6 * GRAVITY, 12)
     const speed = wheelTopSpeed(objects.wfl.wheel!, objects.mount.components![0].props, 12)
     expect(all.topSpeed).toEqual({ min: speed, max: speed })
-    // 앞은 일반 바퀴(μ 0.9)로 구동, 뒤는 구동하지 않는 옴니: 앞 하중(2/3)만 견인한다
+    // 앞은 일반 바퀴(μ 0.9, 팔각형이라 굴림 방향은 0.924·μ)로 구동, 뒤는 구동하지 않는 옴니: 앞 하중(2/3)만 견인한다
     let mixed = fourWheels()
     for (const id of ['wfl', 'wfr'])
       mixed = withWheel(mixed, id, { kind: 'traction', diameter: 0.096, motor: 'fl' })
     for (const id of ['wbl', 'wbr']) mixed = withWheel(mixed, id, { kind: 'omni', motor: '' })
     expect(drivetrainSummary(mixed, 'R', settings, model).tractionAcceleration).toBeCloseTo(
-      0.9 * GRAVITY * (2 / 3),
+      0.9 * Math.cos(Math.PI / 8) * GRAVITY * (2 / 3),
       9
+    )
+    // X 드라이브(옴니 넷, 굴림 ±45°): μ·g가 아니라 (μ − 롤러 쿨롱)·cos 45°·g(시뮬레이터 약 0.64·μ·g)
+    let xDrive = fourWheels({ kind: 'omni', diameter: 0.096 })
+    for (const [id, angle] of [
+      ['wfl', -45],
+      ['wfr', 45],
+      ['wbl', 45],
+      ['wbr', -45]
+    ] as const)
+      xDrive = withWheel(xDrive, id, {
+        kind: 'omni',
+        diameter: 0.096,
+        motor: 'fl',
+        angle: angle * DEG
+      })
+    expect(drivetrainSummary(xDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      (0.8 - ROLLER_COULOMB) * Math.SQRT1_2 * GRAVITY,
+      9
+    )
+    // H 드라이브: 옴니 넷(굴림 0°)과 가운데 옆걸음 옴니(90°). 옆걸음 바퀴는 하중을 가져가지만 앞으로는 밀지 못한다(0)
+    const hDrive: SceneObjects = {
+      ...fourWheels({ kind: 'omni', diameter: 0.096 }),
+      strafe: {
+        id: 'strafe',
+        name: 'strafe',
+        kind: 'part',
+        parentId: 'R',
+        transform: at(0, 0),
+        visual: { type: 'mesh', geometryId: 'strafe:0', color: [1, 1, 1] },
+        wheel: { ...defaultWheel('omni'), motor: 'fl', angle: 90 * DEG }
+      }
+    }
+    const loads = robotStaticLoads(hDrive, 'R', model)!
+    const strafeLoad = loads.wheels.find((w) => w.objectId === 'strafe')!.load
+    expect(strafeLoad).toBeGreaterThan(0)
+    const corners = loads.weight - strafeLoad
+    expect(drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      (GRAVITY * 0.8 * corners) / loads.weight,
+      9
+    )
+    // 옆걸음 바퀴를 구동하든 안 하든 앞 견인은 같다
+    const undriven = withWheel(hDrive, 'strafe', { kind: 'omni', diameter: 0.096, angle: 90 * DEG })
+    expect(drivetrainSummary(undriven, 'R', settings, model).tractionAcceleration).toBeCloseTo(
+      drivetrainSummary(hDrive, 'R', settings, model).tractionAcceleration!,
+      12
     )
     // 외부 감속비가 다른 바퀴가 있으면 최고 속도는 범위다
     const geared = withWheel(objects, 'wbr', { motor: 'fl', gearRatio: 2 })
@@ -512,9 +590,14 @@ describe('바퀴 카드 문구', () => {
     'hardware.wheel.frictionHint',
     'hardware.wheel.frictionRejected',
     'hardware.wheel.wheelMass',
+    'hardware.wheel.wheelMassDefault',
+    'hardware.wheel.wheelMassDefaultHint',
+    'hardware.wheel.wheelMassClipped',
+    'hardware.wheel.wheelMassClippedHint',
     'hardware.wheel.staticLoad',
     'hardware.wheel.staticLoadUnknown',
     'hardware.drivetrain.traction',
+    'hardware.drivetrain.tractionHint',
     'hardware.drivetrain.topSpeed',
     'hardware.drivetrain.topSpeedRange',
     'hardware.derived.motorOutputRatio'
@@ -637,14 +720,40 @@ describe('바퀴 카드 그리기', () => {
     expect(loose).not.toContain('정지 하중')
   })
 
-  it('로봇 카드: 최고 속도와 견인 한계 가속(바퀴 μ의 하중 가중 평균 × g)', () => {
+  it('바퀴 카드: 질량 모델이 모르는 바퀴는 종류 기본, 범위 밖 질량은 자른 값임을 보인다', () => {
+    // 표에 없는 일반 바퀴(형상 미등록: 하위 질량 0)
+    const base = fourWheels({ kind: 'traction', diameter: 0.096 })
+    const unknown = render(base, 'wfl')
+    expect(unknown).toContain('바퀴 질량 82 g(종류 기본, 질량 모름) · 회전 관성')
+    expect(unknown).toContain('title="질량 모델이 이 바퀴의 질량을 알지 못해')
+    // 바퀴에 5 kg를 덮어쓰면 회전 관성에는 2 kg
+    const heavy: SceneObjects = { ...base, wfl: { ...base.wfl, mass: { mass: 5 } } }
+    const clipped = render(heavy, 'wfl')
+    expect(clipped).toContain('(질량 모델 값 5')
+    expect(clipped).toMatch(/바퀴 질량 2[.0]* kg\(질량 모델 값 5[.0]* kg에서 자름\) · 회전 관성/)
+    expect(clipped).toContain('title="이 바퀴 하위의 질량이 바퀴 하나로 보기에 너무 크거나 작아서')
+    // 범위 안이면 계산값 그대로(종류 기본·자름 문구 없음)
+    const known: SceneObjects = { ...base, wfl: { ...base.wfl, mass: { mass: 0.3 } } }
+    const plain = render(known, 'wfl')
+    expect(plain).toContain('바퀴 질량 300 g · 회전 관성')
+    expect(plain).not.toContain('종류 기본, 질량 모름')
+    expect(plain).not.toContain('에서 자름')
+  })
+
+  it('로봇 카드: 최고 속도와 앞 방향 견인 한계 가속(표시 단위, 굴림 0° 메카넘은 바퀴 μ의 하중 가중 평균 × g)', () => {
     const objects = fourWheels()
     setStore(useSceneStore, { objects })
     setStore(useUnitStore, { lengthUnit: 'mm' })
     const speed = wheelTopSpeed(objects.wfl.wheel!, objects.mount.components![0].props, 12.5)
     const html = renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)
     expect(html).toContain(`최고 속도 ≈ ${(speed * 1000).toFixed(1)} mm/s (무부하, 12.5 V)`)
-    expect(html).toContain('견인 한계 가속 ≈ 5.88 m/s² (0.60 g)')
+    // 견인 한계 가속도 표시 길이 단위(0.6·g = 5.884 m/s²)
+    expect(html).toContain('앞 방향 견인 한계 가속 ≈ 5884.0 mm/s² (0.60 g)')
+    setStore(useUnitStore, { lengthUnit: 'in' })
+    expect(renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)).toContain(
+      '앞 방향 견인 한계 가속 ≈ 231.7 in/s² (0.60 g)'
+    )
+    setStore(useUnitStore, { lengthUnit: 'mm' })
     // 바퀴마다 최고 속도가 다르면 범위
     setStore(useSceneStore, { objects: withWheel(objects, 'wbr', { motor: 'fl', gearRatio: 2 }) })
     expect(renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)).toContain(
