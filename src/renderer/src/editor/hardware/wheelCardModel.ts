@@ -6,6 +6,7 @@ import {
   DEFAULT_WHEEL_FRICTION,
   effectiveWheelFriction,
   effectiveWheelMass,
+  wheelMassClipped,
   wheelSpinInertia
 } from '../../../../shared/sim/wheelData'
 import { distributeWheelLoads } from '../../../../shared/sim/wheelLoads'
@@ -156,14 +157,19 @@ export function parseWheelFriction(text: string): number | null {
 
 // 바퀴 질량(kg): 세계 설명과 같은 도는 질량(play/worldSpec.ts wheelSpinMass: 하위 질량 − 하위 하드웨어 데이터시트 질량, 표의
 // 메카넘은 데이터시트)을 wheelData.ts effectiveWheelMass로 자른 것, 없으면 종류 기본 질량이다(spec-3c §1.7).
-// fromModel은 질량 모델의 값을 썼는지다.
+// fromModel은 질량 모델의 값을 썼는지, clipped는 그 값이 범위 밖이라 잘렸는지다(카드가 종류 기본·잘린 값을 계산값과 다르게
+// 보인다).
 export function wheelMass(
   wheel: Pick<WheelSettings, 'kind'>,
   spinMass: number | null | undefined
-): { mass: number; fromModel: boolean } {
+): { mass: number; fromModel: boolean; clipped: boolean } {
   const fromModel =
     spinMass !== null && spinMass !== undefined && Number.isFinite(spinMass) && spinMass > 0
-  return { mass: effectiveWheelMass(wheel.kind, spinMass), fromModel }
+  return {
+    mass: effectiveWheelMass(wheel.kind, spinMass),
+    fromModel,
+    clipped: wheelMassClipped(spinMass)
+  }
 }
 
 // 정지한 로봇의 바퀴 하중(N, robotWheels 순서). 질량 모델의 로봇 질량·무게중심(편집 자세)이 바닥에 거는 렌치
@@ -205,7 +211,10 @@ export type WheelPhysicsView = {
   friction: number
   defaultFriction: number
   mass: number
+  // 질량 모델의 값인지(아니면 종류 기본 질량 DEFAULT_WHEEL_MASS: 질량을 모름)
   massFromModel: boolean
+  // 질량 모델의 값이 범위(MIN·MAX_WHEEL_MASS) 밖이라 잘렸으면 자르기 전 값(kg), 아니면 null
+  clippedFrom: number | null
   // kg·m², 바퀴 축(외부 감속 전)
   spinInertia: number
   // 정지 하중(N)과 견인 한계 μ·N(N, 잠근 바퀴를 끄는 힘). 로봇 밖이거나 로봇 질량을 모르면 null
@@ -221,7 +230,8 @@ export function wheelPhysicsView(
   const wheel = objects[objectId]?.wheel
   if (!wheel) return null
   const friction = effectiveWheelFriction(wheel.kind, wheel.friction)
-  const { mass, fromModel } = wheelMass(wheel, wheelSpinMass(objects, objectId, wheel, model))
+  const spinMass = wheelSpinMass(objects, objectId, wheel, model)
+  const { mass, fromModel, clipped } = wheelMass(wheel, spinMass)
   const robotId = findRobotId(objects, objectId)
   const loads = robotId ? robotStaticLoads(objects, robotId, model) : null
   const load = loads?.wheels.find((entry) => entry.objectId === objectId)?.load ?? null
@@ -230,6 +240,7 @@ export function wheelPhysicsView(
     defaultFriction: DEFAULT_WHEEL_FRICTION[wheel.kind],
     mass,
     massFromModel: fromModel,
+    clippedFrom: clipped ? spinMass : null,
     spinInertia: wheelSpinInertia(wheel.kind, wheel.diameter / 2, mass),
     load,
     tractionLimit: load === null ? null : friction * load

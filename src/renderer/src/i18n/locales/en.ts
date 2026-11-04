@@ -1168,6 +1168,14 @@ const en: Messages = {
       frictionHint:
         'Friction coefficient of the locked wheel dragged on the field tiles (the CoF manufacturers publish). While the wheels slip, the robot accelerates at about μ·g. For mecanum wheels the simulator converts it to a roller-axis coefficient (√2·μ minus the roller resistance share), so that a locked wheel still drags with this coefficient. Leave it empty to use the kind default (an assumption, not measured).',
       wheelMass: 'Wheel mass {{mass}} · spin inertia {{inertia}} kg·m²',
+      wheelMassDefault:
+        'Wheel mass {{mass}} (kind default, mass unknown) · spin inertia {{inertia}} kg·m²',
+      wheelMassDefaultHint:
+        "The mass model does not know this wheel's mass (shapes loading or not loaded, surface meshes, a group without shapes, or nothing left after subtracting its hardware), so the spin inertia uses the kind's default mass. You can enter a mass in the mass card.",
+      wheelMassClipped:
+        'Wheel mass {{mass}} (clipped from the mass model value {{model}}) · spin inertia {{inertia}} kg·m²',
+      wheelMassClippedHint:
+        'The mass under this wheel is too large or too small for a single wheel, so the spin inertia uses it clipped to {{min}}–{{max}}. Put the wheel component on the wheel part (or a group holding only the wheel).',
       staticLoad: 'Load at rest ≈ {{load}} N · traction limit ≈ {{limit}} N',
       staticLoadUnknown: 'The load at rest appears once the robot mass is computed.',
       frictionRejected:

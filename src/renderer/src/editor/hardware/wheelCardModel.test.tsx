@@ -350,12 +350,23 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
   })
 
   it('바퀴 질량: 질량 모델의 하위 질량을 0.01–2 kg로 자르고, 없거나 0이면 종류 기본', () => {
-    expect(wheelMass({ kind: 'mecanum' }, 0.3)).toEqual({ mass: 0.3, fromModel: true })
-    expect(wheelMass({ kind: 'mecanum' }, 5)).toEqual({ mass: 2, fromModel: true })
-    expect(wheelMass({ kind: 'mecanum' }, 0.001)).toEqual({ mass: 0.01, fromModel: true })
+    expect(wheelMass({ kind: 'mecanum' }, 0.3)).toEqual({
+      mass: 0.3,
+      fromModel: true,
+      clipped: false
+    })
+    expect(wheelMass({ kind: 'mecanum' }, 5)).toEqual({ mass: 2, fromModel: true, clipped: true })
+    expect(wheelMass({ kind: 'mecanum' }, 0.001)).toEqual({
+      mass: 0.01,
+      fromModel: true,
+      clipped: true
+    })
+    // 범위 끝은 자른 것이 아니다
+    expect(wheelMass({ kind: 'mecanum' }, 2).clipped).toBe(false)
     expect(wheelMass({ kind: 'omni' }, 0)).toEqual({
       mass: DEFAULT_WHEEL_MASS.omni,
-      fromModel: false
+      fromModel: false,
+      clipped: false
     })
     expect(wheelMass({ kind: 'traction' }, undefined).mass).toBe(DEFAULT_WHEEL_MASS.traction)
     expect(wheelMass({ kind: 'traction' }, NaN).fromModel).toBe(false)
@@ -403,7 +414,12 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     // 104 mm 메카넘은 표의 제품(goBILDA GripForce)이라 세계 설명처럼 데이터시트 질량 236 g이 도는 질량이다
     // (play/worldSpec.ts wheelSpinMass)
     const fl = wheelPhysicsView(objects, 'wfl', model)!
-    expect(fl).toMatchObject({ friction: 0.6, defaultFriction: 0.6, massFromModel: true })
+    expect(fl).toMatchObject({
+      friction: 0.6,
+      defaultFriction: 0.6,
+      massFromModel: true,
+      clippedFrom: null
+    })
     expect(fl.mass).toBeCloseTo(0.236, 12)
     expect(fl.spinInertia).toBeCloseTo(WHEEL_SPIN_INERTIA_FACTOR * 0.236 * 0.052 ** 2, 15)
     // 표에 없는 지름이면 질량 모델의 하위 질량
@@ -414,7 +430,20 @@ describe('바퀴 카드 마찰·질량·하중 계산', () => {
     // 마찰을 정하면 그 값, 질량 모델에 바퀴가 없으면 기본 질량
     const set = withWheel(objects, 'wbr', { motor: 'fl', friction: 1.1 })
     const br = wheelPhysicsView(set, 'wbr', model)!
-    expect(br).toMatchObject({ friction: 1.1, defaultFriction: 0.6, massFromModel: false })
+    expect(br).toMatchObject({
+      friction: 1.1,
+      defaultFriction: 0.6,
+      massFromModel: false,
+      clippedFrom: null
+    })
+    // 질량 모델의 바퀴 질량이 범위 밖이면 자르기 전 값을 함께 준다
+    const heavy = withWheel(objects, 'wfl', { diameter: 0.09 })
+    const clipped = wheelPhysicsView(
+      heavy,
+      'wfl',
+      massModel(robotMass(10, 0.05), { wfl: objectMass(5) })
+    )!
+    expect(clipped).toMatchObject({ mass: 2, massFromModel: true, clippedFrom: 5 })
     expect(br.mass).toBe(DEFAULT_WHEEL_MASS.mecanum)
     expect(br.tractionLimit).toBeCloseTo(1.1 * br.load!, 12)
     // 로봇 질량을 모르면 하중·견인 한계 없음, 바퀴가 없으면 null
@@ -512,6 +541,10 @@ describe('바퀴 카드 문구', () => {
     'hardware.wheel.frictionHint',
     'hardware.wheel.frictionRejected',
     'hardware.wheel.wheelMass',
+    'hardware.wheel.wheelMassDefault',
+    'hardware.wheel.wheelMassDefaultHint',
+    'hardware.wheel.wheelMassClipped',
+    'hardware.wheel.wheelMassClippedHint',
     'hardware.wheel.staticLoad',
     'hardware.wheel.staticLoadUnknown',
     'hardware.drivetrain.traction',
@@ -635,6 +668,26 @@ describe('바퀴 카드 그리기', () => {
     const loose = render(orphan, 'loose')
     expect(loose).toContain('바퀴 질량')
     expect(loose).not.toContain('정지 하중')
+  })
+
+  it('바퀴 카드: 질량 모델이 모르는 바퀴는 종류 기본, 범위 밖 질량은 자른 값임을 보인다', () => {
+    // 표에 없는 일반 바퀴(형상 미등록: 하위 질량 0)
+    const base = fourWheels({ kind: 'traction', diameter: 0.096 })
+    const unknown = render(base, 'wfl')
+    expect(unknown).toContain('바퀴 질량 82 g(종류 기본, 질량 모름) · 회전 관성')
+    expect(unknown).toContain('title="질량 모델이 이 바퀴의 질량을 알지 못해')
+    // 바퀴에 5 kg를 덮어쓰면 회전 관성에는 2 kg
+    const heavy: SceneObjects = { ...base, wfl: { ...base.wfl, mass: { mass: 5 } } }
+    const clipped = render(heavy, 'wfl')
+    expect(clipped).toContain('(질량 모델 값 5')
+    expect(clipped).toMatch(/바퀴 질량 2[.0]* kg\(질량 모델 값 5[.0]* kg에서 자름\) · 회전 관성/)
+    expect(clipped).toContain('title="이 바퀴 하위의 질량이 바퀴 하나로 보기에 너무 크거나 작아서')
+    // 범위 안이면 계산값 그대로(종류 기본·자름 문구 없음)
+    const known: SceneObjects = { ...base, wfl: { ...base.wfl, mass: { mass: 0.3 } } }
+    const plain = render(known, 'wfl')
+    expect(plain).toContain('바퀴 질량 300 g · 회전 관성')
+    expect(plain).not.toContain('종류 기본, 질량 모름')
+    expect(plain).not.toContain('에서 자름')
   })
 
   it('로봇 카드: 최고 속도와 견인 한계 가속(바퀴 μ의 하중 가중 평균 × g)', () => {
