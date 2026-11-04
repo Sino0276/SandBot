@@ -805,6 +805,8 @@ const ko = {
         '바퀴 접점이 셋보다 적거나 한 줄에 있어 로봇 무게를 바퀴에 나눌 수 없습니다. 시뮬레이터는 로봇이 넘어지지 않는 것으로 계산합니다.',
       worldChassisMass:
         '로봇 몸체(관절 몸체를 뺀 질량)가 {{mass}} kg로 너무 작아 기본 질량 {{fallback}} kg로 계산합니다. Rigidbody 카드에서 저울 무게를 넣으세요.',
+      worldChassisMassPending:
+        '로봇 몸체에 아직 읽는 중이거나 읽지 못한 메시 {{count}}개가 있어 그 형상 없이 질량·무게중심·관성을 계산합니다. 로봇의 가속·제동이 실제와 다를 수 있습니다.',
       worldWheelMotorMissing:
         '바퀴 {{name}}의 구동 모터를 이 로봇에서 찾을 수 없어(지웠거나 다른 로봇의 모터) 굴리지 않습니다.',
       worldRollersAmbiguous:

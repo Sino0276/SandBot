@@ -791,6 +791,8 @@ const en: Messages = {
         'The wheel contacts are fewer than three or lie on one line, so the robot weight cannot be split between the wheels. The simulator treats the robot as never tipping over.',
       worldChassisMass:
         'The robot body (mass without the joint bodies) is only {{mass}} kg, so the default mass of {{fallback}} kg is used. Enter the weighed mass in the Rigidbody card.',
+      worldChassisMassPending:
+        'The robot body still has {{count}} mesh(es) loading or not loaded, so its mass, center of mass and inertia are computed without them. The robot may accelerate and brake differently from the real one.',
       worldWheelMotorMissing:
         'The drive motor of wheel {{name}} is not in this robot (deleted or on another robot), so the wheel is not driven.',
       worldRollersAmbiguous:

@@ -821,6 +821,71 @@ describe('섀시 몸체·바퀴 질량·접점(3c)', () => {
     expect(keys(missing.warnings)).not.toContain('worldChassisMass')
   })
 
+  it('섀시에 형상을 읽는 중·못 읽은 메시가 남으면 경고(관절 몸체의 것은 빼고 센다), 다 읽었거나 바퀴가 없으면 경고 없음', () => {
+    // 한 변 0.1 m 정육면체 메시(닫힘 0)
+    const s = 0.1
+    const cube = {
+      volume: s ** 3,
+      centroid: [0, 0, 0] as [number, number, number],
+      inertia: [s ** 5 / 6, s ** 5 / 6, s ** 5 / 6, 0, 0, 0] as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+      ],
+      area: 6 * s * s,
+      closure: 0
+    }
+    const objects = mecanumRobot()
+    objects.frameB = part('frameB', 'R', [-0.1, 0, 0.05])
+    objects.frameC = part('frameC', 'R', [0, 0.1, 0.05])
+    // 관절(팔) 몸체의 메시 하나
+    objects.arm = pointGroup('arm', 'R', [0.15, 0, 0.2], { joint: defaultJoint('revolute') })
+    objects.armPart = part('armPart', 'arm', [0.1, 0, 0])
+    const loading = (ids: string[]): MassLookup => {
+      const pending = new Set(
+        ids.map((id) => (objects[id].visual as { geometryId: string }).geometryId)
+      )
+      return {
+        props: (geometryId) => (pending.has(geometryId) ? undefined : cube),
+        sourcePath: () => undefined
+      }
+    }
+    const build = (scene: SceneObjects, lookup: MassLookup): WorldWarning[] =>
+      buildWorldSpec(scene, 'R', SETTINGS, computeMassModel(scene, lookup)).warnings.filter(
+        (warning) => warning.key.includes('MassPending')
+      )
+    // 다 읽음: 경고 없음
+    expect(build(objects, loading([]))).toEqual([])
+    // 섀시 메시 둘이 읽는 중
+    const partial = computeMassModel(objects, loading(['frameB', 'frameC']))
+    expect(partial.robots.R.warnings).toContainEqual({ kind: 'pending', meshes: 2 })
+    expect(build(objects, loading(['frameB', 'frameC']))).toEqual([
+      { key: 'worldChassisMassPending', params: { count: 2 } }
+    ])
+    // 관절 몸체의 메시는 관절이 알리고 섀시 수에 넣지 않는다
+    expect(build(objects, loading(['frameB', 'armPart']))).toEqual([
+      { key: 'worldJointMassPending', params: { name: 'arm', count: 1 } },
+      { key: 'worldChassisMassPending', params: { count: 1 } }
+    ])
+    expect(build(objects, loading(['armPart']))).toEqual([
+      { key: 'worldJointMassPending', params: { name: 'arm', count: 1 } }
+    ])
+    // 아무 메시도 읽지 못했으면 질량 모델이 외곽 상자(defaultMass)로 대신한 것이라 섀시는 알리지 않는다
+    const all = Object.keys(objects).filter((id) => objects[id].visual?.type === 'mesh')
+    const none = computeMassModel(objects, loading(all))
+    expect(none.robots.R.warnings.map((warning) => warning.kind)).toContain('defaultMass')
+    expect(build(objects, loading(all))).toEqual([
+      { key: 'worldJointMassPending', params: { name: 'arm', count: 1 } }
+    ])
+    // 바퀴가 없으면 섀시는 쓰이지 않아 알리지 않는다
+    const wheelless: SceneObjects = { ...objects }
+    for (const id of ['FL', 'FR', 'BL', 'BR']) wheelless[id] = { ...objects[id], wheel: undefined }
+    expect(build(wheelless, loading(['frameB', 'frameC']))).toEqual([])
+  })
+
   it('섀시 관성의 주관성 값은 1e-6 이상(점질량 둘이면 선을 따라 0인 축을 올린다)', () => {
     const objects = pointRobot()
     for (const id of ['plate', 'FL', 'FR']) delete objects[id].mass
