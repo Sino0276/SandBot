@@ -224,6 +224,53 @@ describe('3c 구동계: 견인과 미끄럼', () => {
       }
   })
 
+  it('T3c 받는 μ 범위(0.05–3) 전체에서 옴니 X 드라이브가 앞으로 가고 옴니 탱크가 제자리에서 돈다(축 롤러 저항이 견인을 넘지 않는다)', () => {
+    // 3c 리뷰: 옴니 축 방향 롤러 쿨롱(0.076)이 고정이라 μ ≤ 0.076에서 견인보다 커서, 축 방향 미끄럼이 필요한 움직임(X 드라이브
+    // 직진, 탱크 제자리 돌기)이 아예 멈췄다
+    const xAngle: Record<string, number> = {
+      fl: -Math.PI / 4,
+      fr: Math.PI / 4,
+      bl: Math.PI / 4,
+      br: -Math.PI / 4
+    }
+    const heading = Math.PI / 4
+    for (const friction of [0.05, 0.06, 0.07, 0.08, 0.1, 0.2, 0.5, 0.8, 1, 2, 3]) {
+      expect(wheelForwardTraction('omni', heading, null, friction)).toBeGreaterThan(0)
+      const base = robotSpec({ kind: 'omni', friction, start: { x: 0, y: 0, yaw: heading } })
+      const spec = {
+        ...base,
+        wheels: base.wheels.map((w) => ({ ...w, angle: xAngle[w.motor as string] }))
+      }
+      const x = new Runner(spec).run(0.5, () => outputs({ fl: 1, fr: 1, bl: 1, br: 1 }))
+      const along = Math.cos(heading) * x.pose().x + Math.sin(heading) * x.pose().y
+      expect(along, `μ ${friction}`).toBeGreaterThan(0.005)
+      const turn = new Runner(
+        robotSpec({ kind: 'omni', friction, start: { x: 0, y: 0, yaw: 0 } })
+      ).run(0.5, () => outputs({ fl: -1, bl: -1, fr: 1, br: 1 }))
+      expect(turn.pose().yaw, `μ ${friction}`).toBeGreaterThan(0.01)
+    }
+    // 낮은 μ에서도 X 드라이브의 미끄러지는 가속 = 로봇 카드 견인 × g(1 %)
+    const mu = 0.06
+    const low = robotSpec({
+      comHeight: 0,
+      kind: 'omni',
+      friction: mu,
+      start: { x: -1.2, y: -1.2, yaw: heading }
+    })
+    const lowSpec = {
+      ...low,
+      wheels: low.wheels.map((w) => ({ ...w, angle: xAngle[w.motor as string] }))
+    }
+    const r = new Runner(lowSpec, { rollerViscous: 0 }).run(0.1, () =>
+      outputs({ fl: 1, fr: 1, bl: 1, br: 1 })
+    )
+    const traction = wheelForwardTraction('omni', heading, null, mu)
+    for (const k of [2, 6, 10]) {
+      const a = Math.cos(heading) * accelAt(r, k, 'x') + Math.sin(heading) * accelAt(r, k, 'y')
+      expect(Math.abs(a / (traction * GRAVITY) - 1)).toBeLessThan(0.01)
+    }
+  })
+
   it('T2c 낮은 μ(0.1)도 잠근 바퀴 겉보기 μ가 설정 값이다: 미끄러지는 동안 차대 가속 = μ·g(1 %)', () => {
     const mu = 0.1
     const spec = robotSpec({ comHeight: 0, friction: mu })
@@ -288,7 +335,7 @@ describe('3c 구동계: 견인과 미끄럼', () => {
     const omni = DEFAULT_WHEEL_FRICTION.omni
     const xTraction = wheelForwardTraction('omni', -Math.PI / 4, null, omni)
     expect(wheelForwardTraction('omni', Math.PI / 4, null, omni)).toBe(xTraction)
-    // (μ − c_r)·cos 45°: 축 방향 롤러 쿨롱은 굴림과 수직이라 차대가 움직이면 거스른다
+    // (μ − k·c_r)·cos 45°(기본 μ라 k = 1): 축 방향 롤러 쿨롱은 굴림과 수직이라 차대가 움직이면 거스른다
     expect(xTraction).toBeLessThan(omni * Math.SQRT1_2)
     for (const k of [2, 6, 10])
       expect(Math.abs(along(x, k, heading) / (xTraction * GRAVITY) - 1)).toBeLessThan(0.01)

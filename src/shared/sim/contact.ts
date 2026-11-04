@@ -3,10 +3,10 @@ import { tractionDirection } from './drivetrain'
 import { WALL_INNER_HALF } from './field'
 import {
   mecanumRollerFriction,
-  mecanumRollerScale,
   ROLLER_COULOMB,
   ROLLER_VISCOUS,
   ROLLING_RESISTANCE,
+  rollerResistanceScale,
   SUPPORT_NOTICE_DELAY,
   WALL_FRICTION,
   WHEEL_BEARING_FRICTION
@@ -26,7 +26,8 @@ import type { MecanumRollers, Pose2, SimWheelSpec, Vec2, WheelKind } from './wor
 //   - 메카넘: 견인은 롤러 축 a(tractionDirection)에 상자 ±h·μ_r·N(μ_r = √2·μ − c_r, 잠근 바퀴의 겉보기 μ에서), 롤러 자유 방향
 //     f = ẑ × a는 롤러 저항: 점성 행 감쇠(힘 −k·ROLLER_VISCOUS·N·g_f)와 쿨롱 상자 ±h·k·ROLLER_COULOMB·N(점성 하나로는 Pedro의
 //     옆걸음 속도 비와 옆 관성 감속을 함께 맞추지 못한다, wheelData.ts). 직진에서는 g_f = 0이라 손실이 없다. k는
-//     mecanumRollerScale(μ)(기본 μ 이상 1, 아래는 μ에 비례: 낮은 μ에서 저항이 견인을 넘어 옆걸음이 거꾸로 가지 않게).
+//     rollerResistanceScale(종류, μ)(기본 μ 이상 1, 아래는 μ에 비례: 낮은 μ에서 롤러 저항이 견인을 넘지 않게, 메카넘은 옆걸음이
+//     거꾸로 가고 옴니는 축 방향 미끄럼이 멈췄다).
 //   - 옴니: 견인 a = u, ±h·μ·N, 축 방향(ẑ × u)은 메카넘과 같은 롤러 저항(점성 + 쿨롱 상자). 맞춤은 메카넘 로봇으로 했고,
 //     옴니 롤러도 같은 고무 롤러 구름이라 같은 값을 쓴다(가정).
 //   - 일반 바퀴: 마찰 원을 고정 팔각형으로: u 기준 0°·45°·90°·135° 행 넷, 상자마다 ±h·μ·N / (2(cos 22.5° + sin 22.5°))
@@ -65,12 +66,12 @@ export type WheelContact = {
   // 견인 방향(로봇 좌표)과 그 행의 마찰 계수(메카넘은 롤러 축 μ_r)
   traction: Vec2
   tractionFriction: number
-  // 롤러 자유 방향 저항(점성·쿨롱)의 배율(메카넘 mecanumRollerScale, 옴니 1, 일반 바퀴는 쓰지 않음)
+  // 롤러 자유 방향 저항(점성·쿨롱)의 배율(메카넘·옴니 rollerResistanceScale, 일반 바퀴는 쓰지 않음)
   rollerScale: number
 }
 
 // rollerCoulomb: 롤러 자유 방향 쿨롱 계수. 잠근 메카넘 바퀴를 끌면 접점이 롤러 축 a와 자유 방향 f로 같은 크기(cos 45°)만큼
-// 미끄러지므로 앞·옆으로 끄는 힘은 (μ_r + k·c_r)·N·cos 45°다(k = mecanumRollerScale). 그래서 견인 계수를 μ_r = √2·μ − k·c_r로
+// 미끄러지므로 앞·옆으로 끄는 힘은 (μ_r + k·c_r)·N·cos 45°다(k = rollerResistanceScale). 그래서 견인 계수를 μ_r = √2·μ − k·c_r로
 // 두어 잠근 바퀴의 겉보기 계수가 바퀴 설정 μ 그대로이게 한다(spec-3c §1.3 "입력 μ는 잠근 바퀴의 겉보기 계수", 롤러 쿨롱은
 // 맞춤이 더한 항이다). 옴니의 자유
 // 방향은 굴림 방향과 수직이라 굴림 방향 견인에 더해지지 않는다.
@@ -88,7 +89,7 @@ export function wheelContact(
     traction: tractionDirection(spec),
     tractionFriction:
       spec.kind === 'mecanum' ? mecanumRollerFriction(spec.friction, rollerCoulomb) : spec.friction,
-    rollerScale: spec.kind === 'mecanum' ? mecanumRollerScale(spec.friction) : 1
+    rollerScale: spec.kind === 'traction' ? 1 : rollerResistanceScale(spec.kind, spec.friction)
   }
 }
 
@@ -164,12 +165,12 @@ export function wheelRows(
 }
 
 // 바퀴 하나가 로봇 +X(앞)로 미는 견인 한계(하중 1 N당 N, 인스펙터 로봇 카드의 견인 한계 가속이 Σ 이 값 × 하중으로 쓴다).
-// wheelRows의 행 그대로다: 행 d(로봇 좌표)마다 상자 계수 b(메카넘 롤러 축 μ_r·자유 방향 k·c_r, 옴니 굴림 μ·축 c_r, 일반 바퀴
+// wheelRows의 행 그대로다: 행 d(로봇 좌표)마다 상자 계수 b(메카넘 롤러 축 μ_r·자유 방향 k·c_r, 옴니 굴림 μ·축 k·c_r, 일반 바퀴
 // 팔각형 넷 μ / 2.6131). 바퀴가 헛돌며 미는 동안(바퀴 면 속도 ≫ 차대 속도) 굴림과 묶인 행(d·u ≠ 0)은 미끄럼 방향이 바퀴
 // 회전으로 정해져 힘이 s·sign(d·u)·b·d이고(s = 회전 방향, 앞으로 미는 쪽을 고른다), 굴림과 수직인 행(d·u = 0: 옴니 축 방향,
 // 팔각형 90° 행)은 바퀴 회전이 미끄럼을 만들지 않아 차대가 앞으로 움직이면 b·|d_x|만큼 거스른다. 그래서
 // 견인 = max(0, |Σ_묶인 sign(d·u)·b·d_x| − Σ_수직 b·|d_x|)다. 표준 메카넘(angle 0)은 (μ_r + k·c_r)·cos 45° = μ, 일반 바퀴
-// angle 0은 팔각형 지지 cos 22.5°·μ, X 드라이브 옴니(±45°)는 (μ − c_r)·cos 45°, H 드라이브 옆 바퀴(90°)는 0이다(앞으로 밀지
+// angle 0은 팔각형 지지 cos 22.5°·μ, X 드라이브 옴니(±45°)는 (μ − k·c_r)·cos 45°, H 드라이브 옆 바퀴(90°)는 0이다(앞으로 밀지
 // 못하는 바퀴는 0: 거스르는 끌림은 굴림 저항·구동하지 않는 바퀴처럼 이 추정에 넣지 않는다). 롤러 점성은 미끄럼 속도에 따라
 // 달라 넣지 않는다(정지에서 미끄러지기 시작할 때의 값). friction은 겉보기 μ(effectiveWheelFriction으로 푼 값)다.
 export function wheelForwardTraction(
@@ -192,7 +193,7 @@ export function wheelForwardTraction(
     rows.push({ d: a, b: mecanum ? mecanumRollerFriction(friction) : friction })
     rows.push({
       d: perpendicular(a),
-      b: (mecanum ? mecanumRollerScale(friction) : 1) * ROLLER_COULOMB
+      b: rollerResistanceScale(kind, friction) * ROLLER_COULOMB
     })
   }
   let push = 0
