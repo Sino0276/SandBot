@@ -92,7 +92,7 @@ function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
     [objects, robotId, batteryVoltage, massModel]
   )
   const unit = t(`units.symbols.${lengthUnit}`)
-  // 바퀴 카드의 최고 속도와 같은 자릿수
+  // 바퀴 카드의 최고 속도와 같은 자릿수(견인 한계 가속도 표시 길이 단위로 같은 자릿수)
   const speedText = (speed: number): string =>
     formatNumber(toDisplayLength(speed, lengthUnit), lengthUnit === 'm' ? 2 : 1)
   const volts = formatNumber(batteryVoltage, 1)
@@ -135,7 +135,8 @@ function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
       {summary.tractionAcceleration !== null && (
         <span className="hw-static">
           {t('hardware.drivetrain.traction', {
-            accel: formatNumber(summary.tractionAcceleration, 2),
+            accel: speedText(summary.tractionAcceleration),
+            unit,
             g: formatNumber(summary.tractionAcceleration / GRAVITY, 2)
           })}
         </span>

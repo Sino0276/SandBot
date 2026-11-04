@@ -1192,7 +1192,7 @@ const en: Messages = {
       title: 'Drivetrain (simulator)',
       summary: '{{count}} wheel(s) · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
-      traction: 'Traction-limited acceleration ≈ {{accel}} m/s² ({{g}} g)',
+      traction: 'Traction-limited acceleration ≈ {{accel}} {{unit}}/s² ({{g}} g)',
       topSpeed: 'Top speed ≈ {{speed}} {{unit}}/s (free, {{volts}} V)',
       topSpeedRange:
         'Top speed ≈ {{min}}–{{max}} {{unit}}/s (differs per wheel, free, {{volts}} V)',

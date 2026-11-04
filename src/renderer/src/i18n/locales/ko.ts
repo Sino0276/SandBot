@@ -1192,7 +1192,7 @@ const ko = {
       title: '구동계 (시뮬레이터)',
       summary: '바퀴 {{count}}개 · {{kinds}}',
       kindCount: '{{kind}} {{count}}',
-      traction: '견인 한계 가속 ≈ {{accel}} m/s² ({{g}} g)',
+      traction: '견인 한계 가속 ≈ {{accel}} {{unit}}/s² ({{g}} g)',
       topSpeed: '최고 속도 ≈ {{speed}} {{unit}}/s (무부하, {{volts}} V)',
       topSpeedRange: '최고 속도 ≈ {{min}}–{{max}} {{unit}}/s (바퀴마다 다름, 무부하, {{volts}} V)',
       none: '바퀴가 없습니다. 바퀴 파트에 [컴포넌트 추가 → 바퀴]를 붙이면 실행할 때 로봇이 움직입니다.'

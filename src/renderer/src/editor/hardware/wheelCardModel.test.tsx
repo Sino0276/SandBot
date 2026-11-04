@@ -690,14 +690,20 @@ describe('바퀴 카드 그리기', () => {
     expect(plain).not.toContain('에서 자름')
   })
 
-  it('로봇 카드: 최고 속도와 견인 한계 가속(바퀴 μ의 하중 가중 평균 × g)', () => {
+  it('로봇 카드: 최고 속도와 견인 한계 가속(표시 단위, 바퀴 μ의 하중 가중 평균 × g)', () => {
     const objects = fourWheels()
     setStore(useSceneStore, { objects })
     setStore(useUnitStore, { lengthUnit: 'mm' })
     const speed = wheelTopSpeed(objects.wfl.wheel!, objects.mount.components![0].props, 12.5)
     const html = renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)
     expect(html).toContain(`최고 속도 ≈ ${(speed * 1000).toFixed(1)} mm/s (무부하, 12.5 V)`)
-    expect(html).toContain('견인 한계 가속 ≈ 5.88 m/s² (0.60 g)')
+    // 견인 한계 가속도 표시 길이 단위(0.6·g = 5.884 m/s²)
+    expect(html).toContain('견인 한계 가속 ≈ 5884.0 mm/s² (0.60 g)')
+    setStore(useUnitStore, { lengthUnit: 'in' })
+    expect(renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)).toContain(
+      '견인 한계 가속 ≈ 231.7 in/s² (0.60 g)'
+    )
+    setStore(useUnitStore, { lengthUnit: 'mm' })
     // 바퀴마다 최고 속도가 다르면 범위
     setStore(useSceneStore, { objects: withWheel(objects, 'wbr', { motor: 'fl', gearRatio: 2 }) })
     expect(renderToStaticMarkup(<RobotHardwareSection robot={objects.R} />)).toContain(
