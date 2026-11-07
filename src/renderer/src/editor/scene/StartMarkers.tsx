@@ -86,7 +86,9 @@ function StartMarkerMeshes({
 }): React.JSX.Element {
   const gl = useThree((state) => state.gl)
   const raycaster = useThree((state) => state.raycaster)
-  const interaction = useThree((state) => state.internal.interaction)
+  // R3F는 오브젝트를 내릴 때 internal.interaction을 새 배열로 바꾸고(filter) 스토어에 알리지 않으므로, 그리기 때 고른 배열은
+  // 내려간 오브젝트를 계속 품고 새로 붙은 것을 놓친다. 사건 때마다 지금 배열을 읽는다
+  const getState = useThree((state) => state.get)
   const group = useRef<Group>(null)
   const [hover, setHover] = useState<Hover | null>(null)
   const placements = useMemo(() => markers.map(markerPlacement), [markers])
@@ -109,7 +111,7 @@ function StartMarkerMeshes({
     event.stopPropagation()
     const occluded =
       group.current !== null &&
-      markerOccluded(raycaster, interaction, group.current, event.distance)
+      markerOccluded(raycaster, getState().internal.interaction, group.current, event.distance)
     setHover((previous) =>
       previous?.key === key && previous.occluded === occluded ? previous : { key, occluded }
     )

@@ -115,6 +115,13 @@ function applyOverlapNotice(mode: 'show' | 'update'): void {
 export function relabelFieldNotices(): void {
   applyOverlapNotice('update')
 }
+// i18n은 앱 전체에서 하나라, 이 모듈이 다시 평가되면(pnpm dev의 HMR) 이전 모듈 인스턴스의 리스너가 그 인스턴스의 알림 상태로 남아
+// 쌓인다. 그래서 리스너를 i18n 위 한 자리(전역 심볼)에 두고, 붙이기 전에 그 자리의 이전 리스너를 뗀다(늘 하나)
+const LANGUAGE_LISTENER = Symbol.for('sandbot.fieldActions.languageChanged')
+const listenerSlot = i18n as unknown as { [LANGUAGE_LISTENER]?: () => void }
+const previousListener = listenerSlot[LANGUAGE_LISTENER]
+if (previousListener) i18n.off('languageChanged', previousListener)
+listenerSlot[LANGUAGE_LISTENER] = relabelFieldNotices
 i18n.on('languageChanged', relabelFieldNotices)
 
 // Field 인스펙터의 시즌 선택. 바뀌었으면 고른 시즌으로 알림을 다시 띄운다(같은 값·틀린 문자열은 아무것도 하지 않는다).

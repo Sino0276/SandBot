@@ -295,4 +295,33 @@ describe('시작 표시 그리는 조건(C8)', () => {
     await set(() => useSceneStore.setState({ field: { season: 'none' } }))
     expect(markers()).toHaveLength(0)
   })
+
+  it('가림은 사건 때의 internal.interaction으로 본다(R3F가 내린 오브젝트를 빼며 배열을 바꿔도 다시 그리지 않음)', async () => {
+    await mount()
+    await set(() => useEditorStore.getState().select('bot'))
+    scene().updateMatrixWorld(true)
+    const marker = markers()[0]
+    const at = marker.getWorldPosition(new THREE.Vector3())
+    // 표시 위 2 m에서 아래로 보는 광선과, 그 사이(표시 0.2 m 위)의 클릭되는 로봇 파트
+    const state = store.getState()
+    state.raycaster.set(at.clone().setZ(at.z + 2), new THREE.Vector3(0, 0, -1))
+    const occluder = new Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1))
+    occluder.position.set(at.x, at.y, at.z + 0.2)
+    occluder.updateMatrixWorld(true)
+    state.internal.interaction.push(occluder)
+    const cursor = (): string => (state.gl.domElement.style as { cursor?: string }).cursor ?? ''
+    const move = async (): Promise<void> => {
+      const handlers = (marker as unknown as { __r3f: { handlers: Record<string, unknown> } }).__r3f
+        .handlers
+      const onPointerMove = handlers.onPointerMove as (event: object) => void
+      await act(async () => onPointerMove({ stopPropagation: () => {}, distance: 2 }))
+    }
+    await move()
+    expect(cursor()).toBe('')
+    // H로 로봇을 숨긴 것처럼 R3F removeInteractivity가 배열을 바꾼다(store.set 없음, 아무것도 다시 그리지 않음)
+    const live = store.getState().internal
+    live.interaction = live.interaction.filter((object) => object !== occluder)
+    await move()
+    expect(cursor()).not.toBe('')
+  })
 })
