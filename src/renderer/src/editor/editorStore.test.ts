@@ -99,3 +99,44 @@ describe('카메라 포커스 요청', () => {
     expect(state().focusRequest).toEqual({ ids: ['a', 'b', 'c'] })
   })
 })
+
+// C1(spec-4ab §1.9): Field 줄 선택은 오브젝트 선택과 서로 배타다
+describe('Field 선택', () => {
+  beforeEach(() => {
+    state().select(null)
+    state().setRenaming(null)
+  })
+
+  it('selectField는 오브젝트 선택·범위 시작점·이름 바꾸기를 비우고 Field를 고른다', () => {
+    state().select('a')
+    state().setRenaming('a')
+    state().selectField()
+    expect(state().fieldSelected).toBe(true)
+    expect(selection()).toEqual({ active: null, ids: [] })
+    expect(state().rangeAnchorId).toBeNull()
+    expect(state().renamingId).toBeNull()
+  })
+
+  it('오브젝트 선택을 바꾸는 모든 함수가 Field 선택을 푼다', () => {
+    const changes: (() => void)[] = [
+      () => state().select('a'),
+      () => state().select(null),
+      () => state().toggleSelect('b'),
+      () => state().selectRange('c', ROWS),
+      () => state().setSelection(['a', 'b'])
+    ]
+    for (const change of changes) {
+      state().selectField()
+      change()
+      expect(state().fieldSelected).toBe(false)
+    }
+  })
+
+  it('실행 취소의 pruneSelection은 Field 선택을 풀지 않는다', () => {
+    state().selectField()
+    const before = state()
+    state().pruneSelection(() => false)
+    expect(state().fieldSelected).toBe(true)
+    expect(state()).toBe(before)
+  })
+})

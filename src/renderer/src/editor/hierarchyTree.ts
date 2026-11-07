@@ -89,18 +89,36 @@ export function searchRows(objects: SceneObjects, query: string): TreeRow[] | nu
 }
 
 // 하이어라키 키보드(Unity TreeView와 같음): 위/아래 선택 이동(Shift는 범위), Home/End,
-// 오른쪽은 펼치기(펼쳐 있으면 첫 자식으로), 왼쪽은 접기(접혀 있거나 자식이 없으면 부모로)
+// 오른쪽은 펼치기(펼쳐 있으면 첫 자식으로), 왼쪽은 접기(접혀 있거나 자식이 없으면 부모로).
+// 맨 위 Field 줄(spec-4ab §1.9, fieldRow: 검색 중이 아니라 Field 줄이 보임): 첫 행에서 Shift 없이 ↑·Home이면 Field로 가고,
+// Field에서 ↓(Shift도 범위가 아니라 첫 행 하나)는 첫 행, End는 마지막 행이다. Field는 범위에 넣을 수 없다.
 export type TreeKeyAction =
-  { type: 'select'; id: string; extend: boolean } | { type: 'setOpen'; id: string; open: boolean }
+  | { type: 'select'; id: string; extend: boolean }
+  | { type: 'setOpen'; id: string; open: boolean }
+  | { type: 'selectField' }
+
+// 키보드가 있는 자리: Field 줄('field'), 행 id, 또는 없음
+export type TreeKeyCurrent = 'field' | string | null
 
 export function treeKeyAction(
   rows: readonly TreeRow[],
-  currentId: string | null,
+  current: TreeKeyCurrent,
   key: string,
-  shiftKey: boolean
+  shiftKey: boolean,
+  fieldRow = false
 ): TreeKeyAction | null {
+  if (fieldRow && current === 'field') {
+    if (key === 'ArrowDown' && rows.length > 0)
+      return { type: 'select', id: rows[0].id, extend: false }
+    if (key === 'End' && rows.length > 0)
+      return { type: 'select', id: rows[rows.length - 1].id, extend: false }
+    return null
+  }
   if (rows.length === 0) return null
+  const currentId = current === 'field' ? null : current
   const index = currentId === null ? -1 : rows.findIndex((row) => row.id === currentId)
+  if (fieldRow && index === 0 && !shiftKey && (key === 'ArrowUp' || key === 'Home'))
+    return { type: 'selectField' }
   const select = (row: TreeRow | undefined, extend = shiftKey): TreeKeyAction | null =>
     row ? { type: 'select', id: row.id, extend } : null
   switch (key) {

@@ -16,6 +16,9 @@ type Selection = {
   rangeAnchorId: string | null
   // 하이어라키에서 이름을 바꾸는 중인 오브젝트. 활성 오브젝트가 바뀌면 끝난다.
   renamingId: string | null
+  // 하이어라키 맨 위 "Field" 줄을 골랐는지(spec-4ab §1.9). 오브젝트 선택과 서로 배타다: 오브젝트 선택을 바꾸는 모든 함수가
+  // selection()을 거쳐 이것을 끈다. Unity의 씬 머리 줄은 고를 수 없지만 시즌을 고를 곳이 필요해 고를 수 있게 했다(임시 편차).
+  fieldSelected: boolean
 }
 
 type EditorState = Selection & {
@@ -28,8 +31,10 @@ type EditorState = Selection & {
   // 카메라를 이 오브젝트들(둘 이상이면 합친 경계)에 맞추라는 요청. 같은 대상을 다시 요청해도 반응하도록
   // 매번 새 객체를 만든다.
   focusRequest: { ids: readonly string[] } | null
-  // 하나만 선택한다(null이면 선택 해제)
+  // 하나만 선택한다(null이면 선택 해제). Field 선택도 푼다.
   select: (id: string | null) => void
+  // Field 줄을 고른다(오브젝트 선택·범위 시작점·이름 바꾸기를 비운다)
+  selectField: () => void
   // Ctrl+클릭: 선택에 넣거나 뺀다. 넣으면 활성 오브젝트가 되고, 활성 오브젝트를 빼면 남은 것 중 마지막이 활성이 된다.
   toggleSelect: (id: string) => void
   // Shift+클릭: 범위 시작점부터 id까지 보이는 행 순서(orderedVisibleIds)로 선택한다. id가 활성 오브젝트가 된다.
@@ -63,7 +68,8 @@ function selection(
     selectedId,
     selectedIds,
     rangeAnchorId: selectedId === null ? null : rangeAnchorId,
-    renamingId: state.renamingId === selectedId ? state.renamingId : null
+    renamingId: state.renamingId === selectedId ? state.renamingId : null,
+    fieldSelected: false
   }
 }
 
@@ -72,12 +78,14 @@ export const useEditorStore = create<EditorState>()((set) => ({
   selectedIds: [],
   rangeAnchorId: null,
   renamingId: null,
+  fieldSelected: false,
   handleSpace: 'global',
   tool: 'translate',
   focusRequest: null,
   cutIds: [],
   setCut: (ids) => set({ cutIds: [...ids] }),
   select: (id) => set((state) => selection(state, id === null ? [] : [id], id)),
+  selectField: () => set((state) => ({ ...selection(state, [], null), fieldSelected: true })),
   toggleSelect: (id) =>
     set((state) =>
       state.selectedIds.includes(id)
@@ -106,6 +114,7 @@ export const useEditorStore = create<EditorState>()((set) => ({
       const kept = state.selectedIds.filter(exists)
       const renamingId =
         state.renamingId !== null && exists(state.renamingId) ? state.renamingId : null
+      // 바뀐 것이 없으면 그대로 돌려준다(실행 취소가 Field 선택을 풀지 않는다)
       if (kept.length === state.selectedIds.length && renamingId === state.renamingId)
         return cutIds === state.cutIds ? state : { cutIds }
       const anchor =

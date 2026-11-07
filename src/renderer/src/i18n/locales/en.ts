@@ -302,6 +302,9 @@ const en: Messages = {
       left: 'Left side toward the field',
       right: 'Right side toward the field'
     },
+    startOutline: 'Outline {{width}} × {{depth}}',
+    // Alliance groups in the start position list
+    startAlliance: { red: 'Red', blue: 'Blue' },
     startOversize:
       'Outline {{width}} × {{depth}}: over 18 in (R102). The outline is the CAD bounding box and may be larger than the robot.',
     collisionHeight: 'Collision height {{height}}',

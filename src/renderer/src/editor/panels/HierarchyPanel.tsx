@@ -10,6 +10,8 @@ import { ancestorIds, childrenInDocument, subtreeIds, type SceneObject } from '.
 import { useSceneStore } from '../../scene/sceneStore'
 import { openContextMenu, type ContextMenuEntry } from '../dialogStore'
 import { useEditorStore } from '../editorStore'
+import { fieldRowLabel } from '../field/fieldDisplay'
+import { FIELD_ROW_ATTRIBUTE, fieldRowOf, handleFieldRowEvent } from '../field/fieldRowEvents'
 import {
   beginObjectDrag,
   createHoverExpander,
@@ -49,7 +51,9 @@ import {
   type HierarchyMenuItem
 } from '../sceneCommands'
 import {
+  fieldRowVisibility,
   rowVisibilities,
+  toggleFieldHidden,
   toggleRowVisibility,
   useSceneVisibilityStore,
   type RowVisibility
@@ -92,7 +96,9 @@ function finishDrag(): void {
 }
 
 function rowElementOf(target: EventTarget | null): HTMLElement | null {
-  return target instanceof Element ? target.closest<HTMLElement>('[data-object-id]') : null
+  return typeof Element !== 'undefined' && target instanceof Element
+    ? target.closest<HTMLElement>('[data-object-id]')
+    : null
 }
 
 // 이름 바꾸기 입력칸. Enter나 포커스 이동으로 확정하고 Esc는 취소한다. 끝나면 이름 바꾸기 상태를 푼다.
@@ -360,6 +366,60 @@ const TreeRowView = memo(function TreeRowView({
   )
 })
 
+// 하이어라키 맨 위 Field 줄(spec-4ab §1.9, Unity 씬 머리 줄 자리). 오브젝트 트리와 함께 스크롤하고, 빈 씬에도 있고, 검색
+// 중에는 숨긴다. 고를 수 있다(Unity 씬 머리 줄은 고를 수 없다: 시즌을 고를 곳이 필요해 둔 임시 편차). 클릭·우클릭·끌기는
+// 영역 처리기가 data-field-row로 가른다(field/fieldRowEvents.ts). 최상위 오브젝트 행의 aria-setsize·posinset에는 넣지 않는다.
+function FieldRow({ tabStop }: { tabStop: boolean }): React.JSX.Element {
+  const { t } = useTranslation()
+  const season = useSceneStore((state) => state.field.season)
+  const selected = useEditorStore((state) => state.fieldSelected)
+  const visibility = useSceneVisibilityStore(fieldRowVisibility)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const label = fieldRowLabel(season, t)
+
+  // 고르면(키보드 ↑·Home, 알림의 [Field 보기]) 보이게 스크롤한다
+  useEffect(() => {
+    if (selected) rowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+
+  const classes = ['tree-row', 'tree-field-row']
+  if (selected) classes.push('is-selected', 'is-active')
+  if (visibility === 'hidden') classes.push('is-hidden')
+  const eyeAction = visibility === 'hidden' ? t('hierarchy.show') : t('hierarchy.hide')
+
+  return (
+    <div
+      ref={rowRef}
+      role="treeitem"
+      aria-level={1}
+      aria-selected={selected}
+      {...{ [FIELD_ROW_ATTRIBUTE]: '' }}
+      tabIndex={tabStop ? 0 : -1}
+      className={classes.join(' ')}
+      style={{ paddingLeft: indentOf(0) }}
+      title={label}
+    >
+      <button
+        type="button"
+        tabIndex={-1}
+        className={`tree-eye is-${visibility}`}
+        aria-label={eyeAction}
+        aria-pressed={visibility === 'hidden'}
+        title={t('hierarchy.visibilityTitle', { action: eyeAction })}
+        onClick={(event) => {
+          event.stopPropagation()
+          toggleFieldHidden()
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
+        <EyeIcon state={visibility} />
+      </button>
+      <span className="tree-twisty" />
+      <span className="tree-name">{label}</span>
+    </div>
+  )
+}
+
 // 메뉴 항목 → 단축키 표(editor/shortcuts.ts). Select Children은 Unity에도 단축키가 없다.
 const MENU_SHORTCUTS: Record<HierarchyMenuItem, ShortcutCommand | null> = {
   cut: 'cut',
@@ -381,6 +441,7 @@ function HierarchyPanel(): React.JSX.Element {
   const cutIds = useEditorStore((state) => state.cutIds)
   // 활성 오브젝트만 구독한다(roving tabIndex). 선택 표시는 행마다 따로 읽는다.
   const activeId = useEditorStore((state) => state.selectedId)
+  const fieldSelected = useEditorStore((state) => state.fieldSelected)
   const endLine = useHierarchyDragStore((state) => state.indicator?.position === 'end')
   // 한 번에 하나만 불러온다(큰 STEP은 메모리를 많이 쓴다). 창에 끌어다 놓기도 같은 조건으로 막힌다.
   const importing = useImportStore((state) => state.running > 0)
@@ -401,7 +462,11 @@ function HierarchyPanel(): React.JSX.Element {
   const searching = results !== null
   const searchRef = useRef<HTMLInputElement>(null)
   const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows])
-  const tabStopId = activeId !== null && rowById.has(activeId) ? activeId : (rows[0]?.id ?? null)
+  // Tab으로 들어오는 곳은 늘 하나다: Field를 골랐거나 오브젝트 행이 없으면 Field 줄(검색 중에는 없음), 아니면 보이는 활성
+  // 오브젝트, 없으면 첫 행
+  const rowTabStop = activeId !== null && rowById.has(activeId) ? activeId : (rows[0]?.id ?? null)
+  const fieldTabStop = !searching && (fieldSelected || rowTabStop === null)
+  const tabStopId = fieldTabStop ? null : rowTabStop
 
   // 씬 뷰 등에서 새로 선택한 오브젝트가 보이도록 상위 행을 펼친다(Unity와 같음). 이미 선택된 것은 다시 펼치지 않아,
   // 선택한 오브젝트의 부모도 접을 수 있다.
@@ -419,6 +484,12 @@ function HierarchyPanel(): React.JSX.Element {
   useEffect(() => () => finishDrag(), [])
 
   const visibleIds = (): string[] => rows.map((row) => row.id)
+
+  const focusFieldRow = (): void => {
+    const element = treeRef.current?.querySelector<HTMLElement>(`[${FIELD_ROW_ATTRIBUTE}]`)
+    element?.focus()
+    element?.scrollIntoView({ block: 'nearest' })
+  }
 
   const focusRow = (id: string): void => {
     const element = treeRef.current?.querySelector<HTMLElement>(
@@ -466,6 +537,7 @@ function HierarchyPanel(): React.JSX.Element {
   // 빈 공간이면 선택을 풀고 만들기 메뉴를 띄운다.
   const onContextMenu = (event: React.MouseEvent): void => {
     if (event.target instanceof HTMLInputElement) return
+    if (handleFieldRowEvent('contextMenu', event)) return
     event.preventDefault()
     const editor = useEditorStore.getState()
     const rowElement = rowElementOf(event.target)
@@ -502,6 +574,7 @@ function HierarchyPanel(): React.JSX.Element {
 
   // 클릭 = 선택, Ctrl/Cmd+클릭 = 넣기·빼기, Shift+클릭 = 보이는 행 범위(Unity와 같음). 빈 공간 클릭은 선택 해제.
   const onClick = (event: React.MouseEvent): void => {
+    if (handleFieldRowEvent('click', event)) return
     const editor = useEditorStore.getState()
     const rowElement = rowElementOf(event.target)
     if (!rowElement) {
@@ -515,6 +588,7 @@ function HierarchyPanel(): React.JSX.Element {
   }
 
   const onDoubleClick = (event: React.MouseEvent): void => {
+    if (handleFieldRowEvent('doubleClick', event)) return
     const rowElement = rowElementOf(event.target)
     if (rowElement) useEditorStore.getState().focus(rowElement.dataset.objectId!)
   }
@@ -523,12 +597,10 @@ function HierarchyPanel(): React.JSX.Element {
     if (event.target instanceof HTMLInputElement) return
     if (event.ctrlKey || event.metaKey || event.altKey) return
     const rowElement = rowElementOf(event.target)
-    const action = treeKeyAction(
-      rows,
-      rowElement?.dataset.objectId ?? activeId,
-      event.key,
-      event.shiftKey
-    )
+    const current = fieldRowOf(event.target)
+      ? 'field'
+      : (rowElement?.dataset.objectId ?? (fieldSelected ? 'field' : activeId))
+    const action = treeKeyAction(rows, current, event.key, event.shiftKey, !searching)
     if (!action) return
     event.preventDefault()
     if (action.type === 'setOpen') {
@@ -536,6 +608,11 @@ function HierarchyPanel(): React.JSX.Element {
       return
     }
     const editor = useEditorStore.getState()
+    if (action.type === 'selectField') {
+      editor.selectField()
+      focusFieldRow()
+      return
+    }
     if (action.extend) editor.selectRange(action.id, visibleIds())
     else editor.select(action.id)
     focusRow(action.id)
@@ -610,6 +687,10 @@ function HierarchyPanel(): React.JSX.Element {
 
   const onDragOver = (event: React.DragEvent): void => {
     if (!isObjectDrag(event)) return
+    if (handleFieldRowEvent('dragOver', event)) {
+      hoverExpander.hover(null)
+      return
+    }
     const ids = getDraggedIds()
     if (!ids) return
     if (dropAt(event, ids)) {
@@ -628,6 +709,10 @@ function HierarchyPanel(): React.JSX.Element {
 
   const onDrop = (event: React.DragEvent): void => {
     if (!isObjectDrag(event)) return
+    if (handleFieldRowEvent('drop', event)) {
+      hoverExpander.cancel()
+      return
+    }
     event.preventDefault()
     const ids = getDraggedIds()
     const destination = ids && !isChangeOpen() ? dropAt(event, ids) : null
@@ -735,43 +820,47 @@ function HierarchyPanel(): React.JSX.Element {
         onDrop={onDrop}
         onDragEnd={finishDrag}
       >
+        {/* 트리는 늘 있다(빈 씬에도 Field 줄). 빈 씬·검색 결과 없음 안내는 Field 줄 아래에 둔다 */}
+        <div
+          ref={treeRef}
+          role="tree"
+          aria-multiselectable="true"
+          className="tree"
+          aria-label={t('panels.hierarchy')}
+        >
+          {!searching && <FieldRow tabStop={fieldTabStop} />}
+          {rows.map((row) => {
+            const severity = severities.get(row.id)
+            return (
+              <TreeRowView
+                key={row.id}
+                object={objects[row.id]}
+                depth={row.depth}
+                hasChildren={row.hasChildren}
+                open={row.open}
+                posInSet={row.posInSet}
+                setSize={row.setSize}
+                tabStop={row.id === tabStopId}
+                severity={severity?.severity}
+                severityOwn={severity?.own ?? false}
+                visibility={visibilities.get(row.id) ?? 'visible'}
+                cut={cutSet.has(row.id)}
+                path={searching ? pathOf(row.id) : undefined}
+              />
+            )
+          })}
+        </div>
         {roots.length === 0 ? (
           <p className="panel-empty">
             {t('hierarchy.empty')}
             <br />
             {t('hierarchy.emptyHint')}
           </p>
-        ) : searching && rows.length === 0 ? (
-          <p className="panel-empty">{t('hierarchy.searchNoResults', { query: query.trim() })}</p>
         ) : (
-          <div
-            ref={treeRef}
-            role="tree"
-            aria-multiselectable="true"
-            className="tree"
-            aria-label={t('panels.hierarchy')}
-          >
-            {rows.map((row) => {
-              const severity = severities.get(row.id)
-              return (
-                <TreeRowView
-                  key={row.id}
-                  object={objects[row.id]}
-                  depth={row.depth}
-                  hasChildren={row.hasChildren}
-                  open={row.open}
-                  posInSet={row.posInSet}
-                  setSize={row.setSize}
-                  tabStop={row.id === tabStopId}
-                  severity={severity?.severity}
-                  severityOwn={severity?.own ?? false}
-                  visibility={visibilities.get(row.id) ?? 'visible'}
-                  cut={cutSet.has(row.id)}
-                  path={searching ? pathOf(row.id) : undefined}
-                />
-              )
-            })}
-          </div>
+          searching &&
+          rows.length === 0 && (
+            <p className="panel-empty">{t('hierarchy.searchNoResults', { query: query.trim() })}</p>
+          )
         )}
         {/* 행 아래 빈 공간: 클릭하면 선택 해제, 놓으면 로봇의 마지막 자식, 우클릭하면 만들기 메뉴 */}
         <div className={endLine ? 'tree-filler is-drop-end' : 'tree-filler'} />

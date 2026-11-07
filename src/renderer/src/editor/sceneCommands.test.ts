@@ -384,3 +384,51 @@ describe('보이기·숨기기', () => {
     expect(useSceneVisibilityStore.getState().isolated).toBeNull()
   })
 })
+
+// C3(spec-4ab §1.9): Field 줄을 골랐을 때의 명령. selectedIds만 보는 명령은 할 일이 없다
+describe('Field 선택의 명령', () => {
+  beforeEach(() => {
+    editor().selectField()
+  })
+
+  it('Delete·Ctrl+X·Ctrl+V·F2·F·Ctrl+A는 씬을 바꾸지 않는다', async () => {
+    editor().setCut(['groupG'])
+    editor().selectField()
+    await deleteSelection()
+    expect(cutSelection()).toBe(false)
+    expect(pasteCut(false)).toBe(false)
+    expect(pasteCut(true)).toBe(false)
+    expect(renameSelection()).toBe(false)
+    useEditorStore.setState({ focusRequest: null })
+    editor().focusSelection()
+    expect(editor().focusRequest).toBeNull()
+    expect(scene()).toBe(SCENE)
+    expect(useDialogStore.getState().request).toBeNull()
+    // Ctrl+A는 오브젝트만 고른다(Field는 범위에 들어가지 않는다)
+    selectAll()
+    expect(scene()).toBe(SCENE)
+    expect(editor().fieldSelected).toBe(false)
+  })
+
+  it('H는 필드 요소 보이기를 바꾸고 오브젝트 숨김은 그대로, Shift+H는 아무것도 하지 않는다', () => {
+    expect(toggleSelectedVisibility()).toBe(true)
+    expect(useSceneVisibilityStore.getState().fieldHidden).toBe(true)
+    expect(useSceneVisibilityStore.getState().hidden.size).toBe(0)
+    toggleSelectedVisibility()
+    expect(useSceneVisibilityStore.getState().fieldHidden).toBe(false)
+    expect(toggleSelectedIsolation()).toBe(false)
+    expect(useSceneVisibilityStore.getState().isolated).toBeNull()
+    expect(scene()).toBe(SCENE)
+  })
+
+  it('Ctrl+Shift+N·Alt+Shift+N은 아무것도 고르지 않았을 때처럼 만들고 그것을 고른다', () => {
+    const id = createEmpty()!
+    expect(scene()[id].parentId).toBe(defaultParentId(SCENE, null))
+    expect(editor().selectedIds).toEqual([id])
+    expect(editor().fieldSelected).toBe(false)
+    editor().selectField()
+    const child = createEmptyChild()!
+    expect(scene()[child].parentId).toBe(defaultParentId(SCENE, null))
+    expect(editor().selectedId).toBe(child)
+  })
+})

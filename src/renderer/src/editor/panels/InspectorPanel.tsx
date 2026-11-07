@@ -17,6 +17,8 @@ import { useSceneStore } from '../../scene/sceneStore'
 import CadAlignmentSection, { CadOriginSection } from '../CadAlignmentSection'
 import CodeGroupSection from '../CodeGroupSection'
 import { useEditorStore } from '../editorStore'
+import FieldInspector from '../field/FieldInspector'
+import StartPresetSection from '../field/StartPresetSection'
 import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import RobotHardwareSection from '../hardware/RobotHardwareSection'
 import { movedOutCadRoot, parentCadAxes } from '../inspectorInfo'
@@ -147,6 +149,7 @@ function InspectorPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const selectedId = useEditorStore((state) => state.selectedId)
   const selectedIds = useEditorStore((state) => state.selectedIds)
+  const fieldSelected = useEditorStore((state) => state.fieldSelected)
   const objects = useSceneStore((state) => state.objects)
   const setLocalTransform = useSceneStore((state) => state.setLocalTransform)
   const renameObject = useSceneStore((state) => state.renameObject)
@@ -156,6 +159,15 @@ function InspectorPanel(): React.JSX.Element {
     () => (selectedIds.length > 1 ? inHierarchyOrder(objects, selectedIds) : []),
     [objects, selectedIds]
   )
+
+  // 하이어라키 Field 줄(오브젝트 선택과 배타)
+  if (fieldSelected) {
+    return (
+      <PanelFrame title={t('panels.inspector')} localKeys>
+        <FieldInspector />
+      </PanelFrame>
+    )
+  }
 
   if (multiple.length > 1) {
     return (
@@ -295,6 +307,8 @@ function InspectorPanel(): React.JSX.Element {
             </div>
           )}
         </section>
+        {/* 최상위 로봇: 시즌 시작 프리셋으로 벽에 붙이기 */}
+        {isRobotRoot && <StartPresetSection robot={object} />}
         {cadObjectId && <CadAlignmentSection cadObject={objects[cadObjectId]} />}
         {originId && <CadOriginSection cadObject={objects[originId]} />}
         {isCodeGroup(object) && <CodeGroupSection group={object} />}
