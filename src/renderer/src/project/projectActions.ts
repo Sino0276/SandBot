@@ -14,6 +14,7 @@ import { useHierarchyViewStore } from '../editor/hierarchyTree'
 import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../editor/history'
 import { resetSceneVisibility } from '../editor/sceneVisibility'
+import { notifyFieldState, refreshFieldNotices } from '../field/fieldActions'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import { refreshJavaIndex, scheduleFocusRefresh } from '../java/javaIndex'
@@ -31,6 +32,7 @@ import {
   initUsageIndex,
   setUsageBaseline
 } from '../java/usageIndex'
+import { DEFAULT_FIELD_DOC, type FieldDoc } from '../scene/fieldDoc'
 import type { SceneObjects } from '../scene/model'
 import { beginCadLoad, disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
@@ -44,6 +46,8 @@ let loading = false
 
 // 마지막으로 저장하거나 연 씬. 실행 취소로 이 상태로 돌아오면 저장할 변경이 없는 것으로 본다.
 let savedObjects: SceneObjects | null = null
+// 마지막으로 저장하거나 연 필드 시즌(문자열). 시즌은 값으로 비교한다(되돌려 고르면 변경이 없다).
+let savedField: string | null = null
 // 마지막으로 생성 코드를 맞춘(synced) 저장의 씬. 열 때는 연 씬이다(디스크의 생성 코드·구성이 그것과 같다고 본다).
 // 생성이 막히거나 실패한 저장은 디스크를 바꾸지 않으므로 옮기지 않는다. 사용처의 기준 씬("이전 이름")과 저장 뒤
 // 확인(이번 저장이 구성에서 없앤 이름)이 이것과 비교한다.
@@ -71,12 +75,17 @@ function replaceGenerationNotices(notices: Parameters<typeof showNotice>[]): voi
 const fileNames = (paths: string[]): string => paths.map(fileNameOf).join(', ')
 
 // 저장할 변경이 있는지. 저장하지 않은 튜닝 값은 디스크와 다른 것만 담으므로 비어 있지 않으면 변경이다.
-// 씬은 마지막으로 저장하거나 연 objects와 같은 참조인지로 본다(실행 취소로 돌아오면 변경이 없다).
-// 프로젝트 없이 임시 씬만 만지는 것은 저장할 변경으로 치지 않는다(튜닝 값은 TeamCode 연결이 있어야 생긴다).
-function computeDirty(state: { objects: SceneObjects; tunables: TunableEdits }): boolean {
+// 씬은 마지막으로 저장하거나 연 objects와 같은 참조인지로, 필드는 시즌 문자열 값으로 본다(실행 취소로 돌아오거나 원래
+// 시즌을 다시 고르면 변경이 없다). 프로젝트 없이 임시 씬만 만지는 것(시즌만 바꾼 것 포함)은 저장할 변경으로 치지 않는다
+// (튜닝 값은 TeamCode 연결이 있어야 생긴다).
+function computeDirty(state: {
+  objects: SceneObjects
+  tunables: TunableEdits
+  field: FieldDoc
+}): boolean {
   if (hasTunableEdits(state.tunables)) return true
   if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) return false
-  return state.objects !== savedObjects
+  return state.objects !== savedObjects || state.field.season !== savedField
 }
 
 // 메인 프로세스에는 initProjectSession의 구독이 알린다(확정하지 않은 입력칸 초안도 포함)
@@ -186,8 +195,10 @@ export function saveProject(): Promise<boolean> {
     const projectRoot = root
     // 저장하는 동안 바뀐 내용은 다음 저장 몫이다. 프로젝트 파일과 생성 코드는 같은 씬으로 만든다.
     // 튜닝 값도 여기서 잡은 것만 쓴다(저장하는 동안 고친 값은 rebase가 저장하지 않은 값으로 남긴다).
-    const { objects, tunables } = useSceneStore.getState()
-    const content = serializeProject(objects, (path) => window.api.relativePath(projectRoot, path))
+    const { objects, tunables, field } = useSceneStore.getState()
+    const content = serializeProject(objects, field, (path) =>
+      window.api.relativePath(projectRoot, path)
+    )
     try {
       await window.api.saveProject(projectRoot, content)
     } catch (error) {
@@ -197,6 +208,7 @@ export function saveProject(): Promise<boolean> {
     wrote = true
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
     savedObjects = objects
+    savedField = field.season
     setDirty(computeDirty(useSceneStore.getState()))
     // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
     const tunableOutcome = await saveTunables(projectRoot, tunables)
@@ -244,9 +256,16 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
     let replaced = false
     try {
       const info = await window.api.openProject(root)
-      const { objects, cadFiles, droppedScripts } = info.content
+      // 새 프로젝트(내용 없음)도 기본 필드를 넘긴다(이전 프로젝트의 시즌이 넘어가지 않게)
+      const { objects, field, fieldDefaulted, cadFiles, droppedScripts } = info.content
         ? parseProject(info.content)
-        : { objects: {}, cadFiles: new Map(), droppedScripts: [] }
+        : {
+            objects: {},
+            field: { season: DEFAULT_FIELD_DOC.season },
+            fieldDefaulted: false,
+            cadFiles: new Map(),
+            droppedScripts: []
+          }
 
       // 새 프로젝트를 읽었으니 이전 프로젝트의 불러오기(새 STEP, CAD 형상 읽기)를 멈춘다(열기에 실패하면 그대로 둔다).
       // 세션을 먼저 바꿔, 취소되어 끝나는 이전 작업이 결과·상태를 반영하거나 다음 CAD로 넘어가지 않게 한다.
@@ -254,7 +273,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useProjectStore.setState({ session })
       cancelAllImports()
 
-      useSceneStore.getState().replaceObjects(objects)
+      useSceneStore.getState().replaceObjects(objects, field)
       replaced = true
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
@@ -308,11 +327,15 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
       savedObjects = useSceneStore.getState().objects
+      savedField = useSceneStore.getState().field.season
       generatedObjects = savedObjects
       // 사용처의 "이전 이름"은 연 씬(고친 경로 포함)과 비교한다
       setUsageBaseline(savedObjects)
       setDirty(false)
       opened = true
+      // 필드 알림(v9 기본 시즌, 모르는 시즌, 시작 자세 겹침)은 CAD 못 찾음 알림 다음에 쌓는다. 외곽은 프로젝트 파일의
+      // cad.bounds라 형상 로딩과 관계없다.
+      notifyFieldState('open', { assumed: fieldDefaulted })
     } catch (error) {
       for (const cad of cads) cad.endQueued()
       cads = []
@@ -447,8 +470,15 @@ export function initProjectSession(): void {
 
   useSceneStore.subscribe((state, previous) => {
     if (loading) return
-    if (state.objects === previous.objects && state.tunables === previous.tunables) return
+    if (
+      state.objects === previous.objects &&
+      state.tunables === previous.tunables &&
+      state.field === previous.field
+    )
+      return
     setDirty(computeDirty(state))
+    // 떠 있는 필드 알림(시작 겹침, 모르는 시즌)이 낡았으면 다시 계산한다(새로 띄우지는 않는다)
+    refreshFieldNotices(state, previous)
   })
   // 연결을 더하면 그 Java 파일을 읽어 튜닝 값을 보인다
   initJavaSources()

@@ -201,7 +201,9 @@ beforeEach(async () => {
   useNoticeStore.setState({ notices: [] })
   useDialogStore.setState({ request: null })
   usePreferencesStore.setState({ open: false, target: null })
-  useSceneStore.setState({ objects: SCENE })
+  // 세계 설명 고정값은 'none'이다(spec-4ab §1.2: 스토어 기본 시즌 BIOBUZZ의 구조물·벽에 시험 로봇이 걸리지 않게, 'none'은 3c와
+  // 바이트까지 같다). 시즌을 보는 시험은 따로 바꾼다.
+  useSceneStore.setState({ objects: SCENE, field: { season: 'none' } })
   useEditorStore.getState().select(null)
   useProjectStore.setState({ root: '/p', busy: false, dirty: false, generation: null })
   await settle()
@@ -655,6 +657,67 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     await initPlay()
     expect(lastRequest()).toMatchObject({ configPath: null, world: null })
     expect(notices()).toEqual([])
+  })
+
+  // spec-4ab §2.4·§3: 실행의 시즌은 문서 시즌(모르면 'none')과 실행 설정 hiveState에서 INIT 때 정한다
+  describe('시즌과 HIVE 상태', () => {
+    // 'none' +X 벽(안쪽 반폭 1.81630 m)에 붙인 18 in 로봇: BIOBUZZ 벽(1.79286 m)에 23 mm 걸친다
+    const atNoneWall = (): SceneObjects => {
+      const objects = withWheel()
+      const x = 1.8163 - 0.2286
+      return { ...objects, bot: { ...objects.bot, transform: { ...T0, position: [x, 0, 0] } } }
+    }
+
+    it('B13: 세계 설명과 실행이 문서 시즌·HIVE 상태를 쓰고, INIT 뒤 문서 시즌을 바꿔도 실행은 그대로', async () => {
+      useSceneStore.setState({ objects: withWheel(), field: { season: 'biobuzz' } })
+      usePlayStore.getState().updateSettings({ hiveState: { red: 'start', blue: 'tipped' } })
+      await initPlay()
+      const field = { season: 'biobuzz', hiveTipped: [false, true] }
+      expect(lastRequest().world!.field).toEqual(field)
+      // 실행 요청의 settings에는 렌더러 전용 hiveState가 없다
+      expect(lastRequest().settings).not.toHaveProperty('hiveState')
+      expect(usePlayStore.getState().run!.field).toEqual(field)
+      expect(notices()).toEqual([])
+      useSceneStore.getState().setFieldSeason('none')
+      expect(usePlayStore.getState().run!.field).toEqual(field)
+    })
+
+    it('세계 설명이 없어도(로봇 구성 없음) 실행의 시즌을 정한다', async () => {
+      useSceneStore.setState({
+        objects: { bot: { ...SCENE.bot } },
+        field: { season: 'biobuzz' }
+      })
+      usePlayStore.getState().updateSettings({ hiveState: { red: 'tipped', blue: 'start' } })
+      await initPlay()
+      expect(lastRequest().world).toBeNull()
+      expect(usePlayStore.getState().run!.field).toEqual({
+        season: 'biobuzz',
+        hiveTipped: [true, false]
+      })
+    })
+
+    it('B3: 모르는 시즌은 none으로 시뮬레이션하고 Console에 worldUnknownSeason', async () => {
+      useSceneStore.setState({ objects: withWheel(), field: { season: 'decode2027' } })
+      await initPlay()
+      expect(lastRequest().world!.field.season).toBe('none')
+      expect(usePlayStore.getState().run!.field.season).toBe('none')
+      expect(notices()).toEqual(['worldUnknownSeason'])
+    })
+
+    it('B9: none 벽에 붙인 바퀴 로봇을 BIOBUZZ로 INIT하면 worldStartOverlap(실행은 막지 않는다)', async () => {
+      useSceneStore.setState({ objects: atNoneWall(), field: { season: 'biobuzz' } })
+      await initPlay()
+      expect(lastRequest().world).not.toBeNull()
+      expect(notices()).toEqual(['worldStartOverlap'])
+      const entry = usePlayStore.getState().entries.at(-1)
+      expect(entry).toMatchObject({ type: 'notice', key: 'worldStartOverlap', level: 'warning' })
+      // 대상 이름(i18n 문구, 이 시험은 i18n을 초기화하지 않는다)은 worldField.test.ts가 본다
+      expect(entry).toMatchObject({ params: { targets: expect.any(String) } })
+      // 같은 자리도 'none' 시즌이면 겹치지 않는다
+      useSceneStore.setState({ field: { season: 'none' } })
+      await initPlay()
+      expect(notices().filter((key) => key === 'worldStartOverlap')).toHaveLength(1)
+    })
   })
 })
 

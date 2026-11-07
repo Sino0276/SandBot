@@ -5,6 +5,7 @@ import {
 } from '../../../shared/teamCodePaths'
 import { AXIS_DIRECTIONS } from '../cad/alignment'
 import { componentDef, isComponentType } from '../hardware/catalog'
+import { DEFAULT_FIELD_DOC, isSeasonString, type FieldDoc } from '../scene/fieldDoc'
 import { cadOriginOf } from '../scene/hierarchy'
 import type { MassSettings, RigidbodySettings } from '../mass/types'
 import {
@@ -48,10 +49,14 @@ export const PROJECT_FORMAT = 'sandbot-project'
 // 8: 관절 joint({ type, anchor, axis, axisSign, limits, friction, spring, drive }, 시뮬레이터 설정, robot이 아니고 바퀴가
 //    없는 오브젝트에만, scene/joint.ts).
 // 9: 바퀴 wheel.friction(잠근 바퀴의 겉보기 타일 마찰 계수, 0이면 종류 기본, 3c 구동계 동역학).
+// 10: 필드 field({ season }, 시즌 id 문자열, 모르는 값은 보존). 시즌 데이터는 src/shared/sim/seasons/ 한곳이라 시즌을
+//     더해도 이 버전을 올리지 않는다(모르는 시즌 문자열은 보존하고 표시·시뮬레이터는 'none'으로 처리한다).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
-// 8 이하는 바퀴 friction 없음 = 0).
+// 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 9
+export const PROJECT_VERSION = 10
+// field를 두기 시작한 버전
+const FIELD_VERSION = 10
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -61,6 +66,7 @@ type StoredObject = Omit<SceneObject, 'cad'> & { cad?: StoredCad }
 type ProjectFileData = {
   format: typeof PROJECT_FORMAT
   version: number
+  field: FieldDoc
   objects: StoredObject[]
 }
 
@@ -77,12 +83,15 @@ export class ProjectFileError extends Error {
 
 export function serializeProject(
   objects: SceneObjects,
+  // 필드 설정(v10). 시즌 문자열만 쓴다(모르는 시즌도 그대로)
+  field: FieldDoc,
   // 절대 경로를 프로젝트 기준 상대 경로로 바꾼다
   relativize: (absolutePath: string) => string
 ): string {
   const data: ProjectFileData = {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
+    field: { season: field.season },
     objects: Object.values(objects).map(({ cad, ...stored }) => {
       // 빈 연결 목록은 쓰지 않는다(스토어도 비면 필드를 지운다)
       const { scripts, ...rest } = stored
@@ -558,10 +567,31 @@ function checkCadOrigins(objects: SceneObjects): void {
   }
 }
 
+// 필드(v10). 객체이고 season이 시즌 문자열 모양(fieldDoc.ts isSeasonString)이어야 한다. 없거나 틀리면 파일 오류다.
+// 모양이 맞으면 모르는 시즌도 보존한다(다시 저장해도 그 문자열을 쓴다). 다른 키는 버린다.
+// v9 이하는 field를 보지 않고 BIOBUZZ(DEFAULT_PROJECT_SEASON, 사용자 결정 11/07)로 읽는다(fieldDefaulted).
+function parseField(
+  data: Record<string, unknown>,
+  version: number
+): {
+  field: FieldDoc
+  fieldDefaulted: boolean
+} {
+  if (version < FIELD_VERSION)
+    return { field: { season: DEFAULT_FIELD_DOC.season }, fieldDefaulted: true }
+  const { field } = data
+  if (!isRecord(field) || !isSeasonString(field.season))
+    throw new ProjectFileError('invalidData', 'field')
+  return { field: { season: field.season }, fieldDefaulted: false }
+}
+
 // 프로젝트 파일을 읽는다. CAD 파일 경로(상대·절대)는 따로 돌려주고, 경로 찾기는 호출한 쪽이 한다.
 // droppedScripts는 연결할 수 없는 경로라 버린 스크립트 연결의 경로다(호출한 쪽이 알린다).
+// fieldDefaulted는 field가 없는 예전 형식(v9 이하)이라 기본 시즌으로 읽었다는 뜻이다(열기가 알린다).
 export function parseProject(content: string): {
   objects: SceneObjects
+  field: FieldDoc
+  fieldDefaulted: boolean
   cadFiles: Map<string, StoredCadFile>
   droppedScripts: string[]
 } {
@@ -576,6 +606,7 @@ export function parseProject(content: string): {
     throw new ProjectFileError('newerVersion', String(data.version))
   }
   if (!Array.isArray(data.objects)) throw new ProjectFileError('invalidData', 'objects')
+  const { field, fieldDefaulted } = parseField(data, data.version)
 
   const objects: SceneObjects = {}
   const cadFiles = new Map<string, StoredCadFile>()
@@ -597,5 +628,5 @@ export function parseProject(content: string): {
     console.warn(
       `project.json: 연결할 수 없는 스크립트 경로를 버린다: ${droppedScripts.join(', ')}`
     )
-  return { objects, cadFiles, droppedScripts }
+  return { objects, field, fieldDefaulted, cadFiles, droppedScripts }
 }

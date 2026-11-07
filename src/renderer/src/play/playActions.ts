@@ -49,11 +49,18 @@ import {
   withEntries,
   withPendingConfig,
   type PlayData,
+  type PlayRunField,
   type RegisteredListState,
   type RegisteredProblem
 } from './playStore'
 import { chooseRobotConfig, generationWarning } from './robotConfig'
-import { buildWorldSpec, robotNeedsMassModel, type WorldSpecResult } from './worldSpec'
+import {
+  buildWorldSpec,
+  robotNeedsMassModel,
+  runFieldOf,
+  withRunField,
+  type WorldSpecResult
+} from './worldSpec'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -425,7 +432,9 @@ async function runInit(): Promise<void> {
   const warning = generationWarning(generation, configPath)
   // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
-  const world = config ? worldFor(config.robotId, play.settings) : null
+  // 실행의 시즌·HIVE 상태(문서 시즌과 실행 설정, 세계 설명이 없어도 정한다). 실행 중 문서 시즌이 바뀌어도 그대로다.
+  const runField = runFieldOf(useSceneStore.getState().field, play.settings.hiveState)
+  const world = config ? worldFor(config.robotId, play.settings, runField) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
   // 이전 실행의 잔상·Dashboard 오버레이·설정은 다음 INIT에 지운다(Unity처럼 로봇은 편집 위치에서 다시 시작한다)
@@ -443,7 +452,8 @@ async function runInit(): Promise<void> {
       configPath,
       speed: play.settings.speed,
       paused: play.paused,
-      joints: world?.jointObjectIds ?? []
+      joints: world?.jointObjectIds ?? [],
+      field: runField
     })
   })
   const { addConsole } = usePlayStore.getState()
@@ -523,14 +533,18 @@ async function runInit(): Promise<void> {
 
 // 세계 설명을 만들다 예상하지 못한 오류가 나도 실행은 시뮬레이터 없이 계속한다(Console에 알림)
 // 관절이나 바퀴가 있으면 관절 몸체·섀시 몸체·바퀴 회전 관성에 질량 모델(인스펙터와 같은 마지막 계산, 문서 밖 형상 정보,
-// 문서·형상 판으로 캐시)을 쓴다.
-function worldFor(robotId: string, settings: PlayData['settings']): WorldSpecResult {
+// 문서·형상 판으로 캐시)을 쓴다. 시즌·HIVE 상태와 필드 경고(모르는 시즌, 시작 겹침)는 빌더 결과에 덧붙인다(withRunField).
+function worldFor(
+  robotId: string,
+  settings: PlayData['settings'],
+  field: PlayRunField
+): WorldSpecResult {
   try {
-    const { objects, geometryRevision } = useSceneStore.getState()
+    const { objects, geometryRevision, field: doc } = useSceneStore.getState()
     const mass = robotNeedsMassModel(objects, robotId)
       ? massModelFor(objects, geometryRevision)
       : null
-    return buildWorldSpec(objects, robotId, settings, mass)
+    return withRunField(buildWorldSpec(objects, robotId, settings, mass), doc, field, i18n.t)
   } catch (error) {
     return {
       spec: null,

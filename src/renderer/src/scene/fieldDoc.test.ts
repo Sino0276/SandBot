@@ -54,4 +54,24 @@ describe('sceneStore field', () => {
     replaceObjects({}, { season: 'biobuzz' })
     expect(useSceneStore.getState().field).toEqual({ season: 'biobuzz' })
   })
+
+  // B7(spec-4ab §2.2): 첫 STEP 임포트(addObjects의 replacesOnImport)가 임시 씬을 비워도 field는 그대로다
+  it('첫 STEP 임포트가 임시 씬을 비워도 field는 그대로', () => {
+    const { replaceObjects, setFieldSeason } = useSceneStore.getState()
+    replaceObjects(useSceneStore.getInitialState().objects)
+    setFieldSeason('none')
+    const field = useSceneStore.getState().field
+    useSceneStore.getState().addObjects({
+      r: {
+        id: 'r',
+        name: 'Robot',
+        kind: 'robot',
+        parentId: null,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+      }
+    })
+    // 임시 씬은 비워지고 새 로봇만 남는다
+    expect(Object.keys(useSceneStore.getState().objects)).toEqual(['r'])
+    expect(useSceneStore.getState().field).toBe(field)
+  })
 })

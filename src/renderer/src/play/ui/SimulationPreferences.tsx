@@ -8,6 +8,9 @@ import NumberField from '../../editor/NumberField'
 import { clampBatteryVoltage, clampJitter, clampSeed, JITTER_CHOICES } from '../playSettings'
 import { usePlayStore } from '../playStore'
 
+// HIVE 상태 칸 순서(빨강, 파랑: 세계 설명 field.hiveTipped의 순서)
+const HIVE_SIDES = ['red', 'blue'] as const
+
 const percent = (jitter: number): number => Math.round(jitter * 1000) / 10
 
 function parseSeed(text: string): number | null {
@@ -24,8 +27,8 @@ function parseVoltage(text: string): number | null {
   return Number.isFinite(value) ? clampBatteryVoltage(value) : null
 }
 
-// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지. 개인 설정(localStorage)이고
-// 다음 INIT부터 쓴다.
+// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지, HIVE 상태. 개인 설정(localStorage)이고
+// 다음 INIT부터 쓴다(HIVE 상태는 실행 중이 아니면 씬 뷰가 바로 따른다).
 function SimulationPreferences(): React.JSX.Element {
   const { t } = useTranslation()
   const settings = usePlayStore((state) => state.settings)
@@ -98,6 +101,39 @@ function SimulationPreferences(): React.JSX.Element {
         {t('preferences.simulation.autoStop', { seconds: AUTONOMOUS_SECONDS })}
       </label>
       <p className="inspector-note">{t('preferences.simulation.nextRun')}</p>
+      {/* HIVE 상태(spec-4ab §2.3): Field 인스펙터의 같은 칸과 같은 값(개인 실행 설정, 프로젝트·실행 취소와 무관) */}
+      <section className="preferences-subsection" aria-labelledby="preferences-hive">
+        <h3 id="preferences-hive" className="preferences-subtitle">
+          {t('preferences.simulation.hiveState')}
+        </h3>
+        {HIVE_SIDES.map((side) => (
+          <label className="preferences-row" key={side}>
+            <span className="preferences-row-label">
+              {t(
+                side === 'red'
+                  ? 'preferences.simulation.hiveRed'
+                  : 'preferences.simulation.hiveBlue'
+              )}
+            </span>
+            <select
+              className="field-select"
+              value={settings.hiveState[side]}
+              onChange={(event) =>
+                updateSettings({
+                  hiveState: {
+                    ...settings.hiveState,
+                    [side]: event.target.value === 'tipped' ? 'tipped' : 'start'
+                  }
+                })
+              }
+            >
+              <option value="start">{t('preferences.simulation.hiveStart')}</option>
+              <option value="tipped">{t('preferences.simulation.hiveTipped')}</option>
+            </select>
+          </label>
+        ))}
+        <p className="inspector-note">{t('preferences.simulation.hiveHint')}</p>
+      </section>
     </section>
   )
 }
