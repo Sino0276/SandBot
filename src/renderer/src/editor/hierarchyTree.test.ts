@@ -124,6 +124,50 @@ describe('treeKeyAction', () => {
   })
 })
 
+// C2(spec-4ab §1.9): 맨 위 Field 줄(fieldRow: 검색 중이 아님)
+describe('treeKeyAction의 Field 줄', () => {
+  const rows = visibleRows(SCENE, {})
+  const first = { type: 'select', id: 'robot', extend: false }
+  const last = { type: 'select', id: 'other', extend: false }
+
+  it('첫 행에서 Shift 없이 ↑·Home이면 Field로 간다', () => {
+    expect(treeKeyAction(rows, 'robot', 'ArrowUp', false, true)).toEqual({ type: 'selectField' })
+    expect(treeKeyAction(rows, 'robot', 'Home', false, true)).toEqual({ type: 'selectField' })
+    // 다른 행의 Home은 첫 행이다
+    expect(treeKeyAction(rows, 'cad', 'Home', false, true)).toEqual(first)
+  })
+
+  it('Field에서 ↓(Shift도 범위가 아님)는 첫 행 하나, End는 마지막 행, ↑·Home·←·→는 없음', () => {
+    expect(treeKeyAction(rows, 'field', 'ArrowDown', false, true)).toEqual(first)
+    expect(treeKeyAction(rows, 'field', 'ArrowDown', true, true)).toEqual(first)
+    expect(treeKeyAction(rows, 'field', 'End', false, true)).toEqual(last)
+    for (const key of ['ArrowUp', 'Home', 'ArrowLeft', 'ArrowRight'])
+      expect(treeKeyAction(rows, 'field', key, false, true)).toBeNull()
+  })
+
+  it('Field는 범위에 넣을 수 없다: 첫 행에서 Shift+↑는 없음, Shift+Home은 첫 행', () => {
+    expect(treeKeyAction(rows, 'robot', 'ArrowUp', true, true)).toBeNull()
+    expect(treeKeyAction(rows, 'robot', 'Home', true, true)).toEqual({
+      type: 'select',
+      id: 'robot',
+      extend: true
+    })
+  })
+
+  it('행이 없으면 Field에서 ↓·End는 아무것도 하지 않는다', () => {
+    expect(treeKeyAction([], 'field', 'ArrowDown', false, true)).toBeNull()
+    expect(treeKeyAction([], 'field', 'End', false, true)).toBeNull()
+  })
+
+  it('검색 중(Field 줄 없음)에는 지금 동작 그대로', () => {
+    expect(treeKeyAction(rows, 'robot', 'ArrowUp', false, false)).toBeNull()
+    expect(treeKeyAction(rows, 'robot', 'Home', false, false)).toEqual(first)
+    // Field를 골라 둔 채 검색하면 아무것도 고르지 않은 것과 같다
+    expect(treeKeyAction(rows, 'field', 'ArrowDown', false, false)).toEqual(first)
+    expect(treeKeyAction(rows, 'field', 'ArrowUp', false, false)).toEqual(last)
+  })
+})
+
 describe('펼침 상태', () => {
   beforeEach(() => {
     useHierarchyViewStore.setState({ overrides: {} })

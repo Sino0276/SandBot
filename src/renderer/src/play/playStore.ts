@@ -7,10 +7,10 @@ import type {
   OpModeInfo,
   PlayEvent,
   PlayPhase,
-  PlaySettings,
   PlaySpeed,
   RegistrarInfo
 } from '../../../shared/play'
+import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { RootOverride, SceneObjects, Transform } from '../scene/model'
@@ -36,7 +36,8 @@ import {
   saveDockTab,
   savePlaySettings,
   type ConsolePrefs,
-  type DockTab
+  type DockTab,
+  type RendererPlaySettings
 } from './playSettings'
 
 // 실행(Play) 상태: OpMode 목록과 고른 것, 지금 실행(메인이 보내는 PlayEvent를 그대로 반영), Console 항목, 개인 설정.
@@ -141,7 +142,18 @@ export type PlayRun = {
   detached: boolean
   // 세계 설명의 관절 순번 → 관절 오브젝트 id(INIT 때 정해짐, pose 이벤트 joints의 순서). 세계 설명이 없으면 비어 있다.
   joints: readonly string[]
+  // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
+  // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
+  field: PlayRunField
 }
+
+export type PlayRunField = { season: SeasonId; hiveTipped: readonly [boolean, boolean] }
+
+// newRun에 field를 넘기지 않으면 쓰는 값('none' 시즌, HIVE 시작 상태)
+const DEFAULT_RUN_FIELD: PlayRunField = Object.freeze({
+  season: 'none',
+  hiveTipped: Object.freeze([false, false] as const)
+})
 
 // 시뮬레이터가 보낸 지금 로봇 자세(필드 좌표, pose 이벤트). 약 60 Hz로 바뀌므로 run과 따로 둔다(run을 구독하는
 // 툴바·장치 탭이 그때마다 다시 그리지 않게). 씬 문서는 바꾸지 않고 씬 뷰가 이 자세로 그린다.
@@ -211,7 +223,7 @@ export type PlayData = {
   selectedEntryId: number | null
   consoleQuery: string
   consolePrefs: ConsolePrefs
-  settings: PlaySettings
+  settings: RendererPlaySettings
   gamepads: PadSlots
   dockTab: DockTab
   simPose: SimPoseState | null
@@ -367,6 +379,7 @@ export function newRun(options: {
   speed: PlaySpeed
   paused: boolean
   joints?: readonly string[]
+  field?: PlayRunField
 }): PlayRun {
   return {
     runId: options.runId,
@@ -391,7 +404,8 @@ export function newRun(options: {
     libraryProgress: null,
     libraryReported: false,
     detached: false,
-    joints: options.joints ?? []
+    joints: options.joints ?? [],
+    field: options.field ?? DEFAULT_RUN_FIELD
   }
 }
 
@@ -635,7 +649,7 @@ type PlayStoreActions = {
   setConsoleQuery: (query: string) => void
   toggleLevel: (level: ConsoleLevel) => void
   setClearOnPlay: (clearOnPlay: boolean) => void
-  updateSettings: (patch: Partial<PlaySettings>) => void
+  updateSettings: (patch: Partial<RendererPlaySettings>) => void
   setDockTab: (tab: DockTab) => void
 }
 

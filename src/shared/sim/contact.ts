@@ -1,6 +1,5 @@
 import type { ContactRow, ContactSet } from './articulation'
 import { tractionDirection } from './drivetrain'
-import { WALL_INNER_HALF } from './field'
 import {
   mecanumRollerFriction,
   ROLLER_COULOMB,
@@ -42,7 +41,7 @@ const OCTAGON_DIVISOR = 2 * (Math.cos(Math.PI / 8) + Math.sin(Math.PI / 8))
 const OCTAGON_ANGLES = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4]
 
 // 벽 행을 넣는 근방: 간격 ≤ |접근 속도|·h + WALL_MARGIN(m). 가정: 3b 관절 한계 근방(LIMIT_MARGIN 1 mm)과 같은 크기
-const WALL_MARGIN = 1e-3
+export const WALL_MARGIN = 1e-3
 // 받쳐지지 않은 모멘트가 F_z × 이 길이(m)를 넘으면 넘어짐으로 센다. 가정: ZMP가 바퀴 껍질 밖으로 1 mm(반올림 잡음보다 훨씬 크고
 // 넘어짐을 놓치지 않을 만큼 작다, spec-3c §1.4)
 const TIPPING_ARM = 1e-3
@@ -107,7 +106,8 @@ function slipRow(wheel: WheelContact, d: Vec2, yaw: number, m: number): number[]
   return j
 }
 
-const perpendicular = (d: Vec2): Vec2 => ({ x: -d.y, y: d.x })
+// ẑ × d(반시계 90°). 구조물 접촉(fieldContact.ts)도 같은 것을 쓴다
+export const perpendicular = (d: Vec2): Vec2 => ({ x: -d.y, y: d.x })
 
 // 롤러 자유 방향 저항(하중 1 N당): 점성(s/m)과 쿨롱 계수
 export type RollerResistance = { viscous: number; coulomb: number }
@@ -217,16 +217,18 @@ export function wheelCoordinateFriction(
   return wheel.driven ? rolling : rolling + WHEEL_BEARING_FRICTION
 }
 
-// 벽 행: 외곽 꼭짓점 k와 벽 w(+x, −x, +y, −y)마다 간격 gap = WALL_INNER_HALF − s_w·P_k를 재고, 근방(간격 ≤ |접근 속도|·h +
-// WALL_MARGIN)인 쌍만 넣는다. 법선 행은 한쪽(λ ≥ 0)이고 목표 J_n·v⁺ ≥ −max(gap, 0)/h라 이미 걸쳐 있으면 밀어내지 않는다(반발 0,
-// 위치 자르기 없음). 접선 행은 상자 ±WALL_FRICTION·λ_n(Articulation이 고정 2회 엇갈림으로 푼다). 벽 힘은 바닥 높이에 작용한다고
-// 본다(하중 이동 없음, 한계).
+// 벽 행: 외곽 꼭짓점 k와 벽 w(+x, −x, +y, −y)마다 간격 gap = innerHalf − s_w·P_k를 재고, 근방(간격 ≤ |접근 속도|·h +
+// WALL_MARGIN)인 쌍만 넣는다. innerHalf는 시즌 외곽의 접촉 기준면 반폭(FieldSpec.perimeter.innerHalf, 'none'은 field.ts의
+// WALL_INNER_HALF와 같은 double이라 3c와 바이트까지 같다). 법선 행은 한쪽(λ ≥ 0)이고 목표 J_n·v⁺ ≥ −max(gap, 0)/h라 이미
+// 걸쳐 있으면 밀어내지 않는다(반발 0, 위치 자르기 없음). 접선 행은 상자 ±WALL_FRICTION·λ_n(Articulation이 고정 2회 엇갈림으로
+// 푼다). 벽 힘은 바닥 높이에 작용한다고 본다(하중 이동 없음, 한계).
 export function wallRows(
   footprint: readonly Vec2[],
   pose: Pose2,
   velocity: { vx: number; vy: number; omega: number },
   h: number,
-  m: number
+  m: number,
+  innerHalf: number
 ): ContactRow[] {
   const rows: ContactRow[] = []
   const c = Math.cos(pose.yaw)
@@ -235,7 +237,7 @@ export function wallRows(
   for (const wall of WALLS) {
     offsets.forEach((r, k) => {
       const position = wall.axis === 0 ? pose.x + r.x : pose.y + r.y
-      const gap = WALL_INNER_HALF - wall.sign * position
+      const gap = innerHalf - wall.sign * position
       const speed =
         wall.axis === 0 ? velocity.vx - velocity.omega * r.y : velocity.vy + velocity.omega * r.x
       if (gap > Math.abs(speed) * h + WALL_MARGIN) return
@@ -264,8 +266,8 @@ export function wallRows(
   return rows
 }
 
-// 벽 법선 행인지(blocked 판정)
-export function isWallNormal(row: ContactRow): boolean {
+// 막는 법선 행인지(blocked 판정): 마찰 없는 한쪽 행(hi = ∞)은 벽 법선과 고정 구조물 법선(fieldContact.ts)뿐이다
+export function isBlockingNormal(row: ContactRow): boolean {
   return row.friction === undefined && row.hi === Infinity
 }
 

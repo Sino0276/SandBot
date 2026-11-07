@@ -21,6 +21,7 @@ import {
   loadPlaySettings,
   parsePlaySettings,
   PLAY_SETTINGS_KEY,
+  runSettings,
   saveConsolePrefs,
   saveDockTab,
   saveLastOpMode,
@@ -64,7 +65,8 @@ describe('실행 설정(localStorage)', () => {
       jitter: 0.1,
       seed: 42,
       autoStopAutonomous: false,
-      batteryVoltage: 13
+      batteryVoltage: 13,
+      hiveState: { red: 'tipped' as const, blue: 'start' as const }
     }
     savePlaySettings(settings, storage)
     expect(loadPlaySettings(storage)).toEqual(settings)
@@ -83,6 +85,36 @@ describe('실행 설정(localStorage)', () => {
       seed: 2 ** 31 - 1
     })
     expect(parsePlaySettings(null)).toEqual(DEFAULT_PLAY_SETTINGS)
+  })
+
+  // K12(spec-4ab §2.3): HIVE 상태는 렌더러 전용 설정이고 실행 요청에는 공유 다섯 키만 간다
+  it('HIVE 상태를 채우고 실행 요청 설정은 공유 다섯 키만 낸다', () => {
+    expect(DEFAULT_PLAY_SETTINGS.hiveState).toEqual({ red: 'start', blue: 'start' })
+    expect(parsePlaySettings({}).hiveState).toEqual({ red: 'start', blue: 'start' })
+    expect(parsePlaySettings({ hiveState: { red: 'tipped', blue: 'x' } }).hiveState).toEqual({
+      red: 'tipped',
+      blue: 'start'
+    })
+    expect(parsePlaySettings({ hiveState: 'tipped' }).hiveState).toEqual({
+      red: 'start',
+      blue: 'start'
+    })
+    // 기본값 객체를 공유하지 않는다
+    const parsed = parsePlaySettings(null)
+    expect(parsed.hiveState).not.toBe(DEFAULT_PLAY_SETTINGS.hiveState)
+    parsed.hiveState.red = 'tipped'
+    expect(DEFAULT_PLAY_SETTINGS.hiveState.red).toBe('start')
+    const sent = runSettings({ ...DEFAULT_PLAY_SETTINGS, speed: 2 })
+    expect(Object.keys(sent).sort()).toEqual(
+      ['autoStopAutonomous', 'batteryVoltage', 'jitter', 'seed', 'speed'].sort()
+    )
+    expect(sent).toEqual({
+      speed: 2,
+      jitter: 0,
+      seed: 1,
+      autoStopAutonomous: true,
+      batteryVoltage: 12.5
+    })
   })
 
   it('배터리 전압은 설정 범위 안으로(기본 12.5 V)', () => {

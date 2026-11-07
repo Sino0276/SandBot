@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { FieldDoc } from '../scene/fieldDoc'
 import { createGroup, moveObjects } from '../scene/hierarchy'
 import type { JointSettings, SceneObjects } from '../scene/model'
 import { parseProject, PROJECT_VERSION, ProjectFileError, serializeProject } from './projectFile'
@@ -62,9 +63,12 @@ const objects: SceneObjects = {
 
 const relativize = (path: string): string => path.replace('/home/team/', '../')
 
+// 시험 프로젝트의 필드(새 프로젝트의 기본 시즌이 아닌 값으로, 왕복이 기본값에 기대지 않게)
+const FIELD: FieldDoc = { season: 'none' }
+
 describe('프로젝트 파일', () => {
   it('저장한 내용을 다시 읽으면 같은 씬이 된다', () => {
-    const { objects: loaded, cadFiles } = parseProject(serializeProject(objects, relativize))
+    const { objects: loaded, cadFiles } = parseProject(serializeProject(objects, FIELD, relativize))
     expect(loaded).toEqual(objects)
     expect(cadFiles.get('cad')).toEqual({
       relativePath: '../cad/robot.step',
@@ -73,8 +77,8 @@ describe('프로젝트 파일', () => {
   })
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 9 })
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 10 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -87,7 +91,7 @@ describe('프로젝트 파일', () => {
       ...objects,
       cad: { ...objects.cad, cad: { ...objects.cad.cad!, absolutePath: '' } }
     }
-    const { cadFiles } = parseProject(serializeProject(withoutPath, relativize))
+    const { cadFiles } = parseProject(serializeProject(withoutPath, FIELD, relativize))
     expect(cadFiles.get('cad')).toEqual({ relativePath: null, absolutePath: '' })
   })
 })
@@ -104,15 +108,15 @@ describe('메커니즘 그룹(버전 4)', () => {
   it('그룹·cadOrigin·codeClassName과 형제 순서를 저장하고 그대로 읽는다', () => {
     const scene = grouped()
     expect(scene.plate.cadOrigin).toBe('cad')
-    const content = serializeProject(scene, relativize)
+    const content = serializeProject(scene, FIELD, relativize)
     const { objects: loaded } = parseProject(content)
     expect(loaded).toEqual(scene)
     expect(Object.keys(loaded)).toEqual(['robot', 'lift', 'cad', 'plate'])
-    expect(serializeProject(loaded, relativize)).toBe(content)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
   it('그룹이 없는 씬은 새 필드를 쓰지 않는다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     for (const object of data.objects) {
       expect(object).not.toHaveProperty('cadOrigin')
       expect(object).not.toHaveProperty('codeClassName')
@@ -151,7 +155,7 @@ describe('메커니즘 그룹(버전 4)', () => {
 
   it('끊긴 cadOrigin(없는 오브젝트·CAD 아닌 것·그룹에 있는 것)은 경고하고 버린다', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const data = JSON.parse(serializeProject(grouped(), relativize))
+    const data = JSON.parse(serializeProject(grouped(), FIELD, relativize))
     const byId = (id: string): Record<string, unknown> =>
       data.objects.find((object: { id: string }) => object.id === id)
     // plate는 형상 id로 출처를 다시 채운다(아래 테스트). 여기서는 메시 없는 오브젝트로 확인한다.
@@ -185,22 +189,22 @@ describe('메커니즘 그룹(버전 4)', () => {
 
   it('CAD 루트 밖에 있는데 cadOrigin이 없는 메시 파트는 형상 id로 출처를 채운다', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const data = JSON.parse(serializeProject(grouped(), relativize))
+    const data = JSON.parse(serializeProject(grouped(), FIELD, relativize))
     for (const object of data.objects) delete object.cadOrigin
     const { objects: loaded } = parseProject(JSON.stringify(data))
     expect(loaded.plate.cadOrigin).toBe('cad')
     expect(warn).toHaveBeenCalledTimes(1)
     // CAD 루트 안에 있는 파트는 건드리지 않는다
-    const inside = parseProject(serializeProject(objects, relativize)).objects
+    const inside = parseProject(serializeProject(objects, FIELD, relativize)).objects
     expect(inside.plate).not.toHaveProperty('cadOrigin')
     warn.mockRestore()
   })
 
   it('codeClassName은 그룹에만, cadOrigin은 문자열만 받는다', () => {
-    const misplaced = JSON.parse(serializeProject(objects, relativize))
+    const misplaced = JSON.parse(serializeProject(objects, FIELD, relativize))
     misplaced.objects[2].codeClassName = 'Plate'
     expect(() => parseProject(JSON.stringify(misplaced))).toThrow(ProjectFileError)
-    const wrongType = JSON.parse(serializeProject(objects, relativize))
+    const wrongType = JSON.parse(serializeProject(objects, FIELD, relativize))
     wrongType.objects[2].cadOrigin = 3
     expect(() => parseProject(JSON.stringify(wrongType))).toThrow(ProjectFileError)
   })
@@ -222,22 +226,22 @@ describe('스크립트 연결(버전 5)', () => {
   })
   // 저장한 파일의 plate에 scripts를 넣는다
   const withScripts = (scripts: unknown): string => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.objects[2].scripts = scripts
     return JSON.stringify(data)
   }
 
   it('연결 목록(순서 포함)을 저장하고 그대로 읽는다', () => {
-    const content = serializeProject(linked(), relativize)
+    const content = serializeProject(linked(), FIELD, relativize)
     const { objects: loaded, droppedScripts } = parseProject(content)
     expect(loaded).toEqual(linked())
     expect(droppedScripts).toEqual([])
-    expect(serializeProject(loaded, relativize)).toBe(content)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
   it('연결이 없으면 scripts를 쓰지 않고, 빈 목록도 쓰지 않는다', () => {
     const empty: SceneObjects = { ...objects, plate: { ...objects.plate, scripts: [] } }
-    for (const object of JSON.parse(serializeProject(empty, relativize)).objects) {
+    for (const object of JSON.parse(serializeProject(empty, FIELD, relativize)).objects) {
       expect(object).not.toHaveProperty('scripts')
     }
     expect(parseProject(withScripts([])).objects.plate).not.toHaveProperty('scripts')
@@ -293,7 +297,7 @@ describe('스크립트 연결(버전 5)', () => {
   })
 
   it('버전 4 파일은 연결 없이 그대로 읽는다', () => {
-    const v4 = JSON.parse(serializeProject(objects, relativize))
+    const v4 = JSON.parse(serializeProject(objects, FIELD, relativize))
     v4.version = 4
     const { objects: loaded } = parseProject(JSON.stringify(v4))
     expect(loaded).toEqual(objects)
@@ -316,22 +320,22 @@ describe('바퀴(버전 6)', () => {
   })
   // 저장한 파일의 오브젝트(index)에 wheel을 넣는다
   const fileWith = (index: number, wheel: unknown, version = 6): string => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.version = version
     data.objects[index].wheel = wheel
     return JSON.stringify(data)
   }
 
   it('바퀴를 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다)', () => {
-    const content = serializeProject(withWheel(), relativize)
+    const content = serializeProject(withWheel(), FIELD, relativize)
     expect(JSON.parse(content).objects[2].wheel).toEqual(WHEEL)
     const { objects: loaded } = parseProject(content)
     expect(loaded).toEqual(withWheel())
-    expect(serializeProject(loaded, relativize)).toBe(content)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
   it('바퀴가 없으면 wheel을 쓰지 않는다', () => {
-    for (const object of JSON.parse(serializeProject(objects, relativize)).objects) {
+    for (const object of JSON.parse(serializeProject(objects, FIELD, relativize)).objects) {
       expect(object).not.toHaveProperty('wheel')
     }
   })
@@ -412,11 +416,11 @@ describe('바퀴(버전 6)', () => {
         wheel: { ...WHEEL, kind: 'omni', rollers: 'auto', diameter: 0.096 }
       }
     }
-    expect(parseProject(serializeProject(scene, relativize)).objects).toEqual(scene)
+    expect(parseProject(serializeProject(scene, FIELD, relativize)).objects).toEqual(scene)
   })
 
   it('버전 5 파일은 바퀴 없이 그대로 읽는다', () => {
-    const v5 = JSON.parse(serializeProject(objects, relativize))
+    const v5 = JSON.parse(serializeProject(objects, FIELD, relativize))
     v5.version = 5
     const { objects: loaded } = parseProject(JSON.stringify(v5))
     expect(loaded).toEqual(objects)
@@ -439,20 +443,20 @@ describe('질량 설정(버전 7)', () => {
   })
   // 저장한 파일의 오브젝트(index)에 field 값을 넣는다
   const fileWith = (index: number, field: string, value: unknown, version = 7): string => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.version = version
     data.objects[index][field] = value
     return JSON.stringify(data)
   }
 
   it('질량 설정과 Rigidbody를 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다)', () => {
-    const content = serializeProject(withMass(), relativize)
+    const content = serializeProject(withMass(), FIELD, relativize)
     const stored = JSON.parse(content).objects
     expect(stored[0].rigidbody).toEqual({ weighedMass: 14.2, defaultMaterial: 'pla' })
     expect(stored[1].mass).toEqual({ material: 'petg', infill: 0.4 })
     const { objects: loaded } = parseProject(content)
     expect(loaded).toEqual(withMass())
-    expect(serializeProject(loaded, relativize)).toBe(content)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
   it('빈 질량 설정(카드만 붙임)은 남기고, 빈 Rigidbody는 버린다', () => {
@@ -463,7 +467,7 @@ describe('질량 설정(버전 7)', () => {
   })
 
   it('설정이 없으면 mass·rigidbody를 쓰지 않는다', () => {
-    for (const object of JSON.parse(serializeProject(objects, relativize)).objects) {
+    for (const object of JSON.parse(serializeProject(objects, FIELD, relativize)).objects) {
       expect(object).not.toHaveProperty('mass')
       expect(object).not.toHaveProperty('rigidbody')
     }
@@ -514,17 +518,17 @@ describe('질량 설정(버전 7)', () => {
         mass: { mass: 0.597 }
       }
     }
-    expect(parseProject(serializeProject(scene, relativize)).objects).toEqual(scene)
+    expect(parseProject(serializeProject(scene, FIELD, relativize)).objects).toEqual(scene)
   })
 
   it('버전 6 파일은 질량 설정 없이 그대로 읽는다', () => {
-    const v6 = JSON.parse(serializeProject(objects, relativize))
+    const v6 = JSON.parse(serializeProject(objects, FIELD, relativize))
     v6.version = 6
     const { objects: loaded } = parseProject(JSON.stringify(v6))
     expect(loaded).toEqual(objects)
     expect(Object.values(loaded).some((object) => object.mass || object.rigidbody)).toBe(false)
     // 다시 저장하면 지금 버전이 된다
-    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(PROJECT_VERSION)
+    expect(JSON.parse(serializeProject(loaded, FIELD, relativize)).version).toBe(PROJECT_VERSION)
   })
 })
 
@@ -552,18 +556,18 @@ describe('관절(버전 8)', () => {
   })
   // 저장한 파일의 오브젝트(index)에 joint를 넣는다
   const fileWith = (index: number, joint: unknown, version = 8): string => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.version = version
     data.objects[index].joint = joint
     return JSON.stringify(data)
   }
 
   it('관절을 저장하고 그대로 읽는다(바이트 단위로 같게 다시 쓴다, 끊긴 id는 남긴다)', () => {
-    const content = serializeProject(withJoint(), relativize)
+    const content = serializeProject(withJoint(), FIELD, relativize)
     expect(JSON.parse(content).objects[2].joint).toEqual(JOINT)
     const { objects: loaded } = parseProject(content)
     expect(loaded).toEqual(withJoint())
-    expect(serializeProject(loaded, relativize)).toBe(content)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
   it('모든 구동 종류와 스프링 종류를 읽는다', () => {
@@ -666,19 +670,19 @@ describe('관절(버전 8)', () => {
   })
 
   it('관절이 없으면 joint를 쓰지 않고, 버전 7 파일은 관절 없이 그대로 읽는다', () => {
-    for (const object of JSON.parse(serializeProject(objects, relativize)).objects)
+    for (const object of JSON.parse(serializeProject(objects, FIELD, relativize)).objects)
       expect(object).not.toHaveProperty('joint')
-    const v7 = JSON.parse(serializeProject(objects, relativize))
+    const v7 = JSON.parse(serializeProject(objects, FIELD, relativize))
     v7.version = 7
     const { objects: loaded } = parseProject(JSON.stringify(v7))
     expect(loaded).toEqual(objects)
-    expect(JSON.parse(serializeProject(loaded, relativize)).version).toBe(PROJECT_VERSION)
+    expect(JSON.parse(serializeProject(loaded, FIELD, relativize)).version).toBe(PROJECT_VERSION)
   })
 })
 
 describe('버전과 하위 호환', () => {
   it('버전 2 CAD(meshIndexing 없음)는 예전 형상 id 방식으로 읽고, 모르는 방식은 거부한다', () => {
-    const legacy = JSON.parse(serializeProject(objects, relativize))
+    const legacy = JSON.parse(serializeProject(objects, FIELD, relativize))
     legacy.version = 2
     delete legacy.objects[1].cad.meshIndexing
     expect(parseProject(JSON.stringify(legacy)).objects.cad.cad?.meshIndexing).toBeUndefined()
@@ -706,7 +710,7 @@ describe('버전과 하위 호환', () => {
   })
 
   it('컴포넌트 속성은 카탈로그 키만 남기고, 없거나 잘못된 값은 기본값으로 채운다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.objects[2].components[0].props = { direction: 'sideways', extra: 1 }
     const { objects: loaded } = parseProject(JSON.stringify(data))
     expect(loaded.plate.components![0].props).toEqual({
@@ -722,7 +726,7 @@ describe('버전과 하위 호환', () => {
   })
 
   it('버전 5 이하 파일의 모터·데드휠은 새 시뮬레이터 속성을 기본값으로 채운다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     data.version = 5
     delete data.objects[2].components[0].props.gearbox
     data.objects[2].components.push({
@@ -745,7 +749,7 @@ describe('버전과 하위 호환', () => {
   })
 
   it('길이 속성은 범위 밖이거나 수가 아니면 기본값으로 채운다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     const deadWheel = (podDiameter: unknown): Record<string, unknown> => ({
       id: `dw${data.objects[2].components.length}`,
       type: 'deadWheel',
@@ -764,7 +768,7 @@ describe('버전과 하위 호환', () => {
   })
 
   it('리밋 스위치의 거리(길이)·각도(라디안)는 범위 밖이거나 수가 아니면 0(기본)으로 채운다', () => {
-    const data = JSON.parse(serializeProject(objects, relativize))
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     const values: unknown[] = [0.005, 2, -0.1, '0.01', null]
     values.forEach((value, i) =>
       data.objects[2].components.push({
@@ -793,7 +797,8 @@ describe('잘못된 프로젝트 파일', () => {
     }
     return undefined
   }
-  const valid = (): Record<string, unknown> => JSON.parse(serializeProject(objects, relativize))
+  const valid = (): Record<string, unknown> =>
+    JSON.parse(serializeProject(objects, FIELD, relativize))
 
   it('JSON이 아니면 invalidJson', () => {
     expect(codeOf('{ nope')).toBe('invalidJson')
@@ -848,5 +853,113 @@ describe('잘못된 프로젝트 파일', () => {
     const broken = valid()
     ;(broken.objects as { transform: unknown }[])[0].transform = { position: [0, 0], rotation: [] }
     expect(codeOf(JSON.stringify(broken))).toBe('invalidData')
+  })
+})
+
+// spec-4ab §2.1: 프로젝트 v10 field({ season })
+describe('필드(v10)', () => {
+  const codeOf = (content: string): string | undefined => {
+    try {
+      parseProject(content)
+    } catch (error) {
+      return error instanceof ProjectFileError ? `${error.code}:${error.message}` : 'other'
+    }
+    return undefined
+  }
+
+  // B1
+  it('v10 왕복: field와 objects를 그대로 내고, 파일에 "field": { "season": … }가 있다', () => {
+    const content = serializeProject(objects, { season: 'biobuzz' }, relativize)
+    expect(content).toContain('"field": {\n    "season": "biobuzz"\n  }')
+    // 머리(format, version, field) 다음에 objects
+    expect(Object.keys(JSON.parse(content))).toEqual(['format', 'version', 'field', 'objects'])
+    const loaded = parseProject(content)
+    expect(loaded.field).toEqual({ season: 'biobuzz' })
+    expect(loaded.fieldDefaulted).toBe(false)
+    expect(loaded.objects).toEqual(objects)
+    expect(serializeProject(loaded.objects, loaded.field, relativize)).toBe(content)
+    // 'none'도 같다
+    expect(parseProject(serializeProject(objects, FIELD, relativize)).field).toEqual(FIELD)
+  })
+
+  it('저장은 field의 season만 쓴다(다른 키는 쓰지 않는다)', () => {
+    const extra = { season: 'none', hive: 'tipped' } as FieldDoc
+    expect(JSON.parse(serializeProject(objects, extra, relativize)).field).toEqual({
+      season: 'none'
+    })
+  })
+
+  // B2
+  it('v9 이하(field 없음)는 BIOBUZZ로 읽고 fieldDefaulted, v10은 아니다', () => {
+    const v9 = JSON.parse(serializeProject(objects, FIELD, relativize))
+    v9.version = 9
+    delete v9.field
+    expect(parseProject(JSON.stringify(v9))).toMatchObject({
+      field: { season: 'biobuzz' },
+      fieldDefaulted: true
+    })
+    // v9에 field가 있어도(손으로 고친 파일) 보지 않는다
+    v9.field = { season: 'none' }
+    expect(parseProject(JSON.stringify(v9)).field).toEqual({ season: 'biobuzz' })
+    const v1 = JSON.stringify({
+      format: 'sandbot-project',
+      version: 1,
+      objects: [
+        {
+          id: 'robot',
+          name: 'Robot',
+          kind: 'robot',
+          parentId: null,
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0] }
+        }
+      ]
+    })
+    expect(parseProject(v1)).toMatchObject({ field: { season: 'biobuzz' }, fieldDefaulted: true })
+    expect(parseProject(serializeProject(objects, FIELD, relativize)).fieldDefaulted).toBe(false)
+  })
+
+  it('v9에서 읽은 기본 field는 공유 기본값 객체가 아니다(얼린 객체를 스토어에 넣지 않는다)', () => {
+    const v9 = JSON.parse(serializeProject(objects, FIELD, relativize))
+    v9.version = 9
+    delete v9.field
+    const { field } = parseProject(JSON.stringify(v9))
+    expect(Object.isFrozen(field)).toBe(false)
+  })
+
+  // B3(파일 쪽)
+  it('모양이 맞는 모르는 시즌은 보존하고 다시 저장해도 그 문자열이다', () => {
+    const content = serializeProject(objects, { season: 'decode2027' }, relativize)
+    const loaded = parseProject(content)
+    expect(loaded.field).toEqual({ season: 'decode2027' })
+    expect(loaded.fieldDefaulted).toBe(false)
+    expect(serializeProject(loaded.objects, loaded.field, relativize)).toBe(content)
+  })
+
+  it('field의 다른 키는 버린다', () => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    data.field = { season: 'biobuzz', hiveState: 'tipped', extra: 1 }
+    expect(parseProject(JSON.stringify(data)).field).toEqual({ season: 'biobuzz' })
+  })
+
+  // B4
+  it('v10에서 field 없음·객체 아님·숫자 시즌·정규식 밖·65자는 invalidData(field)', () => {
+    const withField = (field: unknown, remove = false): string => {
+      const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+      if (remove) delete data.field
+      else data.field = field
+      return JSON.stringify(data)
+    }
+    const expected = 'invalidData:invalidData: field'
+    expect(codeOf(withField(undefined, true))).toBe(expected)
+    expect(codeOf(withField(null))).toBe(expected)
+    expect(codeOf(withField('biobuzz'))).toBe(expected)
+    expect(codeOf(withField([{ season: 'biobuzz' }]))).toBe(expected)
+    expect(codeOf(withField({}))).toBe(expected)
+    expect(codeOf(withField({ season: 2026 }))).toBe(expected)
+    for (const season of ['', 'BioBuzz', '2026', 'bio-buzz', 'bio buzz', 'bió', 'a'.repeat(65)])
+      expect(codeOf(withField({ season })), season).toBe(expected)
+    // 경계: 64자, 소문자로 시작하는 영숫자(대문자·숫자 포함)는 받는다
+    for (const season of ['a'.repeat(64), 'decode2027', 'intoTheDeep', 'x'])
+      expect(codeOf(withField({ season })), season).toBeUndefined()
   })
 })

@@ -18,12 +18,21 @@ export const CONSOLE_PREFS_KEY = 'sandbot:console'
 // 아래 패널의 고른 탭
 export const DOCK_TAB_KEY = 'sandbot:playDock'
 
-export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
+// HIVE 상태(spec-4ab §1.5·§2.3): 빨강·파랑 HIVE가 시작 상태인지 넘어간 상태인지. 경기 조건이라 배터리 전압처럼 개인 실행
+// 설정이고 프로젝트 파일·실행 취소에는 넣지 않는다 [가정: HIVE 상태는 실행 동안 고정, 개인 실행 설정]. 렌더러 전용이다: 메인·
+// 사이드카는 쓰지 않고 시뮬레이터는 세계 설명 field.hiveTipped로만 받는다(공유 PlaySettings·PlayInitRequest는 그대로).
+export type HiveSide = 'start' | 'tipped'
+export type HiveState = { red: HiveSide; blue: HiveSide }
+export type RendererPlaySettings = PlaySettings & { hiveState: HiveState }
+
+export const DEFAULT_PLAY_SETTINGS: RendererPlaySettings = {
   speed: 1,
   jitter: 0,
   seed: 1,
   autoStopAutonomous: true,
-  batteryVoltage: DEFAULT_BATTERY_VOLTAGE
+  batteryVoltage: DEFAULT_BATTERY_VOLTAGE,
+  // 기본은 시작 상태(EFG:533)
+  hiveState: Object.freeze({ red: 'start', blue: 'start' })
 }
 
 // Hub 타이밍 오차의 상한(±50%). 이보다 크면 결과가 실제 허브와 너무 달라진다.
@@ -83,10 +92,16 @@ export function clampSeed(value: number): number {
   return Math.min(MAX_SEED, Math.max(-MAX_SEED, Math.trunc(value)))
 }
 
-// 저장된 값을 확인해 읽는다. 맞지 않는 항목만 기본값으로 바꾼다.
-export function parsePlaySettings(value: unknown): PlaySettings {
+const hiveSide = (value: unknown): HiveSide => (value === 'tipped' ? 'tipped' : 'start')
+
+// 저장된 값을 확인해 읽는다. 맞지 않는 항목만 기본값으로 바꾼다. hiveState는 늘 새 객체다(기본값 객체를 공유하지 않는다).
+export function parsePlaySettings(value: unknown): RendererPlaySettings {
   const saved =
     value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  const hive =
+    saved.hiveState !== null && typeof saved.hiveState === 'object'
+      ? (saved.hiveState as Record<string, unknown>)
+      : {}
   return {
     speed: isPlaySpeed(saved.speed) ? saved.speed : DEFAULT_PLAY_SETTINGS.speed,
     jitter: typeof saved.jitter === 'number' ? clampJitter(saved.jitter) : 0,
@@ -100,16 +115,30 @@ export function parsePlaySettings(value: unknown): PlaySettings {
       saved.batteryVoltage >= MIN_BATTERY_VOLTAGE &&
       saved.batteryVoltage <= MAX_BATTERY_VOLTAGE
         ? saved.batteryVoltage
-        : DEFAULT_BATTERY_VOLTAGE
+        : DEFAULT_BATTERY_VOLTAGE,
+    hiveState: { red: hiveSide(hive.red), blue: hiveSide(hive.blue) }
   }
 }
 
-export function loadPlaySettings(storage: ReadStorage | null = browserStorage()): PlaySettings {
+// 실행 요청(PlayInitRequest.settings)에 싣는 공유 설정 다섯 키(렌더러 전용 hiveState는 빼고)
+export function runSettings(settings: PlaySettings): PlaySettings {
+  return {
+    speed: settings.speed,
+    jitter: settings.jitter,
+    seed: settings.seed,
+    autoStopAutonomous: settings.autoStopAutonomous,
+    batteryVoltage: settings.batteryVoltage
+  }
+}
+
+export function loadPlaySettings(
+  storage: ReadStorage | null = browserStorage()
+): RendererPlaySettings {
   return parsePlaySettings(readJson(storage, PLAY_SETTINGS_KEY))
 }
 
 export function savePlaySettings(
-  settings: PlaySettings,
+  settings: RendererPlaySettings,
   storage: WriteStorage | null = browserStorage()
 ): void {
   writeJson(storage, PLAY_SETTINGS_KEY, settings)

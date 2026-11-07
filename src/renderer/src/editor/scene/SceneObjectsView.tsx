@@ -30,6 +30,7 @@ import { useEditorStore } from '../editorStore'
 import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { isHiddenInScene, useSceneVisibilityStore } from '../sceneVisibility'
 import { objectWorldBounds } from './bounds'
+import { FIELD_RENDER_ORDER } from './fieldViewModel'
 import {
   bindJointDisplay,
   bindPoseDisplay,
@@ -290,6 +291,9 @@ const GHOST_WEBCAM_BOX = new BoxGeometry(0.03, 0.09, 0.03)
 // 큰 CAD 잔상의 외곽선(한 변 1 m, 크기는 scale로)
 const UNIT_BOX_EDGES = new EdgesGeometry(new BoxGeometry(1, 1, 1))
 
+// 잔상은 필드 반투명(벽 판·HIVE CELL)보다 뒤에 그린다(벽 판·CELL 뒤에서도 보이게, fieldViewModel.ts)
+const GHOST_RENDER_ORDER = FIELD_RENDER_ORDER.ghost
+
 // 잔상은 클릭되지 않는다(BVH도 만들지 않는다)
 const noRaycast = (): void => {}
 
@@ -302,7 +306,14 @@ function GhostMesh({ geometryId }: { geometryId: string }): React.JSX.Element | 
     invalidate()
   }, [geometry, invalidate])
   if (!geometry) return null
-  return <mesh geometry={geometry} material={GHOST_MATERIAL} raycast={noRaycast} />
+  return (
+    <mesh
+      geometry={geometry}
+      material={GHOST_MATERIAL}
+      renderOrder={GHOST_RENDER_ORDER}
+      raycast={noRaycast}
+    />
+  )
 }
 
 function GhostVisual({ visual }: { visual: ObjectVisual }): React.JSX.Element {
@@ -311,11 +322,17 @@ function GhostVisual({ visual }: { visual: ObjectVisual }): React.JSX.Element {
     <mesh
       geometry={GHOST_ROBOT_BOX}
       material={GHOST_MATERIAL}
+      renderOrder={GHOST_RENDER_ORDER}
       position={[0, 0, ROBOT_SIZE / 2]}
       raycast={noRaycast}
     />
   ) : (
-    <mesh geometry={GHOST_WEBCAM_BOX} material={GHOST_MATERIAL} raycast={noRaycast} />
+    <mesh
+      geometry={GHOST_WEBCAM_BOX}
+      material={GHOST_MATERIAL}
+      renderOrder={GHOST_RENDER_ORDER}
+      raycast={noRaycast}
+    />
   )
 }
 
@@ -410,6 +427,7 @@ function GhostBox({ robotId }: { robotId: string }): React.JSX.Element | null {
     <lineSegments
       geometry={UNIT_BOX_EDGES}
       material={GHOST_LINE_MATERIAL}
+      renderOrder={GHOST_RENDER_ORDER}
       position={box.getCenter(new Vector3()).toArray() as Vec3}
       scale={size}
       raycast={noRaycast}

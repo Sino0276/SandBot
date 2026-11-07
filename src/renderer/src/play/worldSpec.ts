@@ -1,5 +1,8 @@
+import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
+import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
+import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
 import {
   isValidInertia,
@@ -48,7 +51,11 @@ import { componentCotsKey, cotsEntry, wheelCotsKey } from '../mass/cotsTable'
 import { DEFAULT_ROBOT_MASS, type MassModel } from '../mass/types'
 import { effectiveWheelFriction, wheelSpinInertia } from '../../../shared/sim/wheelData'
 import { convexHull } from '../../../shared/sim/wheelLoads'
+import { overlapTargetLabel } from '../field/fieldLabels'
+import { fieldSeasonId, type FieldDoc } from '../scene/fieldDoc'
 import type { ConsoleNoticeKey } from './consoleModel'
+import type { HiveState } from './playSettings'
+import type { PlayRunField } from './playStore'
 import { buildWorldJoints, motorComponentParams } from './worldJoints'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
@@ -67,6 +74,9 @@ const ROLLER_ANGLE_EPSILON = 1 * DEG
 
 // CAD가 없을 때의 외곽: 18 in 정사각형(시작 크기 한도)
 const DEFAULT_HALF_FOOTPRINT = ROBOT_SIZE / 2
+// 높이를 모를 때(CAD 없음, 1 mm 이하)의 충돌 높이: 18 in 임시 로봇과 같다(R102 시작 크기)
+const DEFAULT_OUTLINE_HEIGHT = ROBOT_SIZE
+const MIN_OUTLINE_HEIGHT = 1e-3
 
 // 바퀴 오브젝트의 위치(로봇 좌표). 보이는 형상이 있으면 그 피벗(CAD 파트는 경계 상자 중심), 없으면(그룹·형상 없는
 // 어셈블리) 하위에서 형상이 있는 오브젝트 피벗들의 경계 상자 중심, 그것도 없으면 자기 피벗. 로봇 밖이면 null.
@@ -202,13 +212,19 @@ export function wheelTopSpeed(
   return (freeSpeed * (batteryVoltage / NOMINAL_VOLTAGE) * (wheel.diameter / 2)) / wheel.gearRatio
 }
 
-// 외곽: 로봇의 CAD 루트들의 경계 상자(cad.bounds, CAD 좌표) 8꼭짓점을 로봇 좌표로 옮긴 바닥 사각형(반시계).
-// CAD 루트의 피벗은 경계 상자 중심이라 꼭짓점의 로컬 좌표는 꼭짓점 − 중심이다. CAD가 없으면 18 in 정사각형.
-export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
+// 외곽과 높이: 로봇의 CAD 루트들의 경계 상자(cad.bounds, CAD 좌표) 8꼭짓점을 로봇 좌표로 옮겨, 바닥 사각형(반시계)과
+// 꼭짓점 z의 최대값을 낸다. CAD 루트의 피벗은 경계 상자 중심이라 꼭짓점의 로컬 좌표는 꼭짓점 − 중심이다. CAD가 없으면 18 in
+// 정사각형, 높이가 1 mm 이하(CAD 없음 포함)면 18 in(임시 로봇과 같은 크기) [가정: 높이는 편집 자세 CAD 최대 z, 없으면 18 in].
+// 관절로 올라간 높이는 넣지 않는다(편집 자세). 형상 로딩과 관계없다(cad.bounds는 씬 문서에 있다).
+export function robotOutline(
+  objects: SceneObjects,
+  robotId: string
+): { footprint: Vec2[]; height: number } {
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
   let maxY = -Infinity
+  let maxZ = -Infinity
   for (const id of subtreeIds(objects, robotId)) {
     const cad = objects[id].cad
     if (!cad) continue
@@ -225,18 +241,27 @@ export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
           maxX = Math.max(maxX, corner.x)
           minY = Math.min(minY, corner.y)
           maxY = Math.max(maxY, corner.y)
+          maxZ = Math.max(maxZ, corner.z)
         }
   }
   if (!(minX < maxX && minY < maxY)) {
     minX = minY = -DEFAULT_HALF_FOOTPRINT
     maxX = maxY = DEFAULT_HALF_FOOTPRINT
   }
-  return [
-    { x: maxX, y: minY },
-    { x: maxX, y: maxY },
-    { x: minX, y: maxY },
-    { x: minX, y: minY }
-  ]
+  return {
+    footprint: [
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+      { x: minX, y: minY }
+    ],
+    height: maxZ > MIN_OUTLINE_HEIGHT ? maxZ : DEFAULT_OUTLINE_HEIGHT
+  }
+}
+
+// 외곽(robotOutline의 바닥 사각형)
+export function robotFootprint(objects: SceneObjects, robotId: string): Vec2[] {
+  return robotOutline(objects, robotId).footprint
 }
 
 const xy = (pose: { x: number; y: number }): Vec2 => ({ x: pose.x, y: pose.y })
@@ -604,12 +629,15 @@ export function buildWorldSpec(
     warnings.push({ key: 'worldFewWheels', params: {} })
 
   const [x, y] = robot.transform.position
-  const footprint = robotFootprint(objects, robotId)
+  const { footprint, height } = robotOutline(objects, robotId)
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
+    // 빌더 기본 시즌 'none'. playActions.worldFor가 문서 시즌과 HIVE 설정으로 덮어쓴다(빌더 시그니처는 그대로, spec-4ab §3)
+    field: { season: 'none', hiveTipped: [false, false] },
     robot: {
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
       footprint,
+      height,
       // 바퀴가 없으면 기저가 고정이라 섀시 몸체를 쓰지 않는다(spec-3c §3): 기본 상자로 대신해도 알리지 않는다
       body: chassisBody(
         mass,
@@ -628,7 +656,11 @@ export function buildWorldSpec(
     pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
     otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
     imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
-    joints: joints.joints
+    joints: joints.joints,
+    // 거리·컬러 센서와 잡음은 4c가 채운다
+    distanceSensors: [],
+    colorSensors: [],
+    noise: { enabled: false, seed: 0 }
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
@@ -641,4 +673,50 @@ export function buildWorldSpec(
     jointObjectIds: joints.objectIds,
     jointMotorIds: joints.motorIds
   }
+}
+
+// 실행의 시즌과 HIVE 상태(spec-4ab §2.4): 문서 시즌(모르는 문자열이면 'none')과 개인 실행 설정 hiveState. INIT 때 한 번
+// 정하고(세계 설명이 없어도) PlayRun.field와 세계 설명 field가 같이 쓴다.
+export function runFieldOf(doc: FieldDoc, hiveState: HiveState): PlayRunField {
+  return {
+    season: fieldSeasonId(doc) ?? 'none',
+    hiveTipped: [hiveState.red === 'tipped', hiveState.blue === 'tipped']
+  }
+}
+
+// 빌더 결과(buildWorldSpec, 시즌 'none' 기본)에 실행의 시즌·HIVE 상태를 넣고 필드 경고를 더한다(spec-4ab §3, INIT의
+// playActions.worldFor). 빌더 시그니처와 로봇 카드 경고는 그대로다(빌더는 새 경고를 내지 않는다). spec이 없으면 그대로 둔다.
+// - 문서 시즌이 모르는 문자열: worldUnknownSeason(공칭 12 ft로 시뮬레이션)
+// - 바퀴가 있는 로봇(부유 기저, 접촉이 있음)의 시작 자세가 벽·solid 구조물과 겹침: worldStartOverlap { targets }. 실행은 막지
+//   않는다(걸친 채로는 밀어내지 않는다). 바퀴 없는 로봇은 고정 기저라 접촉이 없으므로 내지 않는다.
+// targets는 대상 이름(field/fieldLabels.ts)을 t로 옮긴 글자다.
+export function withRunField(
+  result: WorldSpecResult,
+  doc: FieldDoc,
+  field: PlayRunField,
+  t: TFunction
+): WorldSpecResult {
+  if (!result.spec) return result
+  const spec: WorldSpec = {
+    ...result.spec,
+    field: { season: field.season, hiveTipped: [field.hiveTipped[0], field.hiveTipped[1]] }
+  }
+  const warnings = [...result.warnings]
+  if (fieldSeasonId(doc) === null)
+    warnings.push({ key: 'worldUnknownSeason', params: { season: doc.season } })
+  if (spec.wheels.length > 0) {
+    const fieldSpec = resolveSeason(field.season)
+    const overlaps = fieldOverlaps(
+      fieldSpec,
+      spec.robot.footprint,
+      spec.robot.start,
+      spec.robot.height
+    )
+    if (overlaps.length > 0)
+      warnings.push({
+        key: 'worldStartOverlap',
+        params: { targets: overlapTargetLabel(fieldSpec, overlaps, t) }
+      })
+  }
+  return { ...result, spec, warnings }
 }

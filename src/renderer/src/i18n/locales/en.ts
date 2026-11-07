@@ -53,6 +53,12 @@ const en: Messages = {
     delete: 'Delete'
   },
   notice: {
+    // Field (season) notices
+    fieldStartOverlap: 'The start pose overlaps field elements: {{robots}}',
+    fieldUnknownSeason:
+      'This project uses an unknown field season "{{season}}". It is shown and simulated as the nominal 12 ft field; saving keeps the season string.',
+    fieldAssumedSeason:
+      'This project predates field settings, so it was opened with the BIOBUZZ field. You can change it in Field.',
     pasteRejectedRobot:
       'A robot cannot be pasted under another object. Robots can only be reordered.',
     pasteRejectedCadRoot:
@@ -164,6 +170,8 @@ const en: Messages = {
   },
   // Notice action buttons
   noticeAction: {
+    selectRobot: 'Select robot',
+    showField: 'Show Field',
     openJdkPreferences: 'Open JDK settings',
     openAndroidSdkPreferences: 'Open Android SDK settings'
   },
@@ -249,6 +257,8 @@ const en: Messages = {
     }
   },
   hierarchy: {
+    // Field row at the top (season field, where Unity shows the scene header)
+    fieldRow: 'Field — {{season}}',
     empty: 'No objects in the scene',
     emptyHint: 'Drop a STEP file onto the window or click [Import STEP].',
     importStep: 'Import STEP',
@@ -278,6 +288,26 @@ const en: Messages = {
     }
   },
   inspector: {
+    // Start position of a top-level robot (snap to the wall with the season's G304 start presets)
+    startPreset: 'Start position',
+    startPresetNone: '—',
+    startPresetTooWide:
+      'The outline is {{width}} wide, wider than the span ({{available}}), so {{count}} presets are unavailable.',
+    startPresetConflict:
+      'Snapping would overlap {{targets}}, so {{count}} presets are unavailable.',
+    startFacing: {
+      label: 'Side facing the wall',
+      default: 'Default (front toward the field)',
+      reverse: 'Reversed (back toward the field)',
+      left: 'Left side toward the field',
+      right: 'Right side toward the field'
+    },
+    startOutline: 'Outline {{width}} × {{depth}}',
+    // Alliance groups in the start position list
+    startAlliance: { red: 'Red', blue: 'Blue' },
+    startOversize:
+      'Outline {{width}} × {{depth}}: over 18 in (R102). The outline is the CAD bounding box and may be larger than the robot.',
+    collisionHeight: 'Collision height {{height}}',
     empty: 'No object selected',
     transform: 'Transform',
     position: 'Position',
@@ -582,6 +612,13 @@ const en: Messages = {
     },
     // Simulation (personal settings, used from the next INIT)
     simulation: {
+      hiveState: 'HIVE state',
+      hiveRed: 'Red HIVE',
+      hiveBlue: 'Blue HIVE',
+      hiveStart: 'Start',
+      hiveTipped: 'Tipped',
+      hiveHint:
+        'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT. Same value as in the Field inspector.',
       title: 'Simulation',
       jitter: 'Hub timing jitter',
       jitterOff: 'Off (always the same result)',
@@ -783,6 +820,10 @@ const en: Messages = {
     code: 'Diagnostic code',
     // Notes left by the run flow
     notices: {
+      // Field (season) warnings (INIT)
+      worldStartOverlap:
+        'The start pose overlaps field elements ({{targets}}). The robot is not pushed out; if it overlaps deeply it may escape or pass through.',
+      worldUnknownSeason: 'Unknown field season "{{season}}"; simulating the nominal 12 ft field.',
       // Warnings left while building the kinematic simulator's world description (play/worldSpec.ts) at INIT
       worldNoWheels:
         'The robot has no wheel components, so it will not move. Add [Add component → Wheel] to the wheel parts (or groups).',
@@ -1795,6 +1836,78 @@ const en: Messages = {
       massPending: 'The mass of {{count}} meshes of the body still loading is missing.',
       cannotHold:
         'The stall torque (force) is less than the load in the edit pose, so the joint cannot hold.'
+    }
+  },
+  // Season field (spec-4ab). Season data keys are the keys (src/shared/sim/seasons/). The season name BIOBUZZ is not translated.
+  field: {
+    seasons: {
+      biobuzz: 'BIOBUZZ (2026-27)',
+      none: 'None (nominal 12 ft)'
+    },
+    unknownSeason: 'Unknown season ({{season}})',
+    walls: {
+      red: 'Red wall',
+      blue: 'Blue wall',
+      audience: 'Audience wall',
+      scoring: 'Scoring-side wall'
+    },
+    wallGeneric: 'Field wall',
+    structures: {
+      footBar: 'Foot bar',
+      leg: 'HIVE leg',
+      topBar: 'Top bar',
+      logoPlate: 'Logo plate',
+      flower: 'FLOWER',
+      hiveCell: 'HIVE CELL'
+    },
+    tape: {
+      loadingZoneSide: 'LOADING ZONE side tape',
+      loadingZoneFront: 'LOADING ZONE front tape',
+      garden: 'GARDEN tape',
+      allianceArea: 'ALLIANCE AREA tape'
+    },
+    zones: {
+      loadingZone: 'LOADING ZONE',
+      garden: 'GARDEN'
+    },
+    hives: {
+      hiveRed: 'Red HIVE',
+      hiveBlue: 'Blue HIVE'
+    },
+    startPresets: {
+      redWallScoring: 'Red wall · scoring side',
+      redWallCenter: 'Red wall · center',
+      redWallAudience: 'Red wall · audience side',
+      audienceWall: 'Audience wall (red)',
+      scoringWallCorner: 'Scoring-side wall · corner (red)',
+      scoringWallCenter: 'Scoring-side wall · center (red)',
+      blueWallAudience: 'Blue wall · audience side',
+      blueWallCenter: 'Blue wall · center',
+      blueWallScoring: 'Blue wall · scoring side',
+      scoringWall: 'Scoring-side wall (blue)',
+      audienceWallCorner: 'Audience wall · corner (blue)',
+      audienceWallCenter: 'Audience wall · center (blue)'
+    },
+    overlapItem: '{{name}} ({{targets}})',
+    inspector: {
+      title: 'Field',
+      season: 'Season',
+      locked: 'Running',
+      afterRun: 'Returns to the {{season}} field when the run ends.',
+      axesBiobuzz: '+X audience wall, +Y blue wall, origin on top of the center tiles',
+      axesNone: 'Nominal 12 ft, walls symmetric about the origin',
+      axesNoDiagram:
+        'The FTC field coordinate definition applied to this season layout (ftc-docs has no diagram for this season yet).',
+      innerHalf: 'Wall inner half-width',
+      hiveState: 'HIVE state',
+      hiveRed: 'Red HIVE',
+      hiveBlue: 'Blue HIVE',
+      hiveStart: 'Start',
+      hiveTipped: 'Tipped',
+      hiveHint:
+        'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT.',
+      showElements: 'Show field elements',
+      noStartPresets: 'This season has no start position presets.'
     }
   }
 }

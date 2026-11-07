@@ -13,7 +13,7 @@ import { useEditorStore } from './editorStore'
 import { revealObjects, searchRows, useHierarchyViewStore } from './hierarchyTree'
 import { isChangeOpen } from './history'
 import { showNotice, type NoticeKey } from './noticeStore'
-import { toggleIsolation, toggleSelectionVisibility } from './sceneVisibility'
+import { toggleFieldHidden, toggleIsolation, toggleSelectionVisibility } from './sceneVisibility'
 import { shortcutLabel } from './shortcuts'
 
 // 하이어라키 편집 명령(단축키·우클릭 메뉴·헤더 버튼이 같이 쓴다). 모두 핸들을 드래그하는 중(isChangeOpen)에는
@@ -235,16 +235,21 @@ export function pasteCut(asChild: boolean): boolean {
 
 // ---- 보이기·숨기기(씬 뷰에서만, sceneVisibility) ----
 
-// H: 선택을 숨기거나 보인다
+// H: 선택을 숨기거나 보인다. Field 줄을 골랐으면 필드 요소 보이기를 바꾼다(Unity의 H = 선택의 눈 아이콘)
 export function toggleSelectedVisibility(): boolean {
+  if (useEditorStore.getState().fieldSelected) {
+    toggleFieldHidden()
+    return true
+  }
   return toggleSelectionVisibility(
     useSceneStore.getState().objects,
     useEditorStore.getState().selectedIds
   )
 }
 
-// Shift+H: 고립 보기 켜기·끄기
+// Shift+H: 고립 보기 켜기·끄기. Field 줄을 골랐으면 아무것도 하지 않는다(spec-4ab §1.9)
 export function toggleSelectedIsolation(): boolean {
+  if (useEditorStore.getState().fieldSelected) return false
   return toggleIsolation(useSceneStore.getState().objects, useEditorStore.getState().selectedIds)
 }
 

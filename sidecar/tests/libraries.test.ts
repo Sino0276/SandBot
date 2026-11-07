@@ -138,6 +138,11 @@ const GOBILDA_19 = testMotorParams('goBILDA5202SeriesMotor', 19.2)
 
 const SPEC: WorldSpec = {
   version: WORLD_SPEC_VERSION,
+  // 'none' 시즌: (−0.5, 0.2)에서 도는 이 로봇은 BIOBUZZ HIVE 터널 안이라 다리·발판 막대에 걸린다(3c와 바이트까지 같은 벽)
+  field: { season: 'none', hiveTipped: [false, false] },
+  distanceSensors: [],
+  colorSensors: [],
+  noise: { enabled: false, seed: 0 },
   robot: {
     start: { x: -0.5, y: 0.2, yaw: 0 },
     footprint: [
@@ -146,6 +151,8 @@ const SPEC: WorldSpec = {
       { x: -HALF, y: -HALF },
       { x: HALF, y: -HALF }
     ],
+    // 18 in(공칭 시작 크기)
+    height: 0.4572,
     body: testChassis()
   },
   batteryVoltage: 12.5,

@@ -11,7 +11,12 @@ import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } fr
 import { dashboardJarPath, javaArgs, type SidecarFiles } from './launch'
 import { spawnSidecar, type SidecarProcess, type SpawnSidecar } from './process'
 import { FAKE_SIDECAR_SCRIPT, FakeClock } from './testkit'
-import { testChassis, testMotorParams } from '../../shared/sim/testkit'
+import {
+  TEST_ROBOT_HEIGHT,
+  testChassis,
+  testMotorParams,
+  worldV4Defaults
+} from '../../shared/sim/testkit'
 import { simulationWorld } from './world'
 
 // 진짜 프로세스(node로 돌리는 가짜 사이드카)와 파이프로 호스트 전체(확인 → spawn → 세션 → 이벤트)를 시험한다.
@@ -862,6 +867,8 @@ describe('PlayController + 가짜 사이드카', () => {
     controller = make({ world: simulationWorld })
     const world: WorldSpec = {
       version: WORLD_SPEC_VERSION,
+      // 'none' 시즌: 메인 경로 시험은 필드와 관계없다
+      ...worldV4Defaults(),
       robot: {
         start: { x: 0.25, y: -0.5, yaw: 0.5 },
         footprint: [
@@ -869,6 +876,7 @@ describe('PlayController + 가짜 사이드카', () => {
           { x: -0.2, y: 0.2 },
           { x: -0.2, y: -0.2 }
         ],
+        height: TEST_ROBOT_HEIGHT,
         body: testChassis()
       },
       batteryVoltage: 11.5,

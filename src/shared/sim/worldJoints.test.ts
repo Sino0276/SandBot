@@ -5,7 +5,7 @@ import { resolveMotorParams, resolveServoParams } from './actuatorData'
 import { Articulation, MIN_COORDINATE_INERTIA, type DriveForces } from './articulation'
 import { motorType, rotationSign } from './motorTypes'
 import { GRAVITY } from './physics'
-import { testChassis, testMotorParams } from './testkit'
+import { TEST_ROBOT_HEIGHT, testChassis, testMotorParams, worldV4Defaults } from './testkit'
 import { PhysicsWorld } from './world'
 import {
   WORLD_SPEC_VERSION,
@@ -58,6 +58,8 @@ function lift(change: Partial<SimJointSpec> = {}, params = PARAMS): SimJointSpec
 function world(joints: SimJointSpec[], change: Partial<WorldSpec> = {}): WorldSpec {
   return {
     version: WORLD_SPEC_VERSION,
+    // 'none' 시즌: 관절 시험은 필드와 관계없다(3b와 바이트 그대로)
+    ...worldV4Defaults(),
     robot: {
       start: { x: 0, y: 0, yaw: 0 },
       footprint: [
@@ -66,6 +68,7 @@ function world(joints: SimJointSpec[], change: Partial<WorldSpec> = {}): WorldSp
         { x: -0.2, y: -0.2 },
         { x: 0.2, y: -0.2 }
       ],
+      height: TEST_ROBOT_HEIGHT,
       body: testChassis()
     },
     batteryVoltage: VOLTS,

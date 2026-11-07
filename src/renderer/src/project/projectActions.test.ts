@@ -17,6 +17,7 @@ import type { FromWorker, ToWorker } from '../java/usages/usageTypes'
 import { createUsageWorkerState, handleMessage } from '../java/usages/usageWorkerCore'
 import { cadMassSummary, disposeAllGeometry } from '../scene/geometryRegistry'
 import type { SceneObject, SceneObjects } from '../scene/model'
+import { DEFAULT_FIELD_DOC } from '../scene/fieldDoc'
 import { useSceneStore } from '../scene/sceneStore'
 import { openProjectAt, saveProject } from './projectActions'
 import { serializeProject } from './projectFile'
@@ -233,7 +234,7 @@ async function edit(objects: SceneObjects): Promise<void> {
 }
 
 async function open(objects: SceneObjects): Promise<void> {
-  projectJson = serializeProject(objects, (path) => path)
+  projectJson = serializeProject(objects, DEFAULT_FIELD_DOC, (path) => path)
   await openProjectAt('/p')
   await settle()
   expect(usage().status).toBe('ready')
@@ -383,7 +384,7 @@ public class Constants {
   })
 
   it('처음 읽는 중에 저장하고 끝나기 전에 또 이름을 바꿔도 저장한 씬으로 알린다', async () => {
-    projectJson = serializeProject(botScene('liftLeft'), (path) => path)
+    projectJson = serializeProject(botScene('liftLeft'), DEFAULT_FIELD_DOC, (path) => path)
     write('Teleop.java', byName('liftLeft'))
     for (let i = 0; i < 20; i++)
       write(`F${i}.java`, `package org.firstinspires.ftc.teamcode;\nclass F${i} {}\n`)
@@ -488,7 +489,7 @@ describe('프로젝트를 열 때 CAD 형상 읽기와 질량 요약', () => {
   })
 
   it('차례를 기다리는 CAD도 읽는 중으로 센다', async () => {
-    projectJson = serializeProject(cadScene(), (path) => path)
+    projectJson = serializeProject(cadScene(), DEFAULT_FIELD_DOC, (path) => path)
     await openProjectAt('/p')
     await settle()
     expect(reads.map((read) => read.path)).toEqual(['/cad/A.step'])
@@ -516,7 +517,7 @@ describe('프로젝트를 열 때 CAD 형상 읽기와 질량 요약', () => {
   })
 
   it('읽는 중에 프로젝트를 다시 열면 이전 열기가 새 열기의 읽는 중 표시를 지우지 않는다', async () => {
-    projectJson = serializeProject(cadScene(), (path) => path)
+    projectJson = serializeProject(cadScene(), DEFAULT_FIELD_DOC, (path) => path)
     await openProjectAt('/p')
     await settle()
     expect(reads).toHaveLength(1)

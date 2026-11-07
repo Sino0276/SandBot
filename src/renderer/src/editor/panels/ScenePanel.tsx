@@ -11,7 +11,7 @@ import { exitIsolation, useSceneVisibilityStore } from '../sceneVisibility'
 import { shortcutLabel } from '../shortcuts'
 import PanelFrame from '../PanelFrame'
 import DashboardOverlay from '../scene/DashboardOverlay'
-import FieldFloor from '../scene/FieldFloor'
+import FieldView from '../scene/FieldView'
 import EditorCameraControls from '../scene/EditorCameraControls'
 import FocusController from '../scene/FocusController'
 import FrameAxes from '../scene/FrameAxes'
@@ -141,7 +141,8 @@ function ScenePanel(): React.JSX.Element {
         <color attach="background" args={['#1e1f22']} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[3, -2, 5]} intensity={1.2} />
-        <FieldFloor />
+        {/* 시즌 필드(문서 시즌, 실행 중이면 실행의 시즌)와 시작 표시. 'none'은 공칭 FieldFloor */}
+        <FieldView />
         {/* FTC Dashboard 필드 그림(fieldOverlay, 실행 중 받은 마지막 것) */}
         <DashboardOverlay />
         <SceneObjectsView />
