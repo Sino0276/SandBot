@@ -4,6 +4,7 @@ import { WALL_INNER_HALF } from './field'
 import {
   fieldCollision,
   REFERENCE_TOLERANCE,
+  SUPPLEMENT_TOLERANCE,
   structureContactState,
   structureRows,
   type FieldCollision
@@ -177,6 +178,35 @@ describe('4ab fieldContact: 좁은 단계', () => {
     turned.reference[FLOWER_RED] = { side: 'q', face: 2 }
     rowsAt(collision, { ...face, yaw: -Math.PI / 2 + 0.02 }, STILL, turned)
     expect(turned.reference[FLOWER_RED]?.side).toBe('p')
+  })
+
+  it('참 분리 축 보충: 구조물 면이 기준으로 남아도 로봇 면 분리가 SUPPLEMENT_TOLERANCE 넘게 크면 로봇 면 점을 더한다', () => {
+    // FLOWER 필드 쪽 면에 로봇 앞면이 1 mrad 기울어(넘어 걸친 로봇 꼭짓점이 면 쪽으로 내려감) 0.3 mm 떨어진 자세: 로봇 면 분리가
+    // 구조물 면 분리보다 크지만 REFERENCE_TOLERANCE 안이라 기준은 구조물 면 2다. 참 축(로봇 면 3)의 점(FLOWER 모서리)도 행이 된다
+    const top = Math.max(...flower().map((p) => p.y))
+    const tilt = 1e-3
+    const face = { x: 0.594, y: top + HALF + 3e-4, yaw: -Math.PI / 2 + tilt }
+    const state = structureContactState(collision)
+    const rows = rowsAt(collision, face, STILL, state)
+    expect(state.reference[FLOWER_RED]).toEqual({ side: 'q', face: 2 })
+    const keys = rows.map((r) => r.key)
+    expect(keys.filter((k) => /^ns11\.q2\.r\d$/.test(k)).length).toBe(2)
+    const supplement = rows.filter((r) => /^ns11\.p3\.c\d$/.test(r.key))
+    expect(supplement.length).toBeGreaterThan(0)
+    // 보충 행 법선은 −n′_3(로봇 앞면 바깥 법선의 반대, 필드 틀)이고 기준 행 뒤에 온다
+    for (const row of supplement) {
+      expect(row.j[0]).toBeCloseTo(-Math.cos(face.yaw), 12)
+      expect(row.j[1]).toBeCloseTo(-Math.sin(face.yaw), 12)
+    }
+    expect(keys.indexOf(supplement[0].key)).toBeGreaterThan(keys.lastIndexOf('ts11.q2.r0'))
+    expect(SUPPLEMENT_TOLERANCE).toBe(1e-7)
+    // 기울지 않은 면 대 면(분리가 같음)과 기울어 기준이 참 축인 자세(로봇 면 기억)에서는 더하지 않는다
+    const flat = rowsAt(collision, { ...face, yaw: -Math.PI / 2 }).map((r) => r.key)
+    expect(flat.every((k) => /^[nt]s11\.q2\.r\d$/.test(k))).toBe(true)
+    const fromP = structureContactState(collision)
+    fromP.reference[FLOWER_RED] = { side: 'p', face: 3 }
+    const kept = rowsAt(collision, face, STILL, fromP).map((r) => r.key)
+    expect(kept.every((k) => /^[nt]s11\.p3\.c\d$/.test(k))).toBe(true)
   })
 
   it('곡률 보정: 로봇 면 기준 점은 도는 로봇이 파고들지 않게 목표를 (h/2)·ω²·|n·r|만큼 조이고, 구조물 면 기준은 그대로다', () => {

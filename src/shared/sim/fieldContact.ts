@@ -12,12 +12,17 @@ import type { Pose2, Vec2 } from './worldSpec'
 // 좁은 단계(볼록 다각형–다각형): SAT로 두 다각형의 분리 축 후보(구조물 면 i*, 로봇 면 j*)를 고르고, 기준 면 하나에 다른
 // 다각형의 사건 변을 잘라 점 2개까지 낸다(Box2D b2CollidePolygons와 같은 꼴). 기준 면은 하위 단계 사이 히스테리시스로 고정해
 // 모서리 대 모서리에서 법선이 뒤집히지 않게 하고, 행 키에 기준 면을 넣어 법선이 바뀌면 키도 바뀌게 한다(앞 하위 단계의 같은 키
-// 충격·LCP 활성 집합을 다른 법선에 쓰지 않게, Box2D 특징 id와 같은 뜻).
+// 충격·LCP 활성 집합을 다른 법선에 쓰지 않게, Box2D 특징 id와 같은 뜻). 기준 면이 SAT의 참 분리 축이 아니면 참 축의 점
+// 2개까지를 더한다(위치 보정이 없어 기준 면만으로는 침투가 남는다, polygonContact).
 
 // 기준 면 히스테리시스(m): 로봇 면 분리가 구조물 면 분리보다 이만큼 커야 로봇 면을 기준으로 한다. [결정: Box2D
 // b2CollidePolygons의 k_tol = 0.1·b2_linearSlop(0.005 m) = 5e-4 m. 필드에 고정된 구조물 법선을 먼저 써서 하위 단계마다 기준이
 // 뒤집히지 않게]
 export const REFERENCE_TOLERANCE = 5e-4
+
+// 참 분리 축 보충 문턱(m): 기준 면 분리가 SAT 최대 분리보다 이만큼 넘게 작으면 참 축의 점도 행으로 더한다(polygonContact).
+// [가정: 구조물 접촉 수용 기준(침투 증가 < 1e-6 m)의 1/10. 거의 같은 두 행이 반올림 차만으로 겹쳐 들어가지 않게 0보다 크게]
+export const SUPPLEMENT_TOLERANCE = 1e-7
 
 // 생성자에서 한 번 만드는 접촉 준비(시즌·로봇 높이마다 같다)
 export type FieldCollision = {
@@ -132,33 +137,15 @@ function clipSegment(
   return [a, b]
 }
 
-// 볼록 다각형 둘(필드 좌표, 반시계): 구조물 껍질 q(법선 nq)와 로봇 외곽 p(법선 np). 접촉이 없으면 null(기억도 null로)
-function polygonContact(
+// 기준 면 (side, f)에 다른 다각형의 사건 변을 잘라 낸 접촉 점(점 2개까지, 사건 변 끝점 순)
+function clipContact(
   q: readonly Vec2[],
   nq: readonly Vec2[],
   p: readonly Vec2[],
   np: readonly Vec2[],
-  margin: number,
-  previous: ContactReference | null
-): { points: ContactPoint[]; reference: ContactReference } | null {
-  const sepQs = faceSeparations(q, nq, p)
-  const sepPs = faceSeparations(p, np, q)
-  let iStar = maxFace(sepQs)
-  let jStar = maxFace(sepPs)
-  const sepQ = sepQs[iStar]
-  const sepP = sepPs[jStar]
-  if (Math.max(sepQ, sepP) > margin) return null
-  // 히스테리시스: 앞 기준 면이 지금 최대에서 REFERENCE_TOLERANCE 안이면 그 면을 유지한다
-  if (previous?.side === 'q' && sepQs[previous.face] >= sepQ - REFERENCE_TOLERANCE)
-    iStar = previous.face
-  if (previous?.side === 'p' && sepPs[previous.face] >= sepP - REFERENCE_TOLERANCE)
-    jStar = previous.face
-  // 기준 면: 로봇 면 분리가 구조물 면 분리보다 REFERENCE_TOLERANCE 넘게 클 때만 로봇 면(앞 기준이 로봇 면이었으면 −TOL까지 유지)
-  const robotFace =
-    previous?.side === 'p' ? sepP > sepQ - REFERENCE_TOLERANCE : sepP > sepQ + REFERENCE_TOLERANCE
-  const reference: ContactReference = robotFace
-    ? { side: 'p', face: jStar }
-    : { side: 'q', face: iStar }
+  reference: ContactReference
+): ContactPoint[] {
+  const robotFace = reference.side === 'p'
   // 기준 다각형 r(면 f), 사건 다각형 s
   const [r, s, nr, ns] = robotFace ? [p, q, np, nq] : [q, p, nq, np]
   const f = reference.face
@@ -192,6 +179,54 @@ function polygonContact(
             { point: c.p, normal: nRef, gap, feature: `q${f}.r${c.k}`, robotNormal: false }
       )
     }
+  return points
+}
+
+// 볼록 다각형 둘(필드 좌표, 반시계): 구조물 껍질 q(법선 nq)와 로봇 외곽 p(법선 np). 접촉이 없으면 null(기억도 null로)
+function polygonContact(
+  q: readonly Vec2[],
+  nq: readonly Vec2[],
+  p: readonly Vec2[],
+  np: readonly Vec2[],
+  margin: number,
+  previous: ContactReference | null
+): { points: ContactPoint[]; reference: ContactReference } | null {
+  const sepQs = faceSeparations(q, nq, p)
+  const sepPs = faceSeparations(p, np, q)
+  const iMax = maxFace(sepQs)
+  const jMax = maxFace(sepPs)
+  const sepQ = sepQs[iMax]
+  const sepP = sepPs[jMax]
+  if (Math.max(sepQ, sepP) > margin) return null
+  let iStar = iMax
+  let jStar = jMax
+  // 히스테리시스: 앞 기준 면이 지금 최대에서 REFERENCE_TOLERANCE 안이면 그 면을 유지한다
+  if (previous?.side === 'q' && sepQs[previous.face] >= sepQ - REFERENCE_TOLERANCE)
+    iStar = previous.face
+  if (previous?.side === 'p' && sepPs[previous.face] >= sepP - REFERENCE_TOLERANCE)
+    jStar = previous.face
+  // 기준 면: 로봇 면 분리가 구조물 면 분리보다 REFERENCE_TOLERANCE 넘게 클 때만 로봇 면(앞 기준이 로봇 면이었으면 −TOL까지 유지)
+  const robotFace =
+    previous?.side === 'p' ? sepP > sepQ - REFERENCE_TOLERANCE : sepP > sepQ + REFERENCE_TOLERANCE
+  const reference: ContactReference = robotFace
+    ? { side: 'p', face: jStar }
+    : { side: 'q', face: iStar }
+  const points = clipContact(q, nq, p, np, reference)
+  // 참 분리 축 보충: 기준 면(히스테리시스·구조물 면 우선으로 고른 것)이 SAT의 참 최대 분리 축보다 SUPPLEMENT_TOLERANCE 넘게
+  // 덜 떨어졌으면 참 축의 점도 더한다. 위치 보정이 없어(목표 −max(gap, 0)/h) 거의 평행한 로봇 변이 짧은 구조물 면 끝을
+  // 넘어 걸치면, 구조물 면 기준 점(로봇 변 위를 미끄러지는 점)만으로는 구조물 모서리가 로봇 변으로 미끄러지거나 돌며 들어가는
+  // 것을 막지 못하고(L·sin θ ≤ REFERENCE_TOLERANCE까지) 되돌리지도 않는다. 반대(로봇 면 기준에서 로봇 꼭짓점이 구조물 변으로)도
+  // 같다. 참 축의 행이 그 방향을 막는다(키의 기준 면이 달라 앞 행과 겹치지 않는다). 기억은 기준 면 그대로다.
+  // [결정: 명세(§1.10) 밖에서 더한 행, 4ab 리뷰 수정. 기준 면 선택은 명세 그대로 두어 법선이 뒤집히지 않게 한다]
+  const trueReference: ContactReference =
+    sepP > sepQ ? { side: 'p', face: jMax } : { side: 'q', face: iMax }
+  const trueSeparation = Math.max(sepQ, sepP)
+  const referenceSeparation = robotFace ? sepPs[jStar] : sepQs[iStar]
+  if (
+    trueSeparation > referenceSeparation + SUPPLEMENT_TOLERANCE &&
+    (trueReference.side !== reference.side || trueReference.face !== reference.face)
+  )
+    points.push(...clipContact(q, nq, p, np, trueReference))
   return { points, reference }
 }
 
@@ -249,7 +284,8 @@ function circleContact(
   ]
 }
 
-// 구조물 행: 구조물은 structures 순번 순, 한 구조물 안의 점은 사건 변 끝점 순(자른 뒤 남은 것), 점마다 n행 다음 t행(벽과 같음).
+// 구조물 행: 구조물은 structures 순번 순, 한 구조물 안의 점은 사건 변 끝점 순(자른 뒤 남은 것, 기준 면 점 다음 참 축 보충 점),
+// 점마다 n행 다음 t행(벽과 같음).
 // 키는 n|t + s<구조물 순번>.<특징>(특징 q<구조물 면>.r<로봇 꼭짓점> 또는 p<로봇 면>.c<껍질 꼭짓점>). state는 PhysicsWorld가
 // 갖는 기준 면 기억이고 이 함수가 갱신한다.
 export function structureRows(

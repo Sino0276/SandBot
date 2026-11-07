@@ -217,11 +217,13 @@ describe('4ab 구조물 접촉: 벽을 따라 FLOWER로', () => {
         for (const keys of touched) for (const key of keys) expect(key).toMatch(pattern)
         ends.push(r.pose())
       }
-      // Rz(π) 짝(빨강 ↔ 파랑, scoring ↔ audience)은 끝 자세도 대칭이다
+      // Rz(π) 짝(빨강 ↔ 파랑, scoring ↔ audience)은 끝 자세도 대칭이다. 1e-8: FLOWER 모서리를 중심으로 도는 동안 기준 면 행과
+      // 참 분리 축 보충 행(polygonContact)이 거의 같은 자리·법선에 함께 들어가, 짝마다 다른 껍질 꼭짓점 순서·요의 반올림이
+      // 정칙화한 LCP의 힘 나눔에서 1e-9 m 단위로 커진다(3 s 뒤 scoring ↔ audience 1.3e-9)
       const mirrored = (a: Pose2, b: Pose2): void => {
-        expect(Math.abs(a.x + b.x)).toBeLessThan(1e-9)
-        expect(Math.abs(a.y + b.y)).toBeLessThan(1e-9)
-        expect(Math.abs(Math.sin(a.yaw - b.yaw))).toBeLessThan(1e-9)
+        expect(Math.abs(a.x + b.x)).toBeLessThan(1e-8)
+        expect(Math.abs(a.y + b.y)).toBeLessThan(1e-8)
+        expect(Math.abs(Math.sin(a.yaw - b.yaw))).toBeLessThan(1e-8)
         expect(Math.cos(a.yaw - b.yaw)).toBeLessThan(0)
       }
       mirrored(ends[0], ends[2])
@@ -564,6 +566,146 @@ function cornerStart(): Pose2 {
   if (!snap.ok) throw new Error('tooWide')
   return snap.pose
 }
+
+describe('4ab 구조물 접촉: 거의 나란한 면(참 분리 축 보충)', () => {
+  // 위치 보정이 없어(목표 −max(gap, 0)/h) 기준 면이 SAT의 참 분리 축이 아니면, 거의 나란한 로봇 변이 짧은 구조물 면 끝을 넘어
+  // 걸친 채 미끄러지거나 돌 때 구조물 모서리가 로봇 변으로 들어가고(L·sin θ ≤ REFERENCE_TOLERANCE까지) 되돌아오지 않았다.
+  // polygonContact가 참 축의 점을 더해 막는다(리뷰가 찾은 회귀 시험). 침투는 모든 solid 구조물과 벽에서 잰다.
+  const SOLIDS = solidFootprints(BIOBUZZ, H18)
+  const worstAny = (poses: readonly Pose2[]): number => {
+    let worst = 0
+    for (const p of poses)
+      for (const s of SOLIDS)
+        if (s.kind === 'polygon')
+          worst = Math.max(worst, -polygonSeparation(placeFootprint(FOOTPRINT, p), s.points))
+    return worst
+  }
+  const worldErrors = (r: Runner): number =>
+    r.world.drainNotices().filter((n) => n.code === 'worldError').length
+
+  it('리뷰 재현: 발판 막대 <0>의 +X 끝면에 로봇 면이 약 2.3° 기울어 닿은 채 돌며 미끄러져도 침투가 늘지 않는다', () => {
+    const start = { x: 0.8237481154031969, y: -0.14912877470282265, yaw: 1.8086232700416973 }
+    expect(worstAny([start])).toBe(0)
+    const r = new Runner(fieldSpec(start)).run(2, () =>
+      outputs(mecanum(-0.1175384521484375, 0.18050765991210938, 0.5522994995117188))
+    )
+    // 고치기 전에는 발판 막대에 0.34 mm 들어간 채 남았다
+    expect(worstPenetration(r.poses, FOOT_BAR_RED)).toBeLessThan(1e-6)
+    expect(worstAny(r.poses)).toBeLessThan(1e-6)
+    expect(worldErrors(r)).toBe(0)
+  })
+
+  it('FLOWER <3> 필드 쪽 면·발판 막대 <0> 끝면 끝을 1 cm 넘어 거의 나란히(1°·2.5°) 닿아 미끄러지며 돌아도 침투 증가 < 1e-6 m', () => {
+    // 로봇 앞면(요 = 진행 방향 + tilt)이 구조물 면 한 끝을 1 cm 넘어 걸치게 두고 면 쪽으로 다가가 2 mm 앞에서 시작한다.
+    // L·sin θ(1 cm × sin 1°–2.5° = 0.17–0.44 mm)가 REFERENCE_TOLERANCE 안이라 구조물 면이 기준으로 남는 경우다
+    // tilt·slide·turn은 고치기 전 침투가 가장 컸던 조합(FLOWER 0.52–0.67 µm, 발판 막대 0.58–0.62 µm, 지금은 0.12 µm 아래)
+    type Target = {
+      index: number
+      face: [Vec2, Vec2]
+      direction: number
+      runs: { tilt: number; slide: number; turn: number }[]
+    }
+    const DEG = Math.PI / 180
+    const flower = hull(FLOWER_RED)
+    const bar = hull(FOOT_BAR_RED)
+    const flowerTop = Math.max(...flower.map((p) => p.y))
+    const barEnd = Math.max(...bar.map((p) => p.x))
+    const targets: Target[] = [
+      // FLOWER <3>의 +Y 면(x 0.5187–0.6697)에 +Y에서 −Y로
+      {
+        index: FLOWER_RED,
+        face: [
+          { x: Math.min(...flower.map((p) => p.x)), y: flowerTop },
+          { x: Math.max(...flower.map((p) => p.x)), y: flowerTop }
+        ],
+        direction: -Math.PI / 2,
+        runs: [
+          { tilt: 1 * DEG, slide: -0.5, turn: 0.2 },
+          { tilt: 2.5 * DEG, slide: -0.5, turn: 0.2 }
+        ]
+      },
+      // 발판 막대 <0>의 +X 끝면(y −0.6282–−0.5778)에 +X에서 −X로
+      {
+        index: FOOT_BAR_RED,
+        face: [
+          { x: barEnd, y: Math.min(...bar.map((p) => p.y)) },
+          { x: barEnd, y: Math.max(...bar.map((p) => p.y)) }
+        ],
+        direction: Math.PI,
+        runs: [
+          { tilt: -1 * DEG, slide: 0.5, turn: -0.2 },
+          { tilt: -2.5 * DEG, slide: 0.5, turn: -0.2 }
+        ]
+      }
+    ]
+    for (const target of targets) {
+      const [a, b] = target.face
+      const along = { x: b.x - a.x, y: b.y - a.y }
+      const length = Math.hypot(along.x, along.y)
+      const u = { x: along.x / length, y: along.y / length }
+      const back = { x: -Math.cos(target.direction), y: -Math.sin(target.direction) }
+      for (const { tilt, slide, turn } of target.runs) {
+        // 앞면이 면의 a 쪽 끝을 1 cm 넘게 앞면 가운데를 옮기고, 면에서 30 cm 뒤에 둔다
+        const shift = HALF - length / 2 - 0.01
+        const mid = { x: (a.x + b.x) / 2 + shift * u.x, y: (a.y + b.y) / 2 + shift * u.y }
+        const from = {
+          x: mid.x + (HALF + 0.3) * back.x,
+          y: mid.y + (HALF + 0.3) * back.y,
+          yaw: target.direction + tilt
+        }
+        const start = approach(target.index, from, target.direction, 2e-3)
+        expect(worstAny([start])).toBe(0)
+        const r = new Runner(fieldSpec(start)).run(1, () =>
+          outputs(toward(start.yaw, target.direction + slide, 0.5, turn))
+        )
+        expect(worstAny(r.poses)).toBeLessThan(1e-6)
+        expect(wallPenetration(r.poses)).toBeLessThan(1e-6)
+        expect(worldErrors(r)).toBe(0)
+      }
+    }
+  })
+
+  // 퍼즈: solid 구조물 근처의 무작위 자세·명령 48개(고정 시드). 한 시험이 5 s 기본 제한을 넘지 않게 12개씩 넷으로 나눈다
+  const fuzzTrials = ((): { start: Pose2; command: Powers }[] => {
+    const polygons = SOLIDS.filter((s) => s.kind === 'polygon')
+    // 선형 합동 생성기(glibc 상수, 결정적)
+    let seed = 12345
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    const trials: { start: Pose2; command: Powers }[] = []
+    while (trials.length < 48) {
+      const s = polygons[Math.floor(random() * polygons.length)]
+      const center = {
+        x: s.points.reduce((a, p) => a + p.x, 0) / s.points.length,
+        y: s.points.reduce((a, p) => a + p.y, 0) / s.points.length
+      }
+      const angle = random() * 2 * Math.PI
+      const distance = 0.3 + random() * 0.3
+      const start = {
+        x: center.x + distance * Math.cos(angle),
+        y: center.y + distance * Math.sin(angle),
+        yaw: random() * 2 * Math.PI
+      }
+      const command = mecanum(random() * 2 - 1, random() * 2 - 1, random() * 2 - 1)
+      // 벽에 1 mm 안이나 구조물에 5 mm 안으로 시작하는 자세는 버린다
+      const placed = placeFootprint(FOOTPRINT, start)
+      if (placed.some((v) => Math.max(Math.abs(v.x), Math.abs(v.y)) > INNER - 1e-3)) continue
+      if (polygons.some((q) => polygonSeparation(placed, q.points) < 5e-3)) continue
+      trials.push({ start, command })
+    }
+    return trials
+  })()
+  for (let part = 0; part < 4; part++)
+    it(`퍼즈 ${part + 1}/4: 구조물 근처 무작위 자세·명령 12개에서 침투 증가 < 1e-6 m, worldError 없음`, () => {
+      for (const { start, command } of fuzzTrials.slice(part * 12, part * 12 + 12)) {
+        const r = new Runner(fieldSpec(start)).run(1.5, () => outputs(command))
+        expect(worstAny(r.poses)).toBeLessThan(1e-6)
+        expect(worldErrors(r)).toBe(0)
+      }
+    })
+})
 
 describe('4ab 구조물 접촉: 행 키·모서리·성능', () => {
   it('A2 행 키 유일: FLOWER 옆 벽 모서리, 다리 둘 사이, 발판 막대 끝에서 한 풀이의 밖의 행 키가 서로·내부 키(f·l·u)와 다르다', () => {

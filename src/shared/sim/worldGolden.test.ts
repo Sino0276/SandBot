@@ -30,7 +30,8 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // 세계 설명에 field: { season: 'none', … }을 더해도 이 해시가 그대로임을 보여야 한다('none' 시즌은 3c와 바이트까지 같다,
 // 계획의 "바이트 보존과 시험 고정"). 그러니 'none'으로 이 값이 바뀌면 시험을 고치지 말고 코드를 고친다. 4ab가 바꿀 곳은
 // 각 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
-// 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값).
+// 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값. 4ab 리뷰 수정의
+// 참 분리 축 보충 행으로 다시 쟀다).
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
@@ -446,7 +447,7 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(normals.some((k) => k.startsWith('ns11.'))).toBe(true)
     expect(normals.some((k) => k.startsWith('ns5.'))).toBe(true)
     expect(ticks[ticks.length - 1].pose.blocked).toBe(false)
-    expect(hash).toBe('03911c045ed848dfe42a1c946320b0c86d115d58ba892e8da18b3e5a0e448427')
+    expect(hash).toBe('ac93852541573361e073684b10d05900a5a35cd6ff928c4045d7f79bf4706f4f')
   })
 
   it('바퀴·관절 없음', () => {
