@@ -11,6 +11,7 @@ import type { SceneObject, SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import { useDialogStore } from '../dialogStore'
+import { useNoticeStore } from '../noticeStore'
 import { useEditorStore } from '../editorStore'
 import { useHierarchyDragStore } from '../hierarchyDnd'
 import { useHierarchyViewStore } from '../hierarchyTree'
@@ -325,6 +326,20 @@ describe('Field 인스펙터(C9)', () => {
     useSceneStore.setState({ objects: SCENE, field: { season: 'biobuzz' } })
     chooseFieldSeason('none')
     expect(useSceneStore.getState().field).toEqual({ season: 'none' })
+    // 인스펙터의 시즌 선택은 갈래 B의 chooseFieldSeason(notifyFieldState('choose'))까지 간다: 'none' 벽에 붙인
+    // 18 in 로봇은 BIOBUZZ(벽 안쪽 반폭 1.79286 m)로 바꾸면 겹침 알림이 뜬다
+    useNoticeStore.setState({ notices: [] })
+    const atNoneWall: SceneObjects = {
+      bot: node('bot', 'robot', null, {
+        transform: { position: [0, -(1.8163 - 0.2286), 0], rotation: [0, 0, 0] }
+      })
+    }
+    useSceneStore.setState({ objects: atNoneWall, field: { season: 'none' } })
+    chooseFieldSeason('biobuzz')
+    expect(useNoticeStore.getState().notices.map((notice) => notice.key)).toEqual([
+      'fieldStartOverlap'
+    ])
+    useNoticeStore.setState({ notices: [] })
     usePlayStore.setState({ settings: DEFAULT_PLAY_SETTINGS })
     setHiveSide('red', 'tipped')
     expect(usePlayStore.getState().settings.hiveState).toEqual({ red: 'tipped', blue: 'start' })

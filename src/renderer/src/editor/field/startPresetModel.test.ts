@@ -179,6 +179,38 @@ describe('시작 위치 고르기(C7)', () => {
     expect(startPresetModel(scene().objects, 'bot', scene().field, 'default')!.oversize).toBe(false)
   })
 
+  it('충돌하는 프리셋과 tooWide인 면은 어느 경로로도 적용되지 않는다', () => {
+    // 비활성(conflict) 프리셋: 득점 쪽 벽 모서리에 스냅하면 깊이 0.8 m가 빨강 LOADING ZONE에 걸린다
+    for (const facing of ['default', 'reverse', 'left', 'right'] as const)
+      expect(snapRobotToPreset('wide', 'scoringWallCorner', facing)).toBe(false)
+    expect(writes).toBe(0)
+    // 길쭉한 로봇(로봇 X 0.9 m × Y 0.4 m): 빨강 벽 득점 쪽(구간 0.59896 m)에 기본 면으로는 들어가지만 옆면은 tooWide
+    const long = node('long', 'robot', null, [0.5, 0.5, 0], 0)
+    const longCad = node('longCad', 'assembly', 'long', [0, 0, 0], 0, {
+      cad: {
+        fileName: 'long.step',
+        absolutePath: '/cad/long.step',
+        upAxis: '+Z',
+        forwardAxis: '+X',
+        bounds: { min: [-0.45, -0.2, 0], max: [0.45, 0.2, 0.3] },
+        meshCount: 0,
+        meshIndexing: 'source'
+      }
+    })
+    useSceneStore.setState({ objects: { ...SCENE, long, longCad } })
+    expect(snapRobotToPreset('long', 'redWallScoring', 'default')).toBe(true)
+    const model = startPresetModel(scene().objects, 'long', scene().field, 'default')!
+    expect(model.match).toEqual({ key: 'redWallScoring', facing: 'default' })
+    expect(model.blockedFacings).toEqual(['left', 'right'])
+    const before = pose('long')
+    const written = writes
+    expect(snapRobotToPreset('long', 'redWallScoring', 'left')).toBe(false)
+    expect(pose('long')).toEqual(before)
+    expect(writes).toBe(written)
+    // 맞는 프리셋이 없으면 면 선택칸은 막지 않는다(스냅하지 않고 다음 고르기의 면만 정한다)
+    expect(startPresetModel(SCENE, 'wide', scene().field, 'default')!.blockedFacings).toEqual([])
+  })
+
   it("'none'·모르는 시즌은 프리셋이 없다", () => {
     expect(presetSeason({ season: 'none' })).toBeNull()
     expect(presetSeason({ season: 'decode2027' })).toBeNull()

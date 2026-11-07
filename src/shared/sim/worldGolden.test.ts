@@ -22,13 +22,14 @@ import { testMotorParams } from './testkit'
 import { PhysicsWorld } from './world'
 import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec'
 
-// 시뮬레이터 출력 기준 해시(4단계 전, 세계 설명 v3). 대표 시나리오 넷을 고정한 출력열로 돌려, 틱마다 step()이 돌려준 입력,
-// pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(), drainNotices()를 JSON으로 이어 sha256을 잰다.
+// 시뮬레이터 출력 기준 해시. 대표 시나리오 다섯(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준)을 고정한 출력열로
+// 돌려, 틱마다 step()이 돌려준 입력, pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(),
+// drainNotices()를 JSON으로 이어 sha256을 잰다.
 //
-// 아래 해시는 4단계(4ab: 시즌 필드·고정 경기 요소 충돌, 세계 설명 v4) 전의 코드로 잰 기준값이다. 4ab는 세계 설명에
-// field: { season: 'none', … }을 더해도 이 해시가 그대로임을 보여야 한다('none' 시즌은 3c와 바이트까지 같다, 계획의
-// "바이트 보존과 시험 고정"). 그러니 'none'으로 이 값이 바뀌면 시험을 고치지 말고 코드를 고친다. 4ab가 바꿀 곳은 각
-// 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
+// 'none' 시나리오 넷의 해시는 4단계(4ab: 시즌 필드·고정 경기 요소 충돌, 세계 설명 v4) 전의 코드로 잰 기준값이다. 4ab는
+// 세계 설명에 field: { season: 'none', … }을 더해도 이 해시가 그대로임을 보여야 한다('none' 시즌은 3c와 바이트까지 같다,
+// 계획의 "바이트 보존과 시험 고정"). 그러니 'none'으로 이 값이 바뀌면 시험을 고치지 말고 코드를 고친다. 4ab가 바꿀 곳은
+// 각 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
 // 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값).
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
@@ -395,7 +396,7 @@ const seen = (ticks: Tick[], device: string, key: string, value: unknown): boole
 const notified = (ticks: Tick[], code: string): boolean =>
   ticks.some((t) => t.notices.some((n) => n.code === code))
 
-describe('시뮬레이터 기준 해시(4단계 전 v3)', () => {
+describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ)", () => {
   it('메카넘 + Pinpoint + 리프트', () => {
     const { ticks, hash } = trace(mecanumLift())
     const last = ticks[ticks.length - 1].pose

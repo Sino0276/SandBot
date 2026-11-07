@@ -83,10 +83,9 @@ function selectOverlapRobot(): void {
   if (id !== null && useSceneStore.getState().objects[id]) useEditorStore.getState().select(id)
 }
 
-// [Field 보기]: 하이어라키 Field 줄을 고른다(editorStore.selectField, 갈래 C가 더한다). 그 전에는 아무것도 하지 않는다.
+// [Field 보기]: 하이어라키 Field 줄을 고른다(인스펙터가 Field 인스펙터가 된다)
 function showFieldRow(): void {
-  const editor = useEditorStore.getState() as { selectField?: () => void }
-  editor.selectField?.()
+  useEditorStore.getState().selectField()
 }
 
 // 겹침 알림을 지금 문서로 띄우거나(show) 다시 계산한다(update: 떠 있을 때만 글자를 바꾸거나 지운다)

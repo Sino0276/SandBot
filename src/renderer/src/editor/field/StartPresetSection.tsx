@@ -62,7 +62,8 @@ function StartPresetSection({ robot }: { robot: SceneObject }): React.JSX.Elemen
   }
   const chooseFacing = (facing: StartFacing): void => {
     setLastFacing(facing)
-    // 프리셋이 맞는 상태면 같은 프리셋을 그 면으로 다시 스냅한다
+    // 프리셋이 맞는 상태면 같은 프리셋을 그 면으로 다시 스냅한다(그 면이 tooWide·충돌이면 비활성이고
+    // snapRobotToPreset도 쓰지 않는다)
     if (model.match) snapRobotToPreset(robot.id, model.match.key, facing)
   }
 
@@ -124,7 +125,11 @@ function StartPresetSection({ robot }: { robot: SceneObject }): React.JSX.Elemen
           onChange={(event) => chooseFacing(event.target.value as StartFacing)}
         >
           {START_FACINGS.map((facing) => (
-            <option key={facing} value={facing}>
+            <option
+              key={facing}
+              value={facing}
+              disabled={facing !== model.facing && model.blockedFacings.includes(facing)}
+            >
               {t(`inspector.startFacing.${facing}`)}
             </option>
           ))}

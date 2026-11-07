@@ -1,6 +1,7 @@
 import type { FieldSpec, FieldStartPreset } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import {
+  START_FACINGS,
   matchingPreset,
   presetRect,
   presetTarget,
@@ -72,6 +73,8 @@ export type StartPresetModel = {
   // 계산에 쓴 면(맞는 프리셋의 면, 없으면 넘겨받은 면)
   facing: StartFacing
   options: PresetOption[]
+  // 맞는 프리셋이 있을 때 그 프리셋을 다른 면으로 다시 스냅하면 tooWide이거나 충돌하는 면(START_FACINGS 순서). 없으면 []
+  blockedFacings: StartFacing[]
   // 너무 넓어 쓸 수 없는 프리셋 요약(없으면 null). available은 그 가운데 가장 넓은 구간, width는 그 프리셋에서의 외곽 폭
   tooWide: { count: number; width: number; available: number } | null
   // 겹쳐 쓸 수 없는 프리셋 요약(없으면 null). conflicts는 그 프리셋들의 충돌을 프리셋 순서로 이은 것
@@ -82,17 +85,24 @@ export type StartPresetModel = {
   oversize: boolean
 }
 
+// target이 없으면 presetTarget(지금 외곽이 사각형 안이면 그 중심, 아니면 구간 가운데)
 function presetOption(
   spec: FieldSpec,
   preset: FieldStartPreset,
   footprint: readonly Vec2[],
   height: number,
   pose: Pose2,
-  facing: StartFacing
+  facing: StartFacing,
+  target?: number
 ): PresetOption {
   const innerHalf = spec.perimeter.innerHalf
-  const target = presetTarget(preset, innerHalf, footprint, pose)
-  const snap = snapRobotToStart(footprint, preset, innerHalf, target, facing)
+  const snap = snapRobotToStart(
+    footprint,
+    preset,
+    innerHalf,
+    target ?? presetTarget(preset, innerHalf, footprint, pose),
+    facing
+  )
   if (!snap.ok) return { preset, snap, conflicts: [], disabled: 'tooWide' }
   const conflicts = startConflicts(spec, footprint, snap.pose, height)
   return { preset, snap, conflicts, disabled: conflicts.length > 0 ? 'conflict' : null }
@@ -115,6 +125,13 @@ export function startPresetModel(
   const options = spec.startPresets.map((preset) =>
     presetOption(spec, preset, footprint, height, pose, facing)
   )
+  const matched = match ? spec.startPresets.find((preset) => preset.key === match.key) : undefined
+  const blockedFacings = matched
+    ? START_FACINGS.filter(
+        (candidate) =>
+          presetOption(spec, matched, footprint, height, pose, candidate).disabled !== null
+      )
+    : []
   // 너무 넓은 것: 가장 넓은 구간의 프리셋(같으면 앞의 것)
   const wide = options.flatMap((option) => (option.snap.ok ? [] : [option.snap]))
   const widest = wide.reduce<(typeof wide)[number] | null>(
@@ -147,6 +164,7 @@ export function startPresetModel(
     match,
     facing,
     options,
+    blockedFacings,
     tooWide,
     conflict,
     size,
@@ -164,7 +182,9 @@ function angleDifference(a: number, b: number): number {
 
 // 로봇을 프리셋에 스냅해 쓴다(setLocalTransform 한 번, constrainTransform을 거쳐 실행 취소 한 단계). 결과가 지금 자세와
 // 같으면 쓰지 않는다(실행 취소 단계를 만들지 않음). target이 없으면 presetTarget(지금 외곽이 사각형 안이면 그 중심).
-// 썼으면 true, 같거나 tooWide·로봇 없음이면 false.
+// 프리셋 목록·면 선택칸과 같은 규칙(presetOption)으로, tooWide이거나 스냅 결과가 startConflicts에 걸리면 쓰지 않는다
+// (비활성 프리셋·면은 어느 경로로도 적용되지 않는다).
+// 썼으면 true, 같거나 tooWide·충돌·로봇 없음이면 false.
 export function snapRobotToPreset(
   robotId: string,
   presetKey: string,
@@ -176,18 +196,11 @@ export function snapRobotToPreset(
   const spec = presetSeason(scene.field)
   const preset = spec?.startPresets.find((candidate) => candidate.key === presetKey)
   if (!spec || !preset || objects[robotId]?.kind !== 'robot') return false
-  const { footprint } = robotOutline(objects, robotId)
+  const { footprint, height } = robotOutline(objects, robotId)
   const pose = robotPose(objects, robotId)
-  const innerHalf = spec.perimeter.innerHalf
-  const snap = snapRobotToStart(
-    footprint,
-    preset,
-    innerHalf,
-    target ?? presetTarget(preset, innerHalf, footprint, pose),
-    facing
-  )
-  if (!snap.ok) return false
-  const next = snap.pose
+  const option = presetOption(spec, preset, footprint, height, pose, facing, target)
+  if (option.disabled !== null || !option.snap.ok) return false
+  const next = option.snap.pose
   if (
     Math.abs(next.x - pose.x) <= SAME_POSITION &&
     Math.abs(next.y - pose.y) <= SAME_POSITION &&
