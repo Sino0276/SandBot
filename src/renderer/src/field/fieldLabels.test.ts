@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
 import { SEASON_IDS, resolveSeason } from '../../../shared/sim/seasons/seasons'
+import { START_FACINGS } from '../../../shared/sim/seasons/startPose'
 import en from '../i18n/locales/en'
 import ko, { type Messages } from '../i18n/locales/ko'
 import {
@@ -34,6 +35,10 @@ for (const id of SEASON_IDS) {
   for (const h of spec.hives) keys.push(hiveLabelKey(h.key))
   for (const p of spec.startPresets) keys.push(startPresetLabelKey(p.key))
 }
+// C10(갈래 C): 로봇 "시작 위치"의 면·얼라이언스 묶음·외곽 줄, 하이어라키 Field 줄
+for (const facing of START_FACINGS) keys.push(`inspector.startFacing.${facing}`)
+for (const alliance of ['red', 'blue']) keys.push(`inspector.startAlliance.${alliance}`)
+keys.push('inspector.startOutline', 'inspector.startFacing.label', 'hierarchy.fieldRow')
 
 describe('시즌 필드 번역', () => {
   it.each([

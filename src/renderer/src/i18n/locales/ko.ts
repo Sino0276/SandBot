@@ -309,6 +309,9 @@ const ko = {
       left: '왼쪽이 필드 쪽',
       right: '오른쪽이 필드 쪽'
     },
+    startOutline: '외곽 {{width}} × {{depth}}',
+    // 시작 위치 선택칸의 얼라이언스 묶음
+    startAlliance: { red: '빨강', blue: '파랑' },
     startOversize:
       '외곽 {{width}} × {{depth}}: 18 in 넘음(R102). 외곽은 CAD 경계 상자라 실제보다 클 수 있습니다.',
     collisionHeight: '충돌 높이 {{height}}',

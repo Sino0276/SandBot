@@ -11,18 +11,50 @@ type VisibilityState = {
   hidden: ReadonlySet<string>
   // 고립 보기 중이면 그 대상(이 오브젝트들과 하위만 보인다), 아니면 null
   isolated: readonly string[] | null
+  // 필드 요소(구조물·HIVE·태그·벽 라벨·시작 표시)를 숨겼는지(spec-4ab §1.9, 하이어라키 Field 줄의 눈 아이콘·Field 선택의 H·
+  // Field 인스펙터 "필드 요소 보이기"). 바닥·벽·테이프는 남긴다. 보기만이라 숨겨도 시뮬레이터 접촉은 그대로다.
+  fieldHidden: boolean
 }
 
 const EMPTY: ReadonlySet<string> = new Set()
 
 export const useSceneVisibilityStore = create<VisibilityState>()(() => ({
   hidden: EMPTY,
-  isolated: null
+  isolated: null,
+  fieldHidden: false
 }))
 
 // 프로젝트를 새로 열면 보기 상태를 버린다(다른 씬의 id다)
 export function resetSceneVisibility(): void {
-  useSceneVisibilityStore.setState({ hidden: EMPTY, isolated: null })
+  useSceneVisibilityStore.setState({ hidden: EMPTY, isolated: null, fieldHidden: false })
+}
+
+// ---- 필드 요소(spec-4ab §1.9) ----
+
+export function setFieldHidden(fieldHidden: boolean): void {
+  if (useSceneVisibilityStore.getState().fieldHidden !== fieldHidden)
+    useSceneVisibilityStore.setState({ fieldHidden })
+}
+
+// Field 줄의 눈 아이콘·Field 선택의 H
+export function toggleFieldHidden(): void {
+  setFieldHidden(!useSceneVisibilityStore.getState().fieldHidden)
+}
+
+// 씬 뷰에서 필드 요소(구조물·HIVE·태그·벽 라벨·시작 표시)를 그리지 않는가: 숨겼거나 고립 보기 중이다. 고립 보기는 Unity처럼
+// 씬 전체를 숨기지 않고 바닥·벽·테이프는 남긴다(그 중간, 임시 편차).
+export function fieldElementsHidden(
+  state: Pick<VisibilityState, 'fieldHidden' | 'isolated'>
+): boolean {
+  return state.fieldHidden || state.isolated !== null
+}
+
+// Field 줄의 눈 아이콘: 숨김, 고립 보기 중이면 일부 숨김(구조물 등이 숨어 있다), 아니면 보임
+export function fieldRowVisibility(
+  state: Pick<VisibilityState, 'fieldHidden' | 'isolated'>
+): RowVisibility {
+  if (state.fieldHidden) return 'hidden'
+  return state.isolated !== null ? 'mixed' : 'visible'
 }
 
 // 고립 대상과 그 하위(고립 중이 아니면 null). 고립 대상 배열마다 한 번 만든다.
