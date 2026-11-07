@@ -1,7 +1,7 @@
 import type { DeviceValues } from '../sidecarProtocol'
 import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
 import { GRAVITY } from './physics'
-import { testChassis, testMotorParams } from './testkit'
+import { TEST_ROBOT_HEIGHT, testChassis, testMotorParams, worldV4Defaults } from './testkit'
 import { DEFAULT_WHEEL_FRICTION, wheelSpinInertia } from './wheelData'
 import { PhysicsWorld, type PhysicsWorldOptions } from './world'
 import {
@@ -83,6 +83,8 @@ export function robotSpec(robot: Robot = {}, change: Partial<WorldSpec> = {}): W
   }
   return {
     version: WORLD_SPEC_VERSION,
+    // 'none' 시즌: 3c와 바이트까지 같은 기준(worldGolden 해시), Pedro 튜너 재현의 대각선이 BIOBUZZ 발판 막대에 걸린다
+    ...worldV4Defaults(),
     robot: {
       start: robot.start ?? { x: -1.2, y: 0, yaw: 0 },
       footprint: [
@@ -91,6 +93,7 @@ export function robotSpec(robot: Robot = {}, change: Partial<WorldSpec> = {}): W
         { x: -HALF, y: -HALF },
         { x: HALF, y: -HALF }
       ],
+      height: TEST_ROBOT_HEIGHT,
       body
     },
     batteryVoltage: VOLTS,

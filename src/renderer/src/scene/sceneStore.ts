@@ -3,6 +3,7 @@ import { isLinkableJavaPath, normalizeLinkPath } from '../../../shared/teamCodeP
 import { cadRootTransform, isValidAlignment, type CadAlignment } from '../cad/alignment'
 import { NO_TUNABLE_EDITS, withTunable, type TunableEdits } from '../java/tunableEdits'
 import { DEG, ROBOT_SIZE, TILE_SIZE } from './coordinates'
+import { DEFAULT_FIELD_DOC, isSeasonString, type FieldDoc } from './fieldDoc'
 import {
   carryCadDependents,
   createEmptyParent,
@@ -123,13 +124,19 @@ type SceneState = {
   // 쓰지 않는다(원본은 Java 파일이고, 저장할 때 그 파일에 쓴다). 연결을 지우거나 오브젝트를 지워도 남긴다
   // (실행 취소로 되살아날 수 있고, 저장이 없는 파일·필드를 처리한다).
   tunables: TunableEdits
+  // 필드 설정(시즌, scene/fieldDoc.ts). 프로젝트 설정이라 씬 문서의 일부다(바꿀 때마다 새 객체)
+  field: FieldDoc
   // geometryRegistry에 형상이 새로 등록될 때마다 올린다. CAD 메시가 이 값을 구독해 다시 그린다.
   geometryRevision: number
   bumpGeometryRevision: () => void
   // 씬 전체를 바꾼다(프로젝트 열기). 저장하지 않은 튜닝 값도 같은 set()에서 버린다.
   // 형상(geometryRegistry)은 여기서 해제하지 않는다. 실행 취소 기록이 지운 오브젝트를 되살릴 수 있으므로
   // 어떤 기록에서도 쓰지 않게 된 형상을 editor/history.ts가 해제한다.
-  replaceObjects: (objects: SceneObjects) => void
+  // field를 넘기면 같은 set()에서 함께 바꾸고, 없으면 그대로 둔다(objects만 바꾸는 시험).
+  replaceObjects: (objects: SceneObjects, field?: FieldDoc) => void
+  // 필드 시즌을 고른다(Field 인스펙터). 시즌 문자열 모양이 아니거나 같은 값이면 그대로 둔다(실행 취소에 빈 단계가 생기지
+  // 않게). 모르는 시즌 문자열도 받는다(보존).
+  setFieldSeason: (season: string) => void
   // 튜닝 값 하나를 바꾼다(인스펙터). value는 쓸 리터럴, diskLiteral은 인스펙터가 보여 준 지금 디스크 리터럴이고
   // 편집의 base가 된다(둘 다 normalizeLiteral로 맞춘 글자). value가 디스크 값과 같으면 항목을 지운다.
   // 바뀐 것이 없으면 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
@@ -206,9 +213,19 @@ type SceneState = {
 export const useSceneStore = create<SceneState>()((set, get) => ({
   objects: PLACEHOLDER_SCENE,
   tunables: NO_TUNABLE_EDITS,
+  field: DEFAULT_FIELD_DOC,
   geometryRevision: 0,
   bumpGeometryRevision: () => set((state) => ({ geometryRevision: state.geometryRevision + 1 })),
-  replaceObjects: (objects) => set({ objects, tunables: NO_TUNABLE_EDITS }),
+  replaceObjects: (objects, field) =>
+    set(
+      field
+        ? { objects, tunables: NO_TUNABLE_EDITS, field }
+        : { objects, tunables: NO_TUNABLE_EDITS }
+    ),
+  setFieldSeason: (season) =>
+    set((state) =>
+      !isSeasonString(season) || season === state.field.season ? state : { field: { season } }
+    ),
   setTunable: (path, fieldId, value, diskLiteral) =>
     set((state) => {
       const tunables = withTunable(state.tunables, path, fieldId, value, diskLiteral)

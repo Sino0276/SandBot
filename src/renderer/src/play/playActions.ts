@@ -36,7 +36,7 @@ import {
 } from './keyboardGamepad'
 import { installLibraryNotice } from './libraryNotice'
 import { compareOpModes, findOpMode, opModeKey, preselectedTeleOp } from './opModeList'
-import { loadLastOpMode, saveLastOpMode } from './playSettings'
+import { loadLastOpMode, runSettings, saveLastOpMode } from './playSettings'
 import {
   consoleEntry,
   EMPTY_OPMODE_LIST,
@@ -471,7 +471,8 @@ async function runInit(): Promise<void> {
           }
         : { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
-      settings: play.settings,
+      // 공유 다섯 키만(렌더러 전용 hiveState는 메인·사이드카가 쓰지 않는다)
+      settings: runSettings(play.settings),
       world: world?.spec ?? null
     })
   } catch (error) {

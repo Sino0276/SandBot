@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { testChassis, testMotorParams, testWheelPhysics } from './testkit'
+import {
+  TEST_ROBOT_HEIGHT,
+  testChassis,
+  testMotorParams,
+  testWheelPhysics,
+  worldV4Defaults
+} from './testkit'
 import {
   parseWorldSpec,
   WORLD_SPEC_VERSION,
@@ -11,6 +17,8 @@ import {
 function valid(): WorldSpec {
   return {
     version: WORLD_SPEC_VERSION,
+    // 'none' 시즌: 모양 검사만 본다
+    ...worldV4Defaults(),
     robot: {
       start: { x: 0.5, y: -0.25, yaw: 1 },
       footprint: [
@@ -19,6 +27,7 @@ function valid(): WorldSpec {
         { x: -0.2, y: -0.2 },
         { x: 0.2, y: -0.2 }
       ],
+      height: TEST_ROBOT_HEIGHT,
       body: testChassis()
     },
     batteryVoltage: 12.5,
@@ -281,5 +290,186 @@ describe('parseWorldSpec 관절', () => {
   it('단위 축은 정규화한다', () => {
     const parsed = parseWorldSpec(joint(2, { axis: { x: 0, y: 1.0005, z: 0 } }))
     expect(typeof parsed !== 'string' && parsed.joints[2].axis).toEqual({ x: 0, y: 1, z: 0 })
+  })
+})
+
+// K8(spec-4ab §3·§5): 세계 설명 v4의 새 칸 검사
+describe('parseWorldSpec v4', () => {
+  const mount = { body: -1, position: { x: 0.1, y: 0, z: 0.05 }, rotation: { x: 0, y: 0, z: 0 } }
+  const sensors = (): WorldSpec => ({
+    ...withJoints(),
+    distanceSensors: [{ device: 'front', mount }],
+    colorSensors: [{ device: 'sample', mount: { ...mount, body: 2 } }]
+  })
+  const footprint = (points: [number, number][]): WorldSpec => ({
+    ...valid(),
+    robot: { ...valid().robot, footprint: points.map(([x, y]) => ({ x, y })) }
+  })
+
+  it('시즌·HIVE·높이·센서·잡음을 그대로 읽는다', () => {
+    const spec: WorldSpec = {
+      ...sensors(),
+      field: { season: 'biobuzz', hiveTipped: [true, false] },
+      noise: { enabled: true, seed: -42 }
+    }
+    const parsed = parseWorldSpec(spec)
+    expect(parsed).toEqual(spec)
+    expect(parsed).not.toBe(spec)
+  })
+
+  it("{ version: 4 }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
+    expect(parseWorldSpec({ version: WORLD_SPEC_VERSION })).toBe('robot')
+    expect(WORLD_SPEC_VERSION).toBe(4)
+    expect(parseWorldSpec({ ...valid(), version: 3 })).toBe('version')
+  })
+
+  it.each([
+    ['field', { ...valid(), field: undefined }],
+    ['field', { ...valid(), field: { season: 'decode2027', hiveTipped: [false, false] } }],
+    ['field.hiveTipped', { ...valid(), field: { season: 'none', hiveTipped: [false] } }],
+    ['field.hiveTipped', { ...valid(), field: { season: 'none', hiveTipped: [0, false] } }],
+    ['robot.height', { ...valid(), robot: { ...valid().robot, height: 0 } }],
+    ['robot.height', { ...valid(), robot: { ...valid().robot, height: 11 } }],
+    ['robot.height', { ...valid(), robot: { ...valid().robot, height: undefined } }],
+    ['noise', { ...valid(), noise: undefined }],
+    ['noise', { ...valid(), noise: { enabled: 1, seed: 0 } }],
+    ['noise', { ...valid(), noise: { enabled: false, seed: 0.5 } }],
+    ['noise', { ...valid(), noise: { enabled: false, seed: 2 ** 53 } }],
+    ['distanceSensors', { ...valid(), distanceSensors: undefined }],
+    [
+      'distanceSensors',
+      { ...valid(), distanceSensors: new Array(33).fill({ device: 'd', mount }) }
+    ],
+    ['colorSensors', { ...valid(), colorSensors: {} }],
+    [
+      'distanceSensors[0].mount.body',
+      { ...valid(), distanceSensors: [{ device: 'd', mount: { ...mount, body: 0 } }] }
+    ],
+    [
+      'distanceSensors[0].mount.body',
+      { ...valid(), distanceSensors: [{ device: 'd', mount: { ...mount, body: -2 } }] }
+    ],
+    [
+      'colorSensors[0].mount.body',
+      { ...sensors(), colorSensors: [{ device: 'c', mount: { ...mount, body: 3 } }] }
+    ],
+    [
+      'colorSensors[0].mount.body',
+      { ...sensors(), colorSensors: [{ device: 'c', mount: { ...mount, body: 0.5 } }] }
+    ],
+    [
+      'distanceSensors[0].mount.position',
+      {
+        ...valid(),
+        distanceSensors: [{ device: 'd', mount: { ...mount, position: { x: 11, y: 0, z: 0 } } }]
+      }
+    ],
+    [
+      'distanceSensors[0].mount.rotation',
+      {
+        ...valid(),
+        distanceSensors: [{ device: 'd', mount: { ...mount, rotation: { x: 0, y: 0, z: 13 } } }]
+      }
+    ],
+    ['distanceSensors[0].device', { ...valid(), distanceSensors: [{ device: '', mount }] }],
+    ['distanceSensors[0]', { ...valid(), distanceSensors: [{ device: 'd' }] }]
+  ])('%s가 틀리면 그 이름을 돌려준다', (what, value) => {
+    expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  it('목록마다 32개까지(따로 센다)', () => {
+    const many = (prefix: string): { device: string; mount: typeof mount }[] =>
+      Array.from({ length: 32 }, (_, i) => ({ device: `${prefix}${i}`, mount }))
+    const spec = { ...valid(), distanceSensors: many('d'), colorSensors: many('c') }
+    expect(typeof parseWorldSpec(spec)).toBe('object')
+  })
+
+  it.each([
+    ['두 목록 사이', { colorSensors: [{ device: 'front', mount }] }, 'colorSensors[0]'],
+    ['모터', { distanceSensors: [{ device: 'lift', mount }] }, 'distanceSensors[0]'],
+    ['데드휠', { distanceSensors: [{ device: 'par', mount }] }, 'distanceSensors[0]'],
+    ['Pinpoint', { distanceSensors: [{ device: 'pinpoint', mount }] }, 'distanceSensors[0]'],
+    ['OTOS', { distanceSensors: [{ device: 'otos', mount }] }, 'distanceSensors[0]'],
+    ['IMU', { distanceSensors: [{ device: 'imu', mount }] }, 'distanceSensors[0]'],
+    ['관절 서보', { distanceSensors: [{ device: 'wrist', mount }] }, 'distanceSensors[0]'],
+    ['리밋 스위치', { distanceSensors: [{ device: 'bottom', mount }] }, 'distanceSensors[0]'],
+    [
+      '같은 목록 안',
+      {
+        distanceSensors: [
+          { device: 'x', mount },
+          { device: 'x', mount }
+        ]
+      },
+      'distanceSensors[1]'
+    ]
+  ])('센서 장치 이름이 %s와 겹치면 거부한다', (_, change, what) => {
+    expect(parseWorldSpec({ ...sensors(), ...change })).toBe(`${what}.device: duplicate device`)
+  })
+
+  it.each([
+    [
+      '시계 방향 사각형',
+      [
+        [0.2, 0.2],
+        [0.2, -0.2],
+        [-0.2, -0.2],
+        [-0.2, 0.2]
+      ]
+    ],
+    [
+      '오각별(두 바퀴 감김)',
+      [0, 1, 2, 3, 4].map((k) => {
+        const a = Math.PI / 2 + (k * 4 * Math.PI) / 5
+        return [0.2 * Math.cos(a), 0.2 * Math.sin(a)]
+      })
+    ],
+    [
+      '일직선 세 점',
+      [
+        [0, 0],
+        [0.1, 0],
+        [0.2, 0]
+      ]
+    ],
+    [
+      '변 위의 점',
+      [
+        [0.2, -0.2],
+        [0.2, 0],
+        [0.2, 0.2],
+        [-0.2, 0.2],
+        [-0.2, -0.2]
+      ]
+    ],
+    [
+      '오목 다각형',
+      [
+        [0.2, -0.2],
+        [0.2, 0.2],
+        [0, 0],
+        [-0.2, 0.2],
+        [-0.2, -0.2]
+      ]
+    ]
+  ] as [string, [number, number][]][])('외곽이 %s면 거부한다', (_, points) => {
+    expect(parseWorldSpec(footprint(points))).toBe('robot.footprint')
+  })
+
+  it('반시계 볼록 외곽(삼각형·육각형)은 받는다', () => {
+    expect(
+      typeof parseWorldSpec(
+        footprint([
+          [0.2, 0.2],
+          [-0.2, 0.2],
+          [-0.2, -0.2]
+        ])
+      )
+    ).toBe('object')
+    const hexagon = [0, 1, 2, 3, 4, 5].map((k): [number, number] => [
+      0.2 * Math.cos((k * Math.PI) / 3),
+      0.2 * Math.sin((k * Math.PI) / 3)
+    ])
+    expect(typeof parseWorldSpec(footprint(hexagon))).toBe('object')
   })
 })

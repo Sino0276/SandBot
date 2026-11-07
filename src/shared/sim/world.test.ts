@@ -5,7 +5,14 @@ import { twistBetween } from './drivetrain'
 import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
 import { DcGearMotor } from './actuators'
 import { GRAVITY } from './physics'
-import { TEST_CHASSIS_MASS, testChassis, testMotorParams, testWheelPhysics } from './testkit'
+import {
+  TEST_CHASSIS_MASS,
+  TEST_ROBOT_HEIGHT,
+  testChassis,
+  testMotorParams,
+  testWheelPhysics,
+  worldV4Defaults
+} from './testkit'
 import { ROLLING_RESISTANCE } from './wheelData'
 import { PhysicsWorld } from './world'
 import {
@@ -54,6 +61,8 @@ function mecanumWheel(device: string, x: number, y: number): SimWheelSpec {
 function mecanumSpec(change: Partial<WorldSpec> = {}): WorldSpec {
   return {
     version: WORLD_SPEC_VERSION,
+    // 'none' 시즌: 3c 동작 시험(벽 반폭 1.81630, 구조물 없음)
+    ...worldV4Defaults(),
     robot: {
       start: { x: 0, y: 0, yaw: 0 },
       footprint: [
@@ -62,6 +71,7 @@ function mecanumSpec(change: Partial<WorldSpec> = {}): WorldSpec {
         { x: -HALF, y: -HALF },
         { x: HALF, y: -HALF }
       ],
+      height: TEST_ROBOT_HEIGHT,
       body: testChassis()
     },
     batteryVoltage: VOLTS,

@@ -21,6 +21,7 @@ import {
   MIN_CHASSIS_INERTIA,
   placeholderChassisBody,
   robotFootprint,
+  robotOutline,
   robotNeedsMassModel,
   robotWheels,
   wheelPosition,
@@ -535,6 +536,44 @@ describe('buildWorldSpec', () => {
       x: 0.21,
       y: -0.2
     })
+  })
+
+  // spec-4ab §3: 높이는 편집 자세 CAD 경계 상자 꼭짓점 z의 최대값, CAD가 없으면 18 in. 빌더는 v4 기본 칸을 채운다
+  it('robotOutline 높이와 세계 설명 v4 기본 칸', () => {
+    const objects = mecanumRobot()
+    expect(robotOutline(objects, 'R').height).toBeCloseTo(0.4572, 12)
+    const bounds = { min: [-0.2, 0, -0.15], max: [0.2, 0.3, 0.17] } as {
+      min: [number, number, number]
+      max: [number, number, number]
+    }
+    const withCad: SceneObjects = {
+      ...objects,
+      cad: {
+        id: 'cad',
+        name: 'robot.step',
+        kind: 'assembly',
+        parentId: 'R',
+        transform: cadRootTransform(bounds, { upAxis: '+Y', forwardAxis: '+Z' }),
+        cad: {
+          fileName: 'robot.step',
+          absolutePath: '/cad/robot.step',
+          upAxis: '+Y',
+          forwardAxis: '+Z',
+          bounds,
+          meshCount: 0,
+          meshIndexing: 'source'
+        }
+      }
+    }
+    // Y-up CAD의 높이 0.3 m(바닥 면이 로봇 원점 높이)
+    expect(robotOutline(withCad, 'R').height).toBeCloseTo(0.3, 12)
+    expect(robotOutline(withCad, 'R').footprint).toEqual(robotFootprint(withCad, 'R'))
+    const spec = buildWorldSpec(withCad, 'R', SETTINGS).spec!
+    expect(spec.robot.height).toBeCloseTo(0.3, 12)
+    expect(spec.field).toEqual({ season: 'none', hiveTipped: [false, false] })
+    expect(spec.distanceSensors).toEqual([])
+    expect(spec.colorSensors).toEqual([])
+    expect(spec.noise).toEqual({ enabled: false, seed: 0 })
   })
 
   it('로봇이 아니거나 없으면 null, 메인이 받지 않을 값이면 null과 worldInvalid', () => {

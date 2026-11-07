@@ -48,6 +48,7 @@ import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
 import { opModeKey } from './opModeList'
+import { runSettings } from './playSettings'
 import {
   displayRootOverride,
   EMPTY_OPMODE_LIST,
@@ -222,8 +223,10 @@ describe('INIT → START → STOP', () => {
       root: '/p',
       opMode: { className: DRIVE.className, path: DRIVE.path, flavor: 'TeleOp' },
       configPath: 'src/main/res/xml/sandbot_robot_hardware.xml',
-      settings: usePlayStore.getState().settings
+      // 공유 다섯 키만(렌더러 전용 hiveState는 보내지 않는다)
+      settings: runSettings(usePlayStore.getState().settings)
     })
+    expect(request.settings).not.toHaveProperty('hiveState')
     expect(request.runId).toBe(runId())
     expect(usePlayStore.getState().run!.accepted).toBe(true)
     // 실행을 받으면 게임패드를 읽기 시작해 지금 상태를 한 번 보낸다(패드가 없으면 키보드가 gamepad1, 모두 뗀 상태)
@@ -441,7 +444,9 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     const { world } = lastRequest()
     expect(world).toMatchObject({
       version: WORLD_SPEC_VERSION,
-      robot: { start: { x: 0, y: 0, yaw: 0 } },
+      // 빌더 기본 'none'(문서 시즌은 갈래 B의 worldFor가 채운다)
+      field: { season: 'none', hiveTipped: [false, false] },
+      robot: { start: { x: 0, y: 0, yaw: 0 }, height: 0.4572 },
       batteryVoltage: usePlayStore.getState().settings.batteryVoltage,
       hubs: ['Control Hub'],
       motors: [{ device: 'arm', modelTag: 'goBILDA5202SeriesMotor', gearbox: 99.5 }]

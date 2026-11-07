@@ -1,11 +1,15 @@
 // 시뮬레이터의 세계 설명(렌더러 → 메인). 렌더러가 INIT 때 씬에서 고른 로봇의 바퀴·모터·오도메트리를 이 모양으로
 // 만들어 PlayInitRequest.world로 보내고, 메인의 PhysicsWorld(src/shared/sim/world.ts)가 틱마다 이것으로 센서 값을 만든다.
 // 메인은 렌더러를 믿지 않고 parseWorldSpec으로 모양·유한 수·한도를 확인한다.
-// 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙, Z 위.
+// 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙 타일 윗면,
+// Z 위, 축은 시즌 공식 좌표계(seasons/, 'none' 시즌은 축의 뜻이 없고 타일 두께가 없어 바닥과 같은 평면).
 
 import { symmetricEigen3 } from './drivetrain'
+import type { SeasonId } from './seasons/fieldSpec'
+import { isSeasonId } from './seasons/seasons'
 
-export const WORLD_SPEC_VERSION = 3
+// 4: 시즌 field({ season, hiveTipped }), robot.height, 거리·컬러 센서 목록(4c), 잡음(4c·4d)을 더함(spec-4ab §3)
+export const WORLD_SPEC_VERSION = 4
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
@@ -111,13 +115,23 @@ export type SimOtosSpec = {
 
 export type SimImuSpec = { device: string }
 
+// 센서 장착(4c·4d). body −1 = 섀시(로봇 좌표), ≥ 0 = 그 관절 몸체(관절 틀). rotation은 ZYX이고 장치 +X가 보는 방향
+export type SensorMount = { body: number; position: Vec3; rotation: Vec3 }
+export type SimDistanceSensorSpec = { device: string; mount: SensorMount }
+export type SimColorSensorSpec = { device: string; mount: SensorMount }
+
 export type WorldSpec = {
   version: typeof WORLD_SPEC_VERSION
+  // 시즌(메인이 seasons/resolveSeason으로 FieldSpec을 푼다, 렌더러가 보낸 형상은 받지 않는다)과 HIVE 상태 [빨강, 파랑](4d가 씀)
+  field: { season: SeasonId; hiveTipped: [boolean, boolean] }
   robot: {
     // 시작 자세(필드 좌표)
     start: Pose2
-    // 바닥 외곽(로봇 좌표 볼록 다각형, 보통 사각형 4점). 필드 벽 접촉에 쓴다.
+    // 바닥 외곽(로봇 좌표, 단순 볼록 반시계 다각형, 보통 사각형 4점). 필드 벽·구조물 접촉에 쓴다.
     footprint: Vec2[]
+    // 높이(m): 편집 자세 CAD 경계 상자 꼭짓점 z의 최대값, CAD가 없으면 0.4572. 구조물 [0, H] 단면에 쓴다
+    // [가정: 높이는 편집 자세 CAD 최대 z, 없으면 18 in]
+    height: number
     // 섀시(로봇 전체 − 관절 몸체, 3a 질량 모델): 로봇 좌표, 무게중심 기준 관성. 늘 있고, 바퀴가 없는 세계는 기저가
     // 고정이라 쓰지 않는다(3c).
     body: SimBody
@@ -134,6 +148,11 @@ export type WorldSpec = {
   imus: SimImuSpec[]
   // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 관절이 없다.
   joints: SimJointSpec[]
+  // 4c가 채운다. 4ab는 늘 []
+  distanceSensors: SimDistanceSensorSpec[]
+  colorSensors: SimColorSensorSpec[]
+  // 4c·4d 센서 잡음(spec-4ab §1.12). 4ab는 enabled false
+  noise: { enabled: boolean; seed: number }
 }
 
 // ---- 관절(3b, spec-3b §4, Unity ArticulationBody 하나 = 관절 하나 = 움직이는 몸체 하나) ----
@@ -223,7 +242,7 @@ export type SimJointSpec = {
   switches: { device: string; kind: 'touch' | 'digital'; at: 'lower' | 'upper'; within: number }[]
 }
 
-// 시뮬레이터가 렌더러에 보이는 로봇 자세(필드 좌표). blocked: 이번 틱에 필드 벽에 막혔다.
+// 시뮬레이터가 렌더러에 보이는 로봇 자세(필드 좌표). blocked: 이번 틱에 필드 벽이나 고정 구조물에 막혔다.
 // joints: 관절 순번 순 q(rad 또는 m). 관절이 없는 세계는 키를 넣지 않는다.
 export type SimPose = { x: number; y: number; yaw: number; blocked: boolean; joints?: number[] }
 
@@ -627,7 +646,8 @@ function joint(value: unknown, i: number): SimJointSpec {
 
 // 관절 사이의 참조. 구동 모터는 motors에 있고 바퀴·다른 관절과 겹치지 않는다. 서보·스위치 장치는 한 곳에서만 쓴다.
 // 다단 리깅의 단은 drive 'stage'인 직선 관절이고 구동 관절(직선) 하나에만 들어 있다.
-function checkJointReferences(spec: WorldSpec, motorNames: Set<string>): void {
+// 돌려주는 값: 관절 서보·리밋 스위치 장치 이름(센서 이름 겹침 검사에 쓴다)
+function checkJointReferences(spec: WorldSpec, motorNames: Set<string>): Set<string> {
   const wheelMotors = new Set(spec.wheels.flatMap((w) => (w.motor === null ? [] : [w.motor])))
   const usedMotors = new Set<string>()
   const usedDevices = new Set<string>()
@@ -669,6 +689,93 @@ function checkJointReferences(spec: WorldSpec, motorNames: Set<string>): void {
       usedDevices.add(s.device)
     })
   })
+  return usedDevices
+}
+
+// 단순 볼록 반시계 다각형: 모든 변 i(P_i → P_i+1)와 그 변의 끝점이 아닌 모든 꼭짓점 k에 대해 cross > 0. 연속 세 점만 보면
+// 오각별(두 바퀴 감김)이 통과하므로 모두 본다(n ≤ MAX_FOOTPRINT_POINTS라 O(n²)도 싸다). 구조물 접촉의 SAT·자르기가 가정한다.
+function isConvexCounterClockwise(points: readonly Vec2[]): boolean {
+  const n = points.length
+  for (let i = 0; i < n; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % n]
+    for (let k = 0; k < n; k++) {
+      if (k === i || k === (i + 1) % n) continue
+      const p = points[k]
+      if (!((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) > 0)) return false
+    }
+  }
+  return true
+}
+
+function field(value: unknown): WorldSpec['field'] {
+  if (!isRecord(value) || !isSeasonId(value.season)) fail('field')
+  const tipped = value.hiveTipped
+  if (
+    !Array.isArray(tipped) ||
+    tipped.length !== 2 ||
+    typeof tipped[0] !== 'boolean' ||
+    typeof tipped[1] !== 'boolean'
+  )
+    fail('field.hiveTipped')
+  return { season: value.season, hiveTipped: [tipped[0], tipped[1]] }
+}
+
+function noise(value: unknown): WorldSpec['noise'] {
+  if (!isRecord(value) || typeof value.enabled !== 'boolean' || !Number.isSafeInteger(value.seed))
+    fail('noise')
+  return { enabled: value.enabled, seed: value.seed as number }
+}
+
+// 거리·컬러 센서 하나(4c). body는 −1(섀시) 또는 관절 순번
+function sensor(
+  value: unknown,
+  what: string,
+  jointCount: number
+): { device: string; mount: SensorMount } {
+  if (!isRecord(value) || !isRecord(value.mount)) fail(what)
+  if (!name(value.device)) fail(`${what}.device`)
+  const { body: mountBody, position, rotation } = value.mount
+  if (
+    typeof mountBody !== 'number' ||
+    !Number.isInteger(mountBody) ||
+    mountBody < -1 ||
+    mountBody >= jointCount
+  )
+    fail(`${what}.mount.body`)
+  return {
+    device: value.device,
+    mount: {
+      body: mountBody,
+      position: vec3(position, `${what}.mount.position`),
+      rotation: vec3(rotation, `${what}.mount.rotation`, 4 * Math.PI)
+    }
+  }
+}
+
+// 거리·컬러 센서 장치 이름: 두 목록을 합쳐 유일하고, 모터·데드휠·Pinpoint·OTOS·IMU·관절 서보·리밋 스위치와 겹치지 않는다
+// (데드휠은 모터 이름을 함께 쓰므로 모터·데드휠끼리는 보지 않는다)
+function checkSensorNames(
+  spec: WorldSpec,
+  motorNames: Set<string>,
+  jointDevices: Set<string>
+): void {
+  const others = new Set<string>([
+    ...motorNames,
+    ...spec.deadWheels.map((d) => d.device),
+    ...spec.pinpoints.map((p) => p.device),
+    ...spec.otos.map((o) => o.device),
+    ...spec.imus.map((i) => i.device),
+    ...jointDevices
+  ])
+  const seen = new Set<string>()
+  const check = (list: { device: string }[], what: string): void =>
+    list.forEach((s, i) => {
+      if (seen.has(s.device) || others.has(s.device)) fail(`${what}[${i}].device: duplicate device`)
+      seen.add(s.device)
+    })
+  check(spec.distanceSensors, 'distanceSensors')
+  check(spec.colorSensors, 'colorSensors')
 }
 
 // 모양이 맞으면 새 객체(받은 값의 다른 키는 버린다), 아니면 무엇이 틀렸는지 글자로 돌려준다
@@ -682,37 +789,60 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
     const footprint = list(robot.footprint, MAX_FOOTPRINT_POINTS, 'robot.footprint', (v, i) =>
       vec2(v, `robot.footprint[${i}]`)
     )
-    if (footprint.length < 3) fail('robot.footprint')
+    if (footprint.length < 3 || !isConvexCounterClockwise(footprint)) fail('robot.footprint')
+    const { height } = robot
+    if (!(finite(height) && height > 0 && height <= MAX_COORD)) fail('robot.height')
     const { batteryVoltage } = value
     if (!inRange(batteryVoltage, 1, 30)) fail('batteryVoltage')
+    // 3c까지의 칸을 같은 순서로 먼저 읽고(오류 순서 그대로), v4 칸은 그 뒤에 읽는다
+    const robotSpec: WorldSpec['robot'] = {
+      start: {
+        x: vec2({ x: start.x, y: start.y }, 'robot.start').x,
+        y: vec2({ x: start.x, y: start.y }, 'robot.start').y,
+        yaw: angle(start.yaw, 'robot.start.yaw')
+      },
+      footprint,
+      height,
+      // 섀시 질량 하한(kg): 렌더러는 0.1 kg 아래를 기본 질량으로 대신한다(spec-3c §1.7). 1 g 아래는 잘못된 값이다.
+      body: body(robot.body, 'robot.body', 1e-3)
+    }
+    const hubs = list(value.hubs, 16, 'hubs', (v, i) => (name(v) ? v : fail(`hubs[${i}]`)))
+    const motors = list(value.motors, MAX_WORLD_MOTORS, 'motors', motor)
+    const wheels = list(value.wheels, MAX_WORLD_WHEELS, 'wheels', wheel)
+    const deadWheels = list(value.deadWheels, MAX_WORLD_SENSORS, 'deadWheels', deadWheel)
+    const pinpoints = list(value.pinpoints, MAX_WORLD_SENSORS, 'pinpoints', pinpoint)
+    const otosList = list(value.otos, MAX_WORLD_SENSORS, 'otos', otos)
+    const imus = list(value.imus, MAX_WORLD_SENSORS, 'imus', imu)
+    const joints = list(value.joints, MAX_WORLD_JOINTS, 'joints', joint)
     const spec: WorldSpec = {
       version: WORLD_SPEC_VERSION,
-      robot: {
-        start: {
-          x: vec2({ x: start.x, y: start.y }, 'robot.start').x,
-          y: vec2({ x: start.x, y: start.y }, 'robot.start').y,
-          yaw: angle(start.yaw, 'robot.start.yaw')
-        },
-        footprint,
-        // 섀시 질량 하한(kg): 렌더러는 0.1 kg 아래를 기본 질량으로 대신한다(spec-3c §1.7). 1 g 아래는 잘못된 값이다.
-        body: body(robot.body, 'robot.body', 1e-3)
-      },
+      field: field(value.field),
+      robot: robotSpec,
       batteryVoltage,
-      hubs: list(value.hubs, 16, 'hubs', (v, i) => (name(v) ? v : fail(`hubs[${i}]`))),
-      motors: list(value.motors, MAX_WORLD_MOTORS, 'motors', motor),
-      wheels: list(value.wheels, MAX_WORLD_WHEELS, 'wheels', wheel),
-      deadWheels: list(value.deadWheels, MAX_WORLD_SENSORS, 'deadWheels', deadWheel),
-      pinpoints: list(value.pinpoints, MAX_WORLD_SENSORS, 'pinpoints', pinpoint),
-      otos: list(value.otos, MAX_WORLD_SENSORS, 'otos', otos),
-      imus: list(value.imus, MAX_WORLD_SENSORS, 'imus', imu),
-      joints: list(value.joints, MAX_WORLD_JOINTS, 'joints', joint)
+      hubs,
+      motors,
+      wheels,
+      deadWheels,
+      pinpoints,
+      otos: otosList,
+      imus,
+      joints,
+      // 목록마다 MAX_WORLD_SENSORS(따로 센다, synthesis §9.10-4). body는 관절 수 안
+      distanceSensors: list(value.distanceSensors, MAX_WORLD_SENSORS, 'distanceSensors', (v, i) =>
+        sensor(v, `distanceSensors[${i}]`, joints.length)
+      ),
+      colorSensors: list(value.colorSensors, MAX_WORLD_SENSORS, 'colorSensors', (v, i) =>
+        sensor(v, `colorSensors[${i}]`, joints.length)
+      ),
+      noise: noise(value.noise)
     }
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')
     spec.wheels.forEach((w, i) => {
       if (w.motor !== null && !motorNames.has(w.motor)) fail(`wheels[${i}].motor: unknown device`)
     })
-    checkJointReferences(spec, motorNames)
+    const jointDevices = checkJointReferences(spec, motorNames)
+    checkSensorNames(spec, motorNames, jointDevices)
     return spec
   } catch (error) {
     if (error instanceof SpecError) return error.message

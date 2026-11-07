@@ -24,7 +24,7 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // 아래 해시는 4단계(4ab: 시즌 필드·고정 경기 요소 충돌, 세계 설명 v4) 전의 코드로 잰 기준값이다. 4ab는 세계 설명에
 // field: { season: 'none', … }을 더해도 이 해시가 그대로임을 보여야 한다('none' 시즌은 3c와 바이트까지 같다, 계획의
 // "바이트 보존과 시험 고정"). 그러니 'none'으로 이 값이 바뀌면 시험을 고치지 말고 코드를 고친다. 4ab가 바꿀 곳은 각
-// 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다.
+// 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
@@ -50,6 +50,9 @@ type Tick = {
 
 // 틱마다 [k, 입력, 자세, 하중, 알림]을 모아 JSON의 sha256(hex)을 낸다
 function trace(s: Scenario): { ticks: Tick[]; hash: string } {
+  // 4ab 계약: 시나리오는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
+  expect(s.spec.version).toBe(4)
+  expect(s.spec.field).toEqual({ season: 'none', hiveTipped: [false, false] })
   const world = new PhysicsWorld(s.spec)
   const ticks: Tick[] = []
   for (let k = 0; k < s.ticks; k++) {

@@ -1,6 +1,7 @@
 import { Object3D } from 'three'
 
-// 저장 좌표계는 FTC 필드 좌표계다. 원점은 필드 중앙 바닥, Z가 위, 단위는 미터·라디안.
+// 저장 좌표계는 FTC 필드 좌표계다. 원점은 필드 중앙 타일 윗면, Z가 위, 축은 시즌 공식 좌표계(src/shared/sim/seasons/),
+// 단위는 미터·라디안. 'none' 시즌은 타일 두께가 없어 바닥과 같은 평면이다.
 // Three.js 기본값(Y-up)을 바꾸므로 Object3D를 만드는 코드보다 먼저 이 모듈이 평가되어야 한다(main.tsx에서 가장 먼저 import).
 Object3D.DEFAULT_UP.set(0, 0, 1)
 

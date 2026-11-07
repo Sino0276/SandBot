@@ -42,7 +42,7 @@ const OCTAGON_DIVISOR = 2 * (Math.cos(Math.PI / 8) + Math.sin(Math.PI / 8))
 const OCTAGON_ANGLES = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4]
 
 // 벽 행을 넣는 근방: 간격 ≤ |접근 속도|·h + WALL_MARGIN(m). 가정: 3b 관절 한계 근방(LIMIT_MARGIN 1 mm)과 같은 크기
-const WALL_MARGIN = 1e-3
+export const WALL_MARGIN = 1e-3
 // 받쳐지지 않은 모멘트가 F_z × 이 길이(m)를 넘으면 넘어짐으로 센다. 가정: ZMP가 바퀴 껍질 밖으로 1 mm(반올림 잡음보다 훨씬 크고
 // 넘어짐을 놓치지 않을 만큼 작다, spec-3c §1.4)
 const TIPPING_ARM = 1e-3
@@ -107,7 +107,8 @@ function slipRow(wheel: WheelContact, d: Vec2, yaw: number, m: number): number[]
   return j
 }
 
-const perpendicular = (d: Vec2): Vec2 => ({ x: -d.y, y: d.x })
+// ẑ × d(반시계 90°). 구조물 접촉(fieldContact.ts)도 같은 것을 쓴다
+export const perpendicular = (d: Vec2): Vec2 => ({ x: -d.y, y: d.x })
 
 // 롤러 자유 방향 저항(하중 1 N당): 점성(s/m)과 쿨롱 계수
 export type RollerResistance = { viscous: number; coulomb: number }

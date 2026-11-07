@@ -52,6 +52,12 @@ const ko = {
     delete: '삭제'
   },
   notice: {
+    // 필드(시즌) 알림
+    fieldStartOverlap: '시작 자세가 필드 요소와 겹칩니다: {{robots}}',
+    fieldUnknownSeason:
+      '이 프로젝트의 필드 시즌 "{{season}}"을(를) 알 수 없어 공칭 12 ft 필드로 보이고 시뮬레이션합니다. 저장하면 시즌 문자열은 그대로 남습니다.',
+    fieldAssumedSeason:
+      '이 프로젝트는 필드 설정 전 형식이라 BIOBUZZ 필드로 열었습니다. Field에서 바꿀 수 있습니다.',
     // 잘라낸 오브젝트를 붙일 수 없는 이유(하이어라키 이동 규칙)
     pasteRejectedRobot:
       '로봇은 다른 오브젝트 아래에 붙일 수 없습니다. 로봇끼리 순서만 바꿀 수 있습니다.',
@@ -165,6 +171,8 @@ const ko = {
   },
   // 알림의 행동 버튼
   noticeAction: {
+    selectRobot: '로봇 고르기',
+    showField: 'Field 보기',
     openJdkPreferences: 'JDK 설정 열기',
     openAndroidSdkPreferences: 'Android SDK 설정 열기'
   },
@@ -254,6 +262,8 @@ const ko = {
     }
   },
   hierarchy: {
+    // 맨 위 Field 줄(시즌 필드, Unity 씬 머리 줄 자리)
+    fieldRow: 'Field — {{season}}',
     empty: '씬에 오브젝트가 없습니다',
     emptyHint: 'STEP 파일을 창에 끌어다 놓거나 [STEP 불러오기]를 누르세요.',
     importStep: 'STEP 불러오기',
@@ -286,6 +296,22 @@ const ko = {
     }
   },
   inspector: {
+    // 최상위 로봇의 시작 위치(시즌 G304 시작 프리셋으로 벽에 붙이기)
+    startPreset: '시작 위치',
+    startPresetNone: '—',
+    startPresetTooWide:
+      '외곽 폭 {{width}}이(가) 구간({{available}})보다 넓어 프리셋 {{count}}개를 쓸 수 없습니다.',
+    startPresetConflict: '스냅하면 {{targets}}와(과) 겹쳐 프리셋 {{count}}개를 쓸 수 없습니다.',
+    startFacing: {
+      label: '벽을 보는 면',
+      default: '기본(앞이 필드 쪽)',
+      reverse: '반대(뒤가 필드 쪽)',
+      left: '왼쪽이 필드 쪽',
+      right: '오른쪽이 필드 쪽'
+    },
+    startOversize:
+      '외곽 {{width}} × {{depth}}: 18 in 넘음(R102). 외곽은 CAD 경계 상자라 실제보다 클 수 있습니다.',
+    collisionHeight: '충돌 높이 {{height}}',
     empty: '선택된 오브젝트가 없습니다',
     transform: '변환',
     position: '위치',
@@ -596,6 +622,13 @@ const ko = {
     },
     // 시뮬레이션(개인 설정, 다음 INIT부터)
     simulation: {
+      hiveState: 'HIVE 상태',
+      hiveRed: '빨강 HIVE',
+      hiveBlue: '파랑 HIVE',
+      hiveStart: '시작',
+      hiveTipped: '넘어감',
+      hiveHint:
+        '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다. Field 인스펙터의 같은 칸과 같은 값입니다.',
       title: '시뮬레이션',
       jitter: 'Hub 타이밍 오차',
       jitterOff: '끔 (늘 같은 결과)',
@@ -796,6 +829,11 @@ const ko = {
     code: '진단 코드',
     // 실행 흐름이 남기는 안내
     notices: {
+      // 필드(시즌) 경고(INIT)
+      worldStartOverlap:
+        '시작 자세가 필드 요소({{targets}})와 겹칩니다. 걸친 채로는 밀어내지 않고, 깊이 걸치면 빠져나가거나 통과할 수 있습니다.',
+      worldUnknownSeason:
+        '필드 시즌 "{{season}}"을(를) 알 수 없어 공칭 12 ft 필드로 시뮬레이션합니다.',
       // 시뮬레이터의 세계 설명(play/worldSpec.ts)을 만들 때 남기는 경고(INIT)
       worldNoWheels:
         '바퀴 컴포넌트가 없어 로봇이 움직이지 않습니다. 바퀴 파트(또는 그룹)에 [컴포넌트 추가 → 바퀴]를 붙이세요.',
@@ -1788,6 +1826,78 @@ const ko = {
         '몸체(이 오브젝트 하위에서 안쪽 관절의 하위를 뺀 것)의 질량을 알 수 없어(형상이 없거나 질량 0) 시뮬레이터가 1 g으로 둡니다. 질량 카드에서 질량을 넣으세요.',
       massPending: '몸체에서 아직 읽는 중인 메시 {{count}}개의 질량이 빠져 있습니다.',
       cannotHold: '정지 토크(힘)가 편집 자세의 부하보다 작아 버티지 못합니다.'
+    }
+  },
+  // 시즌 필드(spec-4ab). 시즌 데이터의 key가 키다(src/shared/sim/seasons/). 시즌 이름 BIOBUZZ는 번역하지 않는다.
+  field: {
+    seasons: {
+      biobuzz: 'BIOBUZZ (2026-27)',
+      none: '없음 (공칭 12 ft)'
+    },
+    unknownSeason: '알 수 없는 시즌 ({{season}})',
+    walls: {
+      red: '빨강 벽',
+      blue: '파랑 벽',
+      audience: '관중석 벽',
+      scoring: '득점 쪽 벽'
+    },
+    wallGeneric: '필드 벽',
+    structures: {
+      footBar: '발판 막대',
+      leg: 'HIVE 다리',
+      topBar: '위 막대',
+      logoPlate: '로고 판',
+      flower: 'FLOWER',
+      hiveCell: 'HIVE CELL'
+    },
+    tape: {
+      loadingZoneSide: 'LOADING ZONE 옆 테이프',
+      loadingZoneFront: 'LOADING ZONE 앞 테이프',
+      garden: 'GARDEN 테이프',
+      allianceArea: 'ALLIANCE AREA 테이프'
+    },
+    zones: {
+      loadingZone: 'LOADING ZONE',
+      garden: 'GARDEN'
+    },
+    hives: {
+      hiveRed: '빨강 HIVE',
+      hiveBlue: '파랑 HIVE'
+    },
+    startPresets: {
+      redWallScoring: '빨강 벽 · 득점 쪽',
+      redWallCenter: '빨강 벽 · 가운데',
+      redWallAudience: '빨강 벽 · 관중석 쪽',
+      audienceWall: '관중석 벽 (빨강)',
+      scoringWallCorner: '득점 쪽 벽 · 모서리 (빨강)',
+      scoringWallCenter: '득점 쪽 벽 · 가운데 (빨강)',
+      blueWallAudience: '파랑 벽 · 관중석 쪽',
+      blueWallCenter: '파랑 벽 · 가운데',
+      blueWallScoring: '파랑 벽 · 득점 쪽',
+      scoringWall: '득점 쪽 벽 (파랑)',
+      audienceWallCorner: '관중석 벽 · 모서리 (파랑)',
+      audienceWallCenter: '관중석 벽 · 가운데 (파랑)'
+    },
+    overlapItem: '{{name}} ({{targets}})',
+    inspector: {
+      title: 'Field',
+      season: '시즌',
+      locked: '실행 중',
+      afterRun: '실행이 끝나면 {{season}} 필드로 돌아갑니다.',
+      axesBiobuzz: '+X 관중석 벽, +Y 파랑 벽, 원점 중앙 타일 윗면',
+      axesNone: '공칭 12 ft, 벽은 원점 대칭',
+      axesNoDiagram:
+        'FTC 필드 좌표계 정의를 이 시즌 배치에 적용했습니다(ftc-docs에 이 시즌 그림은 아직 없음).',
+      innerHalf: '벽 안쪽 반폭',
+      hiveState: 'HIVE 상태',
+      hiveRed: '빨강 HIVE',
+      hiveBlue: '파랑 HIVE',
+      hiveStart: '시작',
+      hiveTipped: '넘어감',
+      hiveHint:
+        '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다.',
+      showElements: '필드 요소 보이기',
+      noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.'
     }
   }
 }
