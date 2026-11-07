@@ -1,6 +1,5 @@
 import type { ContactRow, ContactSet } from './articulation'
 import { tractionDirection } from './drivetrain'
-import { WALL_INNER_HALF } from './field'
 import {
   mecanumRollerFriction,
   ROLLER_COULOMB,
@@ -218,16 +217,18 @@ export function wheelCoordinateFriction(
   return wheel.driven ? rolling : rolling + WHEEL_BEARING_FRICTION
 }
 
-// 벽 행: 외곽 꼭짓점 k와 벽 w(+x, −x, +y, −y)마다 간격 gap = WALL_INNER_HALF − s_w·P_k를 재고, 근방(간격 ≤ |접근 속도|·h +
-// WALL_MARGIN)인 쌍만 넣는다. 법선 행은 한쪽(λ ≥ 0)이고 목표 J_n·v⁺ ≥ −max(gap, 0)/h라 이미 걸쳐 있으면 밀어내지 않는다(반발 0,
-// 위치 자르기 없음). 접선 행은 상자 ±WALL_FRICTION·λ_n(Articulation이 고정 2회 엇갈림으로 푼다). 벽 힘은 바닥 높이에 작용한다고
-// 본다(하중 이동 없음, 한계).
+// 벽 행: 외곽 꼭짓점 k와 벽 w(+x, −x, +y, −y)마다 간격 gap = innerHalf − s_w·P_k를 재고, 근방(간격 ≤ |접근 속도|·h +
+// WALL_MARGIN)인 쌍만 넣는다. innerHalf는 시즌 외곽의 접촉 기준면 반폭(FieldSpec.perimeter.innerHalf, 'none'은 field.ts의
+// WALL_INNER_HALF와 같은 double이라 3c와 바이트까지 같다). 법선 행은 한쪽(λ ≥ 0)이고 목표 J_n·v⁺ ≥ −max(gap, 0)/h라 이미
+// 걸쳐 있으면 밀어내지 않는다(반발 0, 위치 자르기 없음). 접선 행은 상자 ±WALL_FRICTION·λ_n(Articulation이 고정 2회 엇갈림으로
+// 푼다). 벽 힘은 바닥 높이에 작용한다고 본다(하중 이동 없음, 한계).
 export function wallRows(
   footprint: readonly Vec2[],
   pose: Pose2,
   velocity: { vx: number; vy: number; omega: number },
   h: number,
-  m: number
+  m: number,
+  innerHalf: number
 ): ContactRow[] {
   const rows: ContactRow[] = []
   const c = Math.cos(pose.yaw)
@@ -236,7 +237,7 @@ export function wallRows(
   for (const wall of WALLS) {
     offsets.forEach((r, k) => {
       const position = wall.axis === 0 ? pose.x + r.x : pose.y + r.y
-      const gap = WALL_INNER_HALF - wall.sign * position
+      const gap = innerHalf - wall.sign * position
       const speed =
         wall.axis === 0 ? velocity.vx - velocity.omega * r.y : velocity.vy + velocity.omega * r.x
       if (gap > Math.abs(speed) * h + WALL_MARGIN) return
@@ -265,8 +266,8 @@ export function wallRows(
   return rows
 }
 
-// 벽 법선 행인지(blocked 판정)
-export function isWallNormal(row: ContactRow): boolean {
+// 막는 법선 행인지(blocked 판정): 마찰 없는 한쪽 행(hi = ∞)은 벽 법선과 고정 구조물 법선(fieldContact.ts)뿐이다
+export function isBlockingNormal(row: ContactRow): boolean {
   return row.friction === undefined && row.hi === Infinity
 }
 

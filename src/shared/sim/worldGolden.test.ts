@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { resolveServoParams } from './actuatorData'
+import { Articulation } from './articulation'
 import {
   HALF,
   HUB_SIGN,
@@ -14,6 +15,9 @@ import {
   ZERO
 } from './driveTestkit'
 import { WALL_INNER_HALF } from './field'
+import type { SeasonId } from './seasons/fieldSpec'
+import { resolveSeason } from './seasons/seasons'
+import { snapRobotToStart } from './seasons/startPose'
 import { testMotorParams } from './testkit'
 import { PhysicsWorld } from './world'
 import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec'
@@ -25,6 +29,7 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // field: { season: 'none', … }을 더해도 이 해시가 그대로임을 보여야 한다('none' 시즌은 3c와 바이트까지 같다, 계획의
 // "바이트 보존과 시험 고정"). 그러니 'none'으로 이 값이 바뀌면 시험을 고치지 말고 코드를 고친다. 4ab가 바꿀 곳은 각
 // 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
+// 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값).
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
@@ -49,10 +54,10 @@ type Tick = {
 }
 
 // 틱마다 [k, 입력, 자세, 하중, 알림]을 모아 JSON의 sha256(hex)을 낸다
-function trace(s: Scenario): { ticks: Tick[]; hash: string } {
-  // 4ab 계약: 시나리오는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
+function trace(s: Scenario, season: SeasonId = 'none'): { ticks: Tick[]; hash: string } {
+  // 4ab 계약: 넷째까지는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
   expect(s.spec.version).toBe(4)
-  expect(s.spec.field).toEqual({ season: 'none', hiveTipped: [false, false] })
+  expect(s.spec.field).toEqual({ season, hiveTipped: [false, false] })
   const world = new PhysicsWorld(s.spec)
   const ticks: Tick[] = []
   for (let k = 0; k < s.ticks; k++) {
@@ -346,6 +351,44 @@ function motorsOnly(): Scenario {
   }
 }
 
+// (5) BIOBUZZ 구조물 접촉(4ab 기준): redWallCenter 프리셋의 +X 끝(FLOWER <3> 옆 빨강 벽 모서리)에 스냅해 모서리로 비스듬히
+// 밀고(벽 + FLOWER), 벽에서 물러나 +X로 FLOWER를 비켜 +Y로 올라간 뒤, −X로 HIVE 쪽에 와서 −Y로 물러나며 다리 (+X,−Y)의 안쪽
+// 끝을 스친다. 데드휠 하나, 고르지 않은 틱.
+function biobuzzContact(): Scenario {
+  const field = resolveSeason('biobuzz')
+  const preset = field.startPresets.find((p) => p.key === 'redWallCenter')
+  if (!preset) throw new Error('redWallCenter')
+  const footprint = robotSpec().robot.footprint
+  const snap = snapRobotToStart(footprint, preset, field.perimeter.innerHalf, preset.along[1])
+  if (!snap.ok) throw new Error('tooWide')
+  const spec = robotSpec(
+    { start: snap.pose },
+    {
+      field: { season: 'biobuzz', hiveTipped: [false, false] },
+      deadWheels: [
+        {
+          device: 'par',
+          position: { x: 0, y: 0.1 },
+          measures: 'forward',
+          reversed: false,
+          ticksPerMeter: 2000 / (Math.PI * 0.048)
+        }
+      ]
+    }
+  )
+  // 요 π/2(필드 +Y를 봄): 로봇 앞 = 필드 +Y, 로봇 오른쪽 = 필드 +X
+  const drive = (k: number): ReturnType<typeof mecanum> => {
+    if (k < 100) return mecanum(-0.4, 0.6, 0)
+    if (k < 180) return mecanum(0.6, 0, 0)
+    if (k < 300) return mecanum(0.1, 0.9, 0)
+    if (k < 480) return mecanum(0.8, 0, 0)
+    if (k < 605) return mecanum(0, -0.8, 0)
+    if (k < 745) return mecanum(-0.6, 0, 0)
+    return mecanum(0, 0, 0)
+  }
+  return { spec, ticks: 800, time: uneven, out: (k) => outputs(drive(k)) }
+}
+
 // 시나리오가 덮으려는 것을 실제로 지나가는지(해시만으로는 시나리오가 아무 일도 하지 않아도 통과한다)
 const seen = (ticks: Tick[], device: string, key: string, value: unknown): boolean =>
   ticks.some((t) => t.input[device]?.[key] === value)
@@ -376,6 +419,33 @@ describe('시뮬레이터 기준 해시(4단계 전 v3)', () => {
     expect(seen(ticks, 'liftUp', 'state', false)).toBe(true)
     expect(ticks[ticks.length - 1].pose.joints).toHaveLength(4)
     expect(hash).toBe('cb55f15901ed1b46346dae4d24a787aaedb3e4ff3d3abcb2c56bfcd3a33fc4f7')
+  })
+
+  it('BIOBUZZ 구조물 접촉(4ab 기준, 같은 프로세스에서 두 번 바이트가 같다)', () => {
+    // 한 번은 Articulation.step에 들어간 밖의 행 키를 모아 덮는 접촉을 확인한다(해시에는 들어가지 않는다)
+    const keys = new Set<string>()
+    const original = Articulation.prototype.step
+    const spy = vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h,
+      drive,
+      contacts
+    ) {
+      for (const row of contacts?.rows ?? []) keys.add(row.key)
+      return original.call(this, h, drive, contacts)
+    })
+    const first = trace(biobuzzContact(), 'biobuzz')
+    spy.mockRestore()
+    const { ticks, hash } = trace(biobuzzContact(), 'biobuzz')
+    expect(hash).toBe(first.hash)
+    expect(ticks.filter((t) => t.pose.blocked).length).toBeGreaterThan(50)
+    // 벽(빨강 벽 y−), FLOWER <3>(순번 11), 다리 (+X,−Y)(순번 5)의 법선 행이 모두 들어갔다
+    const normals = [...keys].filter((k) => k.startsWith('n'))
+    expect(normals.some((k) => k.startsWith('ny-'))).toBe(true)
+    expect(normals.some((k) => k.startsWith('ns11.'))).toBe(true)
+    expect(normals.some((k) => k.startsWith('ns5.'))).toBe(true)
+    expect(ticks[ticks.length - 1].pose.blocked).toBe(false)
+    expect(hash).toBe('03911c045ed848dfe42a1c946320b0c86d115d58ba892e8da18b3e5a0e448427')
   })
 
   it('바퀴·관절 없음', () => {
