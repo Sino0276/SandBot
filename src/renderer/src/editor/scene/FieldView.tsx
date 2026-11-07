@@ -57,6 +57,11 @@ function applyMaterialSpec(material: Material, spec: FieldMaterialSpec): void {
   }
 }
 
+// 빛을 받는 필드 재질의 거칠기 [가정: 표시만, 무광 플라스틱·금속 판]
+const FIELD_ROUGHNESS = 0.85
+// 원기둥 둘레 분할 수 [가정: 표시만, 지금 BIOBUZZ 데이터에는 원기둥이 없다]
+const CYLINDER_SEGMENTS = 32
+
 // 색 재질 묶음: 같은 재질 키는 같은 객체
 class MaterialPool implements Disposable {
   private readonly materials = new Map<string, Material>()
@@ -67,7 +72,7 @@ class MaterialPool implements Disposable {
     if (!material) {
       material = flat
         ? new MeshBasicMaterial({ color: spec.color })
-        : new MeshStandardMaterial({ color: spec.color, roughness: 0.85, metalness: 0 })
+        : new MeshStandardMaterial({ color: spec.color, roughness: FIELD_ROUGHNESS, metalness: 0 })
       applyMaterialSpec(material, spec)
       this.materials.set(key, material)
     }
@@ -151,7 +156,7 @@ function makeGeometry(spec: FieldGeometrySpec): BufferGeometry {
     case 'box':
       return new BoxGeometry(spec.size.x, spec.size.y, spec.size.z)
     case 'cylinder':
-      return new CylinderGeometry(spec.radius, spec.radius, spec.height, 32)
+      return new CylinderGeometry(spec.radius, spec.radius, spec.height, CYLINDER_SEGMENTS)
   }
 }
 
