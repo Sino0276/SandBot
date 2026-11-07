@@ -17,7 +17,7 @@ import {
 } from './actuators'
 import { Articulation, type ContactRow, type ContactSet, type DriveForces } from './articulation'
 import {
-  isWallNormal,
+  isBlockingNormal,
   ROLLER_RESISTANCE,
   SupportMonitor,
   wallRows,
@@ -29,10 +29,19 @@ import {
   type WheelContact
 } from './contact'
 import { HubVelocityWindow } from './encoderVelocity'
+import {
+  fieldCollision,
+  structureContactState,
+  structureRows,
+  type FieldCollision,
+  type StructureContactState
+} from './fieldContact'
 import { isEncoderMode, readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import { jointEncoderTicksPerOutputRev } from './actuatorData'
 import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
 import { GRAVITY } from './physics'
+import type { FieldSpec } from './seasons/fieldSpec'
+import { resolveSeason } from './seasons/seasons'
 import { LOAD_FILTER_TAU, ROLLING_RESISTANCE } from './wheelData'
 import type {
   Pose2,
@@ -72,6 +81,10 @@ import type {
 // 값)를 나눈 것이고, 바퀴가 오래 뜨거나 받쳐지지 않으면 wheelLift·tipping을 한 번 알린다(넘어지지는 않는다). 오도메트리(데드휠·
 // Pinpoint)는 하위 단계마다 실제 자세 변화 twistBetween(전, 후)로 센다. 바퀴가 없는 로봇은 3b처럼 기저가 고정이다(프레임이 바닥에
 // 놓여 있다).
+//
+// 필드(spec-4ab §1.10): 벽 반폭은 시즌 FieldSpec(spec.field.season)의 perimeter.innerHalf이고, 시즌의 solid 고정 구조물(발판
+// 막대·다리·FLOWER)은 외곽 × [0, robot.height] 프리즘과 접촉 행(fieldContact.ts)을 벽 행 뒤에 붙인다. 부유 기저에만 계산한다
+// (바퀴 없는 로봇은 접촉이 없다). 'none' 시즌은 벽 반폭이 field.ts 값 그대로이고 구조물이 없어 3c와 바이트까지 같다.
 //
 // 엔코더 속도(모터 포트의 velocity, 데드휠 포함): 허브 펌웨어처럼 지난 50 ms 동안의 원시 틱 변화 × 20이다(encoderVelocity.ts:
 // 늘 20 틱/s의 배수, 약 25 ms 늦음, 처음 50 ms는 시작 position부터 셈). 원시 틱은 하위 단계마다 기록한다.
@@ -196,6 +209,8 @@ export type PhysicsWorldOptions = {
   rollerCoulomb?: number
   // 굴림 저항 계수(ROLLING_RESISTANCE)
   rollingResistance?: number
+  // 시즌 필드(시험 전용: 구조물을 뺀 판 등). 없으면 resolveSeason(spec.field.season)
+  field?: FieldSpec
 }
 
 // src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
@@ -216,6 +231,9 @@ export class PhysicsWorld {
   private readonly support = new SupportMonitor()
   private readonly roller: RollerResistance
   private readonly rollingResistance: number
+  // 시즌 벽 반폭과 solid 구조물 단면(생성자에서 한 번, 로봇 높이 spec.robot.height의 [0, H] 슬랩), 구조물 기준 면 기억
+  private readonly collision: FieldCollision
+  private readonly structureState: StructureContactState
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
 
@@ -234,6 +252,11 @@ export class PhysicsWorld {
       coulomb: options.rollerCoulomb ?? ROLLER_RESISTANCE.coulomb
     }
     this.rollingResistance = options.rollingResistance ?? ROLLING_RESISTANCE
+    this.collision = fieldCollision(
+      options.field ?? resolveSeason(spec.field.season),
+      spec.robot.height
+    )
+    this.structureState = structureContactState(this.collision)
     this.poseNow = { ...spec.robot.start }
     this.deadWheels = spec.deadWheels.map((d) => ({
       spec: d,
@@ -460,11 +483,11 @@ export class PhysicsWorld {
         stage.kind === 'duty' ? { kind: 'duty', duty: stage.duty * motor.forwardSign } : stage
     }
     const from = art.basePose()
-    let walls: ContactRow[] = []
+    let blocking: ContactRow[] = []
     let contacts: ContactSet | undefined
     if (from) {
       contacts = this.contacts(art, from, h)
-      walls = contacts.rows.filter(isWallNormal)
+      blocking = contacts.rows.filter(isBlockingNormal)
     }
     try {
       art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
@@ -482,11 +505,12 @@ export class PhysicsWorld {
     const to = art.basePose()
     if (from && to) {
       this.moveRobot(from, to)
-      if (walls.some((row) => art.contactImpulse(row.key) > 0)) this.blocked = true
+      if (blocking.some((row) => art.contactImpulse(row.key) > 0)) this.blocked = true
     }
   }
 
-  // 이번 하위 단계의 바퀴 하중(걸러진 가속의 기저 렌치를 나눔)·받침 알림·바퀴 행·벽 행
+  // 이번 하위 단계의 바퀴 하중(걸러진 가속의 기저 렌치를 나눔)·받침 알림·바퀴 행·벽 행·고정 구조물 행(벽 행 뒤에만 붙인다:
+  // 'none' 시즌은 구조물이 0개라 행 목록이 3c와 원소 단위로 같다)
   private contacts(art: Articulation, pose: Pose2, h: number): ContactSet {
     const m = art.coordinates.length
     const wrench = art.baseWrench() as { fz: number; mx: number; my: number }
@@ -497,8 +521,18 @@ export class PhysicsWorld {
     if (alerts.tipping) this.notify('tipping', {})
     const wheel = wheelRows(this.wheels, this.loads, pose.yaw, h, m, this.roller)
     const velocity = art.baseVelocity() as { vx: number; vy: number; omega: number }
-    const walls = wallRows(this.spec.robot.footprint, pose, velocity, h, m)
-    return { rows: [...wheel.rows, ...walls], damping: wheel.damping }
+    const footprint = this.spec.robot.footprint
+    const walls = wallRows(footprint, pose, velocity, h, m, this.collision.innerHalf)
+    const structures = structureRows(
+      this.collision,
+      footprint,
+      pose,
+      velocity,
+      h,
+      m,
+      this.structureState
+    )
+    return { rows: [...wheel.rows, ...walls, ...structures], damping: wheel.damping }
   }
 
   // 좌표마다 구동 힘(모터: 전기 토크 + 기어 손실·마찰 상자, 바퀴 좌표: 굴림 저항·베어링 마찰 상자, 서보: PD·포화·풀림)
