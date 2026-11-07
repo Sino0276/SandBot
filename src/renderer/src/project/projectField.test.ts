@@ -7,6 +7,7 @@ import { useEditorStore } from '../editor/editorStore'
 import { beginChange, endChange, initHistory, redo, undo } from '../editor/history'
 import { runNoticeAction, useNoticeStore } from '../editor/noticeStore'
 import { chooseFieldSeason } from '../field/fieldActions'
+import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
 import { setUsageWorkerFactory, type UsageWorkerLike } from '../java/usageIndex'
 import { robotOutline } from '../play/worldSpec'
@@ -134,7 +135,7 @@ const season = (): string => useSceneStore.getState().field.season
 
 beforeAll(async () => {
   await i18n.init({
-    resources: { ko: { translation: ko } },
+    resources: { ko: { translation: ko }, en: { translation: en } },
     lng: 'ko',
     initAsync: false,
     interpolation: { escapeValue: false }
@@ -317,6 +318,29 @@ describe('알림 다시 계산(B15)', () => {
     // [로봇 고르기]도 남은 첫 로봇을 고른다
     runNoticeAction(noticeOf('fieldStartOverlap').id)
     expect(useEditorStore.getState().selectedId).toBe('b')
+  })
+
+  it('UI 언어를 바꾸면 떠 있는 겹침 알림의 항목 글자도 새 언어다(띄울 때 번역한 글자를 남기지 않음)', async () => {
+    await open(overlapScene(), { season: 'biobuzz' })
+    expect(noticeOf('fieldStartOverlap').params).toEqual({
+      robots: 'Bot A (관중석 벽), Bot B (빨강 벽)'
+    })
+    const id = noticeOf('fieldStartOverlap').id
+    try {
+      await i18n.changeLanguage('en')
+      expect(noticeOf('fieldStartOverlap').id).toBe(id)
+      expect(noticeOf('fieldStartOverlap').params).toEqual({
+        robots: 'Bot A (Audience wall), Bot B (Red wall)'
+      })
+    } finally {
+      await i18n.changeLanguage('ko')
+    }
+    expect(noticeOf('fieldStartOverlap').params.robots).toContain('빨강 벽')
+    // 닫은 알림은 언어를 바꿔도 되살아나지 않는다
+    useNoticeStore.getState().dismiss(id)
+    await i18n.changeLanguage('en')
+    await i18n.changeLanguage('ko')
+    expect(fieldKeys()).toEqual([])
   })
 
   it('스냅으로 모두 풀리면 지운다', async () => {

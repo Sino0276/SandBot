@@ -427,3 +427,26 @@ export function startMarkersShown(options: {
     options.hasPresets
   )
 }
+
+// 시작 표시 재질 키: (얼라이언스 색, 불투명도, offset 종류)마다 하나라 컴포넌트 수명 동안 같은 재질을 함께 쓴다(spec-4ab §1.9,
+// 많아야 색 2 × 불투명도 2). 흐린 묶음이 바뀌어도 재질을 다시 만들지 않는다
+export function startMarkerMaterialKey(material: FieldMaterialSpec): string {
+  return JSON.stringify([
+    material.color,
+    material.opacity,
+    material.transparent,
+    material.depthWrite,
+    material.polygonOffsetUnits
+  ])
+}
+
+// 시작 표시 위 커서(캔버스): 앞에 다른 누를 수 있는 오브젝트가 있으면(그것이 클릭을 받는다) 또는 누를 수 없으면(Field만 고름)
+// 기본, 흐린 표시는 not-allowed, 아니면 손가락
+export function startMarkerCursor(options: {
+  clickable: boolean
+  dimmed: boolean
+  occluded: boolean
+}): string {
+  if (options.occluded || !options.clickable) return ''
+  return options.dimmed ? 'not-allowed' : 'pointer'
+}

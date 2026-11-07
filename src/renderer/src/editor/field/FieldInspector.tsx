@@ -7,7 +7,13 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import { formatLength } from '../../units/units'
 import { setFieldHidden, useSceneVisibilityStore } from '../sceneVisibility'
-import { displayedField, runLocksField, seasonName, setHiveSide } from './fieldDisplay'
+import {
+  displayedField,
+  documentSeasonId,
+  runLocksField,
+  seasonName,
+  setHiveSide
+} from './fieldDisplay'
 
 // Field 인스펙터(spec-4ab §1.9): 하이어라키 Field 줄을 고르면 보인다. 시즌 선택(문서, 실행 취소 한 단계), 축 안내, 벽 안쪽
 // 반폭, HIVE 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 상태를
@@ -29,7 +35,8 @@ function FieldInspector(): React.JSX.Element {
   const known = isSeasonId(doc.season)
   // 잠겼으면 실행의 시즌을 보인다(실행 중 실행 취소로 문서 시즌이 달라질 수 있다)
   const seasonValue = locked ? run.field.season : doc.season
-  const afterRun = locked && doc.season !== run.field.season
+  // 푼 시즌끼리 비교한다(모르는 시즌 문자열은 실행에서 'none'이라 그대로 두면 늘 다르다)
+  const afterRun = locked && documentSeasonId(doc) !== run.field.season
   // 축 안내: BIOBUZZ 같은 시즌 필드는 시즌 축, 'none'·모르는 시즌은 공칭
   const seasonAxes = shown.season !== 'none'
 

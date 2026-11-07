@@ -1,5 +1,5 @@
 import { useThree } from '@react-three/fiber'
-import { useEffect, useMemo } from 'react'
+import { memo, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   BoxGeometry,
@@ -17,12 +17,11 @@ import {
 } from 'three'
 import type { FieldSpec, FieldWallName } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
-import type { Vec3 } from '../../../../shared/sim/worldSpec'
 import { wallLabelKey } from '../../field/fieldLabels'
 import { looseT } from '../../hardware/labels'
 import { usePlayStore } from '../../play/playStore'
 import { useSceneStore } from '../../scene/sceneStore'
-import { displayedField } from '../field/fieldDisplay'
+import { documentField, lockedRunField } from '../field/fieldDisplay'
 import { fieldElementsHidden, useSceneVisibilityStore } from '../sceneVisibility'
 import { useDeferredDispose, type Disposable } from './deferredDispose'
 import FieldFloor from './FieldFloor'
@@ -170,19 +169,20 @@ class GeometrySet implements Disposable {
   }
 }
 
-type Placement = { position: Vec3; quaternion: Quaternion }
+type Placement = { position: Vector3; quaternion: Quaternion }
 
 function placement(matrix: readonly number[]): Placement {
   const position = new Vector3()
   const quaternion = new Quaternion()
   new Matrix4().fromArray(matrix).decompose(position, quaternion, new Vector3())
-  return { position: { x: position.x, y: position.y, z: position.z }, quaternion }
+  return { position, quaternion }
 }
 
 // 바닥·겹 요소·태그·라벨은 빛과 관계없이 보이는 평면(MeshBasicMaterial), 나머지는 빛을 받는다
 const FLAT_ROLES = new Set(['floor', 'seam', 'tape'])
 
-function SeasonFieldView({
+// 속성(시즌·HIVE 상태·숨김)이 같으면 다시 그리지 않는다
+const SeasonFieldView = memo(function SeasonFieldView({
   spec,
   tippedRed,
   tippedBlue,
@@ -208,6 +208,8 @@ function SeasonFieldView({
   )
   const geometries = useMemo(() => new GeometrySet(model.meshes), [model])
   useDeferredDispose(geometries)
+  // 자세는 모델마다 한 번 푼다(다시 그릴 때 새 Quaternion을 넘기면 R3F가 모든 메시에 다시 적용한다)
+  const placements = useMemo(() => model.meshes.map((mesh) => placement(mesh.matrix)), [model])
 
   // 언어가 바뀌면 라벨 텍스처만 다시 만든다(UI 문자열 불변 조건)
   const labels = useMemo(() => {
@@ -228,14 +230,14 @@ function SeasonFieldView({
     else if (mesh.role === 'wallLabel') material = labels.get(mesh.wall!)
     else material = pool.get(mesh.material, FLAT_ROLES.has(mesh.role))
     if (!material) return null
-    const { position, quaternion } = placement(mesh.matrix)
+    const { position, quaternion } = placements[index]
     return (
       <mesh
         key={mesh.key}
         name={mesh.key}
         geometry={geometries.list[index]}
         material={material}
-        position={[position.x, position.y, position.z]}
+        position={position}
         quaternion={quaternion}
         renderOrder={mesh.renderOrder}
         raycast={noRaycast}
@@ -271,15 +273,16 @@ function SeasonFieldView({
       ))}
     </group>
   )
-}
+})
 
-// 씬 뷰 필드: 실행이 잠갔으면 실행의 시즌·HIVE 상태, 아니면 문서 시즌(모르는 문자열은 'none')과 개인 실행 설정
+// 씬 뷰 필드: 실행이 잠갔으면 실행의 시즌·HIVE 상태, 아니면 문서 시즌(모르는 문자열은 'none')과 개인 실행 설정.
+// 실행 전체(state.run)가 아니라 잠근 run.field만 구독한다(텔레메트리·장치마다 바뀌는 run으로 다시 그리지 않게)
 function FieldView(): React.JSX.Element {
   const doc = useSceneStore((state) => state.field)
-  const run = usePlayStore((state) => state.run)
+  const lockedField = usePlayStore((state) => lockedRunField(state.run))
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   const elementsHidden = useSceneVisibilityStore(fieldElementsHidden)
-  const shown = displayedField(run, doc, hiveState)
+  const shown = lockedField ?? documentField(doc, hiveState)
   return (
     <>
       {usesNominalFloor(shown.season) ? (

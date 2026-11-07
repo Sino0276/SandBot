@@ -1,17 +1,25 @@
-import { Matrix4, PlaneGeometry, Vector3 } from 'three'
+import { BoxGeometry, Group, Matrix4, Mesh, PlaneGeometry, Raycaster, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
 import type { OpModeInfo } from '../../../../shared/play'
 import { applyMatrix3, matMul3, rotationMatrix } from '../../../../shared/sim/seasons/fieldGeometry'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { tag36h11Image } from '../../../../shared/sim/seasons/tag36h11'
 import type { Vec3 } from '../../../../shared/sim/worldSpec'
-import { newRun, type PlayRun } from '../../play/playStore'
-import { displayedField, documentSeasonId, runLocksField } from '../field/fieldDisplay'
+import { applyPlayEvent, initialPlayData, newRun, type PlayRun } from '../../play/playStore'
+import {
+  displayedField,
+  documentField,
+  documentSeasonId,
+  lockedRunField,
+  runLocksField
+} from '../field/fieldDisplay'
 import {
   fieldViewModel,
   FIELD_RENDER_ORDER,
   POLYGON_OFFSET_UNITS,
   START_MARKER_ORDER_STEP,
+  startMarkerCursor,
+  startMarkerMaterialKey,
   startMarkersShown,
   startMarkerSpecs,
   TAG_FRONT_OFFSET,
@@ -20,6 +28,7 @@ import {
   type FieldMeshSpec,
   type FieldViewModel
 } from './fieldViewModel'
+import { markerOccluded } from './startMarkerHover'
 import { tagPixels, tagTextureWhiteAt } from './tagTexture'
 
 const BIOBUZZ = resolveSeason('biobuzz')
@@ -222,6 +231,31 @@ describe('실행 중 표시(C5)', () => {
     expect(runLocksField(run({ phase: 'preparing' }))).toBe(true)
   })
 
+  it('잠근 필드(lockedRunField)는 텔레메트리·장치마다 run이 새 객체가 되어도 같은 객체다(씬 뷰 필드가 다시 그리지 않음)', () => {
+    const active = run()
+    const data = { ...initialPlayData(), run: active }
+    const frame = { lines: ['a'], log: [], format: 'classic' as const }
+    const next = {
+      ...data,
+      ...applyPlayEvent(data, { type: 'telemetry', runId: 'r', tNanos: 5, frame })
+    }
+    const after = {
+      ...next,
+      ...applyPlayEvent(next, {
+        type: 'devices',
+        runId: 'r',
+        tNanos: 9,
+        outputs: {},
+        inputs: {}
+      })
+    }
+    expect(after.run).not.toBe(active)
+    expect(lockedRunField(after.run)).toBe(lockedRunField(active))
+    expect(lockedRunField(active)).toBe(active.field)
+    expect(lockedRunField(run({ detached: true }))).toBeNull()
+    expect(documentField(doc, hives)).toEqual({ season: 'biobuzz', hiveTipped: [false, true] })
+  })
+
   it('떼어 놓은 실행·끝난 실행·실행 없음은 문서 시즌과 개인 실행 설정', () => {
     const expected = { season: 'biobuzz', hiveTipped: [false, true] }
     for (const other of [run({ detached: true }), run({ phase: 'finished' }), null]) {
@@ -318,5 +352,52 @@ describe('태그 텍스처·방향(C6)', () => {
     expect(front.x).toBeCloseTo(0.5, 9)
     expect(front.y).toBeCloseTo(0, 9)
     expect(front.z).toBeCloseTo(-Math.sqrt(3) / 2, 9)
+  })
+})
+
+describe('시작 표시 재질·커서(4ab 리뷰 수정)', () => {
+  it('재질 키는 (얼라이언스 색, 불투명도, offset 종류)마다 하나다: 흐린 묶음이 어떻든 많아야 4개', () => {
+    const keys = new Set<string>()
+    const presets = BIOBUZZ.startPresets.map((preset) => preset.key)
+    for (const dimmed of [[], presets, presets.slice(0, 4), ['redWallCenter']])
+      for (const marker of startMarkerSpecs(BIOBUZZ, new Set(dimmed)))
+        keys.add(startMarkerMaterialKey(marker.material))
+    expect(keys.size).toBe(4)
+    // 같은 프리셋의 흐린·보통 재질은 키가 다르다
+    const [plain] = startMarkerSpecs(BIOBUZZ, new Set())
+    const [dim] = startMarkerSpecs(BIOBUZZ, new Set([plain.key]))
+    expect(startMarkerMaterialKey(plain.material)).not.toBe(startMarkerMaterialKey(dim.material))
+  })
+
+  it('커서: 앞에 누를 수 있는 오브젝트가 있거나 누를 수 없으면 기본, 흐리면 not-allowed, 아니면 손가락', () => {
+    const base = { clickable: true, dimmed: false, occluded: false }
+    expect(startMarkerCursor(base)).toBe('pointer')
+    expect(startMarkerCursor({ ...base, dimmed: true })).toBe('not-allowed')
+    expect(startMarkerCursor({ ...base, occluded: true })).toBe('')
+    expect(startMarkerCursor({ ...base, occluded: true, dimmed: true })).toBe('')
+    expect(startMarkerCursor({ ...base, clickable: false })).toBe('')
+  })
+
+  it('가림: 표시 묶음 밖의 사건 오브젝트가 표시보다 가까우면 가린 것이고, 표시 자신·더 먼 것·빗나간 것은 아니다', () => {
+    // 광선은 (0, 0, 2)에서 −z. 표시는 z = 0.002, 로봇 파트는 z 0.1–0.3 상자
+    const raycaster = new Raycaster(new Vector3(0, 0, 2), new Vector3(0, 0, -1))
+    const markers = new Group()
+    const marker = new Mesh(new PlaneGeometry(1, 1))
+    marker.position.z = 0.002
+    markers.add(marker)
+    const part = new Mesh(new BoxGeometry(0.2, 0.2, 0.2))
+    part.position.z = 0.2
+    const aside = new Mesh(new BoxGeometry(0.2, 0.2, 0.2))
+    aside.position.set(1, 0, 0.2)
+    const below = new Mesh(new BoxGeometry(0.2, 0.2, 0.002))
+    below.position.z = -0.1
+    // 클릭 처리기를 그룹에 둔 오브젝트(임시 로봇)도 하위 메시로 맞춘다
+    const holder = new Group()
+    holder.add(part)
+    for (const object of [markers, holder, aside, below]) object.updateMatrixWorld(true)
+    const distance = 2 - 0.002
+    expect(markerOccluded(raycaster, [marker, aside, below], markers, distance)).toBe(false)
+    expect(markerOccluded(raycaster, [marker, holder], markers, distance)).toBe(true)
+    expect(markerOccluded(raycaster, [part], markers, distance)).toBe(true)
   })
 })

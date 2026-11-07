@@ -110,6 +110,13 @@ function applyOverlapNotice(mode: 'show' | 'update'): void {
     })
 }
 
+// 겹침 알림의 robots는 띄울 때 번역한 글자(로봇마다 "이름 (대상)")라, UI 언어가 바뀌면 떠 있는 알림의 글자를 새 언어로 다시
+// 만든다(바깥 문구는 NoticeList가 그릴 때 번역한다). 띄우지 않은 알림을 새로 띄우지는 않는다
+export function relabelFieldNotices(): void {
+  applyOverlapNotice('update')
+}
+i18n.on('languageChanged', relabelFieldNotices)
+
 // Field 인스펙터의 시즌 선택. 바뀌었으면 고른 시즌으로 알림을 다시 띄운다(같은 값·틀린 문자열은 아무것도 하지 않는다).
 export function chooseFieldSeason(season: string): void {
   const before = useSceneStore.getState().field

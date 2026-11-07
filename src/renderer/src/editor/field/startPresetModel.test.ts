@@ -303,9 +303,19 @@ describe('시작 표시 클릭 규칙(C13)', () => {
     } finally {
       endChange()
     }
-    markHandleInteraction()
-    expect(click(CENTER_POINT)).toEqual({ result: false, stopped: 1 })
-    expect(writes).toBe(0)
+    // 핸들 직후 판정은 performance.now 차라, 뒤 시험들처럼 가짜 시계(0부터)에서 표시한다. 진짜 시계로 표시하면 워커가 오래
+    // 돈 뒤(> 700 ms) 뒤 시험의 가짜 시계 1000 ms가 '핸들 직후'로 보여 그 시험들이 가끔 실패했다
+    vi.useFakeTimers({ toFake: ['performance'] })
+    try {
+      markHandleInteraction()
+      expect(click(CENTER_POINT)).toEqual({ result: false, stopped: 1 })
+      expect(writes).toBe(0)
+      // 300 ms가 지나면 다시 스냅한다
+      vi.advanceTimersByTime(1000)
+      expect(click(CENTER_POINT).result).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('흐린 표시를 누르면 스냅하지 않고 선택도 그대로다', () => {

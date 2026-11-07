@@ -38,7 +38,8 @@ function StartPresetSection({ robot }: { robot: SceneObject }): React.JSX.Elemen
     <header className="inspector-section-header">
       <span className="inspector-section-title">
         {t('inspector.startPreset')}
-        {locked && model && (
+        {/* 프리셋이 없는 시즌(실행 중 실행 취소로 문서 시즌이 바뀐 경우 포함)에도 잠김을 보인다 */}
+        {locked && (
           <span className="frame-badge is-running" title={t('inspector.runningHint')}>
             {t('inspector.running')}
           </span>

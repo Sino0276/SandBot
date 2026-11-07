@@ -26,14 +26,24 @@ export function hiveTippedOf(hiveState: HiveState): [boolean, boolean] {
   return [hiveState.red === 'tipped', hiveState.blue === 'tipped']
 }
 
+// 실행이 잠근 필드(run.field 그 객체, 잠그지 않으면 null). 텔레메트리·장치마다 run이 새 객체가 되어도 run.field는 그대로라
+// 씬 뷰 필드가 이것만 구독하면 실행 중 다시 그리지 않는다
+export function lockedRunField(run: PlayRun | null): DisplayedField | null {
+  return runLocksField(run) ? run.field : null
+}
+
+// 잠기지 않았을 때 그리는 필드: 문서 시즌과 개인 실행 설정
+export function documentField(doc: FieldDoc, hiveState: HiveState): DisplayedField {
+  return { season: documentSeasonId(doc), hiveTipped: hiveTippedOf(hiveState) }
+}
+
 // 씬 뷰가 그리는 시즌과 HIVE 상태: 실행이 잠갔으면 실행의 것, 아니면 문서 시즌과 개인 실행 설정
 export function displayedField(
   run: PlayRun | null,
   doc: FieldDoc,
   hiveState: HiveState
 ): DisplayedField {
-  if (runLocksField(run)) return run.field
-  return { season: documentSeasonId(doc), hiveTipped: hiveTippedOf(hiveState) }
+  return lockedRunField(run) ?? documentField(doc, hiveState)
 }
 
 // 시즌 이름(알려진 시즌은 field.seasons.<id>, 모르는 문자열은 field.unknownSeason)

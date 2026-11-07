@@ -322,6 +322,17 @@ describe('Field 인스펙터(C9)', () => {
     expect(free).toContain('<option value="none" selected="">')
   })
 
+  it('모르는 문서 시즌의 실행(run.field.season은 none)은 실행 중이어도 afterRun 줄이 없다(푼 시즌으로 비교)', () => {
+    scene(SCENE, 'decode2027')
+    setStore(usePlayStore, { run: run({ season: 'none', hiveTipped: [false, false] }) })
+    const html = inspector()
+    expect(html).toContain('실행 중')
+    expect(html).not.toContain('실행이 끝나면')
+    // 실행 취소로 문서가 BIOBUZZ가 되면 돌아갈 필드가 달라지므로 보인다
+    scene(SCENE, 'biobuzz')
+    expect(inspector()).toContain('실행이 끝나면 BIOBUZZ')
+  })
+
   it('시즌 선택은 chooseFieldSeason, HIVE 칸은 개인 실행 설정', () => {
     useSceneStore.setState({ objects: SCENE, field: { season: 'biobuzz' } })
     chooseFieldSeason('none')
@@ -376,12 +387,19 @@ describe('로봇 "시작 위치" 그리기(C7)', () => {
     setStore(usePlayStore, { run: run({ season: 'biobuzz', hiveTipped: [false, false] }) })
     const locked = renderToStaticMarkup(<StartPresetSection robot={SCENE.bot} />)
     expect(count(locked, '<select class="field-select" disabled=""')).toBe(2)
+    expect(locked).toContain('실행 중')
+    // 실행 중 실행 취소로 문서 시즌이 프리셋 없는 시즌이 되어도 잠김 표시는 남는다(씬 뷰는 실행의 시즌)
+    scene(SCENE, 'none')
+    const undone = renderToStaticMarkup(<StartPresetSection robot={SCENE.bot} />)
+    expect(undone).toContain('이 시즌에는 시작 위치 프리셋이 없습니다.')
+    expect(undone).toContain('실행 중')
     setStore(usePlayStore, { run: null })
     for (const season of ['none', 'decode2027']) {
       scene(SCENE, season)
       const html = renderToStaticMarkup(<StartPresetSection robot={SCENE.bot} />)
       expect(html).toContain('이 시즌에는 시작 위치 프리셋이 없습니다.')
       expect(html).not.toContain('<select')
+      expect(html).not.toContain('실행 중')
     }
   })
 })
