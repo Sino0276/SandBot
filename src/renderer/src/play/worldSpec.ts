@@ -1,5 +1,8 @@
+import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
+import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
+import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
 import {
   isValidInertia,
@@ -48,7 +51,11 @@ import { componentCotsKey, cotsEntry, wheelCotsKey } from '../mass/cotsTable'
 import { DEFAULT_ROBOT_MASS, type MassModel } from '../mass/types'
 import { effectiveWheelFriction, wheelSpinInertia } from '../../../shared/sim/wheelData'
 import { convexHull } from '../../../shared/sim/wheelLoads'
+import { overlapTargetLabel } from '../field/fieldLabels'
+import { fieldSeasonId, type FieldDoc } from '../scene/fieldDoc'
 import type { ConsoleNoticeKey } from './consoleModel'
+import type { HiveState } from './playSettings'
+import type { PlayRunField } from './playStore'
 import { buildWorldJoints, motorComponentParams } from './worldJoints'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
@@ -666,4 +673,50 @@ export function buildWorldSpec(
     jointObjectIds: joints.objectIds,
     jointMotorIds: joints.motorIds
   }
+}
+
+// 실행의 시즌과 HIVE 상태(spec-4ab §2.4): 문서 시즌(모르는 문자열이면 'none')과 개인 실행 설정 hiveState. INIT 때 한 번
+// 정하고(세계 설명이 없어도) PlayRun.field와 세계 설명 field가 같이 쓴다.
+export function runFieldOf(doc: FieldDoc, hiveState: HiveState): PlayRunField {
+  return {
+    season: fieldSeasonId(doc) ?? 'none',
+    hiveTipped: [hiveState.red === 'tipped', hiveState.blue === 'tipped']
+  }
+}
+
+// 빌더 결과(buildWorldSpec, 시즌 'none' 기본)에 실행의 시즌·HIVE 상태를 넣고 필드 경고를 더한다(spec-4ab §3, INIT의
+// playActions.worldFor). 빌더 시그니처와 로봇 카드 경고는 그대로다(빌더는 새 경고를 내지 않는다). spec이 없으면 그대로 둔다.
+// - 문서 시즌이 모르는 문자열: worldUnknownSeason(공칭 12 ft로 시뮬레이션)
+// - 바퀴가 있는 로봇(부유 기저, 접촉이 있음)의 시작 자세가 벽·solid 구조물과 겹침: worldStartOverlap { targets }. 실행은 막지
+//   않는다(걸친 채로는 밀어내지 않는다). 바퀴 없는 로봇은 고정 기저라 접촉이 없으므로 내지 않는다.
+// targets는 대상 이름(field/fieldLabels.ts)을 t로 옮긴 글자다.
+export function withRunField(
+  result: WorldSpecResult,
+  doc: FieldDoc,
+  field: PlayRunField,
+  t: TFunction
+): WorldSpecResult {
+  if (!result.spec) return result
+  const spec: WorldSpec = {
+    ...result.spec,
+    field: { season: field.season, hiveTipped: [field.hiveTipped[0], field.hiveTipped[1]] }
+  }
+  const warnings = [...result.warnings]
+  if (fieldSeasonId(doc) === null)
+    warnings.push({ key: 'worldUnknownSeason', params: { season: doc.season } })
+  if (spec.wheels.length > 0) {
+    const fieldSpec = resolveSeason(field.season)
+    const overlaps = fieldOverlaps(
+      fieldSpec,
+      spec.robot.footprint,
+      spec.robot.start,
+      spec.robot.height
+    )
+    if (overlaps.length > 0)
+      warnings.push({
+        key: 'worldStartOverlap',
+        params: { targets: overlapTargetLabel(fieldSpec, overlaps, t) }
+      })
+  }
+  return { ...result, spec, warnings }
 }
