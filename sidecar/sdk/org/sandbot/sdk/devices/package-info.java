@@ -61,9 +61,13 @@
  *         장치가 구성한 허브 장착 방향으로 바꿔 보고한다. 옛 BNO055IMU의 initialize는 칩을 리셋해 칩이 그 자리에서 전원을 켠
  *         것처럼 heading을 그때부터 센다(피치·롤은 그대로, 같은 칩의 IMU 인터페이스도). 옛 getAngularOrientation은 칩 축 내재 ZYX
  *         (둘째 ±90° 안, 칩 X가 수직이면 셋째 0)</td></tr>
- * <tr><td>distance(REV_VL53L0X_RANGE_SENSOR)</td><td>-</td><td>distance(m, 없으면 범위 밖 8190 mm; 33 ms마다 새 측정)</td></tr>
+ * <tr><td>distance(REV_VL53L0X_RANGE_SENSOR)</td><td>-</td>
+ *     <td>distance(m 또는 null: null·없음은 범위 밖 8190 mm. 연속 측정은 33 ms마다 끝나며 그 끝의 값을 잡는다)</td></tr>
  * <tr><td>color(RevColorSensorV3)</td><td>-</td>
- *     <td>red·green·blue·ir(칩 원래 값 0..65535, 드라이버가 red에 1.07, blue에 1.55를 곱한다), distance(m) 또는 proximity(0..2047)</td></tr>
+ *     <td>red·green·blue·ir(SDK 기본 3×·25 ms 기준 칩 원래 값. 칩이 LS_GAIN·적분으로 DS 표 비율만큼 척도를 바꾸고 해상도로 포화,
+ *         측정 k는 t_ls + t_int + k·max(주기, t_int)에 끝나며 적분 창의 시간 평균을 잡는다; 드라이버가 red에 1.07, blue에 1.55를
+ *         곱한다), proximity(0..2047, PS 주기마다 그 순간 값) 또는 distance(m, 시험용: 역공식으로 PS). 시뮬레이터는
+ *         red·green·blue·proximity만 보낸다</td></tr>
  * <tr><td>huskyLens(HuskyLens)</td><td>algorithm(고른 알고리즘 이름 또는 null)</td><td>-(1단계는 블록·화살표 0개)</td></tr>
  * <tr><td>pinpoint(goBILDAPinpoint)</td>
  *     <td>xOffsetMm(X 포드의 옆 위치, 왼쪽 +), yOffsetMm(Y 포드의 앞 위치, 앞 +), ticksPerMm(정하지 않았으면 null),
@@ -86,7 +90,9 @@
  * 쓰기·스칼라를 그 위에 얹는다({@link org.sandbot.sdk.devices.SimTrackedPose}).
  *
  * <p>입력을 만드는 쪽은 메인 프로세스의 운동학 시뮬레이터(src/shared/sim/world.ts)다. 틱마다 바뀐 키만 보내고(처음에는 전부),
- * 정수 키(position·velocity·encoderX·encoderY)는 정수로 보낸다. 모터 포트의 velocity 측정 규칙은 src/shared/sim/encoderVelocity.ts다.
+ * 정수 키(position·velocity·encoderX·encoderY·red·green·blue·proximity)는 정수로 보낸다. 측정 시각이 있는 칩(VL53L0X·
+ * APDS-9151)은 입력 훅({@link org.sandbot.sim.SimDevice.InputHook})으로 틱 경계 시각을 인자로 받아 그 전에 끝난 측정을 옛 입력으로
+ * 잡는다(훅은 시계를 부르지 않는다). 모터 포트의 velocity 측정 규칙은 src/shared/sim/encoderVelocity.ts다.
  * Pinpoint 자세는 시뮬레이터가 펌웨어처럼 포드 틱과 이 장치의 출력(ticksPerMm·방향·오프셋)과 내장 IMU 요로 적분한 값이다(그래서
  * 팀이 오프셋을 틀리게 쓰면 실제처럼 결과가 틀어진다).
  *

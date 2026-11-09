@@ -2932,3 +2932,8 @@ button.usage-header:hover {
   gap: 6px;
   margin: 4px 0 8px;
 }
+
+/* 거리·컬러 센서 카드의 편집 자세 값 줄과 경고 꼬리(4c, editor/hardware/sensorReading.ts) */
+.hw-derived.hw-sensor-tail {
+  color: #e0b341;
+}

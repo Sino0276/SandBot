@@ -9,7 +9,14 @@ import org.sandbot.sim.SimDevice;
  * RESULT_INTERRUPT_STATUS에 '새 값' 비트가 서고, SYSTEM_INTERRUPT_CLEAR를 쓰면 지워진다. 드라이버는 이 비트를 기다리므로
  * 측정 주기보다 자주 읽으면 실제처럼 기다린다(그동안의 상태 읽기도 I2C 트랜잭션).
  *
- * <p>입력: distance(m, 센서 앞 물체까지). 없으면 물체가 범위 밖일 때 칩이 내는 {@value #OUT_OF_RANGE_MM} mm.
+ * <p>입력: distance(m 또는 null: null·없음은 범위 밖 {@value #OUT_OF_RANGE_MM} mm. 연속 측정은 {@value #MEASUREMENT_MS} ms마다
+ * 끝나며 그 끝의 값을 잡는다).
+ *
+ * <p>측정 시각 [가정: ToF는 측정 끝 표본, 명세 4c §1.8]: 연속 측정 k(≥ 1)는 시작 + k·{@value #MEASUREMENT_MS} ms에 끝나고 그때의
+ * distance 입력을 잡는다. RESULT_RANGE는 마지막으로 끝난 측정의 값이다(첫 측정 전은 {@value #OUT_OF_RANGE_MM}). 입력은 틱 경계에서만
+ * 바뀌므로, 입력 훅(경계 b)은 끝 시각 &lt; b인 측정을 옛 입력으로, 레지스터 읽기(지금 = now)는 끝 시각 ≤ now인 측정을 지금 입력으로
+ * 잡는다(정수 나노초). 칩은 광자를 적분할 뿐 거리를 평균하지 않고 범위 밖(null)이 섞이면 평균은 뜻이 없어 창 평균은 하지 않는다
+ * (1.5 m/s면 33 ms 사이에 5 cm, 한계). 단일 측정(SYSRANGE_START 0x01)은 읽는 때의 입력이다(드라이버가 쓰지 않음).
  */
 final class VL53L0XChip implements SimI2cChip {
     static final String KIND = "distance";
@@ -26,9 +33,13 @@ final class VL53L0XChip implements SimI2cChip {
     private long continuousStartNanos = 0;
     private long consumedMeasurements = 0;
     private boolean singleShotReady = false;
+    /** 마지막으로 잡은 연속 측정 순번(0 = 이번 연속 측정에서 아직 없음)과 그 값(mm) */
+    private long latchedIndex = 0;
+    private int latchedMm = OUT_OF_RANGE_MM;
 
     VL53L0XChip(SimDevice device) {
         this.device = device;
+        device.setInputHook(this::beforeInputs);
         byte[] p0 = page(0);
         p0[0xC0] = (byte) 0xEE;
         p0[0xC1] = (byte) 0xAA;
@@ -48,9 +59,42 @@ final class VL53L0XChip implements SimI2cChip {
         return registers;
     }
 
+    private static final long MEASUREMENT_NANOS = MEASUREMENT_MS * 1_000_000L;
+
     private long completedMeasurements() {
         if (!continuous) return 0;
-        return (SimLastKnown.now() - continuousStartNanos) / (MEASUREMENT_MS * 1_000_000L);
+        return Math.max(0, SimLastKnown.now() - continuousStartNanos) / MEASUREMENT_NANOS;
+    }
+
+    /**
+     * 끝 시각이 t보다 앞(inclusive면 t 포함)인 연속 측정까지 잡는다. 잡는 값은 지금 입력이다(부르는 쪽이 그 측정 끝에 유효한 입력일 때만
+     * 부른다: 훅은 경계 전의 옛 입력, 읽기는 지금 입력). 마지막 측정만 기억한다.
+     */
+    private void latchUpTo(long t, boolean inclusive) {
+        if (!continuous) return;
+        long span = t - continuousStartNanos - (inclusive ? 0 : 1);
+        if (span < MEASUREMENT_NANOS) return;
+        long index = span / MEASUREMENT_NANOS;
+        if (index <= latchedIndex) return;
+        latchedIndex = index;
+        latchedMm = rangeMm();
+    }
+
+    /** 입력 훅: 경계 b 전에 끝난 측정을 옛 입력으로 잡는다. 시계를 부르지 않는다. */
+    private void beforeInputs(long boundaryNanos) {
+        latchUpTo(boundaryNanos, false);
+    }
+
+    /** 시험용: 마지막으로 잡은 연속 측정의 값(mm). 시계를 읽지 않는다. */
+    int latchedRangeMm() {
+        return latchedMm;
+    }
+
+    /** RESULT_RANGE: 연속 측정이면 마지막으로 끝난 측정, 아니면(단일 측정) 지금 입력 */
+    private int resultMm() {
+        if (!continuous) return rangeMm();
+        latchUpTo(SimLastKnown.now(), true);
+        return latchedMm;
     }
 
     private boolean ready() {
@@ -67,11 +111,12 @@ final class VL53L0XChip implements SimI2cChip {
     @Override public byte[] read(int reg, int count) {
         int start = reg == NO_REGISTER ? 0 : reg & 0xFF;
         byte[] out = new byte[count];
+        int range = resultMm();
         for (int i = 0; i < count; i++) {
             int r = (start + i) & 0xFF;
             if (page == 0 && r == RESULT_INTERRUPT_STATUS) out[i] = (byte) (ready() ? 0x04 : 0x00);
-            else if (page == 0 && r == RESULT_RANGE_MM) out[i] = (byte) (rangeMm() >> 8);
-            else if (page == 0 && r == RESULT_RANGE_MM + 1) out[i] = (byte) rangeMm();
+            else if (page == 0 && r == RESULT_RANGE_MM) out[i] = (byte) (range >> 8);
+            else if (page == 0 && r == RESULT_RANGE_MM + 1) out[i] = (byte) range;
             else if (r == 0x83 || r == 0x92) out[i] = page(0)[r]; // SPAD 정보(페이지 6·7에서 읽는다)
             else out[i] = page(page)[r];
         }
@@ -88,10 +133,13 @@ final class VL53L0XChip implements SimI2cChip {
                 continue;
             }
             if (page == 0 && r == SYSRANGE_START) {
+                // 설정을 바꾸기 전에 지금까지 끝난 측정을 잡는다(옛 설정의 결과, RESULT_RANGE에 남는다)
+                latchUpTo(SimLastKnown.now(), true);
                 if ((value & 0x02) != 0) {
                     continuous = true;
                     continuousStartNanos = SimLastKnown.now();
                     consumedMeasurements = 0;
+                    latchedIndex = 0;
                 } else if ((value & 0x01) != 0) {
                     singleShotReady = true;
                 } else if (value == 0) {
