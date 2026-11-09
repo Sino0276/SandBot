@@ -65,6 +65,12 @@ public final class SimCamera {
         return device.inputString("model", null);
     }
 
+    /** 마지막으로 받은 프레임의 시각(입력 frameNanos, 프레임이 없었으면 Long.MIN_VALUE). 태그를 읽지 않는다 */
+    public long frameNanos() {
+        Object nanos = device.input("frameNanos");
+        return nanos instanceof Number ? ((Number) nanos).longValue() : Long.MIN_VALUE;
+    }
+
     /**
      * 마지막으로 받은 프레임(입력 frameNanos·frameWidth·frameHeight·tags, 프레임이 없었으면 null). tags가 없거나 규칙에 맞지
      * 않으면 태그 없는 프레임으로 본다(런타임이 규칙에 맞는 배열만 넣는다).

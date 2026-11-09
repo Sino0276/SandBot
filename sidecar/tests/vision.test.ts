@@ -512,6 +512,41 @@ describe.skipIf(build === null)('사이드카 비전', () => {
   )
 
   it(
+    '틱 경계의 일 안(OpMode 수명 리스너)에서 열리는 중인 포털을 닫아도 전이를 끝내고 닫는다(끝없이 돌지 않음)',
+    async () => {
+      const opModeSource = join(
+        VISION_OPMODES,
+        'org',
+        'firstinspires',
+        'ftc',
+        'teamcode',
+        'VisionCloseInListener.java'
+      )
+      const run = await runVisionSidecar(
+        sidecar,
+        {
+          opModeSource,
+          opModeClass: 'org.firstinspires.ftc.teamcode.VisionCloseInListener',
+          configXml: writeConfig()
+        },
+        WEBCAMS,
+        3,
+        null
+      )
+      expect(
+        run.messages.filter((m) => m.type === 'error'),
+        run.stderr
+      ).toEqual([])
+      expect(results(run)).toEqual([
+        { listener: 'CLOSING_CAMERA_DEVICE' },
+        { final: 'CAMERA_DEVICE_CLOSED' }
+      ])
+      expect(finishedReason(run)).toBe('returned')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
     '필드 자세 라이브러리(BIOBUZZ 없는 Builder + clusterFieldPoses, INCH) + sdkCameraPose → robotPose가 로봇 필드 자세',
     async () => {
       // 부록 B 장면: 카메라(렌즈) 필드 (1.05, −0.30, 0.30) m, 요 −3.108348, 위로 0.931290 rad. 로봇 중심을 렌즈 바로 아래(같은 요)에

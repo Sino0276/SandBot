@@ -166,6 +166,30 @@ public final class VisionPortalTest {
         waitFor(portal, VisionPortal.CameraState.CAMERA_DEVICE_CLOSED, 1);
     }
 
+    /** 같은 웹캠을 닫고 새 포털로 다시 열면 입력에 남은 이전 프레임을 처리하지 않는다(STREAMING 전에 본 프레임은 버린다, 새 스트림의 프레임부터) */
+    public static void testReopenIgnoresStaleFrame() throws Exception {
+        HardwareMap[] map = new HardwareMap[1];
+        VisionHarness.Camera cam = VisionHarness.webcam(map, "logitechC920");
+        cam.tags = AprilTagTest.appendixTags();
+        VisionPortal first = builder(cam, map[0]).addProcessor(new AprilTagProcessor.Builder().build()).build();
+        waitFor(first, VisionPortal.CameraState.STREAMING, 2);
+        VisionHarness.advance(0.2);
+        Check.isTrue(!cam.frames.isEmpty(), "frames while the first portal streams");
+        long staleFrame = cam.frames.get(cam.frames.size() - 1);
+        first.close();
+        waitFor(first, VisionPortal.CameraState.CAMERA_DEVICE_CLOSED, 1);
+        CountingInitTag tag = new CountingInitTag();
+        VisionPortal second = builder(cam, map[0]).addProcessor(tag).build();
+        waitFor(second, VisionPortal.CameraState.STREAMING, 2);
+        Check.equal(0f, second.getFps(), "no frame processed at the STREAMING boundary");
+        Check.equal(0, tag.inits, "not initialised from the stale frame");
+        ArrayList<AprilTagDetection> dets = AprilTagTest.nextDetections(tag);
+        Check.isTrue(!dets.isEmpty() && dets.get(0).frameAcquisitionNanoTime > staleFrame, "first detections come from a new frame");
+        Check.isTrue(second.getFps() > 0, "fps from new frames: " + second.getFps());
+        second.close();
+        VisionHarness.advance(0.4);
+    }
+
     public static void testSameWebcamTwiceIsError() throws Exception {
         HardwareMap[] map = new HardwareMap[1];
         VisionHarness.Camera cam = VisionHarness.webcam(map, "logitechC920");

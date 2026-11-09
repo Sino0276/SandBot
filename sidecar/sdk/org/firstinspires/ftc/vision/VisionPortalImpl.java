@@ -61,6 +61,7 @@ import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
 import org.firstinspires.ftc.vision.apriltag.SandbotAprilTagFrames;
 import org.openftc.easyopencv.OpenCvCamera;
+import org.opencv.core.CvException;
 import org.openftc.easyopencv.OpenCvCameraRotation;
 import org.sandbot.sdk.devices.SandbotCameraCalibrations;
 import org.sandbot.sdk.devices.SandbotCameraModels;
@@ -520,12 +521,17 @@ public class VisionPortalImpl extends VisionPortal
 
     // SandBot: 가상 시간 상태 기계 ------------------------------------------------------------------------------------------
 
-    /** 진행 중 전이가 끝날 때까지 다음 틱을 기다린다(userStateSemaphore 대응). 끼어들기는 삼켰다가 돌아가기 전에 되살린다 */
+    /**
+     * 진행 중 전이가 끝날 때까지 다음 틱을 기다린다(userStateSemaphore 대응). 끼어들기는 삼켰다가 돌아가기 전에 되살린다. 틱 경계의 일
+     * 안(예: 팀이 등록한 OpMode 수명 리스너)이나 틱 밖에서는 다음 경계를 기다릴 수 없어 awaitNextTick이 시간을 보내지 않으므로, 그때는
+     * 실제 세마포어처럼 전이가 끝날 때까지 시간을 보내고(charge) 그 자리에서 전이를 끝낸다(그러지 않으면 끝없이 돈다)
+     */
     private void sandbotAcquire()
     {
         boolean interrupted = false;
         while (sandbotTransition != SANDBOT_NONE)
         {
+            long before = Sim.nanoTime();
             try
             {
                 Sim.clock().awaitNextTick();
@@ -533,6 +539,13 @@ public class VisionPortalImpl extends VisionPortal
             catch (InterruptedException e)
             {
                 interrupted = true;
+                continue;
+            }
+            long now = Sim.nanoTime();
+            if (sandbotTransition != SANDBOT_NONE && now == before)
+            {
+                if (sandbotTransitionEnd > now) Sim.clock().charge(sandbotTransitionEnd - now);
+                sandbotApplyTransitions(Math.max(sandbotTransitionEnd, now));
             }
         }
         if (interrupted)
@@ -556,6 +569,34 @@ public class VisionPortalImpl extends VisionPortal
 
     /** 틱 경계 b(OpMode 스레드, 시계 호출 안): 끝난 전이 → 끝난 처리의 결과 → 새 프레임. 시계를 부르지 않는다 */
     private void sandbotBoundary(long b)
+    {
+        sandbotApplyTransitions(b);
+        sandbotDeliver(b);
+        if (sandbotCamera != null && !sandbotOpenFailed && sandbotCamera.frameNanos() > sandbotLastFrameNanos)
+        {
+            SimCameraFrame frame = sandbotCamera.frame();
+            if (frame != null)
+            {
+                sandbotLastFrameNanos = frame.frameNanos;
+                if (cameraState == CameraState.STREAMING)
+                {
+                    if (sandbotInFlight != null)
+                    {
+                        sandbotWaiting = frame;
+                    }
+                    else
+                    {
+                        sandbotStartProcessing(frame, frame.frameNanos);
+                        sandbotDeliver(b);
+                    }
+                }
+            }
+        }
+        sandbotPublish();
+    }
+
+    /** 끝 시각이 b 이하인 전이를 끝낸다(경계 듣기, 또는 기다릴 수 없는 sandbotAcquire). 시계를 부르지 않는다 */
+    private void sandbotApplyTransitions(long b)
     {
         while (sandbotTransition != SANDBOT_NONE && sandbotTransitionEnd <= b)
         {
@@ -604,29 +645,6 @@ public class VisionPortalImpl extends VisionPortal
                 Sim.removeBoundaryListener(sandbotListener);
             }
         }
-
-        sandbotDeliver(b);
-        if (sandbotCamera != null && !sandbotOpenFailed)
-        {
-            SimCameraFrame frame = sandbotCamera.frame();
-            if (frame != null && frame.frameNanos > sandbotLastFrameNanos)
-            {
-                sandbotLastFrameNanos = frame.frameNanos;
-                if (cameraState == CameraState.STREAMING)
-                {
-                    if (sandbotInFlight != null)
-                    {
-                        sandbotWaiting = frame;
-                    }
-                    else
-                    {
-                        sandbotStartProcessing(frame, frame.frameNanos);
-                        sandbotDeliver(b);
-                    }
-                }
-            }
-        }
-        sandbotPublish();
     }
 
     /** 끝 시각이 b 이하인 처리의 결과를 내고, 기다리는 프레임이 있으면 그 끝 시각에 바로 처리를 시작한다 */
@@ -639,8 +657,9 @@ public class VisionPortalImpl extends VisionPortal
             sandbotInFlight = null;
             if (work.error != null)
             {
-                // 실제는 카메라 스레드의 예외가 EOCV handleFrame → emulateEStop(OpMode 정지)이다. 그 프레임의 검출은 바뀌지 않는다
-                sandbotNotice("visionSolverStop", "solver", work.errorSolver);
+                // 실제는 카메라 스레드의 예외가 EOCV handleFrame → emulateEStop(OpMode 정지)이다. 그 프레임의 검출은 바뀌지 않는다.
+                // 자세 풀이 안내는 OpenCV 예외일 때만(다른 예외도 실제처럼 OpMode를 멈춘다)
+                if (work.error instanceof CvException) sandbotNotice("visionSolverStop", "solver", work.errorSolver);
                 Sim.host().emergencyStop(work.error);
             }
             else

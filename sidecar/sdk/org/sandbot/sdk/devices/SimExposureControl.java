@@ -89,6 +89,6 @@ final class SimExposureControl implements ExposureControl {
 
     /** 출력 exposureMs: Manual이면 노출(ms), 아니면 null */
     synchronized Double exposureMs() {
-        return mode == Mode.Manual ? units * 0.1 : null;
+        return mode == Mode.Manual ? units / 10.0 : null; // 100 µs 단위 → ms(나눗셈이라 33.3처럼 가장 가까운 double)
     }
 }

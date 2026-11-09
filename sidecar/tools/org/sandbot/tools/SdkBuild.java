@@ -746,7 +746,6 @@ public final class SdkBuild {
         }
     }
 
-    /** 소스 폴더의 .java가 아닌 파일(리소스)을 클래스 폴더로 */
     /**
      * --sdk-resource {@code <jar 안 경로>=<파일>}: sidecar/sdk 밖의 파일 하나를 sdk jar의 자원으로 넣는다(spec-4d §1.13: 받은 SDK 내장
      * 웹캠 보정 XML). 없으면 아무것도 하지 않는다.
@@ -765,6 +764,7 @@ public final class SdkBuild {
         Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
     }
 
+    /** 소스 폴더의 .java가 아닌 파일(리소스)을 클래스 폴더로 */
     private static void copyResources(Path sources, Path classes) throws IOException {
         if (!Files.isDirectory(sources)) return;
         try (Stream<Path> walk = Files.walk(sources)) {
