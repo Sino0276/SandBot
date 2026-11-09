@@ -115,6 +115,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await act(async () => root.unmount())
+  // 내린 기즈모의 미룬 해제(setTimeout 0)를 이 시험 안에서 끝낸다(다음 시험의 dispose 감시에 섞이지 않게)
+  await flush()
 })
 
 const select = async (id: string | null): Promise<void> => {

@@ -1,5 +1,6 @@
 import { useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   BufferGeometry,
   CircleGeometry,
@@ -14,11 +15,11 @@ import {
   Vector3,
   type LineSegments
 } from 'three'
-import { readColorSensor } from '../../../../shared/sim/colorSensor'
+import { readColorSensor, type ColorReading } from '../../../../shared/sim/colorSensor'
 import { raycasterFor } from '../../../../shared/sim/fieldRaycast'
-import { readRangeSensor } from '../../../../shared/sim/rangeSensor'
+import { readRangeSensor, type RangeReading } from '../../../../shared/sim/rangeSensor'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
-import { sensorPoseFromMatrix } from '../../../../shared/sim/sensorFrame'
+import { sensorPoseFromMatrix, type SensorPose } from '../../../../shared/sim/sensorFrame'
 import type { Vec3 as SimVec3 } from '../../../../shared/sim/worldSpec'
 import { sensorAim, sensorMountInRobot } from '../../hardware/mounting'
 import { simPoseOf, usePlayStore } from '../../play/playStore'
@@ -28,7 +29,11 @@ import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { documentSeasonId, lockedRunField, runLocksField } from '../field/fieldDisplay'
-import { SELF_HIT_COLOR_REACH, SELF_HIT_DISTANCE_REACH } from '../hardware/sensorReading'
+import {
+  SELF_HIT_COLOR_REACH,
+  SELF_HIT_DISTANCE_REACH,
+  sensorEditPose
+} from '../hardware/sensorReading'
 import { selfHitFor, useSelfHitRefresh } from '../hardware/sensorSelfHit'
 import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { useSceneVisibilityStore } from '../sceneVisibility'
@@ -227,6 +232,18 @@ function GizmoView({
   )
 }
 
+// 두 센서 자세가 같은가(행렬 곱의 반올림 차는 같다고 본다) [가정: 1e-12 m·1e-12는 double 행렬 곱 몇 번의 반올림보다 크고
+// 눈에 띄는 차보다 훨씬 작다]
+function samePose(a: SensorPose, b: SensorPose): boolean {
+  const near = (x: number, y: number): boolean => Math.abs(x - y) <= 1e-12
+  return (
+    near(a.origin.x, b.origin.x) &&
+    near(a.origin.y, b.origin.y) &&
+    near(a.origin.z, b.origin.z) &&
+    a.rotation.every((v, i) => near(v, b.rotation[i]))
+  )
+}
+
 const objectBounds =
   (objects: SceneObjects) =>
   (id: string): ReturnType<typeof objectLocalBounds> =>
@@ -242,7 +259,23 @@ function SensorGizmo({
   const objects = useSceneStore((state) => state.objects)
   const fieldDoc = useSceneStore((state) => state.field)
   const revision = useSceneStore((state) => state.geometryRevision)
-  const run = usePlayStore((state) => state.run)
+  // 기즈모가 쓰는 실행 값만 구독한다(활성·떼어 놓음·로봇·센서 장착·관절·필드). 텔레메트리·장치마다 run이 새 객체가 되어도
+  // 이것들은 그대로라 다시 계산하지 않는다(FieldView의 lockedRunField와 같은 이유). 계산은 지금 run을 읽는다.
+  const runKey = usePlayStore(
+    useShallow((state) => {
+      const current = state.run
+      return current
+        ? [
+            current.phase === 'finished',
+            current.detached,
+            current.robotId,
+            current.sensors,
+            current.joints,
+            current.field
+          ]
+        : []
+    })
+  )
   // 그 로봇이 실행 중 자세를 받을 때만 자세를 구독한다(약 60 Hz, 그 밖에는 다시 그리지 않는다)
   const simPose = usePlayStore((state) => {
     const current = simPoseOf(state)
@@ -254,6 +287,8 @@ function SensorGizmo({
   const geometry = useMemo(() => {
     void revision
     void refresh
+    void runKey
+    const run = usePlayStore.getState().run
     const bounds = objectBounds(objects)
     const play = { run, simPose }
     const pose = sensorGizmoPose(objects, target, play, preview, bounds)
@@ -283,8 +318,20 @@ function SensorGizmo({
         sensorAim(target.type, target.component.props),
         bounds
       )
+      // reach는 인스펙터 값 줄과 같은 편집 자세(관절 0) 값의 거리다(미리보기·실행 중에도 같은 열쇠라 selfHitFor 기억이
+      // 카드와 기즈모 사이에서 번갈아 다시 계산되지 않는다). 표시 자세가 편집 자세면 이미 읽은 값을 쓴다.
+      let editReading: RangeReading | ColorReading | null = null
+      if (mount) {
+        const editPose = sensorEditPose(objects, target.robotId, mount)
+        editReading =
+          reading && samePose(editPose, sensorPose)
+            ? reading
+            : target.type === 'distanceSensor'
+              ? readRangeSensor(caster, editPose)
+              : readColorSensor(caster, editPose)
+      }
       const reach =
-        reading?.distance ??
+        editReading?.distance ??
         (target.type === 'distanceSensor' ? SELF_HIT_DISTANCE_REACH : SELF_HIT_COLOR_REACH)
       const hit = mount
         ? selfHitFor(
@@ -309,7 +356,7 @@ function SensorGizmo({
       excluded,
       selfHitDistance
     })
-  }, [objects, fieldDoc, revision, run, simPose, preview, refresh, target])
+  }, [objects, fieldDoc, revision, runKey, simPose, preview, refresh, target])
   useEffect(() => {
     invalidate()
     return () => invalidate()

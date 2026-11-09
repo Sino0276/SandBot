@@ -83,6 +83,29 @@ function subtreeSet(objects: SceneObjects, id: string): Set<string> {
 const rayRobot = new Ray()
 const rayLocal = new Ray()
 const hitPoint = new Vector3()
+const boxCenter = new Vector3()
+
+// 넓은 단계의 앞 거르기: 상자의 외접 구가 광선 원뿔(꼭짓점 origin, 축 axis, 반각의 cos·sin)이나 reach 밖이면 어느 광선도
+// 상자에 닿지 않는다(보수적: 구는 상자를 품는다). 메시 1761개에서 메시마다 광선 9개의 상자 검사를 한 번으로 줄인다.
+function outsideCone(
+  box: Box3,
+  origin: Vector3,
+  axis: Vector3,
+  cos: number,
+  sin: number,
+  far: number
+): boolean {
+  box.getCenter(boxCenter).sub(origin)
+  const radius =
+    0.5 * Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+  const distance = boxCenter.length()
+  if (distance - radius > far) return true
+  const along = boxCenter.dot(axis)
+  const across = Math.sqrt(Math.max(0, distance * distance - along * along))
+  // 구 중심에서 원뿔 겉면까지의 거리(가장 가까운 점이 꼭짓점이면 꼭짓점까지의 거리)
+  const gap = along * cos + across * sin >= 0 ? across * cos - along * sin : distance
+  return gap > radius
+}
 
 // reachM: 편집 자세 값의 거리(없으면 거리 센서 1.2 m, 컬러 센서 6 in)
 export function sensorSelfHit(
@@ -110,6 +133,10 @@ export function sensorSelfHit(
   )
   const skip = subtreeSet(objects, sensorObjectId)
   const far = Math.max(0, reachM - SELF_HIT_ORIGIN_OFFSET)
+  // 모든 광선을 품는 원뿔(꼭짓점 origin, 축 axis, 반각 = 바깥 광선의 축과의 각)
+  const coneHalf = Math.max(0, ...directions.map((d) => Math.acos(Math.min(1, d.dot(axis)))))
+  const coneCos = Math.cos(coneHalf)
+  const coneSin = Math.sin(coneHalf)
   let axisHit: { partId: string; t: number } | null = null
   let outerHit = false
   for (const entry of robotMeshes(objects, robotId)) {
@@ -121,6 +148,7 @@ export function sensorSelfHit(
     const local = geometry.boundingBox
     if (!local || local.isEmpty()) continue
     const box = robotBox(entry, local)
+    if (outsideCone(box, origin, axis, coneCos, coneSin, far)) continue
     for (let i = 0; i < directions.length; i++) {
       // 바깥 광선은 이미 하나 맞았으면 더 볼 필요가 없다(축은 가장 가까운 파트를 찾는다)
       if (i > 0 && (outerHit || axisHit)) break
