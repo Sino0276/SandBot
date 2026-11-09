@@ -578,7 +578,14 @@ describe('buildWorldSpec', () => {
 
   it('로봇이 아니거나 없으면 null, 메인이 받지 않을 값이면 null과 worldInvalid', () => {
     const objects = mecanumRobot()
-    const none = { spec: null, warnings: [], jointObjectIds: [], jointMotorIds: [] }
+    const none = {
+      spec: null,
+      warnings: [],
+      jointObjectIds: [],
+      jointMotorIds: [],
+      sensors: [],
+      sensorExclusions: new Map()
+    }
     expect(buildWorldSpec(objects, 'FL', SETTINGS)).toEqual(none)
     expect(buildWorldSpec(objects, 'nope', SETTINGS)).toEqual(none)
     objects.R = { ...objects.R, transform: { position: [50, 0, 0], rotation: [0, 0, 0] } }

@@ -156,7 +156,14 @@ describe('withRunField(B3·B9·B12)', () => {
   })
 
   it('spec이 없으면 그대로 돌려준다', () => {
-    const none = { spec: null, warnings: [], jointObjectIds: [], jointMotorIds: [] }
+    const none = {
+      spec: null,
+      warnings: [],
+      jointObjectIds: [],
+      jointMotorIds: [],
+      sensors: [],
+      sensorExclusions: new Map()
+    }
     expect(withRunField(none, { season: 'x' }, runFieldOf({ season: 'x' }, START), keyT)).toBe(none)
   })
 
