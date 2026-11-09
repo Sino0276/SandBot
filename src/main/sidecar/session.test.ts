@@ -580,8 +580,14 @@ describe('SidecarSession 끝내기', () => {
       ],
       [
         'protocol',
-        (proc) => proc.line({ type: 'hello', protocol: 4, runtime: 'x', java: '21' }),
-        'protocol error: protocol 4'
+        (proc) =>
+          proc.line({
+            type: 'hello',
+            protocol: SIDECAR_PROTOCOL_VERSION + 1,
+            runtime: 'x',
+            java: '21'
+          }),
+        `protocol error: protocol ${SIDECAR_PROTOCOL_VERSION + 1}`
       ]
     ]
     for (const [, act, detail] of cases) {

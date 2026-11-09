@@ -454,7 +454,8 @@ describe('사이드카 빌드 결과와 명령', () => {
       jitter: 0.1,
       seed: 42,
       startEpochMillis: 1234,
-      stallMillis: 2000
+      stallMillis: 2000,
+      teamCalibrations: null
     })
   })
 
