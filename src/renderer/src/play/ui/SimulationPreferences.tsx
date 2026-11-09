@@ -65,7 +65,8 @@ function SimulationPreferences(): React.JSX.Element {
           ariaLabel={t('preferences.simulation.seed')}
           value={settings.seed}
           digits={0}
-          disabled={settings.jitter === 0}
+          // 센서 잡음도 이 시드를 쓴다(spec-4c §1.6) — 오차를 꺼도 잡음을 켰으면 고를 수 있다
+          disabled={settings.jitter === 0 && !settings.sensorNoise}
           parse={parseSeed}
           title={t('preferences.simulation.seedHint')}
           onCommit={(seed) => updateSettings({ seed: clampSeed(seed) })}

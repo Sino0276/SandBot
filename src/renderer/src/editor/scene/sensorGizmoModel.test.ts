@@ -10,6 +10,7 @@ import { ROBOT_COM_COLOR } from '../mass/CenterOfMassIndicator'
 import { IMU_LOGO_COLOR, IMU_USB_COLOR } from './ImuIndicators'
 import {
   COLOR_GIZMO_REACH,
+  DISC_SEGMENTS,
   GIZMO_OUTER_THETA,
   SENSOR_COLOR_LINE_COLOR,
   SENSOR_DISTANCE_COLOR,
@@ -259,6 +260,18 @@ describe('기즈모 형상', () => {
     expect(near.disc).not.toBeNull()
     expect(near.disc!.radius).toBeCloseTo(0.6 * 0.015, 12)
     expect(near.disc!.center.z).toBeCloseTo(0, 12)
+    // 4c 리뷰: 같은 반경의 닫힌 테두리(중립색 실선으로 그린다, 바닥 평면 위)
+    const outline = near.disc!.outline
+    expect(outline).toHaveLength(DISC_SEGMENTS)
+    for (const [i, segment] of outline.entries()) {
+      const r = Math.hypot(
+        segment.from.x - near.disc!.center.x,
+        segment.from.y - near.disc!.center.y
+      )
+      expect(r).toBeCloseTo(0.6 * 0.015, 12)
+      expect(segment.from.z).toBeCloseTo(0, 12)
+      expect(segment.to).toEqual(outline[(i + 1) % outline.length].from)
+    }
     // 드라이버 값 744.72·281·215.45를 최댓값으로: 빨강
     expect(near.disc!.color).toBe(predictedColor(reading))
     expect(predictedColor(reading)).toBe('#ff604a')

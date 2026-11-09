@@ -1,11 +1,13 @@
-import { BoxGeometry } from 'three'
+import { BoxGeometry, BufferGeometry } from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { MeshBVH } from 'three-mesh-bvh'
 import { afterEach, describe, expect, it } from 'vitest'
 import { sensorMountInRobot, type SensorMountInRobot } from '../../hardware/mounting'
 import { disposeGeometry, registerGeometry } from '../../scene/geometryRegistry'
 import { objectLocalBounds } from '../../scene/localBounds'
 import type { SceneObject, SceneObjects, Transform } from '../../scene/model'
-import { sensorSelfHit } from './sensorSelfHit'
+import { getGeometry } from '../../scene/geometryRegistry'
+import { selfHitFor, sensorSelfHit } from './sensorSelfHit'
 
 // 자기 로봇 가림(spec-4c §1.9, C13): 편집 자세에서 축·바깥 광선을 그 로봇의 CAD 메시(BVH)에 쏜다.
 
@@ -93,7 +95,7 @@ describe('sensorSelfHit', () => {
     expect(hit?.kind === 'axis' && hit.distance).toBeCloseTo(0.33 - 0.01 - 0.215, 6)
   })
 
-  it('바깥 광선만 맞으면 partial, BVH가 없는 메시는 건너뛴다', () => {
+  it('바깥 광선만 맞으면 partial', () => {
     box('g:body', 0.4, 0.4, 0.2)
     box('g:sensor', 0.01, 0.01, 0.01)
     // 축(z 0.1)에서 4–10 cm 위의 판: 0.3 m 앞에서 위 모선(11.2°)은 축보다 약 6 cm 위
@@ -110,11 +112,50 @@ describe('sensorSelfHit', () => {
     ).toEqual({
       kind: 'partial'
     })
+  })
+
+  it('BVH가 아직 없는(쉬는 시간 미리 만들기 전) 메시도 넓은 단계를 지나면 그 자리에서 만들어 본다', () => {
+    // 4c 리뷰: 건너뛰면 빈 결과가 selfHitFor 기억에 남아 BVH가 생긴 뒤에도 경고가 보이지 않았다
     box('g:nobvh', 0.4, 0.4, 0.2, false)
-    const noBvh = robot({}, 'g:nobvh')
-    expect(
-      sensorSelfHit(noBvh, 'bot', 'sensor', mountFor(noBvh, Math.PI), 'distanceSensor', 1.2)
-    ).toBeNull()
+    box('g:sensor', 0.01, 0.01, 0.01)
+    box('g:faraway', 0.01, 0.01, 0.01, false)
+    const objects = robot({ away: part('away', 'bot', at(-0.3, 0.3, 0.5), 'g:faraway') }, 'g:nobvh')
+    const mount = mountFor(objects, Math.PI)
+    const hit = selfHitFor('c:nobvh', objects, 0, 'bot', 'sensor', mount, 'distanceSensor', 1.2)
+    expect(hit?.kind === 'axis' && hit.partId).toBe('body')
+    expect(hit?.kind === 'axis' && hit.distance).toBeCloseTo(0.005, 6)
+    expect(getGeometry('g:nobvh')!.boundsTree).toBeDefined()
+    // 원뿔 밖 메시는 만들지 않는다(1761개 CAD에서 센서 하나가 모든 BVH를 만들지 않게)
+    expect(getGeometry('g:faraway')!.boundsTree).toBeUndefined()
+  })
+
+  it('광선 원점이 메시 경계 상자 안이면 상자 진입 거리를 0으로 본다(더 가까운 파트를 놓치지 않음)', () => {
+    // 4c 리뷰: 한 메시로 합친 막대 셋(x −0.1·0.05·0.3)의 상자가 원점(x 0)을 품는다. 상자를 나가는 거리(약 0.3 m)를
+    // 앞 파트의 거리(0.1 m)나 reach와 비교해 0.045 m의 막대를 건너뛰었다
+    const bar = (x: number): BufferGeometry => new BoxGeometry(0.01, 0.1, 0.1).translate(x, 0, 0)
+    const merged = mergeGeometries([bar(-0.1), bar(0.05), bar(0.3)])!
+    registerGeometry('g:bars', merged)
+    registered.push('g:bars')
+    box('g:sensor', 0.01, 0.01, 0.01)
+    box('g:cube', 0.02, 0.02, 0.02)
+    // 센서 앞면이 x 0이 되게(센서 상자 중심 −0.005), 막대 메시는 원점 둘레
+    const objects: SceneObjects = {
+      bot: { id: 'bot', name: 'Bot', kind: 'robot', parentId: null, transform: at(0, 0, 0) },
+      // 문서 순서가 앞인 다른 파트 A(0.101 m)
+      a: part('a', 'bot', at(0.111, 0, 0.1), 'g:cube'),
+      bars: part('bars', 'bot', at(0, 0, 0.1), 'g:bars'),
+      sensor: part('sensor', 'bot', at(-0.005, 0, 0.1), 'g:sensor')
+    }
+    const mount = mountFor(objects, 0)
+    expect(mount.position.x).toBeCloseTo(0, 9)
+    const hit = sensorSelfHit(objects, 'bot', 'sensor', mount, 'distanceSensor', 1.2)
+    expect(hit?.kind === 'axis' && hit.partId).toBe('bars')
+    expect(hit?.kind === 'axis' && hit.distance).toBeCloseTo(0.045, 6)
+    // reach가 상자 출구보다 짧아도(컬러 6 in) 0.045 m의 막대를 본다
+    const alone = { ...objects }
+    delete alone.a
+    const color = sensorSelfHit(alone, 'bot', 'sensor', mount, 'colorSensor', 0.15)
+    expect(color?.kind === 'axis' && color.partId).toBe('bars')
   })
 
   it('메시 1761개 로봇에서 센서 하나의 시간(기록)', () => {

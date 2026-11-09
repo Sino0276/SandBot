@@ -3,6 +3,7 @@ import { Box3, DoubleSide, Matrix4, Ray, Vector3 } from 'three'
 import { rotationMatrix } from '../../../../shared/sim/seasons/fieldGeometry'
 import type { SensorComponentType, SensorMountInRobot } from '../../hardware/mounting'
 import { getGeometry } from '../../scene/geometryRegistry'
+import { buildBvh } from '../../scene/meshBvh'
 import { childrenInDocument, transformToMatrix, type SceneObjects } from '../../scene/model'
 import { isChangeOpen, onChangeClosed } from '../history'
 import { sensorOuterRays } from '../scene/sensorGizmoModel'
@@ -12,8 +13,11 @@ import { sensorOuterRays } from '../scene/sensorGizmoModel'
 // 시뮬레이터에는 로봇 형상이 없으므로 값은 바꾸지 않고 경고만 한다(인스펙터 값 줄, 씬 뷰 점선, INIT Console
 // worldSensorSelfHit).
 //
-// 넓은 단계는 메시의 로봇 좌표 경계 상자, 좁은 단계는 등록 때 만든 BVH(scene/meshBvh.ts, MeshBVH.raycastFirst)다. BVH가
-// 아직 없으면 그 메시는 건너뛴다(쉬는 시간에 만들어지면 geometryRevision과 관계없이 다음 계산에서 본다).
+// 넓은 단계는 메시의 로봇 좌표 경계 상자, 좁은 단계는 메시의 BVH(scene/meshBvh.ts, MeshBVH.raycastFirst)다. 쉬는 시간의
+// 미리 만들기가 아직 그 메시에 닿지 않았으면 넓은 단계를 지난 메시만 그 자리에서 만든다(cadMeshRaycast와 같음). 건너뛰면
+// 빈 결과가 selfHitFor 기억에 남고, BVH가 다 만들어져도 문서·geometryRevision이 그대로라 다시 계산하지 않기 때문이다
+// (INIT의 Console 경고와 인스펙터·기즈모가 달라진다). 아직 등록되지 않은(읽는 중) 형상은 건너뛰고, 등록하면
+// geometryRevision이 바뀌어 다시 계산한다.
 
 // axis: 축 광선이 reach보다 가까이에서 그 파트에 맞음(distance m, 하우징 앞면부터, 가장 가까운 파트). partial: 바깥 광선만 맞음.
 export type SelfHit = { kind: 'axis'; partId: string; distance: number } | { kind: 'partial' }
@@ -142,13 +146,14 @@ export function sensorSelfHit(
   for (const entry of robotMeshes(objects, robotId)) {
     if (skip.has(entry.id)) continue
     const geometry = getGeometry(entry.geometryId)
-    const bvh = geometry?.boundsTree
-    if (!geometry || !bvh) continue
+    if (!geometry) continue
     if (!geometry.boundingBox) geometry.computeBoundingBox()
     const local = geometry.boundingBox
     if (!local || local.isEmpty()) continue
     const box = robotBox(entry, local)
     if (outsideCone(box, origin, axis, coneCos, coneSin, far)) continue
+    // 원점이 상자 안이면 광선은 상자 안에서 시작한다(three Ray.intersectBox는 그때 나가는 점을 준다)
+    const inside = box.containsPoint(origin)
     for (let i = 0; i < directions.length; i++) {
       // 바깥 광선은 이미 하나 맞았으면 더 볼 필요가 없다(축은 가장 가까운 파트를 찾는다)
       if (i > 0 && (outerHit || axisHit)) break
@@ -156,9 +161,9 @@ export function sensorSelfHit(
       const boxHit = rayRobot.intersectBox(box, hitPoint)
       if (!boxHit) continue
       const limit = i === 0 && axisHit ? axisHit.t : far
-      if (boxHit.distanceTo(origin) > limit) continue
+      if (!inside && boxHit.distanceTo(origin) > limit) continue
       rayLocal.copy(rayRobot).applyMatrix4(entry.toLocal)
-      const hit = bvh.raycastFirst(rayLocal, DoubleSide, 0, limit)
+      const hit = buildBvh(geometry).raycastFirst(rayLocal, DoubleSide, 0, limit)
       if (!hit || !(hit.distance <= limit)) continue
       if (i === 0) axisHit = { partId: entry.id, t: hit.distance }
       else outerHit = true

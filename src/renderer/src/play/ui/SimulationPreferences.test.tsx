@@ -57,4 +57,19 @@ describe('SimulationPreferences 센서 잡음', () => {
     Object.assign(initial, { settings: { ...DEFAULT_PLAY_SETTINGS, sensorNoise: false } })
     expect(label(renderToStaticMarkup(<SimulationPreferences />))).not.toContain('checked=""')
   })
+
+  // 4c 리뷰: 잡음은 Hub 타이밍 시드 칸을 함께 쓰므로 오차(기본 끔)가 꺼져도 잡음을 켰으면 시드를 고칠 수 있다
+  it('시드 칸은 오차와 잡음이 모두 꺼졌을 때만 비활성이다', () => {
+    const seedInput = (settings: object): string => {
+      Object.assign(initial, { settings: { ...DEFAULT_PLAY_SETTINGS, ...settings } })
+      const html = renderToStaticMarkup(<SimulationPreferences />)
+      const match = html.match(/<input[^>]*aria-label="시드"[^>]*>/)
+      expect(match).not.toBeNull()
+      return match![0]
+    }
+    expect(seedInput({ jitter: 0, sensorNoise: false })).toContain('disabled=""')
+    expect(seedInput({ jitter: 0, sensorNoise: true })).not.toContain('disabled=""')
+    expect(seedInput({ jitter: 0.1, sensorNoise: false })).not.toContain('disabled=""')
+    expect(ko.preferences.simulation.seedHint).toContain('센서 잡음')
+  })
 })

@@ -238,9 +238,19 @@ export type SensorGizmoGeometry = {
   warning: GizmoSegment[]
   // 거리 값: 유효하면 구, 문턱 아래(신호는 있음)면 속 빈 고리(축에 수직)
   value: { kind: 'sphere' | 'ring'; at: SimVec3; normal: SimVec3 } | null
-  // 컬러 발자국: 축 교차에서 축에 수직인 반경 0.6·d 원, 예측 색(드라이버 값 r·g·b를 최댓값으로 나눈 sRGB)
-  disc: { center: SimVec3; normal: SimVec3; radius: number; color: string } | null
+  // 컬러 발자국: 축 교차에서 축에 수직인 반경 0.6·d 원, 예측 색(드라이버 값 r·g·b를 최댓값으로 나눈 sRGB). 테두리
+  // outline은 같은 반경의 닫힌 다각형(중립색 실선, 명세 §1.9 — 예측 색이 바닥 색과 비슷해도 원이 보이게)
+  disc: {
+    center: SimVec3
+    normal: SimVec3
+    radius: number
+    color: string
+    outline: GizmoSegment[]
+  } | null
 }
+
+// 발자국 원의 꼭짓점 수(채움 CircleGeometry와 테두리가 같은 다각형) [가정: 반경 1 cm 안팎의 원이 매끄럽게 보이는 수]
+export const DISC_SEGMENTS = 48
 
 const along = (o: SimVec3, d: SimVec3, t: number): SimVec3 => ({
   x: o.x + d.x * t,
@@ -327,12 +337,25 @@ export function sensorGizmoGeometry(input: SensorGizmoInput): SensorGizmoGeometr
     const reading = !input.excluded ? (input.reading as ColorReading | null) : null
     if (reading && axisRay.hit) {
       const d = axisRay.t
-      disc = {
-        center: axisRay.end,
-        normal: axis,
-        radius: COLOR_FOOTPRINT_SPREAD * d,
-        color: predictedColor(reading)
+      const radius = COLOR_FOOTPRINT_SPREAD * d
+      // 축에 수직인 두 센서 축(y·z)으로 원을 돈다
+      const u = rotate(pose, { x: 0, y: 1, z: 0 })
+      const v = rotate(pose, { x: 0, y: 0, z: 1 })
+      const rim = (k: number): SimVec3 => {
+        const angle = (2 * Math.PI * k) / DISC_SEGMENTS
+        const c = Math.cos(angle) * radius
+        const s = Math.sin(angle) * radius
+        const at = axisRay.end
+        return {
+          x: at.x + u.x * c + v.x * s,
+          y: at.y + u.y * c + v.y * s,
+          z: at.z + u.z * c + v.z * s
+        }
       }
+      const outline: GizmoSegment[] = []
+      for (let k = 0; k < DISC_SEGMENTS; k++)
+        outline.push({ from: rim(k), to: rim((k + 1) % DISC_SEGMENTS) })
+      disc = { center: axisRay.end, normal: axis, radius, color: predictedColor(reading), outline }
     }
   }
   return {

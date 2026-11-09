@@ -210,6 +210,8 @@ const ko = {
     },
     lengthInputHint:
       '단위를 붙여 입력할 수 있습니다 (예: 12in, 30cm, 150mm). 없으면 {{unit}}로 읽습니다.',
+    angleRejected:
+      '각도로 읽을 수 없습니다. 도(°) 단위 숫자를 넣거나 rad를 붙이세요. Esc로 되돌립니다.',
     angleInputHint: '도(°) 단위입니다. rad를 붙여 라디안으로 입력할 수도 있습니다.'
   },
   panels: {
@@ -639,7 +641,7 @@ const ko = {
       jitterHint:
         '하드웨어 호출마다 가상 시간이 Hub 타이밍 표만큼 흐릅니다. 오차를 켜면 비용마다 그 범위 안에서 고르게 뽑아 실제 허브처럼 루프 시간이 조금씩 달라집니다. 시드가 같으면 결과도 같습니다.',
       seed: '시드',
-      seedHint: '오차를 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
+      seedHint: '오차와 센서 잡음을 뽑는 순서(정수). 같은 코드·입력·시드면 같은 결과가 나옵니다.',
       autoStop: 'Autonomous는 START 뒤 {{seconds}}초에 자동으로 STOP (Driver Station과 같음)',
       battery: '배터리 전압',
       batteryUnit: 'V',

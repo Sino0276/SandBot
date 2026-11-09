@@ -206,6 +206,7 @@ const en: Messages = {
     },
     lengthInputHint:
       'You can type a unit (e.g. 12in, 30cm, 150mm). Without one, the value is read in {{unit}}.',
+    angleRejected: 'Not an angle. Enter a number in degrees (°) or add rad. Press Esc to revert.',
     angleInputHint: 'Degrees (°). Add rad to enter radians.'
   },
   panels: {
@@ -627,7 +628,7 @@ const en: Messages = {
         'Each hardware call advances virtual time by the Hub timing table. With jitter on, each cost is drawn uniformly within the range so loop times vary a little like a real hub. The same seed gives the same result.',
       seed: 'Seed',
       seedHint:
-        'The order the jitter is drawn in (an integer). Same code, inputs and seed give the same result.',
+        'The order the jitter and sensor noise are drawn in (an integer). Same code, inputs and seed give the same result.',
       autoStop: 'Stop Autonomous automatically {{seconds}} s after START (like the Driver Station)',
       battery: 'Battery voltage',
       batteryUnit: 'V',

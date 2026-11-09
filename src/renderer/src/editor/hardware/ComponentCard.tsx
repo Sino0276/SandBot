@@ -410,6 +410,8 @@ function ComponentCard({
             value={Number(value) / DEG}
             digits={ANGLE_DIGITS}
             title={t('units.angleInputHint')}
+            // 읽지 못한 글자는 남겨 틀렸다고 보인다(spec-4c E2E 1, 조준 방향·높이각과 리밋 각도)
+            invalidTitle={t('units.angleRejected')}
             parse={(text) => {
               const radians = parseAngle(text)
               return radians === null ? null : radians / DEG

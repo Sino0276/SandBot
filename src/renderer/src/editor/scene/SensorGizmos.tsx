@@ -39,6 +39,7 @@ import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { useSceneVisibilityStore } from '../sceneVisibility'
 import { useDeferredDispose } from './deferredDispose'
 import {
+  DISC_SEGMENTS,
   SENSOR_COLOR_LINE_COLOR,
   SENSOR_DISTANCE_COLOR,
   SENSOR_EXCLUDED_COLOR,
@@ -150,7 +151,7 @@ function Lines({
 }
 
 function Disc({ disc }: { disc: NonNullable<SensorGizmoGeometry['disc']> }): React.JSX.Element {
-  const geometry = useMemo(() => new CircleGeometry(disc.radius, 48), [disc.radius])
+  const geometry = useMemo(() => new CircleGeometry(disc.radius, DISC_SEGMENTS), [disc.radius])
   useDeferredDispose(geometry)
   const material = useMemo(
     () =>
@@ -228,6 +229,10 @@ function GizmoView({
         />
       )}
       {geometry.disc && <Disc disc={geometry.disc} />}
+      {/* 발자국 테두리는 중립색 실선(명세 §1.9, 발자국은 빠지지 않은 컬러 센서에만 있다) */}
+      {geometry.disc && (
+        <Lines segments={geometry.disc.outline} material={materials.line.color} dashed={false} />
+      )}
     </group>
   )
 }
