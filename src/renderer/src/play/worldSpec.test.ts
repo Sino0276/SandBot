@@ -584,7 +584,9 @@ describe('buildWorldSpec', () => {
       jointObjectIds: [],
       jointMotorIds: [],
       sensors: [],
-      sensorExclusions: new Map()
+      sensorExclusions: new Map(),
+      cameras: [],
+      cameraExclusions: new Map()
     }
     expect(buildWorldSpec(objects, 'FL', SETTINGS)).toEqual(none)
     expect(buildWorldSpec(objects, 'nope', SETTINGS)).toEqual(none)

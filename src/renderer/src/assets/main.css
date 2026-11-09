@@ -2921,6 +2921,18 @@ button.usage-header:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Field 인스펙터 AprilTag 묶음 줄(4d): 긴 Java 글자는 줄을 바꾸고 [복사]는 오른쪽 */
+.field-row.field-cluster-row {
+  grid-template-columns: 1fr auto;
+  align-items: start;
+}
+
+.field-cluster-text {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 /* 비활성 프리셋의 이유 줄(선택칸 아래, Windows 드롭다운은 option title을 보이지 않는다) */
 .inspector-note.is-reason {
   color: #e0b341;

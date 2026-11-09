@@ -120,6 +120,19 @@ export function sensorSelfHit(
   type: SensorComponentType,
   reachM: number
 ): SelfHit | null {
+  return castSelfHit(objects, robotId, sensorObjectId, mount, sensorOuterRays(type), reachM)
+}
+
+// 센서 틀의 축(+X)과 바깥 광선들(센서 틀 방향)을 하우징 앞면에서 그 로봇의 CAD 메시에 쏜다(거리·컬러 센서와 4d 웹캠
+// editor/hardware/cameraSelfHit.ts가 같이 쓴다). 센서 오브젝트 자신과 그 하위의 형상은 뺀다.
+export function castSelfHit(
+  objects: SceneObjects,
+  robotId: string,
+  sensorObjectId: string,
+  mount: Pick<SensorMountInRobot, 'position' | 'rotation'>,
+  outerRays: readonly { x: number; y: number; z: number }[],
+  reachM: number
+): SelfHit | null {
   if (!objects[robotId] || !objects[sensorObjectId] || !(reachM > 0)) return null
   const rotation = rotationMatrix(mount.rotation)
   const toRobot = (d: { x: number; y: number; z: number }): Vector3 =>
@@ -129,7 +142,7 @@ export function sensorSelfHit(
       rotation[6] * d.x + rotation[7] * d.y + rotation[8] * d.z
     )
   // 축 광선이 먼저, 바깥 광선이 그 뒤(센서 틀 → 로봇 좌표)
-  const directions = [toRobot({ x: 1, y: 0, z: 0 }), ...sensorOuterRays(type).map(toRobot)]
+  const directions = [toRobot({ x: 1, y: 0, z: 0 }), ...outerRays.map(toRobot)]
   const axis = directions[0]
   const origin = new Vector3(mount.position.x, mount.position.y, mount.position.z).addScaledVector(
     axis,
@@ -180,7 +193,7 @@ export function sensorSelfHit(
 
 type CacheEntry = { objects: SceneObjects; revision: number; key: string; result: SelfHit | null }
 const cache = new Map<string, CacheEntry>()
-// 기억이 끝없이 늘지 않게(센서 컴포넌트 수만큼이면 충분하다) [가정: 한 씬의 거리·컬러 센서는 이보다 적다]
+// 기억이 끝없이 늘지 않게(센서 컴포넌트 수만큼이면 충분하다) [가정: 한 씬의 거리·컬러 센서·웹캠은 이보다 적다]
 const CACHE_LIMIT = 256
 
 let refreshVersion = 0
@@ -230,6 +243,21 @@ export function selfHitFor(
     type,
     reachM
   ])
+  return memoSelfHit(componentId, objects, revision, key, () =>
+    sensorSelfHit(objects, robotId, sensorObjectId, mount, type, reachM)
+  )
+}
+
+// 기억 한곳(거리·컬러 센서의 selfHitFor와 4d 웹캠 editor/hardware/cameraSelfHit.ts의 cameraSelfHitFor가 같이 쓴다. 컴포넌트
+// id는 종류와 관계없이 유일하다). key는 부르는 쪽이 정한 입력 글자이고, 문서·revision·key가 같으면 compute를 부르지 않는다.
+// 핸들 드래그 중에는 마지막 결과를 쓰고 묶음이 닫히면 구독자를 다시 그린다.
+export function memoSelfHit(
+  componentId: string,
+  objects: SceneObjects,
+  revision: number,
+  key: string,
+  compute: () => SelfHit | null
+): SelfHit | null {
   const entry = cache.get(componentId)
   if (entry && entry.objects === objects && entry.revision === revision && entry.key === key)
     return entry.result
@@ -237,7 +265,7 @@ export function selfHitFor(
     refreshWhenChangeCloses()
     return entry.result
   }
-  const result = sensorSelfHit(objects, robotId, sensorObjectId, mount, type, reachM)
+  const result = compute()
   if (cache.size >= CACHE_LIMIT && !cache.has(componentId)) cache.clear()
   cache.set(componentId, { objects, revision, key, result })
   return result

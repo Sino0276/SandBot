@@ -1447,8 +1447,13 @@ const ko = {
       // tags: 묶음별 "RED AUDIENCE 34·35·36·37"
       visible: '보이는 태그: {{tags}}',
       none: '보이는 태그 없음',
-      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리)
-      rejected: '(가려짐 {{occluded}} · 작음 {{tooSmall}} · 스침 {{grazing}})',
+      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리, 0이 아닌 것만 rejectedParts를 ", "로 이어 list에)
+      rejected: '({{list}})',
+      rejectedParts: {
+        occluded: '가려짐 {{count}}',
+        tooSmall: '작음 {{count}}',
+        grazing: '스침 {{count}}'
+      },
       hint: 'VisionPortal 기본(640×480, 데시메이션 3)으로 편집 자세에서 보이는 태그입니다. BIOBUZZ 태그는 바닥 위 0.9–1.3 m의 HIVE CELL 아래면에서 60° 아래를 봅니다. 카메라를 위로 25–35° 기울이면 잘 보입니다(기본 30°).',
       // 줄 끝의 경고(여럿이면 이 순서)
       tails: {

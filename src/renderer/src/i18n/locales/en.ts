@@ -1445,8 +1445,13 @@ const en: Messages = {
       // tags: 묶음별 "RED AUDIENCE 34·35·36·37"
       visible: 'Visible tags: {{tags}}',
       none: 'No visible tags',
-      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리)
-      rejected: '(occluded {{occluded}} · too small {{tooSmall}} · grazing {{grazing}})',
+      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리, 0이 아닌 것만 rejectedParts를 ", "로 이어 list에)
+      rejected: '({{list}})',
+      rejectedParts: {
+        occluded: 'occluded {{count}}',
+        tooSmall: 'too small {{count}}',
+        grazing: 'grazing {{count}}'
+      },
       hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down. Tilting the camera up 25–35° sees them well (default 30°).',
       // 줄 끝의 경고(여럿이면 이 순서)
       tails: {
