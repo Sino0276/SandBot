@@ -5,8 +5,8 @@
 //  - 메카넘 TeleOp + 고정 게임패드(앞으로 1초, 그다음 왼쪽으로 회전) → 기대 방향 이동, 팀 코드가 읽은 IMU·엔코더·Pinpoint
 //  - RUN_TO_POSITION Autonomous의 while (isBusy())가 정한 가상 시간 안에 끝나고 목표 허용 오차 안에 선다
 //  - 같은 입력으로 두 번 → 같은 자세열(바이트까지)
-//  - 4c 거리·컬러 센서(spec-4c I1·I4): 벽으로 다가가는 메카넘의 거리 센서를 읽는 OpMode, 고치지 않은 SDK 샘플
-//    RobotAutoDriveToLine_Linear(회색 타일 위 컬러 센서)
+//  - 4c 거리·컬러 센서(spec-4c I1·I2·I4): 벽으로 다가가는 메카넘의 거리 센서를 읽는 OpMode, 테이프를 가로지르는 컬러 센서
+//    OpMode(속도·시작 위상별), 고치지 않은 SDK 샘플 RobotAutoDriveToLine_Linear(회색 타일 위 컬러 센서)
 import { spawn } from 'node:child_process'
 import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -339,7 +339,7 @@ function closest(values: number[], target: number): number {
   return Math.min(...values.map((v) => Math.abs(v - target)))
 }
 
-// ---- 4c 거리·컬러 센서(spec-4c I1·I4) ----
+// ---- 4c 거리·컬러 센서(spec-4c I1·I2·I4) ----
 
 const NONE_FIELD = resolveSeason('none')
 // I1: Sim Bot에서 Pinpoint를 빼고 앞 가운데(h 0.14)에 거리 센서. 'none' +X 벽 판 안쪽 면에서 1.4 m(범위 밖)부터 다가간다
@@ -415,25 +415,61 @@ const LINE_SPEC: WorldSpec = {
   ]
 }
 
-// 팀 코드가 tNanos에 읽은 거리(mm)가 나올 수 있는 세계 값: 그 앞 측정 하나(33 ms)와 틱 몇 개 안의 틱 경계 입력(칩이 측정 끝에
-// 잡든 읽을 때 잡든 맞는다). 범위 밖(null)은 칩 8190 mm
+// I2: I4와 같은 2륜 로봇이 BIOBUZZ 빨강 LOADING ZONE 앞 테이프(y [−1.53886, −1.51346], x −0.9)를 직각으로 가로지른다(요 −90°,
+// 필드 −y로 감). 컬러 센서(아래 1.5 cm, 로봇 앞 HALF − 0.02)가 테이프 가까운 가장자리에서 runUp만큼 떨어진 자리에서 시작하고,
+// 시작 위치를 속도 × 12.5 ms씩 앞으로 옮겨 테이프를 지나는 때를 LS 측정 격자(100 ms)에 대해 12.5 ms씩 당긴다(8개)
+const CROSS_TAPE_NEAR_Y = -1.51346
+const CROSS_TAPE_FAR_Y = -1.53886
+const CROSS_SENSOR_AHEAD = HALF - 0.02
+const CROSS_PHASE_NANOS = 12_500_000
+function crossSpec(speed: number, runUp: number, phase: number): WorldSpec {
+  const y =
+    CROSS_TAPE_NEAR_Y + CROSS_SENSOR_AHEAD + runUp - (phase * speed * CROSS_PHASE_NANOS) / 1e9
+  return { ...LINE_SPEC, robot: { ...LINE_SPEC.robot, start: { x: -0.9, y, yaw: -Math.PI / 2 } } }
+}
+
+// VL53L0X 연속 측정 주기(VL53L0XChip.MEASUREMENT_MS 33 ms)
 const VL53L0X_MEASUREMENT_NANOS = 33_000_000
 
 // 실행마다 같아야 하는 메시지 전부(컴파일 벽시계 시간 compiled.millis만 뺀다)
 function deterministicMessages(run: SimRun): string {
   return JSON.stringify(run.messages.map((m) => (m.type === 'compiled' ? { ...m, millis: 0 } : m)))
 }
-function candidateRanges(run: SimRun, tNanos: number): number[] {
-  return run.states
-    .filter(
-      (s) =>
-        s.tNanos <= tNanos &&
-        s.tNanos >= tNanos - VL53L0X_MEASUREMENT_NANOS - RECENT_TICKS * DEFAULT_TICK_NANOS
-    )
-    .map((s) => {
-      const d = s.state.sensor_distance?.distance
-      return typeof d === 'number' ? Math.round(d * 1000) : 8190
-    })
+
+// 칩 연속 측정의 위상 φ(연속 시작 시각 mod 33 ms, ns) 구간 [a, b)의 합집합. 위상은 사이드카 안(드라이버가 SYSRANGE_START를 쓴
+// 가상 시각)이라 바깥에서 모르므로, 읽기마다 값이 맞는 φ를 모두 구해 모든 읽기에 공통인 φ가 있는지 본다.
+type PhaseSet = [number, number][]
+
+// 팀 코드가 r에 읽은 값 mm와 맞는 φ: 칩은 r 이하 마지막 측정 끝 e = r − ((r − φ) mod 33 ms)에서, e 이하 마지막 틱 경계의
+// 입력을 잡는다(VL53L0XChip: 훅은 경계 b 전(e < b)에 끝난 측정을 옛 입력으로, 읽기는 e ≤ 지금인 측정을 지금 입력으로 잡는다).
+// 드라이버 readRangeContinuousMillimeters는 새 측정을 기다린 뒤 RESULT_RANGE를 읽고 곧 줄을 쓰므로 r은 줄의 시각이다
+// (그 사이 다음 측정 끝(33 ms 뒤)이 오지 않는다). 범위 밖(null)은 칩 8190 mm다.
+function phasesFor(rangeAt: Map<number, number>, r: number, mm: number): PhaseSet {
+  const period = VL53L0X_MEASUREMENT_NANOS
+  const tick = DEFAULT_TICK_NANOS
+  const out: PhaseSet = []
+  for (let b = Math.floor(r / tick) * tick; b > r - period - tick; b -= tick) {
+    // 경계 b의 입력을 잡는 측정 끝 e ∈ [lo, hi)
+    const lo = Math.max(b, r - period + 1)
+    const hi = Math.min(b + tick, r + 1)
+    if (lo >= hi || rangeAt.get(b) !== mm) continue
+    const a = ((lo % period) + period) % period
+    const end = a + (hi - lo)
+    if (end <= period) out.push([a, end])
+    else out.push([a, period], [0, end - period])
+  }
+  return out
+}
+
+function intersectPhases(a: PhaseSet, b: PhaseSet): PhaseSet {
+  const out: PhaseSet = []
+  for (const [a0, a1] of a)
+    for (const [b0, b1] of b) {
+      const lo = Math.max(a0, b0)
+      const hi = Math.min(a1, b1)
+      if (lo < hi) out.push([lo, hi])
+    }
+  return out
 }
 
 // 앞으로 1초(왼쪽 스틱 위 0.6), 그다음 왼쪽(반시계)으로 회전(오른쪽 스틱 왼쪽 0.5)
@@ -563,7 +599,7 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
     SIDECAR_TEST_TIMEOUT
   )
   it(
-    'I1 거리 센서: 벽으로 다가가며 팀 코드의 getDistance가 단조 비증가이고 그 앞 측정의 세계 값과 같다. 두 번 바이트가 같다',
+    'I1 거리 센서: 벽으로 다가가며 팀 코드의 getDistance가 단조 비증가이고 각 값이 33 ms 측정 끝 틱의 세계 값과 같다. 두 번 바이트가 같다',
     async () => {
       const run = await runSim(
         sidecar,
@@ -584,7 +620,18 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       expect(ranges[ranges.length - 1].mm).toBeLessThan(150)
       for (let i = 1; i < ranges.length; i++)
         expect(ranges[i].mm).toBeLessThanOrEqual(ranges[i - 1].mm)
-      for (const r of ranges) expect(candidateRanges(run, r.tNanos)).toContain(r.mm)
+      // 각 값이 그 측정 끝(33 ms 격자) 틱의 세계 값과 같다: 모든 읽기에 공통인 측정 위상이 있다(통합 뒤 C의 칩 측정 시각으로 조임)
+      const rangeAt = new Map(
+        run.states.map((s) => {
+          const d = s.state.sensor_distance?.distance
+          return [s.tNanos, typeof d === 'number' ? Math.round(d * 1000) : 8190] as const
+        })
+      )
+      let phases: PhaseSet = [[0, VL53L0X_MEASUREMENT_NANOS]]
+      for (const r of ranges) {
+        phases = intersectPhases(phases, phasesFor(rangeAt, r.tNanos, r.mm))
+        expect(phases, `RANGE ${r.mm} @ ${r.tNanos}`).not.toEqual([])
+      }
       // 시뮬레이터가 보낸 값도 줄어들기만 한다(벽 판 거울 + 확산)
       const world = run.states
         .map((s) => s.state.sensor_distance?.distance)
@@ -598,6 +645,57 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       )
       expect(deterministicMessages(again)).toBe(deterministicMessages(run))
       expect(JSON.stringify(again.states)).toBe(JSON.stringify(run.states))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'I2 컬러 센서: 0.15 m/s로 테이프를 가로지르면 시작 위상 8개 모두 문턱을 넘고, 1.5 m/s면 잡는 위상과 놓치는 위상이 모두 있다',
+    async () => {
+      // 허브 속도 루프(적분 I)가 목표 속도에 다가가는 데 시간이 걸려 충분히 달린 뒤 지난다: 느림은 테이프 앞 0.3 m에서 시작해
+      // 엔코더 0.45 m에서, 빠름은 1.0 m에서 시작해 1.25 m에서 선다(SimColorCrossSlow·Fast의 travel. 출발 헛돎으로 엔코더가 앞선다)
+      const cases = [
+        { opMode: 'SimColorCrossSlow', speed: 0.15, runUp: 0.3 },
+        { opMode: 'SimColorCrossFast', speed: 1.5, runUp: 1.0 }
+      ]
+      const caught: Record<string, boolean[]> = {}
+      for (const c of cases) {
+        const runs = await Promise.all(
+          Array.from({ length: 8 }, (_, phase) =>
+            runSim(
+              sidecar,
+              teamOpMode(
+                c.opMode,
+                crossSpec(c.speed, c.runUp, phase),
+                join(OPMODES, 'sandbot_sim_line.xml')
+              ),
+              () => null
+            )
+          )
+        )
+        caught[c.opMode] = runs.map((run) => {
+          expect(errors(run), run.stderr).toEqual([])
+          expect(finishedReason(run)).toBe('returned')
+          const values = result(run).values
+          // 값은 기록한다(spec-4c I2)
+          console.info(`${c.opMode} maxRed=${values.maxRed} reads=${values.reads}`)
+          // 센서가 테이프를 다 지났고(빠른 실행은 제동하다 빨강 벽에 닿기도 한다), 테이프 가운데를 지날 때 바닥 속도(앞뒤 100 ms,
+          // 200 ms 구간 평균: 허브 속도 루프가 50 ms 측정 속도로 제어해 낮은 속도에서는 100 ms 안에서도 흔들린다)가 목표의 10% 안이다
+          // (정상 상태에서 가로지름)
+          const sensorY = (p: SimPose): number => p.y - CROSS_SENSOR_AHEAD
+          expect(sensorY(run.poses[run.poses.length - 1].pose)).toBeLessThan(
+            CROSS_TAPE_FAR_Y - 0.02
+          )
+          const k = run.poses.findIndex((p) => sensorY(p.pose) < CROSS_TAPE_NEAR_Y - 0.0127)
+          const [a, b] = [run.poses[k - 20], run.poses[k + 20]]
+          const speed = ((a.pose.y - b.pose.y) * 1e9) / (b.tNanos - a.tNanos)
+          expect(Math.abs(speed - c.speed)).toBeLessThan(0.1 * c.speed)
+          return values.caught === 1
+        })
+      }
+      expect(caught.SimColorCrossSlow).toEqual(Array(8).fill(true))
+      expect(caught.SimColorCrossFast).toContain(true)
+      expect(caught.SimColorCrossFast).toContain(false)
     },
     SIDECAR_TEST_TIMEOUT
   )
