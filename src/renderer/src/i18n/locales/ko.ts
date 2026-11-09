@@ -645,6 +645,9 @@ const ko = {
       batteryUnit: 'V',
       batteryHint:
         '시뮬레이터의 배터리 전압({{min}}–{{max}} V). 모터 무부하 속도가 전압 ÷ 12에 비례하고, 허브 getVoltage()가 이 값을 돌려줍니다.',
+      sensorNoise: '센서 잡음',
+      sensorNoiseHint:
+        '거리 센서 값에 장치마다 고정 오프셋(±10 mm)과 측정마다 잡음을 더합니다(데이터시트 산포). 컬러 센서에는 더하지 않습니다. 시드가 같으면 같은 값이 나옵니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
   },
@@ -903,6 +906,23 @@ const ko = {
         '관절 {{joint}}의 리밋 스위치가 시뮬레이터 한도({{max}}개)를 넘어 {{name}}은(는) 누르지 않습니다.',
       worldSensorOnJoint:
         '{{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
+      // 거리·컬러 센서(4c, play/worldSensors.ts·playActions worldFor)
+      worldSensorNoHousing:
+        '센서 {{name}}의 형상이 없거나 아직 읽는 중이라 하우징 앞면 대신 피벗에서 잽니다.',
+      worldSensorOnRobot:
+        '센서 {{name}}이(가) 로봇·CAD 루트에 붙어 있어 피벗에서 잽니다. 센서 파트에 붙이세요.',
+      worldSensorFarHousing:
+        '센서 {{name}}의 하우징 앞면이 피벗에서 {{distance}} 떨어져 있습니다. 센서보다 큰 그룹에 붙였는지 확인하세요.',
+      worldSensorBelowFloor:
+        '센서 {{name}}의 앞면이 바닥 아래에 있어 바닥을 보지 못할 수 있습니다.',
+      worldSensorSelfHit:
+        '센서 {{name}}의 광선을 자기 로봇의 {{part}}이(가) 가립니다. 시뮬레이터는 자기 로봇을 보지 않으므로 값이 실제 로봇과 다릅니다.',
+      worldDuplicateSensor:
+        '센서 장치 이름 {{name}}이(가) 다른 장치와 겹치거나 비어 있어 시뮬레이터가 그 센서를 쓰지 않습니다.',
+      worldTooManyDistanceSensors:
+        '거리 센서 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyColorSensors:
+        '컬러 센서 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldWheelOnJoint:
         '바퀴 {{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
       worldGenerationStale:
@@ -1302,7 +1322,10 @@ const ko = {
       limitJoint: '리밋 스위치 관절',
       limitAt: '눌리는 끝',
       limitDistance: '눌리는 거리',
-      limitAngle: '눌리는 각도'
+      limitAngle: '눌리는 각도',
+      // 거리·컬러 센서 조준(4c). rowLabel이 " (°)"를 붙인다
+      aimYaw: '조준 방향',
+      aimPitch: '조준 높이각(위 +)'
     },
     // 속성 칸의 도움말(catalog의 hint)
     propHints: {
@@ -1312,7 +1335,56 @@ const ko = {
         '시뮬레이터가 이 모터(바퀴·관절·인테이크 등)의 속도에 쓰는 값입니다. 0이면 모델·감속비의 데이터시트 값이고, 잰 값으로 덮어씁니다. 생성 코드는 쓰지 않습니다.',
       limitDistance:
         '연결한 직선 관절이 고른 끝에서 이 거리 안이면 눌립니다. 0이면 기본값 2 mm입니다.',
-      limitAngle: '연결한 회전 관절이 고른 끝에서 이 각도 안이면 눌립니다. 0이면 기본값 1°입니다.'
+      limitAngle: '연결한 회전 관절이 고른 끝에서 이 각도 안이면 눌립니다. 0이면 기본값 1°입니다.',
+      aimYaw:
+        '로봇 앞(+X)에서 반시계 +. 로봇 좌표 기준이고 CAD 파트 회전과 관계없다. 위·아래를 볼 때는 요가 값을 거의 바꾸지 않는다.',
+      aimPitch:
+        '수평에서 위가 +, 아래를 보면 −90°(Transform 회전 Y와 부호가 반대). 로봇 좌표 기준이다.'
+    },
+    // 실행 중인 로봇의 조준 칸 배지(inspector.running) 도움말
+    aimRunningHint: '다음 INIT부터 적용됩니다.',
+    // 거리·컬러 센서 카드의 편집 자세 값 줄(4c, editor/hardware/sensorReading.ts)
+    sensorReading: {
+      distance: '편집 자세 값: {{value}} ({{surface}})',
+      distanceOut: '편집 자세 값: 범위 밖(getDistance가 {{max}}를 돌려줌)',
+      distanceWeak: '편집 자세 값: 신호 약함(반사율 {{reflectance}}, 최대 {{maxRange}})',
+      color:
+        'red {{r}} · green {{g}} · blue {{b}} · 정규화(게인 {{gain}}) {{nr}}·{{ng}}·{{nb}} · alpha {{alpha}}',
+      colorDistance: 'getDistance {{distance}} (실제 {{actual}}, {{surface}})',
+      colorNothing: '물체 없음: 축이 닿는 면이 없어 배경 값이고 getDistance는 상한입니다.',
+      hint: "고른 시즌 필드에서 편집 자세(관절 0)로 시뮬레이터와 같은 계산을 한 값. 잡음·칩 측정 주기는 넣지 않는다. 실행 중 값은 장치 탭(칩 원래 값). 다른 로봇·게임 요소는 보지 않는다. Field 요소를 숨겨도 센서는 구조물을 본다. 'none' 시즌의 벽은 레일과 투명판으로 계산한다. getDistance는 표면 반사율에 따라 실제 거리와 다르다(REV 맞춤은 흰 카드).",
+      // 광선이 맞은 면(field/fieldLabels.ts sensorSurfaceLabel)
+      surfaces: {
+        floor: '바닥 타일',
+        tape: '{{alliance}} {{name}}',
+        rail: '{{wall}} 레일',
+        panel: '{{wall}} 투명판',
+        alliances: {
+          red: '빨강',
+          blue: '파랑'
+        }
+      },
+      // 값 줄 끝의 경고(여럿이면 이 순서)
+      tails: {
+        onRobot: '로봇·CAD 루트에 붙어 있어 피벗에서 잽니다. 센서 파트에 붙이세요.',
+        pivotLoading: '형상을 읽는 중이라 피벗에서 잽니다.',
+        pivot: '형상이 없어 하우징 앞면 대신 피벗에서 잽니다.',
+        farHousing:
+          '하우징 앞면이 피벗에서 {{distance}} 떨어져 있습니다. 센서보다 큰 그룹에 붙였는지 확인하세요.',
+        belowFloor: '센서 앞면이 바닥 아래에 있습니다.',
+        outsideField: '센서 앞면이 필드 벽 밖에 있습니다.',
+        selfHit:
+          '자기 로봇의 {{part}}이(가) {{distance}} 앞에서 광선을 가립니다(시뮬레이터는 자기 로봇을 보지 않습니다).',
+        selfHitPartial:
+          '원뿔 가장자리가 자기 로봇에 걸립니다(시뮬레이터는 자기 로봇을 보지 않습니다).'
+      },
+      // 세계 설명에서 빠진 센서(play/worldSensors.ts sensorExclusions): 값 대신 이 줄만
+      excluded: {
+        emptyName: '시뮬레이터에서 빠짐: 장치 이름이 비었습니다.',
+        duplicateName: '시뮬레이터에서 빠짐: 장치 이름이 다른 장치와 겹칩니다.',
+        tooMany: '시뮬레이터에서 빠짐: 이 종류의 센서 수가 시뮬레이터 한도를 넘었습니다.',
+        outsideRobot: '시뮬레이터에서 빠짐: 로봇 밖에 있습니다.'
+      }
     },
     options: {
       motorModel: {

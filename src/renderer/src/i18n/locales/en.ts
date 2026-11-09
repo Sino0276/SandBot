@@ -633,6 +633,9 @@ const en: Messages = {
       batteryUnit: 'V',
       batteryHint:
         'Battery voltage of the simulator ({{min}}–{{max}} V). Motor free speed scales with voltage ÷ 12, and the hub getVoltage() returns this value.',
+      sensorNoise: 'Sensor noise',
+      sensorNoiseHint:
+        'Adds a fixed per-device offset (±10 mm) and per-measurement noise (datasheet spread) to distance sensor values. Color sensors get no noise. The same seed gives the same values.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -894,6 +897,22 @@ const en: Messages = {
         'Joint {{joint}} has more limit switches than the simulator limit ({{max}}), so {{name}} is never pressed.',
       worldSensorOnJoint:
         '{{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
+      worldSensorNoHousing:
+        'Sensor {{name}} has no shape or is still loading, so it is measured from the pivot instead of the housing front.',
+      worldSensorOnRobot:
+        'Sensor {{name}} is attached to the robot or a CAD root, so it is measured from the pivot. Attach it to the sensor part.',
+      worldSensorFarHousing:
+        'The housing front of sensor {{name}} is {{distance}} from the pivot. Check that it is not attached to a group larger than the sensor.',
+      worldSensorBelowFloor:
+        'The front of sensor {{name}} is below the floor, so it may not see the floor.',
+      worldSensorSelfHit:
+        '{{part}} on this robot blocks the beam of sensor {{name}}. The simulator does not see its own robot, so the values differ from the real robot.',
+      worldDuplicateSensor:
+        'Sensor device name {{name}} is empty or used by another device, so the simulator does not use that sensor.',
+      worldTooManyDistanceSensors:
+        'There are more distance sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldTooManyColorSensors:
+        'There are more color sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
       worldWheelOnJoint:
         'Wheel {{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
       worldGenerationStale:
@@ -1303,7 +1322,9 @@ const en: Messages = {
       limitJoint: 'Limit switch joint',
       limitAt: 'Pressed at',
       limitDistance: 'Press distance',
-      limitAngle: 'Press angle'
+      limitAngle: 'Press angle',
+      aimYaw: 'Aim yaw',
+      aimPitch: 'Aim elevation (up +)'
     },
     propHints: {
       stallTorque:
@@ -1313,7 +1334,54 @@ const en: Messages = {
       limitDistance:
         'The switch is pressed while the linked prismatic joint is within this distance of the chosen end. 0 means the default, 2 mm.',
       limitAngle:
-        'The switch is pressed while the linked revolute joint is within this angle of the chosen end. 0 means the default, 1°.'
+        'The switch is pressed while the linked revolute joint is within this angle of the chosen end. 0 means the default, 1°.',
+      aimYaw:
+        'Counterclockwise + from the robot front (+X). In robot coordinates, independent of the CAD part rotation. When looking up or down, yaw barely changes the reading.',
+      aimPitch:
+        'Up from horizontal is +; looking down is −90° (the opposite sign of Transform rotation Y). In robot coordinates.'
+    },
+    aimRunningHint: 'Applies from the next INIT.',
+    sensorReading: {
+      distance: 'Edit pose value: {{value}} ({{surface}})',
+      distanceOut: 'Edit pose value: out of range (getDistance returns {{max}})',
+      distanceWeak: 'Edit pose value: weak signal (reflectance {{reflectance}}, max {{maxRange}})',
+      color:
+        'red {{r}} · green {{g}} · blue {{b}} · normalized (gain {{gain}}) {{nr}}·{{ng}}·{{nb}} · alpha {{alpha}}',
+      colorDistance: 'getDistance {{distance}} (actual {{actual}}, {{surface}})',
+      colorNothing:
+        'Nothing in view: the axis hits no surface, so these are background values and getDistance is at its maximum.',
+      hint: "Computed in the edit pose (joints at 0) on the chosen season field with the same calculation as the simulator. Noise and the chip measurement period are not included. Values while running are in the Devices tab (raw chip values). Other robots and game elements are not seen. Sensors still see structures when field elements are hidden. In the 'none' season the walls are computed as rails and clear panels. getDistance differs from the actual distance depending on the surface reflectance (the REV fit is for white card).",
+      surfaces: {
+        floor: 'Floor tile',
+        tape: '{{alliance}} {{name}}',
+        rail: '{{wall}} rail',
+        panel: '{{wall}} clear panel',
+        alliances: {
+          red: 'Red',
+          blue: 'Blue'
+        }
+      },
+      tails: {
+        onRobot:
+          'Attached to the robot or a CAD root, so measured from the pivot. Attach it to the sensor part.',
+        pivotLoading: 'The shape is still loading, so measured from the pivot.',
+        pivot: 'No shape, so measured from the pivot instead of the housing front.',
+        farHousing:
+          'The housing front is {{distance}} from the pivot. Check that it is not attached to a group larger than the sensor.',
+        belowFloor: 'The sensor front is below the floor.',
+        outsideField: 'The sensor front is outside the field walls.',
+        selfHit:
+          '{{part}} on this robot blocks the beam {{distance}} ahead (the simulator does not see its own robot).',
+        selfHitPartial:
+          'The edge of the cone hits this robot (the simulator does not see its own robot).'
+      },
+      excluded: {
+        emptyName: 'Left out of the simulator: the device name is empty.',
+        duplicateName: 'Left out of the simulator: the device name is used by another device.',
+        tooMany:
+          'Left out of the simulator: there are more sensors of this kind than the simulator limit.',
+        outsideRobot: 'Left out of the simulator: it is not on a robot.'
+      }
     },
     options: {
       motorModel: {

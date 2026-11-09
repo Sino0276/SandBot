@@ -115,8 +115,11 @@ export type SimOtosSpec = {
 
 export type SimImuSpec = { device: string }
 
-// 센서 장착(4c·4d). body −1 = 섀시(로봇 좌표), ≥ 0 = 그 관절 몸체(관절 틀). rotation은 ZYX이고 장치 +X가 보는 방향
+// 센서 장착(4c·4d). body −1 = 섀시(로봇 좌표), ≥ 0 = 그 관절 몸체(관절 틀, joints 순번).
+// position: 그 몸체 틀의 하우징 앞면(광선 원점, spec-4c §1.2). 렌더러가 형상 경계 상자를 조준 축에 투영해 정하고,
+// 형상을 모르면 피벗이다. rotation: ZYX이고 장치 +X가 보는 방향(광선 축), +Z가 광선 방위각의 기준이다.
 export type SensorMount = { body: number; position: Vec3; rotation: Vec3 }
+// device: 구성 이름을 Java String.trim과 같게 자른 사이드카 장치 이름(hardware/naming.ts sidecarDeviceName)
 export type SimDistanceSensorSpec = { device: string; mount: SensorMount }
 export type SimColorSensorSpec = { device: string; mount: SensorMount }
 
@@ -148,10 +151,13 @@ export type WorldSpec = {
   imus: SimImuSpec[]
   // 메커니즘 관절(3b). 부모가 먼저 온다. 비면 관절이 없다.
   joints: SimJointSpec[]
-  // 4c가 채운다. 4ab는 늘 []
+  // 거리·컬러 센서(4c): 그 로봇의 distanceSensor·colorSensor 컴포넌트(하이어라키 순서, 이름이 비었거나 겹치거나 한도를
+  // 넘은 것은 뺌). 시뮬레이터가 틱 경계마다 필드 기본형에 광선을 쏴서 거리 distance(m 또는 null)와 컬러 red·green·blue·
+  // proximity(칩 원래 값)를 보낸다(spec-4c §1.7). 4ab는 늘 []였다.
   distanceSensors: SimDistanceSensorSpec[]
   colorSensors: SimColorSensorSpec[]
-  // 4c·4d 센서 잡음(spec-4ab §1.12). 4ab는 enabled false
+  // 센서 잡음(spec-4c §1.6): 켜면 거리 센서만 장치 고정 오프셋과 측정마다 잡음을 시드 해시로 더한다(같은 시드면 같은
+  // 값). 컬러에는 잡음이 없다. 시드는 Hub 타이밍과 같은 실행 설정 칸이다.
   noise: { enabled: boolean; seed: number }
 }
 

@@ -11,6 +11,7 @@ import type {
   RegistrarInfo
 } from '../../../shared/play'
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
+import type { SensorMount } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { RootOverride, SceneObjects, Transform } from '../scene/model'
@@ -142,9 +143,21 @@ export type PlayRun = {
   detached: boolean
   // 세계 설명의 관절 순번 → 관절 오브젝트 id(INIT 때 정해짐, pose 이벤트 joints의 순서). 세계 설명이 없으면 비어 있다.
   joints: readonly string[]
+  // 시뮬레이터가 쓰는 거리·컬러 센서(4c, INIT 때 세계 설명의 distanceSensors 다음 colorSensors 순서). 실행 중 씬 뷰
+  // 기즈모가 문서 조준 대신 이 장착을 표시 자세 몸체 틀로 그린다. 세계 설명이 없으면 비어 있다.
+  sensors: readonly PlayRunSensor[]
   // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
   // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
   field: PlayRunField
+}
+
+// 실행의 센서 하나: 붙은 오브젝트·컴포넌트, 종류, 몸체(−1 섀시, ≥ 0 세계 설명 관절 순번), 세계 설명 장착 그대로
+export type PlayRunSensor = {
+  objectId: string
+  componentId: string
+  kind: 'distance' | 'color'
+  body: number
+  mount: SensorMount
 }
 
 export type PlayRunField = { season: SeasonId; hiveTipped: readonly [boolean, boolean] }
@@ -379,6 +392,7 @@ export function newRun(options: {
   speed: PlaySpeed
   paused: boolean
   joints?: readonly string[]
+  sensors?: readonly PlayRunSensor[]
   field?: PlayRunField
 }): PlayRun {
   return {
@@ -405,6 +419,7 @@ export function newRun(options: {
     libraryReported: false,
     detached: false,
     joints: options.joints ?? [],
+    sensors: options.sensors ?? [],
     field: options.field ?? DEFAULT_RUN_FIELD
   }
 }

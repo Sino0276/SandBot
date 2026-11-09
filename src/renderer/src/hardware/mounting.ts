@@ -1,5 +1,16 @@
-import { findRobotId, getTransformInFrame, type SceneObjects, type Vec3 } from '../scene/model'
-import type { HUB_DIRECTIONS } from './catalog'
+import { Vector3 } from 'three'
+import type { Vec3 as SimVec3 } from '../../../shared/sim/worldSpec'
+import {
+  findRobotId,
+  frameMatrix,
+  getTransformInFrame,
+  subtreeIds,
+  worldMatrix,
+  type HardwareComponent,
+  type SceneObjects,
+  type Vec3
+} from '../scene/model'
+import { COMPONENT_TYPES, type HUB_DIRECTIONS } from './catalog'
 
 // 장치가 로봇에 달린 위치·방향에서 SDK가 요구하는 설정값을 계산한다.
 // 로봇 좌표계는 X 앞, Y 왼쪽, Z 위, 원점은 로봇 중심 바닥(CLAUDE.md 좌표계 결정).
@@ -89,4 +100,117 @@ export function isValidHubOrientation(logo: HubDirection, usb: HubDirection): bo
   const a = HUB_DIRECTION_VECTORS[logo]
   const b = HUB_DIRECTION_VECTORS[usb]
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] === 0
+}
+
+// ---- 거리·컬러 센서 장착(4c, spec-4c §1.2) ----
+
+// 조준(rad, 로봇 좌표): yaw는 로봇 +X에서 반시계 +, pitch는 올려본각(위 +)
+export type SensorAim = { yaw: number; pitch: number }
+export type SensorComponentType = 'distanceSensor' | 'colorSensor'
+
+// 조준 속성을 카탈로그 기본·범위로 읽는다. 없거나 수가 아니거나(NaN 포함) 범위 밖이면 기본값이다(컬러 pitch 기본 −π/2).
+// 프로젝트 파일은 parseProps가 같은 규칙으로 채우지만, 메모리 안 컴포넌트(임시 씬, 4c 전에 붙인 컴포넌트)에는 속성이
+// 없을 수 있다.
+export function sensorAim(type: SensorComponentType, props: HardwareComponent['props']): SensorAim {
+  const read = (key: 'aimYaw' | 'aimPitch'): number => {
+    const def = COMPONENT_TYPES[type].properties.find((property) => property.key === key)
+    if (!def || def.kind !== 'angle') throw new Error(`${type}.${key} 조준 속성이 카탈로그에 없다`)
+    const value = props[key]
+    return typeof value === 'number' && value >= def.min && value <= def.max ? value : def.default
+  }
+  return { yaw: read('aimYaw'), pitch: read('aimPitch') }
+}
+
+// 센서 틀 회전(ZYX): (0, −pitch, yaw). R_y(θ)·x̂ = (cos θ, 0, −sin θ)이므로 위를 보려면(pitch > 0) rotation.y가 음수다
+// (synthesis §4.1). 0은 −0이 되지 않게 둔다(세계 설명·기준 해시가 −0을 다른 글자로 쓰지 않게).
+export function aimRotation(aim: SensorAim): SimVec3 {
+  return { x: 0, y: aim.pitch === 0 ? 0 : -aim.pitch, z: aim.yaw === 0 ? 0 : aim.yaw }
+}
+
+// 조준 축 a = R(aimRotation)·x̂ = Rz(yaw)·Ry(−pitch)·x̂(로봇 좌표 단위 벡터)
+function aimAxis(aim: SensorAim): SimVec3 {
+  const c = Math.cos(aim.pitch)
+  return { x: c * Math.cos(aim.yaw), y: c * Math.sin(aim.yaw), z: Math.sin(aim.pitch) }
+}
+
+// 오브젝트 자신의 모양의 로컬 경계 상자(형상이 없거나 아직 읽지 않았으면 null). 렌더러는 scene/localBounds.ts의
+// objectLocalBounds다. 형상은 씬 문서 밖이라 순수 계산(세계 빌더)은 이것을 인자로 받는다(null이면 피벗을 쓴다).
+export type LocalBoundsLookup = (objectId: string) => { min: SimVec3; max: SimVec3 } | null
+
+export type SensorMountInRobot = {
+  // 로봇 좌표의 광선 원점(하우징 앞면)
+  position: SimVec3
+  // aimRotation(aim) 그대로
+  rotation: SimVec3
+  // 'front': 형상 경계 상자를 조준 축에 투영해 앞면을 찾았다. 'pivot': 형상을 몰라(또는 robot·CAD 루트에 붙어) 피벗을 썼다
+  housing: 'front' | 'pivot'
+  // 원점 − 피벗을 조준 축에 투영한 길이(m, ≥ 0). 'pivot'이면 0
+  pivotOffset: number
+}
+
+// 하우징 앞면이 피벗에서 이보다 멀면 경고한다(m) [가정: REV 두 센서 하우징 깊이 2 cm대의 두 배 남짓. 이보다 멀면
+// 센서보다 큰 그룹(인테이크 전체 등)에 붙였을 가능성이 크다]
+export const SENSOR_HOUSING_WARN = 0.05
+
+// 하우징 앞면을 찾을 때 볼 형상의 오브젝트들. 자기 모양이 있으면 그것만, 없고 그룹이나 CAD 루트가 아닌 어셈블리면
+// 하위의 모양들. robot·CAD 루트(cad 있음)·그 밖은 빈 목록(피벗을 쓴다).
+function housingShapeIds(objects: SceneObjects, objectId: string): string[] {
+  const object = objects[objectId]
+  if (object.kind === 'robot' || object.cad) return []
+  if (object.visual) return [objectId]
+  if (object.kind !== 'group' && object.kind !== 'assembly') return []
+  return subtreeIds(objects, objectId).filter((id) => objects[id].visual)
+}
+
+// 센서 오브젝트의 로봇 좌표 장착(편집 자세, 관절 q = 0). 원점은 하우징 앞면이다(REV RevColorSensorV3.getDistance는 "to the
+// plastic housing at the front", RevColorSensorV3.java:137–138, ToF도 앞 창 기준. 피벗(경계 상자 중심)을 쓰면 바닥 가까이
+// 단 컬러 센서 값이 30–50% 달라진다, critique E13). 형상 경계 상자 8꼭짓점을 로봇 좌표로 옮겨(robotOutline과 같은 방법)
+// 조준 축에 투영한 최대가 앞면이다. 로봇 밖 오브젝트면 null.
+export function sensorMountInRobot(
+  objects: SceneObjects,
+  objectId: string,
+  aim: SensorAim,
+  bounds: LocalBoundsLookup | null
+): SensorMountInRobot | null {
+  if (!objects[objectId] || findRobotId(objects, objectId) === null) return null
+  const pivot = robotFramePose(objects, objectId)
+  if (!pivot) return null
+  const rotation = aimRotation(aim)
+  const axis = aimAxis(aim)
+  let best = -Infinity
+  if (bounds) {
+    for (const id of housingShapeIds(objects, objectId)) {
+      const box = bounds(id)
+      if (!box) continue
+      const toRobot = frameMatrix(objects, id, 'robot').invert().multiply(worldMatrix(objects, id))
+      for (const x of [box.min.x, box.max.x])
+        for (const y of [box.min.y, box.max.y])
+          for (const z of [box.min.z, box.max.z]) {
+            const corner = new Vector3(x, y, z).applyMatrix4(toRobot)
+            const along =
+              (corner.x - pivot.x) * axis.x +
+              (corner.y - pivot.y) * axis.y +
+              (corner.z - pivot.z) * axis.z
+            if (along > best) best = along
+          }
+    }
+  }
+  if (best === -Infinity)
+    return {
+      position: { x: pivot.x, y: pivot.y, z: pivot.z },
+      rotation,
+      housing: 'pivot',
+      pivotOffset: 0
+    }
+  const pivotOffset = Math.max(0, best)
+  return {
+    position: {
+      x: pivot.x + axis.x * pivotOffset,
+      y: pivot.y + axis.y * pivotOffset,
+      z: pivot.z + axis.z * pivotOffset
+    },
+    rotation,
+    housing: 'front',
+    pivotOffset
+  }
 }

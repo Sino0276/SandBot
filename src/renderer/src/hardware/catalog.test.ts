@@ -2,6 +2,7 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
+  angleInputValue,
   COMPONENT_TYPES,
   deadWheelTicksPerMeter,
   isPropertyVisible,
@@ -156,5 +157,75 @@ describe('오도메트리 포드 해상도(시뮬레이터)', () => {
       expect(kinds.limitDistance).toBe('length')
       expect(kinds.limitAngle).toBe('angle')
     }
+  })
+})
+
+// 거리·컬러 센서 조준(4c, spec-4c §1.1 K1·K1a)
+describe('센서 조준 속성', () => {
+  const DEG = Math.PI / 180
+  const aim = (type: 'distanceSensor' | 'colorSensor'): Record<string, PropertyDef> =>
+    Object.fromEntries(
+      (COMPONENT_TYPES[type].properties as readonly PropertyDef[])
+        .filter((property) => property.key.startsWith('aim'))
+        .map((property) => [property.key, property])
+    )
+
+  it('두 센서에 aimYaw·aimPitch가 시뮬레이터 전용 각도로 있다', () => {
+    for (const type of ['distanceSensor', 'colorSensor'] as const) {
+      const { aimYaw, aimPitch } = aim(type)
+      expect(aimYaw).toMatchObject({
+        kind: 'angle',
+        default: 0,
+        min: -Math.PI,
+        max: Math.PI,
+        wrap: true,
+        hint: true,
+        simulation: true
+      })
+      expect(aimPitch).toMatchObject({
+        kind: 'angle',
+        min: -Math.PI / 2,
+        max: Math.PI / 2,
+        hint: true,
+        simulation: true
+      })
+      expect('wrap' in aimPitch).toBe(false)
+    }
+    expect(aim('distanceSensor').aimPitch.default).toBe(0)
+    expect(aim('colorSensor').aimPitch.default).toBe(-Math.PI / 2)
+    // 컬러는 생성 코드가 쓰는 gain 뒤에 조준이 온다
+    expect(COMPONENT_TYPES.colorSensor.properties.map((property) => property.key)).toEqual([
+      'gain',
+      'aimYaw',
+      'aimPitch'
+    ])
+    expect(COMPONENT_TYPES.distanceSensor.properties.map((property) => property.key)).toEqual([
+      'aimYaw',
+      'aimPitch'
+    ])
+  })
+
+  it('wrap 칸은 (−π, π]로 감고, 아닌 칸은 범위로 자른다', () => {
+    const { aimYaw, aimPitch } = aim('distanceSensor')
+    const deg = (property: PropertyDef, input: number): number =>
+      angleInputValue(property as { min: number; max: number; wrap?: true }, input * DEG) / DEG
+    expect(deg(aimYaw, 270)).toBeCloseTo(-90, 12)
+    expect(deg(aimYaw, -180)).toBe(180)
+    expect(deg(aimYaw, 180)).toBe(180)
+    expect(deg(aimYaw, -200)).toBeCloseTo(160, 12)
+    expect(deg(aimYaw, 720)).toBeCloseTo(0, 12)
+    expect(deg(aimYaw, -45)).toBeCloseTo(-45, 12)
+    expect(Object.is(angleInputValue({ min: -Math.PI, max: Math.PI, wrap: true }, -0), 0)).toBe(
+      true
+    )
+    // 자르는 칸(지금 규칙): 높이각, 리밋 스위치 각
+    expect(deg(aimPitch, 120)).toBeCloseTo(90, 12)
+    expect(deg(aimPitch, -120)).toBeCloseTo(-90, 12)
+    const limitAngle = COMPONENT_TYPES.touchSensor.properties.find(
+      (property) => property.key === 'limitAngle'
+    ) as PropertyDef & { min: number; max: number }
+    expect(angleInputValue(limitAngle, -0.5)).toBe(0)
+    expect(angleInputValue(limitAngle, 5)).toBe(limitAngle.max)
+    expect(angleInputValue(limitAngle, 0.3)).toBe(0.3)
   })
 })

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  angleInputValue,
   componentDef,
   deadWheelTicksPerMeter,
   isComponentType,
@@ -331,9 +332,7 @@ function ComponentCard({
               const radians = parseAngle(text)
               return radians === null ? null : radians / DEG
             }}
-            onCommit={(input) =>
-              setProp(property.key, Math.min(property.max, Math.max(property.min, input * DEG)))
-            }
+            onCommit={(input) => setProp(property.key, angleInputValue(property, input * DEG))}
           />
         )
       case 'text':
