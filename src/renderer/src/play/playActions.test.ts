@@ -1,5 +1,5 @@
 import i18n from 'i18next'
-import { Vector3 } from 'three'
+import { BoxGeometry, Vector3 } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simulationWorld } from '../../../main/sidecar/world'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
@@ -19,9 +19,16 @@ import { useDialogStore, usePreferencesStore } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { cancelNotice, runNoticeAction, useNoticeStore } from '../editor/noticeStore'
 import { propertyDefaults } from '../hardware/catalog'
+import { sensorSelfHit } from '../editor/hardware/sensorSelfHit'
 import { saveProject } from '../project/projectActions'
+import { disposeGeometry, registerGeometry } from '../scene/geometryRegistry'
 import { useProjectStore } from '../project/projectStore'
-import { worldMatrix, type SceneObject, type SceneObjects } from '../scene/model'
+import {
+  worldMatrix,
+  type HardwareComponent,
+  type SceneObject,
+  type SceneObjects
+} from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
 import { defaultJoint } from '../scene/joint'
 import { defaultWheel } from '../scene/wheel'
@@ -61,6 +68,8 @@ import {
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
+// 자기 로봇 가림(갈래 C가 BVH로 구현)은 시험 이중으로 바꾼다(기본: 가림 없음, spec-4c B11)
+vi.mock('../editor/hardware/sensorSelfHit', () => ({ sensorSelfHit: vi.fn(() => null) }))
 
 const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
 
@@ -719,6 +728,152 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       expect(notices().filter((key) => key === 'worldStartOverlap')).toHaveLength(1)
     })
   })
+})
+
+// 거리·컬러 센서(4c B, spec-4c §3 B1·B3·B7·B11): worldFor가 형상 조회로 하우징 앞면을 정하고 센서 경고·잡음을 더하며 실행이
+// 센서 장착을 기억한다
+describe('INIT의 센서', () => {
+  const sensorPart = (
+    id: string,
+    position: [number, number, number],
+    component: HardwareComponent,
+    geometryId: string | null = 'g:sensorBox'
+  ): SceneObject => ({
+    id,
+    name: id,
+    kind: 'part',
+    parentId: 'bot',
+    transform: { position, rotation: [0, 0, 0] },
+    ...(geometryId ? { visual: { type: 'mesh', geometryId, color: [1, 1, 1] } } : {}),
+    components: [component]
+  })
+  const sensor = (
+    id: string,
+    type: 'distanceSensor' | 'colorSensor',
+    name: string
+  ): HardwareComponent => ({
+    id,
+    type,
+    name,
+    hub: 'controlHub',
+    port: 0,
+    props: propertyDefaults(type)
+  })
+  const scene = (): SceneObjects => ({
+    ...SCENE,
+    front: sensorPart('front', [0.2, 0, 0.1], sensor('ds', 'distanceSensor', 'frontDist')),
+    floor: sensorPart('floor', [0.1, 0, 0.03], sensor('cs', 'colorSensor', 'floorColor')),
+    bare: sensorPart('bare', [0, 0.1, 0.1], sensor('bs', 'distanceSensor', 'bareDist'), null)
+  })
+  const sensorNotices = (): unknown[] =>
+    usePlayStore
+      .getState()
+      .entries.flatMap((entry) =>
+        entry.type === 'notice' && entry.key.startsWith('worldSensor')
+          ? [[entry.key, entry.params]]
+          : []
+      )
+
+  beforeEach(() => {
+    // 0.02 m 정육면체(경계 상자 ±0.01 m)
+    registerGeometry('g:sensorBox', new BoxGeometry(0.02, 0.02, 0.02))
+    vi.mocked(sensorSelfHit).mockReset()
+    vi.mocked(sensorSelfHit).mockReturnValue(null)
+  })
+  afterEach(() => disposeGeometry('g:sensorBox'))
+
+  it('B1·B3: 세계 설명의 센서 장착(하우징 앞면)과 실행의 run.sensors, 형상 없는 센서는 worldSensorNoHousing', async () => {
+    useSceneStore.setState({ objects: scene() })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world!.distanceSensors.map((s) => s.device)).toEqual(['frontDist', 'bareDist'])
+    // 하우징 앞면: 앞을 보는 센서는 피벗 + 0.01 m(상자 반폭, 형상 꼭짓점이 float32라 1e-7 안), 형상 없는 센서는 피벗
+    expect(world!.distanceSensors[0].mount.position.x).toBeCloseTo(0.21, 7)
+    expect(world!.distanceSensors[1].mount).toEqual({
+      body: -1,
+      position: { x: 0, y: 0.1, z: 0.1 },
+      rotation: { x: 0, y: 0, z: 0 }
+    })
+    expect(world!.colorSensors).toHaveLength(1)
+    expect(world!.colorSensors[0].mount.position.z).toBeCloseTo(0.02, 7)
+    expect(world!.noise).toEqual({ enabled: false, seed: usePlayStore.getState().settings.seed })
+    expect(usePlayStore.getState().run!.sensors).toEqual([
+      {
+        objectId: 'front',
+        componentId: 'ds',
+        kind: 'distance',
+        ...pick(world!.distanceSensors[0])
+      },
+      { objectId: 'bare', componentId: 'bs', kind: 'distance', ...pick(world!.distanceSensors[1]) },
+      { objectId: 'floor', componentId: 'cs', kind: 'color', ...pick(world!.colorSensors[0]) }
+    ])
+    expect(sensorNotices()).toEqual([['worldSensorNoHousing', { name: 'bareDist' }]])
+    // 자기 가림 검사는 센서마다(하이어라키 순서) 로봇 좌표 장착으로 부른다
+    expect(vi.mocked(sensorSelfHit).mock.calls.map((call) => [call[2], call[4]])).toEqual([
+      ['front', 'distanceSensor'],
+      ['floor', 'colorSensor'],
+      ['bare', 'distanceSensor']
+    ])
+  })
+
+  it('B7: 센서 잡음 설정이 세계 설명 noise { enabled, seed }로 간다(실행 요청 settings에는 없다)', async () => {
+    useSceneStore.setState({ objects: scene() })
+    usePlayStore.getState().updateSettings({ sensorNoise: true, seed: -42 })
+    await initPlay()
+    expect(lastRequest().world!.noise).toEqual({ enabled: true, seed: -42 })
+    expect(lastRequest().settings).not.toHaveProperty('sensorNoise')
+  })
+
+  it('B11: 자기 가림이 axis면 worldSensorSelfHit { name, part }, partial·null이면 없음', async () => {
+    useSceneStore.setState({ objects: scene() })
+    vi.mocked(sensorSelfHit).mockImplementation((_objects, _robot, objectId) =>
+      objectId === 'front'
+        ? { kind: 'axis', partId: 'arm', distance: 0.05 }
+        : objectId === 'floor'
+          ? { kind: 'partial' }
+          : null
+    )
+    await initPlay()
+    expect(sensorNotices()).toEqual([
+      ['worldSensorSelfHit', { name: 'frontDist', part: 'Arm' }],
+      ['worldSensorNoHousing', { name: 'bareDist' }]
+    ])
+  })
+
+  it('이름이 모터와 겹친 센서는 세계 설명·run.sensors에서 빠지고 worldDuplicateSensor', async () => {
+    useSceneStore.setState({
+      objects: {
+        ...scene(),
+        dup: sensorPart('dup', [0, -0.1, 0.1], sensor('xs', 'distanceSensor', 'arm'))
+      }
+    })
+    await initPlay()
+    expect(lastRequest().world!.distanceSensors.map((s) => s.device)).toEqual([
+      'frontDist',
+      'bareDist'
+    ])
+    expect(usePlayStore.getState().run!.sensors.map((s) => s.componentId)).toEqual([
+      'ds',
+      'bs',
+      'cs'
+    ])
+    const entry = usePlayStore
+      .getState()
+      .entries.find((e) => e.type === 'notice' && e.key === 'worldDuplicateSensor')
+    expect(entry).toMatchObject({ params: { name: 'arm' }, level: 'warning' })
+  })
+
+  it('세계 설명이 없으면 run.sensors도 비어 있다', async () => {
+    useSceneStore.setState({ objects: { bot: { ...SCENE.bot } } })
+    await initPlay()
+    expect(lastRequest().world).toBeNull()
+    expect(usePlayStore.getState().run!.sensors).toEqual([])
+  })
+})
+
+const pick = (s: { mount: { body: number } & object }): { body: number; mount: object } => ({
+  body: s.mount.body,
+  mount: s.mount
 })
 
 describe('INIT 전 저장', () => {

@@ -84,6 +84,11 @@ export type JointBuildResult = {
   // 관절 몸체들의 형상을 읽는 중·못 읽은 메시 수의 합(질량 모델 자기 몫 pendingMeshes, 각 몸체가 worldJointMassPending으로
   // 알린 것). 섀시 몸체의 같은 경고(worldChassisMassPending)는 로봇 전체 수에서 이것을 뺀 것만 센다.
   bodyPendingMeshes: number
+  // 로봇 하위 오브젝트마다 몸체(가장 가까운 자신·상위 관절의 세계 설명 순번, 로봇 몸체 −1). 한도로 뺀 관절의 하위는 가장
+  // 가까운 남은 관절이다. 거리·컬러 센서 장착(4c, play/worldSensors.ts)이 같은 몸체를 쓴다.
+  bodyOf: ReadonlyMap<string, number>
+  // 관절 순번마다 관절 틀(로봇 좌표, 편집 자세 q = 0: 오브젝트 자세(회전 포함)에 앵커만큼 옮긴 것)
+  frames: Matrix4[]
   warnings: WorldWarning[]
 }
 
@@ -601,6 +606,8 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     motorIds,
     bodyMasses,
     bodyPendingMeshes,
+    bodyOf,
+    frames,
     warnings
   }
 }

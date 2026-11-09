@@ -41,3 +41,20 @@ describe('SimulationPreferences HIVE 상태', () => {
     expect(selected.slice(-2)).toEqual(['tipped', 'start'])
   })
 })
+
+describe('SimulationPreferences 센서 잡음', () => {
+  // B8(spec-4c §1.6): 체크 칸 하나와 도움말(거리 센서만, 시드가 같으면 같은 값)
+  it('체크 칸이 실행 설정 sensorNoise를 보이고 도움말이 있다', () => {
+    const label = (html: string): string => {
+      const end = html.indexOf(`${ko.preferences.simulation.sensorNoise}</label>`)
+      expect(end).toBeGreaterThan(0)
+      return html.slice(html.lastIndexOf('<label', end), end)
+    }
+    Object.assign(initial, { settings: { ...DEFAULT_PLAY_SETTINGS, sensorNoise: true } })
+    const on = renderToStaticMarkup(<SimulationPreferences />)
+    expect(on).toContain(ko.preferences.simulation.sensorNoiseHint)
+    expect(label(on)).toContain('checked=""')
+    Object.assign(initial, { settings: { ...DEFAULT_PLAY_SETTINGS, sensorNoise: false } })
+    expect(label(renderToStaticMarkup(<SimulationPreferences />))).not.toContain('checked=""')
+  })
+})

@@ -33,7 +33,7 @@ import {
 import { robotComponents, robotHardwareSettings, type ComponentEntry } from '../hardware/components'
 import { lynxModules } from '../hardware/configXml'
 import { deadWheelDeviceName } from '../hardware/javaCodegen'
-import { normalizeDegrees, robotFramePose } from '../hardware/mounting'
+import { normalizeDegrees, robotFramePose, type LocalBoundsLookup } from '../hardware/mounting'
 import { sidecarDeviceName } from '../hardware/naming'
 import { DEG, ROBOT_SIZE } from '../scene/coordinates'
 import {
@@ -57,12 +57,18 @@ import type { ConsoleNoticeKey } from './consoleModel'
 import type { HiveState } from './playSettings'
 import type { PlayRunField } from './playStore'
 import { buildWorldJoints, motorComponentParams } from './worldJoints'
+import {
+  buildWorldSensors,
+  worldUsedDevices,
+  type SensorExclusion,
+  type WorldSensorEntry
+} from './worldSensors'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
 // 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
 // 온다. 이름은 사이드카 장치 이름(구성 이름을 Java trim, sidecarDeviceName)이다. 위치는 모두 로봇 좌표(X 앞·Y 왼쪽, 원점
 // 로봇 중심 바닥)이고, 형상 로딩과 관계없이 씬 문서만으로 정해진다(결정적). 질량(관절 몸체, 섀시 몸체 = 로봇 전체 − 관절
-// 몸체, 바퀴 회전 관성)만 넘겨받은 질량 모델을 쓴다.
+// 몸체, 바퀴 회전 관성)만 넘겨받은 질량 모델을, 거리·컬러 센서의 하우징 앞면(4c)만 넘겨받은 형상 조회를 쓴다.
 
 // Console 경고(console.notices.world*)
 export type WorldWarningKey = Extract<ConsoleNoticeKey, `world${string}`>
@@ -415,7 +421,24 @@ export type WorldSpecResult = {
   jointObjectIds: string[]
   // 관절을 실제로 구동하는 모터 컴포넌트 id(spec이 null이면 빈 목록)
   jointMotorIds: string[]
+  // 세계 설명의 거리·컬러 센서(목록 순서: distanceSensors 다음 colorSensors, 실행 상태 run.sensors가 이것이다). spec이
+  // null이면 빈 목록
+  sensors: WorldSensorEntry[]
+  // 세계 설명에서 뺀 거리·컬러 센서 컴포넌트 id → 이유(play/worldSensors.ts sensorExclusions, spec이 null이어도 센다)
+  sensorExclusions: Map<string, SensorExclusion>
 }
+
+const emptyResult = (
+  warnings: WorldWarning[],
+  sensorExclusions: Map<string, SensorExclusion> = new Map()
+): WorldSpecResult => ({
+  spec: null,
+  warnings,
+  jointObjectIds: [],
+  jointMotorIds: [],
+  sensors: [],
+  sensorExclusions
+})
 
 // 세계 설명을 만들어 관절을 구동하는 모터 id를 센다(문서·로봇마다 한 번, 씬 문서는 불변이라 문서로 캐시한다)
 const jointMotorCache = new WeakMap<SceneObjects, Map<string, ReadonlySet<string>>>()
@@ -471,15 +494,18 @@ export function robotNeedsMassModel(objects: SceneObjects, robotId: string): boo
 // 받지 않을 값(로봇을 필드에서 아주 멀리 둠 등)이면 null과 worldInvalid 경고를 돌려준다(실행은 시뮬레이터 없이 계속).
 // mass는 질량 모델이다: 관절 몸체(MassModel.own), 섀시 몸체(로봇 전체 − 관절 몸체), 바퀴 회전 관성(바퀴 하위 질량). null이면
 // 몸체를 대체 질량·기본 상자로, 바퀴를 종류 기본 질량으로 두고 질량 경고를 내지 않는다(play/worldJoints.ts).
+// bounds는 형상 조회다(spec-4c §3): 거리·컬러 센서 원점을 하우징 앞면에 둔다. null이면 피벗이고 형상 경고를 내지 않는다
+// (로봇 카드 경로. INIT은 playActions.worldFor가 형상 경고를 withSensorWarnings로 더한다). 센서 잡음은 끔으로 둔다
+// (worldFor가 withSensorNoise로 넣는다).
 export function buildWorldSpec(
   objects: SceneObjects,
   robotId: string,
   settings: Pick<PlaySettings, 'batteryVoltage'>,
-  mass: MassModel | null = null
+  mass: MassModel | null = null,
+  bounds: LocalBoundsLookup | null = null
 ): WorldSpecResult {
   const robot = objects[robotId]
-  if (!robot || robot.kind !== 'robot')
-    return { spec: null, warnings: [], jointObjectIds: [], jointMotorIds: [] }
+  if (!robot || robot.kind !== 'robot') return emptyResult([])
   const warnings: WorldWarning[] = []
   const entries: ComponentEntry[] = robotComponents(objects, robotId).filter((entry) =>
     isComponentType(entry.component.type)
@@ -630,6 +656,36 @@ export function buildWorldSpec(
 
   const [x, y] = robot.transform.position
   const { footprint, height } = robotOutline(objects, robotId)
+  // 경고 순서는 4ab와 같다(섀시 몸체 → 데드휠·Pinpoint·OTOS·IMU 한도), 센서(4c) 경고는 그 뒤다
+  // 바퀴가 없으면 기저가 고정이라 섀시 몸체를 쓰지 않는다(spec-3c §3): 기본 상자로 대신해도 알리지 않는다
+  const body = chassisBody(
+    mass,
+    robotId,
+    joints.bodyMasses,
+    joints.bodyPendingMeshes,
+    footprint,
+    cappedWheels.length > 0 ? warnings : []
+  )
+  const devices = {
+    hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),
+    motors,
+    deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'worldTooManyDeadWheels', warnings),
+    pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
+    otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
+    imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
+    joints: joints.joints
+  }
+  // 거리·컬러 센서(4c): 이름은 위에서 실제로 낸 장치·허브 이름과 겹치지 않게 거른다(겹치면 parseWorldSpec이 세계 전체를
+  // 거절하거나 사이드카가 장치를 만들지 못한다, spec-4c §3 O3)
+  const sensors = buildWorldSensors({
+    objects,
+    robotId,
+    entries,
+    joints,
+    bounds,
+    usedDevices: worldUsedDevices(devices)
+  })
+  warnings.push(...sensors.warnings)
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
     // 빌더 기본 시즌 'none'. playActions.worldFor가 문서 시즌과 HIVE 설정으로 덮어쓴다(빌더 시그니처는 그대로, spec-4ab §3)
@@ -638,40 +694,34 @@ export function buildWorldSpec(
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
       footprint,
       height,
-      // 바퀴가 없으면 기저가 고정이라 섀시 몸체를 쓰지 않는다(spec-3c §3): 기본 상자로 대신해도 알리지 않는다
-      body: chassisBody(
-        mass,
-        robotId,
-        joints.bodyMasses,
-        joints.bodyPendingMeshes,
-        footprint,
-        cappedWheels.length > 0 ? warnings : []
-      )
+      body
     },
     batteryVoltage: settings.batteryVoltage,
-    hubs: lynxModules(robotHardwareSettings(objects, robotId)).map((module) => module.name),
+    hubs: devices.hubs,
     motors,
     wheels: cappedWheels,
-    deadWheels: capped(deadWheels, MAX_WORLD_SENSORS, 'worldTooManyDeadWheels', warnings),
-    pinpoints: capped(pinpoints, MAX_WORLD_SENSORS, 'worldTooManyPinpoints', warnings),
-    otos: capped(otos, MAX_WORLD_SENSORS, 'worldTooManyOtos', warnings),
-    imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
+    deadWheels: devices.deadWheels,
+    pinpoints: devices.pinpoints,
+    otos: devices.otos,
+    imus: devices.imus,
     joints: joints.joints,
-    // 거리·컬러 센서와 잡음은 4c가 채운다
-    distanceSensors: [],
-    colorSensors: [],
+    distanceSensors: sensors.distanceSensors,
+    colorSensors: sensors.colorSensors,
+    // 잡음은 끔(playActions.worldFor가 개인 실행 설정으로 withSensorNoise)
     noise: { enabled: false, seed: 0 }
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
     warnings.push({ key: 'worldInvalid', params: { detail: checked } })
-    return { spec: null, warnings, jointObjectIds: [], jointMotorIds: [] }
+    return emptyResult(warnings, sensors.exclusions)
   }
   return {
     spec: checked,
     warnings,
     jointObjectIds: joints.objectIds,
-    jointMotorIds: joints.motorIds
+    jointMotorIds: joints.motorIds,
+    sensors: sensors.sensors,
+    sensorExclusions: sensors.exclusions
   }
 }
 
