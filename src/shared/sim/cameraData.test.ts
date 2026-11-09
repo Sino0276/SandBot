@@ -1,11 +1,16 @@
+import { createHash } from 'crypto'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
   CAMERA_MODEL_IDS,
   CAMERA_MODELS,
   DEFAULT_CAMERA_MODEL,
+  FALLBACK_FOCAL_LENGTH,
   isCameraModelId,
   sdkCalibration,
   trueIntrinsics,
+  type CameraCalibrationEntry,
   type CameraModelId,
   type TrueIntrinsics
 } from './cameraData'
@@ -291,5 +296,116 @@ describe('cameraData (spec-4d K5)', () => {
       kind: 'scaled',
       from: [1920, 1080]
     })
+  })
+})
+
+// SDK 내장 보정 XML(RobotCore 12.0 AAR res/xml, pnpm fetch:ftc-sdk가 꺼냄). 없으면 A6의 XML 대조만 건너뛴다
+const XML_PATH = join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'sidecar',
+  'build',
+  'ftc-sdk',
+  '12.0.0',
+  'builtinwebcamcalibrations.xml'
+)
+const XML_SHA256 = '43febb0ee76f4336242cc26ea79ca2fdb52943ff78bd4333e156b3bade1c5106'
+
+// UsbConstants의 vid 이름(내장 XML이 쓰는 것만, javap로 확인: Logitech 1133 = 0x046D, Microsoft 1118 = 0x045E)
+const VENDOR_IDS: Record<string, number> = { LOGITECH: 0x046d, MICROSOFT: 0x045e }
+
+// Java Integer.decode(10진·0x·#·앞의 0은 8진)
+function decode(text: string): number {
+  if (/^0x/i.test(text)) return parseInt(text.slice(2), 16)
+  if (text.startsWith('#')) return parseInt(text.slice(1), 16)
+  if (/^0[0-7]+$/.test(text)) return parseInt(text, 8)
+  if (/^-?\d+$/.test(text)) return parseInt(text, 10)
+  throw new Error(`Integer.decode ${text}`)
+}
+
+// CameraCalibrationManager 규칙의 TS판(내장 XML이 쓰는 꼴만): 쉼표 → 공백, \s+로 나눔, 정수는 decode, 실수는
+// Float.parseFloat(f 접미사)
+const numbers = (text: string): string[] => text.replace(/,/g, ' ').trim().split(/\s+/)
+const floats = (text: string): number[] =>
+  numbers(text).map((v) => Math.fround(parseFloat(v.replace(/[fF]$/, ''))))
+
+type XmlCamera = { vid: number; pid: number; calibrations: CameraCalibrationEntry[] }
+
+function parseCalibrationXml(xml: string): XmlCamera[] {
+  const body = xml.replace(/<!--[\s\S]*?-->/g, '')
+  const cameras: XmlCamera[] = []
+  for (const camera of body.matchAll(/<Camera\s+([^>]*)>([\s\S]*?)<\/Camera>/g)) {
+    const attr = (text: string, name: string): string =>
+      (new RegExp(`${name}="([^"]*)"`).exec(text) as RegExpExecArray)[1]
+    const vidText = attr(camera[1], 'vid')
+    const vid = VENDOR_IDS[vidText.toUpperCase()] ?? decode(vidText)
+    const pid = decode(attr(camera[1], 'pid'))
+    const calibrations: CameraCalibrationEntry[] = []
+    for (const c of camera[2].matchAll(/<Calibration\s+([\s\S]*?)\/>/g)) {
+      const [width, height] = numbers(attr(c[1], 'size')).map(decode)
+      const [fx, fy] = floats(attr(c[1], 'focalLength'))
+      const [cx, cy] = floats(attr(c[1], 'principalPoint'))
+      // 왜곡 계수는 옮기지 않지만 8개인지는 본다(SDK가 8개가 아니면 그 보정을 버린다)
+      expect(floats(attr(c[1], 'distortionCoefficients'))).toHaveLength(8)
+      calibrations.push({ width, height, fx, fy, cx, cy })
+    }
+    cameras.push({ vid, pid, calibrations })
+  }
+  return cameras
+}
+
+describe('cameraData 대 SDK 내장 보정 XML (A6)', () => {
+  it.skipIf(!existsSync(XML_PATH))('모델·vid·pid·크기·fx·fy·cx·cy(float)가 XML과 같다', () => {
+    const xml = readFileSync(XML_PATH)
+    expect(createHash('sha256').update(xml).digest('hex')).toBe(XML_SHA256)
+    const cameras = parseCalibrationXml(xml.toString('utf8'))
+    // XML의 카메라는 모두 모델 하나의 pid나 alias다(같은 값인 두 pid는 한 모델)
+    const seen = new Set<CameraModelId>()
+    for (const camera of cameras) {
+      const id = CAMERA_MODEL_IDS.find(
+        (m) =>
+          CAMERA_MODELS[m].vid === camera.vid &&
+          (CAMERA_MODELS[m].pid === camera.pid || CAMERA_MODELS[m].aliases.includes(camera.pid))
+      )
+      expect(id, `vid ${camera.vid} pid ${camera.pid}`).toBeDefined()
+      expect(CAMERA_MODELS[id as CameraModelId].calibrations).toEqual(camera.calibrations)
+      seen.add(id as CameraModelId)
+    }
+    expect([...seen].sort()).toEqual([...CAMERA_MODEL_IDS].sort())
+    // alias까지 XML 카메라 수와 같다(LifeCam 둘, C310, C920 둘, C270, goBILDA)
+    expect(cameras).toHaveLength(7)
+  })
+})
+
+describe('참 렌즈 값 규칙 (A6·A7)', () => {
+  it('C920 1280×720 = 1920×1080 scaled(923.946716·634.654663·356.056000), 800×448 exact(578.271973)', () => {
+    const c = sdkCalibration('logitechC920', 1280, 720)
+    if (c.kind === 'placeholder') throw new Error('scaled여야 한다')
+    expect(Math.abs(c.fx - 923.946716)).toBeLessThan(1e-6)
+    expect(Math.abs(c.cx - 634.654663)).toBeLessThan(1e-6)
+    expect(Math.abs(c.cy - 356.056)).toBeLessThan(1e-6)
+    const exact = sdkCalibration('logitechC920', 800, 448)
+    expect(exact).toMatchObject({ kind: 'exact', from: [800, 448] })
+    if (exact.kind === 'placeholder') throw new Error('exact여야 한다')
+    expect(Math.abs(exact.fx - 578.271973)).toBeLessThan(1e-6)
+    // SDK 대체값(578.272)과 float로 우연히 같다
+    expect(exact.fx).toBe(Math.fround(FALLBACK_FOCAL_LENGTH))
+  })
+
+  it('LifeCam 1280×720 heightRatio, goBILDA 800×448 crop', () => {
+    const lifecam = trueIntrinsics('lifecamHd3000', 1280, 720)
+    expect(lifecam).toMatchObject({ source: 'heightRatio', from: [640, 480] })
+    expect(Math.abs(lifecam.fx - 1017.230988)).toBeLessThan(1e-6)
+    expect(Math.abs(lifecam.cx - 637.202515)).toBeLessThan(1e-6)
+    expect(Math.abs(lifecam.cy - 342.560989)).toBeLessThan(1e-6)
+    expect(sdkCalibration('lifecamHd3000', 1280, 720)).toEqual({ kind: 'placeholder' })
+    const gobilda = trueIntrinsics('gobilda3122', 800, 448)
+    expect(gobilda).toMatchObject({ source: 'crop', from: [800, 600] })
+    expect(Math.abs(gobilda.fx - 602.426025)).toBeLessThan(1e-6)
+    expect(Math.abs(gobilda.fy - 602.426819)).toBeLessThan(1e-6)
+    expect(Math.abs(gobilda.cx - 416.25)).toBeLessThan(1e-6)
+    expect(Math.abs(gobilda.cy - 226.575989)).toBeLessThan(1e-6)
   })
 })
