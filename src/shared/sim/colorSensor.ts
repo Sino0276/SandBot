@@ -1,11 +1,16 @@
-import type { FieldRaycaster, SurfaceRef } from './fieldRaycast'
-import type { SensorPose } from './sensorFrame'
+import { MAX_RAY_RANGE, type FieldRaycaster, type RayHit, type SurfaceRef } from './fieldRaycast'
+import { sensorAxis, type SensorPose } from './sensorFrame'
+import type { Vec3 } from './worldSpec'
 
 // REV Color Sensor V3(Broadcom APDS-9151) 모델(spec-4c §1.5, synthesis §4.7, 순수·결정적). SDK 드라이버의 칩 설정은
 // 고정이다(BroadcomColorSensor$Parameters, BroadcomColorSensorImpl.initialize): LS 3×, 16비트·25 ms 적분, 100 ms 주기,
 // PS 11비트·100 ms. 세계는 이 기준(3×·25 ms)의 칩 원래 값을 보내고, 팀이 LS 설정을 바꾸면 사이드카 칩이 척도를 바꾼다.
 //
-// 계약 커밋: 상수·타입·시그니처와 "물체 없음" 스텁(배경 79·85·55, PS 27)이다. 4c A가 구현한다.
+// 축 광선이 맞은 거리 d(0.25 in에서 자름)와 입사각, 발자국 7점(축 + atan(0.6) 기운 6광선)의 평균 반사율로
+//   raw_c = clamp(round(wb_c·[ρ̄^L_c·K·cos τ·d_in^−1.3169 + ρ̄^A_c·E_a·s(d)/1.1834]), 0, 65535)
+//   PS = clamp(round(26.98 + 325.961·(ρ̄^N/0.5)·cos τ·d_in^−1.3169), 0, 2047)
+// LED 반사(ρ^L, 판이면 헤이즈, 빗나가면 0), 주변광(ρ^A, 빗나가거나 판이면 판 너머 배경 ρ_bg), 근적외(ρ^N, 판이면 헤이즈,
+// 빗나가면 0). 축이 빗나가면 배경만이다. 컬러에는 거울 반환과 잡음이 없다(근거가 없다, spec-4c §1.5).
 
 const INCH = 0.0254
 
@@ -51,17 +56,102 @@ export type ColorReading = {
   footprint: readonly (number | null)[]
 }
 
-export function readColorSensor(caster: FieldRaycaster, pose: SensorPose): ColorReading {
-  void caster
-  void pose
-  // 축이 빗나갔을 때의 배경: round(wb_c·ρ_bg·E_a/1.1834) = (79, 85, 55), PS 27
+// 칩 원래 값의 범위: LS 16비트(SDK colorSaturation 65535), PS 11비트(proximitySaturation 2047)
+const COLOR_MAX = 65535
+const PROXIMITY_MAX = 2047
+
+// 발자국의 바깥 6광선(센서 틀): 축에서 β = atan(0.6) 기울고 방위각 0°, 60°, …, 300°(센서 +Z부터 +Y 쪽). 정면 평면에서 반경
+// 0.6·d의 6점이다. 모듈이 읽힐 때 한 번 만든다
+const FOOTPRINT_DIRECTIONS: readonly Vec3[] = (() => {
+  const beta = Math.atan(COLOR_FOOTPRINT_SPREAD)
+  const dirs: Vec3[] = [{ x: 1, y: 0, z: 0 }]
+  for (let k = 0; k < 6; k++) {
+    const psi = (k * Math.PI) / 3
+    dirs.push({
+      x: Math.cos(beta),
+      y: Math.sin(beta) * Math.sin(psi),
+      z: Math.sin(beta) * Math.cos(psi)
+    })
+  }
+  return Object.freeze(dirs.map((d) => Object.freeze(d)))
+})()
+
+// 발자국 7방향(센서 틀, 축이 먼저): 기즈모가 같은 방향을 그린다
+export const COLOR_FOOTPRINT: readonly Vec3[] = FOOTPRINT_DIRECTIONS
+
+const clampRound = (value: number, max: number): number =>
+  Math.max(0, Math.min(max, Math.round(value)))
+
+// 축 광선이 빗나갔을 때(배경만): round(wb_c·ρ_bg·E_a/1.1834) = (79, 85, 55), PS 27
+function background(): ColorReading {
+  const ambient = (c: number): number =>
+    clampRound(
+      (COLOR_WHITE_BALANCE[c] * COLOR_BACKGROUND * COLOR_AMBIENT_LUX) / COLOR_LUX_PER_COUNT,
+      COLOR_MAX
+    )
   return {
-    red: 79,
-    green: 85,
-    blue: 55,
+    red: ambient(0),
+    green: ambient(1),
+    blue: ambient(2),
     proximity: PROXIMITY_NONE,
     distance: null,
     surface: null,
-    footprint: [null, null, null, null, null, null, null]
+    footprint: FOOTPRINT_DIRECTIONS.map(() => null)
+  }
+}
+
+// 축 광선이 빗나간 값(인스펙터·방어 값이 같이 쓴다)
+export const COLOR_BACKGROUND_READING: Readonly<ColorReading> = Object.freeze(background())
+
+export function readColorSensor(caster: FieldRaycaster, pose: SensorPose): ColorReading {
+  const o = pose.origin
+  const axisHit = caster.cast(o, sensorAxis(pose), MAX_RAY_RANGE)
+  if (!axisHit) return background()
+  const r = pose.rotation
+  const hits: (RayHit | null)[] = [axisHit]
+  for (let k = 1; k < FOOTPRINT_DIRECTIONS.length; k++) {
+    const d = FOOTPRINT_DIRECTIONS[k]
+    const dir = {
+      x: r[0] * d.x + r[1] * d.y + r[2] * d.z,
+      y: r[3] * d.x + r[4] * d.y + r[5] * d.z,
+      z: r[6] * d.x + r[7] * d.y + r[8] * d.z
+    }
+    hits.push(caster.cast(o, dir, MAX_RAY_RANGE))
+  }
+  const led = [0, 0, 0]
+  const ambient = [0, 0, 0]
+  let nir = 0
+  for (const hit of hits) {
+    const panel = hit !== null && hit.surface.kind === 'panel'
+    for (let c = 0; c < 3; c++) {
+      led[c] += hit ? hit.rgb[c] : 0
+      ambient[c] += hit && !panel ? hit.rgb[c] : COLOR_BACKGROUND
+    }
+    nir += hit ? hit.nir : 0
+  }
+  const n = hits.length
+  const d = Math.max(axisHit.t, COLOR_MIN_DISTANCE)
+  const cos = axisHit.cosIncidence
+  // 부록 A 기준 스크립트(s4c2/sim2.py)와 같은 곱 순서(정수 반올림 경계에서 같게)
+  const falloff = (d / INCH) ** -COLOR_FALLOFF
+  const shade = d / (d + COLOR_SHADE_LENGTH)
+  const channel = (c: number): number =>
+    clampRound(
+      COLOR_WHITE_BALANCE[c] *
+        ((led[c] / n) * COLOR_LED_GAIN * cos * falloff +
+          ((ambient[c] / n) * COLOR_AMBIENT_LUX * shade) / COLOR_LUX_PER_COUNT),
+      COLOR_MAX
+    )
+  return {
+    red: channel(0),
+    green: channel(1),
+    blue: channel(2),
+    proximity: clampRound(
+      PROXIMITY_C + PROXIMITY_A * (nir / n / PROXIMITY_REFERENCE) * cos * falloff,
+      PROXIMITY_MAX
+    ),
+    distance: axisHit.t,
+    surface: axisHit.surface,
+    footprint: hits.map((hit) => (hit ? hit.t : null))
   }
 }
