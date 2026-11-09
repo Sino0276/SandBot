@@ -15,7 +15,6 @@ import { buildWorldSpec, runFieldOf, withRunField } from './worldSpec'
 
 // 4d C9(spec-4d §4 C): 렌더러 빌더 세계(buildWorldSpec + withRunField + 잡음 끔)를 메인과 같은 parseWorldSpec(JSON 왕복) →
 // PhysicsWorld에 넣고 스트리밍 출력을 준 첫 프레임의 tags id 집합 = 인스펙터 편집 자세 줄의 보이는 태그(640×480, d 3).
-// 세계의 카메라(4d A fieldCameras)와 판정(FieldVision.observe)이 들어오기 전에는 건너뛴다(통합 뒤 돈다).
 
 const SETTINGS = { batteryVoltage: 12 }
 const keyT = ((key: string) => key) as unknown as TFunction
@@ -101,10 +100,7 @@ const READING = cameraReadingModel({
   bounds: (id) => objectLocalBounds(OBJECTS, id),
   exclusion: cameraExclusions(OBJECTS, 'robot').get(WEBCAM.id) ?? null
 })
-const OBSERVE_IS_STUB =
-  READING?.kind === 'camera' && READING.observations.every((o) => o.rejection === 'behind')
-
-describe.skipIf(OBSERVE_IS_STUB)('4d C9: 첫 프레임 tags = 인스펙터 편집 자세 줄', () => {
+describe('4d C9: 첫 프레임 tags = 인스펙터 편집 자세 줄', () => {
   it('렌더러 빌더 → parseWorldSpec → PhysicsWorld의 첫 프레임 id 집합이 보이는 태그와 같다', () => {
     if (READING?.kind !== 'camera') throw new Error('camera')
     const visible = READING.visible.flatMap((group) => group.ids).sort((a, b) => a - b)

@@ -10,6 +10,8 @@ import org.firstinspires.ftc.robotcore.internal.camera.calibration.VendorProduct
 import org.firstinspires.ftc.robotcore.internal.system.Misc;
 import org.sandbot.sim.Sim;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -92,14 +94,38 @@ public final class SandbotCameraCalibrations {
             }
             File team = teamForTest != null ? teamForTest : Sim.installed() ? Sim.cameraCalibrationsFile() : null;
             if (team != null) {
-                try (InputStream in = new FileInputStream(team)) {
-                    new Parser(true).parse(in);
-                } catch (IOException e) {
-                    RobotLog.ee(TAG, e, "exception opening XML file %s; ignoring", team);
+                // SandBot: 메인이 INIT 때 확인한 파일(보통 파일, 256 KB 이하)이 그 뒤 바뀌었을 수 있어 읽을 때 다시 본다. 한도까지만
+                // 읽어 넘으면 쓰지 않는다(파서에 큰 입력을 주지 않게, src/main/sidecar/launch.ts MAX_TEAM_CALIBRATIONS_BYTES와 같은 한도)
+                byte[] bytes = team.isFile() ? readLimited(team) : null;
+                if (bytes == null) {
+                    new Parser(true).skipped("teamwebcamcalibrations.xml is not a regular file of at most "
+                            + MAX_TEAM_BYTES + " bytes");
+                } else {
+                    new Parser(true).parse(new ByteArrayInputStream(bytes));
                 }
             }
         }
         return calibrationMap;
+    }
+
+    /** 팀 보정 파일 크기 한도(메인 launch.ts MAX_TEAM_CALIBRATIONS_BYTES와 같음, spec-4d §1.13) */
+    static final int MAX_TEAM_BYTES = 256 * 1024;
+
+    /** 한도까지 읽는다. 넘거나 읽지 못하면 null(실제 SDK의 열기 실패처럼 RobotLog.ee) */
+    private static byte[] readLimited(File team) {
+        try (InputStream in = new FileInputStream(team)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int n;
+            while ((n = in.read(buffer)) > 0) {
+                out.write(buffer, 0, n);
+                if (out.size() > MAX_TEAM_BYTES) return null;
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            RobotLog.ee(TAG, e, "exception opening XML file %s; ignoring", team);
+            return null;
+        }
     }
 
     private static void close(InputStream in) {
@@ -201,7 +227,7 @@ public final class SandbotCameraCalibrations {
             this.team = team;
         }
 
-        private void skipped(String detail) {
+        void skipped(String detail) {
             if (!team) return;
             Map<String, String> params = new LinkedHashMap<>();
             params.put("detail", detail);

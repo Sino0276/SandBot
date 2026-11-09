@@ -340,6 +340,17 @@ public final class AprilTagTest {
                     + "<Calibrations><Camera vid=\"Logitech\" pid=\"0x0825\"><Calibration size=\"640 480\" focalLength=\"900 900\" principalPoint=\"320 240\" /></Camera></Calibrations>"));
             Check.near(822.317017, lookup(0x046D, 0x0825, 640, 480).focalLengthX, 1e-3, "builtin only");
             Check.isTrue(VisionHarness.noticesSince(n2).contains("visionCalibrationSkipped {detail=DOCTYPE is not allowed}"), "doctype notice");
+
+            // 메인이 확인한 뒤 256 KB를 넘게 된 파일: 읽을 때 다시 보고 쓰지 않는다(내장만)
+            int n3 = VisionHarness.HOST.notices.size();
+            StringBuilder big = new StringBuilder("<Calibrations><Camera vid=\"Logitech\" pid=\"0x0825\">"
+                    + "<Calibration size=\"640 480\" focalLength=\"900 900\" principalPoint=\"320 240\" /></Camera>");
+            while (big.length() <= 256 * 1024) big.append("<!-- padding padding padding padding padding padding -->\n");
+            big.append("</Calibrations>");
+            SandbotCameraCalibrations.reloadForTest(teamXml(big.toString()));
+            Check.near(822.317017, lookup(0x046D, 0x0825, 640, 480).focalLengthX, 1e-3, "too large: builtin only");
+            Check.isTrue(String.join("\n", VisionHarness.noticesSince(n3)).contains("is not a regular file of at most 262144 bytes"),
+                    "too large notice");
         } finally {
             SandbotCameraCalibrations.reloadForTest(null);
         }

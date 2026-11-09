@@ -19,8 +19,7 @@ import {
   type CameraReadingModel
 } from './cameraReading'
 
-// 웹캠 카드의 편집 자세 줄(spec-4d §1.15, C4). FieldVision.observe(4d A)가 스텁인 동안에는 형식과 묶음·꼬리 규칙만 보고
-// (observe를 이중으로), 실제 판정 값(C4 기준 장면)은 observe가 구현되면 돈다(skipIf).
+// 웹캠 카드의 편집 자세 줄(spec-4d §1.15, C4). 형식과 묶음·꼬리 규칙은 observe를 이중으로 보고, 실제 판정 값은 C4 기준 장면으로 본다.
 
 let t: TFunction
 beforeAll(async () => {
@@ -275,12 +274,6 @@ function snappedScene(): SceneObjects {
   }
 }
 
-const OBSERVE_IS_STUB = (() => {
-  const objects = snappedScene()
-  const model = cameraReadingModel(inputFor(objects))
-  return model?.kind === 'camera' && model.observations.every((o) => o.rejection === 'behind')
-})()
-
 describe('C4 장면', () => {
   it('인스펙터 경로 스냅: 구간 가운데(로봇 y −0.752), 요 π, 웹캠 렌즈는 필드 x > 0 쪽에서 −X를 본다', () => {
     const objects = snappedScene()
@@ -293,7 +286,7 @@ describe('C4 장면', () => {
   })
 })
 
-describe.skipIf(OBSERVE_IS_STUB)('C4: 편집 자세 값(빨강 관중석 벽 프리셋, 위 30°)', () => {
+describe('C4: 편집 자세 값(빨강 관중석 벽 프리셋, 위 30°)', () => {
   it('두 묶음이 보이고 가림 꼬리가 있다, 높이각 0이면 없음, 로봇을 돌리면 없음, none 시즌이면 없음, HIVE 넘어감이면 다름', () => {
     const objects = snappedScene()
     // 인스펙터 경로 스냅: 구간 가운데(로봇 y −0.752)
