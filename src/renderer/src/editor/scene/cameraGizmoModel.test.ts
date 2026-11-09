@@ -209,7 +209,7 @@ describe('절두체 방향', () => {
     }
   })
 
-  it('태그 표시: 보이는 태그는 검은 테두리(tagFieldPose 꼭짓점), 가려진 태그만 점선, 다른 이유·빠진 웹캠은 없음', () => {
+  it('태그 표시: 보이는 태그는 검은 테두리(tagFieldPose 꼭짓점), 가려진 태그만 점선, 다른 이유는 없음, 빠진 웹캠은 넘긴 태그만', () => {
     const field = resolveSeason('biobuzz')
     const hiveTipped = [false, false] as const
     const observation = (
@@ -252,7 +252,11 @@ describe('절두체 방향', () => {
     const h = tag.size / 2
     expect(corners[0].x).toBeCloseTo(pose.position.x - r[0] * h + r[1] * h, 15)
     expect(corners[0].z).toBeCloseTo(pose.position.z - r[6] * h + r[7] * h, 15)
-    expect(cameraGizmoGeometry({ ...input, excluded: true }).visibleTags).toEqual([])
+    // 빠진 웹캠: 부르는 쪽이 태그를 넘기지 않으면 없고, 구성에 없는 웹캠(회색)처럼 넘기면 그린다
+    expect(cameraGizmoGeometry({ ...input, excluded: true, tags: null }).visibleTags).toEqual([])
+    const notConfigured = cameraGizmoGeometry({ ...input, excluded: true })
+    expect(notConfigured.excluded).toBe(true)
+    expect(notConfigured.visibleTags).toHaveLength(4)
   })
 
   it('색: 청록이 거리 센서 보라·경고 주황과 다르다', () => {

@@ -213,7 +213,7 @@ export function cameraGizmoPose(
 // ---- 형상 ----
 
 export type CameraGizmoGeometry = {
-  // 시뮬레이터에서 빠짐(회색 50%, 태그 없음)
+  // 시뮬레이터에서 빠짐(회색 50%). 태그는 tags로 따로 정한다(구성에 없는 웹캠은 회색이어도 태그를 그린다)
   excluded: boolean
   // 렌즈(하우징 앞면)
   origin: SimVec3
@@ -233,7 +233,8 @@ export type CameraGizmoInput = {
   width: number
   height: number
   excluded: boolean
-  // 태그 표시(편집 자세 판정 결과와 그 필드). null이면 그리지 않는다
+  // 태그 표시(편집 자세 판정 결과와 그 필드). null이면 그리지 않는다. excluded와 따로다: 부르는 쪽이 빠진 웹캠은 null을
+  // 넘기고, 구성에 없는 웹캠(notConfigured)은 회색 절두체에 태그를 넘긴다(인스펙터 줄처럼 시리얼 전에도 조준을 맞추게)
   tags: {
     field: FieldSpec
     hiveTipped: readonly [boolean, boolean]
@@ -307,7 +308,7 @@ export function cameraGizmoGeometry(input: CameraGizmoInput): CameraGizmoGeometr
 
   const visibleTags: GizmoSegment[] = []
   const occludedTags: GizmoSegment[] = []
-  if (input.tags && !input.excluded) {
+  if (input.tags) {
     const { field, hiveTipped, observations } = input.tags
     for (const observation of observations) {
       const target = observation.visible
