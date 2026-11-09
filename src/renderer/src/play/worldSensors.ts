@@ -2,6 +2,7 @@ import { Euler, Matrix4, Vector3 } from 'three'
 import { readColorSensor } from '../../../shared/sim/colorSensor'
 import { raycasterFor, SURFACE_TOLERANCE } from '../../../shared/sim/fieldRaycast'
 import { readRangeSensor, TOF_WHITE_RANGE } from '../../../shared/sim/rangeSensor'
+import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { planarFrame, sensorPose } from '../../../shared/sim/sensorFrame'
 import {
@@ -302,10 +303,11 @@ export function buildWorldSensors(input: WorldSensorsInput): WorldSensorsResult 
 // 6 in × 0.0254 m/in(RevColorSensorV3.getDistance가 돌려주는 최대값, spec-4c §1.9)
 export const COLOR_REACH = 6 * 0.0254
 export function sensorSelfHitReach(
-  spec: Pick<WorldSpec, 'field' | 'robot'>,
+  spec: Pick<WorldSpec, 'robot'>,
+  season: SeasonId,
   sensor: Pick<WorldSensorEntry, 'kind' | 'inRobot'>
 ): number {
-  const caster = raycasterFor(resolveSeason(spec.field.season))
+  const caster = raycasterFor(resolveSeason(season))
   const pose = sensorPose(planarFrame(spec.robot.start), {
     body: -1,
     position: sensor.inRobot.position,
@@ -326,15 +328,19 @@ export type SensorSelfHitCheck = (sensor: WorldSensorEntry, reachM: number) => S
 // - worldSensorFarHousing { distance }: 하우징 앞면이 피벗에서 SENSOR_HOUSING_WARN보다 멂(distance는 표시 단위 글자)
 // - worldSensorBelowFloor: 원점(하우징 앞면, 로봇 좌표 z) < −SURFACE_TOLERANCE
 // - worldSensorSelfHit { part }: 자기 로봇 파트가 축 광선을 가림
+// season은 자기 가림 reach를 잴 필드다. 빌더 결과의 시즌은 늘 'none'이고 실행의 시즌은 withRunField가 나중에 넣으므로,
+// INIT은 실행의 시즌을 넘긴다(인스펙터 값 줄과 같은 필드라야 Console과 값 줄의 판정이 같다). 생략하면 결과의 시즌이다.
 // spec이 없으면 그대로 둔다(시뮬레이터 없이 실행).
 export function withSensorWarnings(
   result: WorldSpecResult,
   objects: SceneObjects,
   formatDistance: (meters: number) => string,
-  selfHit: SensorSelfHitCheck
+  selfHit: SensorSelfHitCheck,
+  season?: SeasonId
 ): WorldSpecResult {
   if (!result.spec) return result
   const spec = result.spec
+  const reachSeason = season ?? spec.field.season
   const warnings = [...result.warnings]
   const ordered = [...result.sensors].sort((a, b) => a.order - b.order)
   for (const sensor of ordered) {
@@ -351,7 +357,7 @@ export function withSensorWarnings(
       })
     if (sensor.inRobot.position.z < -SURFACE_TOLERANCE)
       warnings.push({ key: 'worldSensorBelowFloor', params: { name } })
-    const hit = selfHit(sensor, sensorSelfHitReach(spec, sensor))
+    const hit = selfHit(sensor, sensorSelfHitReach(spec, reachSeason, sensor))
     if (hit?.kind === 'axis')
       warnings.push({
         key: 'worldSensorSelfHit',

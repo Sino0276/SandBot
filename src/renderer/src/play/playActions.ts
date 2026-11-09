@@ -582,7 +582,8 @@ function worldFor(
           sensor.inRobot,
           sensor.kind === 'distance' ? 'distanceSensor' : 'colorSensor',
           reachM
-        )
+        ),
+      field.season
     )
     // 시즌 경고는 센서 경고 뒤(필드 쪽 경고를 모아 둔다)
     return withSensorNoise(withRunField(withSensors, doc, field, i18n.t), settings)
