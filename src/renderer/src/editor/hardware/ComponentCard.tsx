@@ -57,6 +57,7 @@ import { objectLocalBounds } from '../../scene/localBounds'
 import { documentSeasonId, hiveTippedOf } from '../field/fieldDisplay'
 import { cameraReadingModel, cameraReadingText } from './cameraReading'
 import { cameraSelfHitFor } from './cameraSelfHit'
+import { useComponentGeometryRevision } from './geometryRevision'
 import { sensorReadingModel, sensorReadingText } from './sensorReading'
 import { selfHitFor, useSelfHitRefresh } from './sensorSelfHit'
 import { motorComponentParams } from '../../play/worldJoints'
@@ -151,13 +152,14 @@ function derivedText(
       )
       if (!mount) return null
       const pose = sdkCameraPose(mount.position, cameraAim(props))
+      // formatNumber: 행렬 곱의 반올림 찌꺼기(±1e-16)가 "-0.00"으로 보이지 않게(붙여 넣을 Java에 음의 0이 없게)
       return t('hardware.derived.webcam', {
-        x: pose.x.toFixed(2),
-        y: pose.y.toFixed(2),
-        z: pose.z.toFixed(2),
-        yaw: pose.yaw.toFixed(1),
-        pitch: pose.pitch.toFixed(1),
-        roll: pose.roll.toFixed(1)
+        x: formatNumber(pose.x, 2),
+        y: formatNumber(pose.y, 2),
+        z: formatNumber(pose.z, 2),
+        yaw: formatNumber(pose.yaw, 1),
+        pitch: formatNumber(pose.pitch, 1),
+        roll: formatNumber(pose.roll, 1)
       })
     }
     default:
@@ -366,6 +368,8 @@ function ComponentCard({
   const removeComponent = useSceneStore((state) => state.removeComponent)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const runningRobot = usePlayStore(runningRobotId)
+  // 웹캠 setCameraPose 줄(derivedText)은 형상 경계 상자를 쓰므로 형상 판이 바뀌면 다시 그린다
+  useComponentGeometryRevision(component.type)
   if (!isComponentType(component.type)) return null
   const type: ComponentType = component.type
   const def = componentDef(type)

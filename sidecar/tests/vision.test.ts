@@ -9,6 +9,7 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ensureFtcSamples, FetchError, readZip } from '../../scripts/fetch-ftc-sdk.mjs'
 import { sdkCameraPose } from '../../src/renderer/src/hardware/mounting'
+import { parseSidecarLine } from '../../src/main/sidecar/protocol'
 import { CAMERA_MODELS, CAMERA_MODEL_IDS } from '../../src/shared/sim/cameraData'
 import { clusterFieldPoses } from '../../src/shared/sim/seasons/tagPoses'
 import { resolveSeason } from '../../src/shared/sim/seasons/seasons'
@@ -542,6 +543,56 @@ describe.skipIf(build === null)('사이드카 비전', () => {
         { final: 'CAMERA_DEVICE_CLOSED' }
       ])
       expect(finishedReason(run)).toBe('returned')
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    '팀 보정 파일의 긴 속성(5000자 vid): visionCalibrationSkipped 하나가 호스트 한도 안이고 실행은 계속된다',
+    async () => {
+      // 메인은 256 KB까지 보내므로 속성 하나가 호스트 notice 한도(4096자)를 넘을 수 있다. 예전에는 프로토콜 오류로 실행이 끝났다
+      const teamCalibrations = join(testTempDir('vision-team-cal'), 'teamwebcamcalibrations.xml')
+      writeFileSync(
+        teamCalibrations,
+        `<?xml version="1.0" encoding="utf-8"?>\n<Calibrations><Camera vid="${'x'.repeat(5000)}" pid="0x082D">` +
+          '<Calibration size="640 480" focalLength="900 900" principalPoint="320 240" /></Camera></Calibrations>\n'
+      )
+      const opModeSource = join(
+        VISION_OPMODES,
+        'org',
+        'firstinspires',
+        'ftc',
+        'teamcode',
+        'VisionTeamCalibration.java'
+      )
+      const run = await runVisionSidecar(
+        sidecar,
+        {
+          opModeSource,
+          opModeClass: 'org.firstinspires.ftc.teamcode.VisionTeamCalibration',
+          configXml: writeConfig(),
+          teamCalibrations
+        },
+        WEBCAMS,
+        3,
+        600
+      )
+      expect(
+        run.messages.filter((m) => m.type === 'error'),
+        run.stderr
+      ).toEqual([])
+      // 호스트 검사(parseSidecarLine)를 지난다
+      for (const m of run.messages) expect(() => parseSidecarLine(JSON.stringify(m))).not.toThrow()
+      const skipped = run.messages.flatMap((m) =>
+        m.type === 'notice' && m.code === 'visionCalibrationSkipped' ? [m] : []
+      )
+      expect(skipped).toHaveLength(1)
+      const detail = skipped[0].params.detail
+      expect(detail.length).toBe(4096)
+      expect(detail.startsWith('Camera vid=xxx')).toBe(true)
+      expect(detail.endsWith('…')).toBe(true)
+      expect(results(run)).toEqual([{ detections: '1' }])
+      expect(finishedReason(run)).toBe('stopped')
     },
     SIDECAR_TEST_TIMEOUT
   )

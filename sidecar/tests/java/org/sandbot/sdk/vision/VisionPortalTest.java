@@ -145,6 +145,35 @@ public final class VisionPortalTest {
         Check.equal("Illegal CameraState CAMERA_DEVICE_CLOSED when calling resumeStreaming()", e.getMessage(), "message");
     }
 
+    /**
+     * 처리 중에 close: 1920×1080 데시메이션 1은 처리 675 ms(100 ms × 6.75)로 닫기 0.3 s보다 길다. 닫힘은 그 프레임의 결과를 낸 뒤다
+     * (EOCV closeCameraDevice가 프레임 작업을 끝낸다, spec-4d §1.10). 예전에는 닫힐 때 경계 듣기를 떼어 결과를 잃었다
+     */
+    public static void testCloseFinishesInFlightFrame() throws Exception {
+        HardwareMap[] map = new HardwareMap[1];
+        VisionHarness.Camera cam = VisionHarness.webcam(map, "logitechC920");
+        cam.tags = AprilTagTest.appendixTags();
+        AprilTagProcessor tag = new AprilTagProcessor.Builder().build();
+        tag.setDecimation(1);
+        VisionPortal portal = builder(cam, map[0]).setCameraResolution(new Size(1920, 1080)).addProcessor(tag).build();
+        waitFor(portal, VisionPortal.CameraState.STREAMING, 2);
+        tag.getFreshDetections(); // 처음 빈 목록을 비운다
+        int first = cam.frames.size();
+        while (cam.frames.size() == first) VisionHarness.advance(0.005);
+        long frameNanos = cam.frames.get(first);
+        Check.equal(null, tag.getFreshDetections(), "still processing");
+        long closeAt = VisionHarness.CLOCK.nanos;
+        portal.close();
+        long closed = waitFor(portal, VisionPortal.CameraState.CAMERA_DEVICE_CLOSED, 2);
+        Check.isTrue(closed >= frameNanos + 675_000_000L,
+                "closed after the frame finished: " + (closed - frameNanos));
+        Check.isTrue(closed - closeAt >= 300_000_000L, "close at least 0.3 s");
+        ArrayList<AprilTagDetection> fresh = tag.getFreshDetections();
+        Check.isTrue(fresh != null && !fresh.isEmpty(), "in-flight frame published before CLOSED: " + fresh);
+        Check.equal(frameNanos, fresh.get(0).frameAcquisitionNanoTime, "from that frame");
+        Check.equal(null, state(cam), "released");
+    }
+
     public static void testResumeWithFormatAndWaiting() throws Exception {
         HardwareMap[] map = new HardwareMap[1];
         VisionHarness.Camera cam = VisionHarness.webcam(map, "logitechC920");

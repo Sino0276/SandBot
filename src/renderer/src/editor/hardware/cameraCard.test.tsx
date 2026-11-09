@@ -1,6 +1,7 @@
 import i18n from 'i18next'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { initReactI18next } from 'react-i18next'
+import { BoxGeometry } from 'three'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { OpModeInfo } from '../../../../shared/play'
 import { rotationMatrix } from '../../../../shared/sim/seasons/fieldGeometry'
@@ -8,6 +9,7 @@ import ko from '../../i18n/locales/ko'
 import { cameraAimRotation, sdkCameraPose, type CameraAim } from '../../hardware/mounting'
 import { newRun, usePlayStore } from '../../play/playStore'
 import type { HardwareComponent, SceneObjects } from '../../scene/model'
+import { disposeGeometry, registerGeometry } from '../../scene/geometryRegistry'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import ComponentCard from './ComponentCard'
@@ -88,8 +90,7 @@ const OP_MODE: OpModeInfo = {
   preselectTeleOp: ''
 }
 
-const render = (component: HardwareComponent): string => {
-  const objects = scene(component)
+const render = (component: HardwareComponent, objects: SceneObjects = scene(component)): string => {
   setStore(useSceneStore, { objects })
   setStore(useUnitStore, { lengthUnit: 'mm' })
   return renderToStaticMarkup(
@@ -124,6 +125,42 @@ describe('웹캠 카드', () => {
     expect(html).toContain(
       `title="${i18n.t('hardware.derivedHints.webcam').replace(/'/g, '&#x27;')}"`
     )
+  })
+
+  it('로봇 중심선 위 렌즈의 반올림 찌꺼기(±1e-17)는 "-0.00"·"-0.0"이 아니라 0이다', () => {
+    const component = webcam({ aimRoll: -1e-17 })
+    const objects = scene(component)
+    const centred: SceneObjects = {
+      ...objects,
+      part: { ...objects.part, transform: { position: [0.2, 1e-17, 0.3], rotation: [0, 0, 0] } }
+    }
+    const html = render(component, centred)
+    expect(html).toContain(
+      'setCameraPose: Position(INCH, 0.00, 7.87, 11.81) · YawPitchRollAngles(DEGREES, 0.0, -60.0, 0.0)'
+    )
+    expect(html).not.toContain('-0.0')
+  })
+
+  it('형상을 읽으면 setCameraPose 줄이 피벗에서 하우징 앞면으로 바뀐다(형상 판으로 다시 그림)', () => {
+    const component = webcam({ aimPitch: 0 })
+    const objects = scene(component)
+    const withMesh: SceneObjects = {
+      ...objects,
+      part: {
+        ...objects.part,
+        visual: { type: 'mesh', geometryId: 'cam-geometry', color: [0.5, 0.5, 0.5] }
+      }
+    }
+    // 형상을 아직 읽지 않았으면 피벗(앞 0.2 m = 7.87 in)
+    expect(render(component, withMesh)).toContain('Position(INCH, -1.97, 7.87, 11.81)')
+    const geometry = new BoxGeometry(0.0254, 0.05, 0.03)
+    registerGeometry('cam-geometry', geometry)
+    try {
+      // 수평 앞 조준: 렌즈 = 피벗 + 상자 앞면(+X 0.5 in) → y_sdk 8.37 in
+      expect(render(component, withMesh)).toContain('Position(INCH, -1.97, 8.37, 11.81)')
+    } finally {
+      disposeGeometry('cam-geometry')
+    }
   })
 
   it('C3: sdkCameraPose를 SDK ZXZ(Rz·Rx·Rz)로 되돌린 회전 = SandBot 장착의 OpenCV 축 행렬(1e-12)', () => {

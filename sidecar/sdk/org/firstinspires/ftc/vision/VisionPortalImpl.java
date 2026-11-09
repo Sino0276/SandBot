@@ -502,8 +502,12 @@ public class VisionPortalImpl extends VisionPortal
             {
                 cameraState = CameraState.CLOSING_CAMERA_DEVICE;
                 // SandBot: 실제는 새 스레드에서 camera.closeCameraDevice() 뒤 CAMERA_DEVICE_CLOSED, camera = null
+                // SandBot: closeCameraDevice도 stopStreaming처럼 처리 중인 프레임을 끝낸 뒤 닫힘을 알리므로(spec-4d §1.10), 처리 중
+                // 결과의 끝이 닫기 시간보다 늦으면 그때 닫힌다(대기 칸은 버린다)
                 sandbotWaiting = null;
-                sandbotBegin(SANDBOT_CLOSE, Sim.nanoTime() + SANDBOT_CLOSE_NANOS);
+                long closeEnd = Sim.nanoTime() + SANDBOT_CLOSE_NANOS;
+                if (sandbotInFlight != null && sandbotInFlight.end > closeEnd) closeEnd = sandbotInFlight.end;
+                sandbotBegin(SANDBOT_CLOSE, closeEnd);
             }
         }
         finally
@@ -638,6 +642,9 @@ public class VisionPortalImpl extends VisionPortal
             }
             else if (kind == SANDBOT_CLOSE)
             {
+                // SandBot: 처리 중이던 프레임의 결과(또는 예외)를 닫힘보다 먼저 낸다. 경계 듣기를 떼면 sandbotDeliver가 다시 불리지 않고,
+                // 기다릴 수 없는 sandbotAcquire 경로는 sandbotDeliver를 부르지 않는다(끝 시각은 close가 처리 끝 이후로 잡았다)
+                sandbotDeliver(end);
                 cameraState = CameraState.CAMERA_DEVICE_CLOSED;
                 sandbotCamera.release(this);
                 sandbotCamera = null;

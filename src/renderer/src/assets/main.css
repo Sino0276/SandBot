@@ -232,6 +232,9 @@ body {
 }
 
 .frame-badge {
+  /* 좁은 줄(웹캠 카드의 카메라 모델 선택칸 옆)에서도 "실행 중"이 두 줄로 접히지 않게 */
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 1px 6px;
   color: #fff;
   background: var(--color-accent-muted);
