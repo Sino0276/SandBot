@@ -184,6 +184,12 @@ public final class Main {
         session.clock = clock;
         session.running = true;
         Sim.installFirstFolder(new File(request.firstFolder));
+        // 팀 웹캠 보정(teamwebcamcalibrations.xml, spec-4d §1.13): 메인이 TeamCode 안 보통 파일로 확인한 경로. 여기서도 보통
+        // 파일인지 보고 아니면 내장 보정만 쓴다(읽기는 처음 조회할 때)
+        if (request.teamCalibrations != null) {
+            File calibrations = new File(request.teamCalibrations);
+            if (calibrations.isFile()) Sim.installCameraCalibrations(calibrations);
+        }
         Sim.install(clock, timing, runner);
         clock.setBoundary(runner);
 

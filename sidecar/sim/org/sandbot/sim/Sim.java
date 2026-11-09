@@ -102,6 +102,23 @@ public final class Sim {
         firstFolder = folder;
     }
 
+    private static volatile File cameraCalibrations;
+
+    /**
+     * 팀 웹캠 보정 파일(TeamCode/src/main/res/xml/teamwebcamcalibrations.xml, RunRequest.teamCalibrations, spec-4d §1.13)을 넣는다.
+     * 런타임만, 팀 코드를 부르기 전에 한 번. 가짜 SDK의 SandbotCameraCalibrations가 내장 보정 다음에 읽는다.
+     */
+    public static synchronized void installCameraCalibrations(File file) {
+        if (cameraCalibrations != null) throw new IllegalStateException("camera calibrations already installed");
+        if (file == null) throw new NullPointerException();
+        cameraCalibrations = file;
+    }
+
+    /** 팀 웹캠 보정 파일(없으면 null) */
+    public static File cameraCalibrationsFile() {
+        return cameraCalibrations;
+    }
+
     public static File firstFolder() {
         File f = firstFolder;
         if (f == null) throw new IllegalStateException("SandBot simulator is not running");

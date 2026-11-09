@@ -144,9 +144,105 @@ placeholder types or written by SandBot (android.graphics.Color, android.opengl.
 android.util.Log, android.os.SystemClock, and the signatures of android.content.Context#getAssets
 and parts of android.content.res.AssetManager); no other Android code is included.
 
+5. Class files of OpenCV 4.10.0 for Java (org.opencv.*), from the classes.jar of the OpenCV
+   Android package as re-packaged by OpenFTC (Maven Central:
+   org.openftc:opencv-repackaged-bundled-dylibs:4.10.0-A, https://github.com/OpenFTC). SandBot
+   redistributes only the pure-Java classes whose references close over the JDK and SandBot's own
+   implementation (for example org.opencv.core.Point, Point3, Rect, Size, Scalar, CvException), with
+   the same clock redirection, and the public and protected API of the other OpenCV classes (method
+   bodies replaced). No native library and none of OpenFTC's own classes (org.openftc.*) are
+   included. OpenCV 4.x is licensed under the Apache License, Version 2.0 (the license text above;
+   https://opencv.org/license/). Copyright (C) 2000-2022, Intel Corporation, all rights reserved;
+   Copyright (C) 2009-2011, Willow Garage Inc., all rights reserved; Copyright (C) 2009-2016,
+   NVIDIA Corporation, all rights reserved; Copyright (C) 2010-2013, Advanced Micro Devices, Inc.,
+   all rights reserved; Copyright (C) 2015-2023, OpenCV Foundation, all rights reserved; Copyright
+   (C) 2008-2016, Itseez Inc., all rights reserved; Copyright (C) 2019-2023, Xperience AI, all
+   rights reserved; Copyright (C) 2019-2022, Shenzhen Institute of Artificial Intelligence and
+   Robotics for Society, all rights reserved; Copyright (C) 2022-2023, Southern University of
+   Science And Technology, all rights reserved. Third party copyrights are property of their
+   respective owners.
+
+6. org.sandbot.sdk.vision: a Java translation of parts of OpenCV 4.10.0 written by SandBot for the
+   simulator (camera pose estimation as used by the FTC SDK's AprilTag processor). Each source file
+   keeps the copyright header of the OpenCV source it was translated from:
+   modules/calib3d/src/solvepnp.cpp, calibration.cpp, fundam.cpp, compat_ptsetreg.cpp, levmarq.cpp,
+   undistort.dispatch.cpp, epnp.cpp, ippe.cpp and modules/core/src/lapack.cpp. Most of these files
+   carry the OpenCV 3-clause license below (with the copyright holders named in each header:
+   Intel Corporation, Willow Garage Inc., OpenCV Foundation); epnp.cpp has no header and is covered
+   by the OpenCV 4.x Apache License, Version 2.0; levmarq.cpp also contains code by Miroslav Balda
+   (2-clause BSD, the text is in LevMarq.java); ippe.cpp is based on code by Toby Collins (3-clause
+   BSD, the text is in Ippe.java).
+
+------------------------------------------------------------------------------------------
+                          License Agreement
+               For Open Source Computer Vision Library
+
+Copyright (C) 2000-2008, Intel Corporation, all rights reserved.
+Copyright (C) 2009, Willow Garage Inc., all rights reserved.
+Copyright (C) 2013, OpenCV Foundation, all rights reserved.
+Third party copyrights are property of their respective owners.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+  * Redistribution's of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+
+  * Redistribution's in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+
+  * The name of the copyright holders may not be used to endorse or promote products
+    derived from this software without specific prior written permission.
+
+This software is provided by the copyright holders and contributors "as is" and
+any express or implied warranties, including, but not limited to, the implied
+warranties of merchantability and fitness for a particular purpose are disclaimed.
+In no event shall the Intel Corporation or contributors be liable for any direct,
+indirect, incidental, special, exemplary, or consequential damages
+(including, but not limited to, procurement of substitute goods or services;
+loss of use, data, or profits; or business interruption) however caused
+and on any theory of liability, whether in contract, strict liability,
+or tort (including negligence or otherwise) arising in any way out of
+the use of this software, even if advised of the possibility of such damage.
+------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------
+IPPE (ippe.cpp) — Copyright 2017 Toby Collins
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+------------------------------------------------------------------------------------------
+
+7. org/sandbot/sdk/devices/builtinwebcamcalibrations.xml: the FTC SDK's built-in webcam
+   calibrations (res/xml/builtinwebcamcalibrations.xml of the RobotCore 12.0.0 AAR), unchanged,
+   under the FIRST BSD-style license above.
+
 sandbot-dashboard.jar contains:
 
-5. Class files of FTC Dashboard 0.6.0 (https://maven.brott.dev: com.acmerobotics.dashboard:core
+8. Class files of FTC Dashboard 0.6.0 (https://maven.brott.dev: com.acmerobotics.dashboard:core
    and com.acmerobotics.dashboard:dashboard 0.6.0, https://github.com/acmerobotics/ftc-dashboard)
    whose references close over the JDK, the SDK above and SandBot's own implementation, with the
    same clock and collection-order redirection; the public and protected API of the remaining

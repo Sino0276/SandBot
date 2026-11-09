@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { readZip } from '../../scripts/fetch-ftc-sdk.mjs'
+import {
+  ensureFtcSdk,
+  liftableJars,
+  readZip,
+  REAL_EXCLUDED_PREFIXES
+} from '../../scripts/fetch-ftc-sdk.mjs'
 import { SIDECAR_PROTOCOL_VERSION } from '../../src/shared/sidecarProtocol'
 import {
   compileJavaTests,
@@ -21,13 +26,10 @@ import {
 // SANDBOT_SIDECAR_LENIENT=1(--allow-missing) 빌드에서는 반드시 있어야 할 클래스·runtime Main 확인을 건너뛴다.
 
 const sdkDir = join(repoRoot, 'sidecar', 'build', 'ftc-sdk')
-// 빌드가 들여오기·stub에 쓰는 실제 jar(build-sidecar.mjs의 liftableJars와 같다)
-const realJars = [
-  ...['RobotCore', 'Hardware', 'FtcCommon', 'Vision'].map((n) =>
-    join(sdkDir, '12.0.0', `${n}.jar`)
-  ),
-  ...['gson-2.8.0', 'gson-extras-0.2.1'].map((n) => join(sdkDir, '12.0.0', 'libs', `${n}.jar`))
-]
+// 빌드가 들여오기·stub에 쓰는 실제 jar와 그중 뺄 접두어(build-sidecar.mjs와 같은 목록: fetch-ftc-sdk.mjs의 liftableJars·
+// REAL_EXCLUDED_PREFIXES. OpenCV classes.jar를 빼면 OpenCV stub이 API 대조에서 조용히 빠진다, spec-4d §1.9)
+let realJars: string[] = []
+const realExclude = REAL_EXCLUDED_PREFIXES.join(',')
 const androidJar = join(sdkDir, 'android-4.1.1.4.jar')
 // FTC Dashboard 층의 기준(scripts/fetch-ftc-sdk.mjs의 ensureFtcDashboard: core jar, AAR의 classes.jar)
 const dashboardRealJars = ['core', 'dashboard'].map((n) =>
@@ -54,6 +56,8 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
     const result = await sidecarBuild()
     if (!result) throw new Error('JDK disappeared')
     build = result
+    // 빌드가 이미 받아 두었다(해시만 확인한다)
+    realJars = liftableJars(await ensureFtcSdk({ log: () => {} }))
   }, SIDECAR_TEST_TIMEOUT)
 
   it('jar·sidecar.json·NOTICE를 쓴다', () => {
@@ -220,6 +224,8 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
         'org.sandbot.tools.ApiCheck',
         '--real',
         realJars.join(delimiter),
+        '--real-exclude',
+        realExclude,
         '--android',
         androidJar,
         '--sdk',
@@ -229,7 +235,8 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
       expect(result.code).toBe(0)
       const summary = /checked (\d+) classes, (\d+) constants, 0 errors/.exec(result.output)
       expect(summary).not.toBeNull()
-      expect(Number(summary![1])).toBeGreaterThan(1000)
+      // 손 구현·들여옴·stub 전부(4d: OpenCV stub을 더해 1700 넘음, spec-4d B1)
+      expect(Number(summary![1])).toBeGreaterThanOrEqual(1700)
       expect(Number(summary![2])).toBeGreaterThan(500)
     },
     SIDECAR_TEST_TIMEOUT
@@ -365,6 +372,8 @@ describe.skipIf(!hasJdk())('사이드카 빌드', () => {
           'org.sandbot.tools.ApiCheck',
           '--real',
           realJars.join(delimiter),
+          '--real-exclude',
+          realExclude,
           '--android',
           androidJar,
           '--hand',

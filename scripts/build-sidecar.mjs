@@ -4,7 +4,8 @@
 //   sandbot-dashboard.jar FTC Dashboard 대체(라이브러리 L2): 손 구현(sidecar/libs/dashboard) + 들여온 실제 Dashboard 0.6.0
 //                       클래스(시간 API 패치) + 껍데기. 팀 Gradle이 Dashboard를 선언하면 메인이 실행 클래스패스에 넣는다
 //   sidecar.json        { sourceHash, sdkVersion, protocol, javaRelease }(--allow-missing으로 빠진 것이 있으면 incomplete)
-//   NOTICE.txt          FTC SDK의 BSD 고지, Gson의 Apache 2.0, FTC Dashboard의 MIT 고지(들여온 바이너리를 배포하므로)
+//   NOTICE.txt          FTC SDK의 BSD 고지, Gson·OpenCV의 Apache 2.0, FTC Dashboard의 MIT 고지(들여온 바이너리를 배포하므로),
+//                       옮긴 OpenCV 소스(solvePnP·IPPE·EPnP 등)의 고지
 // 순서: JDK 찾기 → SDK·Dashboard 받기(scripts/fetch-ftc-sdk.mjs) → 빌드 도구(sidecar/tools) 컴파일 → org.sandbot.tools.SdkBuild
 // (stub 생성·컴파일·들여오기·패치·링크 확인·API 대조·jar, 그다음 같은 순서로 Dashboard 층). 자세한 단계는 SdkBuild.java.
 //
@@ -32,7 +33,14 @@ import {
   writeFileSync
 } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
-import { ensureFtcDashboard, ensureFtcSdk, FetchError, SDK_VERSION } from './fetch-ftc-sdk.mjs'
+import {
+  ensureFtcDashboard,
+  ensureFtcSdk,
+  FetchError,
+  liftableJars,
+  REAL_EXCLUDED_PREFIXES,
+  SDK_VERSION
+} from './fetch-ftc-sdk.mjs'
 import {
   MIN_JDK,
   findJdk,
@@ -44,11 +52,10 @@ import {
 const JAVA_RELEASE = 8
 const buildDir = join(repoRoot, 'sidecar', 'build')
 
-// 들여오기·stub의 대상: SDK의 classes.jar 넷과, RobotCore AAR이 함께 싣는 Gson(SDK가 쓰고 팀 코드도 쓸 수 있다,
-// Apache 2.0). 같은 AAR의 slf4j는 SDK 클래스가 쓰지 않으므로 넣지 않는다.
-function liftableJars(sdk) {
-  return [...sdk.jars, ...sdk.libs.filter((path) => /[\\/]gson(-extras)?-[\d.]+\.jar$/.test(path))]
-}
+// 들여오기·stub의 대상(liftableJars: SDK classes.jar 넷, Gson, OpenCV classes.jar)과 그중 뺄 접두어(REAL_EXCLUDED_PREFIXES)는
+// scripts/fetch-ftc-sdk.mjs 한곳에 둔다(sidecar/tests/build.test.ts도 같은 목록을 쓴다).
+// sandbot-sdk.jar에 넣는 자원(jar 안 경로 → 받은 파일): SDK 내장 웹캠 보정(4d, SandbotCameraCalibrations가 읽는다)
+const CALIBRATIONS_RESOURCE = 'org/sandbot/sdk/devices/builtinwebcamcalibrations.xml'
 
 function option(name) {
   const index = process.argv.indexOf(`--${name}`)
@@ -249,6 +256,10 @@ async function main() {
       join(buildDir, 'work'),
       '--real',
       liftableJars(sdk).join(delimiter),
+      '--real-exclude',
+      REAL_EXCLUDED_PREFIXES.join(','),
+      '--sdk-resource',
+      `${CALIBRATIONS_RESOURCE}=${sdk.calibrationsXml}`,
       '--android',
       sdk.androidJar,
       '--api-reference',

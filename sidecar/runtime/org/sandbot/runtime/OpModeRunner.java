@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 /**
  * OpMode 하나를 실행한다(spec §2.4). 실제 SDK의 OpModeManagerImpl(이벤트 루프 스레드)과 OpModeInternal(executor)이 하던 일을
@@ -88,6 +89,12 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     private boolean stopApplied;
     private boolean dsStop;
     private long stopTimeNanos;
+
+    /**
+     * 비상 정지(카메라 스레드 예외의 대응, spec-4d §1.12): 오류는 받은 즉시 보냈고, 정지는 OpMode 준비 뒤 첫 경계의 DS STOP
+     * 자리에서 적용한다. 끝 이유는 exception이다.
+     */
+    private boolean emergencyStopRequested;
 
     private volatile long loops;
     /** requestOpModeStop(어느 스레드든) */
@@ -320,7 +327,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         userCodeRunning = false;
         String reason;
         if (thrown == null) {
-            reason = dsStop ? "stopped" : "returned";
+            reason = emergencyStopRequested ? "exception" : dsStop ? "stopped" : "returned";
         } else if (thrown instanceof SimExit || SandbotOpModeBridge.isForceStop(thrown)) {
             reason = "terminated";
         } else if (thrown instanceof SimThreadError) {
@@ -548,6 +555,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         }
         pendingEvents.clear();
         if (stopRequestedByOpMode) applyStop(false);
+        // 비상 정지(VisionPortal 처리기 예외): DS STOP과 같은 자리에서
+        if (emergencyStopRequested) applyStop(false);
 
         // 게임패드(runActiveOpMode: 새 자료가 오면 newGamepadDataAvailable). INIT 뒤 첫 경계에서 지금 상태를 한 번 넘긴다.
         if (gamepadsChanged || !gamepadsDelivered) {
@@ -585,9 +594,33 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                 Object value = v.getValue();
                 if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String)
                     values.put((String) v.getKey(), value);
+                else if (value instanceof List && isTagsInput((String) v.getKey(), (List<?>) value))
+                    values.put((String) v.getKey(), value);
+                // 다른 배열은 버린다(SimDevice.checkValue가 OpMode 스레드에서 던지지 않게 먼저 거른다)
             }
             device.applyInputs(values, tNanos);
         }
+    }
+
+    /** 웹캠 입력 tags의 한 칸 수(src/shared/sidecarProtocol.ts TAG_INPUT_STRIDE: [id, x0, y0, …, x3, y3]) */
+    static final int TAG_INPUT_STRIDE = 9;
+    /** 한 프레임 태그 수 한도(sidecarProtocol.ts MAX_TAG_DETECTIONS) */
+    static final int MAX_TAG_DETECTIONS = 64;
+
+    /**
+     * sidecarProtocol.ts isTagsInput과 같은 규칙: 키가 tags, 길이가 9의 배수이고 9·64 이하, 모든 원소가 유한 수, 칸 0(id)은 0 이상의
+     * 정수(Json은 소수점 없는 수를 Long으로 읽는다. 꼭짓점도 Long일 수 있다).
+     */
+    static boolean isTagsInput(String key, List<?> value) {
+        if (!"tags".equals(key)) return false;
+        int n = value.size();
+        if (n % TAG_INPUT_STRIDE != 0 || n > TAG_INPUT_STRIDE * MAX_TAG_DETECTIONS) return false;
+        for (int i = 0; i < n; i++) {
+            Object item = value.get(i);
+            if (!(item instanceof Number) || !Double.isFinite(((Number) item).doubleValue())) return false;
+            if (i % TAG_INPUT_STRIDE == 0 && !(item instanceof Long && (Long) item >= 0)) return false;
+        }
+        return true;
     }
 
     @SuppressWarnings("unchecked")
@@ -616,6 +649,25 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     @Override
     public void loopMarker() {
         loops++;
+    }
+
+    /** 사이드카 안내(spec-4d §1.14). 직렬화 순서가 정해지게 키 순서로 */
+    @Override
+    public void notice(String code, Map<String, String> params) {
+        protocol.notice(clock.peekNanos(), code, new TreeMap<>(params));
+    }
+
+    /**
+     * EOCV emulateEStop의 대응(spec-4d §1.12): 오류(kind exception, 스레드 VisionPortal, 팀 코드 줄이 없어 빈 스택)를 바로 보내고
+     * 정지는 OpMode가 준비된 뒤 첫 경계의 DS STOP 자리에서 적용한다. 두 번째부터는 무시한다(첫 예외가 OpMode를 멈춘다).
+     */
+    @Override
+    public void emergencyStop(Throwable cause) {
+        if (emergencyStopRequested) return;
+        emergencyStopRequested = true;
+        String message = cause.getMessage() != null ? cause.getMessage() : StackFrames.describe(cause);
+        protocol.error(clock.peekNanos(), "exception", message, cause.getClass().getName(), new ArrayList<>(),
+                "VisionPortal");
     }
 
     // ---- OpModeServices ----
