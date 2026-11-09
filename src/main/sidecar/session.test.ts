@@ -2,7 +2,12 @@ import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { DashConfigNode } from '../../shared/dashboard'
 import type { PlayEvent, SimNoticeCode } from '../../shared/play'
-import type { DeviceValues, RunRequest, TickMessage } from '../../shared/sidecarProtocol'
+import {
+  SIDECAR_PROTOCOL_VERSION,
+  type DeviceValues,
+  type RunRequest,
+  type TickMessage
+} from '../../shared/sidecarProtocol'
 import { MAX_WORLD_JOINTS } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
@@ -15,7 +20,7 @@ const SOURCE = `${ROOT}/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Dr
 
 const REQUEST: RunRequest = {
   type: 'run',
-  protocol: 3,
+  protocol: SIDECAR_PROTOCOL_VERSION,
   clock: 'virtual',
   tickNanos: 5_000_000,
   sourceRoots: [`${ROOT}/TeamCode/src/main/java`],
@@ -32,7 +37,8 @@ const REQUEST: RunRequest = {
   jitter: 0,
   seed: 0,
   startEpochMillis: 0,
-  stallMillis: 2000
+  stallMillis: 2000,
+  teamCalibrations: null
 }
 
 const MS = 1_000_000
@@ -67,7 +73,7 @@ function setup(
 }
 
 function boot(proc: FakeProcess): void {
-  proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+  proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
   proc.line({ type: 'compiled', ok: true, diagnostics: [], millis: 4 })
   proc.line({ type: 'state', tNanos: 0, phase: 'init' })
 }
@@ -108,7 +114,7 @@ describe('SidecarSession 시작과 이벤트', () => {
           ? { kind: 'undeclared', packageName: 'com.example' }
           : null
     })
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     proc.line({
       type: 'linkReport',
       warnings: [
@@ -154,7 +160,7 @@ describe('SidecarSession 시작과 이벤트', () => {
 
   it('진단과 스택 프레임의 경로를 TeamCode 기준으로 바꾼다', () => {
     const { proc, of } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     proc.line({
       type: 'compiled',
       ok: false,
@@ -380,7 +386,7 @@ describe('SidecarSession 일시 정지와 Step', () => {
 
   it('START는 init 단계에서 한 번만, STOP 뒤에는 받지 않는다', () => {
     const { clock, proc, session } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     session.command({ type: 'start' })
     proc.line({ type: 'state', tNanos: 0, phase: 'init' })
     proc.line(tick(0))
@@ -598,7 +604,12 @@ describe('SidecarSession 끝내기', () => {
 
   it('조각난 줄과 CRLF를 이어 읽는다', () => {
     const { proc, of } = setup()
-    const text = JSON.stringify({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    const text = JSON.stringify({
+      type: 'hello',
+      protocol: SIDECAR_PROTOCOL_VERSION,
+      runtime: 'x',
+      java: '21'
+    })
     proc.raw(text.slice(0, 5))
     proc.raw(`${text.slice(5)}\r\n`)
     expect(of('phase').at(-1)?.phase).toBe('compiling')
@@ -614,7 +625,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('compiling 중 STOP은 shutdown을 보낸다', () => {
     const { proc, session, of } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'x', java: '21' })
     session.command({ type: 'stop' })
     expect(proc.sent.at(-1)).toEqual({ type: 'shutdown' })
     proc.line({ type: 'finished', tNanos: 0, reason: 'shutdown' })
@@ -665,7 +676,7 @@ describe('SidecarSession 이벤트 묶기', () => {
 
   it('로그는 50 ms 묶음이고, 오류·단계·끝 전에 먼저 보낸다', () => {
     const { clock, proc, events } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'x', java: '21' })
     const log = (text: string): void => proc.line({ type: 'log', tNanos: 0, stream: 'out', text })
     log('a')
     log('b')

@@ -501,6 +501,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             Main.parkForever();
         }
         applyInputs(reply.body.get("inputs"), tNanos);
+        // 틱 경계 듣기(4d VisionPortal 등, spec-4d §1.10): 입력을 넣은 바로 뒤, Dashboard·DS 사건 앞(INIT 전 경계 포함)
+        Sim.fireBoundary(tNanos);
         Object events = reply.body.get("events");
         if (events instanceof List) {
             for (Object e : (List<?>) events) {

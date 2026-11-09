@@ -649,7 +649,7 @@ const ko = {
         '시뮬레이터의 배터리 전압({{min}}–{{max}} V). 모터 무부하 속도가 전압 ÷ 12에 비례하고, 허브 getVoltage()가 이 값을 돌려줍니다.',
       sensorNoise: '센서 잡음',
       sensorNoiseHint:
-        '거리 센서 값에 장치마다 고정 오프셋(±10 mm)과 측정마다 잡음을 더합니다(데이터시트 산포). 컬러 센서에는 더하지 않습니다. 시드가 같으면 같은 값이 나옵니다.',
+        '거리 센서 값(장치마다 고정 오프셋 ±10 mm와 측정마다 잡음, 데이터시트 산포)과 웹캠 태그 꼭짓점(σ 0.3 px)에 잡음을 더합니다. 컬러 센서에는 더하지 않습니다. 시드가 같으면 같은 값이 나옵니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
   },
@@ -925,6 +925,20 @@ const ko = {
         '거리 센서 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyColorSensors:
         '컬러 센서 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      // 웹캠(4d, play/worldCameras.ts·playActions worldFor)
+      worldCameraNotConfigured:
+        '웹캠 {{name}}에 시리얼이 없어 구성 XML에 들어가지 않으므로 시뮬레이터가 그 웹캠을 쓰지 않습니다.',
+      worldDuplicateCamera:
+        '웹캠 장치 이름 {{name}}이(가) 다른 장치와 겹치거나 비어 있어 시뮬레이터가 그 웹캠을 쓰지 않습니다.',
+      worldTooManyCameras: '웹캠 수가 시뮬레이터 한도({{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldCameraNoHousing:
+        '웹캠 {{name}}의 형상이 없거나 아직 읽는 중이라 하우징 앞면 대신 피벗을 렌즈로 씁니다.',
+      worldCameraOnRobot:
+        '웹캠 {{name}}이(가) 로봇·CAD 루트에 붙어 있어 피벗을 렌즈로 씁니다. 웹캠 파트에 붙이세요.',
+      worldCameraFarHousing:
+        '웹캠 {{name}}의 렌즈(하우징 앞면)가 피벗에서 {{distance}} 떨어져 있습니다. 웹캠보다 큰 그룹에 붙였는지 확인하세요.',
+      worldCameraSelfHit:
+        '웹캠 {{name}}의 시야를 자기 로봇의 {{part}}이(가) 가립니다. 시뮬레이터는 자기 로봇을 보지 않으므로 보이는 태그가 실제 로봇과 다릅니다.',
       worldWheelOnJoint:
         '바퀴 {{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
       worldGenerationStale:
@@ -966,7 +980,28 @@ const ko = {
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
         // file은 모의 저장소(userData/sim-files/<프로젝트>/FIRST, 로봇의 /sdcard/FIRST) 안의 절대 경로
-        rrTuningSaved: 'Road Runner 튜닝 결과를 저장했습니다: {{file}}'
+        rrTuningSaved: 'Road Runner 튜닝 결과를 저장했습니다: {{file}}',
+        // 비전(4d, spec-4d §1.14)
+        visionProcessorUnsupported:
+          '{{processor}} 처리기는 영상이 필요해 시뮬레이션하지 않습니다(프레임을 받지 않습니다). AprilTag 처리기만 동작합니다.',
+        aprilTagNoFieldPose:
+          'SDK의 BIOBUZZ 태그 라이브러리에는 필드 위치가 없어 {{cluster}}의 robotPose는 CELL 기준 값입니다(실제 로봇도 같습니다). 필드 자세가 필요하면 BIOBUZZ가 없는 라이브러리(getSampleTagLibrary 등)에 HIVE 상태에 맞춘 묶음을 직접 넣어야 합니다. 현재 게임 라이브러리에는 setAllowOverwrite로도 더할 수 없습니다. Field 인스펙터가 묶음 위치를 보여 줍니다.',
+        // params.solver로 고른다(OPENCV_SQPNP → sqpnp, APRILTAG_BUILTIN → builtin)
+        visionSolverSubstituted: {
+          sqpnp:
+            'OPENCV_SQPNP 자세 풀이는 OPENCV_ITERATIVE로 대신 계산합니다(잡음이 없으면 같은 값이고, 잡음이 있으면 조금 다릅니다).',
+          builtin:
+            'APRILTAG_BUILTIN 단일 태그 자세 풀이는 OPENCV_ITERATIVE로 대신 계산합니다(실제는 apriltag 네이티브 풀이라 값이 조금 다릅니다). 태그 묶음에는 이 풀이를 쓸 수 없습니다.'
+        },
+        visionSolverStop:
+          '{{solver}} 자세 풀이는 BIOBUZZ 태그 묶음을 풀지 못해 OpenCV 예외로 OpMode가 멈춥니다. 실제 로봇에서도 같습니다(OPENCV_ITERATIVE를 쓰세요).',
+        visionMultipleAprilTag:
+          '한 VisionPortal에 AprilTag 처리기가 둘 이상 켜져 있습니다. 시뮬레이터는 첫 처리기의 패밀리·데시메이션으로 검출합니다.',
+        visionFrameCapture: '{{method}}는 시뮬레이터에 영상이 없어 아무것도 하지 않습니다.',
+        visionResumeNullFormat:
+          '스트림 형식 없이 resumeStreaming을 불러 카메라가 STARTING_STREAM에 머뭅니다. 실제 SDK 12.0도 카메라 스레드에서 NullPointerException이 나 스트림이 다시 시작되지 않습니다(앱이 멈출 수도 있습니다). VisionPortal.Builder에 setStreamFormat(VisionPortal.StreamFormat.YUY2)를 넣으세요.',
+        visionCalibrationSkipped:
+          'teamwebcamcalibrations.xml의 보정 하나를 SDK가 버립니다(실제 로봇은 알리지 않고 버립니다): {{detail}}'
       },
       // 라이브러리 의존성 보고(INIT, src/main/libraries). 좌표마다 이유(LibraryReason)로 한 줄.
       library: {
@@ -1144,7 +1179,10 @@ const ko = {
     jointName: '관절',
     jointType: '종류',
     jointValue: '값',
-    jointsHint: '시뮬레이터가 보낸 관절 위치입니다(편집 자세가 0). 누르면 그 오브젝트를 고릅니다.'
+    jointsHint: '시뮬레이터가 보낸 관절 위치입니다(편집 자세가 0). 누르면 그 오브젝트를 고릅니다.',
+    // 웹캠 입력 tags 요약(4d, play/deviceRows.ts): 원소 대신 id 목록
+    tags: '태그 {{count}}장: {{ids}}',
+    tagsNone: '태그 없음'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
@@ -1327,7 +1365,10 @@ const ko = {
       limitAngle: '눌리는 각도',
       // 거리·컬러 센서 조준(4c). rowLabel이 " (°)"를 붙인다
       aimYaw: '조준 방향',
-      aimPitch: '조준 높이각(위 +)'
+      aimPitch: '조준 높이각(위 +)',
+      // 웹캠(4d). cameraModel은 선택칸, aimRoll은 rowLabel이 " (°)"를 붙인다
+      cameraModel: '카메라 모델',
+      aimRoll: '롤(뒤에서 볼 때 시계 방향 +)'
     },
     // 속성 칸의 도움말(catalog의 hint)
     propHints: {
@@ -1341,7 +1382,12 @@ const ko = {
       aimYaw:
         '로봇 앞(+X)에서 반시계 +입니다. 로봇 좌표 기준이고 CAD 파트 회전과 관계없습니다. 위·아래를 볼 때는 요가 값을 거의 바꾸지 않습니다.',
       aimPitch:
-        '수평에서 위가 +이고 아래를 보면 −90°입니다(Transform 회전 Y와 부호가 반대). 로봇 좌표 기준입니다.'
+        '수평에서 위가 +이고 아래를 보면 −90°입니다(Transform 회전 Y와 부호가 반대). 로봇 좌표 기준입니다.',
+      // 웹캠(4d). webcam의 aimYaw·aimPitch는 위 4c 키를 같이 쓴다
+      cameraModel:
+        '시뮬레이터가 쓰는 렌즈(SDK 내장 보정 값)와 SDK가 찾는 보정의 카메라입니다. 실제 웹캠과 같은 모델을 고르세요. 목록은 SDK에 내장 보정이 있는 카메라뿐입니다.',
+      aimRoll:
+        '광축 둘레 회전입니다. 카메라를 뒤에서 볼 때 시계 방향이 +이고, 영상은 반대로 돕니다. 로봇 좌표 기준입니다.'
     },
     // 실행 중인 로봇의 조준 칸 배지(inspector.running) 도움말
     aimRunningHint: '다음 INIT부터 적용됩니다.',
@@ -1386,6 +1432,43 @@ const ko = {
         duplicateName: '시뮬레이터에서 빠짐: 장치 이름이 다른 장치와 겹칩니다.',
         tooMany: '시뮬레이터에서 빠짐: 이 종류의 센서 수가 시뮬레이터 한도를 넘었습니다.',
         outsideRobot: '시뮬레이터에서 빠짐: 로봇 밖에 있습니다.'
+      }
+    },
+    // 웹캠 카드의 편집 자세 줄(4d, editor/hardware/cameraReading.ts): VisionPortal 기본 640×480·데시메이션 3
+    cameraReading: {
+      lens: '렌즈 640×480: fx {{fx}} · cx {{cx}} · cy {{cy}} ({{source}})',
+      // 렌즈 값의 출처(cameraData.ts TrueIntrinsics.source). 뒤의 둘은 SDK가 대체값 578.272를 쓴다
+      sources: {
+        exact: '내장 보정 그대로',
+        scaled: '{{from}} 보정을 줄임(SDK도 같음)',
+        heightRatio: '{{from}} 보정에서 높이 비로 추정(SDK는 578.272를 씀)',
+        crop: '{{from}} 보정을 잘라 추정(SDK는 578.272를 씀)'
+      },
+      // tags: 묶음별 "RED AUDIENCE 34·35·36·37"
+      visible: '보이는 태그: {{tags}}',
+      none: '보이는 태그 없음',
+      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리)
+      rejected: '(가려짐 {{occluded}} · 작음 {{tooSmall}} · 스침 {{grazing}})',
+      hint: 'VisionPortal 기본(640×480, 데시메이션 3)으로 편집 자세에서 보이는 태그입니다. BIOBUZZ 태그는 바닥 위 0.9–1.3 m의 HIVE CELL 아래면에서 60° 아래를 봅니다. 카메라를 위로 25–35° 기울이면 잘 보입니다(기본 30°).',
+      // 줄 끝의 경고(여럿이면 이 순서)
+      tails: {
+        onRobot: '로봇·CAD 루트에 붙어 있어 피벗을 렌즈로 씁니다. 웹캠 파트에 붙이세요.',
+        pivot: '형상이 없거나 읽는 중이라 하우징 앞면 대신 피벗을 렌즈로 씁니다.',
+        farHousing:
+          '렌즈(하우징 앞면)가 피벗에서 {{distance}} 떨어져 있습니다. 웹캠보다 큰 그룹에 붙였는지 확인하세요.',
+        selfHit:
+          '자기 로봇의 {{part}}이(가) 시야 가운데를 가립니다(시뮬레이터는 자기 로봇을 보지 않습니다).',
+        selfHitPartial:
+          '시야 가장자리가 자기 로봇에 걸립니다(시뮬레이터는 자기 로봇을 보지 않습니다).',
+        notConfigured: '시리얼이 없어 구성 XML에 들어가지 않으므로 시뮬레이터에서 빠집니다.'
+      },
+      // 세계 설명에서 빠진 웹캠(play/worldCameras.ts cameraExclusions): 값 대신 이 줄만
+      excluded: {
+        emptyName: '시뮬레이터에서 빠짐: 장치 이름이 비었습니다.',
+        duplicateName: '시뮬레이터에서 빠짐: 장치 이름이 다른 장치와 겹칩니다.',
+        tooMany: '시뮬레이터에서 빠짐: 웹캠 수가 시뮬레이터 한도를 넘었습니다.',
+        outsideRobot: '시뮬레이터에서 빠짐: 로봇 밖에 있습니다.',
+        notConfigured: '시뮬레이터에서 빠짐: 시리얼이 없어 구성 XML에 들어가지 않습니다.'
       }
     },
     options: {
@@ -1467,6 +1550,13 @@ const ko = {
       limitAt: {
         lower: '아래 한계',
         upper: '위 한계'
+      },
+      cameraModel: {
+        logitechC920: 'Logitech C920',
+        logitechC270: 'Logitech C270',
+        logitechC310: 'Logitech C310',
+        lifecamHd3000: 'Microsoft LifeCam HD-3000',
+        gobilda3122: 'goBILDA USB Camera (3122-0003-0001)'
       }
     },
     hints: {
@@ -1491,7 +1581,15 @@ const ko = {
         '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 토크·속도는 실제 감속비 {{ratio}}:1',
       jointMotorOutput:
         '관절: 출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전 · 실제 감속비 {{ratio}}:1',
-      deadWheelPod: '포드 해상도: {{ticks}} 틱/mm'
+      deadWheelPod: '포드 해상도: {{ticks}} 틱/mm',
+      // 웹캠(4d): SDK setCameraPose 값(렌즈 = 하우징 앞면, hardware/mounting.ts sdkCameraPose)
+      webcam:
+        'setCameraPose: Position(INCH, {{x}}, {{y}}, {{z}}) · YawPitchRollAngles(DEGREES, {{yaw}}, {{pitch}}, {{roll}})'
+    },
+    // 계산값 줄의 도움말
+    derivedHints: {
+      webcam:
+        'AprilTagProcessor.Builder.setCameraPose에 넣을 값입니다(SDK 로봇 좌표: X 오른쪽, Y 앞, Z 위). 로봇 중심 바닥이 원점입니다.'
     },
     robot: {
       title: '로봇 하드웨어',
@@ -1974,7 +2072,15 @@ const ko = {
       hiveHint:
         '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다.',
       showElements: '필드 요소 보이기',
-      noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.'
+      noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.',
+      // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
+      clusters: {
+        title: 'AprilTag 묶음(SDK 라이브러리용)',
+        line: '{{name}}: VectorF({{x}}f, {{y}}f, {{z}}f) in · Quaternion({{w}}f, {{qx}}f, {{qy}}f, {{qz}}f, 0)',
+        copy: '복사',
+        copied: '복사함',
+        hint: 'SDK BIOBUZZ 라이브러리의 묶음은 필드 위치가 0이라 robotPose가 CELL 기준입니다. 필드 자세가 필요하면 AprilTagClusterMetadata에 이 값을 DistanceUnit.INCH로 넣은 묶음 넷을 BIOBUZZ가 없는 라이브러리(getSampleTagLibrary() 또는 새 Builder)에 더하세요(SDK는 fieldPosition 단위를 바꾸지 않습니다). 현재 게임 라이브러리(getCurrentGameTagLibrary)에는 id가 겹쳐 setAllowOverwrite(true)로도 더할 수 없습니다.'
+      }
     }
   }
 }

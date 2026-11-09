@@ -361,7 +361,9 @@ export function buildRunRequest(
     jitter: request.settings.jitter,
     seed: request.settings.seed,
     startEpochMillis: now,
-    stallMillis: DEFAULT_STALL_MILLIS
+    stallMillis: DEFAULT_STALL_MILLIS,
+    // 팀 웹캠 보정(spec-4d §1.13): 계약은 늘 null(내장 보정만). 경로 확인은 4d A가 더한다
+    teamCalibrations: null
   }
 }
 

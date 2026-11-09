@@ -461,7 +461,34 @@ function configNode(value: unknown, depth: number, budget: { nodes: number }): D
   }
 }
 
-const NOTICE_CODES: readonly SidecarNoticeCode[] = ['dashCamera', 'dashImage', 'rrTuningSaved']
+const NOTICE_CODES: readonly SidecarNoticeCode[] = [
+  'dashCamera',
+  'dashImage',
+  'rrTuningSaved',
+  'visionProcessorUnsupported',
+  'aprilTagNoFieldPose',
+  'visionSolverSubstituted',
+  'visionSolverStop',
+  'visionMultipleAprilTag',
+  'visionFrameCapture',
+  'visionResumeNullFormat',
+  'visionCalibrationSkipped'
+]
+// code마다 필수 params 키(빠지거나 남으면 사이드카 잘못, spec-4d §1.14). 렌더러 번역의 {{…}} 자리와 같다.
+// 계약은 표만 둔다(검사는 4d A가 noticeParams에서 켠다. 그때까지 키는 보지 않는다).
+export const NOTICE_PARAM_KEYS: Readonly<Record<SidecarNoticeCode, readonly string[]>> = {
+  dashCamera: [],
+  dashImage: [],
+  rrTuningSaved: ['path'],
+  visionProcessorUnsupported: ['processor'],
+  aprilTagNoFieldPose: ['cluster'],
+  visionSolverSubstituted: ['solver'],
+  visionSolverStop: ['solver'],
+  visionMultipleAprilTag: [],
+  visionFrameCapture: ['method'],
+  visionResumeNullFormat: [],
+  visionCalibrationSkipped: ['detail']
+}
 // 안내 매개변수(경로 등) 수와 글자 수
 const MAX_NOTICE_PARAMS = 16
 const MAX_NOTICE_TEXT = 4096

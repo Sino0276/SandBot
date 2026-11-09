@@ -636,7 +636,7 @@ const en: Messages = {
         'Battery voltage of the simulator ({{min}}–{{max}} V). Motor free speed scales with voltage ÷ 12, and the hub getVoltage() returns this value.',
       sensorNoise: 'Sensor noise',
       sensorNoiseHint:
-        'Adds a fixed per-device offset (±10 mm) and per-measurement noise (datasheet spread) to distance sensor values. Color sensors get no noise. The same seed gives the same values.',
+        'Adds noise to distance sensor values (a fixed per-device offset of ±10 mm and per-measurement noise, datasheet spread) and to webcam tag corners (σ 0.3 px). Color sensors get no noise. The same seed gives the same values.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -914,6 +914,21 @@ const en: Messages = {
         'There are more distance sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
       worldTooManyColorSensors:
         'There are more color sensors than the simulator limit ({{max}}); only the first {{max}} are used.',
+      // 웹캠(4d, play/worldCameras.ts·playActions worldFor)
+      worldCameraNotConfigured:
+        'Webcam {{name}} has no serial number, so it is not in the configuration XML and the simulator does not use it.',
+      worldDuplicateCamera:
+        'The webcam device name {{name}} is empty or the same as another device, so the simulator does not use that webcam.',
+      worldTooManyCameras:
+        'There are more webcams than the simulator limit ({{max}}); only the first {{max}} are used.',
+      worldCameraNoHousing:
+        'Webcam {{name}} has no shape or is still loading, so its pivot is used as the lens instead of the housing front.',
+      worldCameraOnRobot:
+        'Webcam {{name}} is attached to the robot or a CAD root, so its pivot is used as the lens. Attach it to the webcam part.',
+      worldCameraFarHousing:
+        'The lens (housing front) of webcam {{name}} is {{distance}} from its pivot. Check that it is not attached to a group larger than the webcam.',
+      worldCameraSelfHit:
+        "Your own robot's {{part}} blocks the view of webcam {{name}}. The simulator does not see your own robot, so the visible tags differ from the real robot.",
       worldWheelOnJoint:
         'Wheel {{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
       worldGenerationStale:
@@ -955,7 +970,28 @@ const en: Messages = {
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
         // file: absolute path in the simulated storage (userData/sim-files/<project>/FIRST, the robot's /sdcard/FIRST)
-        rrTuningSaved: 'Saved the Road Runner tuning result: {{file}}'
+        rrTuningSaved: 'Saved the Road Runner tuning result: {{file}}',
+        // 비전(4d, spec-4d §1.14)
+        visionProcessorUnsupported:
+          'The {{processor}} processor needs images, so it is not simulated (it receives no frames). Only the AprilTag processor works.',
+        aprilTagNoFieldPose:
+          'The SDK BIOBUZZ tag library has no field positions, so robotPose for {{cluster}} is relative to the CELL (the real robot does the same). For field poses, add clusters matching the HIVE state to a library without BIOBUZZ (getSampleTagLibrary, etc.) yourself. They cannot be added to the current game library, not even with setAllowOverwrite. The Field inspector shows the cluster poses.',
+        // params.solver로 고른다(OPENCV_SQPNP → sqpnp, APRILTAG_BUILTIN → builtin)
+        visionSolverSubstituted: {
+          sqpnp:
+            'The OPENCV_SQPNP pose solver is computed with OPENCV_ITERATIVE instead (the same values without noise, slightly different with noise).',
+          builtin:
+            'The APRILTAG_BUILTIN single-tag pose solver is computed with OPENCV_ITERATIVE instead (the real one is the native apriltag solver, so values differ slightly). This solver cannot be used for tag clusters.'
+        },
+        visionSolverStop:
+          'The {{solver}} pose solver cannot solve BIOBUZZ tag clusters, so an OpenCV exception stops the OpMode. The real robot does the same (use OPENCV_ITERATIVE).',
+        visionMultipleAprilTag:
+          'More than one AprilTag processor is enabled on one VisionPortal. The simulator detects with the family and decimation of the first one.',
+        visionFrameCapture: '{{method}} does nothing because the simulator has no images.',
+        visionResumeNullFormat:
+          'resumeStreaming was called without a stream format, so the camera stays in STARTING_STREAM. The real SDK 12.0 also throws a NullPointerException on the camera thread and does not restart the stream (the app may stop). Add setStreamFormat(VisionPortal.StreamFormat.YUY2) to the VisionPortal.Builder.',
+        visionCalibrationSkipped:
+          'The SDK drops one calibration in teamwebcamcalibrations.xml (the real robot drops it silently): {{detail}}'
       },
       // Library dependency report (INIT, src/main/libraries)
       library: {
@@ -1140,7 +1176,10 @@ const en: Messages = {
     jointType: 'Type',
     jointValue: 'Value',
     jointsHint:
-      'Joint positions sent by the simulator (the edit pose is 0). Click to select the object.'
+      'Joint positions sent by the simulator (the edit pose is 0). Click to select the object.',
+    // 웹캠 입력 tags 요약(4d, play/deviceRows.ts): 원소 대신 id 목록
+    tags: '{{count}} tags: {{ids}}',
+    tagsNone: 'No tags'
   },
   hardware: {
     // 생성 코드 경로(메커니즘 그룹 1단계)
@@ -1325,7 +1364,10 @@ const en: Messages = {
       limitDistance: 'Press distance',
       limitAngle: 'Press angle',
       aimYaw: 'Aim yaw',
-      aimPitch: 'Aim elevation (up +)'
+      aimPitch: 'Aim elevation (up +)',
+      // 웹캠(4d). cameraModel은 선택칸, aimRoll은 rowLabel이 " (°)"를 붙인다
+      cameraModel: 'Camera model',
+      aimRoll: 'Roll (clockwise from behind +)'
     },
     propHints: {
       stallTorque:
@@ -1339,7 +1381,12 @@ const en: Messages = {
       aimYaw:
         'Counterclockwise + from the robot front (+X). In robot coordinates, independent of the CAD part rotation. When looking up or down, yaw barely changes the reading.',
       aimPitch:
-        'Up from horizontal is +; looking down is −90° (the opposite sign of Transform rotation Y). In robot coordinates.'
+        'Up from horizontal is +; looking down is −90° (the opposite sign of Transform rotation Y). In robot coordinates.',
+      // 웹캠(4d). webcam의 aimYaw·aimPitch는 위 4c 키를 같이 쓴다
+      cameraModel:
+        'The camera whose lens (the SDK built-in calibration values) the simulator uses and whose calibration the SDK looks up. Pick the same model as the real webcam. The list has only the cameras with a built-in SDK calibration.',
+      aimRoll:
+        'Rotation about the optical axis. Clockwise as seen from behind the camera is +, and the image turns the other way. In robot coordinates.'
     },
     aimRunningHint: 'Applies from the next INIT.',
     sensorReading: {
@@ -1382,6 +1429,48 @@ const en: Messages = {
         tooMany:
           'Left out of the simulator: there are more sensors of this kind than the simulator limit.',
         outsideRobot: 'Left out of the simulator: it is not on a robot.'
+      }
+    },
+    // 웹캠 카드의 편집 자세 줄(4d, editor/hardware/cameraReading.ts): VisionPortal 기본 640×480·데시메이션 3
+    cameraReading: {
+      lens: 'Lens 640×480: fx {{fx}} · cx {{cx}} · cy {{cy}} ({{source}})',
+      // 렌즈 값의 출처(cameraData.ts TrueIntrinsics.source). 뒤의 둘은 SDK가 대체값 578.272를 쓴다
+      sources: {
+        exact: 'built-in calibration',
+        scaled: 'scaled from the {{from}} calibration (the SDK does the same)',
+        heightRatio:
+          'estimated from the {{from}} calibration by height ratio (the SDK uses 578.272)',
+        crop: 'estimated by cropping the {{from}} calibration (the SDK uses 578.272)'
+      },
+      // tags: 묶음별 "RED AUDIENCE 34·35·36·37"
+      visible: 'Visible tags: {{tags}}',
+      none: 'No visible tags',
+      // 놓친 이유가 가림·작음·스침인 태그 수(꼬리)
+      rejected: '(occluded {{occluded}} · too small {{tooSmall}} · grazing {{grazing}})',
+      hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down. Tilting the camera up 25–35° sees them well (default 30°).',
+      // 줄 끝의 경고(여럿이면 이 순서)
+      tails: {
+        onRobot:
+          'Attached to the robot or a CAD root, so the pivot is used as the lens. Attach it to the webcam part.',
+        pivot:
+          'No shape (or still loading), so the pivot is used as the lens instead of the housing front.',
+        farHousing:
+          'The lens (housing front) is {{distance}} from the pivot. Check that it is not attached to a group larger than the webcam.',
+        selfHit:
+          "Your own robot's {{part}} blocks the middle of the view (the simulator does not see your own robot).",
+        selfHitPartial:
+          'The edge of the view hits your own robot (the simulator does not see your own robot).',
+        notConfigured:
+          'There is no serial number, so it is not in the configuration XML and the simulator leaves it out.'
+      },
+      // 세계 설명에서 빠진 웹캠(play/worldCameras.ts cameraExclusions): 값 대신 이 줄만
+      excluded: {
+        emptyName: 'Left out of the simulator: the device name is empty.',
+        duplicateName: 'Left out of the simulator: the device name is the same as another device.',
+        tooMany: 'Left out of the simulator: there are more webcams than the simulator limit.',
+        outsideRobot: 'Left out of the simulator: it is outside the robot.',
+        notConfigured:
+          'Left out of the simulator: there is no serial number, so it is not in the configuration XML.'
       }
     },
     options: {
@@ -1463,6 +1552,13 @@ const en: Messages = {
       limitAt: {
         lower: 'Lower limit',
         upper: 'Upper limit'
+      },
+      cameraModel: {
+        logitechC920: 'Logitech C920',
+        logitechC270: 'Logitech C270',
+        logitechC310: 'Logitech C310',
+        lifecamHd3000: 'Microsoft LifeCam HD-3000',
+        gobilda3122: 'goBILDA USB Camera (3122-0003-0001)'
       }
     },
     hints: {
@@ -1486,7 +1582,15 @@ const en: Messages = {
         'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · torque and speed use the actual ratio {{ratio}}:1',
       jointMotorOutput:
         'Joint: output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · actual ratio {{ratio}}:1',
-      deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm'
+      deadWheelPod: 'Pod resolution: {{ticks}} ticks/mm',
+      // 웹캠(4d): SDK setCameraPose 값(렌즈 = 하우징 앞면, hardware/mounting.ts sdkCameraPose)
+      webcam:
+        'setCameraPose: Position(INCH, {{x}}, {{y}}, {{z}}) · YawPitchRollAngles(DEGREES, {{yaw}}, {{pitch}}, {{roll}})'
+    },
+    // 계산값 줄의 도움말
+    derivedHints: {
+      webcam:
+        'Values to pass to AprilTagProcessor.Builder.setCameraPose (SDK robot axes: X right, Y forward, Z up). The origin is the robot center on the floor.'
     },
     robot: {
       title: 'Robot hardware',
@@ -1976,7 +2080,15 @@ const en: Messages = {
       hiveHint:
         'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT.',
       showElements: 'Show field elements',
-      noStartPresets: 'This season has no start position presets.'
+      noStartPresets: 'This season has no start position presets.',
+      // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
+      clusters: {
+        title: 'AprilTag clusters (for SDK libraries)',
+        line: '{{name}}: VectorF({{x}}f, {{y}}f, {{z}}f) in · Quaternion({{w}}f, {{qx}}f, {{qy}}f, {{qz}}f, 0)',
+        copy: 'Copy',
+        copied: 'Copied',
+        hint: 'Clusters in the SDK BIOBUZZ library have a zero field position, so robotPose is relative to the CELL. For field poses, add four clusters with these values in AprilTagClusterMetadata with DistanceUnit.INCH to a library without BIOBUZZ (getSampleTagLibrary() or a new Builder); the SDK does not convert the fieldPosition unit. They cannot be added to the current game library (getCurrentGameTagLibrary) because the ids clash, not even with setAllowOverwrite(true).'
+      }
     }
   }
 }

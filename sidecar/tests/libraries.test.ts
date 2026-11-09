@@ -143,6 +143,7 @@ const SPEC: WorldSpec = {
   distanceSensors: [],
   colorSensors: [],
   noise: { enabled: false, seed: 0 },
+  cameras: [],
   robot: {
     start: { x: -0.5, y: 0.2, yaw: 0 },
     footprint: [
@@ -263,6 +264,7 @@ function runRequest(b: SidecarBuild, host: Host): RunRequest {
     seed: 0,
     startEpochMillis: 1_700_000_000_000,
     stallMillis: 5000,
+    teamCalibrations: null,
     ...host.request
   }
 }

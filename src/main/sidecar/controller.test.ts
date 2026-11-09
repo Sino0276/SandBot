@@ -4,7 +4,7 @@ import { dirname, join } from 'path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { LibraryProgress } from '../../shared/libraries'
 import type { JdkInfo, PlayEvent, PlayInitRequest } from '../../shared/play'
-import type { HostMessage } from '../../shared/sidecarProtocol'
+import { SIDECAR_PROTOCOL_VERSION, type HostMessage } from '../../shared/sidecarProtocol'
 import { WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import { parseCommand, PlayController, sanitizeGamepad, type ControllerDeps } from './controller'
@@ -186,7 +186,7 @@ describe('PlayController + 가짜 사이드카', () => {
     const run = JSON.parse(robotLog.find((text) => text.startsWith('request '))!.slice(8))
     expect(run).toMatchObject({
       type: 'run',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       opModeClass: 'org.firstinspires.ftc.teamcode.Normal',
       registeredName: null,

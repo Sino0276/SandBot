@@ -9,6 +9,9 @@
 // - FTC Dashboard 0.6.0(MIT, maven.brott.dev): dashboard AAR(안의 classes.jar → dashboard.jar)과 core jar →
 //   sidecar/build/ftc-sdk/dashboard/0.6.0/. 사이드카 빌드가 Dashboard 대체(sandbot-dashboard.jar)를 만들 때 들여오기·API 대조의
 //   기준이다. 저장소가 체크섬을 주지 않으므로 해시는 src/main/libraries/pins.ts의 값(받아서 잰 것)과 같다.
+// - OpenCV(4d): Maven Central의 org.openftc:opencv-repackaged-bundled-dylibs:4.10.0-A AAR을 메모리에서만 다루고 안의
+//   classes.jar만 sidecar/build/ftc-sdk/opencv/4.10.0-A/opencv-classes.jar로(jni·AAR은 디스크에 두지 않는다)
+// - SDK 내장 웹캠 보정(4d): RobotCore AAR의 res/xml/builtinwebcamcalibrations.xml → sidecar/build/ftc-sdk/12.0.0/
 //
 // 사용법: node scripts/fetch-ftc-sdk.mjs [--no-samples]
 // 프록시 뒤에서는 NODE_USE_ENV_PROXY=1로 HTTPS_PROXY를 쓰게 한다(Node 22.21 이상).
@@ -408,6 +411,73 @@ async function ensureAar(versionDir, name, hash, withLibs, log) {
   return { jar, libs: extracted.libs.map(([lib]) => join(versionDir, 'libs', lib)) }
 }
 
+// ---- 웹캠 보정·OpenCV(4d, spec-4d §1.9)
+
+// RobotCore 12.0.0 AAR 안의 SDK 내장 웹캠 보정(9696 B). src/shared/sim/cameraData.ts의 표가 이 파일을 옮긴 것이다.
+const WEBCAM_CALIBRATIONS = {
+  entry: 'res/xml/builtinwebcamcalibrations.xml',
+  sha256: '43febb0ee76f4336242cc26ea79ca2fdb52943ff78bd4333e156b3bade1c5106',
+  file: 'builtinwebcamcalibrations.xml'
+}
+
+/**
+ * RobotCore AAR(없거나 다르면 받는다)에서 SDK 내장 웹캠 보정 XML을 꺼내 둔다. ensureAar의 .extracted 도장과 따로 확인한다:
+ * 도장이 맞으면 ensureAar는 아무것도 꺼내지 않으므로, 이미 받은 PC에서도 XML 해시가 고정값이 아니면 AAR에서 다시 꺼낸다.
+ * @returns {Promise<string>} XML 경로(sidecar/build/ftc-sdk/12.0.0/builtinwebcamcalibrations.xml)
+ */
+export async function ensureWebcamCalibrations({ log = console.log } = {}) {
+  const versionDir = join(ftcSdkDir, SDK_VERSION)
+  const target = join(versionDir, WEBCAM_CALIBRATIONS.file)
+  if (fileHash(target) === WEBCAM_CALIBRATIONS.sha256) return target
+  const [name, hash] = AARS.find(([n]) => n === 'RobotCore')
+  const aar = join(versionDir, 'aar', `${name}-${SDK_VERSION}.aar`)
+  if (fileHash(aar) !== hash) await ensureAar(versionDir, name, hash, true, log)
+  const xml = readZip(readFileSync(aar)).read(WEBCAM_CALIBRATIONS.entry)
+  if (!xml) throw new FetchError(`${name}-${SDK_VERSION}.aar has no ${WEBCAM_CALIBRATIONS.entry}`)
+  const actual = sha256(xml)
+  if (actual !== WEBCAM_CALIBRATIONS.sha256)
+    throw new FetchError(
+      `${WEBCAM_CALIBRATIONS.entry}: SHA-256 ${actual} does not match ${WEBCAM_CALIBRATIONS.sha256}`
+    )
+  log(`extracting ${WEBCAM_CALIBRATIONS.file}`)
+  writeAtomic(target, xml)
+  return target
+}
+
+export const OPENCV_VERSION = '4.10.0-A'
+export const openCvDir = join(ftcSdkDir, 'opencv', OPENCV_VERSION)
+
+// OpenFTC가 다시 묶은 OpenCV(Apache-2.0). AAR(16.6 MB, jni 포함)은 Maven Central .sha1(bc03e766…2f82)과도 맞는 SHA-256이고,
+// 쓰는 것은 안의 classes.jar 하나다(순수 Java 형식은 들여오고 나머지는 stub, 4d B가 build-sidecar.mjs에서 쓴다)
+const OPENCV = {
+  url: `${MAVEN}/org/openftc/opencv-repackaged-bundled-dylibs/${OPENCV_VERSION}/opencv-repackaged-bundled-dylibs-${OPENCV_VERSION}.aar`,
+  sha256: '81e8b70373cf56b6d3683fd4c56e4d9e0c75e6ed60c33a3053f1d54393af944f',
+  classesSha256: '882b34cf4de9fc5a56615d0ee87d462d7575c4662be13da7d8b113778c15811d',
+  file: 'opencv-classes.jar'
+}
+
+/**
+ * OpenCV classes.jar를 받아 둔다(있고 해시가 맞으면 받지 않는다). AAR은 메모리에서만 다룬다.
+ * @returns {Promise<string>} jar 경로(sidecar/build/ftc-sdk/opencv/4.10.0-A/opencv-classes.jar)
+ */
+export async function ensureOpenCv({ log = console.log } = {}) {
+  const jar = join(openCvDir, OPENCV.file)
+  if (fileHash(jar) === OPENCV.classesSha256) return jar
+  log(`downloading opencv-repackaged-bundled-dylibs-${OPENCV_VERSION}.aar`)
+  const classes = readZip(await download(OPENCV.url, OPENCV.sha256, log)).read('classes.jar')
+  if (!classes)
+    throw new FetchError(
+      `opencv-repackaged-bundled-dylibs-${OPENCV_VERSION}.aar has no classes.jar`
+    )
+  const actual = sha256(classes)
+  if (actual !== OPENCV.classesSha256)
+    throw new FetchError(
+      `OpenCV classes.jar: SHA-256 ${actual} does not match ${OPENCV.classesSha256}`
+    )
+  writeAtomic(jar, classes)
+  return jar
+}
+
 // ---- FTC Dashboard
 
 export const DASHBOARD_VERSION = '0.6.0'
@@ -496,6 +566,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`FTC SDK ${sdk.version}: ${dirname(sdk.jars[0])}`)
     const dashboard = await ensureFtcDashboard()
     console.log(`FTC Dashboard ${dashboard.version}: ${dirname(dashboard.jars[0])}`)
+    // 4d: 계약은 받기만 한다(사이드카 빌드가 쓰는 것은 4d B)
+    console.log(`webcam calibrations: ${await ensureWebcamCalibrations()}`)
+    console.log(`OpenCV ${OPENCV_VERSION}: ${await ensureOpenCv()}`)
     if (!process.argv.includes('--no-samples')) {
       const samples = await ensureFtcSamples()
       console.log(`FtcRobotController samples (${samples.files.length}): ${samples.dir}`)

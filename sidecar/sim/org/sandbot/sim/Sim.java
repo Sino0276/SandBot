@@ -1,6 +1,8 @@
 package org.sandbot.sim;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 가짜 SDK와 패치한 코드가 쓰는 시뮬레이터 서비스. 런타임이 실행마다(JVM 하나에 한 번) {@link #install}로 넣는다.
@@ -13,8 +15,47 @@ public final class Sim {
     private static volatile SimDashboard dashboard;
     private static final SimDevices DEVICES = new SimDevices();
     private static volatile File firstFolder;
+    /** 틱 경계 듣기(등록 순서, 같은 것은 한 번). OpMode 스레드만 쓰지만 등록은 다른 스레드에서 올 수 있어 잠근다 */
+    private static final List<BoundaryListener> BOUNDARY_LISTENERS = new ArrayList<>();
 
     private Sim() {}
+
+    /**
+     * 틱 경계 듣기(4d, spec-4d §1.10). 런타임이 틱 경계마다 장치 입력을 넣은 바로 뒤(Dashboard 틱·DS 사건 앞,
+     * INIT 전 경계 포함) OpMode 스레드에서 부른다. 시계 호출 안이므로 듣는 쪽은 charge·nanoTime·sleep·
+     * awaitNextTick을 부르지 않는다(peekNanos는 된다. 4c InputHook과 같은 이유). VisionPortal이 프레임·전이를 이것으로
+     * 진행한다.
+     */
+    public interface BoundaryListener {
+        void afterInputs(long boundaryNanos);
+    }
+
+    /** 듣기를 등록한다(등록 순서로 부름, 이미 있으면 그대로) */
+    public static void addBoundaryListener(BoundaryListener listener) {
+        if (listener == null) throw new NullPointerException();
+        synchronized (BOUNDARY_LISTENERS) {
+            if (!BOUNDARY_LISTENERS.contains(listener)) BOUNDARY_LISTENERS.add(listener);
+        }
+    }
+
+    public static void removeBoundaryListener(BoundaryListener listener) {
+        synchronized (BOUNDARY_LISTENERS) {
+            BOUNDARY_LISTENERS.remove(listener);
+        }
+    }
+
+    /**
+     * 런타임만 부른다(OpModeRunner.onTick). 목록을 복사해 돌리므로 듣는 쪽이 도는 중에 removeBoundaryListener를
+     * 불러도 된다(포털 close). 듣는 쪽이 없으면 아무것도 하지 않는다.
+     */
+    public static void fireBoundary(long boundaryNanos) {
+        BoundaryListener[] listeners;
+        synchronized (BOUNDARY_LISTENERS) {
+            if (BOUNDARY_LISTENERS.isEmpty()) return;
+            listeners = BOUNDARY_LISTENERS.toArray(new BoundaryListener[0]);
+        }
+        for (BoundaryListener l : listeners) l.afterInputs(boundaryNanos);
+    }
 
     /** 런타임만 부른다. 한 번만. */
     public static synchronized void install(SimClock clock, HubTiming timing, SimHost host) {

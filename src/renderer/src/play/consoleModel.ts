@@ -28,12 +28,20 @@ export const CONSOLE_LIMIT = 2000
 
 export type ConsoleFinishReason = FinishReason | 'killed' | 'crashed'
 
-// 실행 흐름이 남기는 안내(console.notices.*). 시뮬레이터 안내(simNotice)는 console.notices.sim.<code>, 라이브러리
-// 의존성 보고는 console.notices.library.<이유>다.
+// 실행 흐름이 남기는 안내(console.notices.*). 시뮬레이터 안내(simNotice)는 console.notices.sim.<code>(문구가 params로
+// 나뉘는 code는 console.notices.sim.<code>.<갈래>, 예: visionSolverSubstituted.sqpnp), 라이브러리 의존성 보고는
+// console.notices.library.<이유>다.
 type NoticeMessages = Messages['console']['notices']
+type SimNoticeMessages = NoticeMessages['sim']
+// 글자인 키는 그대로, 묶음인 키는 한 단계 아래 키까지
+type SimNoticeLeaf = {
+  [K in keyof SimNoticeMessages & string]: SimNoticeMessages[K] extends string
+    ? K
+    : `${K}.${keyof SimNoticeMessages[K] & string}`
+}[keyof SimNoticeMessages & string]
 export type ConsoleNoticeKey =
   | Exclude<keyof NoticeMessages, 'sim' | 'library'>
-  | `sim.${keyof NoticeMessages['sim'] & string}`
+  | `sim.${SimNoticeLeaf}`
   | `library.${keyof NoticeMessages['library'] & string}`
 
 export type ConsoleBody =

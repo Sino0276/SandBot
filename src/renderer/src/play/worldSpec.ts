@@ -708,7 +708,9 @@ export function buildWorldSpec(
     distanceSensors: sensors.distanceSensors,
     colorSensors: sensors.colorSensors,
     // 잡음은 끔(playActions.worldFor가 개인 실행 설정으로 withSensorNoise)
-    noise: { enabled: false, seed: 0 }
+    noise: { enabled: false, seed: 0 },
+    // 웹캠(4d): 계약은 빈 목록(4d C가 worldCameras.ts의 buildWorldCameras로 채운다)
+    cameras: []
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {

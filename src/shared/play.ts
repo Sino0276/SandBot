@@ -353,7 +353,10 @@ export type PlayEvent =
 //   시뮬레이터는 축 엔코더로 제어한다고 가정), params.device
 // - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
 // - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path, 호스트가 더한
-//   params.file: 모의 저장소 안의 절대 경로. 모의 저장소 밖을 가리키는 path면 없다)
+//   params.file: 모의 저장소 안의 절대 경로. 모의 저장소 밖을 가리키는 path면 없다), 비전(4d)
+//   visionProcessorUnsupported(params.processor), aprilTagNoFieldPose(params.cluster),
+//   visionSolverSubstituted·visionSolverStop(params.solver), visionMultipleAprilTag, visionFrameCapture(params.method),
+//   visionResumeNullFormat, visionCalibrationSkipped(params.detail)
 // - tipping(3c): 바닥이 받쳐야 할 모멘트가 바퀴 접점 밖이다(넘어질 상황, 시뮬레이터는 넘어지지 않음). params 없음
 // - wheelLift(3c): 바퀴 하나 이상이 하중 0(뜸)인 채 0.1 s 넘게 이어졌다. params 없음
 export type SimNoticeCode =

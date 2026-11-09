@@ -11,6 +11,7 @@ import type {
   RegistrarInfo
 } from '../../../shared/play'
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
+import type { CameraModelId } from '../../../shared/sim/cameraData'
 import type { SensorMount } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
@@ -146,9 +147,21 @@ export type PlayRun = {
   // 시뮬레이터가 쓰는 거리·컬러 센서(4c, INIT 때 세계 설명의 distanceSensors 다음 colorSensors 순서). 실행 중 씬 뷰
   // 기즈모가 문서 조준 대신 이 장착을 표시 자세 몸체 틀로 그린다. 세계 설명이 없으면 비어 있다.
   sensors: readonly PlayRunSensor[]
+  // 시뮬레이터가 쓰는 웹캠(4d, INIT 때 세계 설명의 cameras 순서). 실행 중 씬 뷰 기즈모가 문서 조준 대신 이 장착을 표시
+  // 자세 몸체 틀로 그린다(run.sensors와 같은 규칙). 세계 설명이 없으면 비어 있다.
+  cameras: readonly PlayRunCamera[]
   // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
   // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
   field: PlayRunField
+}
+
+// 실행의 웹캠 하나(4d): 붙은 오브젝트·컴포넌트, 몸체(−1 섀시, ≥ 0 세계 설명 관절 순번), 세계 설명 장착·모델 그대로
+export type PlayRunCamera = {
+  objectId: string
+  componentId: string
+  body: number
+  mount: SensorMount
+  model: CameraModelId
 }
 
 // 실행의 센서 하나: 붙은 오브젝트·컴포넌트, 종류, 몸체(−1 섀시, ≥ 0 세계 설명 관절 순번), 세계 설명 장착 그대로
@@ -393,6 +406,7 @@ export function newRun(options: {
   paused: boolean
   joints?: readonly string[]
   sensors?: readonly PlayRunSensor[]
+  cameras?: readonly PlayRunCamera[]
   field?: PlayRunField
 }): PlayRun {
   return {
@@ -420,6 +434,7 @@ export function newRun(options: {
     detached: false,
     joints: options.joints ?? [],
     sensors: options.sensors ?? [],
+    cameras: options.cameras ?? [],
     field: options.field ?? DEFAULT_RUN_FIELD
   }
 }
@@ -605,8 +620,12 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             run.root
           )
         ])
-      // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다)
-      const key: ConsoleNoticeKey = `sim.${event.code}`
+      // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다). 대체 자세 풀이
+      // 안내(4d)는 params.solver로 문구를 고른다(spec-4d §1.14)
+      const key: ConsoleNoticeKey =
+        event.code === 'visionSolverSubstituted'
+          ? `sim.visionSolverSubstituted.${event.params.solver === 'APRILTAG_BUILTIN' ? 'builtin' : 'sqpnp'}`
+          : `sim.${event.code}`
       return withEntries(data, [
         consoleEntry({ type: 'notice', key, params: { ...event.params } }, event.tNanos, 'warning')
       ])

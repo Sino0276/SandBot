@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'fs/promi
 import { tmpdir } from 'os'
 import { dirname, join, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { SIDECAR_PROTOCOL_VERSION } from '../../shared/sidecarProtocol'
 import type { PlayInitRequest } from '../../shared/play'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import {
@@ -330,7 +331,7 @@ describe('모의 저장소와 목록 요청', () => {
       )
     ).toEqual({
       type: 'list',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
@@ -362,9 +363,12 @@ describe('사이드카 빌드 결과와 명령', () => {
     expect(await readSidecarFiles(dir)).toMatchObject({
       ok: false,
       code: 'noSidecar',
-      detail: 'sidecar protocol 1, expected 3'
+      detail: `sidecar protocol 1, expected ${SIDECAR_PROTOCOL_VERSION}`
     })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 3, sourceHash: 'x' }))
+    await writeFile(
+      join(dir, 'sidecar.json'),
+      JSON.stringify({ protocol: SIDECAR_PROTOCOL_VERSION, sourceHash: 'x' })
+    )
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
@@ -433,7 +437,7 @@ describe('사이드카 빌드 결과와 명령', () => {
     )
     expect(run).toEqual({
       type: 'run',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
