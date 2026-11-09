@@ -500,7 +500,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
             session.protocolError("expected tickReply for tick " + k + " but got tick " + replyTick);
             Main.parkForever();
         }
-        applyInputs(reply.body.get("inputs"));
+        applyInputs(reply.body.get("inputs"), tNanos);
         Object events = reply.body.get("events");
         if (events instanceof List) {
             for (Object e : (List<?>) events) {
@@ -572,7 +572,8 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         finish("stuck");
     }
 
-    private void applyInputs(Object inputs) {
+    /** 틱 경계 tNanos의 입력을 장치에 넣는다. 칩의 입력 훅은 지금 시각이 아니라 이 경계 시각을 받는다(SimDevice.InputHook). */
+    private void applyInputs(Object inputs, long tNanos) {
         if (!(inputs instanceof Map)) return;
         for (Map.Entry<?, ?> e : ((Map<?, ?>) inputs).entrySet()) {
             SimDevice device = Sim.devices().get((String) e.getKey());
@@ -583,7 +584,7 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                 if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String)
                     values.put((String) v.getKey(), value);
             }
-            device.applyInputs(values);
+            device.applyInputs(values, tNanos);
         }
     }
 
