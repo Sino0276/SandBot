@@ -2,7 +2,12 @@
 // - FakeClock: 손으로 돌리는 시계(advance로 그 사이 타이머를 차례로 부른다)
 // - FakeProcess: 메모리 안의 사이드카 프로세스(보낸 메시지를 모으고, 사이드카 출력·종료를 흉내 낸다)
 // - FAKE_SIDECAR_SCRIPT: node로 돌리는 가짜 사이드카(진짜 파이프·프로세스로 프로토콜의 사이드카 쪽을 흉내 낸다)
-import type { HostMessage, SidecarMessage, TickReply } from '../../shared/sidecarProtocol'
+import {
+  SIDECAR_PROTOCOL_VERSION,
+  type HostMessage,
+  type SidecarMessage,
+  type TickReply
+} from '../../shared/sidecarProtocol'
 import type { ProcessExit, SidecarProcess } from './process'
 import type { HostClock } from './session'
 
@@ -128,7 +133,7 @@ const readline = require('readline')
 const TICK = 5000000
 const out = (m) => process.stdout.write(JSON.stringify(m) + '\n')
 process.stderr.write('Picked up JAVA_TOOL_OPTIONS: -Dfake=1\n')
-out({ type: 'hello', protocol: Number(process.env.FAKE_PROTOCOL || 3), runtime: 'fake', java: '21' })
+out({ type: 'hello', protocol: Number(process.env.FAKE_PROTOCOL || ${SIDECAR_PROTOCOL_VERSION}), runtime: 'fake', java: '21' })
 let request = null
 let waiting = null
 let t = 0

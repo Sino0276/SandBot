@@ -41,17 +41,19 @@ export function testWheelPhysics(
 }
 
 // 세계 설명 v4의 새 칸(spec-4ab §5): 시즌 'none'(3c와 바이트까지 같은 공칭 12 ft 근사, 기준 해시가 이것으로 잰다), HIVE 시작
-// 상태, 센서 없음, 잡음 끔. 시험 고정값은 이것을 펼쳐 쓰고 robot에 height(18 in)를 넣는다.
+// 상태, 센서 없음, 잡음 끔, 그리고 v5의 웹캠 없음(spec-4d §3.1). 시험 고정값은 이것을 펼쳐 쓰고 robot에 height(18 in)를
+// 넣는다.
 export const TEST_ROBOT_HEIGHT = 0.4572
 export function worldV4Defaults(): Pick<
   WorldSpec,
-  'field' | 'distanceSensors' | 'colorSensors' | 'noise'
+  'field' | 'distanceSensors' | 'colorSensors' | 'noise' | 'cameras'
 > {
   return {
     field: { season: 'none', hiveTipped: [false, false] },
     distanceSensors: [],
     colorSensors: [],
-    noise: { enabled: false, seed: 0 }
+    noise: { enabled: false, seed: 0 },
+    cameras: []
   }
 }
 

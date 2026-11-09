@@ -147,6 +147,7 @@ function runRequest(b: SidecarBuild, host: Host): RunRequest {
     seed: 0,
     startEpochMillis: 1_700_000_000_000,
     stallMillis: 5000,
+    teamCalibrations: null,
     ...classpaths(b, host.extraLibraries ?? [])
   }
 }

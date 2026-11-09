@@ -229,3 +229,73 @@ describe('센서 조준 속성', () => {
     expect(angleInputValue(limitAngle, 0.3)).toBe(0.3)
   })
 })
+
+// 웹캠 시뮬레이터 전용 속성(4d, spec-4d §1.1 K1). 생성 파일이 바이트 그대로인지는 generatedOutput.test.ts가 본다
+describe('웹캠 카메라 모델·조준', () => {
+  const props = COMPONENT_TYPES.webcam.properties as readonly PropertyDef[]
+  const byKey = (key: string): PropertyDef => {
+    const property = props.find((p) => p.key === key)
+    if (!property) throw new Error(key)
+    return property
+  }
+
+  it('serialNumber 다음 cameraModel·aimYaw·aimPitch·aimRoll 순서다', () => {
+    expect(props.map((property) => property.key)).toEqual([
+      'serialNumber',
+      'cameraModel',
+      'aimYaw',
+      'aimPitch',
+      'aimRoll'
+    ])
+    expect(byKey('serialNumber').simulation).toBeUndefined()
+  })
+
+  it('종류·범위·기본·도움말·감기', () => {
+    expect(byKey('cameraModel')).toMatchObject({
+      kind: 'enum',
+      options: ['logitechC920', 'logitechC270', 'logitechC310', 'lifecamHd3000', 'gobilda3122'],
+      default: 'logitechC920',
+      hint: true,
+      simulation: true
+    })
+    expect(byKey('aimYaw')).toMatchObject({
+      kind: 'angle',
+      default: 0,
+      min: -Math.PI,
+      max: Math.PI,
+      wrap: true,
+      hint: true,
+      simulation: true
+    })
+    const pitch = byKey('aimPitch')
+    expect(pitch).toMatchObject({
+      kind: 'angle',
+      default: Math.PI / 6,
+      min: -Math.PI / 2,
+      max: Math.PI / 2,
+      hint: true,
+      simulation: true
+    })
+    expect('wrap' in pitch).toBe(false)
+    expect(byKey('aimRoll')).toMatchObject({
+      kind: 'angle',
+      default: 0,
+      min: -Math.PI,
+      max: Math.PI,
+      wrap: true,
+      hint: true,
+      simulation: true
+    })
+    // 4c 거리·컬러 센서 기본은 그대로
+    expect(
+      COMPONENT_TYPES.distanceSensor.properties.find((p) => p.key === 'aimPitch')?.default
+    ).toBe(0)
+    expect(propertyDefaults('webcam')).toMatchObject({
+      serialNumber: '',
+      cameraModel: 'logitechC920',
+      aimYaw: 0,
+      aimPitch: Math.PI / 6,
+      aimRoll: 0
+    })
+  })
+})

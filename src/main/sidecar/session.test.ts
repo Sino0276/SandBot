@@ -2,7 +2,12 @@ import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { DashConfigNode } from '../../shared/dashboard'
 import type { PlayEvent, SimNoticeCode } from '../../shared/play'
-import type { DeviceValues, RunRequest, TickMessage } from '../../shared/sidecarProtocol'
+import {
+  SIDECAR_PROTOCOL_VERSION,
+  type DeviceValues,
+  type RunRequest,
+  type TickMessage
+} from '../../shared/sidecarProtocol'
 import { MAX_WORLD_JOINTS } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
@@ -15,7 +20,7 @@ const SOURCE = `${ROOT}/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/Dr
 
 const REQUEST: RunRequest = {
   type: 'run',
-  protocol: 3,
+  protocol: SIDECAR_PROTOCOL_VERSION,
   clock: 'virtual',
   tickNanos: 5_000_000,
   sourceRoots: [`${ROOT}/TeamCode/src/main/java`],
@@ -32,7 +37,8 @@ const REQUEST: RunRequest = {
   jitter: 0,
   seed: 0,
   startEpochMillis: 0,
-  stallMillis: 2000
+  stallMillis: 2000,
+  teamCalibrations: null
 }
 
 const MS = 1_000_000
@@ -67,7 +73,7 @@ function setup(
 }
 
 function boot(proc: FakeProcess): void {
-  proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+  proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
   proc.line({ type: 'compiled', ok: true, diagnostics: [], millis: 4 })
   proc.line({ type: 'state', tNanos: 0, phase: 'init' })
 }
@@ -108,7 +114,7 @@ describe('SidecarSession 시작과 이벤트', () => {
           ? { kind: 'undeclared', packageName: 'com.example' }
           : null
     })
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     proc.line({
       type: 'linkReport',
       warnings: [
@@ -154,7 +160,7 @@ describe('SidecarSession 시작과 이벤트', () => {
 
   it('진단과 스택 프레임의 경로를 TeamCode 기준으로 바꾼다', () => {
     const { proc, of } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     proc.line({
       type: 'compiled',
       ok: false,
@@ -380,7 +386,7 @@ describe('SidecarSession 일시 정지와 Step', () => {
 
   it('START는 init 단계에서 한 번만, STOP 뒤에는 받지 않는다', () => {
     const { clock, proc, session } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     session.command({ type: 'start' })
     proc.line({ type: 'state', tNanos: 0, phase: 'init' })
     proc.line(tick(0))
@@ -574,8 +580,14 @@ describe('SidecarSession 끝내기', () => {
       ],
       [
         'protocol',
-        (proc) => proc.line({ type: 'hello', protocol: 4, runtime: 'x', java: '21' }),
-        'protocol error: protocol 4'
+        (proc) =>
+          proc.line({
+            type: 'hello',
+            protocol: SIDECAR_PROTOCOL_VERSION + 1,
+            runtime: 'x',
+            java: '21'
+          }),
+        `protocol error: protocol ${SIDECAR_PROTOCOL_VERSION + 1}`
       ]
     ]
     for (const [, act, detail] of cases) {
@@ -598,7 +610,12 @@ describe('SidecarSession 끝내기', () => {
 
   it('조각난 줄과 CRLF를 이어 읽는다', () => {
     const { proc, of } = setup()
-    const text = JSON.stringify({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    const text = JSON.stringify({
+      type: 'hello',
+      protocol: SIDECAR_PROTOCOL_VERSION,
+      runtime: 'x',
+      java: '21'
+    })
     proc.raw(text.slice(0, 5))
     proc.raw(`${text.slice(5)}\r\n`)
     expect(of('phase').at(-1)?.phase).toBe('compiling')
@@ -614,7 +631,7 @@ describe('SidecarSession 끝내기', () => {
 
   it('compiling 중 STOP은 shutdown을 보낸다', () => {
     const { proc, session, of } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'x', java: '21' })
     session.command({ type: 'stop' })
     expect(proc.sent.at(-1)).toEqual({ type: 'shutdown' })
     proc.line({ type: 'finished', tNanos: 0, reason: 'shutdown' })
@@ -665,7 +682,7 @@ describe('SidecarSession 이벤트 묶기', () => {
 
   it('로그는 50 ms 묶음이고, 오류·단계·끝 전에 먼저 보낸다', () => {
     const { clock, proc, events } = setup()
-    proc.line({ type: 'hello', protocol: 3, runtime: 'x', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'x', java: '21' })
     const log = (text: string): void => proc.line({ type: 'log', tNanos: 0, stream: 'out', text })
     log('a')
     log('b')
@@ -834,6 +851,53 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       { limit: { pressed: false } }
     ])
     expect(of('devices')[0].inputs).toEqual({ limit: { pressed: true }, home: { state: false } })
+  })
+
+  it('웹캠 tags 배열만 입력으로 받는다(A14: 키·길이·원소·id 규칙, 다른 키의 배열과 어긋난 tags는 버림)', () => {
+    const tags = [34, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
+    const bad: unknown[] = [
+      [34, 1, 2, 3, 4, 5, 6, 7], // 9의 배수가 아님
+      [-1, 1, 2, 3, 4, 5, 6, 7, 8], // id 음수
+      [34.5, 1, 2, 3, 4, 5, 6, 7, 8], // id 정수 아님
+      [34, 1, 2, 3, 4, 5, 6, 7, null], // 수 아님
+      Array.from({ length: 9 * 65 }, (_, i) => (i % 9 === 0 ? i / 9 : 1)) // 64태그 넘음
+    ]
+    const { world } = scriptedWorld(
+      (t) =>
+        (t === 0
+          ? { cam: { model: 'logitechC920', tags, other: [1, 2] }, m: { pidf: [1, 2] } }
+          : t === 5 * MS
+            ? Object.fromEntries(bad.map((b, i) => [`c${i}`, { tags: b }]))
+            : { cam: { frameNanos: t, tags: [] } }) as unknown as Record<string, DeviceValues>
+    )
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    proc.line(tick(2))
+    clock.advance(50)
+    expect(proc.replies().map((r) => r.inputs)).toEqual([
+      { cam: { model: 'logitechC920', tags } },
+      {},
+      { cam: { frameNanos: 10 * MS, tags: [] } }
+    ])
+    // devices 이벤트의 누적 입력에도 tags가 실린다(마지막 값)
+    expect(of('devices')[0].inputs).toEqual({ cam: { model: 'logitechC920', tags } })
+    expect(of('devices').at(-1)?.inputs).toEqual({
+      cam: { model: 'logitechC920', tags: [], frameNanos: 10 * MS }
+    })
+  })
+
+  it('입력 tags는 복사해 둔다(세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않음)', () => {
+    const shared = [30, 1, 2, 3, 4, 5, 6, 7, 8]
+    const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
+      t === 0 ? { cam: { tags: shared } } : {}
+    )
+    const { proc } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    shared[1] = 99
+    expect(proc.replies()[0].inputs).toEqual({ cam: { tags: [30, 1, 2, 3, 4, 5, 6, 7, 8] } })
   })
 
   it('답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다', () => {
@@ -1298,26 +1362,22 @@ describe('SidecarSession FTC Dashboard', () => {
     ])
   })
 
-  it('사이드카가 보낸 file은 믿지 않는다(받지 않는 경로면 file 없이, 받는 경로면 메인이 만든 것)', () => {
-    const { proc, of } = setup()
-    boot(proc)
-    const tuning = 'RoadRunner/tuning/accel/2.json'
-    proc.line({
-      type: 'notice',
-      tNanos: 1,
-      code: 'rrTuningSaved',
-      params: { path: '../x.json', file: '/home/user/.ssh/id_rsa' }
-    })
-    proc.line({
-      type: 'notice',
-      tNanos: 2,
-      code: 'rrTuningSaved',
-      params: { path: tuning, file: '/elsewhere/2.json' }
-    })
-    expect(of('simNotice').map((n) => n.params)).toEqual([
-      { path: '../x.json' },
-      { path: tuning, file: join(REQUEST.firstFolder, 'RoadRunner', 'tuning', 'accel', '2.json') }
-    ])
+  it('사이드카가 보낸 file은 받지 않는다(4d부터 code마다 params 키가 정확해야 해 남는 키는 프로토콜 오류)', async () => {
+    for (const path of ['../x.json', 'RoadRunner/tuning/accel/2.json']) {
+      const { proc, of } = setup()
+      boot(proc)
+      proc.line({
+        type: 'notice',
+        tNanos: 1,
+        code: 'rrTuningSaved',
+        params: { path, file: '/home/user/.ssh/id_rsa' }
+      })
+      expect(proc.killed).toBe(true)
+      await settle()
+      expect(of('simNotice')).toEqual([])
+      expect(of('finished')[0].reason).toBe('crashed')
+      expect(of('finished')[0].detail.startsWith('protocol error: notice.params')).toBe(true)
+    }
   })
 
   it('Config 탭의 값은 다음 틱 답의 configSet에 차례로 싣고, 일시 정지 중이면 답할 때 싣는다', () => {

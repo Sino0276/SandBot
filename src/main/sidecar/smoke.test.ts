@@ -6,6 +6,7 @@ import { dirname, join } from 'path'
 import { promisify } from 'util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MIN_JDK_MAJOR, type JdkInfo, type PlayEvent } from '../../shared/play'
+import { SIDECAR_PROTOCOL_VERSION } from '../../shared/sidecarProtocol'
 import { detectJdks, javaTool, nodeJdkFs } from '../jdk'
 import { clearOpModeCache, scanOpModes } from '../opModes'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
@@ -316,7 +317,7 @@ public class Main {
     public static void main(String[] args) throws Exception {
         PrintStream out = new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8");
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        out.println("{\\"type\\":\\"hello\\",\\"protocol\\":3,\\"runtime\\":\\"stub\\",\\"java\\":\\"" + System.getProperty("java.version") + "\\"}");
+        out.println("{\\"type\\":\\"hello\\",\\"protocol\\":${SIDECAR_PROTOCOL_VERSION},\\"runtime\\":\\"stub\\",\\"java\\":\\"" + System.getProperty("java.version") + "\\"}");
         String run = in.readLine();
         boolean crash = run.contains("Crash");
         out.println("{\\"type\\":\\"compiled\\",\\"ok\\":true,\\"diagnostics\\":[],\\"millis\\":1}");

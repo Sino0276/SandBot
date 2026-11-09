@@ -2,10 +2,16 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { Vec3 } from '../worldSpec'
-import { applyMatrix3, matMul3, rotationMatrix } from './fieldGeometry'
 import type { FieldSpec, FieldTag } from './fieldSpec'
 import { resolveSeason } from './seasons'
 import { tag36h11Code, tag36h11Image } from './tag36h11'
+import {
+  clusterFieldPoses,
+  clusterOriginFromMember,
+  SDK_BIOBUZZ_CLUSTER_OFFSET_Y,
+  SDK_BIOBUZZ_CLUSTER_OFFSET_Z,
+  tagFieldPose as fieldPose
+} from './tagPoses'
 
 // K2·K3(spec-4ab §5): AprilTag 참값과 tag36h11 그림.
 // 기대값 __fixtures__/biobuzz-tags.json은 조사 스크립트(scratchpad p13field/web/biobuzz_tags_computed.json, `compl/tags.py`)가
@@ -26,22 +32,15 @@ const EXPECTED: Expected[] = JSON.parse(
 
 const biobuzz = resolveSeason('biobuzz')
 
-// carrier 위 요소의 필드 자세: T(pivot)·R_y(θ)·T(position)·R_zyx(rotation)(행렬 곱, Euler 각을 더하지 않는다)
+// 4ab의 지역 함수 자리: 4d부터 seasons/tagPoses.ts의 tagFieldPose를 쓴다(두 HIVE를 같은 상태로)
 function tagFieldPose(
   spec: FieldSpec,
   tag: FieldTag,
   state: 'start' | 'tipped'
-): { position: Vec3; matrix: number[] } {
-  const local = rotationMatrix(tag.rotation)
-  if (tag.carrier === 'field') return { position: tag.position, matrix: local }
-  const hive = spec.hives.find((h) => h.key === tag.carrier)!
-  const theta = state === 'start' ? hive.startAngle : hive.tippedAngle
-  const carrier = rotationMatrix({ x: 0, y: theta, z: 0 })
-  const p = applyMatrix3(carrier, tag.position)
-  return {
-    position: { x: hive.pivot.x + p.x, y: hive.pivot.y + p.y, z: hive.pivot.z + p.z },
-    matrix: matMul3(carrier, local)
-  }
+): { position: Vec3; matrix: readonly number[] } {
+  const tipped = state === 'tipped'
+  const { position, rotation } = fieldPose(spec, tag, [tipped, tipped])
+  return { position, matrix: rotation }
 }
 
 function quaternionMatrix([w, x, y, z]: [number, number, number, number]): number[] {
@@ -149,5 +148,74 @@ describe('K3 tag36h11', () => {
           expect(image[1][k] || image[8][k] || image[k][1] || image[k][8]).toBe(false)
       }
     }
+  })
+})
+
+// K6(spec-4d §1.6, A9 앞부분): SDK 묶음 원점. 몸체 틀 값은 식으로 x = ±(0.36246 + 7.1874f·0.0254), z = −0.03792 −
+// (−5.622f)·0.0254이다(4ab 값 0.54501과 1e-5 비교는 4.3e-8 여유라 쓰지 않는다)
+describe('K6 묶음 원점', () => {
+  const bodyX = 0.36246 + SDK_BIOBUZZ_CLUSTER_OFFSET_Y * 0.0254
+  const bodyZ = -0.03792 - SDK_BIOBUZZ_CLUSTER_OFFSET_Z * 0.0254
+
+  it('식 값과 상수', () => {
+    expect(SDK_BIOBUZZ_CLUSTER_OFFSET_Y).toBe(Math.fround(7.1874))
+    expect(SDK_BIOBUZZ_CLUSTER_OFFSET_Z).toBe(Math.fround(-5.622))
+    expect(Math.abs(bodyX - 0.545019956)).toBeLessThan(1e-9)
+    expect(Math.abs(bodyZ - 0.1048788055)).toBeLessThan(1e-9)
+  })
+
+  for (const tipped of [false, true] as const) {
+    it(`HIVE ${tipped ? '넘어감' : '시작'}: 네 묶음, 몸체 틀 (±x, 0, z)를 1e-6로, 네 멤버가 같은 원점(1e-16 급)`, () => {
+      const hiveTipped: [boolean, boolean] = [tipped, tipped]
+      const poses = clusterFieldPoses(biobuzz, hiveTipped)
+      expect(poses.map((p) => [p.name, p.firstId])).toEqual([
+        ['RED SCORING', 30],
+        ['RED AUDIENCE', 34],
+        ['BLUE AUDIENCE', 38],
+        ['BLUE SCORING', 42]
+      ])
+      for (const pose of poses) {
+        const hive = biobuzz.hives.find(
+          (h) => h.key === (pose.name.startsWith('RED') ? 'hiveRed' : 'hiveBlue')
+        )!
+        const theta = tipped ? hive.tippedAngle : hive.startAngle
+        // 몸체 틀로 되돌림: R_y(−θ)·(p − pivot)
+        const dx = pose.position.x - hive.pivot.x
+        const dy = pose.position.y - hive.pivot.y
+        const dz = pose.position.z - hive.pivot.z
+        const local = {
+          x: Math.cos(theta) * dx - Math.sin(theta) * dz,
+          y: dy,
+          z: Math.sin(theta) * dx + Math.cos(theta) * dz
+        }
+        // 득점 묶음(빨강 −X CELL, 파랑은 그 Rz(π) 상이라 몸체 틀에서도 같은 쪽)은 −x, 관중석은 +x
+        const sign = pose.name.endsWith('SCORING') ? -1 : 1
+        expect(Math.abs(local.x - sign * bodyX)).toBeLessThan(1e-6)
+        expect(Math.abs(local.y)).toBeLessThan(1e-6)
+        expect(Math.abs(local.z - bodyZ)).toBeLessThan(1e-6)
+        // 같은 묶음의 네 멤버가 같은 원점
+        const members = biobuzz.aprilTags.tags
+          .filter((t) => t.cluster === pose.name)
+          .sort((a, b) => a.id - b.id)
+        expect(members).toHaveLength(4)
+        members.forEach((tag, k) => {
+          const o = clusterOriginFromMember(biobuzz, tag, k, hiveTipped).position
+          expect(Math.abs(o.x - pose.position.x)).toBeLessThan(1e-15)
+          expect(Math.abs(o.y - pose.position.y)).toBeLessThan(1e-15)
+          expect(Math.abs(o.z - pose.position.z)).toBeLessThan(1e-15)
+        })
+        // 사원수: 단위, w ≥ 0, 회전 행렬과 같음
+        const q = pose.quaternion
+        expect(Math.abs(Math.hypot(...q) - 1)).toBeLessThan(1e-15)
+        expect(q[0]).toBeGreaterThanOrEqual(0)
+        quaternionMatrix(q).forEach((v, i) =>
+          expect(Math.abs(v - pose.rotation[i])).toBeLessThan(1e-15)
+        )
+      }
+    })
+  }
+
+  it("'none' 시즌은 묶음이 없다", () => {
+    expect(clusterFieldPoses(resolveSeason('none'), [false, false])).toEqual([])
   })
 })

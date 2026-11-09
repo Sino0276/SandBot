@@ -8,7 +8,8 @@ import java.util.Map;
 
 /** 호스트의 run 메시지(src/shared/sidecarProtocol.ts의 RunRequest)를 검사해 읽은 것 */
 final class RunRequest {
-    static final int PROTOCOL = 3;
+    // 4: 웹캠 입력 tags·teamCalibrations·비전 notice(spec-4d §3.2, src/shared/sidecarProtocol.ts와 같은 판)
+    static final int PROTOCOL = 4;
 
     /** TeamCode의 @OpModeRegistrar 메서드가 있는 클래스(sidecarProtocol RegistrarRef) */
     static final class Registrar {
@@ -52,6 +53,11 @@ final class RunRequest {
     final long seed;
     final long startEpochMillis;
     final long stallMillis;
+    /**
+     * 팀 웹캠 보정 XML(TeamCode/src/main/res/xml/teamwebcamcalibrations.xml)의 절대 경로, 없으면 null(내장 보정만).
+     * 계약은 받아 두기만 한다(4d B가 보통 파일인지 확인해 Sim.installCameraCalibrations에 넘긴다, spec-4d §1.13).
+     */
+    final String teamCalibrations;
 
     private RunRequest(Map<String, Object> m) throws Invalid {
         checkProtocolAndClock(m);
@@ -84,6 +90,10 @@ final class RunRequest {
         seed = integer(m, "seed");
         startEpochMillis = integer(m, "startEpochMillis");
         stallMillis = positiveLong(m, "stallMillis");
+        Object calibrations = m.get("teamCalibrations");
+        if (calibrations != null && !(calibrations instanceof String))
+            throw new Invalid("teamCalibrations must be a string or null");
+        teamCalibrations = (String) calibrations;
     }
 
     static RunRequest parse(Map<String, Object> message) throws Invalid {

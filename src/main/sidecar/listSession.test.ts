@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ListRequest, RegisteredOpMode } from '../../shared/sidecarProtocol'
+import {
+  SIDECAR_PROTOCOL_VERSION,
+  type ListRequest,
+  type RegisteredOpMode
+} from '../../shared/sidecarProtocol'
 import { runListSidecar, type ListOutcome } from './listSession'
 import { MAX_REGISTERED_OPMODES, parseSidecarLine, ProtocolError } from './protocol'
 import { FakeClock, FakeProcess, settle } from './testkit'
 
 const REQUEST: ListRequest = {
   type: 'list',
-  protocol: 3,
+  protocol: SIDECAR_PROTOCOL_VERSION,
   clock: 'virtual',
   tickNanos: 5_000_000,
   sourceRoots: ['/proj/TeamCode/src/main/java'],
@@ -42,7 +46,7 @@ function start(): { clock: FakeClock; proc: FakeProcess; result: Promise<ListOut
 }
 
 function hello(proc: FakeProcess): void {
-  proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+  proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
 }
 
 const registrarError = {

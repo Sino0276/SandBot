@@ -317,9 +317,9 @@ describe('parseWorldSpec v4', () => {
     expect(parsed).not.toBe(spec)
   })
 
-  it("{ version: 4 }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
+  it("{ version }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
     expect(parseWorldSpec({ version: WORLD_SPEC_VERSION })).toBe('robot')
-    expect(WORLD_SPEC_VERSION).toBe(4)
+    expect(WORLD_SPEC_VERSION).toBe(5)
     expect(parseWorldSpec({ ...valid(), version: 3 })).toBe('version')
   })
 
@@ -471,5 +471,91 @@ describe('parseWorldSpec v4', () => {
       0.2 * Math.sin((k * Math.PI) / 3)
     ])
     expect(typeof parseWorldSpec(footprint(hexagon))).toBe('object')
+  })
+})
+
+// K7(spec-4d §3.1): 세계 설명 v5의 웹캠 목록
+describe('parseWorldSpec v5', () => {
+  const mount = { body: -1, position: { x: 0.2, y: 0, z: 0.3 }, rotation: { x: 0, y: -0.5, z: 0 } }
+  const cam = (device: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    device,
+    mount,
+    model: 'logitechC920',
+    ...extra
+  })
+
+  it('웹캠을 그대로 읽고 다른 키는 버린다', () => {
+    const spec: WorldSpec = {
+      ...withJoints(),
+      cameras: [
+        { device: 'Webcam 1', mount, model: 'logitechC920' },
+        { device: 'turret', mount: { ...mount, body: 2 }, model: 'gobilda3122' }
+      ]
+    }
+    const parsed = parseWorldSpec(spec)
+    expect(parsed).toEqual(spec)
+    const extra = parseWorldSpec({ ...withJoints(), cameras: [cam('Webcam 1', { fov: 70 })] })
+    expect(typeof extra !== 'string' && extra.cameras[0]).toEqual({
+      device: 'Webcam 1',
+      mount,
+      model: 'logitechC920'
+    })
+  })
+
+  it('버전 4는 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
+    expect(WORLD_SPEC_VERSION).toBe(5)
+    expect(parseWorldSpec({ ...valid(), version: 4 })).toBe('version')
+  })
+
+  it.each([
+    ['cameras', { ...valid(), cameras: undefined }],
+    ['cameras', { ...valid(), cameras: {} }],
+    ['cameras', { ...valid(), cameras: Array.from({ length: 5 }, (_, i) => cam(`w${i}`)) }],
+    ['cameras[0]', { ...valid(), cameras: [{ device: 'w', model: 'logitechC920' }] }],
+    ['cameras[0].device', { ...valid(), cameras: [cam('')] }],
+    [
+      'cameras[0].mount.body',
+      { ...valid(), cameras: [cam('w', { mount: { ...mount, body: 0 } })] }
+    ],
+    [
+      'cameras[0].mount.body',
+      { ...withJoints(), cameras: [cam('w', { mount: { ...mount, body: 3 } })] }
+    ],
+    [
+      'cameras[0].mount.position',
+      { ...valid(), cameras: [cam('w', { mount: { ...mount, position: { x: 11, y: 0, z: 0 } } })] }
+    ],
+    [
+      'cameras[0].mount.rotation',
+      { ...valid(), cameras: [cam('w', { mount: { ...mount, rotation: { x: 13, y: 0, z: 0 } } })] }
+    ],
+    ['cameras[0].model', { ...valid(), cameras: [cam('w', { model: 'logitechC930' })] }],
+    ['cameras[0].model', { ...valid(), cameras: [cam('w', { model: undefined })] }]
+  ])('%s가 틀리면 그 이름을 돌려준다', (what, value) => {
+    expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  it('4개까지', () => {
+    const spec = { ...valid(), cameras: Array.from({ length: 4 }, (_, i) => cam(`w${i}`)) }
+    expect(typeof parseWorldSpec(spec)).toBe('object')
+  })
+
+  it.each([
+    ['거리 센서', { distanceSensors: [{ device: 'Webcam 1', mount }] }],
+    ['컬러 센서', { colorSensors: [{ device: 'Webcam 1', mount }] }],
+    ['모터', { cameras: [cam('lift')] }],
+    ['데드휠', { cameras: [cam('par')] }],
+    ['Pinpoint', { cameras: [cam('pinpoint')] }],
+    ['OTOS', { cameras: [cam('otos')] }],
+    ['IMU', { cameras: [cam('imu')] }],
+    ['관절 서보', { cameras: [cam('wrist')] }],
+    ['리밋 스위치', { cameras: [cam('bottom')] }],
+    ['같은 목록 안', { cameras: [cam('Webcam 1'), cam('Webcam 1')] }]
+  ])('웹캠 장치 이름이 %s와 겹치면 거부한다', (_, change) => {
+    const base = { ...withJoints(), cameras: [cam('Webcam 1')] }
+    const index = 'cameras' in change && (change.cameras as unknown[]).length === 2 ? 1 : 0
+    expect(parseWorldSpec({ ...base, ...change })).toBe(
+      `cameras[${index}].device: duplicate device`
+    )
   })
 })

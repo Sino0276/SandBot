@@ -1,4 +1,9 @@
 import { Vector3 } from 'three'
+import {
+  DEFAULT_CAMERA_MODEL,
+  isCameraModelId,
+  type CameraModelId
+} from '../../../shared/sim/cameraData'
 import type { Vec3 as SimVec3 } from '../../../shared/sim/worldSpec'
 import {
   findRobotId,
@@ -212,5 +217,69 @@ export function sensorMountInRobot(
     rotation,
     housing: 'front',
     pivotOffset
+  }
+}
+
+// ---- 웹캠 장착(4d, spec-4d §1.3) ----
+
+// 조준(rad, 로봇 좌표): yaw는 로봇 +X에서 반시계 +, pitch는 올려본각(위 +), roll은 광축 둘레(카메라 뒤에서 볼 때 시계 방향 +)
+export type CameraAim = { yaw: number; pitch: number; roll: number }
+
+// 웹캠 조준 속성을 카탈로그 기본·범위로 읽는다(sensorAim과 같은 규칙: 없음·NaN·범위 밖이면 기본값, pitch 기본 π/6)
+export function cameraAim(props: HardwareComponent['props']): CameraAim {
+  const read = (key: 'aimYaw' | 'aimPitch' | 'aimRoll'): number => {
+    const def = COMPONENT_TYPES.webcam.properties.find((property) => property.key === key)
+    if (!def || def.kind !== 'angle') throw new Error(`webcam.${key} 조준 속성이 카탈로그에 없다`)
+    const value = props[key]
+    return typeof value === 'number' && value >= def.min && value <= def.max ? value : def.default
+  }
+  return { yaw: read('aimYaw'), pitch: read('aimPitch'), roll: read('aimRoll') }
+}
+
+// 카메라 틀 회전(ZYX): (roll, −pitch, yaw). R = Rz(yaw)·Ry(−pitch)·Rx(roll)이라 롤은 광축(+X) 둘레 오른손 회전이고,
+// 롤 +면 센서 +Z(영상 위)가 −Y 쪽(카메라 뒤에서 볼 때 오른쪽)으로 간다. 0은 −0이 되지 않게 둔다(aimRotation과 같은 규칙).
+export function cameraAimRotation(aim: CameraAim): SimVec3 {
+  return {
+    x: aim.roll === 0 ? 0 : aim.roll,
+    y: aim.pitch === 0 ? 0 : -aim.pitch,
+    z: aim.yaw === 0 ? 0 : aim.yaw
+  }
+}
+
+// 웹캠의 카메라 모델(틀리거나 없으면 기본 C920)
+export function cameraModelOf(props: HardwareComponent['props']): CameraModelId {
+  const value = props.cameraModel
+  return isCameraModelId(value) ? value : DEFAULT_CAMERA_MODEL
+}
+
+// SDK 로봇 틀(x 오른쪽, y 앞, z 위, 원점 로봇 중심 바닥)의 카메라 위치(in)와 ZXZ 방향(°):
+// AprilTagProcessor.Builder.setCameraPose(Position(INCH, x, y, z, 0), YawPitchRollAngles(DEGREES, yaw, pitch, roll, 0))
+export type SdkCameraPose = {
+  x: number
+  y: number
+  z: number
+  yaw: number
+  pitch: number
+  roll: number
+}
+
+const DEGREES_PER_RADIAN = 180 / Math.PI
+// −0을 0으로(인스펙터 글자가 "-0.00"이 되지 않게)
+const plainZero = (value: number): number => value + 0
+
+// 위치: SandBot 로봇 틀(x 앞, y 왼쪽)에서 SDK 틀로 x_sdk = −y, y_sdk = x, z_sdk = z(in).
+// 방향: (yaw, pitch, roll)_SDK = (aimYaw, aimPitch − 90°, aimRoll). SDK R = Rz(yaw)·Rx(pitch)·Rz(roll)(Vision 12.0
+// AprilTagProcessor.java:246–260, INTRINSIC ZXZ)은 OpenCV 카메라 축을 SDK 로봇 틀로 옮기는 회전이다. SandBot 쪽은
+// R = Rz(90°)·Rz(ψ)·Ry(−θ)·Rx(φ)·C(C = 센서 틀의 OpenCV 축 [−ŷ, −ẑ, x̂], Rz(90°)는 SandBot → SDK 로봇 틀)이고
+// Rz(90°)·C = Rx(−90°), Rz(90°)·Ry(α)·Rz(−90°) = Rx(−α), Rx(90°)·Ry(φ)·Rx(−90°) = Rz(φ)이므로 Rz(ψ)·Rx(θ − 90°)·Rz(φ)와
+// 같다(spec-4d §1.3). 수평 앞을 보면 (0, −90, 0)이고 SDK 샘플 ConceptAprilTagLocalization의 기본값과 같다.
+export function sdkCameraPose(lensInRobot: SimVec3, aim: CameraAim): SdkCameraPose {
+  return {
+    x: plainZero(-lensInRobot.y * INCH_PER_METER),
+    y: plainZero(lensInRobot.x * INCH_PER_METER),
+    z: plainZero(lensInRobot.z * INCH_PER_METER),
+    yaw: plainZero(aim.yaw * DEGREES_PER_RADIAN),
+    pitch: plainZero(aim.pitch * DEGREES_PER_RADIAN - 90),
+    roll: plainZero(aim.roll * DEGREES_PER_RADIAN)
   }
 }

@@ -22,7 +22,8 @@ import { testMotorParams } from './testkit'
 import { PhysicsWorld } from './world'
 import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec'
 
-// 시뮬레이터 출력 기준 해시. 대표 시나리오 여섯(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준)을 고정한 출력열로
+// 시뮬레이터 출력 기준 해시. 대표 시나리오 일곱(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준, 일곱째는
+// 4d 웹캠 기준)을 고정한 출력열로
 // 돌려, 틱마다 step()이 돌려준 입력, pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(),
 // drainNotices()를 JSON으로 이어 sha256을 잰다.
 //
@@ -32,6 +33,9 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // 각 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
 // 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값. 4ab 리뷰 수정의
 // 참 분리 축 보충 행으로 다시 쟀다).
+//
+// 일곱째는 4d의 웹캠 기준이고 다음 단계가 지킨다(BIOBUZZ, 잡음 끔, 웹캠 출력 고정). 웹캠이 없는 세계의 입력열은 4d 전과 바이트
+// 그대로라 앞의 여섯 해시는 4d가 바꾸지 않는다.
 //
 // 여섯째는 4c의 거리·컬러 센서 기준이고 4d가 지킨다(BIOBUZZ, 잡음 끔). 이 해시는 센서 계산의 Math.pow·acos·atan을 처음으로
 // 기준 해시에 넣는다(잡음 끔이라 log는 없다). 기존 해시도 sin·cos·sqrt에 기대므로 같은 성질이지만, Node·Electron을 올릴 때 다시
@@ -71,7 +75,7 @@ function traceWith(
   nullable: (text: string) => string
 ): { ticks: Tick[]; hash: string } {
   // 4ab 계약: 넷째까지는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
-  expect(s.spec.version).toBe(4)
+  expect(s.spec.version).toBe(5)
   expect(s.spec.field).toEqual({ season, hiveTipped: [false, false] })
   const world = new PhysicsWorld(s.spec)
   const ticks: Tick[] = []
@@ -469,13 +473,91 @@ function biobuzzSensors(): Scenario {
   }
 }
 
+// (7) 4d 웹캠(BIOBUZZ, 잡음 끔): 빨강 관중석 벽 프리셋(요 π, 로봇 y −0.32385)의 메카넘 로봇 앞면 웹캠(높이 0.30 m, 위 30°)이
+// 두 묶음을 보다가(RED AUDIENCE 34–37 전부, RED SCORING 30·31, 32·33은 다리) −X로 다가가 위 CELL이 화면 위로 벗어난다. 팬
+// 관절(회전 +z, 로봇 앞 끝 위) 하위 웹캠(위 50°)은 팬이 돌면 보는 태그가 바뀐다. 웹캠 출력(스트리밍 640×480, 36h11, d 3)은
+// 고정, 고르지 않은 틱.
+const camOut: DeviceValues = {
+  serialNumber: 'X',
+  state: 'STREAMING',
+  streaming: true,
+  width: 640,
+  height: 480,
+  aprilTag: true,
+  family: 'TAG_36h11',
+  decimation: 3
+}
+function biobuzzCameras(): Scenario {
+  const field = resolveSeason('biobuzz')
+  const start = { x: field.perimeter.innerHalf - HALF, y: -0.32385, yaw: Math.PI }
+  const pan: SimJointSpec = {
+    parent: -1,
+    type: 'revolute',
+    origin: { position: { x: HALF - 0.05, y: 0, z: 0.25 }, rotation: ZERO },
+    axis: { x: 0, y: 0, z: 1 },
+    limits: { lower: -Math.PI / 2, upper: Math.PI / 2 },
+    body: { mass: 0.2, centerOfMass: ZERO, inertia: [2e-4, 2e-4, 2e-4, 0, 0, 0] },
+    friction: { coulomb: 0.02, viscous: 0.001 },
+    spring: null,
+    drive: {
+      kind: 'motor',
+      devices: ['pan'],
+      ratio: 1 / 4,
+      params: LIFT_PARAMS,
+      rigging: { kind: 'direct' }
+    },
+    switches: []
+  }
+  const base = robotSpec(
+    { start },
+    {
+      field: { season: 'biobuzz', hiveTipped: [false, false] },
+      joints: [pan],
+      cameras: [
+        {
+          device: 'front',
+          mount: {
+            body: -1,
+            position: { x: HALF, y: 0, z: 0.3 },
+            rotation: { x: 0, y: -Math.PI / 6, z: 0 }
+          },
+          model: 'logitechC920'
+        },
+        {
+          device: 'turret',
+          mount: {
+            body: 0,
+            position: { x: 0.05, y: 0, z: 0.05 },
+            rotation: { x: 0, y: (-50 * Math.PI) / 180, z: 0 }
+          },
+          model: 'logitechC920'
+        }
+      ]
+    }
+  )
+  const spec: WorldSpec = { ...base, motors: [...base.motors, liftMotor('pan')] }
+  // 요 π: 로봇 앞 = 필드 −X(HIVE 쪽)
+  const drive = (k: number): ReturnType<typeof mecanum> => {
+    if (k < 60) return mecanum(0, 0, 0)
+    if (k < 240) return mecanum(0.35, 0, 0)
+    return mecanum(0, 0, 0)
+  }
+  const panDrive = (k: number): DeviceValues => liftOut(k < 120 ? 0 : k < 260 ? 0.3 : -0.3)
+  return {
+    spec,
+    ticks: 400,
+    time: uneven,
+    out: (k) => ({ ...outputs(drive(k)), pan: panDrive(k), front: camOut, turret: camOut })
+  }
+}
+
 // 시나리오가 덮으려는 것을 실제로 지나가는지(해시만으로는 시나리오가 아무 일도 하지 않아도 통과한다)
 const seen = (ticks: Tick[], device: string, key: string, value: unknown): boolean =>
   ticks.some((t) => t.input[device]?.[key] === value)
 const notified = (ticks: Tick[], code: string): boolean =>
   ticks.some((t) => t.notices.some((n) => n.code === code))
 
-describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서)", () => {
+describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서, 일곱째는 4d 웹캠)", () => {
   it('메카넘 + Pinpoint + 리프트', () => {
     const { ticks, hash } = trace(mecanumLift())
     const last = ticks[ticks.length - 1].pose
@@ -549,6 +631,26 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(ticks.slice(1).every((t) => t.input.floor === undefined)).toBe(true)
     expect(ticks.filter((t) => t.pose.blocked).length).toBeGreaterThan(20)
     expect(hash).toBe('d73506bb7132142d9e74f547b281d680e8c955166f20f383a8987e1f8a6f2f2c')
+  })
+
+  it('4d 웹캠(BIOBUZZ, 잡음 끔, 같은 프로세스에서 두 번 바이트가 같다)', () => {
+    const first = trace(biobuzzCameras(), 'biobuzz')
+    const { ticks, hash } = trace(biobuzzCameras(), 'biobuzz')
+    expect(hash).toBe(first.hash)
+    const ids = (tags: unknown): string =>
+      (tags as number[]).filter((_, i) => i % 9 === 0).join(',')
+    // 덮으려는 것: 앞 웹캠이 두 묶음(30·31, 34–37)을 보다가 다가가면 위 CELL을 놓친다, 팬 웹캠의 태그가 바뀐다
+    const front = ticks.flatMap((t) =>
+      t.input.front?.tags !== undefined ? [ids(t.input.front.tags)] : []
+    )
+    expect(front[0]).toBe('30,31,34,35,36,37')
+    expect(front.some((list) => !list.includes('34'))).toBe(true)
+    const turret = new Set(
+      ticks.flatMap((t) => (t.input.turret?.tags !== undefined ? [ids(t.input.turret.tags)] : []))
+    )
+    expect(turret.size).toBeGreaterThan(2)
+    expect(ticks[0].input.front).toEqual({ model: 'logitechC920' })
+    expect(hash).toBe('f6d7c14e8289b755b48818f7176b9baed885861069aa47afee722e7e98789b2c')
   })
 
   it('바퀴·관절 없음', () => {

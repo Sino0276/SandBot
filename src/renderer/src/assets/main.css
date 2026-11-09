@@ -232,6 +232,9 @@ body {
 }
 
 .frame-badge {
+  /* 좁은 줄(웹캠 카드의 카메라 모델 선택칸 옆)에서도 "실행 중"이 두 줄로 접히지 않게 */
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 1px 6px;
   color: #fff;
   background: var(--color-accent-muted);
@@ -2919,6 +2922,18 @@ button.usage-header:hover {
 .field-inspector-value {
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
+}
+
+/* Field 인스펙터 AprilTag 묶음 줄(4d): 긴 Java 글자는 줄을 바꾸고 [복사]는 오른쪽 */
+.field-row.field-cluster-row {
+  grid-template-columns: 1fr auto;
+  align-items: start;
+}
+
+.field-cluster-text {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 /* 비활성 프리셋의 이유 줄(선택칸 아래, Windows 드롭다운은 option title을 보이지 않는다) */

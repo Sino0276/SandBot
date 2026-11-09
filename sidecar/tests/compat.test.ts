@@ -22,33 +22,11 @@ import {
 // 없이(bootClasspath가 빔) 팀 코드를 컴파일하는 옵션. Android API 기준 컴파일은 platform.test.ts가 본다). 실행 동작은 런타임·
 // 장치 테스트가 본다. JDK가 없으면 건너뛴다.
 
-// 컴파일되지 않는 샘플과 이유. 1단계 밖(비전 처리의 OpenCV 형식, 안드로이드 UI·리소스)만 뺀다.
+// 컴파일되지 않는 샘플과 이유. 안드로이드 UI·리소스만 뺀다. 비전 샘플 여덟(AprilTag 넷, ColorLocator 둘, ColorSensor,
+// FrameCapture)은 4d에서 OpenCV classes.jar를 실제 원천에 더해(Point 등 들여옴, 나머지는 실제 API의 stub) 컴파일된다.
 // until: 이 형식이 손 구현으로 생기면(빌드 보고의 hand) 그 샘플은 컴파일되어야 한다(목록에서 지운다).
 // 뺀 샘플이 컴파일되면 테스트가 목록을 줄이라고 알린다.
 const EXCLUDED_SAMPLES: Record<string, { reason: string; until?: string[] }> = {
-  'ConceptAprilTag.java': { reason: 'OpenCV org.opencv.core.Point has no fields (vision)' },
-  'ConceptAprilTagEasy.java': { reason: 'OpenCV org.opencv.core.Point has no fields (vision)' },
-  'ConceptAprilTagLocalization.java': {
-    reason: 'OpenCV org.opencv.core.Point has no fields (vision)'
-  },
-  'ConceptAprilTagSwitchableCameras.java': {
-    reason: 'OpenCV org.opencv.core.Point has no fields (vision)'
-  },
-  'ConceptVisionColorLocator_Rectangle.java': {
-    reason: 'OpenCV org.opencv.core.RotatedRect has no fields (vision)'
-  },
-  'ConceptVisionColorLocator_Circle.java': {
-    reason: 'needs android.graphics.Color and android.util.Size',
-    until: ['android.graphics.Color', 'android.util.Size']
-  },
-  'ConceptVisionColorSensor.java': {
-    reason: 'needs android.util.Size',
-    until: ['android.util.Size']
-  },
-  'UtilityCameraFrameCapture.java': {
-    reason: 'needs android.util.Size',
-    until: ['android.util.Size']
-  },
   'ConceptLEDStick.java': {
     reason: 'needs android.graphics.Color',
     until: ['android.graphics.Color']

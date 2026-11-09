@@ -168,6 +168,7 @@ function runRequest(b: SidecarBuild, extra: Partial<RunRequest>): RunRequest {
     seed: 0,
     startEpochMillis: 1_700_000_000_000,
     stallMillis: 5000,
+    teamCalibrations: null,
     ...extra
   }
 }

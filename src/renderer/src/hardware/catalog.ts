@@ -9,6 +9,7 @@ import {
   MIN_STALL_TORQUE_OVERRIDE,
   SERVO_MODEL_KEYS
 } from '../../../shared/sim/actuatorData'
+import { CAMERA_MODEL_IDS, DEFAULT_CAMERA_MODEL } from '../../../shared/sim/cameraData'
 import { motorType } from '../../../shared/sim/motorTypes'
 import type { JointType } from '../scene/model'
 
@@ -244,6 +245,33 @@ export const AIM_PITCH_LEVEL = {
 // 컬러 센서는 기본으로 아래(바닥, −90°)를 본다(synthesis §4.1)
 export const AIM_PITCH_DOWN = { ...AIM_PITCH_LEVEL, default: -Math.PI / 2 } as const
 
+// 웹캠(시뮬레이터 전용, 4d, spec-4d §1.1). 카메라 모델은 SDK 내장 보정 XML(builtinwebcamcalibrations.xml)의 카메라만
+// 고른다(src/shared/sim/cameraData.ts, 카탈로그 불변 조건: SDK 소스에서 확인한 값). 조준은 거리·컬러 센서와 같은 원칙
+// (로봇 좌표 기준, CAD 파트 회전과 무관)이고 롤이 더 있다: 카메라 틀 회전은 ZYX (aimRoll, −aimPitch, aimYaw)
+// (hardware/mounting.ts cameraAimRotation).
+export const CAMERA_MODEL = {
+  key: 'cameraModel',
+  kind: 'enum',
+  options: CAMERA_MODEL_IDS,
+  default: DEFAULT_CAMERA_MODEL,
+  hint: true,
+  simulation: true
+} as const
+// 웹캠은 기본으로 위 30°를 본다 [결정: 웹캠 기본 조준 위 30°]: BIOBUZZ 태그는 바닥 위 0.90 m(아래 CELL)·1.27 m(위 CELL)에서
+// 60° 아래를 봐서, 수평 조준이면 C920 640×480(세로 반시야 21.1°)으로 위 CELL이 필드 어디서도 보이지 않는다(spec-4d §1.1)
+export const CAMERA_AIM_PITCH = { ...AIM_PITCH_LEVEL, default: Math.PI / 6 } as const
+// 광축(+X) 둘레 오른손 회전: 카메라 뒤에서 볼 때 시계 방향이 +(위 가장자리가 오른쪽으로), 영상 속 장면은 반시계로 돈다
+export const AIM_ROLL = {
+  key: 'aimRoll',
+  kind: 'angle',
+  default: 0,
+  min: -Math.PI,
+  max: Math.PI,
+  wrap: true,
+  hint: true,
+  simulation: true
+} as const
+
 // 인스펙터 각도 칸이 확정한 값(rad)을 저장 값으로 바꾼다. wrap이면 (−π, π]로 감고(seasons/symmetry.ts wrapPi와 같은
 // 규칙이되 여러 바퀴도 감는다: 270° → −90°, −180° → 180°, 720° → 0°), 아니면 [min, max]로 자른다. 감은 값도 반올림
 // 오차로 범위를 넘지 않게 마지막에 자르고, −0은 0으로 둔다.
@@ -445,8 +473,15 @@ export const COMPONENT_TYPES = {
     defaultName: 'Webcam 1',
     javaType: 'WebcamName',
     imports: ['org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName'],
-    // 구성 XML의 Webcam은 실제 카메라의 USB 시리얼이 있어야 연결된다(DS의 Configure Robot 스캔으로 확인)
-    properties: [{ key: 'serialNumber', kind: 'text', default: '' }]
+    // 구성 XML의 Webcam은 실제 카메라의 USB 시리얼이 있어야 연결된다(DS의 Configure Robot 스캔으로 확인).
+    // 나머지는 시뮬레이터 전용(4d): 카메라 모델과 조준(요는 4c AIM_YAW 그대로)
+    properties: [
+      { key: 'serialNumber', kind: 'text', default: '' },
+      CAMERA_MODEL,
+      AIM_YAW,
+      CAMERA_AIM_PITCH,
+      AIM_ROLL
+    ]
   },
   limelight: {
     category: 'vision',

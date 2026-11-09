@@ -141,8 +141,9 @@ export const useEditorStore = create<EditorState>()((set) => ({
 }))
 
 // 변환 핸들을 클릭하면 R3F는 오브젝트를 맞히지 못한 클릭(pointer missed)으로 보고 선택을 해제한다.
-// 핸들을 조작한 직후의 빗나간 클릭은 무시하기 위해 마지막 조작 시각을 기록한다.
-let lastHandleInteraction = 0
+// 핸들을 조작한 직후의 빗나간 클릭은 무시하기 위해 마지막 조작 시각을 기록한다. 처음은 −∞다(0이면 performance.now()가
+// 아직 300 ms 안인 막 시작한 프로세스·시험 워커에서 조작한 적 없는 클릭을 '핸들 직후'로 버린다).
+let lastHandleInteraction = -Infinity
 
 export function markHandleInteraction(): void {
   lastHandleInteraction = performance.now()
