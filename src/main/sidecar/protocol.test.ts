@@ -11,7 +11,7 @@ import {
   type DashOp
 } from '../../shared/dashboard'
 import { MAX_DEVICE_ARRAY } from '../../shared/sidecarProtocol'
-import { parseSidecarLine, ProtocolError } from './protocol'
+import { NOTICE_PARAM_KEYS, parseSidecarLine, ProtocolError } from './protocol'
 
 // 사이드카 메시지 읽기 중 FTC Dashboard(dash·dashConfig), 사이드카 안내(notice), 틱의 장치 출력 값 모양.
 // 나머지는 session.test.ts가 세션과 함께 본다.
@@ -263,6 +263,45 @@ describe('사이드카 메시지: dashConfig', () => {
   })
 })
 
+describe('사이드카 메시지: 비전 notice(4d, A14)', () => {
+  // spec-4d §1.14의 code와 필수 params 키
+  const VISION: [keyof typeof NOTICE_PARAM_KEYS, string[]][] = [
+    ['visionProcessorUnsupported', ['processor']],
+    ['aprilTagNoFieldPose', ['cluster']],
+    ['visionSolverSubstituted', ['solver']],
+    ['visionSolverStop', ['solver']],
+    ['visionMultipleAprilTag', []],
+    ['visionFrameCapture', ['method']],
+    ['visionResumeNullFormat', []],
+    ['visionCalibrationSkipped', ['detail']]
+  ]
+
+  it('여덟 code를 받고 code마다 params 키가 빠지거나 남으면 프로토콜 오류', () => {
+    for (const [code, keys] of VISION) {
+      expect(NOTICE_PARAM_KEYS[code]).toEqual(keys)
+      const params = Object.fromEntries(keys.map((k) => [k, `v-${k}`]))
+      expect(parse({ type: 'notice', tNanos: 3, code, params })).toEqual({
+        type: 'notice',
+        tNanos: 3,
+        code,
+        params
+      })
+      for (const key of keys) {
+        const missing = { ...params }
+        delete missing[key]
+        rejects({ type: 'notice', tNanos: 3, code, params: missing }, 'notice.params')
+      }
+      rejects({ type: 'notice', tNanos: 3, code, params: { ...params, x: 'y' } }, 'notice.params')
+    }
+    rejects({ type: 'notice', tNanos: 3, code: 'visionOther', params: {} }, 'notice.code')
+    // 값은 지금처럼 글자만
+    rejects(
+      { type: 'notice', tNanos: 3, code: 'visionSolverStop', params: { solver: 1 } },
+      'notice.params'
+    )
+  })
+})
+
 describe('사이드카 메시지: notice', () => {
   it('안내 code와 글자 매개변수', () => {
     expect(parse({ type: 'notice', tNanos: 7, code: 'dashCamera', params: {} })).toEqual({
@@ -285,6 +324,13 @@ describe('사이드카 메시지: notice', () => {
       params: { path: 'RoadRunner/tuning/accel/1.json' }
     })
     rejects({ type: 'notice', tNanos: 7, code: 'other', params: {} }, 'notice.code')
+    // 4d: code마다 params 키가 정확해야 한다(빠지거나 남으면 프로토콜 오류)
+    rejects({ type: 'notice', tNanos: 7, code: 'rrTuningSaved', params: {} }, 'notice.params')
+    rejects(
+      { type: 'notice', tNanos: 7, code: 'rrTuningSaved', params: { path: 'a', file: '/x' } },
+      'notice.params'
+    )
+    rejects({ type: 'notice', tNanos: 7, code: 'dashCamera', params: { a: 'b' } }, 'notice.params')
     rejects({ type: 'notice', tNanos: 7, code: 'dashImage', params: { a: 1 } }, 'notice.params')
     rejects({ type: 'notice', tNanos: 7, code: 'dashImage', params: [] }, 'notice.params')
     rejects(

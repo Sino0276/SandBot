@@ -189,7 +189,8 @@ describe('prepareRun', () => {
       opModeSource: source,
       configXml: null,
       configMissing: true,
-      preselectTeleOp: ''
+      preselectTeleOp: '',
+      teamCalibrations: null
     })
     const config = await write(CONFIG, '<Robot/>')
     await mkdir(join(root, 'FtcRobotController', 'src', 'main', 'java'), { recursive: true })
@@ -219,6 +220,40 @@ describe('prepareRun', () => {
       ok: false,
       code: 'notAllowed'
     })
+  })
+
+  it('팀 웹캠 보정(A15): TeamCode 안 보통 파일만, 링크로 밖·256 KB 초과·폴더·없음은 null', async () => {
+    await write(`${PKG}/Drive.java`)
+    const rel = 'src/main/res/xml/teamwebcamcalibrations.xml'
+    const team = (): Promise<string | null> =>
+      prepareRun(valid(request({ root }))).then((p) =>
+        'teamCalibrations' in p ? p.teamCalibrations : 'failed'
+      )
+    // 없음
+    expect(await team()).toBeNull()
+    // 보통 파일
+    const file = await write(rel, '<Calibrations/>')
+    expect(await team()).toBe(file)
+    // 한도 그대로는 받고 1바이트 넘으면 null(실행은 막지 않는다)
+    await writeFile(file, Buffer.alloc(256 * 1024, 0x20))
+    expect(await team()).toBe(file)
+    await writeFile(file, Buffer.alloc(256 * 1024 + 1, 0x20))
+    expect(await team()).toBeNull()
+    expect(await prepareRun(valid(request({ root })))).toMatchObject({ teamCalibrations: null })
+    // 폴더
+    await rm(file)
+    await mkdir(file)
+    expect(await team()).toBeNull()
+    await rm(file, { recursive: true })
+    // TeamCode 밖을 가리키는 링크
+    await writeFile(join(outside, 'cal.xml'), '<Calibrations/>')
+    await symlink(join(outside, 'cal.xml'), file)
+    expect(await team()).toBeNull()
+    await rm(file)
+    // TeamCode 안을 가리키는 링크는 받는다(링크를 푼 위치도 TeamCode 안)
+    const inside = await write('src/main/res/xml/real-calibrations.xml', '<Calibrations/>')
+    await symlink(inside, file)
+    expect(await team()).toBe(file)
   })
 
   it('Autonomous면 그 클래스의 preselectTeleOp를 읽는다', async () => {
@@ -414,7 +449,8 @@ describe('사이드카 빌드 결과와 명령', () => {
         opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
         configXml: null,
         configMissing: false,
-        preselectTeleOp: ''
+        preselectTeleOp: '',
+        teamCalibrations: '/proj/TeamCode/src/main/res/xml/teamwebcamcalibrations.xml'
       },
       valid(
         request({
@@ -455,7 +491,7 @@ describe('사이드카 빌드 결과와 명령', () => {
       seed: 42,
       startEpochMillis: 1234,
       stallMillis: 2000,
-      teamCalibrations: null
+      teamCalibrations: '/proj/TeamCode/src/main/res/xml/teamwebcamcalibrations.xml'
     })
   })
 

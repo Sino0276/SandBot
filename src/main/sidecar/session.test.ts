@@ -853,6 +853,53 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
     expect(of('devices')[0].inputs).toEqual({ limit: { pressed: true }, home: { state: false } })
   })
 
+  it('웹캠 tags 배열만 입력으로 받는다(A14: 키·길이·원소·id 규칙, 다른 키의 배열과 어긋난 tags는 버림)', () => {
+    const tags = [34, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
+    const bad: unknown[] = [
+      [34, 1, 2, 3, 4, 5, 6, 7], // 9의 배수가 아님
+      [-1, 1, 2, 3, 4, 5, 6, 7, 8], // id 음수
+      [34.5, 1, 2, 3, 4, 5, 6, 7, 8], // id 정수 아님
+      [34, 1, 2, 3, 4, 5, 6, 7, null], // 수 아님
+      Array.from({ length: 9 * 65 }, (_, i) => (i % 9 === 0 ? i / 9 : 1)) // 64태그 넘음
+    ]
+    const { world } = scriptedWorld(
+      (t) =>
+        (t === 0
+          ? { cam: { model: 'logitechC920', tags, other: [1, 2] }, m: { pidf: [1, 2] } }
+          : t === 5 * MS
+            ? Object.fromEntries(bad.map((b, i) => [`c${i}`, { tags: b }]))
+            : { cam: { frameNanos: t, tags: [] } }) as unknown as Record<string, DeviceValues>
+    )
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    proc.line(tick(2))
+    clock.advance(50)
+    expect(proc.replies().map((r) => r.inputs)).toEqual([
+      { cam: { model: 'logitechC920', tags } },
+      {},
+      { cam: { frameNanos: 10 * MS, tags: [] } }
+    ])
+    // devices 이벤트의 누적 입력에도 tags가 실린다(마지막 값)
+    expect(of('devices')[0].inputs).toEqual({ cam: { model: 'logitechC920', tags } })
+    expect(of('devices').at(-1)?.inputs).toEqual({
+      cam: { model: 'logitechC920', tags: [], frameNanos: 10 * MS }
+    })
+  })
+
+  it('입력 tags는 복사해 둔다(세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않음)', () => {
+    const shared = [30, 1, 2, 3, 4, 5, 6, 7, 8]
+    const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
+      t === 0 ? { cam: { tags: shared } } : {}
+    )
+    const { proc } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    shared[1] = 99
+    expect(proc.replies()[0].inputs).toEqual({ cam: { tags: [30, 1, 2, 3, 4, 5, 6, 7, 8] } })
+  })
+
   it('답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다', () => {
     const { world } = scriptedWorld((t): Record<string, DeviceValues> =>
       t === 5 * MS ? { a: { x: 1, y: 1 } } : t === 10 * MS ? { a: { y: 2 }, b: { z: 3 } } : {}
@@ -1315,26 +1362,22 @@ describe('SidecarSession FTC Dashboard', () => {
     ])
   })
 
-  it('사이드카가 보낸 file은 믿지 않는다(받지 않는 경로면 file 없이, 받는 경로면 메인이 만든 것)', () => {
-    const { proc, of } = setup()
-    boot(proc)
-    const tuning = 'RoadRunner/tuning/accel/2.json'
-    proc.line({
-      type: 'notice',
-      tNanos: 1,
-      code: 'rrTuningSaved',
-      params: { path: '../x.json', file: '/home/user/.ssh/id_rsa' }
-    })
-    proc.line({
-      type: 'notice',
-      tNanos: 2,
-      code: 'rrTuningSaved',
-      params: { path: tuning, file: '/elsewhere/2.json' }
-    })
-    expect(of('simNotice').map((n) => n.params)).toEqual([
-      { path: '../x.json' },
-      { path: tuning, file: join(REQUEST.firstFolder, 'RoadRunner', 'tuning', 'accel', '2.json') }
-    ])
+  it('사이드카가 보낸 file은 받지 않는다(4d부터 code마다 params 키가 정확해야 해 남는 키는 프로토콜 오류)', async () => {
+    for (const path of ['../x.json', 'RoadRunner/tuning/accel/2.json']) {
+      const { proc, of } = setup()
+      boot(proc)
+      proc.line({
+        type: 'notice',
+        tNanos: 1,
+        code: 'rrTuningSaved',
+        params: { path, file: '/home/user/.ssh/id_rsa' }
+      })
+      expect(proc.killed).toBe(true)
+      await settle()
+      expect(of('simNotice')).toEqual([])
+      expect(of('finished')[0].reason).toBe('crashed')
+      expect(of('finished')[0].detail.startsWith('protocol error: notice.params')).toBe(true)
+    }
   })
 
   it('Config 탭의 값은 다음 틱 답의 configSet에 차례로 싣고, 일시 정지 중이면 답할 때 싣는다', () => {

@@ -474,8 +474,9 @@ const NOTICE_CODES: readonly SidecarNoticeCode[] = [
   'visionResumeNullFormat',
   'visionCalibrationSkipped'
 ]
-// code마다 필수 params 키(빠지거나 남으면 사이드카 잘못, spec-4d §1.14). 렌더러 번역의 {{…}} 자리와 같다.
-// 계약은 표만 둔다(검사는 4d A가 noticeParams에서 켠다. 그때까지 키는 보지 않는다).
+// code마다 params 키(정확히 이 키들: 빠지거나 남으면 사이드카 잘못이라 프로토콜 오류, spec-4d §1.14). 렌더러 번역의 {{…}}
+// 자리와 같다(키가 빠지면 Console에 {{processor}}가 그대로 보인다). rrTuningSaved의 file은 호스트만 더한다(사이드카가 보내면
+// 남는 키다).
 export const NOTICE_PARAM_KEYS: Readonly<Record<SidecarNoticeCode, readonly string[]>> = {
   dashCamera: [],
   dashImage: [],
@@ -493,7 +494,7 @@ export const NOTICE_PARAM_KEYS: Readonly<Record<SidecarNoticeCode, readonly stri
 const MAX_NOTICE_PARAMS = 16
 const MAX_NOTICE_TEXT = 4096
 
-function noticeParams(data: Json): Record<string, string> {
+function noticeParams(data: Json, code: SidecarNoticeCode): Record<string, string> {
   const value = data.params
   if (!isObject(value)) fail('notice.params')
   const entries = Object.entries(value)
@@ -501,6 +502,9 @@ function noticeParams(data: Json): Record<string, string> {
   for (const [key, param] of entries)
     if (key.length > MAX_NOTICE_TEXT || typeof param !== 'string' || param.length > MAX_NOTICE_TEXT)
       fail('notice.params')
+  const keys = NOTICE_PARAM_KEYS[code]
+  if (entries.length !== keys.length || !keys.every((key) => Object.hasOwn(value, key)))
+    fail(`notice.params: ${code} takes ${keys.length > 0 ? keys.join(', ') : 'no params'}`)
   return Object.fromEntries(entries) as Record<string, string>
 }
 
@@ -607,13 +611,12 @@ export function parseSidecarLine(line: string): SidecarMessage {
         tNanos: num(data, 'tNanos'),
         root: configNode(data.root, 0, { nodes: 0 })
       }
-    case 'notice':
-      return {
-        type: 'notice',
-        tNanos: num(data, 'tNanos'),
-        code: oneOf(data, 'code', NOTICE_CODES),
-        params: noticeParams(data)
-      }
+    case 'notice': {
+      // 검사 순서는 tNanos → code → params(params 키는 code마다 다르다)
+      const tNanos = num(data, 'tNanos')
+      const code = oneOf(data, 'code', NOTICE_CODES)
+      return { type: 'notice', tNanos, code, params: noticeParams(data, code) }
+    }
     default:
       return fail(`unknown message type ${JSON.stringify(data.type)?.slice(0, 40)}`)
   }

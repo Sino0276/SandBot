@@ -36,6 +36,7 @@ import {
   type FieldCollision,
   type StructureContactState
 } from './fieldContact'
+import { FieldCameras } from './fieldCameras'
 import { FieldSensors, type SensorModels } from './fieldSensors'
 import { isEncoderMode, readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import { jointEncoderTicksPerOutputRev } from './actuatorData'
@@ -197,8 +198,20 @@ type Otos = {
   velocity: { vx: number; vy: number; vh: number }
 }
 
-// 장치 → 키 → 값. null은 거리 센서의 범위 밖(칩 8190 mm)이다(입력이 합쳐지므로 키를 빼지 않고 null을 보낸다)
-type State = Map<string, Map<string, number | boolean | null>>
+// 장치 → 키 → 값. null은 거리 센서의 범위 밖(칩 8190 mm)이다(입력이 합쳐지므로 키를 빼지 않고 null을 보낸다). 문자열은
+// 웹캠 model, 숫자 배열은 웹캠 tags(4d, sidecarProtocol isTagsInput)다.
+type InputValue = number | boolean | null | string | readonly number[]
+type State = Map<string, Map<string, InputValue>>
+
+// 보낸 값과 같은지: 수·불·null·문자열은 ===, 배열은 길이와 원소 ===(배열 원소의 −0은 JSON이 0으로 쓰므로 정규화하지 않는다)
+function sameInput(a: InputValue | undefined, b: InputValue): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+    return true
+  }
+  return a === b
+}
 
 const finite = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -246,6 +259,8 @@ export class PhysicsWorld {
   private readonly structureState: StructureContactState
   // 거리·컬러 센서(하나라도 있을 때만)
   private readonly sensors: FieldSensors | null
+  // 웹캠(하나라도 있을 때만, 4d)
+  private readonly cameras: FieldCameras | null
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
 
@@ -275,6 +290,11 @@ export class PhysicsWorld {
             spec.noise,
             options.sensorModels
           )
+        : null
+    // 웹캠은 HIVE 상태(세계 설명 field.hiveTipped)로 태그 자세를 한 번 푼다(4ab FieldSpec을 같이 쓴다)
+    this.cameras =
+      spec.cameras.length > 0
+        ? new FieldCameras(field, spec.field.hiveTipped, spec.cameras, spec.noise)
         : null
     this.structureState = structureContactState(this.collision)
     this.poseNow = { ...spec.robot.start }
@@ -407,6 +427,8 @@ export class PhysicsWorld {
 
   step(tNanos: number, outputs: Record<string, DeviceValues>): Record<string, DeviceValues> {
     const first = this.tPrev === null
+    // 갱신 전 앞 틱 시각(웹캠 프레임 격자, 첫 step이면 null). 아래에서 this.tPrev를 이 틱으로 바꾼다
+    const tPrevBefore = this.tPrev
     const dtNanos = first ? 0 : tNanos - (this.tPrev as number)
     this.blocked = false
     if (dtNanos > 0) this.integrate(this.tPrev as number, dtNanos)
@@ -417,7 +439,7 @@ export class PhysicsWorld {
     if (dtNanos > 0 || first) this.tPrev = tNanos
     this.checkSharedPorts(outputs)
     this.outputsPrev = outputs
-    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9, tNanos), first)
+    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9, tNanos, tPrevBefore), first)
   }
 
   pose(): SimPose {
@@ -684,10 +706,11 @@ export class PhysicsWorld {
 
   // ---- 입력 ----
 
-  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0), tNanos: 이 틱 경계 시각.
-  private inputs(dt: number, tNanos: number): State {
+  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0), tNanos: 이 틱 경계 시각, tPrev: 앞 틱 경계
+  // 시각(첫 step이면 null, 웹캠 프레임 격자).
+  private inputs(dt: number, tNanos: number, tPrev: number | null): State {
     const state: State = new Map()
-    const put = (device: string, key: string, value: number | boolean | null): void => {
+    const put = (device: string, key: string, value: InputValue): void => {
       let values = state.get(device)
       if (!values) {
         values = new Map()
@@ -756,10 +779,14 @@ export class PhysicsWorld {
       put(imu.device, 'rollRate', 0)
     }
 
-    // 거리·컬러 센서는 IMU 뒤에 넣는다(장치 순서가 결과 객체 키 순서라 바뀌면 바이트가 바뀐다)
-    this.sensors?.read(this.sensorFrames(), tNanos, put, (detail) =>
-      this.notify('worldError', { detail })
-    )
+    // 거리·컬러 센서는 IMU 뒤에, 웹캠은 그 뒤에 넣는다(장치 순서가 결과 객체 키 순서라 바뀌면 바이트가 바뀐다). 몸체 틀은
+    // 둘이 같은 닫힘을 쓴다(관절 bodyPoses()를 틱마다 한 번만 푼다)
+    if (this.sensors || this.cameras) {
+      const frames = this.sensorFrames()
+      const notify = (detail: string): void => this.notify('worldError', { detail })
+      this.sensors?.read(frames, tNanos, put, notify)
+      this.cameras?.read(frames, tPrev, tNanos, this.outputsPrev, put, notify)
+    }
     return state
   }
 
@@ -825,8 +852,10 @@ export class PhysicsWorld {
     o.velocity = velocity
   }
 
-  // 지난번에 보낸 값과 다른 키만(첫 호출은 전부, null 포함). 유한하지 않은 값은 보내지 않는다. null은 보내고 같은 null은
-  // 다시 보내지 않는다. 장치 이름은 팀 구성에서 오므로('__proto__' 등) 객체 키로 바로 쓰지 않고 Object.fromEntries로 만든다.
+  // 지난번에 보낸 값과 다른 키만(첫 호출은 전부, null 포함). 유한하지 않은 값(과 그런 원소가 있는 배열)은 보내지 않는다.
+  // null은 보내고 같은 null은 다시 보내지 않는다. 문자열·배열도 같으면 다시 보내지 않는다(같은 tags가 이어지면 frameNanos만
+  // 간다. 사이드카는 받은 키만 바꾸므로 남은 tags가 그 프레임 값이다). 배열은 복사해 둔다. 장치 이름은 팀 구성에서 오므로
+  // ('__proto__' 등) 객체 키로 바로 쓰지 않고 Object.fromEntries로 만든다.
   private changed(state: State, all: boolean): Record<string, DeviceValues> {
     const result: [string, DeviceValues][] = []
     for (const [device, values] of state) {
@@ -835,12 +864,20 @@ export class PhysicsWorld {
         sent = new Map()
         this.sent.set(device, sent)
       }
-      const entries: [string, number | boolean | null][] = []
+      const entries: [string, InputValue][] = []
       for (const [key, value] of values) {
         if (typeof value === 'number' && !Number.isFinite(value)) continue
+        if (Array.isArray(value)) {
+          if (!value.every((v) => Number.isFinite(v))) continue
+          if (!all && sameInput(sent.get(key), value)) continue
+          // 보낸 값과 기억은 따로 복사한다(받는 쪽이 배열을 바꿔도 다음 비교가 흔들리지 않게)
+          sent.set(key, [...value])
+          entries.push([key, [...value]])
+          continue
+        }
         // −0은 0으로(JSON은 같지만 비교를 단순하게)
         const v = value === 0 ? 0 : value
-        if (!all && sent.get(key) === v) continue
+        if (!all && sameInput(sent.get(key), v)) continue
         sent.set(key, v)
         entries.push([key, v])
       }
