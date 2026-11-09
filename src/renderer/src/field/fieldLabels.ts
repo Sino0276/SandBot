@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import type { SurfaceRef, WallSide } from '../../../shared/sim/fieldRaycast'
 import type { FieldSpec } from '../../../shared/sim/seasons/fieldSpec'
 import type { StartConflict } from '../../../shared/sim/seasons/startPose'
 import { looseT } from '../hardware/labels'
@@ -57,4 +58,36 @@ export function overlapTargetLabel(
     if (!labels.includes(label)) labels.push(label)
   }
   return labels.join(', ')
+}
+
+// 벽 이름: spec.walls의 이름('none'은 field.wallGeneric, overlapTargetLabel과 같은 규칙)
+function wallName(spec: FieldSpec, wall: WallSide, t: TFunction): string {
+  const tt = looseT(t)
+  return spec.walls ? tt(wallLabelKey(spec.walls[wall])) : tt('field.wallGeneric')
+}
+
+// 센서 광선이 맞은 면의 이름(4c 인스펙터 값 줄, spec-4c §1.9 U7): 바닥 타일, "빨강 LOADING ZONE 앞 테이프"(얼라이언스 +
+// 테이프 이름), "빨강 벽 레일"·"필드 벽 투명판", 구조물 이름. 시즌 데이터 밖 순번(시즌이 바뀐 직후 등)은 빈 글자다.
+export function sensorSurfaceLabel(spec: FieldSpec, surface: SurfaceRef, t: TFunction): string {
+  const tt = looseT(t)
+  switch (surface.kind) {
+    case 'floor':
+      return t('hardware.sensorReading.surfaces.floor')
+    case 'tape': {
+      const tape = spec.tape[surface.index]
+      if (!tape) return ''
+      return t('hardware.sensorReading.surfaces.tape', {
+        alliance: t(`hardware.sensorReading.surfaces.alliances.${tape.alliance}`),
+        name: tt(tapeLabelKey(tape.key))
+      })
+    }
+    case 'rail':
+      return t('hardware.sensorReading.surfaces.rail', { wall: wallName(spec, surface.wall, t) })
+    case 'panel':
+      return t('hardware.sensorReading.surfaces.panel', { wall: wallName(spec, surface.wall, t) })
+    case 'structure': {
+      const structure = spec.structures[surface.index]
+      return structure ? tt(structureLabelKey(structure.key)) : ''
+    }
+  }
 }

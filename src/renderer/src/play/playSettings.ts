@@ -23,7 +23,9 @@ export const DOCK_TAB_KEY = 'sandbot:playDock'
 // 사이드카는 쓰지 않고 시뮬레이터는 세계 설명 field.hiveTipped로만 받는다(공유 PlaySettings·PlayInitRequest는 그대로).
 export type HiveSide = 'start' | 'tipped'
 export type HiveState = { red: HiveSide; blue: HiveSide }
-export type RendererPlaySettings = PlaySettings & { hiveState: HiveState }
+// sensorNoise(spec-4c §1.6): 거리 센서 잡음을 켬(세계 설명 noise, 시드는 Hub 타이밍과 같은 seed 칸). 렌더러 전용이고 메인에는
+// 세계 설명으로만 간다.
+export type RendererPlaySettings = PlaySettings & { hiveState: HiveState; sensorNoise: boolean }
 
 export const DEFAULT_PLAY_SETTINGS: RendererPlaySettings = {
   speed: 1,
@@ -32,7 +34,9 @@ export const DEFAULT_PLAY_SETTINGS: RendererPlaySettings = {
   autoStopAutonomous: true,
   batteryVoltage: DEFAULT_BATTERY_VOLTAGE,
   // 기본은 시작 상태(EFG:533)
-  hiveState: Object.freeze({ red: 'start', blue: 'start' })
+  hiveState: Object.freeze({ red: 'start', blue: 'start' }),
+  // 기본은 끔: 끄면 같은 입력에 같은 값(잡음 경로를 부르지 않는다)
+  sensorNoise: false
 }
 
 // Hub 타이밍 오차의 상한(±50%). 이보다 크면 결과가 실제 허브와 너무 달라진다.
@@ -116,11 +120,13 @@ export function parsePlaySettings(value: unknown): RendererPlaySettings {
       saved.batteryVoltage <= MAX_BATTERY_VOLTAGE
         ? saved.batteryVoltage
         : DEFAULT_BATTERY_VOLTAGE,
-    hiveState: { red: hiveSide(hive.red), blue: hiveSide(hive.blue) }
+    hiveState: { red: hiveSide(hive.red), blue: hiveSide(hive.blue) },
+    // 참일 때만 켬(틀린 값은 끔)
+    sensorNoise: saved.sensorNoise === true
   }
 }
 
-// 실행 요청(PlayInitRequest.settings)에 싣는 공유 설정 다섯 키(렌더러 전용 hiveState는 빼고)
+// 실행 요청(PlayInitRequest.settings)에 싣는 공유 설정 다섯 키(렌더러 전용 hiveState·sensorNoise는 빼고)
 export function runSettings(settings: PlaySettings): PlaySettings {
   return {
     speed: settings.speed,

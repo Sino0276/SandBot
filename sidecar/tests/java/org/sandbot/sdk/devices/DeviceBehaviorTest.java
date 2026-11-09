@@ -1,6 +1,7 @@
 package org.sandbot.sdk.devices;
 
 import com.qualcomm.hardware.bosch.BNO055IMU;
+import com.qualcomm.hardware.broadcom.BroadcomColorSensor;
 import com.qualcomm.hardware.dfrobot.HuskyLens;
 import com.qualcomm.hardware.digitalchickenlabs.OctoQuad;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
@@ -41,12 +42,15 @@ import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Velocity;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.sandbot.sim.SimDevice;
 import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.testing.Check;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.sandbot.sdk.devices.SimTestSupport.CLOCK;
 import static org.sandbot.sdk.devices.SimTestSupport.create;
@@ -805,8 +809,209 @@ public final class DeviceBehaviorTest {
         Check.isTrue(rgba.red > rgba.green && rgba.green > rgba.blue, "normalized colors keep the order: " + rgba.red + " " + rgba.green + " " + rgba.blue);
         Check.equal(4280, color.red(), "red with the driver's 1.07 factor");
         bot.in("color", "distance", 0.05);
+        // PS는 측정 시각(100 ms 주기)에 잡으므로 한 주기를 흘린다(실제 칩도 그렇다)
+        CLOCK.nanos += ms(100);
         Check.near(5.0, color.getDistance(DistanceUnit.CM), 0.3, "proximity distance");
         SandbotHardware.afterStop(bot.map);
+    }
+
+    // ---- 칩 측정 시각·척도(명세 4c §1.8): 칩을 직접 만들고 가짜 시계를 손으로 옮긴다 ----
+
+    private static final int VL_RESULT_RANGE = 0x14 + 10, VL_SYSRANGE_START = 0x00;
+
+    private static int vlRange(VL53L0XChip chip) {
+        byte[] b = chip.read(VL_RESULT_RANGE, 2);
+        return ((b[0] & 0xFF) << 8) | (b[1] & 0xFF);
+    }
+
+    /** 틱 경계 b의 입력(런타임처럼 경계 시각을 인자로). 시계는 그대로 둔다. */
+    private static void boundary(SimDevice device, long b, String key, Object value) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put(key, value);
+        device.applyInputs(values, b);
+    }
+
+    public static void testChipVl53l0xLatchesAtMeasurementEnd() {
+        SimTestSupport.install();
+        SimDevice device = new SimDevice("chip.vl", "distance");
+        VL53L0XChip chip = new VL53L0XChip(device);
+        long t0 = CLOCK.nanos;
+        chip.write(VL_SYSRANGE_START, new byte[] {0x02});
+        boundary(device, t0, "distance", 0.5);
+        CLOCK.nanos = t0 + ms(20);
+        Check.equal(VL53L0XChip.OUT_OF_RANGE_MM, vlRange(chip), "before the first measurement: 8190");
+        CLOCK.nanos = t0 + ms(40);
+        boundary(device, t0 + ms(40), "distance", 0.3);
+        CLOCK.nanos = t0 + ms(50);
+        Check.equal(500, vlRange(chip), "t 50 ms: the measurement ending at 33 ms holds 0.5 m");
+        CLOCK.nanos = t0 + ms(70);
+        Check.equal(300, vlRange(chip), "t 70 ms: the measurement ending at 66 ms holds 0.3 m");
+
+        // 경계 b = 98 ms, 시계 now = 100 ms: 99 ms에 끝난 측정은 경계 뒤라 새 입력을 잡는다(시계를 읽었다면 옛 0.3)
+        CLOCK.nanos = t0 + ms(100);
+        boundary(device, t0 + ms(98), "distance", 0.7);
+        Check.equal(700, vlRange(chip), "a measurement ending between the boundary and now holds the new input");
+
+        // 한 charge가 경계 셋을 넘음: 경계마다 그 전에 끝난 측정을 옛 입력으로 잡는다(132·165·198 ms에 끝남)
+        CLOCK.nanos = t0 + ms(200);
+        boundary(device, t0 + ms(135), "distance", 0.1);
+        Check.equal(700, chip.latchedRangeMm(), "measurement ending at 132 ms holds the input before the 135 ms boundary");
+        boundary(device, t0 + ms(170), "distance", 0.2);
+        Check.equal(100, chip.latchedRangeMm(), "measurement ending at 165 ms holds the 135 ms input");
+        boundary(device, t0 + ms(200), "distance", 0.3);
+        Check.equal(200, chip.latchedRangeMm(), "measurement ending at 198 ms holds the 170 ms input");
+        Check.equal(200, vlRange(chip), "reading at 200 ms: the last finished measurement, not the newest input");
+
+        // null(범위 밖)은 8190, 8.19 m 넘음도 8190
+        boundary(device, t0 + ms(205), "distance", null);
+        CLOCK.nanos = t0 + ms(240);
+        Check.equal(VL53L0XChip.OUT_OF_RANGE_MM, vlRange(chip), "null input is out of range");
+        boundary(device, t0 + ms(245), "distance", 9.0);
+        CLOCK.nanos = t0 + ms(270);
+        Check.equal(VL53L0XChip.OUT_OF_RANGE_MM, vlRange(chip), "beyond 8.19 m clamps to 8190");
+    }
+
+    private static final int CS_MAIN_CTRL = 0x00, CS_PS_MEAS_RATE = 0x03, CS_LS_MEAS_RATE = 0x04, CS_LS_GAIN = 0x05;
+    private static final int CS_MAIN_STATUS = 0x07, CS_PS_DATA = 0x08, CS_GREEN = 0x0D;
+
+    private static long cs24(ColorSensorV3Chip chip, int reg) {
+        byte[] b = chip.read(reg, 3);
+        return (b[0] & 0xFF) | ((b[1] & 0xFF) << 8) | ((long) (b[2] & 0x0F) << 16);
+    }
+
+    private static int csPs(ColorSensorV3Chip chip) {
+        byte[] b = chip.read(CS_PS_DATA, 2);
+        return (b[0] & 0xFF) | ((b[1] & 0x07) << 8);
+    }
+
+    private static int csNewLight(ColorSensorV3Chip chip) {
+        return chip.read(CS_MAIN_STATUS, 1)[0] & 0x08;
+    }
+
+    public static void testChipColorSaturationAndScale() {
+        Bot bot = new Bot(null, I2C, null);
+        RevColorSensorV3 color = bot.get(RevColorSensorV3.class, "color");
+        bot.in("color", "red", 70000L);
+        bot.in("color", "green", 1000L);
+        CLOCK.nanos += ms(200);
+        Check.equal(65535, color.red(), "SDK default 16-bit saturates at 65535");
+        Check.equal(1000, color.green(), "3x 25 ms is the input scale");
+
+        BroadcomColorSensor.LSResolution saved = BroadcomColorSensor.Parameters.lightSensorResolution;
+        try {
+            // 13비트(3.125 ms): 척도 1.1834/9.4675 = 0.125, 8191에서 포화(드라이버 red는 × 1.07)
+            BroadcomColorSensor.Parameters.lightSensorResolution = BroadcomColorSensor.LSResolution.R13BIT;
+            color.initialize(color.getParameters());
+            CLOCK.nanos += ms(200);
+            Check.equal((int) (1.07 * 8191), color.red(), "13-bit saturates at 8191");
+            Check.equal(125, color.green(), "13-bit scale 0.125");
+
+            // 이득 9×, 16비트·25 ms: 1.1834/0.3899 = 3.0352
+            BroadcomColorSensor.Parameters.lightSensorResolution = BroadcomColorSensor.LSResolution.R16BIT;
+            BroadcomColorSensor.Parameters gain9 = color.getParameters();
+            gain9.gain = BroadcomColorSensor.Gain.GAIN_9;
+            color.initialize(gain9);
+            CLOCK.nanos += ms(200);
+            Check.equal((int) Math.round(1000 * 1.1834 / 0.3899), color.green(), "gain 9 scale from the datasheet table");
+
+            // 18비트(100 ms), 3×: 1.1834/0.2959 = 3.9993. 17500 → 69988 → 드라이버는 아래 16비트 69988 − 65536 = 4452
+            BroadcomColorSensor.Parameters.lightSensorResolution = BroadcomColorSensor.LSResolution.R18BIT;
+            BroadcomColorSensor.Parameters gain3 = color.getParameters();
+            gain3.gain = BroadcomColorSensor.Gain.GAIN_3;
+            color.initialize(gain3);
+            bot.in("color", "green", 17500L);
+            CLOCK.nanos += ms(250);
+            Check.equal(69988 - 65536, color.green(), "18-bit value wraps in the driver's 16-bit read");
+        } finally {
+            BroadcomColorSensor.Parameters.lightSensorResolution = saved;
+        }
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testChipColorLightTimingAndWindowAverage() {
+        SimTestSupport.install();
+        SimDevice device = new SimDevice("chip.ls", "color");
+        ColorSensorV3Chip chip = new ColorSensorV3Chip(device);
+        long t0 = CLOCK.nanos;
+        // SDK 드라이버의 initialize 순서(BroadcomColorSensorImpl: 이득 3× → LS 16비트·100 ms → 켜기)
+        chip.write(CS_LS_GAIN, new byte[] {0x01});
+        chip.write(CS_LS_MEAS_RATE, new byte[] {0x42});
+        boundary(device, t0, "green", 1000L);
+        chip.write(CS_MAIN_CTRL, new byte[] {0x07});
+        CLOCK.nanos = t0 + ms(24.999);
+        Check.equal(0L, cs24(chip, CS_GREEN), "no light data before the first 25 ms integration");
+        Check.equal(0, csNewLight(chip), "no new light data yet");
+        CLOCK.nanos = t0 + ms(25);
+        Check.equal(0x08, csNewLight(chip), "first light data at 25 ms");
+        Check.equal(1000L, cs24(chip, CS_GREEN), "first light value");
+        Check.equal(0, csNewLight(chip), "status read clears the new-data bit");
+
+        // 측정 끝 사이에 바꾼 입력은 다음 측정 끝(125 ms)까지 보이지 않는다
+        CLOCK.nanos = t0 + ms(50);
+        boundary(device, t0 + ms(50), "green", 2000L);
+        CLOCK.nanos = t0 + ms(124);
+        Check.equal(1000L, cs24(chip, CS_GREEN), "input change between measurements waits for the next end");
+        Check.equal(0, csNewLight(chip), "no new data before 125 ms");
+        // 창 [100, 125] ms 안에서 경계마다 0 ↔ 1000: 1000이 10 ms → 평균 400
+        for (int i = 0; i < 5; i++) boundary(device, t0 + ms(100 + 5 * i), "green", i % 2 == 0 ? 0L : 1000L);
+        CLOCK.nanos = t0 + ms(125);
+        Check.equal(400L, cs24(chip, CS_GREEN), "window time average of the boundary inputs");
+        // [200, 212.5) 1, [212.5, 225] 0 → 0.5 → 반올림 1
+        boundary(device, t0 + ms(200), "green", 1L);
+        boundary(device, t0 + ms(212.5), "green", 0L);
+        CLOCK.nanos = t0 + ms(225);
+        Check.equal(1L, cs24(chip, CS_GREEN), "average rounds half up");
+
+        // LS_MEAS_RATE 다시 쓰기: 위상이 다시 시작된다(쓴 뒤 25 ms에 첫 값)
+        boundary(device, t0 + ms(230), "green", 3000L);
+        CLOCK.nanos = t0 + ms(260);
+        chip.write(CS_LS_MEAS_RATE, new byte[] {0x42});
+        CLOCK.nanos = t0 + ms(284);
+        Check.equal(1L, cs24(chip, CS_GREEN), "phase restarted: no new value before write + 25 ms");
+        CLOCK.nanos = t0 + ms(285);
+        Check.equal(3000L, cs24(chip, CS_GREEN), "phase restarted: value at write + 25 ms");
+
+        // 20비트(400 ms) + 주기 100 ms → 실제 주기 400 ms(DS: repeat rate는 적분 시간보다 짧을 수 없다)
+        chip.write(CS_LS_MEAS_RATE, new byte[] {0x02});
+        long tw = CLOCK.nanos;
+        CLOCK.nanos = tw + ms(399);
+        csNewLight(chip);
+        Check.equal(3000L, cs24(chip, CS_GREEN), "20-bit integration: nothing before 400 ms");
+        CLOCK.nanos = tw + ms(400);
+        Check.equal(0x08, csNewLight(chip), "20-bit first value at 400 ms");
+        Check.equal(Math.round(3000 * 1.1834 / 0.0740), cs24(chip, CS_GREEN), "20-bit 400 ms scale");
+        CLOCK.nanos = tw + ms(799);
+        Check.equal(0, csNewLight(chip), "repeat rate is at most the integration time");
+        CLOCK.nanos = tw + ms(800);
+        Check.equal(0x08, csNewLight(chip), "next value 400 ms later");
+    }
+
+    public static void testChipColorProximityTiming() {
+        SimTestSupport.install();
+        SimDevice device = new SimDevice("chip.ps", "color");
+        ColorSensorV3Chip chip = new ColorSensorV3Chip(device);
+        long t0 = CLOCK.nanos;
+        boundary(device, t0, "proximity", 300L);
+        chip.write(CS_PS_MEAS_RATE, new byte[] {0x1D});
+        Check.equal(0, csPs(chip), "PS before enabling is 0");
+        chip.write(CS_MAIN_CTRL, new byte[] {0x07});
+        Check.equal(300, csPs(chip), "first PS right after enabling");
+        CLOCK.nanos = t0 + ms(30);
+        boundary(device, t0 + ms(30), "proximity", 500L);
+        CLOCK.nanos = t0 + ms(99);
+        Check.equal(300, csPs(chip), "new proximity waits for the next PS measurement");
+        CLOCK.nanos = t0 + ms(100);
+        Check.equal(500, csPs(chip), "PS measurement on the 100 ms grid");
+        CLOCK.nanos = t0 + ms(150);
+        boundary(device, t0 + ms(150), "proximity", 700L);
+        chip.write(CS_PS_MEAS_RATE, new byte[] {0x1D});
+        Check.equal(700, csPs(chip), "PS_MEAS_RATE write restarts the phase with an immediate measurement");
+        CLOCK.nanos = t0 + ms(200);
+        boundary(device, t0 + ms(200), "proximity", 900L);
+        CLOCK.nanos = t0 + ms(249);
+        Check.equal(700, csPs(chip), "next PS at write + 100 ms");
+        CLOCK.nanos = t0 + ms(250);
+        Check.equal(900, csPs(chip), "PS at write + 100 ms");
     }
 
     public static void testPinpoint() {

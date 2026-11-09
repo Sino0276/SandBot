@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  angleInputValue,
   componentDef,
   deadWheelTicksPerMeter,
   isComponentType,
@@ -37,12 +38,21 @@ import {
 import type { Issue } from '../../hardware/validation'
 import {
   findRobotId,
+  subtreeIds,
   type HardwareComponent,
   type HubId,
   type JointType,
   type SceneObjects
 } from '../../scene/model'
 import { DEG } from '../../scene/coordinates'
+import { cadRootIdOf } from '../../cad/stepImport'
+import { useProjectStore, type CadGeometryStatus } from '../../project/projectStore'
+import { runningRobotId, usePlayStore } from '../../play/playStore'
+import { sensorExclusions } from '../../play/worldSensors'
+import { objectLocalBounds } from '../../scene/localBounds'
+import { documentSeasonId } from '../field/fieldDisplay'
+import { sensorReadingModel, sensorReadingText } from './sensorReading'
+import { selfHitFor, useSelfHitRefresh } from './sensorSelfHit'
 import { motorComponentParams } from '../../play/worldJoints'
 import { motorDrivesJoint } from '../../play/worldSpec'
 import { jointEncoderTicksPerOutputRev } from '../../../../shared/sim/actuatorData'
@@ -182,6 +192,78 @@ function simulationText(
   }
 }
 
+// 하우징 형상을 읽는 중인가: 센서 오브젝트와 그 하위의 CAD 메시가 온 CAD 루트 중 읽는 중(cadStatus loading)인 것이 있음
+function housingLoading(
+  objects: SceneObjects,
+  objectId: string,
+  cadStatus: Record<string, CadGeometryStatus>
+): boolean {
+  for (const id of subtreeIds(objects, objectId)) {
+    const visual = objects[id].visual
+    const cadRootId = visual?.type === 'mesh' ? cadRootIdOf(visual.geometryId) : null
+    if (cadRootId !== null && cadStatus[cadRootId] === 'loading') return true
+  }
+  return false
+}
+
+// 거리·컬러 센서 카드의 "편집 자세 값" 줄과 경고 꼬리(4c, spec-4c §1.9, 계산은 sensorReading.ts). 문서·시즌·형상
+// revision마다 한 번 계산한다(61광선이라 핸들 드래그 중에도 한다). 자기 가림은 드래그가 끝날 때 한 번이다(sensorSelfHit.ts).
+function SensorReadingLines({
+  objects,
+  objectId,
+  component
+}: {
+  objects: SceneObjects
+  objectId: string
+  component: HardwareComponent
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  const field = useSceneStore((state) => state.field)
+  const revision = useSceneStore((state) => state.geometryRevision)
+  const cadStatus = useProjectStore((state) => state.cadStatus)
+  const refresh = useSelfHitRefresh()
+  const model = useMemo(() => {
+    void refresh
+    const robotId = findRobotId(objects, objectId)
+    const type = component.type
+    if (type !== 'distanceSensor' && type !== 'colorSensor') return null
+    return sensorReadingModel({
+      objects,
+      objectId,
+      component,
+      // 문서 시즌(실행 잠금과 관계없이: 실행 중 값은 장치 탭)
+      season: documentSeasonId(field),
+      bounds: (id) => objectLocalBounds(objects, id),
+      exclusion: robotId
+        ? (sensorExclusions(objects, robotId).get(component.id) ?? null)
+        : 'outsideRobot',
+      loading: housingLoading(objects, objectId, cadStatus),
+      selfHit: robotId
+        ? (mount, reach) =>
+            selfHitFor(component.id, objects, revision, robotId, objectId, mount, type, reach)
+        : undefined
+    })
+  }, [objects, objectId, component, field, revision, cadStatus, refresh])
+  if (!model) return null
+  const text = sensorReadingText(model, t, lengthUnit, objects)
+  const hint = t('hardware.sensorReading.hint')
+  return (
+    <>
+      {text.lines.map((line, index) => (
+        <p key={`line${index}`} className="hw-derived hw-sensor-reading" title={hint}>
+          {line}
+        </p>
+      ))}
+      {text.tails.map((tail, index) => (
+        <p key={`tail${index}`} className="hw-derived hw-sensor-tail" title={hint}>
+          {`⚠ ${tail}`}
+        </p>
+      ))}
+    </>
+  )
+}
+
 function ComponentCard({
   objects,
   objectId,
@@ -196,6 +278,7 @@ function ComponentCard({
   const updateComponent = useSceneStore((state) => state.updateComponent)
   const removeComponent = useSceneStore((state) => state.removeComponent)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  const runningRobot = usePlayStore(runningRobotId)
   if (!isComponentType(component.type)) return null
   const type: ComponentType = component.type
   const def = componentDef(type)
@@ -327,13 +410,13 @@ function ComponentCard({
             value={Number(value) / DEG}
             digits={ANGLE_DIGITS}
             title={t('units.angleInputHint')}
+            // 읽지 못한 글자는 남겨 틀렸다고 보인다(spec-4c E2E 1, 조준 방향·높이각과 리밋 각도)
+            invalidTitle={t('units.angleRejected')}
             parse={(text) => {
               const radians = parseAngle(text)
               return radians === null ? null : radians / DEG
             }}
-            onCommit={(input) =>
-              setProp(property.key, Math.min(property.max, Math.max(property.min, input * DEG)))
-            }
+            onCommit={(input) => setProp(property.key, angleInputValue(property, input * DEG))}
           />
         )
       case 'text':
@@ -388,6 +471,12 @@ function ComponentCard({
   const codePath = componentCodePath(objects, objectId, component.id)
   const robotId = codePath ? findRobotId(objects, objectId) : null
   const robotClassName = robotId ? robotHardwareSettings(objects, robotId).className : ''
+  const isSensor = type === 'distanceSensor' || type === 'colorSensor'
+  const aimRunning = (property: PropertyDef): boolean =>
+    isSensor &&
+    (property.key === 'aimYaw' || property.key === 'aimPitch') &&
+    runningRobot !== null &&
+    findRobotId(objects, objectId) === runningRobot
 
   return (
     <li className="hw-card" data-component-type={type}>
@@ -483,7 +572,17 @@ function ComponentCard({
                 .join(' ') || undefined
             }
           >
-            {propertyControl(property)}
+            {aimRunning(property) ? (
+              // 실행 중인 로봇의 조준 칸(편집은 막지 않는다): 시뮬레이터는 INIT 때의 조준을 쓴다(Transform 배지와 같음)
+              <div className="hw-inline">
+                {propertyControl(property)}
+                <span className="frame-badge is-running" title={t('hardware.aimRunningHint')}>
+                  {t('inspector.running')}
+                </span>
+              </div>
+            ) : (
+              propertyControl(property)
+            )}
           </FieldRow>
         ))}
       {codePath && codePath.constants.length > 0 && (
@@ -503,6 +602,9 @@ function ComponentCard({
         <p className="hw-derived" title={t('hardware.simulationOnly')}>
           {simulated}
         </p>
+      )}
+      {isSensor && (
+        <SensorReadingLines objects={objects} objectId={objectId} component={component} />
       )}
       {hasHint(type) && <p className="inspector-note">{t(`hardware.hints.${type}`)}</p>}
       <IssueList issues={issues} />

@@ -27,7 +27,7 @@ function parseVoltage(text: string): number | null {
   return Number.isFinite(value) ? clampBatteryVoltage(value) : null
 }
 
-// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지, HIVE 상태. 개인 설정(localStorage)이고
+// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지, 센서 잡음, HIVE 상태. 개인 설정(localStorage)이고
 // 다음 INIT부터 쓴다(HIVE 상태는 실행 중이 아니면 씬 뷰가 바로 따른다).
 function SimulationPreferences(): React.JSX.Element {
   const { t } = useTranslation()
@@ -65,7 +65,8 @@ function SimulationPreferences(): React.JSX.Element {
           ariaLabel={t('preferences.simulation.seed')}
           value={settings.seed}
           digits={0}
-          disabled={settings.jitter === 0}
+          // 센서 잡음도 이 시드를 쓴다(spec-4c §1.6) — 오차를 꺼도 잡음을 켰으면 고를 수 있다
+          disabled={settings.jitter === 0 && !settings.sensorNoise}
           parse={parseSeed}
           title={t('preferences.simulation.seedHint')}
           onCommit={(seed) => updateSettings({ seed: clampSeed(seed) })}
@@ -100,6 +101,16 @@ function SimulationPreferences(): React.JSX.Element {
         />
         {t('preferences.simulation.autoStop', { seconds: AUTONOMOUS_SECONDS })}
       </label>
+      {/* 센서 잡음(spec-4c §1.6): 거리 센서만, 시드는 위 Hub 타이밍 시드 칸과 같다 */}
+      <label className="preferences-check" title={t('preferences.simulation.sensorNoiseHint')}>
+        <input
+          type="checkbox"
+          checked={settings.sensorNoise}
+          onChange={(event) => updateSettings({ sensorNoise: event.target.checked })}
+        />
+        {t('preferences.simulation.sensorNoise')}
+      </label>
+      <p className="inspector-note">{t('preferences.simulation.sensorNoiseHint')}</p>
       <p className="inspector-note">{t('preferences.simulation.nextRun')}</p>
       {/* HIVE 상태(spec-4ab §2.3): Field 인스펙터의 같은 칸과 같은 값(개인 실행 설정, 프로젝트·실행 취소와 무관) */}
       <section className="preferences-subsection" aria-labelledby="preferences-hive">

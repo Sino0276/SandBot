@@ -36,12 +36,14 @@ import {
   type FieldCollision,
   type StructureContactState
 } from './fieldContact'
+import { FieldSensors, type SensorModels } from './fieldSensors'
 import { isEncoderMode, readMotorOutputs, type MotorOutputs } from './motorOutputs'
 import { jointEncoderTicksPerOutputRev } from './actuatorData'
 import { motorType, rotationSign, ticksPerOutputRev } from './motorTypes'
 import { GRAVITY } from './physics'
 import type { FieldSpec } from './seasons/fieldSpec'
 import { resolveSeason } from './seasons/seasons'
+import { composeFrames, planarFrame, type Frame3 } from './sensorFrame'
 import { LOAD_FILTER_TAU, ROLLING_RESISTANCE } from './wheelData'
 import type {
   Pose2,
@@ -92,6 +94,11 @@ import type {
 // 풀이가 실패하면(LCP가 수렴하지 않음 등, Articulation은 상태를 바꾸기 전에 던진다) 그 하위 단계의 모든 속도를 0으로 하고 위치는
 // 그대로 둔 채 다음 하위 단계에서 다시 푼다(worldError, 같은 detail은 실행마다 한 번).
 // 관절 하위의 센서(IMU·OTOS·데드휠·Pinpoint)는 섀시에 붙은 것으로 계산한다(3b 한계, 렌더러가 경고한다).
+//
+// 거리·컬러 센서(spec-4c §1.7): 틱 경계 상태(그 틱까지 적분한 기저·관절 자세)에서 틱마다 한 번 몸체 틀을 만들고
+// (fieldSensors.ts) 시즌 필드 기본형에 광선을 쏴서 칩 원래 값을 보낸다. 하위 단계에서는 계산하지 않는다(칩 측정 주기 33 ms·
+// 100 ms보다 훨씬 짧은 5 ms 틱이라 충분하다). 관절 하위 센서는 관절 몸체에 붙는다. 센서가 없으면 아무것도 넣지 않아 기존
+// 입력열이 바이트 그대로다. 자기 로봇 형상은 광선을 가리지 않는다(시뮬레이터에 로봇 형상이 없다, 렌더러가 경고한다).
 
 export const SUBSTEP_NANOS = 1_000_000
 // 한 번에 이보다 많은 하위 단계로 나누지 않는다(아주 긴 구간은 하위 단계가 1 ms보다 길어진다)
@@ -190,7 +197,8 @@ type Otos = {
   velocity: { vx: number; vy: number; vh: number }
 }
 
-type State = Map<string, Map<string, number | boolean>>
+// 장치 → 키 → 값. null은 거리 센서의 범위 밖(칩 8190 mm)이다(입력이 합쳐지므로 키를 빼지 않고 null을 보낸다)
+type State = Map<string, Map<string, number | boolean | null>>
 
 const finite = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -211,6 +219,8 @@ export type PhysicsWorldOptions = {
   rollingResistance?: number
   // 시즌 필드(시험 전용: 구조물을 뺀 판 등). 없으면 resolveSeason(spec.field.season)
   field?: FieldSpec
+  // 거리·컬러 센서 모델(시험 전용: 비유한 값 방어 시험 이중). 없으면 rangeSensor.ts·colorSensor.ts
+  sensorModels?: SensorModels
 }
 
 // src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
@@ -234,6 +244,8 @@ export class PhysicsWorld {
   // 시즌 벽 반폭과 solid 구조물 단면(생성자에서 한 번, 로봇 높이 spec.robot.height의 [0, H] 슬랩), 구조물 기준 면 기억
   private readonly collision: FieldCollision
   private readonly structureState: StructureContactState
+  // 거리·컬러 센서(하나라도 있을 때만)
+  private readonly sensors: FieldSensors | null
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
 
@@ -252,10 +264,18 @@ export class PhysicsWorld {
       coulomb: options.rollerCoulomb ?? ROLLER_RESISTANCE.coulomb
     }
     this.rollingResistance = options.rollingResistance ?? ROLLING_RESISTANCE
-    this.collision = fieldCollision(
-      options.field ?? resolveSeason(spec.field.season),
-      spec.robot.height
-    )
+    const field = options.field ?? resolveSeason(spec.field.season)
+    this.collision = fieldCollision(field, spec.robot.height)
+    this.sensors =
+      spec.distanceSensors.length > 0 || spec.colorSensors.length > 0
+        ? new FieldSensors(
+            field,
+            spec.distanceSensors,
+            spec.colorSensors,
+            spec.noise,
+            options.sensorModels
+          )
+        : null
     this.structureState = structureContactState(this.collision)
     this.poseNow = { ...spec.robot.start }
     this.deadWheels = spec.deadWheels.map((d) => ({
@@ -397,7 +417,7 @@ export class PhysicsWorld {
     if (dtNanos > 0 || first) this.tPrev = tNanos
     this.checkSharedPorts(outputs)
     this.outputsPrev = outputs
-    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9), first)
+    return this.changed(this.inputs(Math.max(0, dtNanos) / 1e9, tNanos), first)
   }
 
   pose(): SimPose {
@@ -664,10 +684,10 @@ export class PhysicsWorld {
 
   // ---- 입력 ----
 
-  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0).
-  private inputs(dt: number): State {
+  // 지금 상태의 모든 입력(장치 → 키 → 값). dt: 이번 구간(초, 첫 호출은 0), tNanos: 이 틱 경계 시각.
+  private inputs(dt: number, tNanos: number): State {
     const state: State = new Map()
-    const put = (device: string, key: string, value: number | boolean): void => {
+    const put = (device: string, key: string, value: number | boolean | null): void => {
       let values = state.get(device)
       if (!values) {
         values = new Map()
@@ -735,7 +755,29 @@ export class PhysicsWorld {
       put(imu.device, 'pitchRate', 0)
       put(imu.device, 'rollRate', 0)
     }
+
+    // 거리·컬러 센서는 IMU 뒤에 넣는다(장치 순서가 결과 객체 키 순서라 바뀌면 바이트가 바뀐다)
+    this.sensors?.read(this.sensorFrames(), tNanos, put, (detail) =>
+      this.notify('worldError', { detail })
+    )
     return state
+  }
+
+  // 몸체 틀(필드 좌표, 틱 경계 상태): −1 섀시는 지금 자세(부유 기저면 기저 자세, 고정 기저·동역학 없음이면 시작 자세),
+  // j ≥ 0은 관절 몸체(부유 기저면 Articulation이 필드 좌표로 주고, 고정 기저면 로봇 좌표라 시작 자세와 합성한다). 관절 몸체
+  // 자세는 처음 쓸 때 한 번만 계산한다(parseWorldSpec가 body를 joints 순번 안으로 확인하므로 관절이 있으면 동역학이 있다)
+  private sensorFrames(): (body: number) => Frame3 {
+    const chassis = planarFrame(this.poseNow)
+    let joints: Frame3[] | null = null
+    return (body) => {
+      if (body < 0) return chassis
+      if (joints === null) {
+        const art = this.articulation as Articulation
+        const poses = art.bodyPoses()
+        joints = art.basePose() !== null ? poses : poses.map((pose) => composeFrames(chassis, pose))
+      }
+      return joints[body]
+    }
   }
 
   // OTOS: 물리 센서 틀 S와 팀이 쓴 오프셋 O(SDK 샘플 축)로 가상 로봇 틀 V = S∘O⁻¹, 원시 자세 = V(0)⁻¹∘V(t)
@@ -783,8 +825,8 @@ export class PhysicsWorld {
     o.velocity = velocity
   }
 
-  // 지난번에 보낸 값과 다른 키만(첫 호출은 전부). 유한하지 않은 값은 보내지 않는다. 장치 이름은 팀 구성에서 오므로
-  // ('__proto__' 등) 객체 키로 바로 쓰지 않고 Object.fromEntries로 만든다.
+  // 지난번에 보낸 값과 다른 키만(첫 호출은 전부, null 포함). 유한하지 않은 값은 보내지 않는다. null은 보내고 같은 null은
+  // 다시 보내지 않는다. 장치 이름은 팀 구성에서 오므로('__proto__' 등) 객체 키로 바로 쓰지 않고 Object.fromEntries로 만든다.
   private changed(state: State, all: boolean): Record<string, DeviceValues> {
     const result: [string, DeviceValues][] = []
     for (const [device, values] of state) {
@@ -793,7 +835,7 @@ export class PhysicsWorld {
         sent = new Map()
         this.sent.set(device, sent)
       }
-      const entries: [string, number | boolean][] = []
+      const entries: [string, number | boolean | null][] = []
       for (const [key, value] of values) {
         if (typeof value === 'number' && !Number.isFinite(value)) continue
         // −0은 0으로(JSON은 같지만 비교를 단순하게)

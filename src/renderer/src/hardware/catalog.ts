@@ -66,7 +66,9 @@ export type PropertyDef = PropertyMeta &
     // 길이(내부 미터). 인스펙터는 표시 단위(units/units.ts)로 보이고, 입력칸은 단위를 붙인 값도 받는다.
     | { key: string; kind: 'length'; default: number; min: number; max: number }
     // 각도(내부 라디안). 인스펙터는 도(°)로 보이고, 입력칸은 °·rad를 붙인 값도 받는다.
-    | { key: string; kind: 'angle'; default: number; min: number; max: number }
+    // wrap이면 인스펙터 칸이 확정 값을 (−π, π]로 감고(Unity 회전 칸처럼 자르지 않음, −180°는 180°), 아니면 [min, max]로
+    // 자른다. 파일에서 읽는 값은 둘 다 범위 밖이면 기본값이다(projectFile.ts parseProps).
+    | { key: string; kind: 'angle'; default: number; min: number; max: number; wrap?: true }
     | { key: string; kind: 'text'; default: string }
     // 다른 씬 오브젝트(예: 오도메트리 포드 파트)를 가리킨다. 값은 오브젝트 id, 비어 있으면 ''. pick은 고를 수 있는 것:
     // 'any'(기본) 같은 로봇의 오브젝트, 'joint' 같은 로봇의 관절 오브젝트(리밋 스위치)
@@ -215,6 +217,46 @@ const LIMIT_SWITCH = [
   }
 ] as const
 
+// 거리·컬러 센서의 조준(시뮬레이터 전용, 4c). 로봇 좌표 기준이고 CAD 파트 회전과 관계없다(OTOS mountingAngle과 같은
+// 원칙). aimYaw는 로봇 +X(앞)에서 반시계 +(위에서 볼 때), aimPitch는 올려본각(위 +)이다. 센서 틀 회전은 ZYX
+// (0, −aimPitch, aimYaw)(hardware/mounting.ts aimRotation). 롤은 없다(두 센서는 축 대칭 원뿔이라 값에 영향이 없다).
+// 범위: 요는 한 바퀴 [−π, π], 높이각은 위·아래 끝 [−π/2, π/2](synthesis §9.8).
+export const AIM_YAW = {
+  key: 'aimYaw',
+  kind: 'angle',
+  default: 0,
+  min: -Math.PI,
+  max: Math.PI,
+  wrap: true,
+  hint: true,
+  simulation: true
+} as const
+// 거리 센서는 기본으로 앞(수평)을 본다
+export const AIM_PITCH_LEVEL = {
+  key: 'aimPitch',
+  kind: 'angle',
+  default: 0,
+  min: -Math.PI / 2,
+  max: Math.PI / 2,
+  hint: true,
+  simulation: true
+} as const
+// 컬러 센서는 기본으로 아래(바닥, −90°)를 본다(synthesis §4.1)
+export const AIM_PITCH_DOWN = { ...AIM_PITCH_LEVEL, default: -Math.PI / 2 } as const
+
+// 인스펙터 각도 칸이 확정한 값(rad)을 저장 값으로 바꾼다. wrap이면 (−π, π]로 감고(seasons/symmetry.ts wrapPi와 같은
+// 규칙이되 여러 바퀴도 감는다: 270° → −90°, −180° → 180°, 720° → 0°), 아니면 [min, max]로 자른다. 감은 값도 반올림
+// 오차로 범위를 넘지 않게 마지막에 자르고, −0은 0으로 둔다.
+export function angleInputValue(
+  property: { min: number; max: number; wrap?: true },
+  radians: number
+): number {
+  let value = radians
+  if (property.wrap) value = radians - 2 * Math.PI * Math.ceil((radians - Math.PI) / (2 * Math.PI))
+  value = Math.min(property.max, Math.max(property.min, value))
+  return value === 0 ? 0 : value
+}
+
 export const HUB_DIRECTIONS = ['up', 'down', 'forward', 'backward', 'left', 'right'] as const
 
 export const COMPONENT_TYPES = {
@@ -339,7 +381,7 @@ export const COMPONENT_TYPES = {
     javaType: 'DistanceSensor',
     imports: ['com.qualcomm.robotcore.hardware.DistanceSensor'],
     i2cAddress: 0x29,
-    properties: []
+    properties: [AIM_YAW, AIM_PITCH_LEVEL]
   },
   colorSensor: {
     category: 'sensor',
@@ -348,7 +390,11 @@ export const COMPONENT_TYPES = {
     javaType: 'NormalizedColorSensor',
     imports: ['com.qualcomm.robotcore.hardware.NormalizedColorSensor'],
     i2cAddress: 0x52,
-    properties: [{ key: 'gain', kind: 'number', default: 2, min: 1, max: 100, digits: 1 }]
+    properties: [
+      { key: 'gain', kind: 'number', default: 2, min: 1, max: 100, digits: 1 },
+      AIM_YAW,
+      AIM_PITCH_DOWN
+    ]
   },
   touchSensor: {
     category: 'sensor',

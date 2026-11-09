@@ -6,8 +6,10 @@ import { acceleratedRaycast, MeshBVH, type MeshBVHOptions } from 'three-mesh-bvh
 // indirect: 인덱스 버퍼의 삼각형 순서를 바꾸지 않는다(형상 데이터는 메시 캐시에도 쓰인다).
 const BVH_OPTIONS = { indirect: true } as MeshBVHOptions
 
-function buildBvh(geometry: BufferGeometry): void {
+// 형상의 BVH(없으면 지금 만든다). 쉬는 시간의 미리 만들기를 기다리지 않아야 하는 곳(클릭, 센서 자기 가림)이 쓴다
+export function buildBvh(geometry: BufferGeometry): MeshBVH {
   if (!geometry.boundsTree) geometry.boundsTree = new MeshBVH(geometry, BVH_OPTIONS)
+  return geometry.boundsTree
 }
 
 const sphere = new Sphere()

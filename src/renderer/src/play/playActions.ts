@@ -8,6 +8,7 @@ import type {
   PlaySpeed
 } from '../../../shared/play'
 import { openPreferences, showDialog } from '../editor/dialogStore'
+import { sensorSelfHit } from '../editor/hardware/sensorSelfHit'
 import { massModelFor } from '../editor/mass/useMassModel'
 import { useEditorStore } from '../editor/editorStore'
 import { dismissNotice, showNotice, type NoticeKey } from '../editor/noticeStore'
@@ -15,7 +16,9 @@ import { commitFocusedInput } from '../editor/useDraft'
 import { ipcErrorDetail } from '../java/ipcError'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
+import { objectLocalBounds } from '../scene/localBounds'
 import { useSceneStore } from '../scene/sceneStore'
+import { formatLength, loadLengthUnit, type LengthUnit } from '../units/units'
 import type { ConsoleEntry } from './consoleModel'
 import { initConfigSources, refreshConfigSources } from './dashConfigApply'
 import { configCommandFits } from './dashConfigModel'
@@ -36,7 +39,7 @@ import {
 } from './keyboardGamepad'
 import { installLibraryNotice } from './libraryNotice'
 import { compareOpModes, findOpMode, opModeKey, preselectedTeleOp } from './opModeList'
-import { loadLastOpMode, runSettings, saveLastOpMode } from './playSettings'
+import { browserStorage, loadLastOpMode, runSettings, saveLastOpMode } from './playSettings'
 import {
   consoleEntry,
   EMPTY_OPMODE_LIST,
@@ -61,6 +64,7 @@ import {
   withRunField,
   type WorldSpecResult
 } from './worldSpec'
+import { withSensorNoise, withSensorWarnings } from './worldSensors'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -453,6 +457,14 @@ async function runInit(): Promise<void> {
       speed: play.settings.speed,
       paused: play.paused,
       joints: world?.jointObjectIds ?? [],
+      // 시뮬레이터가 쓰는 센서 장착(세계 설명 목록 순서, 실행 중 씬 뷰 기즈모가 그린다)
+      sensors: (world?.spec ? world.sensors : []).map((sensor) => ({
+        objectId: sensor.objectId,
+        componentId: sensor.componentId,
+        kind: sensor.kind,
+        body: sensor.body,
+        mount: sensor.mount
+      })),
       field: runField
     })
   })
@@ -534,6 +546,8 @@ async function runInit(): Promise<void> {
 // 세계 설명을 만들다 예상하지 못한 오류가 나도 실행은 시뮬레이터 없이 계속한다(Console에 알림)
 // 관절이나 바퀴가 있으면 관절 몸체·섀시 몸체·바퀴 회전 관성에 질량 모델(인스펙터와 같은 마지막 계산, 문서 밖 형상 정보,
 // 문서·형상 판으로 캐시)을 쓴다. 시즌·HIVE 상태와 필드 경고(모르는 시즌, 시작 겹침)는 빌더 결과에 덧붙인다(withRunField).
+// 거리·컬러 센서(4c)는 형상 조회(scene/localBounds.ts objectLocalBounds)로 하우징 앞면에 두고, 센서 경고(형상 없음, 로봇에
+// 붙음, 하우징이 멂, 바닥 아래, 자기 로봇 가림)와 개인 실행 설정의 센서 잡음을 덧붙인다(withSensorWarnings·withSensorNoise).
 function worldFor(
   robotId: string,
   settings: PlayData['settings'],
@@ -544,13 +558,43 @@ function worldFor(
     const mass = robotNeedsMassModel(objects, robotId)
       ? massModelFor(objects, geometryRevision)
       : null
-    return withRunField(buildWorldSpec(objects, robotId, settings, mass), doc, field, i18n.t)
+    const built = buildWorldSpec(objects, robotId, settings, mass, (id) =>
+      objectLocalBounds(objects, id)
+    )
+    // 표시 단위(개인 설정, units/unitStore.ts가 같은 저장소에 쓴다. 고르기 전에는 그 기본 'in'). 스토어를 import하면 모듈을
+    // 읽을 때 localStorage가 있어야 해서 저장소를 읽는다
+    let lengthUnit: LengthUnit = 'in'
+    try {
+      const storage = browserStorage()
+      lengthUnit = (storage && loadLengthUnit(storage)) || 'in'
+    } catch {
+      // 막힌 저장소는 기본 단위
+    }
+    const withSensors = withSensorWarnings(
+      built,
+      objects,
+      (meters) => `${formatLength(meters, lengthUnit)} ${i18n.t(`units.symbols.${lengthUnit}`)}`,
+      (sensor, reachM) =>
+        sensorSelfHit(
+          objects,
+          robotId,
+          sensor.objectId,
+          sensor.inRobot,
+          sensor.kind === 'distance' ? 'distanceSensor' : 'colorSensor',
+          reachM
+        ),
+      field.season
+    )
+    // 시즌 경고는 센서 경고 뒤(필드 쪽 경고를 모아 둔다)
+    return withSensorNoise(withRunField(withSensors, doc, field, i18n.t), settings)
   } catch (error) {
     return {
       spec: null,
       warnings: [{ key: 'worldInvalid', params: { detail: ipcErrorDetail(error) } }],
       jointObjectIds: [],
-      jointMotorIds: []
+      jointMotorIds: [],
+      sensors: [],
+      sensorExclusions: new Map()
     }
   }
 }

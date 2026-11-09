@@ -66,7 +66,8 @@ describe('실행 설정(localStorage)', () => {
       seed: 42,
       autoStopAutonomous: false,
       batteryVoltage: 13,
-      hiveState: { red: 'tipped' as const, blue: 'start' as const }
+      hiveState: { red: 'tipped' as const, blue: 'start' as const },
+      sensorNoise: true
     }
     savePlaySettings(settings, storage)
     expect(loadPlaySettings(storage)).toEqual(settings)
@@ -115,6 +116,30 @@ describe('실행 설정(localStorage)', () => {
       autoStopAutonomous: true,
       batteryVoltage: 12.5
     })
+  })
+
+  // B7(spec-4c §2): 센서 잡음은 렌더러 전용 설정(기본 끔)이고 실행 요청 설정에는 넣지 않는다(세계 설명 noise로만 간다)
+  it('B7: 센서 잡음은 기본 끔, 참일 때만 켬, 실행 요청 설정에는 없다', () => {
+    expect(DEFAULT_PLAY_SETTINGS.sensorNoise).toBe(false)
+    expect(parsePlaySettings({}).sensorNoise).toBe(false)
+    expect(parsePlaySettings({ sensorNoise: true }).sensorNoise).toBe(true)
+    for (const wrong of ['true', 1, null, {}, []])
+      expect(parsePlaySettings({ sensorNoise: wrong }).sensorNoise).toBe(false)
+    // 다른 항목은 그대로 읽는다
+    expect(parsePlaySettings({ sensorNoise: true, seed: -42 })).toEqual({
+      ...DEFAULT_PLAY_SETTINGS,
+      seed: -42,
+      sensorNoise: true
+    })
+    // 기본값 객체를 공유하지 않는다(hiveState도 새 객체)
+    const parsed = parsePlaySettings(null)
+    expect(parsed).not.toBe(DEFAULT_PLAY_SETTINGS)
+    expect(parsed.hiveState).not.toBe(DEFAULT_PLAY_SETTINGS.hiveState)
+    const noisy = { ...DEFAULT_PLAY_SETTINGS, sensorNoise: true }
+    const sent = runSettings(noisy)
+    expect(Object.keys(sent).sort()).toEqual(
+      ['autoStopAutonomous', 'batteryVoltage', 'jitter', 'seed', 'speed'].sort()
+    )
   })
 
   it('배터리 전압은 설정 범위 안으로(기본 12.5 V)', () => {
