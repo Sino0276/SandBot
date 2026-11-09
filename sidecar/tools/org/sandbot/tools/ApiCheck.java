@@ -374,7 +374,9 @@ final class ApiCheck {
         List<ClassSource> realJars = new ArrayList<>();
         for (String path : options.get("--real").split(java.io.File.pathSeparator))
             realJars.add(ClassSource.jar(Paths.get(path)));
-        ClassSource real = ClassSource.chain(realJars);
+        // --real-exclude: 빌드와 같은 거름(scripts/fetch-ftc-sdk.mjs의 REAL_EXCLUDED_PREFIXES)
+        ClassSource real = ClassSource.excluding(ClassSource.chain(realJars),
+                ClassSource.excludePrefixes(options.get("--real-exclude")));
         ClassSource android = ClassSource.jar(Paths.get(options.get("--android")));
         ClassSource jdk = ClassSource.jdk();
         ApiCheck check = new ApiCheck();

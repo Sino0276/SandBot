@@ -347,8 +347,11 @@ export function readZip(bytes) {
 
 /**
  * SDK jar들을 받아 둔다(있고 맞으면 그대로).
- * @returns {Promise<{ version: string, jars: string[], libs: string[], apiJars: string[], androidJar: string }>}
+ * @returns {Promise<{ version: string, jars: string[], libs: string[], apiJars: string[], androidJar: string,
+ *   openCvJar: string, calibrationsXml: string }>}
  *   apiJars: API 대조 기준으로만 쓰는 jar(API_AARS의 classes.jar)
+ *   openCvJar: OpenCV classes.jar(4d, 실제 원천에 더한다. 들여오기·stub에서 REAL_EXCLUDED_PREFIXES는 뺀다)
+ *   calibrationsXml: SDK 내장 웹캠 보정 XML(4d, sandbot-sdk.jar의 자원으로 넣는다)
  */
 export async function ensureFtcSdk({ log = console.log } = {}) {
   const versionDir = join(ftcSdkDir, SDK_VERSION)
@@ -367,8 +370,31 @@ export async function ensureFtcSdk({ log = console.log } = {}) {
     log(`downloading ${ANDROID_JAR.file}`)
     writeAtomic(androidJar, await download(ANDROID_JAR.url, ANDROID_JAR.sha256, log))
   }
-  return { version: SDK_VERSION, jars, libs, apiJars, androidJar }
+  const openCvJar = await ensureOpenCv({ log })
+  const calibrationsXml = await ensureWebcamCalibrations({ log })
+  return { version: SDK_VERSION, jars, libs, apiJars, androidJar, openCvJar, calibrationsXml }
 }
+
+/**
+ * 가짜 SDK 빌드가 들여오기·stub에 쓰는 실제 jar(scripts/build-sidecar.mjs의 --real, sidecar/tests/build.test.ts가 같은 목록을
+ * 쓴다): SDK의 classes.jar 넷, RobotCore AAR이 함께 싣는 Gson(SDK가 쓰고 팀 코드도 쓸 수 있다, Apache 2.0), OpenCV classes.jar
+ * (4d, spec-4d §1.9). 같은 AAR의 slf4j는 SDK 클래스가 쓰지 않으므로 넣지 않는다.
+ * @param {{ jars: string[], libs: string[], openCvJar: string }} sdk ensureFtcSdk의 결과
+ */
+export function liftableJars(sdk) {
+  return [
+    ...sdk.jars,
+    ...sdk.libs.filter((path) => /[\\/]gson(-extras)?-[\d.]+\.jar$/.test(path)),
+    sdk.openCvJar
+  ]
+}
+
+/**
+ * 실제 원천에서 뺄 클래스(내부 이름 접두어, SdkBuild·ApiCheck의 --real-exclude). OpenFTC가 다시 묶을 때 더한 부분이다:
+ * org.openftc.opencvrepackaged.LibLoader는 System.loadLibrary를 부르는 @OpModeRegistrar이고 org.opencv.osgi.OpenCVNativeLoader도
+ * 네이티브 로더라 들여오면 실행 때 UnsatisfiedLinkError가 난다. OpenFTC 부분은 MIT라 고지도 따로 필요하다(spec-4d §1.9).
+ */
+export const REAL_EXCLUDED_PREFIXES = ['org/openftc/', 'org/opencv/osgi/']
 
 // SDK AAR 하나를 받고(있고 맞으면 그대로) classes.jar를 <이름>.jar로 꺼낸다. withLibs면 libs/*.jar도 libs/로 꺼낸다.
 async function ensureAar(versionDir, name, hash, withLibs, log) {

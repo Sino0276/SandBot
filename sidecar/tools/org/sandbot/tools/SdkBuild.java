@@ -149,7 +149,11 @@ public final class SdkBuild {
         }
         List<ClassSource> realSources = new ArrayList<>();
         for (Path jar : realJars) realSources.add(ClassSource.jar(jar));
-        ClassSource real = ClassSource.chain(realSources);
+        // --real-exclude: 실제 원천에서 뺄 접두어(OpenCV jar의 org/openftc/·org/opencv/osgi/ — 등록기·네이티브 로더, spec-4d §1.9).
+        // 빠진 클래스는 들여오지도 stub으로 만들지도 않는다(참조하는 쪽은 불투명 껍데기를 본다)
+        List<String> realExcluded = ClassSource.excludePrefixes(options.get("--real-exclude"));
+        report.put("realExcluded", realExcluded);
+        ClassSource real = ClassSource.excluding(ClassSource.chain(realSources), realExcluded);
         ClassSource android = ClassSource.jar(androidJar);
         ClassSource jdk = ClassSource.jdk();
         Set<String> allRealNests = new TreeSet<>();
@@ -227,6 +231,7 @@ public final class SdkBuild {
         if (!compile(all, Collections.singletonList(liftedRaw), classesSdk, "8", "SDK (sim + hand + stubs)"))
             return false;
         copyResources(path("--sdk"), classesSdk);
+        copyExtraResource(options.get("--sdk-resource"), classesSdk);
 
         // 5. runtime
         Path hashResource = classesRuntime.resolve("org/sandbot/runtime/source-hash.txt");
@@ -742,6 +747,24 @@ public final class SdkBuild {
     }
 
     /** 소스 폴더의 .java가 아닌 파일(리소스)을 클래스 폴더로 */
+    /**
+     * --sdk-resource {@code <jar 안 경로>=<파일>}: sidecar/sdk 밖의 파일 하나를 sdk jar의 자원으로 넣는다(spec-4d §1.13: 받은 SDK 내장
+     * 웹캠 보정 XML). 없으면 아무것도 하지 않는다.
+     */
+    private static void copyExtraResource(String option, Path classes) throws IOException, BuildFailure {
+        if (option == null || option.isEmpty()) return;
+        int eq = option.indexOf('=');
+        if (eq <= 0) throw new BuildFailure("--sdk-resource must be <path in jar>=<file>: " + option);
+        String inJar = option.substring(0, eq);
+        Path file = Paths.get(option.substring(eq + 1)).toAbsolutePath();
+        if (inJar.startsWith("/") || inJar.contains("..") || inJar.contains("\\"))
+            throw new BuildFailure("--sdk-resource path must be relative: " + inJar);
+        if (!Files.isRegularFile(file)) throw new BuildFailure("--sdk-resource file not found: " + file);
+        Path target = classes.resolve(inJar);
+        Files.createDirectories(target.getParent());
+        Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
     private static void copyResources(Path sources, Path classes) throws IOException {
         if (!Files.isDirectory(sources)) return;
         try (Stream<Path> walk = Files.walk(sources)) {
