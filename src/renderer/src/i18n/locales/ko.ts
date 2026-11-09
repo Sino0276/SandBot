@@ -938,6 +938,12 @@ const ko = {
         '{{file}}은(는) 팀이 고쳤거나 직접 만든 파일이라 SandBot이 덮어쓰지 않았습니다. 그 파일의 구성으로 실행합니다.',
       configMissing:
         '로봇 구성 {{file}}이(가) TeamCode에 없어 장치 없는 hardwareMap으로 실행합니다. 프로젝트를 저장하면 생성됩니다.',
+      // INIT 때 지금 씬에 하드웨어 검증 오류가 있다(저장하지 않고 연 프로젝트 등, 이번 세션의 저장이 막힌 것은 generationBlocked)
+      configBlocked:
+        '지금 씬에 하드웨어 설정 오류 {{count}}개가 있어 로봇 구성 {{file}}을(를) 만들 수 없습니다. TeamCode에 남아 있는 구성(없으면 장치 없는 hardwareMap)으로 실행합니다. 인스펙터에서 오류를 고친 뒤 저장하세요.',
+      // INIT 때 디스크의 구성 XML이 지금 씬에서 만든 구성과 다르다(메인의 표식 해시 비교)
+      configStale:
+        'TeamCode의 로봇 구성 {{file}}이(가) 지금 씬에서 만든 구성과 다릅니다. 그 파일의 구성으로 실행합니다. 프로젝트를 저장(Ctrl+S)하면 다시 생성됩니다.',
       // 등록기(@OpModeRegistrar) OpMode 목록을 읽을 때
       registeredFailed: '등록기 OpMode 목록을 읽지 못했습니다: {{reason}} ({{detail}})',
       registeredCompileFailed:

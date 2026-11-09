@@ -1,6 +1,10 @@
 import { lstat, mkdir, readFile, realpath, stat } from 'fs/promises'
 import path from 'path'
-import { GENERATED_XML_DIR, isAllowedGeneratedPath } from '../../shared/generatedFiles'
+import {
+  GENERATED_XML_DIR,
+  generatedHash,
+  isAllowedGeneratedPath
+} from '../../shared/generatedFiles'
 import type { GradleProject } from '../../shared/gradle'
 import { isTopLevelOfFile, parseOpModes } from '../../shared/java/opModes'
 import type { LibraryProgress, LibraryReport } from '../../shared/libraries'
@@ -104,6 +108,8 @@ export async function readSidecarFiles(dir: string): Promise<SidecarFiles | Fail
 // ---- 요청 확인 ----
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/
+// 생성 표식 해시(generatedFiles.ts cyrb53, 14자리 16진수)
+const CONFIG_HASH = /^[0-9a-f]{14}$/
 // 바이너리 이름 세그먼트(Java 식별자, teamCodePaths.ts와 같은 범주)
 const IDENTIFIER = /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*$/u
 
@@ -113,6 +119,8 @@ export type ValidRequest = {
   // registeredName: 등록기 OpMode의 DS 이름(className·path는 그 등록기). 없으면 null.
   opMode: { className: string; path: string; flavor: OpModeFlavor; registeredName: string | null }
   configPath: string | null
+  // 지금 씬으로 만들 구성 XML의 표식 해시(없으면 null: 씬이 막혔거나 구성이 없음)
+  configHash: string | null
   settings: PlaySettings
   world: WorldSpec | null
 }
@@ -144,7 +152,7 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
   const bad = (what: string): Failure => failure('notAllowed', `invalid request: ${what}`)
   if (typeof input !== 'object' || input === null) return bad('not an object')
   const request = input as Partial<Record<keyof PlayInitRequest, unknown>>
-  const { runId, root, opMode, configPath, settings, world } = request
+  const { runId, root, opMode, configPath, configHash, settings, world } = request
   if (typeof runId !== 'string' || !RUN_ID.test(runId)) return bad('runId')
   if (typeof root !== 'string' || root === '') return bad('root')
   if (typeof opMode !== 'object' || opMode === null) return bad('opMode')
@@ -162,6 +170,12 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
       !isAllowedGeneratedPath(configPath))
   )
     return bad('configPath')
+  if (
+    configHash !== undefined &&
+    configHash !== null &&
+    (typeof configHash !== 'string' || !CONFIG_HASH.test(configHash) || configPath === null)
+  )
+    return bad('configHash')
   if (typeof settings !== 'object' || settings === null) return bad('settings')
   const { speed, jitter, seed, autoStopAutonomous, batteryVoltage } = settings as Record<
     string,
@@ -184,6 +198,7 @@ export function validateRequest(input: unknown): ValidRequest | Failure {
     root,
     opMode: { className, path: relPath, flavor, registeredName: registeredName ?? null },
     configPath: configPath ?? null,
+    configHash: configHash ?? null,
     settings: { speed, jitter, seed, autoStopAutonomous, batteryVoltage },
     world: parsedWorld
   }
@@ -198,10 +213,26 @@ export type PreparedRun = {
   configXml: string | null
   // 요청한 구성 XML이 없다(장치 없는 hardwareMap으로 실행)
   configMissing: boolean
+  // 디스크의 구성 XML이 지금 씬에서 만든 구성(configHash)과 다르다(그 파일로 실행, 렌더러가 경고)
+  configStale: boolean
   preselectTeleOp: string
 }
 
 const PRESELECT_READ_LIMIT = 1024 * 1024
+// 구성 XML 비교로 읽는 크기 한도(생성 구성은 몇 KB다). 넘으면 지금 씬의 것이 아니다.
+const CONFIG_READ_LIMIT = 1024 * 1024
+
+// 디스크의 구성 XML이 지금 씬에서 만든 것(표식 해시 expected)과 다른지. 팀이 고쳤거나 직접 만든 파일(pristine이
+// 아님), 다른 씬에서 만든 파일, 읽지 못한 파일은 다르다고 본다. 경로는 prepareRun이 이미 TeamCode 안으로 확인했다.
+async function isConfigStale(file: string, expected: string): Promise<boolean> {
+  try {
+    const info = await stat(file)
+    if (info.size > CONFIG_READ_LIMIT) return true
+    return generatedHash(await readFile(file, 'utf8')) !== expected
+  } catch {
+    return true
+  }
+}
 
 // Autonomous의 preselectTeleOp(목록과 같은 파서로 그 파일을 읽는다)
 async function preselectOf(file: string, className: string): Promise<string> {
@@ -252,6 +283,10 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
     opModeSource: located.file,
     configXml,
     configMissing: request.configPath !== null && configXml === null,
+    configStale:
+      configXml !== null &&
+      request.configHash !== null &&
+      (await isConfigStale(configXml, request.configHash)),
     // 등록기 OpMode의 preselectTeleOp은 등록 결과(OpModeMeta의 transitionTarget)다(controller가 목록 캐시에서 찾는다)
     preselectTeleOp:
       request.opMode.flavor === 'Autonomous' && request.opMode.registeredName === null

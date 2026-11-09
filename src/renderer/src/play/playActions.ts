@@ -56,7 +56,7 @@ import {
   type RegisteredListState,
   type RegisteredProblem
 } from './playStore'
-import { chooseRobotConfig, generationWarning } from './robotConfig'
+import { chooseRobotConfig, expectedConfig, generationWarning } from './robotConfig'
 import {
   buildWorldSpec,
   robotNeedsMassModel,
@@ -433,7 +433,9 @@ async function runInit(): Promise<void> {
     useEditorStore.getState().selectedId
   )
   const configPath = config?.configPath ?? null
-  const warning = generationWarning(generation, configPath)
+  // 지금 씬으로 만들 구성(저장 없이 연 프로젝트도 디스크 구성과 맞는지 메인이 해시로 확인한다)
+  const expected = expectedConfig(useSceneStore.getState().objects, configPath)
+  const warning = generationWarning(generation, configPath, expected)
   // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
   // 실행의 시즌·HIVE 상태(문서 시즌과 실행 설정, 세계 설명이 없어도 정한다). 실행 중 문서 시즌이 바뀌어도 그대로다.
@@ -471,7 +473,10 @@ async function runInit(): Promise<void> {
   const { addConsole } = usePlayStore.getState()
   addConsole({ type: 'run', name: opMode.name, config: configPath })
   if (warning) addConsole({ type: 'notice', ...warning }, null, 'warning')
-  if (warning && world?.spec && (world.spec.wheels.length > 0 || world.spec.joints.length > 0))
+  // 바퀴·관절이 쓰는 장치 이름이 디스크 구성과 다를 수 있다(INIT 결과의 configStale도 같은 줄을 남긴다)
+  const movesInWorld =
+    !!world?.spec && (world.spec.wheels.length > 0 || world.spec.joints.length > 0)
+  if (warning && movesInWorld)
     addConsole({ type: 'notice', key: 'worldGenerationStale', params: {} }, null, 'warning')
   for (const notice of world?.warnings ?? [])
     addConsole({ type: 'notice', ...notice }, null, 'warning')
@@ -493,6 +498,7 @@ async function runInit(): Promise<void> {
           }
         : { className: opMode.className, path: opMode.path, flavor: opMode.flavor },
       configPath,
+      configHash: expected.configHash,
       // 공유 다섯 키만(렌더러 전용 hiveState는 메인·사이드카가 쓰지 않는다)
       settings: runSettings(play.settings),
       world: world?.spec ?? null
@@ -523,7 +529,10 @@ async function runInit(): Promise<void> {
     setRegistered(root, { status: 'loading', needsConsent: false })
     void refreshRegisteredOpModes(root)
   }
-  if (result.configMissing && run.configPath)
+  // 막힌 씬의 configBlocked가 이미 "없으면 장치 없는 hardwareMap"을 알렸고, 저장해도 생성되지 않으므로 configMissing의
+  // "저장하면 생성됩니다"는 맞지 않는다. 디스크 구성이 다르다(configStale)는 다른 구성 경고가 없을 때만 알린다
+  // (팀이 고친 구성·생성 실패는 그 경고가 이미 말한다).
+  if (result.configMissing && run.configPath && warning?.key !== 'configBlocked')
     usePlayStore
       .getState()
       .addConsole(
@@ -531,6 +540,12 @@ async function runInit(): Promise<void> {
         null,
         'warning'
       )
+  if (result.configStale && run.configPath && !warning) {
+    const { addConsole: add } = usePlayStore.getState()
+    add({ type: 'notice', key: 'configStale', params: { file: run.configPath } }, null, 'warning')
+    if (movesInWorld)
+      add({ type: 'notice', key: 'worldGenerationStale', params: {} }, null, 'warning')
+  }
   if (run.stopRequested) {
     command({ type: 'stop' })
     return

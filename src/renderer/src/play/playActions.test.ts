@@ -3,6 +3,7 @@ import { BoxGeometry, Vector3 } from 'three'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simulationWorld } from '../../../main/sidecar/world'
 import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
+import { generatedHash } from '../../../shared/generatedFiles'
 import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
 import { parseWorldSpec, WORLD_SPEC_VERSION, type WorldSpec } from '../../../shared/sim/worldSpec'
 import type {
@@ -19,6 +20,7 @@ import { useDialogStore, usePreferencesStore } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { cancelNotice, runNoticeAction, useNoticeStore } from '../editor/noticeStore'
 import { propertyDefaults } from '../hardware/catalog'
+import { generateTeamCodeFiles } from '../hardware/generate'
 import { sensorSelfHit } from '../editor/hardware/sensorSelfHit'
 import { saveProject } from '../project/projectActions'
 import { disposeGeometry, registerGeometry } from '../scene/geometryRegistry'
@@ -425,6 +427,89 @@ describe('INIT → START → STOP', () => {
   })
 })
 
+// 장치 이름이 빈 모터는 검증 오류(emptyName)라 저장해도 아무 파일도 만들지 않는다
+const BLOCKED_SCENE: SceneObjects = {
+  ...SCENE,
+  arm: {
+    ...SCENE.arm,
+    components: [{ ...SCENE.arm.components![0], name: '' }]
+  }
+}
+// 구성 경고만 본다(바퀴 없음 같은 세계 경고는 뺀다)
+const configNoticeKeys = (): string[] =>
+  usePlayStore
+    .getState()
+    .entries.flatMap((entry) =>
+      entry.type === 'notice' && entry.key.startsWith('config') ? [entry.key] : []
+    )
+
+describe('INIT의 구성 확인(저장하지 않고 연 프로젝트)', () => {
+  it('지금 씬으로 만들 구성의 표식 해시를 보낸다', async () => {
+    await initPlay()
+    const { configPath, configHash } = lastRequest()
+    const file = generateTeamCodeFiles(SCENE).files.find((f) => f.path === configPath)!
+    expect(configHash).toBe(generatedHash(file.content))
+    expect(configHash).toMatch(/^[0-9a-f]{14}$/)
+  })
+
+  it('지금 씬에 검증 오류가 있으면 configBlocked를 남기고(해시 없음) 실행한다', async () => {
+    useSceneStore.setState({ objects: BLOCKED_SCENE })
+    await initPlay()
+    await settle()
+    const request = lastRequest()
+    expect(request.configPath).not.toBeNull()
+    expect(request.configHash).toBeNull()
+    const entry = usePlayStore.getState().entries.find((e) => e.type === 'notice')
+    expect(entry).toMatchObject({
+      type: 'notice',
+      key: 'configBlocked',
+      params: { count: 1, file: request.configPath },
+      level: 'warning'
+    })
+    expect(usePlayStore.getState().run?.accepted).toBe(true)
+  })
+
+  it('막힌 씬에 구성 파일도 없으면 configMissing("저장하면 생성됩니다")은 남기지 않는다', async () => {
+    useSceneStore.setState({ objects: BLOCKED_SCENE })
+    initResult = async () => ({ ok: true, configMissing: true })
+    await initPlay()
+    await settle()
+    expect(configNoticeKeys()).toEqual(['configBlocked'])
+  })
+
+  it('메인이 디스크 구성이 다르다고 하면 configStale', async () => {
+    initResult = async () => ({ ok: true, configStale: true })
+    await initPlay()
+    await settle()
+    expect(usePlayStore.getState().entries.at(-1)).toMatchObject({
+      type: 'notice',
+      key: 'configStale',
+      params: { file: lastRequest().configPath },
+      level: 'warning'
+    })
+  })
+
+  it('팀이 고친 구성처럼 이미 구성 경고가 있으면 configStale을 겹쳐 남기지 않는다', async () => {
+    const configPath = 'src/main/res/xml/sandbot_robot_hardware.xml'
+    useProjectStore.setState({
+      generation: {
+        status: 'synced',
+        written: [],
+        unchanged: [],
+        deleted: [],
+        skipped: [],
+        modified: [configPath],
+        caseRenamed: []
+      }
+    })
+    initResult = async () => ({ ok: true, configStale: true })
+    await initPlay()
+    await settle()
+    expect(lastRequest().configPath).toBe(configPath)
+    expect(configNoticeKeys()).toEqual(['configNotGenerated'])
+  })
+})
+
 describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
   // SCENE의 로봇에 구동 바퀴 넷(모두 arm 모터, 체인 구동처럼). 바퀴 하나만이면 하중을 나눌 수 없다고 경고한다(3c).
   const corner = (id: string, x: number, y: number): SceneObject => ({
@@ -519,6 +604,14 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     useProjectStore.setState({ generation: { status: 'blocked', errors: 1 } })
     await initPlay()
     expect(notices()).toEqual(['generationBlocked', 'worldGenerationStale'])
+  })
+
+  it('디스크 구성이 다르면(configStale) 장치 이름이 다를 수 있다고 한 줄 더 알린다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    initResult = async () => ({ ok: true, configStale: true })
+    await initPlay()
+    await settle()
+    expect(notices()).toEqual(['configStale', 'worldGenerationStale'])
   })
 
   it('관절은 세계 설명에 들어가고 실행이 관절 순번 → 오브젝트 id를 기억한다(몸체 질량은 질량 모델에서)', async () => {

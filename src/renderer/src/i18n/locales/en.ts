@@ -927,6 +927,10 @@ const en: Messages = {
         '{{file}} was edited by the team or made by hand, so SandBot did not overwrite it. Running with the configuration in that file.',
       configMissing:
         'The robot configuration {{file}} is not in TeamCode, so the run uses an empty hardwareMap. Saving the project generates it.',
+      configBlocked:
+        'The scene has {{count}} hardware error(s), so the robot configuration {{file}} cannot be generated. Running with the configuration left in TeamCode (an empty hardwareMap if there is none). Fix the errors in the Inspector, then save.',
+      configStale:
+        'The robot configuration {{file}} in TeamCode differs from the one generated from the scene. Running with the configuration in that file. Save the project (Ctrl+S) to generate it again.',
       // Reading the registrar (@OpModeRegistrar) OpMode list
       registeredFailed: 'Could not read the registrar OpMode list: {{reason}} ({{detail}})',
       registeredCompileFailed:

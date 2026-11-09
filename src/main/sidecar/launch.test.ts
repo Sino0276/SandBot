@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'fs/promi
 import { tmpdir } from 'os'
 import { dirname, join, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { GENERATED_MARKER, generatedHash, stampGenerated } from '../../shared/generatedFiles'
 import type { PlayInitRequest } from '../../shared/play'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import {
@@ -32,6 +33,7 @@ function request(overrides: Partial<PlayInitRequest> = {}): PlayInitRequest {
       flavor: 'TeleOp'
     },
     configPath: null,
+    configHash: null,
     settings: { speed: 1, jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 },
     world: null,
     ...overrides
@@ -96,6 +98,11 @@ describe('validateRequest', () => {
       request({ configPath: 'src/main/res/xml/other.xml' }),
       request({ configPath: 'src/main/res/xml/../../../../x/sandbot_a.xml' }),
       request({ configPath: `${PKG}/sandbot/RobotHardware.java` }),
+      // 구성 해시는 생성 표식 해시 모양이고 구성 경로가 있을 때만
+      request({ configPath: CONFIG, configHash: 'ABCDEF01234567' }),
+      request({ configPath: CONFIG, configHash: '0123' }),
+      request({ configPath: CONFIG, configHash: 7 as unknown as string }),
+      request({ configPath: null, configHash: '0123456789abcd' }),
       request({
         settings: { speed: 0, jitter: 0, seed: 0, autoStopAutonomous: true, batteryVoltage: 12.5 }
       }),
@@ -188,6 +195,7 @@ describe('prepareRun', () => {
       opModeSource: source,
       configXml: null,
       configMissing: true,
+      configStale: false,
       preselectTeleOp: ''
     })
     const config = await write(CONFIG, '<Robot/>')
@@ -201,6 +209,34 @@ describe('prepareRun', () => {
         join(root, 'FtcRobotController', 'src', 'main', 'java')
       ]
     })
+  })
+
+  it('구성 해시가 디스크 구성의 표식 해시와 다르면 configStale(그 파일로 실행)', async () => {
+    await write(`${PKG}/Drive.java`)
+    const xml = (body: string): string =>
+      stampGenerated(`<?xml version='1.0'?>\n<!-- ${GENERATED_MARKER} -->\n${body}\n`)
+    const current = xml('<Robot type="FirstInspires-FTC"><Motor name="arm"/></Robot>')
+    const hash = generatedHash(current)!
+    const prepare = (configHash: string | null): ReturnType<typeof prepareRun> =>
+      prepareRun(valid(request({ root, configPath: CONFIG, configHash })))
+    // 파일이 없으면 configMissing만(비교할 것이 없다)
+    expect(await prepare(hash)).toMatchObject({ configMissing: true, configStale: false })
+    const file = await write(CONFIG, current)
+    expect(await prepare(hash)).toMatchObject({ configXml: file, configStale: false })
+    // git autocrlf로 줄바꿈만 바뀐 같은 구성
+    await writeFile(file, current.replace(/\n/g, '\r\n'))
+    expect(await prepare(hash)).toMatchObject({ configStale: false })
+    // 다른 씬(이전 저장)에서 만든 구성, 팀이 고친 구성, 사람이 만든 구성
+    for (const text of [
+      xml('<Robot type="FirstInspires-FTC"><Motor name="lift"/></Robot>'),
+      current.replace('arm', 'arm2'),
+      '<Robot type="FirstInspires-FTC"/>'
+    ]) {
+      await writeFile(file, text)
+      expect(await prepare(hash)).toMatchObject({ configXml: file, configStale: true })
+    }
+    // 렌더러가 해시를 보내지 않으면(지금 씬이 막힘) 비교하지 않는다
+    expect(await prepare(null)).toMatchObject({ configXml: file, configStale: false })
   })
 
   it('구성이 밖을 가리키는 링크이거나 파일이 아니면 notAllowed', async () => {
@@ -410,6 +446,7 @@ describe('사이드카 빌드 결과와 명령', () => {
         opModeSource: '/proj/TeamCode/src/main/java/Drive.java',
         configXml: null,
         configMissing: false,
+        configStale: false,
         preselectTeleOp: ''
       },
       valid(

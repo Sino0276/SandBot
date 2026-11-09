@@ -76,6 +76,14 @@ export function generatedState(content: string): GeneratedState {
   return cyrb53(normalize(unstamped)) === match[1].trim() ? 'pristine' : 'modified'
 }
 
+// 도구가 쓴 그대로인(pristine) 생성 내용의 표식 해시. 아니면(표식 없음·고침·해시 없는 이전 형식) null.
+// 해시는 줄바꿈을 LF로 맞춘 내용의 것이라 CRLF로 바뀐 파일도 같은 해시다. INIT이 디스크의 구성 XML이 지금 씬에서
+// 만든 것과 같은지 볼 때 쓴다(src/main/sidecar/launch.ts prepareRun).
+export function generatedHash(content: string): string | null {
+  if (generatedState(content) !== 'pristine') return null
+  return findStamp(content)?.[1]?.trim() ?? null
+}
+
 export type SyncGeneratedResult =
   // 프로젝트 폴더에 TeamCode가 없다(FtcRobotController 폴더가 아니다)
   | { status: 'noTeamCode' }
