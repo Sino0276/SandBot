@@ -1,6 +1,9 @@
 import { resolveMotorParams } from './actuatorData'
+import type { FieldMaterial, FieldSpec, FieldStructure } from './seasons/fieldSpec'
+import { resolveSeason } from './seasons/seasons'
+import { planarFrame, sensorPose, type SensorPose } from './sensorFrame'
 import { DEFAULT_WHEEL_FRICTION, wheelSpinInertia } from './wheelData'
-import type { SimBody, SimMotorParams, WheelKind, WorldSpec } from './worldSpec'
+import type { SimBody, SimMotorParams, Vec3, WheelKind, WorldSpec } from './worldSpec'
 
 // 시험용 세계 설명 조각(3c 세계 설명 v3의 필드와 v4 기본 칸). 시뮬레이터·메인·사이드카 통합 시험이 같이 쓴다(제품 코드는 쓰지 않는다).
 
@@ -50,4 +53,58 @@ export function worldV4Defaults(): Pick<
     colorSensors: [],
     noise: { enabled: false, seed: 0 }
   }
+}
+
+// ---- 거리·컬러 센서(4c) 시험의 필드와 센서 자세(시험 전용). 기준 수치는 spec-4c 부록 A
+// (scratchpad p13field/s4c2/sim2.py·tables.py·ctab.py)이고 같은 시험 필드를 쓴다.
+
+export const DEG = Math.PI / 180
+export const INCH = 0.0254
+
+// 'none' 시즌의 얕은 복사(checkFieldSpec를 거치지 않는다). 반폭을 10 m로 넓히면 벽 거울이 2.5 m 밖이라 "빈 필드"다
+export function testField(change: Partial<FieldSpec> = {}, innerHalf?: number): FieldSpec {
+  const none = resolveSeason('none')
+  return {
+    ...none,
+    perimeter:
+      innerHalf === undefined ? none.perimeter : { ...none.perimeter, innerHalf: innerHalf },
+    ...change
+  }
+}
+
+// 빈 필드(반폭 10 m)
+export const emptyField = (change: Partial<FieldSpec> = {}): FieldSpec => testField(change, 10)
+
+export function material(rho: number, nir = rho): FieldMaterial {
+  return { display: '#808080', rgb: [rho, rho, rho], nir }
+}
+
+// field carrier sensed 상자
+export function sensedBox(
+  center: Vec3,
+  size: Vec3,
+  yaw = 0,
+  mat: FieldMaterial = material(0.5),
+  flags: Partial<Pick<FieldStructure, 'sensed' | 'occludes' | 'solid' | 'carrier'>> = {}
+): FieldStructure {
+  return {
+    key: 'flower',
+    shape: { kind: 'box', center, rotation: { x: 0, y: 0, z: yaw }, size },
+    solid: true,
+    occludes: true,
+    sensed: true,
+    material: mat,
+    friction: 0.4,
+    carrier: 'field',
+    ...flags
+  }
+}
+
+// 로봇 좌표 = 필드 좌표(로봇이 원점, 요 0)에 둔 센서: 원점(하우징 앞면), 조준 요·올려본각
+export function aimedPose(origin: Vec3, yaw = 0, pitch = 0): SensorPose {
+  return sensorPose(planarFrame({ x: 0, y: 0, yaw: 0 }), {
+    body: -1,
+    position: origin,
+    rotation: { x: 0, y: -pitch, z: yaw }
+  })
 }

@@ -1,5 +1,6 @@
 import { GRAVITY } from './physics'
 import type { Pose2, SimBody, SimJointSpec, Vec3 } from './worldSpec'
+import type { Frame3 } from './sensorFrame'
 
 // 메커니즘 관절 동역학(3b): 움직이지 않는 로봇 몸체(뿌리) 위의 관절 나무를 감소 좌표로 푼다(Unity ArticulationBody·PhysX
 // articulation처럼 Featherstone 계열). 순수 TS이고 결정적이다(배열 순서만 쓰고, 벽시계·난수·Map 순서를 쓰지 않는다).
@@ -686,6 +687,17 @@ export class Articulation {
   ): { rotation: number[]; origin: number[] } {
     const b = this.bodies(q)[i + this.offset]
     return { rotation: b.rotation.slice(), origin: b.origin.slice() }
+  }
+
+  // 세계 설명 관절 몸체들의 자세(세계 설명 관절 순번 순, 로봇 좌표, 부유 기저면 필드 좌표). 지금 z로 모든 몸체를 한 번만
+  // 계산한다(센서·4d 카메라가 틱마다 부른다, spec-4c §1.2). 회전은 행 우선 9원소 사본이다
+  bodyPoses(): Frame3[] {
+    return this.bodies(this.treeQ(this.z))
+      .slice(this.offset)
+      .map((b) => ({
+        rotation: b.rotation.slice(),
+        origin: { x: b.origin[0], y: b.origin[1], z: b.origin[2] }
+      }))
   }
 
   // 위치 에너지(J, 바닥 z = 0 기준, 섀시 포함, 시험용). q는 나무 관절 변위

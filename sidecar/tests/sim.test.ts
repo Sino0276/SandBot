@@ -5,6 +5,8 @@
 //  - 메카넘 TeleOp + 고정 게임패드(앞으로 1초, 그다음 왼쪽으로 회전) → 기대 방향 이동, 팀 코드가 읽은 IMU·엔코더·Pinpoint
 //  - RUN_TO_POSITION Autonomous의 while (isBusy())가 정한 가상 시간 안에 끝나고 목표 허용 오차 안에 선다
 //  - 같은 입력으로 두 번 → 같은 자세열(바이트까지)
+//  - 4c 거리·컬러 센서(spec-4c I1·I4): 벽으로 다가가는 메카넘의 거리 센서를 읽는 OpMode, 고치지 않은 SDK 샘플
+//    RobotAutoDriveToLine_Linear(회색 타일 위 컬러 센서)
 import { spawn } from 'node:child_process'
 import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -16,6 +18,8 @@ import {
   type SidecarMessage,
   type TickMessage
 } from '../../src/shared/sidecarProtocol'
+import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
+import { resolveSeason } from '../../src/shared/sim/seasons/seasons'
 import { testChassis, testMotorParams, testWheelPhysics } from '../../src/shared/sim/testkit'
 import { PhysicsWorld } from '../../src/shared/sim/world'
 import { WORLD_SPEC_VERSION, type SimPose, type WorldSpec } from '../../src/shared/sim/worldSpec'
@@ -153,6 +157,8 @@ function gamepad(sticks: Partial<GamepadState>): GamepadState {
 
 type SimRun = {
   messages: SidecarMessage[]
+  // 틱마다 step 뒤에 합친 입력(장치 → 키 → 값, 사이드카가 그 틱부터 보는 값)
+  states: { tNanos: number; state: Record<string, Record<string, unknown>> }[]
   // 틱마다 step 뒤의 자세와 모터 엔코더(허브 원시 틱, 사이드카가 그 틱부터 보는 값)
   poses: { tNanos: number; pose: SimPose }[]
   encoders: { tNanos: number; position: Record<string, number> }[]
@@ -160,14 +166,35 @@ type SimRun = {
   stderr: string
 }
 
+// 실행 설정: 세계 설명·구성 XML·OpMode 소스(기본은 opmodes-sim의 Sim Bot과 teamcode 패키지)
+type SimSetup = {
+  spec: WorldSpec
+  config: string
+  sourceRoots: string[]
+  opModeSource: string
+  opModeClass: string
+}
+
+function teamOpMode(opMode: string, spec = SPEC, config = CONFIG): SimSetup {
+  return {
+    spec,
+    config,
+    sourceRoots: [OPMODES],
+    opModeSource: join(OPMODES, 'org', 'firstinspires', 'ftc', 'teamcode', `${opMode}.java`),
+    opModeClass: `org.firstinspires.ftc.teamcode.${opMode}`
+  }
+}
+
 // 결정적 호스트: 틱마다 바로 답하고, START_TICK에 START, 게임패드는 틱 번호로 정한다
 function runSim(
   b: SidecarBuild,
-  opMode: string,
+  opMode: string | SimSetup,
   pad: (tick: number) => GamepadState | null
 ): Promise<SimRun> {
+  const setup = typeof opMode === 'string' ? teamOpMode(opMode) : opMode
+  const spec = setup.spec
   return new Promise((done, fail) => {
-    const world = new PhysicsWorld(SPEC)
+    const world = new PhysicsWorld(spec)
     const child = spawn(
       b.java,
       [
@@ -180,7 +207,15 @@ function runSim(
       ],
       { stdio: ['pipe', 'pipe', 'pipe'] }
     )
-    const run: SimRun = { messages: [], poses: [], encoders: [], ticks: [], stderr: '' }
+    const run: SimRun = {
+      messages: [],
+      states: [],
+      poses: [],
+      encoders: [],
+      ticks: [],
+      stderr: ''
+    }
+    const state: Record<string, Record<string, unknown>> = {}
     const position: Record<string, number> = {}
     let pending = ''
     let finished = false
@@ -206,7 +241,10 @@ function runSim(
       // SidecarSession과 같다: 틱이 도착하면 그 틱까지 적분하고, 그 입력을 이 틱의 답에 싣는다
       const inputs = world.step(message.tNanos, message.outputs)
       run.poses.push({ tNanos: message.tNanos, pose: world.pose() })
-      for (const motor of SPEC.motors) {
+      for (const [device, values] of Object.entries(inputs))
+        state[device] = { ...state[device], ...values }
+      run.states.push({ tNanos: message.tNanos, state: { ...state } })
+      for (const motor of spec.motors) {
         const value = inputs[motor.device]?.position
         if (typeof value === 'number') position[motor.device] = value
       }
@@ -242,16 +280,16 @@ function runSim(
       protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: DEFAULT_TICK_NANOS,
-      sourceRoots: [OPMODES],
-      opModeSource: join(OPMODES, 'org', 'firstinspires', 'ftc', 'teamcode', `${opMode}.java`),
-      opModeClass: `org.firstinspires.ftc.teamcode.${opMode}`,
+      sourceRoots: setup.sourceRoots,
+      opModeSource: setup.opModeSource,
+      opModeClass: setup.opModeClass,
       registeredName: null,
       registrars: [],
       firstFolder: testTempDir('first'),
       bootClasspath: [],
       compileClasspath: [b.sdkJar],
       libraryClasspath: [],
-      configXml: CONFIG,
+      configXml: setup.config,
       timing: {},
       jitter: 0,
       seed: 0,
@@ -299,6 +337,103 @@ function recent<T extends { tNanos: number }>(list: T[], tNanos: number): T[] {
 
 function closest(values: number[], target: number): number {
   return Math.min(...values.map((v) => Math.abs(v - target)))
+}
+
+// ---- 4c 거리·컬러 센서(spec-4c I1·I4) ----
+
+const NONE_FIELD = resolveSeason('none')
+// I1: Sim Bot에서 Pinpoint를 빼고 앞 가운데(h 0.14)에 거리 센서. 'none' +X 벽 판 안쪽 면에서 1.4 m(범위 밖)부터 다가간다
+const DISTANCE_SPEC: WorldSpec = {
+  ...SPEC,
+  robot: {
+    ...SPEC.robot,
+    start: {
+      x: NONE_FIELD.perimeter.innerHalf + NONE_FIELD.perimeter.panelInset - HALF - 1.4,
+      y: 0,
+      yaw: 0
+    }
+  },
+  pinpoints: [],
+  distanceSensors: [
+    {
+      device: 'sensor_distance',
+      mount: { body: -1, position: { x: HALF, y: 0, z: 0.14 }, rotation: { x: 0, y: 0, z: 0 } }
+    }
+  ]
+}
+
+// I4: SDK 샘플 RobotAutoDriveToLine_Linear의 2륜(left_drive REVERSE·right_drive FORWARD, 일반 바퀴)과 뒤 옴니 둘(구동 안 함),
+// 앞 아래를 보는 컬러 센서(하우징 앞면 높이 1.5 cm). BIOBUZZ 회색 타일 위(테이프·구조물에서 먼 자리)에서 시작한다
+const LINE_WHEEL_Y = 0.18
+const LINE_SPEC: WorldSpec = {
+  ...SPEC,
+  field: { season: 'biobuzz', hiveTipped: [false, false] },
+  robot: { ...SPEC.robot, start: { x: 1.0, y: 0.3, yaw: 0 } },
+  motors: [
+    {
+      device: 'left_drive',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: -1,
+      params: GOBILDA_19
+    },
+    {
+      device: 'right_drive',
+      modelTag: 'goBILDA5202SeriesMotor',
+      gearbox: 19.2,
+      directionSign: 1,
+      params: GOBILDA_19
+    }
+  ],
+  wheels: (
+    [
+      ['left_drive', LX, LINE_WHEEL_Y, 'traction'],
+      ['right_drive', LX, -LINE_WHEEL_Y, 'traction'],
+      [null, -LX, LINE_WHEEL_Y, 'omni'],
+      [null, -LX, -LINE_WHEEL_Y, 'omni']
+    ] as const
+  ).map(([motor, x, y, kind]) => ({
+    position: { x, y },
+    angle: 0,
+    kind,
+    rollers: null,
+    radius: RADIUS,
+    gearRatio: 1,
+    motor,
+    ...testWheelPhysics(kind, RADIUS)
+  })),
+  pinpoints: [],
+  colorSensors: [
+    {
+      device: 'sensor_color',
+      mount: {
+        body: -1,
+        position: { x: HALF - 0.02, y: 0, z: 0.015 },
+        rotation: { x: 0, y: Math.PI / 2, z: 0 }
+      }
+    }
+  ]
+}
+
+// 팀 코드가 tNanos에 읽은 거리(mm)가 나올 수 있는 세계 값: 그 앞 측정 하나(33 ms)와 틱 몇 개 안의 틱 경계 입력(칩이 측정 끝에
+// 잡든 읽을 때 잡든 맞는다). 범위 밖(null)은 칩 8190 mm
+const VL53L0X_MEASUREMENT_NANOS = 33_000_000
+
+// 실행마다 같아야 하는 메시지 전부(컴파일 벽시계 시간 compiled.millis만 뺀다)
+function deterministicMessages(run: SimRun): string {
+  return JSON.stringify(run.messages.map((m) => (m.type === 'compiled' ? { ...m, millis: 0 } : m)))
+}
+function candidateRanges(run: SimRun, tNanos: number): number[] {
+  return run.states
+    .filter(
+      (s) =>
+        s.tNanos <= tNanos &&
+        s.tNanos >= tNanos - VL53L0X_MEASUREMENT_NANOS - RECENT_TICKS * DEFAULT_TICK_NANOS
+    )
+    .map((s) => {
+      const d = s.state.sensor_distance?.distance
+      return typeof d === 'number' ? Math.round(d * 1000) : 8190
+    })
 }
 
 // 앞으로 1초(왼쪽 스틱 위 0.6), 그다음 왼쪽(반시계)으로 회전(오른쪽 스틱 왼쪽 0.5)
@@ -424,6 +559,98 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       expect(run.ticks.at(-1)?.outputs.frontRight.encoderResets).toBe(1)
       const counted = run.encoders.map((e) => -(e.position.frontRight - reset))
       expect(Math.max(...counted)).toBeLessThan(1000 + 60)
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+  it(
+    'I1 거리 센서: 벽으로 다가가며 팀 코드의 getDistance가 단조 비증가이고 그 앞 측정의 세계 값과 같다. 두 번 바이트가 같다',
+    async () => {
+      const run = await runSim(
+        sidecar,
+        teamOpMode('SimDistanceApproach', DISTANCE_SPEC, join(OPMODES, 'sandbot_sim_distance.xml')),
+        () => null
+      )
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      expect(result(run).values.stopped).toBe(1)
+      const ranges = run.messages.flatMap((m) =>
+        m.type === 'log' && m.stream === 'out' && m.text.startsWith('RANGE ')
+          ? [{ tNanos: m.tNanos, mm: Number(m.text.slice('RANGE '.length)) }]
+          : []
+      )
+      // 처음은 범위 밖(1.4 m, 칩 8190 mm), 그다음 숫자가 줄어들고 150 mm 아래에서 선다
+      expect(ranges[0].mm).toBe(8190)
+      expect(ranges.length).toBeGreaterThan(20)
+      expect(ranges[ranges.length - 1].mm).toBeLessThan(150)
+      for (let i = 1; i < ranges.length; i++)
+        expect(ranges[i].mm).toBeLessThanOrEqual(ranges[i - 1].mm)
+      for (const r of ranges) expect(candidateRanges(run, r.tNanos)).toContain(r.mm)
+      // 시뮬레이터가 보낸 값도 줄어들기만 한다(벽 판 거울 + 확산)
+      const world = run.states
+        .map((s) => s.state.sensor_distance?.distance)
+        .filter((d): d is number => typeof d === 'number')
+      for (let i = 1; i < world.length; i++) expect(world[i]).toBeLessThanOrEqual(world[i - 1])
+
+      const again = await runSim(
+        sidecar,
+        teamOpMode('SimDistanceApproach', DISTANCE_SPEC, join(OPMODES, 'sandbot_sim_distance.xml')),
+        () => null
+      )
+      expect(deterministicMessages(again)).toBe(deterministicMessages(run))
+      expect(JSON.stringify(again.states)).toBe(JSON.stringify(run.states))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+
+  it(
+    'I4 SDK 샘플 RobotAutoDriveToLine_Linear(고치지 않음): 회색 타일 1.5 cm 위 Light Level 0.62–0.63이 문턱 0.5를 넘어 START 직후 끝난다',
+    async (ctx) => {
+      let samples: { dir: string; files: string[] }
+      try {
+        samples = await ensureFtcSamples({ log: () => {} })
+      } catch (error) {
+        // 받지 못하면(오프라인) 건너뛴다. 해시가 다른 것은 실패다(compat.test.ts와 같다)
+        if (error instanceof FetchError && !/SHA-256/.test((error as Error).message)) {
+          ctx.skip()
+          return
+        }
+        throw error
+      }
+      const setup: SimSetup = {
+        spec: LINE_SPEC,
+        config: join(OPMODES, 'sandbot_sim_line.xml'),
+        sourceRoots: [samples.dir],
+        opModeSource: join(samples.dir, 'RobotAutoDriveToLine_Linear.java'),
+        opModeClass:
+          'org.firstinspires.ftc.robotcontroller.external.samples.RobotAutoDriveToLine_Linear'
+      }
+      const run = await runSim(sidecar, setup, () => null)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      const levels = run.messages.flatMap((m) =>
+        m.type === 'telemetry'
+          ? m.frame.lines.filter((line) => line.startsWith('Light Level (0 to 1) : '))
+          : []
+      )
+      expect(levels.length).toBeGreaterThan(0)
+      for (const line of levels) expect(line).toMatch(/^Light Level \(0 to 1\) : 0\.6[23]$/)
+      // 시뮬레이터가 보낸 칩 원래 값은 부록 A 타일 1.5 cm(309, 331, 213, PS 288)
+      expect(run.states[0].state.sensor_color).toEqual({
+        red: 309,
+        green: 331,
+        blue: 213,
+        proximity: 288
+      })
+      // START 직후 루프가 끝나 거의 움직이지 않는다(critique E9: 실물도 그렇다)
+      const finished = run.messages[run.messages.length - 1]
+      const startNanos = START_TICK * DEFAULT_TICK_NANOS
+      expect(finished.type === 'finished' && finished.tNanos - startNanos).toBeLessThan(200_000_000)
+      const end = run.poses[run.poses.length - 1].pose
+      expect(Math.hypot(end.x - 1.0, end.y - 0.3)).toBeLessThan(0.02)
+
+      const again = await runSim(sidecar, setup, () => null)
+      expect(deterministicMessages(again)).toBe(deterministicMessages(run))
+      expect(JSON.stringify(again.states)).toBe(JSON.stringify(run.states))
     },
     SIDECAR_TEST_TIMEOUT
   )

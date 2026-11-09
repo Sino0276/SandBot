@@ -22,7 +22,7 @@ import { testMotorParams } from './testkit'
 import { PhysicsWorld } from './world'
 import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec'
 
-// 시뮬레이터 출력 기준 해시. 대표 시나리오 다섯(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준)을 고정한 출력열로
+// 시뮬레이터 출력 기준 해시. 대표 시나리오 여섯(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준)을 고정한 출력열로
 // 돌려, 틱마다 step()이 돌려준 입력, pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(),
 // drainNotices()를 JSON으로 이어 sha256을 잰다.
 //
@@ -32,6 +32,10 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // 각 시나리오의 세계 설명(spec)뿐이다: 거기에 field를 더하고 version을 올린다(계약 커밋이 robotSpec()에서 했다).
 // 다섯째는 4ab의 BIOBUZZ 기준이고 4c·4d가 지킨다(BIOBUZZ 벽 반폭과 고정 구조물 접촉, 4ab 코드로 잰 값. 4ab 리뷰 수정의
 // 참 분리 축 보충 행으로 다시 쟀다).
+//
+// 여섯째는 4c의 거리·컬러 센서 기준이고 4d가 지킨다(BIOBUZZ, 잡음 끔). 이 해시는 센서 계산의 Math.pow·acos·atan을 처음으로
+// 기준 해시에 넣는다(잡음 끔이라 log는 없다). 기존 해시도 sin·cos·sqrt에 기대므로 같은 성질이지만, Node·Electron을 올릴 때 다시
+// 볼 해시가 하나 는다.
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
@@ -57,6 +61,15 @@ type Tick = {
 
 // 틱마다 [k, 입력, 자세, 하중, 알림]을 모아 JSON의 sha256(hex)을 낸다
 function trace(s: Scenario, season: SeasonId = 'none'): { ticks: Tick[]; hash: string } {
+  return traceWith(s, season, (text) => text)
+}
+
+// nullable: JSON에서 허용한 null을 지운 글자(거리 센서의 범위 밖 distance: null만 허용한다)
+function traceWith(
+  s: Scenario,
+  season: SeasonId,
+  nullable: (text: string) => string
+): { ticks: Tick[]; hash: string } {
   // 4ab 계약: 넷째까지는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
   expect(s.spec.version).toBe(4)
   expect(s.spec.field).toEqual({ season, hiveTipped: [false, false] })
@@ -75,7 +88,7 @@ function trace(s: Scenario, season: SeasonId = 'none'): { ticks: Tick[]; hash: s
   const text = JSON.stringify(ticks.map((t) => [t.k, t.input, t.pose, t.loads, t.notices]))
   // 기준이 실패한 풀이를 담지 않게: LCP 실패 알림이 없고 모든 수가 유한하다(JSON에 null이 없다)
   expect(ticks.some((t) => t.notices.some((n) => n.code === 'worldError'))).toBe(false)
-  expect(text).not.toContain('null')
+  expect(nullable(text)).not.toContain('null')
   return { ticks, hash: createHash('sha256').update(text).digest('hex') }
 }
 
@@ -391,13 +404,78 @@ function biobuzzContact(): Scenario {
   return { spec, ticks: 800, time: uneven, out: (k) => outputs(drive(k)) }
 }
 
+// (6) 4c 센서(BIOBUZZ): 빨강 벽을 향한(요 −π/2) 메카넘이 FLOWER <3> 쪽(필드 +X = 로봇 왼쪽)으로 비스듬히 벽에 다가가 민 뒤
+// 물러난다. 거리 센서 둘(앞 가운데 h 0.14는 벽 판, 리프트 몸체 왼쪽 옆을 보는 것은 FLOWER 면), 컬러 센서 둘(섀시 앞 아래
+// d 0.015는 타일, 리프트 몸체 아래를 보는 것은 리프트 높이에 따라). 리프트는 올린 뒤 RUN_TO_POSITION, 고르지 않은 틱, 잡음 끔.
+function biobuzzSensors(): Scenario {
+  const lift = liftJoint()
+  const base = robotSpec(
+    { start: { x: 0.05, y: -0.9, yaw: -Math.PI / 2 } },
+    {
+      field: { season: 'biobuzz', hiveTipped: [false, false] },
+      joints: [lift],
+      distanceSensors: [
+        {
+          device: 'front',
+          mount: { body: -1, position: { x: HALF, y: 0, z: 0.14 }, rotation: ZERO }
+        },
+        {
+          device: 'side',
+          mount: {
+            body: 0,
+            position: { x: 0.15, y: HALF, z: 0.05 },
+            rotation: { x: 0, y: 0, z: Math.PI / 2 }
+          }
+        }
+      ],
+      colorSensors: [
+        {
+          device: 'floor',
+          mount: {
+            body: -1,
+            position: { x: HALF - 0.02, y: -0.1, z: 0.015 },
+            rotation: { x: 0, y: Math.PI / 2, z: 0 }
+          }
+        },
+        {
+          device: 'liftFloor',
+          mount: {
+            body: 0,
+            position: { x: 0.1, y: -0.15, z: -0.08 },
+            rotation: { x: 0, y: Math.PI / 2, z: 0 }
+          }
+        }
+      ]
+    }
+  )
+  const spec: WorldSpec = { ...base, motors: [...base.motors, liftMotor('lift')] }
+  // 요 −π/2: 로봇 앞 = 필드 −Y(빨강 벽), 로봇 왼쪽 = 필드 +X(FLOWER <3>)
+  const drive = (k: number): ReturnType<typeof mecanum> => {
+    if (k < 260) return mecanum(0.5, -0.2, 0)
+    if (k < 380) return mecanum(0.6, -0.2, 0)
+    if (k < 520) return mecanum(-0.5, 0.2, 0.1)
+    return mecanum(0, 0, 0)
+  }
+  const liftDrive = (k: number): DeviceValues => {
+    if (k < 120) return liftOut(1)
+    if (k < 400) return liftOut(0.8, { mode: 'RUN_TO_POSITION', targetPosition: 200 })
+    return liftOut(0, { zeroPower: 'FLOAT' })
+  }
+  return {
+    spec,
+    ticks: 600,
+    time: uneven,
+    out: (k) => ({ ...outputs(drive(k)), lift: liftDrive(k) })
+  }
+}
+
 // 시나리오가 덮으려는 것을 실제로 지나가는지(해시만으로는 시나리오가 아무 일도 하지 않아도 통과한다)
 const seen = (ticks: Tick[], device: string, key: string, value: unknown): boolean =>
   ticks.some((t) => t.input[device]?.[key] === value)
 const notified = (ticks: Tick[], code: string): boolean =>
   ticks.some((t) => t.notices.some((n) => n.code === code))
 
-describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ)", () => {
+describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서)", () => {
   it('메카넘 + Pinpoint + 리프트', () => {
     const { ticks, hash } = trace(mecanumLift())
     const last = ticks[ticks.length - 1].pose
@@ -448,6 +526,29 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(normals.some((k) => k.startsWith('ns5.'))).toBe(true)
     expect(ticks[ticks.length - 1].pose.blocked).toBe(false)
     expect(hash).toBe('ac93852541573361e073684b10d05900a5a35cd6ff928c4045d7f79bf4706f4f')
+  })
+
+  it('4c 거리·컬러 센서(BIOBUZZ, 같은 프로세스에서 두 번 바이트가 같다)', () => {
+    const first = traceWith(biobuzzSensors(), 'biobuzz', (text) =>
+      text.replaceAll('"distance":null', '')
+    )
+    const { ticks, hash } = traceWith(biobuzzSensors(), 'biobuzz', (text) =>
+      text.replaceAll('"distance":null', '')
+    )
+    expect(hash).toBe(first.hash)
+    // 덮으려는 것: 거리 센서가 범위 밖과 수를 오가고(앞은 벽 판, 옆은 FLOWER), 컬러 값이 바뀐다, 로봇이 벽·FLOWER에 막힌다
+    for (const device of ['front', 'side']) {
+      expect(seen(ticks, device, 'distance', null)).toBe(true)
+      expect(ticks.some((t) => typeof t.input[device]?.distance === 'number')).toBe(true)
+    }
+    expect(
+      new Set(ticks.map((t) => t.input.liftFloor?.red).filter((v) => v !== undefined)).size
+    ).toBeGreaterThan(3)
+    // 타일 위 컬러 센서는 첫 틱에 네 키를 보내고 그 뒤 값이 같아 다시 보내지 않는다
+    expect(ticks[0].input.floor).toEqual({ red: 309, green: 331, blue: 213, proximity: 288 })
+    expect(ticks.slice(1).every((t) => t.input.floor === undefined)).toBe(true)
+    expect(ticks.filter((t) => t.pose.blocked).length).toBeGreaterThan(20)
+    expect(hash).toBe('d73506bb7132142d9e74f547b281d680e8c955166f20f383a8987e1f8a6f2f2c')
   })
 
   it('바퀴·관절 없음', () => {

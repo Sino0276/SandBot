@@ -1,12 +1,14 @@
-import type { FieldRaycaster, SurfaceRef } from './fieldRaycast'
-import type { SensorPose } from './sensorFrame'
+import { MAX_RAY_RANGE, MIN_RAY_T, type FieldRaycaster, type SurfaceRef } from './fieldRaycast'
+import { sensorAxis, type SensorPose } from './sensorFrame'
+import { noiseGaussian, noiseUniform } from './sensorNoise'
 import type { Vec3 } from './worldSpec'
 
 // REV 2m 거리 센서(ST VL53L0X) 모델(spec-4c §1.4, synthesis §4.4·§4.5, 순수·결정적). 25° 원뿔의 61광선을 필드 기본형에
 // 쏘고(fieldRaycast.ts) 신호 가중 평균 거리와 신호 문턱으로 칩 거리를 만든다. 투명판은 거울 반환으로 더한다.
 //
-// 계약 커밋: 광선 배치·빔·상수는 구현했고(기즈모·시험이 쓰는 순수 계산), readRangeSensor는 "물체 없음" 스텁이다.
-// 4c A가 구현한다.
+// 광선 k의 확산 신호 s = w_k·ρ_nir·cos τ/t²(τ 입사각), 투명판 거울은 s = C·0.514·g(φ)/D²(φ 축과 벽 법선의 각, D 판 안쪽 면까지
+// 수직 거리, g = P(φ)/P̄). 보고 거리 d = (Σ확산 s·t/B + Σ거울 s·D)/Σs(B는 확산 광선에만, spec-4c §7.1-1), 유효 반사율
+// ρ_eff = Σs·d²/C, 문턱 d_max(ρ_eff)를 넘으면 범위 밖(null)이다. 정면 램버트 평면·정면 판·둘이 섞인 것 모두 정확히 D다.
 
 const DEG = Math.PI / 180
 
@@ -104,20 +106,119 @@ export type RangeReading = {
 // 측정 번호로 쓰는 틱 시각(tNanos) [가정: 잡음 분리(고정 ±10 mm, 측정마다 σ/√2)]
 export type RangeNoise = { seed: number; device: string; tNanos: number }
 
+// 회 17% 아래 가지의 지수: 칩 신호율 문턱(0.25 MCPS)은 신호에 선형이라 d_max ∝ ρ^0.5(REV 드라이버는 호스트 sigma 검사를
+// 하지 않는다, critique §3.1) [가정: 신호 가중 평균, 문턱 β, 흰색 1.2 m]
+const LOW_REFLECTANCE_EXPONENT = 0.5
+// 흰 88%·회 17%(DS Table 11·13의 표적 반사율)
+const WHITE_REFLECTANCE = 0.88
+const GREY_REFLECTANCE = 0.17
+
+// 최대 거리 d_max(ρ_eff): ρ ≥ 0.17이면 0.8·(min(ρ, 0.88)/0.17)^β(흰 88% 1.2 m와 회 17% 0.8 m를 정확히 지나고 0.17에서
+// 연속, ρ에 단조 비감소), 아래면 0.8·(ρ/0.17)^0.5
+export function tofMaxRange(reflectance: number): number {
+  if (reflectance >= GREY_REFLECTANCE)
+    return (
+      TOF_GREY_RANGE * (Math.min(reflectance, WHITE_REFLECTANCE) / GREY_REFLECTANCE) ** TOF_BETA
+    )
+  return TOF_GREY_RANGE * (reflectance / GREY_REFLECTANCE) ** LOW_REFLECTANCE_EXPONENT
+}
+
+// 장치 고정 오프셋의 크기(m): DS Table 14 오프셋 ±10 mm [가정: 잡음 분리(고정 ±10 mm, 측정마다 σ/√2)]
+export const TOF_NOISE_OFFSET = 0.01
+// 측정마다 잡음 σ = max(0.002, 0.0244·d³/ρ_eff)/√2(m): 흰 1.2 m 47.9 mm(4.0%), 회 0.7 m 49.2 mm(7.0%)로 DS Table 12의
+// 반복 정확도와 맞춘 식이고, 고정 오프셋과 나눠 √2로 나눈다 [가정: 잡음 분리]
+export const TOF_NOISE_FLOOR = 0.002
+export const TOF_NOISE_SCALE = 0.0244
+// 잡음 해시 흐름: 고정 오프셋은 균등 흐름 0(순번 0), 측정마다는 가우스 k = 1(균등 흐름 2·3, 순번 = 틱 시각 tNanos)
+const OFFSET_STREAM = 0
+const MEASUREMENT_GAUSSIAN = 1
+
+// 측정마다 잡음의 표준 편차(m)
+export function tofNoiseSigma(distance: number, reflectance: number): number {
+  return Math.max(TOF_NOISE_FLOOR, (TOF_NOISE_SCALE * distance ** 3) / reflectance) / Math.SQRT2
+}
+
+// 신호를 낸 면의 키(같은 면끼리 더한다)
+function surfaceKey(surface: SurfaceRef): string {
+  switch (surface.kind) {
+    case 'floor':
+      return 'floor'
+    case 'tape':
+    case 'structure':
+      return `${surface.kind}:${surface.index}`
+    case 'rail':
+    case 'panel':
+      return `${surface.kind}:${surface.wall}`
+  }
+}
+
 export function readRangeSensor(
   caster: FieldRaycaster,
   pose: SensorPose,
   noise?: RangeNoise
 ): RangeReading {
-  void caster
-  void pose
-  void noise
-  return {
-    distance: null,
-    raw: null,
-    reflectance: 0,
-    maxRange: 0,
-    surface: null,
-    rays: TOF_RAYS.map(() => null)
+  const o = pose.origin
+  const r = pose.rotation
+  const rays: (number | null)[] = []
+  // 면별 신호(처음 나온 순서: 축 광선부터 광선 순서, 거울은 마지막)
+  const bySurface = new Map<string, { surface: SurfaceRef; signal: number }>()
+  const addSignal = (surface: SurfaceRef, signal: number): void => {
+    const key = surfaceKey(surface)
+    const entry = bySurface.get(key)
+    if (entry) entry.signal += signal
+    else bySurface.set(key, { surface, signal })
   }
+  let diffuse = 0
+  let diffuseT = 0
+  for (const ray of TOF_RAYS) {
+    const d = ray.dir
+    const dir = {
+      x: r[0] * d.x + r[1] * d.y + r[2] * d.z,
+      y: r[3] * d.x + r[4] * d.y + r[5] * d.z,
+      z: r[6] * d.x + r[7] * d.y + r[8] * d.z
+    }
+    const hit = caster.cast(o, dir, MAX_RAY_RANGE)
+    rays.push(hit ? hit.t : null)
+    if (!hit) continue
+    const t = Math.max(hit.t, MIN_RAY_T)
+    const signal = (ray.weight * hit.nir * hit.cosIncidence) / (t * t)
+    diffuse += signal
+    diffuseT += signal * t
+    addSignal(hit.surface, signal)
+  }
+  let mirror = 0
+  let mirrorT = 0
+  for (const candidate of caster.panelMirrors(o, sensorAxis(pose))) {
+    const D = candidate.distance
+    const gain = tofBeam(candidate.angle) / TOF_BEAM_MEAN
+    const signal = (TOF_NORM * PANEL_MIRROR * gain) / (D * D)
+    mirror += signal
+    mirrorT += signal * D
+    addSignal({ kind: 'panel', wall: candidate.wall }, signal)
+  }
+  const total = diffuse + mirror
+  if (!(total > 0))
+    return { distance: null, raw: null, reflectance: 0, maxRange: 0, surface: null, rays }
+  const raw = (diffuseT / TOF_BIAS + mirrorT) / total
+  const reflectance = (total * raw * raw) / TOF_NORM
+  const maxRange = tofMaxRange(reflectance)
+  let surface: SurfaceRef | null = null
+  let strongest = 0
+  for (const entry of bySurface.values())
+    if (surface === null || entry.signal > strongest) {
+      surface = entry.surface
+      strongest = entry.signal
+    }
+  let distance: number | null = null
+  if (raw <= maxRange) {
+    let value = raw
+    if (noise) {
+      const offset =
+        (2 * noiseUniform(noise.seed, noise.device, OFFSET_STREAM, 0) - 1) * TOF_NOISE_OFFSET
+      const z = noiseGaussian(noise.seed, noise.device, MEASUREMENT_GAUSSIAN, noise.tNanos)
+      value = Math.max(0, raw + offset + tofNoiseSigma(raw, reflectance) * z)
+    }
+    distance = Math.round(value * 1000) / 1000
+  }
+  return { distance, raw, reflectance, maxRange, surface, rays }
 }
