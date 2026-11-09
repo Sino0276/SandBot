@@ -1,5 +1,10 @@
 import { AUTONOMOUS_SECONDS, type OpModeFlavor } from '../../../shared/play'
-import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
+import {
+  isTagsInput,
+  TAG_INPUT_STRIDE,
+  type DeviceValues,
+  type TelemetryFrame
+} from '../../../shared/sidecarProtocol'
 
 // 실행 화면(툴바 시간, Console 시각, 장치 표, 텔레메트리)에 보이는 값의 글자. 번역하지 않는 숫자·SDK 값만 다룬다.
 
@@ -50,6 +55,18 @@ export function formatDeviceValue(value: DeviceValues[string]): string {
   if (typeof value === 'number') return formatDeviceNumber(value)
   if (typeof value === 'string') return value
   return `[${value.map(formatDeviceNumber).join(', ')}]`
+}
+
+// 웹캠 입력 tags(4d)의 요약: 원소(태그마다 id와 꼭짓점 8칸) 대신 태그 수와 id 목록("34, 35, 36, 37"). 장치 탭이
+// devices.tags·devices.tagsNone으로 번역한다. tags 규칙(isTagsInput)에 맞지 않는 값이면 null(그대로 보인다)
+export function tagsInputSummary(
+  key: string,
+  value: DeviceValues[string]
+): { count: number; ids: string } | null {
+  if (!isTagsInput(key, value)) return null
+  const ids: number[] = []
+  for (let i = 0; i < value.length; i += TAG_INPUT_STRIDE) ids.push(value[i])
+  return { count: ids.length, ids: ids.join(', ') }
 }
 
 function formatDeviceNumber(value: number): string {

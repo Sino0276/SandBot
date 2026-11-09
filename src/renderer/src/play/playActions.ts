@@ -65,6 +65,8 @@ import {
   type WorldSpecResult
 } from './worldSpec'
 import { withSensorNoise, withSensorWarnings } from './worldSensors'
+import { runCamerasOf, withCameraWarnings } from './worldCameras'
+import { cameraSelfHit } from '../editor/hardware/cameraSelfHit'
 
 // 실행 흐름: OpMode 목록 읽기, INIT(필요하면 저장) → START → STOP, 일시 정지·한 단계·속도, 게임패드,
 // 그리고 메인의 PlayEvent를 스토어에 넣는 구독. JVM·컴파일·페이스는 메인(src/main/sidecar)이 맡는다.
@@ -465,6 +467,8 @@ async function runInit(): Promise<void> {
         body: sensor.body,
         mount: sensor.mount
       })),
+      // 시뮬레이터가 쓰는 웹캠 장착(4d, 세계 설명 cameras 순서, 실행 중 씬 뷰 기즈모가 그린다)
+      cameras: world ? runCamerasOf(world) : [],
       field: runField
     })
   })
@@ -548,6 +552,8 @@ async function runInit(): Promise<void> {
 // 문서·형상 판으로 캐시)을 쓴다. 시즌·HIVE 상태와 필드 경고(모르는 시즌, 시작 겹침)는 빌더 결과에 덧붙인다(withRunField).
 // 거리·컬러 센서(4c)는 형상 조회(scene/localBounds.ts objectLocalBounds)로 하우징 앞면에 두고, 센서 경고(형상 없음, 로봇에
 // 붙음, 하우징이 멂, 바닥 아래, 자기 로봇 가림)와 개인 실행 설정의 센서 잡음을 덧붙인다(withSensorWarnings·withSensorNoise).
+// 웹캠(4d) 경고(형상 없음, 로봇에 붙음, 렌즈가 멂, 자기 로봇 가림)는 센서 경고 뒤에 웹캠 하이어라키 순서로 더한다
+// (withCameraWarnings). 웹캠 꼭짓점 잡음은 센서 잡음과 같은 noise 칸이다.
 function worldFor(
   robotId: string,
   settings: PlayData['settings'],
@@ -570,10 +576,12 @@ function worldFor(
     } catch {
       // 막힌 저장소는 기본 단위
     }
+    const formatDistance = (meters: number): string =>
+      `${formatLength(meters, lengthUnit)} ${i18n.t(`units.symbols.${lengthUnit}`)}`
     const withSensors = withSensorWarnings(
       built,
       objects,
-      (meters) => `${formatLength(meters, lengthUnit)} ${i18n.t(`units.symbols.${lengthUnit}`)}`,
+      formatDistance,
       (sensor, reachM) =>
         sensorSelfHit(
           objects,
@@ -585,8 +593,11 @@ function worldFor(
         ),
       field.season
     )
-    // 시즌 경고는 센서 경고 뒤(필드 쪽 경고를 모아 둔다)
-    return withSensorNoise(withRunField(withSensors, doc, field, i18n.t), settings)
+    const withCameras = withCameraWarnings(withSensors, objects, formatDistance, (camera) =>
+      cameraSelfHit(objects, robotId, camera.objectId, camera.inRobot, camera.model)
+    )
+    // 시즌 경고는 센서·웹캠 경고 뒤(필드 쪽 경고를 모아 둔다)
+    return withSensorNoise(withRunField(withCameras, doc, field, i18n.t), settings)
   } catch (error) {
     return {
       spec: null,
@@ -594,7 +605,9 @@ function worldFor(
       jointObjectIds: [],
       jointMotorIds: [],
       sensors: [],
-      sensorExclusions: new Map()
+      sensorExclusions: new Map(),
+      cameras: [],
+      cameraExclusions: new Map()
     }
   }
 }

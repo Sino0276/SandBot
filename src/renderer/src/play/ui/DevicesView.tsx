@@ -7,19 +7,26 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import { ANGLE_DIGITS, formatNumber, LENGTH_DIGITS, toDisplayLength } from '../../units/units'
 import { deviceRows, jointRows, type DeviceRow, type JointRow } from '../deviceRows'
-import { formatDeviceValue } from '../playFormat'
+import { formatDeviceValue, tagsInputSummary } from '../playFormat'
 import { usePlayStore } from '../playStore'
 
 // 장치 탭: 사이드카가 보낸 장치 출력(약 20 Hz)과 시뮬레이터가 보낸 센서 값(허브 원시 값)을 하이어라키의 컴포넌트
 // 순서로. 행을 누르거나 Enter를 누르면 그 컴포넌트가 붙은 오브젝트를 고른다(씬에 없는 장치는 고를 수 없다).
 // 값은 SDK 단위 그대로다.
+// 웹캠 입력 tags(4d)는 원소 대신 "태그 N장: id…"로 요약한다(다른 배열 — 모터 PIDF — 은 그대로)
 function DeviceValueList({ values }: { values: DeviceRow['values'] }): React.JSX.Element {
+  const { t } = useTranslation()
   if (values.length === 0) return <>—</>
+  const text = (key: string, value: DeviceRow['values'][number][1]): string => {
+    const tags = tagsInputSummary(key, value)
+    if (!tags) return formatDeviceValue(value)
+    return tags.count === 0 ? t('devices.tagsNone') : t('devices.tags', tags)
+  }
   return (
     <>
       {values.map(([key, value]) => (
         <span key={key} className="devices-value">
-          <span className="devices-key">{key}</span>={formatDeviceValue(value)}
+          <span className="devices-key">{key}</span>={text(key, value)}
         </span>
       ))}
     </>
