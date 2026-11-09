@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!-- 시뮬레이터 통합 테스트(sidecar/tests/sim.test.ts I4)의 로봇 구성: SDK 샘플 RobotAutoDriveToLine_Linear의 이름 그대로
+     2륜(left_drive·right_drive)과 아래를 보는 REV Color Sensor V3(sensor_color) -->
+<Robot type="FirstInspires-FTC" name="Sim Line Bot">
+    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">
+        <LynxModule name="Control Hub" port="173">
+            <goBILDA5202SeriesMotor name="left_drive" port="0" />
+            <goBILDA5202SeriesMotor name="right_drive" port="1" />
+            <ControlHubImuBHI260AP name="imu" port="0" bus="0" />
+            <RevColorSensorV3 name="sensor_color" port="0" bus="1" />
+        </LynxModule>
+    </LynxUsbDevice>
+</Robot>
