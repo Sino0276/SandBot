@@ -951,3 +951,196 @@ describe('A17 밀어내지 않음·알림·행 한도', () => {
     expect(limits).toEqual([{ code: 'collisionLimit', params: {} }])
   })
 })
+
+describe('A18 결정성·행 키', () => {
+  // 섀시 상자 + 떨어지는 팔(볼록 상자)이 바닥에 닿고, 로봇이 왼쪽(+y 벽)으로 옆걸음해 막힌다
+  function scene(): WorldSpec {
+    const base = spec3d({ x: INNER - HALF - 0.15, y: INNER - HALF - 0.2, yaw: 0.3 })
+    const arm = joint({
+      type: 'revolute',
+      axis: { x: 0, y: 1, z: 0 },
+      origin: { position: { x: 0.1, y: 0, z: 0.3 }, rotation: ZERO },
+      limits: { lower: -2, upper: 2 },
+      body: {
+        mass: 0.5,
+        centerOfMass: { x: 0.15, y: 0, z: 0 },
+        inertia: [1e-4, 4e-3, 4e-3, 0, 0, 0]
+      },
+      friction: { coulomb: 0.01, viscous: 0 },
+      colliders: [convexBox({ x: 0.15, y: 0, z: 0 }, { x: 0.15, y: 0.02, z: 0.02 })]
+    })
+    return { ...base, joints: [arm] }
+  }
+  const run = (): { text: string; steps: string[][] } => {
+    const steps = recordRows()
+    const r = new Runner(scene()).run(1.5, (k) => outputs(mecanum(0, k < 150 ? -0.6 : 0, 0)))
+    vi.restoreAllMocks()
+    return { text: JSON.stringify([r.inputs, r.poses, r.world.drainNotices()]), steps }
+  }
+
+  it('A18 같은 세계 두 번 바이트 같음, 행 키가 하위 단계마다 유일하고 새 키는 c로 시작한다(지금 접두어 w·n·t·f·l·u와 다름)', () => {
+    const first = staticShapes(BIOBUZZ)
+    const snapshot = structuredClone(first)
+    const a = run()
+    // 다른 세계를 사이에 만든다
+    new Runner(robotSpec({}, { joints: [] })).run(0.05, () => outputs(mecanum(0.2, 0, 0)))
+    const b = run()
+    expect(b.text).toBe(a.text)
+    const collisionKeys = a.steps.flat().filter((k) => k.startsWith('c'))
+    expect(collisionKeys.length).toBeGreaterThan(100)
+    for (const keys of a.steps) expect(new Set(keys).size).toBe(keys.length)
+    for (const key of collisionKeys) expect(/^(cn|ct1|ct2|cw)\./.test(key)).toBe(true)
+    // 3D 섀시라 평면 벽 행(n·t + 벽 이름)은 없고 섀시–벽은 c 행이다
+    expect(a.steps.flat().some((k) => /^[nt][xy][+-]/.test(k))).toBe(false)
+    expect(a.steps.flat().some((k) => k.startsWith('cn.rk0/w'))).toBe(true)
+    expect(a.steps.flat().some((k) => k.startsWith('cn.j0k0/fl.'))).toBe(true)
+    // 얼린 정적 형상은 처음 값 그대로
+    expect(staticShapes(BIOBUZZ)).toBe(first)
+    expect(staticShapes(BIOBUZZ)).toEqual(snapshot)
+    expect(Object.isFrozen(first)).toBe(true)
+    expect(Object.isFrozen(first[0].hull!.vertices[0])).toBe(true)
+    expect(Object.isFrozen(first[0].hull!.faces)).toBe(true)
+  })
+})
+
+describe('A24 던짐 복구', () => {
+  it('A24 rows가 던지면 worldError 한 번, 그 하위 단계 속도 0, PhysicsWorld.step이 끝까지 돈다', () => {
+    const arm = joint({
+      type: 'revolute',
+      axis: { x: 0, y: 1, z: 0 },
+      origin: { position: { x: 0.2, y: 0, z: 0.3 }, rotation: ZERO },
+      limits: { lower: -2, upper: 2 },
+      body: {
+        mass: 0.5,
+        centerOfMass: { x: 0.15, y: 0, z: 0 },
+        inertia: [1e-4, 4e-3, 4e-3, 0, 0, 0]
+      },
+      colliders: [convexBox({ x: 0.15, y: 0, z: 0 }, { x: 0.15, y: 0.02, z: 0.02 })]
+    })
+    const r = new Runner(fixedSpec([arm]))
+    r.run(0.1, () => ({}))
+    // 다음 틱(하위 단계 다섯)은 모두 던진다
+    const original = BodyCollision.prototype.rows
+    let calls = 0
+    vi.spyOn(BodyCollision.prototype, 'rows').mockImplementation(function (
+      this: BodyCollision,
+      ...args: Parameters<BodyCollision['rows']>
+    ) {
+      calls++
+      if (calls <= 5) throw new Error('degenerate hull')
+      return original.apply(this, args)
+    })
+    const before = r.pose().joints![0]
+    expect(() => r.run(DT, () => ({}))).not.toThrow()
+    const art = (r.world as unknown as { articulation: Articulation }).articulation
+    expect(r.pose().joints![0]).toBe(before)
+    expect(art.v.every((x) => x === 0)).toBe(true)
+    r.run(0.2, () => ({}))
+    vi.restoreAllMocks()
+    expect(calls).toBeGreaterThan(5)
+    expect(r.pose().joints![0]).toBeGreaterThan(before)
+    expect(r.world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([
+      { code: 'worldError', params: { detail: 'degenerate hull' } }
+    ])
+  })
+})
+
+describe('A25 마찰 하중 상한', () => {
+  // 부유 기저(메카넘, 13.6 kg) + 리프트(z 직선, 모터 둘, 아래 발 상자). 발이 바닥 위 5 mm에서 내려와 누른다
+  function pressSpec(): WorldSpec {
+    const base = robotSpec({ start: { x: -0.8, y: 0, yaw: 0 } })
+    const lift = joint({
+      origin: { position: { x: 0.1, y: 0, z: 0.1 }, rotation: ZERO },
+      limits: { lower: -0.05, upper: 0.1 },
+      body: { mass: 0.5, centerOfMass: ZERO, inertia: [1e-3, 1e-3, 1e-3, 0, 0, 0] },
+      drive: {
+        kind: 'motor',
+        devices: ['liftA', 'liftB'],
+        ratio: 0.112 / (2 * Math.PI),
+        params: LIFT_PARAMS,
+        rigging: { kind: 'direct' }
+      },
+      colliders: [box({ x: 0, y: 0, z: -0.075 }, { x: 0.03, y: 0.03, z: 0.02 })]
+    })
+    return {
+      ...base,
+      motors: [...base.motors, motorSpec('liftA'), motorSpec('liftB')],
+      joints: [lift]
+    }
+  }
+  const weightOf = (spec: WorldSpec): number =>
+    (spec.robot.body.mass + spec.joints.reduce((s, j) => s + j.body.mass, 0)) * 9.80665
+
+  function press(power: number): {
+    r: Runner
+    caps: number[]
+    worstRatio: number
+    normalOverW: number
+    liftAt: number | null
+  } {
+    const spec = pressSpec()
+    const weight = weightOf(spec)
+    const caps: number[] = []
+    let worstRatio = 0
+    let normalOverW = 0
+    const original = Articulation.prototype.step
+    vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h: number,
+      drive: Parameters<Articulation['step']>[1],
+      contacts?: ContactSet
+    ) {
+      const result = original.call(this, h, drive, contacts)
+      let normal = 0
+      for (const row of contacts?.rows ?? []) {
+        if (!row.key.includes('j0k0/fl')) continue
+        if (row.key.startsWith('cn.')) normal += this.contactImpulse(row.key)
+        if (row.key.startsWith('ct1.') || row.key.startsWith('ct2.')) {
+          const f = row.friction as { mu: number; cap?: number }
+          caps.push((f.cap ?? Infinity) / (h * weight))
+          worstRatio = Math.max(
+            worstRatio,
+            Math.abs(this.contactImpulse(row.key)) / (f.mu * h * weight)
+          )
+        }
+      }
+      normalOverW = Math.max(normalOverW, normal / (h * weight))
+      return result
+    })
+    const r = new Runner(spec)
+    let liftAt: number | null = null
+    for (let k = 0; k < 300; k++) {
+      const pressing = k >= 40
+      r.run(DT, () => ({
+        ...outputs(mecanum(k >= 100 ? 1 : 0, 0, 0)),
+        liftA: motorOut(pressing ? power : 0, { zeroPower: 'FLOAT' }),
+        liftB: motorOut(pressing ? power : 0, { zeroPower: 'FLOAT' })
+      }))
+      if (r.world.drainNotices().some((n) => n.code === 'collisionLift') && liftAt === null)
+        liftAt = (k + 1) * DT
+    }
+    vi.restoreAllMocks()
+    return { r, caps, worstRatio, normalOverW, liftAt }
+  }
+
+  it('A25 모터 둘로 발을 바닥에 누르면 마찰 상자 ≤ μ·h·W, 로봇이 붙들리지 않고, collisionLift 한 번(0.1 s 뒤)', () => {
+    const { r, caps, worstRatio, normalOverW, liftAt } = press(-1)
+    // 누르는 힘이 로봇 무게를 넘는다(상한이 걸리는 장면)
+    expect(normalOverW).toBeGreaterThan(1.5)
+    expect(caps.length).toBeGreaterThan(100)
+    for (const cap of caps) expect(Math.abs(cap - 1)).toBeLessThan(1e-12)
+    expect(worstRatio).toBeLessThan(1 + 1e-9)
+    // 누르는 동안(0.5 s부터) 앞으로 간다: 발 마찰 ≤ μ·W라 바퀴 견인을 다 막지 못한다
+    const x0 = r.poses[99].x
+    expect(r.pose().x - x0).toBeGreaterThan(0.05)
+    // 누르기 시작(0.2 s) 뒤 내려오고(5 mm) 0.1 s 넘게 눌러야 알린다
+    expect(liftAt).not.toBeNull()
+    expect(liftAt!).toBeGreaterThan(0.2 + 0.1)
+  })
+
+  it('A25 누르지 않으면(발이 제 무게로 놓임) collisionLift가 없다', () => {
+    const { liftAt, normalOverW } = press(0)
+    expect(normalOverW).toBeLessThan(1)
+    expect(liftAt).toBeNull()
+  })
+})

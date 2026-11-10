@@ -335,6 +335,8 @@ type Prepared = {
   centroid: V3
   vertexCount: number
   faceCount: number
+  // 모서리마다 방향 b − a와 left·right 면 법선(9·E): 모서리 전체 질의의 Gauss 지도 판정이 배열을 만들지 않게
+  e: Float64Array
 }
 
 function prepare(hull: Hull, o: V3): Prepared {
@@ -355,6 +357,14 @@ function prepare(hull: Hull, o: V3): Prepared {
     n[3 * f + 2] = z
     d[f] = face.offset - (x * o[0] + y * o[1] + z * o[2])
   })
+  const e = new Float64Array(9 * hull.edges.length)
+  hull.edges.forEach((edge, k) => {
+    for (let c = 0; c < 3; c++) {
+      e[9 * k + c] = p[3 * edge.b + c] - p[3 * edge.a + c]
+      e[9 * k + 3 + c] = n[3 * edge.left + c]
+      e[9 * k + 6 + c] = n[3 * edge.right + c]
+    }
+  })
   return {
     hull,
     topo: topology(hull),
@@ -363,7 +373,8 @@ function prepare(hull: Hull, o: V3): Prepared {
     d,
     centroid: sub(arr(hull.centroid), o),
     vertexCount,
-    faceCount
+    faceCount,
+    e
   }
 }
 
@@ -445,8 +456,29 @@ export const SAT_COUNTERS = { edgeQueries: 0 }
 function edgeQuery(a: Prepared, b: Prepared, band: number): EdgeQuery | null {
   SAT_COUNTERS.edgeQueries++
   let best: EdgeQuery | null = null
-  for (let ea = 0; ea < a.hull.edges.length; ea++)
-    for (let eb = 0; eb < b.hull.edges.length; eb++) {
+  const ae = a.e
+  const be = b.e
+  const countA = a.hull.edges.length
+  const countB = b.hull.edges.length
+  for (let ea = 0; ea < countA; ea++) {
+    const oa = 9 * ea
+    const eAx = ae[oa]
+    const eAy = ae[oa + 1]
+    const eAz = ae[oa + 2]
+    const tolerance =
+      PARALLEL_EDGE_TOLERANCE * PARALLEL_EDGE_TOLERANCE * (eAx * eAx + eAy * eAy + eAz * eAz)
+    for (let eb = 0; eb < countB; eb++) {
+      // edgeAxis의 Minkowski 면·거의 나란함 판정을 같은 연산 순서로 먼저(지난 짝만 edgeAxis가 다시 재고 축을 만든다)
+      const ob = 9 * eb
+      const eBx = be[ob]
+      const eBy = be[ob + 1]
+      const eBz = be[ob + 2]
+      const cba = be[ob + 3] * eAx + be[ob + 4] * eAy + be[ob + 5] * eAz
+      const dba = be[ob + 6] * eAx + be[ob + 7] * eAy + be[ob + 8] * eAz
+      const adc = -(ae[oa + 3] * eBx + ae[oa + 4] * eBy + ae[oa + 5] * eBz)
+      const bdc = -(ae[oa + 6] * eBx + ae[oa + 7] * eBy + ae[oa + 8] * eBz)
+      if (!(cba * dba < 0 && adc * bdc < 0 && cba * bdc > 0)) continue
+      if (Math.max(cba * cba, dba * dba) < tolerance) continue
       const found = edgeAxis(a, b, ea, eb)
       if (!found) continue
       if (!best || found.sep > best.sep) {
@@ -454,6 +486,7 @@ function edgeQuery(a: Prepared, b: Prepared, band: number): EdgeQuery | null {
         if (found.sep > band) return best
       }
     }
+  }
   return best
 }
 
