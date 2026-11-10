@@ -88,6 +88,11 @@ const ko = {
     saveFailed: '저장하지 못했습니다 ({{detail}}).',
     noTeamCode: '{{name}}에 TeamCode 폴더가 없습니다. FtcRobotController 폴더가 맞는지 확인하세요.',
     cadMissing: 'CAD 파일 {{count}}개를 찾지 못했습니다. 인스펙터의 [파일 다시 찾기]로 연결하세요.',
+    // 필드 CAD 보기(4e): 버튼 이름은 그 버튼 글자(inspector.cad.relink)와 같아야 한다
+    fieldCadMissing:
+      '필드 CAD 파일 {{fileName}}을(를) 찾지 못했습니다. Field 인스펙터의 [파일 다시 찾기]로 연결하세요.',
+    fieldCadDropped:
+      'project.json의 필드 CAD 설정을 읽지 못해 버렸습니다. Field 인스펙터에서 다시 불러오세요.',
     cadChanged:
       '{{fileName}}의 파트 수가 저장할 때와 다릅니다. CAD가 바뀌어 일부 파트가 맞지 않을 수 있습니다.',
     codegenBlocked:
@@ -1454,7 +1459,7 @@ const ko = {
         tooSmall: '작음 {{count}}',
         grazing: '스침 {{count}}'
       },
-      hint: 'VisionPortal 기본(640×480, 데시메이션 3)으로 편집 자세에서 보이는 태그입니다. BIOBUZZ 태그는 바닥 위 0.9–1.3 m의 HIVE CELL 아래면에서 60° 아래를 봅니다. 카메라를 위로 25–35° 기울이면 잘 보입니다(기본 30°).',
+      hint: 'VisionPortal 기본(640×480, 데시메이션 3)으로 편집 자세에서 보이는 태그입니다. BIOBUZZ 태그는 바닥 위 0.9–1.3 m의 HIVE CELL 아래면에서 60° 아래를 봅니다.',
       // 줄 끝의 경고(여럿이면 이 순서)
       tails: {
         onRobot: '로봇·CAD 루트에 붙어 있어 피벗을 렌즈로 씁니다. 웹캠 파트에 붙이세요.',
@@ -2078,6 +2083,33 @@ const ko = {
         '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다.',
       showElements: '필드 요소 보이기',
       noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.',
+      showElementsCadHint: '끄면 CAD도 숨기고 단순 바닥·벽·테이프를 보입니다.',
+      // 필드 CAD 보기(4e, editor/field/FieldCadSection.tsx). 버튼·배지는 로봇 CAD 키(inspector.cad.*)를 그대로 쓴다.
+      cad: {
+        title: '필드 CAD (보기용)',
+        import: '필드 CAD 불러오기…',
+        chooseTitle: '필드 CAD STEP 파일 고르기',
+        hint: '공식 필드 STEP을 보기용으로 불러옵니다. 시뮬레이터·센서·비전은 계속 단순 형상을 씁니다. 파일은 복사하지 않고 위치만 기억합니다. 프로젝트 폴더 안에 두면 팀원도 같은 상대 경로로 찾습니다. 처음 한 번은 변환에 몇 분 걸릴 수 있습니다(그 뒤는 캐시).',
+        clear: '지우기',
+        unloaded: '불러오지 않음',
+        runningHint: '실행 중에는 필드 CAD를 불러오지 않습니다. 멈춘 뒤 불러오세요.',
+        forwardAxis: '필드 +X(관중석) 쪽 축',
+        alignHint:
+          'CAD의 위·앞 축을 필드 Z·+X에 맞춥니다. 원점은 옮기지 않으므로 CAD 원점이 중앙 타일 윗면이어야 합니다. 공식 필드 CAD는 Y-up입니다.',
+        stats: '메시 {{meshes}}개 · 삼각형 {{triangles}}개 · 투명판 {{glass}}개',
+        bounds: '필드 좌표 범위: X {{x}} · Y {{y}} · Z {{z}}',
+        alignSuspect:
+          '정렬이 맞지 않는 것 같습니다(높이가 바닥 폭보다 크거나 바닥 Z 0이 범위 밖). 위 축과 필드 +X 쪽 축을 확인하세요.',
+        showShapes: '단순 형상도 보기',
+        showShapesHint:
+          '시뮬레이터가 막거나 보는 데 쓰는 바닥·테이프·벽·구조물을 초록 윤곽선으로 겹쳐 봅니다. 가려진 선은 흐리게 보입니다. 보기 상태라 저장하지 않습니다.',
+        hiveTippedNote:
+          'CAD의 HIVE는 시작 상태로 그립니다. 넘어간 HIVE는 단순 CELL·태그로 겹쳐 보입니다.',
+        hiddenNote:
+          '필드 요소를 숨기거나 고립 보기 중이라 CAD를 그리지 않고 단순 바닥·벽·테이프를 보입니다.',
+        simpleSeasonNote:
+          '이 시즌은 CAD와 다른 공칭 단순 형상(벽 반폭 등)을 씁니다. [단순 형상도 보기]로 비교하세요.'
+      },
       // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
       clusters: {
         title: 'AprilTag 묶음(SDK 라이브러리용)',

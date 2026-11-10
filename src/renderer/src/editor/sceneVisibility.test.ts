@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SceneObject, SceneObjects } from '../scene/model'
+import { useSceneStore } from '../scene/sceneStore'
 import {
   exitIsolation,
   isHiddenInScene,
   resetSceneVisibility,
   rowVisibilities,
+  setFieldHidden,
+  setFieldShapesShown,
   toggleIsolation,
   toggleRowVisibility,
   toggleSelectionVisibility,
@@ -79,5 +82,29 @@ describe('고립 보기(Shift+H)', () => {
     toggleIsolation(SCENE, ['c'])
     exitIsolation()
     expect(shownInScene()).toEqual(['robot', 'cad', 'a', 'c'])
+  })
+})
+
+// spec-4e §6 K7: "단순 형상도 보기" 보기 플래그
+describe('fieldShapesShown', () => {
+  it('기본 false, 같은 값이면 상태 그대로, 리셋이 false로 되돌리고 sceneStore를 바꾸지 않는다', () => {
+    resetSceneVisibility()
+    expect(useSceneVisibilityStore.getState().fieldShapesShown).toBe(false)
+    const scene = useSceneStore.getState()
+    const before = useSceneVisibilityStore.getState()
+    setFieldShapesShown(false)
+    expect(useSceneVisibilityStore.getState()).toBe(before)
+    setFieldShapesShown(true)
+    expect(useSceneVisibilityStore.getState().fieldShapesShown).toBe(true)
+    const shown = useSceneVisibilityStore.getState()
+    setFieldShapesShown(true)
+    expect(useSceneVisibilityStore.getState()).toBe(shown)
+    setFieldHidden(true)
+    resetSceneVisibility()
+    expect(useSceneVisibilityStore.getState()).toMatchObject({
+      fieldShapesShown: false,
+      fieldHidden: false
+    })
+    expect(useSceneStore.getState()).toBe(scene)
   })
 })

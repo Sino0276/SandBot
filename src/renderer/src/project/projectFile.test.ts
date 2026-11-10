@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { FieldDoc } from '../scene/fieldDoc'
 import { createGroup, moveObjects } from '../scene/hierarchy'
 import type { JointSettings, SceneObjects } from '../scene/model'
-import { parseProject, PROJECT_VERSION, ProjectFileError, serializeProject } from './projectFile'
+import {
+  parseProject,
+  PROJECT_VERSION,
+  ProjectFileError,
+  serializeProject,
+  type StoredCadFile
+} from './projectFile'
 
 const objects: SceneObjects = {
   robot: {
@@ -78,7 +84,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, FIELD, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 10 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 11 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -961,5 +967,138 @@ describe('필드(v10)', () => {
     // 경계: 64자, 소문자로 시작하는 영숫자(대문자·숫자 포함)는 받는다
     for (const season of ['a'.repeat(64), 'decode2027', 'intoTheDeep', 'x'])
       expect(codeOf(withField({ season })), season).toBeUndefined()
+  })
+})
+
+describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
+  const VISUAL = {
+    fileName: 'field-cad-step.step',
+    absolutePath: '/home/team/field/field-cad-step.step',
+    upAxis: '+Y',
+    forwardAxis: '+Z'
+  } as const
+  const WITH_VISUAL: FieldDoc = { season: 'biobuzz', visual: { ...VISUAL } }
+
+  // A1
+  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 11과 키를 골라 쓴 모양이다', () => {
+    const content = serializeProject(objects, WITH_VISUAL, relativize)
+    const data = JSON.parse(content)
+    expect(data.version).toBe(11)
+    expect(PROJECT_VERSION).toBe(11)
+    expect(data.field).toEqual({
+      season: 'biobuzz',
+      visual: {
+        fileName: 'field-cad-step.step',
+        upAxis: '+Y',
+        forwardAxis: '+Z',
+        file: {
+          relativePath: '../field/field-cad-step.step',
+          absolutePath: '/home/team/field/field-cad-step.step'
+        }
+      }
+    })
+    // 키 순서도 명세 모양 그대로(git diff로 읽는 파일)
+    expect(Object.keys(data.field.visual)).toEqual(['fileName', 'upAxis', 'forwardAxis', 'file'])
+    const loaded = parseProject(content)
+    expect(loaded.field).toEqual(WITH_VISUAL)
+    expect(loaded.fieldVisualFile).toEqual({
+      relativePath: '../field/field-cad-step.step',
+      absolutePath: '/home/team/field/field-cad-step.step'
+    })
+    expect(loaded.fieldVisualDropped).toBe(false)
+    expect(serializeProject(loaded.objects, loaded.field, relativize)).toBe(content)
+  })
+
+  it('문서 visual에 끼운 다른 키는 파일에 없다', () => {
+    const extra = { season: 'biobuzz', visual: { ...VISUAL, extra: 1 } } as FieldDoc
+    const { visual } = JSON.parse(serializeProject(objects, extra, relativize)).field
+    expect(Object.keys(visual)).toEqual(['fileName', 'upAxis', 'forwardAxis', 'file'])
+  })
+
+  it('절대 경로가 비면 relativePath는 null이다', () => {
+    const empty: FieldDoc = { season: 'none', visual: { ...VISUAL, absolutePath: '' } }
+    const { visual } = JSON.parse(serializeProject(objects, empty, relativize)).field
+    expect(visual.file).toEqual({ relativePath: null, absolutePath: '' })
+  })
+
+  it('못 찾은 필드 CAD의 파일 값은 절대 경로가 같을 때만 그대로 쓴다(비평 U2)', () => {
+    const kept: StoredCadFile = {
+      relativePath: '../field/field.step',
+      absolutePath: VISUAL.absolutePath
+    }
+    const write = (fieldVisualFile: StoredCadFile | null): unknown =>
+      JSON.parse(serializeProject(objects, WITH_VISUAL, () => 'relativized', { fieldVisualFile }))
+        .field.visual.file
+    expect(write(kept)).toEqual(kept)
+    // 경로가 다르면(다시 찾음) 지금 경로로 다시 계산한다
+    expect(write({ ...kept, absolutePath: '/other.step' })).toEqual({
+      relativePath: 'relativized',
+      absolutePath: VISUAL.absolutePath
+    })
+    expect(write(null)).toEqual({ relativePath: 'relativized', absolutePath: VISUAL.absolutePath })
+  })
+
+  // A2
+  it('visual 없는 field는 season만 쓴다(version만 11)', () => {
+    const content = serializeProject(objects, { season: 'biobuzz' }, relativize)
+    expect(JSON.parse(content).field).toEqual({ season: 'biobuzz' })
+    expect(content).toContain('"field": {\n    "season": "biobuzz"\n  }')
+    const loaded = parseProject(content)
+    expect('visual' in loaded.field).toBe(false)
+    expect(loaded.fieldVisualFile).toBeNull()
+    expect(loaded.fieldVisualDropped).toBe(false)
+  })
+
+  it('v10 파일은 visual 키가 있어도 버리고, 다시 쓰면 v11이다', () => {
+    const data = JSON.parse(serializeProject(objects, WITH_VISUAL, relativize))
+    data.version = 10
+    const loaded = parseProject(JSON.stringify(data))
+    expect(loaded.field).toEqual({ season: 'biobuzz' })
+    expect('visual' in loaded.field).toBe(false)
+    expect(loaded.fieldVisualFile).toBeNull()
+    expect(loaded.fieldVisualDropped).toBe(false)
+    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(11)
+  })
+
+  // A3
+  it('틀린 visual은 버리고 파일은 연다(fieldVisualDropped), season이 틀리면 지금처럼 invalidData', () => {
+    const good = JSON.parse(serializeProject(objects, WITH_VISUAL, relativize)).field.visual
+    const withVisual = (visual: unknown): string => {
+      const data = JSON.parse(serializeProject(objects, WITH_VISUAL, relativize))
+      data.field.visual = visual
+      return JSON.stringify(data)
+    }
+    const { file, ...rest } = good
+    const cases: unknown[] = [
+      [good],
+      'field.step',
+      null,
+      { ...good, fileName: 3 },
+      { ...good, upAxis: 'Y' },
+      { ...good, upAxis: '+Y', forwardAxis: '-Y' },
+      rest,
+      { ...good, file: { ...file, relativePath: 3 } },
+      { ...good, file: { relativePath: file.relativePath } },
+      { ...good, file: 'x' }
+    ]
+    for (const visual of cases) {
+      const loaded = parseProject(withVisual(visual))
+      expect(loaded.objects, JSON.stringify(visual)).toEqual(objects)
+      expect(loaded.field).toEqual({ season: 'biobuzz' })
+      expect('visual' in loaded.field).toBe(false)
+      expect(loaded.fieldVisualDropped, JSON.stringify(visual)).toBe(true)
+      expect(loaded.fieldVisualFile).toBeNull()
+    }
+    // relativePath null은 맞는 값이다. visual의 다른 키는 버린다.
+    const loaded = parseProject(
+      withVisual({ ...good, extra: 1, file: { ...file, relativePath: null, more: 2 } })
+    )
+    expect(loaded.fieldVisualDropped).toBe(false)
+    expect(loaded.field.visual).toEqual(VISUAL)
+    expect(loaded.fieldVisualFile).toEqual({ relativePath: null, absolutePath: file.absolutePath })
+    // season이 틀리면 visual과 관계없이 파일 오류다
+    const bad = JSON.parse(withVisual(good))
+    bad.field.season = 'Bad'
+    expect(() => parseProject(JSON.stringify(bad))).toThrow('invalidData: field')
   })
 })

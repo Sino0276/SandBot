@@ -225,7 +225,7 @@ export function sensorMountInRobot(
 // 조준(rad, 로봇 좌표): yaw는 로봇 +X에서 반시계 +, pitch는 올려본각(위 +), roll은 광축 둘레(카메라 뒤에서 볼 때 시계 방향 +)
 export type CameraAim = { yaw: number; pitch: number; roll: number }
 
-// 웹캠 조준 속성을 카탈로그 기본·범위로 읽는다(sensorAim과 같은 규칙: 없음·NaN·범위 밖이면 기본값, pitch 기본 π/6)
+// 웹캠 조준 속성을 카탈로그 기본·범위로 읽는다(sensorAim과 같은 규칙: 없음·NaN·범위 밖이면 기본값, pitch 기본 0(수평))
 export function cameraAim(props: HardwareComponent['props']): CameraAim {
   const read = (key: 'aimYaw' | 'aimPitch' | 'aimRoll'): number => {
     const def = COMPONENT_TYPES.webcam.properties.find((property) => property.key === key)

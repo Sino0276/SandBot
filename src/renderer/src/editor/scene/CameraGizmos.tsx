@@ -184,7 +184,8 @@ function CameraGizmo({
   materials: GizmoMaterials
 }): React.JSX.Element | null {
   const objects = useSceneStore((state) => state.objects)
-  const fieldDoc = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const docSeason = useSceneStore((state) => state.field.season)
   const revision = useSceneStore((state) => state.geometryRevision)
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   // 기즈모가 쓰는 실행 값만 구독한다(4c SensorGizmos와 같은 이유: 텔레메트리·장치마다 run이 새 객체가 되어도 그대로)
@@ -223,7 +224,7 @@ function CameraGizmo({
           ? 'notInRun'
           : (cameraExclusions(objects, target.robotId).get(target.key) ?? null)
     const locked = lockedRunField(run)
-    const season = locked?.season ?? documentSeasonId(fieldDoc)
+    const season = locked?.season ?? documentSeasonId({ season: docSeason })
     const hiveTipped = locked?.hiveTipped ?? hiveTippedOf(hiveState)
     const spec = resolveSeason(season)
     const lens = trueIntrinsics(pose.model, PREVIEW_WIDTH, PREVIEW_HEIGHT)
@@ -248,7 +249,7 @@ function CameraGizmo({
       excluded: exclusion !== null,
       tags: observations ? { field: spec, hiveTipped, observations } : null
     })
-  }, [objects, fieldDoc, revision, hiveState, runKey, simPose, preview, target])
+  }, [objects, docSeason, revision, hiveState, runKey, simPose, preview, target])
   useEffect(() => {
     invalidate()
     return () => invalidate()

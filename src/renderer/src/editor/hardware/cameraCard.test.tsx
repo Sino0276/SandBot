@@ -110,7 +110,7 @@ const render = (component: HardwareComponent, objects: SceneObjects = scene(comp
 const POSITION = 'Position(INCH, -1.97, 7.87, 11.81)'
 
 describe('웹캠 카드', () => {
-  it('C3: 기본 위 30° → YawPitchRollAngles(DEGREES, 0.0, -60.0, 0.0), 수평·왼쪽 90°·롤 20°', () => {
+  it('C3: 저장된 위 30°(4d 기본이던 값) → YawPitchRollAngles(DEGREES, 0.0, -60.0, 0.0), 수평·왼쪽 90°·롤 20°', () => {
     const cases: [Record<string, number>, string][] = [
       [{}, 'YawPitchRollAngles(DEGREES, 0.0, -60.0, 0.0)'],
       [{ aimPitch: 0 }, 'YawPitchRollAngles(DEGREES, 0.0, -90.0, 0.0)'],

@@ -91,6 +91,11 @@ const en: Messages = {
     noTeamCode: '{{name}} has no TeamCode folder. Make sure it is an FtcRobotController folder.',
     cadMissing:
       'Could not find {{count}} CAD file(s). Use [Locate file] in the Inspector to relink.',
+    // Field CAD view (4e): the button name must match that button's text (inspector.cad.relink)
+    fieldCadMissing:
+      'Could not find the field CAD file {{fileName}}. Use [Locate file] in the Field inspector to relink.',
+    fieldCadDropped:
+      'Could not read the field CAD setting in project.json, so it was dropped. Import it again in the Field inspector.',
     cadChanged:
       'The part count of {{fileName}} differs from when it was saved. The CAD may have changed, so some parts may not match.',
     codegenBlocked:
@@ -1452,7 +1457,7 @@ const en: Messages = {
         tooSmall: 'too small {{count}}',
         grazing: 'grazing {{count}}'
       },
-      hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down. Tilting the camera up 25–35° sees them well (default 30°).',
+      hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down.',
       // 줄 끝의 경고(여럿이면 이 순서)
       tails: {
         onRobot:
@@ -2086,6 +2091,34 @@ const en: Messages = {
         'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT.',
       showElements: 'Show field elements',
       noStartPresets: 'This season has no start position presets.',
+      showElementsCadHint:
+        'Turning this off also hides the CAD and shows the simple floor, walls and tape.',
+      // Field CAD view (4e, editor/field/FieldCadSection.tsx). Buttons and badges reuse the robot CAD keys (inspector.cad.*).
+      cad: {
+        title: 'Field CAD (view only)',
+        import: 'Import field CAD…',
+        chooseTitle: 'Choose a field CAD STEP file',
+        hint: 'Imports the official field STEP for viewing only. The simulator, sensors and vision keep using the simple shapes. The file is not copied; only its location is remembered. Keep it inside the project folder so teammates find it at the same relative path. The first conversion can take a few minutes (cached after that).',
+        clear: 'Remove',
+        unloaded: 'Not loaded',
+        runningHint: 'The field CAD is not imported while running. Stop the run first.',
+        forwardAxis: 'Axis toward field +X (audience)',
+        alignHint:
+          'Maps the CAD up and front axes to field Z and +X. The origin is not moved, so the CAD origin must be the top of the center tile. The official field CAD is Y-up.',
+        stats: '{{meshes}} meshes · {{triangles}} triangles · {{glass}} glass panels',
+        bounds: 'Field extent: X {{x}} · Y {{y}} · Z {{z}}',
+        alignSuspect:
+          'The alignment looks wrong (the height exceeds the floor size, or floor Z 0 is outside the extent). Check the up axis and the field +X axis.',
+        showShapes: 'Show simple shapes',
+        showShapesHint:
+          'Overlays the floor, tape, walls and structures that the simulator uses for blocking and sensing as green outlines. Hidden lines are drawn faint. This is a view setting and is not saved.',
+        hiveTippedNote:
+          'The CAD HIVE is drawn in its starting state. A tipped HIVE is overlaid with the simple CELLs and tags.',
+        hiddenNote:
+          'Field elements are hidden or isolation is on, so the CAD is not drawn and the simple floor, walls and tape are shown.',
+        simpleSeasonNote:
+          'This season uses nominal simple shapes that differ from the CAD (wall half-width etc.). Compare them with [Show simple shapes].'
+      },
       // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
       clusters: {
         title: 'AprilTag clusters (for SDK libraries)',
