@@ -130,8 +130,10 @@ describe('buildWorldSpec 웹캠 목록', () => {
     expect(spec.cameras[1].mount.rotation).toEqual(
       cameraAimRotation({ yaw: Math.PI, pitch: 20 * DEG, roll: 10 * DEG })
     )
-    // 기본 조준(위 30°): 회전 (0, −π/6, 0)
-    expect(spec.cameras[2].mount.rotation).toEqual({ x: 0, y: -Math.PI / 6, z: 0 })
+    // 기본 조준(수평, spec-4e §1.1): 회전 (0, 0, 0)이고 −0이 없다
+    const level = spec.cameras[2].mount.rotation
+    expect(level).toEqual({ x: 0, y: 0, z: 0 })
+    expect(Object.is(level.x, 0) && Object.is(level.y, 0) && Object.is(level.z, 0)).toBe(true)
     expect(typeof parseWorldSpec(JSON.parse(JSON.stringify(spec)))).toBe('object')
     // 실행 상태 run.cameras(세계 설명 cameras 순서)
     expect(runCamerasOf(result)).toEqual(
