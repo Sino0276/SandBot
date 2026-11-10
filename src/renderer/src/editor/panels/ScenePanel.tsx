@@ -17,6 +17,7 @@ import FocusController from '../scene/FocusController'
 import FrameAxes from '../scene/FrameAxes'
 import ImuIndicators from '../scene/ImuIndicators'
 import SensorGizmos from '../scene/SensorGizmos'
+import ColliderGizmos from '../collider/ColliderGizmos'
 import CameraGizmos from '../scene/CameraGizmos'
 import { FIELD_VIEW_POSITION } from '../scene/frameHooks'
 import SceneObjectsView from '../scene/SceneObjectsView'
@@ -157,6 +158,8 @@ function ScenePanel(): React.JSX.Element {
         {/* 고른 오브젝트(와 상위)의 거리·컬러 센서 원뿔·발자국(4c) */}
         <SensorGizmos />
         <CameraGizmos />
+        {/* 고른 오브젝트(와 상위·하위 관절)의 몸체 충돌 형상(5, Unity 충돌체 기즈모) */}
+        <ColliderGizmos />
         <TransformHandles />
         <EditorCameraControls />
         <FocusController />

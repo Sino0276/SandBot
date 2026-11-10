@@ -6,6 +6,9 @@ import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import { generatedHash } from '../../../shared/generatedFiles'
 import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
 import { parseWorldSpec, WORLD_SPEC_VERSION, type WorldSpec } from '../../../shared/sim/worldSpec'
+import { startOverlaps } from '../../../shared/sim/collision3d'
+import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
+import { meshHullOf } from '../cad/stepImport'
 import type {
   GrantCodeTrustResult,
   ListOpModesResult,
@@ -73,6 +76,11 @@ import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
 // 자기 로봇 가림(갈래 C가 BVH로 구현)은 시험 이중으로 바꾼다(기본: 가림 없음, spec-4c B11)
 vi.mock('../editor/hardware/sensorSelfHit', () => ({ sensorSelfHit: vi.fn(() => null) }))
+// 3D 시작 겹침(spec-5 §3.8, 갈래 A가 구현)은 기본으로 진짜 함수를 쓰고, 시즌 시작 겹침 시험만 갈래 B 시험 이중으로 바꾼다
+vi.mock('../../../shared/sim/collision3d', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../shared/sim/collision3d')>()
+  return { ...actual, startOverlaps: vi.fn(actual.startOverlaps) }
+})
 
 const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
 
@@ -534,6 +542,20 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       .getState()
       .entries.filter((entry) => entry.type === 'notice')
       .map((entry) => (entry.type === 'notice' ? entry.key : null))
+  // 바퀴 메시 형상과 메시 껍질(STEP 워커가 내는 것, spec-5 §5.3)을 등록해 둔다(읽는 중인 메시가 없는 씬: 충돌 형상 경고가 없다)
+  const WHEEL_MESHES = ['wheel', 'wheelFR', 'wheelBL', 'wheelBR']
+  beforeEach(() => {
+    for (const id of WHEEL_MESHES) {
+      const geometry = new BoxGeometry(0.096, 0.096, 0.096)
+      registerGeometry(`g:${id}`, geometry, {
+        hull: meshHullOf(geometry.getAttribute('position').array)
+      })
+    }
+  })
+  afterEach(() => {
+    for (const id of WHEEL_MESHES) disposeGeometry(`g:${id}`)
+    vi.mocked(startOverlaps).mockReset()
+  })
 
   it('구성과 같은 로봇의 세계 설명을 보낸다', async () => {
     useSceneStore.setState({ objects: withWheel() })
@@ -808,6 +830,17 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     })
 
     it('B9: none 벽에 붙인 바퀴 로봇을 BIOBUZZ로 INIT하면 worldStartOverlap(실행은 막지 않는다)', async () => {
+      // 섀시는 3D 경로다(형상 조회를 늘 넘긴다, spec-5 §5.6). 시작 겹침 판정은 갈래 A의 startOverlaps라 여기서는 섀시 외곽
+      // 프리즘으로 같은 판정을 하는 시험 이중을 쓴다(진짜 함수와 잇는 시험은 통합 I3)
+      vi.mocked(startOverlaps).mockImplementation((spec, field) => {
+        const found = fieldOverlaps(
+          field,
+          spec.robot.footprint,
+          spec.robot.start,
+          spec.robot.height
+        )
+        return found.length > 0 ? [{ body: -1, targets: found }] : []
+      })
       useSceneStore.setState({ objects: atNoneWall(), field: { season: 'biobuzz' } })
       await initPlay()
       expect(lastRequest().world).not.toBeNull()

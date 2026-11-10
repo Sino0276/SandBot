@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
 import { startOverlaps } from '../../../shared/sim/collision3d'
-import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
+import { fieldOverlaps, type FieldOverlap } from '../../../shared/sim/seasons/fieldGeometry'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
 import {
@@ -18,6 +18,8 @@ import {
   type SimMotorSpec,
   type SimOtosSpec,
   type SimBody,
+  type SimBodyPair,
+  type SimCollider,
   type SimPinpointSpec,
   type SimWheelSpec,
   type Vec2,
@@ -65,7 +67,7 @@ import {
   type WorldSensorEntry
 } from './worldSensors'
 import { buildWorldCameras, type CameraExclusion, type WorldCameraEntry } from './worldCameras'
-import type { IgnoredPair, WorldColliderBody } from './worldColliders'
+import { buildCollisionModel, type IgnoredPair, type WorldColliderBody } from './worldColliders'
 import type { ColliderShapeLookup } from '../scene/meshHull'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
@@ -515,7 +517,9 @@ export function robotNeedsMassModel(objects: SceneObjects, robotId: string): boo
 // (로봇 카드 경로. INIT은 playActions.worldFor가 형상 경고를 withSensorWarnings로 더한다). 센서 잡음은 끔으로 둔다
 // (worldFor가 withSensorNoise로 넣는다).
 // shapes는 충돌 형상 조회다(spec-5 §5.5): null이면 충돌 형상을 넣지 않는다(세계 설명에 키가 없음, 로봇 카드·motorDrivesJoint
-// 경로). 계약 커밋에서는 아직 쓰지 않는다(5 B가 buildCollisionModel로 넣는다).
+// 경로). 있으면(INIT: scene/meshHull.ts objectHullPoints) 몸체마다 충돌 형상(play/worldColliders.ts buildCollisionModel)을
+// robot.colliders(늘 배열)·joints[i].colliders(비면 키 없음)·collisionIgnore(비면 키 없음)로 넣고 충돌 경고를 질량 경고 뒤, 센서
+// 경고 앞에 더한다.
 export function buildWorldSpec(
   objects: SceneObjects,
   robotId: string,
@@ -524,7 +528,6 @@ export function buildWorldSpec(
   bounds: LocalBoundsLookup | null = null,
   shapes: ColliderShapeLookup | null = null
 ): WorldSpecResult {
-  void shapes
   const robot = objects[robotId]
   if (!robot || robot.kind !== 'robot') return emptyResult([])
   const warnings: WorldWarning[] = []
@@ -696,6 +699,21 @@ export function buildWorldSpec(
     imus: capped(imus, MAX_WORLD_SENSORS, 'worldTooManyImus', warnings),
     joints: joints.joints
   }
+  // 충돌 형상(5): 몸체(jointBodyFrames, 관절과 같은 몸체)마다 Collider·자동 볼록 껍질·섀시 대체 상자와 편집 자세 겹침 무시 짝
+  const collision = shapes
+    ? buildCollisionModel({
+        objects,
+        robotId,
+        joints: joints.bodyFrames,
+        shapes,
+        outline: { footprint, height }
+      })
+    : null
+  if (collision) warnings.push(...collision.warnings)
+  const bodyColliders = (body: number): SimCollider[] =>
+    collision?.bodies.find((entry) => entry.body === body)?.colliders.map((e) => e.collider) ?? []
+  const collisionIgnore: SimBodyPair[] =
+    collision?.pairs.filter((pair) => !pair.forced).map((pair) => [pair.a, pair.b]) ?? []
   // 거리·컬러 센서(4c): 이름은 위에서 실제로 낸 장치·허브 이름과 겹치지 않게 거른다(겹치면 parseWorldSpec이 세계 전체를
   // 거절하거나 사이드카가 장치를 만들지 못한다, spec-4c §3 O3)
   const sensors = buildWorldSensors({
@@ -729,7 +747,9 @@ export function buildWorldSpec(
       start: { x, y, yaw: wrapAngle(robot.transform.rotation[2]) },
       footprint,
       height,
-      body
+      body,
+      // 섀시 충돌 형상(5): 형상 조회가 있으면 늘 배열(빈 배열은 섀시 Collider를 모두 끈 것). 없으면 키가 없다(평면 프리즘 경로)
+      ...(collision ? { colliders: bodyColliders(-1) } : {})
     },
     batteryVoltage: settings.batteryVoltage,
     hubs: devices.hubs,
@@ -739,13 +759,19 @@ export function buildWorldSpec(
     pinpoints: devices.pinpoints,
     otos: devices.otos,
     imus: devices.imus,
-    joints: joints.joints,
+    // 관절 몸체 충돌 형상(5)은 있을 때만 키를 둔다
+    joints: joints.joints.map((joint, i) => {
+      const colliders = bodyColliders(i)
+      return colliders.length > 0 ? { ...joint, colliders } : joint
+    }),
     distanceSensors: sensors.distanceSensors,
     colorSensors: sensors.colorSensors,
     // 잡음은 끔(playActions.worldFor가 개인 실행 설정으로 withSensorNoise)
     noise: { enabled: false, seed: 0 },
     // 웹캠(4d, play/worldCameras.ts)
-    cameras: cameras.cameras
+    cameras: cameras.cameras,
+    // 편집 자세에서 겹친 자기 몸체 짝(5, [그래도 충돌]은 뺌). 비면 키가 없다
+    ...(collisionIgnore.length > 0 ? { collisionIgnore } : {})
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
@@ -761,8 +787,8 @@ export function buildWorldSpec(
     sensorExclusions: sensors.exclusions,
     cameras: cameras.entries,
     cameraExclusions: cameras.exclusions,
-    colliders: [],
-    ignoredPairs: []
+    colliders: collision?.bodies ?? [],
+    ignoredPairs: collision?.pairs ?? []
   }
 }
 
@@ -778,11 +804,14 @@ export function runFieldOf(doc: FieldDoc, hiveState: HiveState): PlayRunField {
 // 빌더 결과(buildWorldSpec, 시즌 'none' 기본)에 실행의 시즌·HIVE 상태를 넣고 필드 경고를 더한다(spec-4ab §3, INIT의
 // playActions.worldFor). 빌더 시그니처와 로봇 카드 경고는 그대로다(빌더는 새 경고를 내지 않는다). spec이 없으면 그대로 둔다.
 // - 문서 시즌이 모르는 문자열: worldUnknownSeason(공칭 12 ft로 시뮬레이션)
-// - 바퀴가 있는 로봇(부유 기저, 접촉이 있음)의 시작 자세가 벽·solid 구조물과 겹침: worldStartOverlap { targets }. 실행은 막지
-//   않는다(걸친 채로는 밀어내지 않는다). 바퀴 없는 로봇은 고정 기저라 접촉이 없으므로 내지 않는다.
+// - 시작 자세 겹침(실행은 막지 않는다, 걸친 채로는 밀어내지 않는다):
+//   - 평면 경로(spec.robot.colliders 없음): 바퀴가 있는 로봇(부유 기저, 접촉이 있음)의 외곽 프리즘이 벽·solid 구조물과 겹침이면
+//     worldStartOverlap { targets }. 바퀴 없는 로봇은 고정 기저라 섀시 접촉이 없으므로 내지 않는다.
+//   - 3D 경로(spec-5 §5.6): overlaps(세계 설명, 실행의 시즌)로 판정한다. 섀시는 바퀴가 있을 때만 worldStartOverlap { targets },
+//     관절 몸체는 바퀴와 관계없이 worldJointStartOverlap { name, targets }(바닥이면 collider.target.floor를 끝에). 순서는 섀시 →
+//     관절 0…이다.
 // targets는 대상 이름(field/fieldLabels.ts)을 t로 옮긴 글자다.
-// overlaps는 3D 경로(spec.robot.colliders가 있음)의 시작 겹침 판정이다(spec-5 §5.6, 시험이 가짜를 넘긴다). 계약 커밋에서는 아직
-// 쓰지 않는다(5 B가 3D 경로의 섀시·관절 몸체 경고로 넣는다).
+// overlaps는 3D 경로의 시작 겹침 판정이다(시험이 가짜를 넘긴다, 기본은 shared startOverlaps).
 export function withRunField(
   result: WorldSpecResult,
   doc: FieldDoc,
@@ -790,7 +819,6 @@ export function withRunField(
   t: TFunction,
   overlaps: typeof startOverlaps = startOverlaps
 ): WorldSpecResult {
-  void overlaps
   if (!result.spec) return result
   const spec: WorldSpec = {
     ...result.spec,
@@ -799,19 +827,43 @@ export function withRunField(
   const warnings = [...result.warnings]
   if (fieldSeasonId(doc) === null)
     warnings.push({ key: 'worldUnknownSeason', params: { season: doc.season } })
-  if (spec.wheels.length > 0) {
-    const fieldSpec = resolveSeason(field.season)
-    const overlaps = fieldOverlaps(
-      fieldSpec,
-      spec.robot.footprint,
-      spec.robot.start,
-      spec.robot.height
-    )
-    if (overlaps.length > 0)
-      warnings.push({
-        key: 'worldStartOverlap',
-        params: { targets: overlapTargetLabel(fieldSpec, overlaps, t) }
-      })
+  const fieldSpec = resolveSeason(field.season)
+  if (spec.robot.colliders === undefined) {
+    if (spec.wheels.length > 0) {
+      const found = fieldOverlaps(
+        fieldSpec,
+        spec.robot.footprint,
+        spec.robot.start,
+        spec.robot.height
+      )
+      if (found.length > 0)
+        warnings.push({
+          key: 'worldStartOverlap',
+          params: { targets: overlapTargetLabel(fieldSpec, found, t) }
+        })
+    }
+  } else {
+    const label = (targets: readonly (FieldOverlap | { kind: 'floor' })[]): string => {
+      const field = targets.filter((target): target is FieldOverlap => target.kind !== 'floor')
+      const parts = [overlapTargetLabel(fieldSpec, field, t)].filter((part) => part !== '')
+      if (targets.some((target) => target.kind === 'floor')) parts.push(t('collider.target.floor'))
+      return parts.join(', ')
+    }
+    for (const overlap of overlaps(spec, fieldSpec)) {
+      if (overlap.targets.length === 0) continue
+      if (overlap.body < 0) {
+        // 섀시는 바퀴가 있을 때만(고정 기저면 섀시는 움직이지 않는다). 섀시는 바닥과 충돌하지 않는다
+        const targets = overlap.targets.filter((target) => target.kind !== 'floor')
+        if (spec.wheels.length > 0 && targets.length > 0)
+          warnings.push({ key: 'worldStartOverlap', params: { targets: label(targets) } })
+      } else {
+        const name = result.colliders.find((body) => body.body === overlap.body)?.name ?? ''
+        warnings.push({
+          key: 'worldJointStartOverlap',
+          params: { name, targets: label(overlap.targets) }
+        })
+      }
+    }
   }
   return { ...result, spec, warnings }
 }

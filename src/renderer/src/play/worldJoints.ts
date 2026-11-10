@@ -89,6 +89,8 @@ export type JointBuildResult = {
   bodyOf: ReadonlyMap<string, number>
   // 관절 순번마다 관절 틀(로봇 좌표, 편집 자세 q = 0: 오브젝트 자세(회전 포함)에 앵커만큼 옮긴 것)
   frames: Matrix4[]
+  // 위 셋을 낸 몸체 나누기 그대로(jointBodyFrames, 충돌 형상 play/worldColliders.ts가 같은 몸체를 쓴다)
+  bodyFrames: JointBodyFrames
   warnings: WorldWarning[]
 }
 
@@ -251,8 +253,8 @@ export function jointBodyMass(
 type Candidate = { objectId: string; name: string; joint: JointSettings }
 
 // 로봇의 몸체 나누기(spec-5 §5.1): 세계 설명에 들어갈 관절(문서 순서, MAX_WORLD_JOINTS까지)과 오브젝트마다 몸체, 관절 틀.
-// 충돌체 빌더·인스펙터·기즈모가 모터 목록 없이 몸체를 알아야 해서 buildWorldJoints의 같은 계산을 꺼낸 것이다(같은 식, 계약 커밋:
-// buildWorldJoints는 5 B가 이것으로 바꾼다).
+// 충돌체 빌더·인스펙터·기즈모가 모터 목록 없이 몸체를 알아야 해서 buildWorldJoints의 계산을 꺼낸 것이다(buildWorldJoints가 이것을
+// 쓴다).
 export type JointBodyFrames = {
   // kept 관절 오브젝트(세계 설명 관절 순번)
   objectIds: string[]
@@ -298,39 +300,25 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   const warnings: WorldWarning[] = []
   const robotTree = subtreeIds(objects, robotId)
 
-  // 관절 오브젝트(문서 순서 = 부모가 먼저). 한도를 넘는 관절은 쓰지 않는다: 깊이 우선 순서의 앞 N개라 남은 관절의 부모
-  // 관절은 늘 남는다. 뺀 관절의 하위는 가장 가까운 남은 관절(또는 로봇)의 몸체로 계산한다.
-  const candidates: Candidate[] = []
-  for (const id of robotTree) {
-    const object = objects[id]
-    if (id === robotId || !object.joint || !isJointObject(object)) continue
-    // 문서의 관절은 스토어·프로젝트 파일이 이미 정리했지만, 세계 설명이 검증을 통과하도록 한 번 더 정리한다(같은 값이면 그대로)
-    candidates.push({ objectId: id, name: object.name, joint: sanitizeJoint(object.joint) })
-  }
-  if (candidates.length > MAX_WORLD_JOINTS)
+  // 관절 오브젝트(문서 순서 = 부모가 먼저)와 몸체 나누기는 jointBodyFrames 한곳이 정한다(충돌 형상·인스펙터·기즈모와 같은 몸체,
+  // spec-5 §5.1). 한도를 넘는 관절은 쓰지 않는다: 깊이 우선 순서의 앞 N개라 남은 관절의 부모 관절은 늘 남는다. 뺀 관절의
+  // 하위는 가장 가까운 남은 관절(또는 로봇)의 몸체로 계산한다.
+  const bodyFrames = jointBodyFrames(objects, robotId)
+  const jointCount = robotTree.filter(
+    (id) => id !== robotId && !!objects[id].joint && isJointObject(objects[id])
+  ).length
+  if (jointCount > MAX_WORLD_JOINTS)
     warnings.push({ key: 'worldTooManyJoints', params: { max: MAX_WORLD_JOINTS } })
-  const kept = candidates.slice(0, MAX_WORLD_JOINTS)
+  // 문서의 관절은 스토어·프로젝트 파일이 이미 정리했지만, 세계 설명이 검증을 통과하도록 한 번 더 정리한다(같은 값이면 그대로)
+  const kept: Candidate[] = bodyFrames.objectIds.map((objectId) => ({
+    objectId,
+    name: objects[objectId].name,
+    joint: sanitizeJoint(objects[objectId].joint!)
+  }))
   const indexOf = new Map(kept.map((candidate, i) => [candidate.objectId, i]))
-
-  // 오브젝트마다 몸체(가장 가까운 자신·상위 관절 순번, 로봇 몸체는 −1)
-  const bodyOf = new Map<string, number>([[robotId, -1]])
-  for (const id of robotTree) {
-    if (id === robotId) continue
-    const own = indexOf.get(id)
-    const parentId = objects[id].parentId
-    bodyOf.set(id, own ?? (parentId !== null ? (bodyOf.get(parentId) ?? -1) : -1))
-  }
-  const parentOf = (i: number): number => {
-    const parentId = objects[kept[i].objectId].parentId
-    return parentId !== null ? (bodyOf.get(parentId) ?? -1) : -1
-  }
-
-  // 관절 틀(로봇 좌표, q = 0): 오브젝트 자세에 앵커만큼 옮긴 것
-  const frames = kept.map(({ objectId, joint }) =>
-    robotFrame(objects, objectId).multiply(
-      new Matrix4().makeTranslation(joint.anchor[0], joint.anchor[1], joint.anchor[2])
-    )
-  )
+  // 오브젝트마다 몸체(가장 가까운 자신·상위 관절 순번, 로봇 몸체는 −1)와 관절 틀(로봇 좌표, q = 0)
+  const { bodyOf, frames } = bodyFrames
+  const parentOf = (i: number): number => bodyFrames.parents[i]
 
   // 몸체의 질량 성질(로봇 좌표에서 합친 뒤 관절 틀로)
   const bodyParts = kept.map(() => [] as string[])
@@ -651,6 +639,7 @@ export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
     bodyPendingMeshes,
     bodyOf,
     frames,
+    bodyFrames,
     warnings
   }
 }

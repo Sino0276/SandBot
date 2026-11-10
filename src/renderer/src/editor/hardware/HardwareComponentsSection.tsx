@@ -23,6 +23,10 @@ import MassCard from '../mass/MassCard'
 import { canAddMass } from '../mass/massCardModel'
 import MassEstimateLine from '../mass/MassEstimateLine'
 import ScriptCard from '../scripts/ScriptCard'
+import ColliderCard from '../collider/ColliderCard'
+import { canAddCollider, newCollider } from '../collider/colliderCardModel'
+import { jointBodyFrames } from '../../play/worldJoints'
+import { canHaveColliders, MAX_OBJECT_COLLIDERS, type ColliderKind } from '../../scene/collider'
 import ComponentCard from './ComponentCard'
 import { objectOptions, objectPicksOf, type ObjectOption } from './objectOptions'
 import { canAddWheel, newWheel } from './wheelCardModel'
@@ -33,6 +37,14 @@ const SCRIPT_OPTION = '#script'
 const WHEEL_OPTION = '#wheel'
 const JOINT_OPTION = '#joint'
 const MASS_OPTION = '#mass'
+// 충돌체(spec-5 §6.1): Box·Capsule·Mesh Collider
+const COLLIDER_OPTIONS = {
+  '#boxCollider': 'box',
+  '#capsuleCollider': 'capsule',
+  '#meshCollider': 'mesh'
+} as const satisfies Record<string, ColliderKind>
+const isColliderOption = (value: string): value is keyof typeof COLLIDER_OPTIONS =>
+  Object.hasOwn(COLLIDER_OPTIONS, value)
 
 // 선택한 오브젝트의 컴포넌트 목록(Unity의 컴포넌트 목록과 같은 방식). 하드웨어 컴포넌트 카드 뒤에 바퀴·관절·질량 카드
 // (시뮬레이터 설정), 그 뒤에 연결한 스크립트 카드가 온다. [컴포넌트 추가]에서 하드웨어 종류, 바퀴, 관절, 질량, TeamCode
@@ -44,11 +56,13 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   const setWheel = useSceneStore((state) => state.setWheel)
   const setJoint = useSceneStore((state) => state.setJoint)
   const setObjectMass = useSceneStore((state) => state.setObjectMass)
+  const setColliders = useSceneStore((state) => state.setColliders)
   const issues = useSceneIssues()
 
   const robotId = findRobotId(objects, object.id)
   const components = object.components ?? []
   const scripts = object.scripts ?? []
+  const colliders = object.colliders ?? []
   // 이름·포트는 로봇 전체에서 겹치지 않아야 한다
   const siblings: ComponentEntry[] = robotId
     ? robotComponents(objects, robotId)
@@ -86,7 +100,8 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
       scripts.length === 0 &&
       !object.wheel &&
       !object.joint &&
-      !object.mass ? (
+      !object.mass &&
+      !object.colliders?.length ? (
         <p className="inspector-note">{t('inspector.componentsEmpty')}</p>
       ) : (
         <ul className="hw-cards">
@@ -105,6 +120,9 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
           {object.wheel && <WheelCard object={object} />}
           {object.joint && <JointCard object={object} />}
           {object.mass && <MassCard object={object} />}
+          {colliders.map((collider) => (
+            <ColliderCard key={collider.id} object={object} collider={collider} />
+          ))}
           {scripts.map((link) => (
             <ScriptCard key={link.path} objectId={object.id} link={link} />
           ))}
@@ -130,6 +148,20 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             if (canAddJoint(object)) setJoint(object.id, newJoint())
           } else if (event.target.value === MASS_OPTION) {
             if (canAddMass(object)) setObjectMass(object.id, {})
+          } else if (isColliderOption(event.target.value)) {
+            if (canHaveColliders(object) && canAddCollider(object))
+              setColliders(object.id, [
+                ...colliders,
+                newCollider(
+                  objects,
+                  object.id,
+                  COLLIDER_OPTIONS[event.target.value],
+                  // 새 Collider의 기본 크기는 같은 몸체 하위 메시의 경계 상자다(몸체 나누기는 충돌 모델과 같은
+                  // jointBodyFrames, 고를 때만 계산한다)
+                  robotId ? jointBodyFrames(objects, robotId) : null,
+                  () => crypto.randomUUID()
+                )
+              ])
           } else add(event.target.value)
           // 포커스가 남아 있으면 방향키가 값을 바꿔 컴포넌트가 또 추가된다
           select.blur()
@@ -161,6 +193,21 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
           <option value={MASS_OPTION} disabled={!canAddMass(object)}>
             {t('mass.addOption')}
           </option>
+          {/* Collider는 Unity처럼 여러 개(한 오브젝트 MAX_OBJECT_COLLIDERS개까지) */}
+          {(Object.keys(COLLIDER_OPTIONS) as (keyof typeof COLLIDER_OPTIONS)[]).map((option) => (
+            <option
+              key={option}
+              value={option}
+              disabled={!canHaveColliders(object) || !canAddCollider(object)}
+              title={
+                canAddCollider(object)
+                  ? undefined
+                  : t('collider.tooMany', { max: MAX_OBJECT_COLLIDERS })
+              }
+            >
+              {t(`collider.addOptions.${COLLIDER_OPTIONS[option]}`)}
+            </option>
+          ))}
         </optgroup>
         <optgroup label={t('scripts.addGroup')}>
           <option value={SCRIPT_OPTION}>{t('scripts.addOption')}</option>

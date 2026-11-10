@@ -26,6 +26,7 @@ import {
 import { sidecarDeviceName } from '../hardware/naming'
 import type { SelfHit } from '../editor/hardware/sensorSelfHit'
 import { findRobotId, matrixToTransform, type SceneObjects } from '../scene/model'
+import { plain } from './plain'
 import type { JointBuildResult } from './worldJoints'
 import { buildWorldSpec, type WorldWarning, type WorldSpecResult } from './worldSpec'
 
@@ -202,9 +203,6 @@ export type WorldSensorsResult = {
   exclusions: Map<string, SensorExclusion>
   warnings: WorldWarning[]
 }
-
-// −0을 0으로(세계 설명·기준 해시가 −0을 다른 글자로 쓰지 않게)
-const plain = (value: number): number => value + 0
 
 // 로봇 좌표 장착을 관절 몸체 틀로: position_j = T_j⁻¹·p, rotation_j = ZYX(R_j⁻¹·R_aim)(matrixToTransform: three
 // Euler('ZYX')와 같은 분해, 짐벌(컬러 센서 −90°)에서는 롤을 0으로 두고 같은 회전 행렬을 낸다). 웹캠 빌더(4d
