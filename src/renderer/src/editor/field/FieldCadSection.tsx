@@ -160,6 +160,9 @@ function FieldCadSection(): React.JSX.Element {
             {t(badge)}
           </span>
         )}
+      </div>
+      {/* 버튼은 경로 아래 줄에 둔다(좁은 인스펙터에서 경로가 사라지지 않게, 4e-B 점검) */}
+      <div className="cad-file">
         {/* [다시 불러오기]는 늘 보인다(Unity 에셋 Reimport: 같은 경로에 고친 파일을 덮어쓴 경우, 비평 U6) */}
         <button
           type="button"
