@@ -232,7 +232,8 @@ export const AIM_YAW = {
   hint: true,
   simulation: true
 } as const
-// 거리 센서는 기본으로 앞(수평)을 본다
+// 거리 센서·웹캠은 기본으로 앞(수평)을 본다 [결정: 시뮬레이터 전용 기본값은 중립값, 시즌 태그 높이에 맞추지 않는다(사용자
+// 결정 11/10)]
 export const AIM_PITCH_LEVEL = {
   key: 'aimPitch',
   kind: 'angle',
@@ -257,9 +258,6 @@ export const CAMERA_MODEL = {
   hint: true,
   simulation: true
 } as const
-// 웹캠은 기본으로 위 30°를 본다 [결정: 웹캠 기본 조준 위 30°]: BIOBUZZ 태그는 바닥 위 0.90 m(아래 CELL)·1.27 m(위 CELL)에서
-// 60° 아래를 봐서, 수평 조준이면 C920 640×480(세로 반시야 21.1°)으로 위 CELL이 필드 어디서도 보이지 않는다(spec-4d §1.1)
-export const CAMERA_AIM_PITCH = { ...AIM_PITCH_LEVEL, default: Math.PI / 6 } as const
 // 광축(+X) 둘레 오른손 회전: 카메라 뒤에서 볼 때 시계 방향이 +(위 가장자리가 오른쪽으로), 영상 속 장면은 반시계로 돈다
 export const AIM_ROLL = {
   key: 'aimRoll',
@@ -479,7 +477,7 @@ export const COMPONENT_TYPES = {
       { key: 'serialNumber', kind: 'text', default: '' },
       CAMERA_MODEL,
       AIM_YAW,
-      CAMERA_AIM_PITCH,
+      AIM_PITCH_LEVEL,
       AIM_ROLL
     ]
   },

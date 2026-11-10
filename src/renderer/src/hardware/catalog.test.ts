@@ -1,7 +1,9 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
+import * as catalog from './catalog'
 import {
+  AIM_PITCH_LEVEL,
   angleInputValue,
   COMPONENT_TYPES,
   deadWheelTicksPerMeter,
@@ -270,7 +272,7 @@ describe('웹캠 카메라 모델·조준', () => {
     const pitch = byKey('aimPitch')
     expect(pitch).toMatchObject({
       kind: 'angle',
-      default: Math.PI / 6,
+      default: 0,
       min: -Math.PI / 2,
       max: Math.PI / 2,
       hint: true,
@@ -294,8 +296,16 @@ describe('웹캠 카메라 모델·조준', () => {
       serialNumber: '',
       cameraModel: 'logitechC920',
       aimYaw: 0,
-      aimPitch: Math.PI / 6,
+      aimPitch: 0,
       aimRoll: 0
     })
+  })
+
+  // B1(spec-4e §1.1): 시뮬레이터 전용 기본값은 중립값이다(수평). 거리 센서와 같은 정의 객체를 쓴다
+  it('웹캠 aimPitch는 AIM_PITCH_LEVEL 그 객체이고 CAMERA_AIM_PITCH는 없다', () => {
+    expect(byKey('aimPitch')).toBe(AIM_PITCH_LEVEL)
+    expect(AIM_PITCH_LEVEL.default).toBe(0)
+    expect('CAMERA_AIM_PITCH' in catalog).toBe(false)
+    expect(propertyDefaults('webcam').aimPitch).toBe(0)
   })
 })

@@ -14,6 +14,9 @@ import {
   runLocksField
 } from '../field/fieldDisplay'
 import {
+  CAD_TAG_FRONT_OFFSET,
+  fieldCompanionModel,
+  fieldOutlineMeshes,
   fieldViewModel,
   FIELD_RENDER_ORDER,
   POLYGON_OFFSET_UNITS,
@@ -399,5 +402,127 @@ describe('시작 표시 재질·커서(4ab 리뷰 수정)', () => {
     expect(markerOccluded(raycaster, [marker, aside, below], markers, distance)).toBe(false)
     expect(markerOccluded(raycaster, [marker, holder], markers, distance)).toBe(true)
     expect(markerOccluded(raycaster, [part], markers, distance)).toBe(true)
+  })
+})
+
+// B8(spec-4e §1.6·§1.8): 필드 CAD와 함께 그리는 단순 형상과 충돌체 윤곽
+describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
+  const roles = (model: FieldViewModel): string[] => model.meshes.map((mesh) => mesh.role)
+
+  it('companion: 태그·벽 라벨만(시작 상태), carriers는 입력 그대로, 순서는 model.meshes', () => {
+    const companion = fieldCompanionModel(START, [false, false])
+    expect(companion.carriers).toBe(START.carriers)
+    expect(ofRole(companion, 'tag')).toHaveLength(16)
+    expect(ofRole(companion, 'wallLabel')).toHaveLength(4)
+    expect(companion.meshes).toHaveLength(20)
+    expect(new Set(roles(companion))).toEqual(new Set(['tag', 'wallLabel']))
+    const order = START.meshes.map((mesh) => mesh.key)
+    const keys = companion.meshes.map((mesh) => mesh.key)
+    expect(keys).toEqual(order.filter((key) => keys.includes(key)))
+    // 벽 라벨은 같은 객체, 태그는 새 사본(입력을 바꾸지 않는다)
+    const label = ofRole(companion, 'wallLabel')[0]
+    expect(START.meshes).toContain(label)
+    const tag = ofRole(companion, 'tag')[0]
+    expect(START.meshes).not.toContain(tag)
+  })
+
+  it('companion 태그는 태그 평면 +z(앞면 법선 = 태그 −z)로 CAD_TAG_FRONT_OFFSET만큼 앞(1e-9)', () => {
+    const companion = fieldCompanionModel(START, [false, false])
+    const before = ofRole(START, 'tag')
+    const after = ofRole(companion, 'tag')
+    after.forEach((mesh, index) => {
+      const original = before[index]
+      expect(mesh.tagId).toBe(original.tagId)
+      // 원래 태그 중심(평면 원점에서 TAG_FRONT_OFFSET 뒤)
+      const at = (spec: FieldMeshSpec, z: number): Vector3 =>
+        new Vector3(0, 0, z).applyMatrix4(new Matrix4().fromArray(spec.matrix))
+      const centre = at(original, -TAG_FRONT_OFFSET)
+      const moved = at(mesh, 0)
+      // 앞면 법선(평면 +z)
+      const normal = at(original, 1 - TAG_FRONT_OFFSET).sub(centre)
+      expect(normal.length()).toBeCloseTo(1, 12)
+      const offset = moved.clone().sub(centre)
+      expect(offset.dot(normal)).toBeCloseTo(CAD_TAG_FRONT_OFFSET, 9)
+      expect(
+        offset
+          .clone()
+          .sub(normal.clone().multiplyScalar(offset.dot(normal)))
+          .length()
+      ).toBeLessThan(1e-9)
+    })
+  })
+
+  it('넘어간 HIVE의 CELL만 더한다(빨강 넘어감이면 빨강 CELL 2)', () => {
+    const tipped = fieldViewModel(BIOBUZZ, [true, false], false)
+    const companion = fieldCompanionModel(tipped, [true, false])
+    const cells = ofRole(companion, 'structure')
+    expect(cells).toHaveLength(2)
+    expect(cells.every((mesh) => mesh.carrier === 'hiveRed')).toBe(true)
+    expect(cells.every((mesh) => BIOBUZZ.structures[mesh.structureIndex!].key === 'hiveCell')).toBe(
+      true
+    )
+    const both = fieldCompanionModel(fieldViewModel(BIOBUZZ, [true, true], false), [true, true])
+    expect(ofRole(both, 'structure')).toHaveLength(4)
+    // carrier 구조물이 아닌 것(발판 막대·다리·FLOWER)은 넘어가도 넣지 않는다
+    expect(ofRole(both, 'structure').every((mesh) => mesh.carrier !== 'field')).toBe(true)
+  })
+
+  it("'none' 시즌의 companion은 비어 있다", () => {
+    const none = fieldViewModel(resolveSeason('none'), [false, false], false)
+    expect(fieldCompanionModel(none, [false, false]).meshes).toEqual([])
+  })
+
+  it('윤곽: 바닥 1 + 테이프 14 + 레일 8 + 판 12 + 판 이음 8 + 계산 구조물 13 = 56, HIVE CELL·carrier 없음', () => {
+    const outline = fieldOutlineMeshes(START, BIOBUZZ)
+    expect(ofRole(outline, 'floor')).toHaveLength(1)
+    expect(ofRole(outline, 'tape')).toHaveLength(14)
+    expect(ofRole(outline, 'rail')).toHaveLength(8)
+    expect(ofRole(outline, 'panel')).toHaveLength(12)
+    expect(ofRole(outline, 'panelSeam')).toHaveLength(8)
+    expect(ofRole(outline, 'structure')).toHaveLength(13)
+    expect(outline.meshes).toHaveLength(56)
+    expect(ofRole(outline, 'seam')).toHaveLength(0)
+    expect(ofRole(outline, 'tag')).toHaveLength(0)
+    expect(ofRole(outline, 'wallLabel')).toHaveLength(0)
+    for (const mesh of ofRole(outline, 'structure')) {
+      const structure = BIOBUZZ.structures[mesh.structureIndex!]
+      expect(structure.solid || structure.sensed || structure.occludes).toBe(true)
+      expect(structure.key).not.toBe('hiveCell')
+    }
+    expect(outline.carriers).toEqual([])
+    // 순서는 model.meshes 순서
+    const order = START.meshes.map((mesh) => mesh.key)
+    const keys = outline.meshes.map((mesh) => mesh.key)
+    expect(keys).toEqual(order.filter((key) => keys.includes(key)))
+    // 위 막대·로고 판(solid 아님, 가림·광선에 씀)은 남긴다
+    const kept = new Set(ofRole(outline, 'structure').map((m) => m.structureIndex))
+    BIOBUZZ.structures.forEach((structure, index) => {
+      expect(kept.has(index)).toBe(structure.solid || structure.sensed || structure.occludes)
+    })
+  })
+
+  it('윤곽은 carrier를 지킨다(계산에 쓰는 carrier 구조물이 있으면 그 그룹을 남긴다)', () => {
+    const spec = {
+      ...BIOBUZZ,
+      structures: BIOBUZZ.structures.map((structure) =>
+        structure.key === 'hiveCell' && structure.carrier === 'hiveRed'
+          ? { ...structure, solid: true }
+          : structure
+      )
+    }
+    const model = fieldViewModel(spec, [false, false], false)
+    const outline = fieldOutlineMeshes(model, spec)
+    expect(outline.carriers.map((carrier) => carrier.key)).toEqual(['hiveRed'])
+    expect(ofRole(outline, 'structure').filter((mesh) => mesh.carrier === 'hiveRed')).toHaveLength(
+      2
+    )
+  })
+
+  it("'none' 시즌 윤곽: 바닥·레일·판(구조물·테이프 없음)", () => {
+    const none = resolveSeason('none')
+    const outline = fieldOutlineMeshes(fieldViewModel(none, [false, false], false), none)
+    expect(ofRole(outline, 'floor')).toHaveLength(1)
+    expect(ofRole(outline, 'structure')).toHaveLength(0)
+    expect(outline.meshes.length).toBeGreaterThan(1)
   })
 })

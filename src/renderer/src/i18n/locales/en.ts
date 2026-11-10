@@ -1457,7 +1457,7 @@ const en: Messages = {
         tooSmall: 'too small {{count}}',
         grazing: 'grazing {{count}}'
       },
-      hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down. Tilting the camera up 25–35° sees them well (default 30°).',
+      hint: 'Tags visible in the edit pose with the VisionPortal defaults (640×480, decimation 3). BIOBUZZ tags are on the underside of the HIVE CELLs 0.9–1.3 m above the floor and face 60° down.',
       // 줄 끝의 경고(여럿이면 이 순서)
       tails: {
         onRobot:

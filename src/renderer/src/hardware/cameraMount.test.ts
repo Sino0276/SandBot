@@ -18,21 +18,21 @@ function zyx(r: { x: number; y: number; z: number }): Matrix4 {
 }
 
 describe('cameraAim·cameraModelOf (K2)', () => {
-  it('없음·NaN·범위 밖이면 기본(pitch π/6), 범위 안이면 그 값', () => {
-    expect(cameraAim({})).toEqual({ yaw: 0, pitch: Math.PI / 6, roll: 0 })
+  it('없음·NaN·범위 밖이면 기본(pitch 0 수평, spec-4e §1.1), 범위 안이면 그 값', () => {
+    expect(cameraAim({})).toEqual({ yaw: 0, pitch: 0, roll: 0 })
     expect(cameraAim({ aimYaw: NaN, aimPitch: NaN, aimRoll: NaN })).toEqual({
       yaw: 0,
-      pitch: Math.PI / 6,
+      pitch: 0,
       roll: 0
     })
     expect(cameraAim({ aimYaw: 4, aimPitch: 2, aimRoll: -4 })).toEqual({
       yaw: 0,
-      pitch: Math.PI / 6,
+      pitch: 0,
       roll: 0
     })
     expect(cameraAim({ aimYaw: 'x', aimPitch: '0.1' })).toEqual({
       yaw: 0,
-      pitch: Math.PI / 6,
+      pitch: 0,
       roll: 0
     })
     expect(cameraAim({ aimYaw: 0.5, aimPitch: -0.2, aimRoll: Math.PI })).toEqual({
@@ -103,14 +103,18 @@ describe('sdkCameraPose (K4)', () => {
       .multiply(c)
   }
 
-  it('위치 축 바꿈(x_sdk = −y, y_sdk = x, in)과 기본 조준 (0, −60, 0)', () => {
+  it('위치 축 바꿈(x_sdk = −y, y_sdk = x, in)과 기본 조준(수평) (0, −90, 0)', () => {
     const pose = sdkCameraPose({ x: 0.254, y: -0.0508, z: 0.3048 }, cameraAim({}))
     expect(pose.x).toBeCloseTo(2, 12)
     expect(pose.y).toBeCloseTo(10, 12)
     expect(pose.z).toBeCloseTo(12, 12)
     expect(pose.yaw).toBe(0)
-    expect(pose.pitch).toBeCloseTo(-60, 12)
+    expect(pose.pitch).toBe(-90)
     expect(pose.roll).toBe(0)
+    // 위 30°(4d 기본이던 값, 저장된 프로젝트에 남아 있을 수 있다)는 (0, −60, 0)
+    expect(
+      sdkCameraPose({ x: 0, y: 0, z: 0 }, { yaw: 0, pitch: Math.PI / 6, roll: 0 }).pitch
+    ).toBeCloseTo(-60, 12)
     // 수평 앞(샘플 ConceptAprilTagLocalization의 기본값)
     expect(sdkCameraPose({ x: 0, y: 0, z: 0 }, { yaw: 0, pitch: 0, roll: 0 })).toEqual({
       x: 0,
