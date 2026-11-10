@@ -16,6 +16,7 @@ import {
   type ServoCommand
 } from './actuators'
 import { Articulation, type ContactRow, type ContactSet, type DriveForces } from './articulation'
+import { BodyCollision, bodyCollisionNeeded } from './bodyCollision'
 import {
   isBlockingNormal,
   ROLLER_RESISTANCE,
@@ -86,8 +87,12 @@ import type {
 // 놓여 있다).
 //
 // 필드(spec-4ab §1.10): 벽 반폭은 시즌 FieldSpec(spec.field.season)의 perimeter.innerHalf이고, 시즌의 solid 고정 구조물(발판
-// 막대·다리·FLOWER)은 외곽 × [0, robot.height] 프리즘과 접촉 행(fieldContact.ts)을 벽 행 뒤에 붙인다. 부유 기저에만 계산한다
-// (바퀴 없는 로봇은 접촉이 없다). 'none' 시즌은 벽 반폭이 field.ts 값 그대로이고 구조물이 없어 3c와 바이트까지 같다.
+// 막대·다리·FLOWER)은 외곽 × [0, robot.height] 프리즘과 접촉 행(fieldContact.ts)을 벽 행 뒤에 붙인다. 평면 경로의 벽·구조물 행은
+// 부유 기저에만 계산한다. 'none' 시즌은 벽 반폭이 field.ts 값 그대로이고 구조물이 없어 3c와 바이트까지 같다.
+//
+// 몸체 충돌(spec-5 §4.3): 세계 설명에 충돌 형상이 있으면(robot.colliders 칸이 있거나 관절 하나라도 colliders가 있으면) 몸체
+// 충돌 행(bodyCollision.ts)을 바퀴·벽 행 뒤에 붙이고, 바퀴 없는 로봇도 관절 몸체 충돌을 받는다. 섀시가 3D(robot.colliders 칸이
+// 있음)면 평면 프리즘 행은 없다. 형상이 없는 세계는 5 전의 연산 그대로다(기준 해시 일곱).
 //
 // 엔코더 속도(모터 포트의 velocity, 데드휠 포함): 허브 펌웨어처럼 지난 50 ms 동안의 원시 틱 변화 × 20이다(encoderVelocity.ts:
 // 늘 20 틱/s의 배수, 약 25 ms 늦음, 처음 50 ms는 시작 position부터 셈). 원시 틱은 하위 단계마다 기록한다.
@@ -261,6 +266,8 @@ export class PhysicsWorld {
   private readonly sensors: FieldSensors | null
   // 웹캠(하나라도 있을 때만, 4d)
   private readonly cameras: FieldCameras | null
+  // 몸체 충돌(5: 충돌 형상이 있고 동역학이 있을 때만)
+  private readonly bodyCollision: BodyCollision | null
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
 
@@ -336,6 +343,8 @@ export class PhysicsWorld {
           })
         : null
     const art = this.articulation
+    // 움직이는 것이 없으면(동역학 없음) 몸체 충돌도 없다
+    this.bodyCollision = bodyCollisionNeeded(spec) && art ? new BodyCollision(spec, field) : null
     // 관절 모터 장치 → (좌표, 기어모터 값). parseWorldSpec가 한 모터를 한 관절에만 두고 바퀴와 겹치지 않음을 확인한다.
     const jointMotors = new Map<string, { coordinate: number; dc: DcGearMotor }>()
     this.servos = []
@@ -532,7 +541,20 @@ export class PhysicsWorld {
       blocking = contacts.rows.filter(isBlockingNormal)
     }
     try {
+      // 몸체 충돌 행은 art.step과 같은 try 안에서 만든다(껍질·NaN 버그로 던져도 아래 복구를 쓴다, C-M10). 바퀴·벽 행 뒤에 붙이고,
+      // blocked는 섀시–정적 법선 행만 센다(관절 몸체·자기 충돌 행은 세지 않는다, spec-5 §1.1)
+      const collision = this.bodyCollision
+      if (collision) {
+        const made = collision.rows(art, h, art.coordinates.length)
+        for (const notice of made.notices) this.notify(notice.code, notice.params)
+        if (made.rows.length > 0)
+          contacts = contacts
+            ? { rows: [...contacts.rows, ...made.rows], damping: contacts.damping }
+            : { rows: made.rows, damping: [] }
+        blocking = [...blocking, ...made.blocking]
+      }
       art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
+      if (collision) for (const n of collision.afterStep(art, h)) this.notify(n.code, n.params)
     } catch (error) {
       // 수치가 터지면(Articulation은 상태를 바꾸기 전에 던진다) 이 하위 단계는 모든 속도를 0으로 두고 위치는 그대로 둔다.
       // 다음 하위 단계에서 다시 푼다(같은 detail은 실행마다 한 번 알린다).
@@ -552,7 +574,8 @@ export class PhysicsWorld {
   }
 
   // 이번 하위 단계의 바퀴 하중(걸러진 가속의 기저 렌치를 나눔)·받침 알림·바퀴 행·벽 행·고정 구조물 행(벽 행 뒤에만 붙인다:
-  // 'none' 시즌은 구조물이 0개라 행 목록이 3c와 원소 단위로 같다)
+  // 'none' 시즌은 구조물이 0개라 행 목록이 3c와 원소 단위로 같다). 섀시가 3D 경로면(robot.colliders 칸이 있음, 5) 벽·구조물 행은
+  // 몸체 충돌(bodyCollision.ts)이 맡고 여기서는 바퀴 행만이다
   private contacts(art: Articulation, pose: Pose2, h: number): ContactSet {
     const m = art.coordinates.length
     const wrench = art.baseWrench() as { fz: number; mx: number; my: number }
@@ -562,6 +585,7 @@ export class PhysicsWorld {
     if (alerts.wheelLift) this.notify('wheelLift', {})
     if (alerts.tipping) this.notify('tipping', {})
     const wheel = wheelRows(this.wheels, this.loads, pose.yaw, h, m, this.roller)
+    if (this.spec.robot.colliders !== undefined) return wheel
     const velocity = art.baseVelocity() as { vx: number; vy: number; omega: number }
     const footprint = this.spec.robot.footprint
     const walls = wallRows(footprint, pose, velocity, h, m, this.collision.innerHalf)

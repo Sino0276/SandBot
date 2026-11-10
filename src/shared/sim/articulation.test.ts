@@ -11,7 +11,9 @@ import {
   type LcpState,
   type DriveModel
 } from './articulation'
+import { wallRows } from './contact'
 import { GRAVITY } from './physics'
+import { planarFrame } from './sensorFrame'
 import type { SimInertia, SimJointSpec, Vec3 } from './worldSpec'
 
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 }
@@ -1194,5 +1196,296 @@ describe('externalRows 마찰 상자', () => {
     expect(externalRows([{ key: 'n', j: [1], target: 0.1, lo: 0, hi: Infinity }], normal)).toEqual([
       { key: 'n', j: [1], target: 0.1, lo: 0, hi: Infinity }
     ])
+  })
+})
+
+// ---- 5: 접촉 틀과 점 야코비안(spec-5 §4.1, A2·A3·A4·A26) ----
+
+// 고정 시드 선형 합동(결정적 입력)
+function lcg(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+// 모터 계열 값(3b 시험 기어모터와 같은 꼴, 물리 값은 이 시험에 쓰지 않는다)
+const MOTOR = {
+  stallTorque: 2.5,
+  freeSpeed: 30,
+  stallCurrent: 9,
+  freeCurrent: 0.2,
+  gearbox: 19.2,
+  efficiency: 0.9,
+  rotorInertia: 3e-6,
+  backdriveFriction: 0.002
+}
+
+// 리프트 두 단(continuous 리깅) 위 회전 팔, 그리고 섀시에 바로 붙은 손목(회전 z)
+function mechanism(): SimJointSpec[] {
+  const body = {
+    mass: 0.8,
+    centerOfMass: { x: 0.02, y: 0, z: 0.05 },
+    inertia: [1e-3, 2e-3, 3e-3, 0, 0, 0] as SimInertia
+  }
+  return [
+    jointSpec({
+      type: 'prismatic',
+      axis: { x: 0, y: 0, z: 1 },
+      origin: { position: { x: 0.05, y: 0.02, z: 0.1 }, rotation: { x: 0, y: 0, z: 0.3 } },
+      body,
+      drive: {
+        kind: 'motor',
+        devices: ['lift'],
+        ratio: 0.02,
+        params: MOTOR,
+        rigging: { kind: 'continuous', stages: [1] }
+      }
+    }),
+    jointSpec({
+      parent: 0,
+      type: 'prismatic',
+      axis: { x: 0, y: 0, z: 1 },
+      origin: { position: { x: 0, y: 0, z: 0.05 }, rotation: ZERO },
+      body,
+      drive: { kind: 'stage' }
+    }),
+    jointSpec({
+      parent: 1,
+      type: 'revolute',
+      axis: { x: 0, y: 1, z: 0 },
+      origin: { position: { x: 0.12, y: -0.03, z: 0.2 }, rotation: { x: 0.1, y: -0.2, z: 0.4 } },
+      body: {
+        mass: 0.4,
+        centerOfMass: { x: 0.15, y: 0, z: 0 },
+        inertia: [1e-4, 3e-3, 3e-3, 0, 0, 0]
+      }
+    }),
+    jointSpec({
+      parent: -1,
+      type: 'revolute',
+      axis: { x: 0, y: 0, z: 1 },
+      origin: { position: { x: -0.1, y: 0.1, z: 0.15 }, rotation: { x: 0, y: 0.2, z: 0 } },
+      body: { mass: 0.2, centerOfMass: ZERO, inertia: [1e-4, 1e-4, 1e-4, 0, 0, 0] }
+    })
+  ]
+}
+
+// 몸체 위 점(몸체 틀 local)의 필드 위치: 섀시는 기저 자세, 관절 몸체는 bodyPose
+function worldPoint(art: Articulation, body: number, local: Vec3): number[] {
+  if (body >= 0) return bodyPoint(art.bodyPose(body), local)
+  const base = art.basePose()
+  const c = base ? Math.cos(base.yaw) : 1
+  const s = base ? Math.sin(base.yaw) : 0
+  return [
+    (base?.x ?? 0) + c * local.x - s * local.y,
+    (base?.y ?? 0) + s * local.x + c * local.y,
+    local.z
+  ]
+}
+
+const dotN = (a: readonly number[], b: readonly number[]): number =>
+  a.reduce((s, x, i) => s + x * b[i], 0)
+
+describe('접촉 틀·점 야코비안(5)', () => {
+  it('A2 접촉 틀: 관절 몸체 틀 = bodyPoses() − O, 섀시 회전 = planarFrame(basePose())와 비트 같음, 고정 기저면 O = 0·섀시 단위', () => {
+    const art = floating(mechanism(), { x: 0.9, y: -1.1, yaw: 2.3 })
+    const next = lcg(11)
+    for (let c = 0; c < art.z.length; c++) {
+      art.z[c] = (next() - 0.5) * 0.4
+      art.v[c] = (next() - 0.5) * 2
+    }
+    const frames = art.contactFrames()
+    const base = art.basePose() as { x: number; y: number; yaw: number }
+    expect(frames.origin).toEqual({ x: base.x, y: base.y, z: 0 })
+    const plane = planarFrame(base)
+    frames.bodies[0].rotation.forEach((x, k) => expect(Object.is(x, plane.rotation[k])).toBe(true))
+    expect(frames.bodies[0].origin).toEqual({ x: 0, y: 0, z: 0 })
+    art.bodyPoses().forEach((pose, i) => {
+      const f = frames.bodies[i + 1]
+      for (let k = 0; k < 9; k++) expect(f.rotation[k]).toBe(pose.rotation[k])
+      expect(Math.abs(f.origin.x - (pose.origin.x - base.x))).toBeLessThan(1e-15)
+      expect(Math.abs(f.origin.y - (pose.origin.y - base.y))).toBeLessThan(1e-15)
+      expect(f.origin.z).toBe(pose.origin.z)
+    })
+    // 고정 기저: O = 0, 섀시 단위·정지, 관절 몸체 틀 = bodyPoses()
+    const fixed = new Articulation(mechanism())
+    fixed.z[0] = 0.05
+    const ff = fixed.contactFrames()
+    expect(ff.origin).toEqual({ x: 0, y: 0, z: 0 })
+    expect(ff.bodies[0]).toEqual({
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      origin: { x: 0, y: 0, z: 0 }
+    })
+    expect(ff.velocities[0]).toEqual({ omega: ZERO, linear: ZERO })
+    fixed.bodyPoses().forEach((pose, i) => expect(ff.bodies[i + 1]).toEqual(pose))
+  })
+
+  it('A3 야코비안 식(섀시): 무작위 외곽·자세 200개에서 wallRows의 행마다 pointJacobian(−1, r, d)이 원소마다 같다', () => {
+    const next = lcg(3)
+    const normals: Record<string, { x: number; y: number }> = {
+      'x+': { x: -1, y: 0 },
+      'x-': { x: 1, y: 0 },
+      'y+': { x: 0, y: -1 },
+      'y-': { x: 0, y: 1 }
+    }
+    let compared = 0
+    for (let trial = 0; trial < 200; trial++) {
+      const start = { x: (next() - 0.5) * 2, y: (next() - 0.5) * 2, yaw: (next() - 0.5) * 7 }
+      const art = floating([], start)
+      for (let c = 0; c < 3; c++) {
+        art.z[c] = (next() - 0.5) * 0.6
+        art.v[c] = (next() - 0.5) * 3
+      }
+      const pose = art.basePose() as { x: number; y: number; yaw: number }
+      // 무작위 볼록 사각형(반시계): 반지름·각이 다른 네 점
+      const footprint = [0, 1, 2, 3].map((k) => {
+        const angle = (k + next() * 0.6) * (Math.PI / 2)
+        const r = 0.15 + next() * 0.2
+        return { x: r * Math.cos(angle), y: r * Math.sin(angle) }
+      })
+      const c = Math.cos(pose.yaw)
+      const s = Math.sin(pose.yaw)
+      // wallRows와 같은 offset 식
+      const offsets = footprint.map((p) => ({ x: c * p.x - s * p.y, y: s * p.x + c * p.y }))
+      // 어떤 꼭짓점이 벽 하나 근처에 오게 반폭을 고른다(그 벽 행이 생긴다)
+      const reach = Math.max(...offsets.map((r) => Math.abs(pose.x + r.x)))
+      const rows = wallRows(footprint, pose, art.baseVelocity()!, 1e-3, 3, reach + 1e-4)
+      const frames = art.contactFrames()
+      for (const row of rows) {
+        const name = row.key.slice(1)
+        const wall = name.slice(0, 2)
+        const r = offsets[Number(name.slice(2))]
+        const n = normals[wall]
+        const d = row.key.startsWith('n') ? n : { x: -n.y, y: n.x }
+        const j = art.pointJacobian(frames, -1, { x: r.x, y: r.y, z: 0 }, { x: d.x, y: d.y, z: 0 })
+        expect(j.length).toBe(row.j.length)
+        // 원소마다 ===(±0은 같게 본다)
+        j.forEach((x, i) => expect(x === row.j[i]).toBe(true))
+        compared++
+      }
+    }
+    expect(compared).toBeGreaterThan(200)
+  })
+
+  it('A4 야코비안 수치: J·v = 유한 차분 점 속도(1e-9 상대), 공통 조상 열은 정확히 0, twistJacobian·pointVelocity 대조', () => {
+    const art = floating(mechanism(), { x: -0.6, y: 0.4, yaw: -0.8 })
+    const next = lcg(29)
+    const z0 = art.z.map(() => (next() - 0.5) * 0.3)
+    const v0 = art.z.map(() => (next() - 0.5) * 2)
+    art.z = z0.slice()
+    art.v = v0.slice()
+    const frames = art.contactFrames()
+    const o = frames.origin
+    const eps = 1e-6
+    const shifted = <T>(sign: number, read: () => T): T => {
+      art.z = z0.map((x, c) => x + sign * eps * v0[c])
+      const value = read()
+      art.z = z0.slice()
+      return value
+    }
+    const local = { x: 0.07, y: -0.04, z: 0.03 }
+    for (const body of [-1, 0, 1, 2, 3]) {
+      const plus = shifted(1, () => worldPoint(art, body, local))
+      const minus = shifted(-1, () => worldPoint(art, body, local))
+      const fd = plus.map((x, k) => (x - minus[k]) / (2 * eps))
+      const p = worldPoint(art, body, local)
+      const pc = { x: p[0] - o.x, y: p[1] - o.y, z: p[2] - o.z }
+      const pv = art.pointVelocity(frames, body, pc)
+      const scale = Math.max(1, Math.hypot(...fd))
+      expect(Math.abs(pv.x - fd[0]) / scale).toBeLessThan(1e-9)
+      expect(Math.abs(pv.y - fd[1]) / scale).toBeLessThan(1e-9)
+      expect(Math.abs(pv.z - fd[2]) / scale).toBeLessThan(1e-9)
+      for (const d of [
+        { x: 1, y: 0, z: 0 },
+        { x: 0, y: 1, z: 0 },
+        { x: 0, y: 0, z: 1 },
+        { x: 0.48, y: -0.6, z: 0.64 }
+      ]) {
+        const j = art.pointJacobian(frames, body, pc, d)
+        const expected = fd[0] * d.x + fd[1] * d.y + fd[2] * d.z
+        expect(Math.abs(dotN(j, art.v) - expected) / scale).toBeLessThan(1e-9)
+      }
+    }
+    // 상대 행: 팔(2)과 리프트 아래 단(0)의 공통 조상은 기저 셋과 관절 0이다. 기저 열은 정확히 0(빼기 잡음이 아님)
+    const pc = { x: 0.1, y: 0.05, z: 0.4 }
+    const d = { x: 0.6, y: 0, z: 0.8 }
+    const rel = art.relativeJacobian(frames, 2, 0, pc, d)
+    const ja = art.pointJacobian(frames, 2, pc, d)
+    const jb = art.pointJacobian(frames, 0, pc, d)
+    for (const c of art.baseCoordinates) expect(rel[c]).toBe(0)
+    rel.forEach((x, c) => expect(Math.abs(x - (ja[c] - jb[c]))).toBeLessThan(1e-14))
+    // 손목(3)과 섀시의 공통 조상은 기저 셋
+    const relChassis = art.relativeJacobian(frames, 3, -1, pc, d)
+    for (const c of art.baseCoordinates) expect(relChassis[c]).toBe(0)
+    // 비틀림: twistJacobian·v = (ω_a − ω_b)·n
+    const n = { x: 0, y: 0.6, z: 0.8 }
+    for (const [a, b] of [
+      [2, null],
+      [2, 0],
+      [3, -1],
+      [-1, null]
+    ] as [number, number | null][]) {
+      const j = art.twistJacobian(frames, a, b, n)
+      const wa = frames.velocities[a + 1].omega
+      const wb = b === null ? ZERO : frames.velocities[b + 1].omega
+      const expected = (wa.x - wb.x) * n.x + (wa.y - wb.y) * n.y + (wa.z - wb.z) * n.z
+      expect(Math.abs(dotN(j, art.v) - expected)).toBeLessThan(1e-12)
+      if (b !== null) for (const c of art.baseCoordinates) expect(j[c]).toBe(0)
+    }
+    // 각속도 자체: 회전 행렬의 유한 차분 Ṙ·Rᵀ = [ω]×
+    for (const body of [0, 2, 3]) {
+      const rp = shifted(1, () => art.bodyPose(body).rotation)
+      const rm = shifted(-1, () => art.bodyPose(body).rotation)
+      const r = art.bodyPose(body).rotation
+      const dr = rp.map((x, k) => (x - rm[k]) / (2 * eps))
+      const w = (i: number, j: number): number =>
+        dr[i * 3] * r[j * 3] + dr[i * 3 + 1] * r[j * 3 + 1] + dr[i * 3 + 2] * r[j * 3 + 2]
+      const omega = frames.velocities[body + 1].omega
+      expect(Math.abs(w(2, 1) - omega.x)).toBeLessThan(1e-8)
+      expect(Math.abs(w(0, 2) - omega.y)).toBeLessThan(1e-8)
+      expect(Math.abs(w(1, 0) - omega.z)).toBeLessThan(1e-8)
+    }
+  })
+
+  it('A26 LCP 퍼즈: 접촉꼴 순위 부족 LCP 고정 시드 100개(행 20–40, 좌표 12–16)에서 solveBoxLcp가 던지지 않고 끝난다', () => {
+    const next = lcg(97)
+    for (let trial = 0; trial < 100; trial++) {
+      const m = 12 + Math.floor(next() * 5)
+      const n = 20 + Math.floor(next() * 21)
+      // 대각 질량(양정치)과 접촉꼴 행: 법선 행(한쪽)과 마찰 행(상자), 몇 행은 다른 행의 복사·선형 결합(순위 부족)
+      const mass = Array.from({ length: m }, () => 0.01 + next() * 5)
+      const rows: number[][] = []
+      const lo: number[] = []
+      const hi: number[] = []
+      const b: number[] = []
+      while (rows.length < n) {
+        let j: number[]
+        if (rows.length > 2 && next() < 0.25) {
+          const x = rows[Math.floor(next() * rows.length)]
+          const y = rows[Math.floor(next() * rows.length)]
+          const t = next() < 0.5 ? 0 : next()
+          j = x.map((value, i) => value + t * y[i])
+        } else {
+          j = Array.from({ length: m }, () => (next() < 0.5 ? 0 : next() * 2 - 1))
+          if (!j.some((value) => value !== 0)) j[0] = 1
+        }
+        rows.push(j)
+        const normal = next() < 0.4
+        lo.push(normal ? 0 : -next() * 0.5)
+        hi.push(normal ? Infinity : next() * 0.5)
+        b.push((next() - 0.5) * 2)
+      }
+      const a = rows.map((ri) =>
+        rows.map((rj) => ri.reduce((s, x, k) => s + (x * rj[k]) / mass[k], 0))
+      )
+      const solved = solveBoxLcp(a, b, lo, hi)
+      expect(solved.lambda.every((x) => Number.isFinite(x))).toBe(true)
+      solved.lambda.forEach((x, i) => {
+        expect(x).toBeGreaterThanOrEqual(lo[i])
+        expect(x).toBeLessThanOrEqual(hi[i])
+      })
+    }
   })
 })
