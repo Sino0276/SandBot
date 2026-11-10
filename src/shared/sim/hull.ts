@@ -296,27 +296,15 @@ export function buildHull(
   }
 
   // 4. 가장 먼 점 넣기
-  const vertexMark = new Uint8Array(count)
-  const countVertices = (): number => {
-    vertexMark.fill(0)
-    let vertices = 0
-    for (const tri of tris) {
-      if (!tri.alive) continue
-      for (const v of tri.v)
-        if (!vertexMark[v]) {
-          vertexMark[v] = 1
-          vertices++
-        }
-    }
-    return vertices
-  }
+  // 살아 있는 면(순서는 결과에 쓰지 않는다: 가장 먼 점은 점 순번으로 가른다, 점은 한 면에만 든다)
+  let live = [0, 1, 2, 3]
   let vertices = 4
   while (vertices < limit) {
     // 모든 면의 충돌점 가운데 거리가 가장 큰 점(같으면 정렬 순번이 작은 점, Box3D 전역 최대)
     let eyeFace = -1
-    for (let f = 0; f < tris.length; f++) {
+    for (const f of live) {
       const tri = tris[f]
-      if (!tri.alive || tri.best < 0) continue
+      if (tri.best < 0) continue
       if (
         eyeFace < 0 ||
         tri.bestDistance > tris[eyeFace].bestDistance ||
@@ -388,7 +376,13 @@ export function buildHull(
         }
       }
     }
-    vertices = countVertices()
+    live = live.filter((f) => tris[f].alive)
+    for (const f of created) live.push(f)
+    // 꼭짓점 수: 보이는 면의 꼭짓점 가운데 지평선에 없는 것은 모든 면이 보였으므로 안쪽이 되어 빠지고, 눈 점이 더해진다
+    const onHorizon = new Set(horizon.map(([from]) => from))
+    const inside = new Set<number>()
+    for (const f of visibleOrder) for (const v of tris[f].v) if (!onHorizon.has(v)) inside.add(v)
+    vertices += 1 - inside.size
   }
 
   // 넣지 못한 충돌점(오차 계산에 쓴다)
@@ -397,12 +391,10 @@ export function buildHull(
   for (const tri of tris) if (tri.alive) for (const i of tri.conflict) remaining.push(i)
 
   // 5. 면 합치기
-  let polys: Poly[] = tris.filter((tri) => tri.alive).map((tri) => ({ v: [...tri.v], n: tri.n }))
-  for (;;) {
-    const merged = mergeOnce(polys, p)
-    if (!merged) break
-    polys = merged
-  }
+  let polys = mergeFaces(
+    tris.filter((tri) => tri.alive).map((tri) => ({ v: [...tri.v], n: tri.n })),
+    p
+  )
   // 차수 2인 꼭짓점(면 둘만 만남 = 모서리 위)을 두 면에서 뺀다
   const degree = new Map<number, number>()
   for (const poly of polys) for (const v of poly.v) degree.set(v, (degree.get(v) ?? 0) + 1)
@@ -412,9 +404,10 @@ export function buildHull(
   }
   // 6–9. 정규화·평면·검사·오차
   const kept = [...new Set(polys.flatMap((poly) => poly.v))].sort((x, y) => x - y)
+  const renumber = new Map(kept.map((v, i) => [v, i]))
   const hull = finishHull(
     kept.map((i) => point(p, i)),
-    polys.map((poly) => poly.v.map((v) => kept.indexOf(v))),
+    polys.map((poly) => poly.v.map((v) => renumber.get(v)!)),
     HULL_MERGE_DISTANCE
   )
   if (!hull) return null
@@ -429,33 +422,76 @@ export function buildHull(
   return { ...hull, error }
 }
 
-// 모서리를 (작은 꼭짓점, 큰 꼭짓점) 사전순으로 보며 처음으로 합칠 수 있는 두 면을 합친 새 목록(없으면 null)
-function mergeOnce(polys: Poly[], p: Float64Array): Poly[] | null {
-  type Entry = { lo: number; hi: number; face: number }
-  const entries: Entry[] = []
-  polys.forEach((poly, face) => {
+// 면 합치기: 모서리를 (작은 꼭짓점, 큰 꼭짓점) 사전순으로 보며 처음으로 합칠 수 있는 두 면을 합치고, 합치면 처음부터 다시 본다(합칠
+// 것이 없을 때까지, 면 수가 줄기만 해서 끝난다). 합치기를 거절한 면 짝은 두 면이 그대로인 동안 다시 재도 같으므로 기억해 두고
+// 다시 재지 않는다(합친 면은 새 번호라 기억에 걸리지 않는다). 그래서 결과는 매번 처음부터 모두 다시 재는 것과 같다.
+function mergeFaces(initial: Poly[], p: Float64Array): Poly[] {
+  const faces: (Poly | null)[] = [...initial]
+  // 모서리마다 양쪽 면(키 찾기에만 Map을 쓴다)
+  type Edge = { lo: number; hi: number; a: number; b: number }
+  const count = p.length / 3
+  const byKey = new Map<number, Edge>()
+  const edges: Edge[] = []
+  initial.forEach((poly, f) => {
     for (let k = 0; k < poly.v.length; k++) {
-      const a = poly.v[k]
-      const b = poly.v[(k + 1) % poly.v.length]
-      entries.push({ lo: Math.min(a, b), hi: Math.max(a, b), face })
+      const x = poly.v[k]
+      const y = poly.v[(k + 1) % poly.v.length]
+      const lo = Math.min(x, y)
+      const hi = Math.max(x, y)
+      const edge = byKey.get(lo * count + hi)
+      if (edge) edge.b = f
+      else {
+        const created = { lo, hi, a: f, b: -1 }
+        byKey.set(lo * count + hi, created)
+        edges.push(created)
+      }
     }
   })
-  entries.sort((x, y) => x.lo - y.lo || x.hi - y.hi || x.face - y.face)
-  for (let e = 0; e + 1 < entries.length; e++) {
-    const first = entries[e]
-    const second = entries[e + 1]
-    if (first.lo !== second.lo || first.hi !== second.hi) continue
-    const left = polys[first.face]
-    const right = polys[second.face]
-    if (first.face === second.face || dot(left.n, right.n) < HULL_MERGE_COS) continue
-    const merged = mergePolygons(left, right, first.lo, first.hi, p)
-    if (!merged) continue
-    const out = polys.filter((_, i) => i !== first.face && i !== second.face)
-    // 합친 면은 앞 면 자리에 둔다(순서는 정규화가 다시 정한다)
-    out.splice(Math.min(first.face, second.face), 0, merged)
-    return out
+  edges.sort((x, y) => x.lo - y.lo || x.hi - y.hi)
+  // 거절한 면 짝(면 번호는 합친 면까지 2·초기 면 수보다 작다)
+  const pairKey = (x: number, y: number): number =>
+    Math.min(x, y) * 2 * (initial.length + 1) + Math.max(x, y)
+  const rejected = new Set<number>()
+  let e = 0
+  while (e < edges.length) {
+    const edge = edges[e]
+    const left = edge.a >= 0 ? faces[edge.a] : null
+    const right = edge.b >= 0 ? faces[edge.b] : null
+    const pair = pairKey(edge.a, edge.b)
+    if (!left || !right || edge.a === edge.b || rejected.has(pair)) {
+      e++
+      continue
+    }
+    const merged =
+      dot(left.n, right.n) < HULL_MERGE_COS ? null : mergePolygons(left, right, edge.lo, edge.hi, p)
+    if (!merged) {
+      rejected.add(pair)
+      e++
+      continue
+    }
+    const m = faces.length
+    faces.push(merged)
+    const [fa, fb] = [edge.a, edge.b]
+    faces[fa] = null
+    faces[fb] = null
+    edges.splice(e, 1)
+    // 처음부터 다시 보는 것과 같다: 앞 모서리 가운데 합친 면이 든 것만 다시 재면 된다(나머지는 두 면이 그대로라 거절 그대로)
+    let restart = e
+    edges.forEach((other, i) => {
+      let touched = false
+      if (other.a === fa || other.a === fb) {
+        other.a = m
+        touched = true
+      }
+      if (other.b === fa || other.b === fb) {
+        other.b = m
+        touched = true
+      }
+      if (touched && i < restart) restart = i
+    })
+    e = restart
   }
-  return null
+  return faces.filter((face): face is Poly => face !== null)
 }
 
 // 모서리 (u, v)를 함께 가진 두 다각형을 합친다: 꼭짓점이 겹치지 않고, Newell 평면에서 모든 꼭짓점이 HULL_MERGE_DISTANCE 안이고,
@@ -534,10 +570,11 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
     outFaces.push({ vertices: list, normal: vec(n), offset: offset + 0 })
   }
   // 모서리와 다양체 검사: 방향이 있는 모서리마다 면 하나, 반대 방향도 있어야 한다
-  const directed = new Map<string, number>()
+  const vertexCount = points.length
+  const directed = new Map<number, number>()
   rotated.forEach((list, f) => {
     for (let k = 0; k < list.length; k++) {
-      const key = `${list[k]},${list[(k + 1) % list.length]}`
+      const key = list[k] * vertexCount + list[(k + 1) % list.length]
       if (directed.has(key)) directed.set(key, -1)
       else directed.set(key, f)
     }
@@ -547,8 +584,8 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
     for (let k = 0; k < list.length; k++) {
       const a = list[k]
       const b = list[(k + 1) % list.length]
-      if (directed.get(`${a},${b}`) !== f) return null
-      const other = directed.get(`${b},${a}`)
+      if (directed.get(a * vertexCount + b) !== f) return null
+      const other = directed.get(b * vertexCount + a)
       if (other === undefined || other < 0) return null
       if (a < b) edges.push({ a, b, left: f, right: other })
     }
@@ -558,10 +595,16 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
   const used = new Set(rotated.flat())
   if (used.size !== points.length) return null
   if (points.length - edges.length + outFaces.length !== 2) return null
-  // 모든 꼭짓점이 모든 면 평면 안쪽
+  // 모든 꼭짓점이 모든 면 평면 안쪽이고, 가장 얇은 폭 min_f (offset_f − min_v n_f·v)가 HULL_MIN_THICKNESS 이상(한 번에 잰다)
   for (const face of outFaces) {
-    const n = arr(face.normal)
-    for (const q of points) if (dot(n, q) - face.offset > planeTolerance) return null
+    const { x: nx, y: ny, z: nz } = face.normal
+    let low = Infinity
+    for (const q of points) {
+      const d = nx * q[0] + ny * q[1] + nz * q[2]
+      if (d - face.offset > planeTolerance) return null
+      if (d < low) low = d
+    }
+    if (!(face.offset - low >= HULL_MIN_THICKNESS)) return null
   }
   // 부피·무게중심: 꼭짓점 평균에서 면 부채꼴로 나눈 사면체(발산 정리)
   const ref: V3 = [0, 0, 0]
@@ -583,13 +626,6 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
   if (!(volume >= HULL_MIN_VOLUME)) return null
   // 사면체 무게중심 = (ref + a + b + c)/4 → Σ(six/6)·(a + b + c)/4 / V + ref
   const centroid: V3 = [0, 1, 2].map((k) => ref[k] + moment[k] / (24 * volume)) as V3
-  // 가장 얇은 폭: min_f (offset_f − min_v n_f·v)
-  for (const face of outFaces) {
-    const n = arr(face.normal)
-    let low = Infinity
-    for (const q of points) low = Math.min(low, dot(n, q))
-    if (!(face.offset - low >= HULL_MIN_THICKNESS)) return null
-  }
   return {
     vertices: points.map(vec),
     faces: outFaces,
