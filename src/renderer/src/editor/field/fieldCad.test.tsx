@@ -272,8 +272,31 @@ describe('필드 CAD 구역 상태별(B2)', () => {
     const locked = tree()
     expect(byData(locked, 'reload')!.props.disabled).toBe(true)
     expect(byData(locked, 'relink')!.props.disabled).toBe(true)
-    expect(byData(locked, 'clear')!.props.disabled).toBeUndefined()
-    expect(byData(locked, 'preset')!.props.disabled).toBeUndefined()
+    expect(byData(locked, 'clear')!.props.disabled).toBe(false)
+    expect(byData(locked, 'preset')!.props.disabled).toBe(false)
+  })
+
+  it('바쁜 동안(프로젝트 열기·저장)은 지우기·정렬 칸도 비활성이고 정렬을 바꾸지 않는다(4e 리뷰 수정)', () => {
+    loadShape()
+    const alignment = vi.fn()
+    setStore(useSceneStore, { setFieldVisualAlignment: alignment })
+    setStore(useProjectStore, { busy: true })
+    const list = tree()
+    for (const name of ['reload', 'relink', 'clear', 'preset', 'upAxis', 'forwardAxis'])
+      expect(byData(list, name)!.props.disabled, name).toBe(true)
+    // 비활성 칸에 사건이 와도(키보드 등) 바꾸지 않는다
+    ;(byData(list, 'preset')!.props.onChange as (event: unknown) => void)({
+      target: { value: 'zUp' }
+    })
+    ;(byData(list, 'upAxis')!.props.onChange as (event: unknown) => void)({
+      target: { value: '+Z' }
+    })
+    expect(alignment).not.toHaveBeenCalled()
+    setStore(useProjectStore, { busy: false })
+    ;(byData(tree(), 'upAxis')!.props.onChange as (event: unknown) => void)({
+      target: { value: '+Z' }
+    })
+    expect(alignment).toHaveBeenCalledTimes(1)
   })
 
   it('정렬이 의심스러우면 경고 줄(Z-up을 고른 공식 파일)', () => {
@@ -326,7 +349,7 @@ describe('정렬 칸(B3)', () => {
     setStore(usePlayStore, { run: run({ season: 'biobuzz', hiveTipped: [false, false] }) })
     const list = tree()
     for (const name of ['preset', 'upAxis', 'forwardAxis'])
-      expect(byData(list, name)!.props.disabled).toBeUndefined()
+      expect(byData(list, name)!.props.disabled).toBe(false)
     ;(byData(list, 'upAxis')!.props.onChange as (event: unknown) => void)({
       target: { value: '+Z' }
     })

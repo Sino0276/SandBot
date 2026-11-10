@@ -518,6 +518,88 @@ describe('A4 실행 취소', () => {
   })
 })
 
+describe('못 찾은 필드 CAD 파일 값과 새 불러오기(4e 리뷰 수정)', () => {
+  const file = { relativePath: '../field/field.step', absolutePath: 'C:\\Users\\alice\\field.step' }
+
+  it('열 때 못 찾음 → 지우기 → B 불러오기 → undo 두 번 → 저장해도 원래 상대 경로이고 missing이 보인다', async () => {
+    writeProject({ bot: robot }, { season: 'biobuzz', visual: visualAt(file.absolutePath) }, file)
+    const before = JSON.stringify(JSON.parse(projectJson!).field.visual.file)
+    await open()
+    expect(state()).toBe('missing')
+    clearFieldVisual()
+    chosen.push(FIELD_PATH)
+    disk.set(FIELD_PATH, fieldModel())
+    await importFieldVisual()
+    await settle()
+    expect(doc().visual?.absolutePath).toBe(FIELD_PATH)
+    expect(state()).toBe('shown')
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(doc().visual?.absolutePath).toBe(file.absolutePath)
+    // 그 경로의 상태 칸을 지우지 않았으므로 'unloaded'가 아니라 missing이다
+    expect(state()).toBe('missing')
+    expect(dirty()).toBe(false)
+    // 다른 일로 저장
+    useSceneStore.getState().setFieldSeason('none')
+    expect(await saveProject()).toBe(true)
+    await settle()
+    expect(JSON.stringify(JSON.parse(projectJson!).field.visual.file)).toBe(before)
+  })
+
+  it('지우지 않고 B를 불러와도 같다, B를 저장하면 B의 경로다', async () => {
+    writeProject({ bot: robot }, { season: 'biobuzz', visual: visualAt(file.absolutePath) }, file)
+    const before = JSON.stringify(JSON.parse(projectJson!).field.visual.file)
+    await open()
+    chosen.push(FIELD_PATH)
+    disk.set(FIELD_PATH, fieldModel())
+    await importFieldVisual()
+    await settle()
+    expect(noticesOf('fieldCadMissing')).toEqual([])
+    expect(await saveProject()).toBe(true)
+    await settle()
+    // 다른 파일(절대 경로가 다름)에는 못 찾은 파일 값을 쓰지 않는다
+    expect(JSON.parse(projectJson!).field.visual.file).toEqual({
+      relativePath: 'field/field.step',
+      absolutePath: FIELD_PATH
+    })
+    expect(undo()).toBe(true)
+    expect(state()).toBe('missing')
+    expect(await saveProject()).toBe(true)
+    await settle()
+    expect(JSON.stringify(JSON.parse(projectJson!).field.visual.file)).toBe(before)
+  })
+
+  it('같은 경로를 다시 불러오면 그 경로의 상태 칸을 비운다', async () => {
+    existing.add(FIELD_PATH)
+    disk.set(FIELD_PATH, 'fail')
+    writeProject({ bot: robot }, { season: 'biobuzz', visual: visualAt(FIELD_PATH) })
+    await open()
+    expect(state()).toBe('failed')
+    disk.set(FIELD_PATH, fieldModel())
+    chosen.push(FIELD_PATH)
+    await importFieldVisual()
+    await settle()
+    expect(status()).toBeNull()
+    expect(state()).toBe('shown')
+  })
+})
+
+describe('바쁜 동안 지우기(4e 리뷰 수정)', () => {
+  it('프로젝트 열기·저장으로 바쁘면 [지우기]는 아무것도 하지 않는다', async () => {
+    await openWithField()
+    const before = doc()
+    useProjectStore.setState({ busy: true })
+    try {
+      clearFieldVisual()
+    } finally {
+      useProjectStore.setState({ busy: false })
+    }
+    expect(doc()).toBe(before)
+    clearFieldVisual()
+    expect('visual' in doc()).toBe(false)
+  })
+})
+
 describe('A5 dirty', () => {
   it('프로젝트에서 불러오면 dirty, undo하면 아니다. 정렬을 원래 프리셋으로 다시 고르면 아니다', async () => {
     writeProject({ bot: robot }, { season: 'biobuzz' })

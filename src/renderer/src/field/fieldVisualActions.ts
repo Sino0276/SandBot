@@ -18,8 +18,10 @@ import { applyFieldVisualStatus, loadFieldVisualWithProgress } from './fieldVisu
 
 // 열 때 찾지 못한 필드 CAD의 파일 값(상대·절대 경로, spec-4e §2.3·§2.5). 저장이 serializeProject에 넘겨, 그 절대 경로가
 // 지금 visual의 절대 경로와 같으면 file을 이 값 그대로 쓴다(못 찾은 팀원이 다른 일로 저장해도 원래 맞던 상대 경로를
-// 지킨다). 다시 찾기·새 불러오기 성공에서 null, 프로젝트를 열 때 그 프로젝트의 값이다. [지우기]에서는 두어 지우기 → 실행
-// 취소로 같은 경로가 돌아와도 파일 값을 지킨다. 다시 찾기(이 모듈)와 열기·저장(projectActions)이 함께 쓰므로 여기에 둔다.
+// 지킨다). 다시 찾기 성공에서 null(기록 전체의 경로를 바꾸므로 그 절대 경로는 돌아오지 않는다), 프로젝트를 열 때 그
+// 프로젝트의 값이다. [지우기]와 새 불러오기 성공에서는 두어, 지우기·불러오기 → 실행 취소로 같은 경로가 돌아와도 파일 값을
+// 지킨다(다른 파일을 불러오면 절대 경로가 달라 쓰이지 않는다, 4e 리뷰 수정). 다시 찾기(이 모듈)와 열기·저장(projectActions)이
+// 함께 쓰므로 여기에 둔다.
 let unresolvedFile: StoredCadFile | null = null
 
 export function unresolvedFieldVisualFile(): StoredCadFile | null {
@@ -75,7 +77,8 @@ async function chooseAndLoad(session: number, defaultPath?: string): Promise<str
 }
 
 // [필드 CAD 불러오기…]. 읽었을 때만 visual을 정한다(고른 파일 + 기본 정렬 Y-up, 실행 취소 한 단계). 실패·취소면 문서는
-// 그대로다(알림만).
+// 그대로다(알림만). 상태 칸은 새 경로의 것만 비운다: 다른 경로(열 때 못 찾은 파일 등)의 상태는 실행 취소로 그 visual이
+// 돌아오면 다시 맞으므로 둔다(missing이 'unloaded'로 바뀌지 않게). 못 찾은 파일 값도 둔다(위 주석, 4e 리뷰 수정).
 export async function importFieldVisual(): Promise<void> {
   if (!canStartImport()) return
   const session = sessionNow()
@@ -86,9 +89,8 @@ export async function importFieldVisual(): Promise<void> {
     absolutePath: path,
     ...DEFAULT_FIELD_VISUAL_ALIGNMENT
   })
-  setFieldVisualStatus(null)
+  if (useProjectStore.getState().fieldVisualStatus?.path === path) setFieldVisualStatus(null)
   replaceProjectNotice('fieldCadMissing', null)
-  setUnresolvedFieldVisualFile(null)
 }
 
 // [다시 불러오기]. 상태와 관계없이(그려져 있어도) 저장된 경로를 다시 읽는다. 성공하면 형상을 바꿔 끼우고(같은 경로에 고친
@@ -121,8 +123,10 @@ export async function relinkFieldVisual(): Promise<void> {
 }
 
 // [지우기]. visual을 뗀다(실행 취소 한 단계). 상태·형상·못 찾은 파일 값은 그대로 둔다(경로를 든 상태라 실행 취소로 되살리면
-// 그 경로의 상태·형상이 그대로 보인다).
+// 그 경로의 상태·형상이 그대로 보인다). 바쁜 동안(프로젝트 열기·저장)은 하지 않는다: 열기는 기록을 멈춘 채 CAD 위치를 찾는
+// await 뒤에 연 상태(savedField)를 잡으므로, 그사이 지우면 실행 취소도 dirty도 없이 저장된 상태로 삼켜진다(4e 리뷰 수정).
 export function clearFieldVisual(): void {
+  if (useProjectStore.getState().busy) return
   useSceneStore.getState().setFieldVisual(null)
   replaceProjectNotice('fieldCadMissing', null)
 }

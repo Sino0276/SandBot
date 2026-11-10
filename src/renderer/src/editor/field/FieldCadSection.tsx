@@ -40,7 +40,9 @@ import { displayedField, runLocksField } from './fieldDisplay'
 // Field 인스펙터 "필드 CAD (보기용)" 구역(spec-4e §4.1). 공식 필드 STEP을 보기용으로 불러와 씬 뷰에 그린다(계산은 늘 단순
 // 형상). 버튼·배지 글자는 로봇 CAD 행(inspector.cad.*)을 그대로 써서 알림 문구와 버튼 이름이 어긋나지 않는다. 불러오기 세
 // 버튼은 불러오는 중·바쁨·잠그는 실행 동안 비활성이다(합치기·GPU 업로드 동안 렌더러가 멈추면 키보드 게임패드가 늦는다,
-// 비평 U11). 정렬·지우기·단순 형상 보기는 실행 중에도 된다(시뮬레이터와 관계없다). 로봇 CadAlignmentSection과 같은 모양이지만
+// 비평 U11). 정렬·지우기·단순 형상 보기는 실행 중에도 된다(시뮬레이터와 관계없다). 정렬·지우기는 바쁜 동안(프로젝트 열기·
+// 저장)만 비활성이다: 열기는 기록을 멈춘 채 CAD 위치를 찾는 await 뒤에 연 상태를 잡으므로, 그사이 바꾸면 실행 취소도 dirty도
+// 없이 저장된 상태로 삼켜진다(4e 리뷰 수정, 로봇 CadAlignmentSection도 busy면 막는다). 로봇 CadAlignmentSection과 같은 모양이지만
 // 그것은 SceneObject와 로봇 방향 기억(sandbot:cadAlignment)에 묶여 있어 새로 쓴다(필드 CAD는 그 기억을 쓰지 않는다).
 
 const PRESET_LABEL_KEYS = {
@@ -133,7 +135,7 @@ function FieldCadSection(): React.JSX.Element {
   const current: CadAlignment = { upAxis: visual.upAxis, forwardAxis: visual.forwardAxis }
   const preset = findPreset(current) ?? 'custom'
   const apply = (alignment: CadAlignment): void => {
-    if (isValidAlignment(alignment)) setAlignment(alignment)
+    if (!busy && isValidAlignment(alignment)) setAlignment(alignment)
   }
   const changeUp = (upAxis: AxisDirection): void => {
     const forwardAxis = isValidAlignment({ upAxis, forwardAxis: visual.forwardAxis })
@@ -184,11 +186,12 @@ function FieldCadSection(): React.JSX.Element {
         >
           {t('inspector.cad.relink')}
         </button>
-        {/* 지우기는 늘 된다(읽는 중에 지워도 결과는 상태를 바꾸지 않는다) */}
+        {/* 지우기는 바쁠 때 말고는 늘 된다(읽는 중·실행 중에 지워도 결과는 상태를 바꾸지 않는다) */}
         <button
           type="button"
           className="panel-button"
           data-field-cad="clear"
+          disabled={busy}
           onClick={() => clearFieldVisual()}
         >
           {t('field.inspector.cad.clear')}
@@ -228,6 +231,7 @@ function FieldCadSection(): React.JSX.Element {
           className="field-select"
           data-field-cad="preset"
           value={preset}
+          disabled={busy}
           onChange={(event) => {
             const value = event.target.value
             if (value in ALIGNMENT_PRESETS) apply(ALIGNMENT_PRESETS[value as AlignmentPreset])
@@ -249,6 +253,7 @@ function FieldCadSection(): React.JSX.Element {
           className="field-select"
           data-field-cad="upAxis"
           value={visual.upAxis}
+          disabled={busy}
           onChange={(event) => changeUp(event.target.value as AxisDirection)}
         >
           {AXIS_DIRECTIONS.map((axis) => (
@@ -264,6 +269,7 @@ function FieldCadSection(): React.JSX.Element {
           className="field-select"
           data-field-cad="forwardAxis"
           value={visual.forwardAxis}
+          disabled={busy}
           onChange={(event) =>
             apply({ upAxis: visual.upAxis, forwardAxis: event.target.value as AxisDirection })
           }
