@@ -976,6 +976,8 @@ const en: Messages = {
         '{{count}} meshes of {{name}} are still loading or could not be read, so its collision shape is built without them.',
       worldColliderDegenerate:
         '{{count}} collision shapes of {{name}} are flat or too thin (under 1 mm) to make a convex hull, so they are not used.',
+      worldColliderOutOfRange:
+        '{{count}} collision shapes of {{name}} exceed the simulator coordinate limit (10 m from the body, 6.5 m for convex hull points), so they are not used.',
       worldTooManyColliders:
         'The colliders of {{name}} exceed the simulator limit ({{max}} per body), so only the first {{max}} are used.',
       worldTooManyWorldColliders:
@@ -2129,6 +2131,8 @@ const en: Messages = {
     hullNone: 'This object and its children have no meshes of this body, so it does not collide.',
     hullDegenerate:
       'The mesh is flat or too thin (under 1 mm) to make a convex hull, so it does not collide.',
+    outOfRange:
+      'Relative to its body this Collider exceeds the simulator coordinate limit (box center and capsule end points 10 m, convex hull points 6.5 m), so it does not collide. Reduce its center or size.',
     hullErrorLarge:
       'The convex hull is up to about {{error}} smaller than the mesh. Raise the vertex limit or split the Collider per part.',
     orphan:

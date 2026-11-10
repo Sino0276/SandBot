@@ -344,6 +344,14 @@ describe('B12 Collider 카드', () => {
     expect(cardHtml('loose')).toContain(t('collider.orphan'))
   })
 
+  it('B12 몸체 틀에서 좌표 한도를 넘는 Collider는 경고 줄(시뮬레이터에 넣지 않음)', () => {
+    // 판(리프트 몸체 z 0.05)의 중심 z 10 m 상자는 몸체 틀에서 10.05 m
+    withColliders('plate', [{ ...BOX, center: [0, 0, 10] }])
+    expect(cardHtml('plate')).toContain(t('collider.outOfRange'))
+    withColliders('plate', [BOX])
+    expect(cardHtml('plate')).not.toContain(t('collider.outOfRange'))
+  })
+
   it('B12 축 줄(Y-up CAD 파트), 소속 줄(섀시·관절·밖), 자동 껍질 대체 안내', () => {
     withColliders('part', [BOX])
     const part = cardHtml('part')

@@ -1137,6 +1137,33 @@ describe('buildWorldSpec 충돌 형상(B8)', () => {
     expect(result.ignoredPairs).toEqual([])
   })
 
+  it('B8 몸체 틀에서 좌표 한도를 넘는 Collider(높이 20 m 캡슐)는 빼고 알리며, 세계 설명은 그대로 만든다', () => {
+    const objects = armRobot()
+    const long: SceneObjects = {
+      ...objects,
+      plate: {
+        ...objects.plate,
+        colliders: [
+          {
+            id: 'c',
+            kind: 'capsule',
+            center: [0.2, 0, 0],
+            radius: 0.05,
+            height: 20,
+            direction: 'x'
+          }
+        ]
+      }
+    }
+    // 끝점 x = 0.2 + (10 − 0.05) = 10.15 m > 10 m
+    const result = buildWorldSpec(long, 'R', SETTINGS, null, null, shapes(long))
+    expect(result.spec).not.toBeNull()
+    expect('colliders' in result.spec!.joints[0]).toBe(false)
+    const warnings = keys(result.warnings)
+    expect(warnings).toContain('worldColliderOutOfRange')
+    expect(warnings).not.toContain('worldInvalid')
+  })
+
   it('B8 섀시 Collider를 모두 끄면 robot.colliders는 빈 배열이다', () => {
     const objects = armRobot()
     const off: SceneObjects = {

@@ -8,6 +8,7 @@ import {
   buildHull,
   canonicalHull,
   HULL_DEFAULT_VERTEX_LIMIT,
+  HULL_MAX_COORD,
   type Hull
 } from '../../../shared/sim/hull'
 import type { Frame3 } from '../../../shared/sim/sensorFrame'
@@ -23,6 +24,7 @@ import {
   colliderEnabled,
   colliderFriction,
   forceCollideKey,
+  MAX_COLLIDER_EXTENT,
   type ColliderDirection,
   type ColliderSettings
 } from '../scene/collider'
@@ -72,8 +74,9 @@ export type ColliderState = {
   objectId: string
   colliderId: string
   enabled: boolean
-  // ok: 형상이 나옴, pending: 메시를 읽는 중이라 형상 없음, none: 이 몸체의 메시가 없음, degenerate: 껍질이 평평하거나 얇음
-  status: 'ok' | 'pending' | 'none' | 'degenerate'
+  // ok: 형상이 나옴, pending: 메시를 읽는 중이라 형상 없음, none: 이 몸체의 메시가 없음, degenerate: 껍질이 평평하거나 얇음,
+  // outOfRange: 몸체 틀 좌표가 세계 설명 한도를 넘음(withinWorld)
+  status: 'ok' | 'pending' | 'none' | 'degenerate' | 'outOfRange'
   // ok일 때 형상(몸체 틀)
   entry: WorldColliderEntry | null
   // Mesh Collider가 모은 메시 가운데 읽는 중·못 읽은 수(Box·Capsule은 0)
@@ -98,6 +101,8 @@ export type WorldColliderBody = {
   pendingMeshes: number
   // 평평하거나 얇아 뺀 Mesh Collider·자동 껍질 수
   degenerate: number
+  // 몸체 틀 좌표가 세계 설명 한도를 넘어 뺀 충돌체 수(켠 Collider·자동 껍질)
+  outOfRange: number
   // 관절 몸체의 편집 자세 바닥 간격(min z, m, F10), 섀시 null
   floorGap: number | null
   // 몸체 소속 Collider(소속 오브젝트 문서 순서, 그 안에서 배열 순서, 끈 것 포함)
@@ -133,6 +138,7 @@ type BodyCore = {
   states: ColliderState[]
   pendingMeshes: number
   degenerate: number
+  outOfRange: number
 }
 
 type BodyCacheEntry = {
@@ -186,6 +192,25 @@ function frameOf(matrix: Matrix4): Frame3 {
 const IDENTITY_FRAME: Frame3 = {
   rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
   origin: { x: 0, y: 0, z: 0 }
+}
+
+// 세계 설명이 받는 좌표 한도(src/shared/sim/worldSpec.ts parseWorldSpec): 상자 중심·캡슐 끝점은 |성분| ≤ 10 m(MAX_COORD =
+// scene/collider.ts MAX_COLLIDER_EXTENT), 볼록 점은 HULL_MAX_COORD(6.5 m, 껍질 양자화 한도). Collider 칸은 오브젝트 로컬 값이라
+// 몸체 틀로 옮기면 넘을 수 있다(중심 10 m, 높이 20 m 캡슐). 넘는 충돌체를 넣으면 메인과 같은 검사가 세계 설명 전체를 거절해
+// 시뮬레이터 없이 실행하므로, 그 충돌체만 빼고 알린다(worldColliderOutOfRange)
+const inWorld = (p: Vec3): boolean =>
+  Math.abs(p.x) <= MAX_COLLIDER_EXTENT &&
+  Math.abs(p.y) <= MAX_COLLIDER_EXTENT &&
+  Math.abs(p.z) <= MAX_COLLIDER_EXTENT
+function withinWorld(collider: SimCollider): boolean {
+  if (collider.kind === 'box') return inWorld(collider.center)
+  if (collider.kind === 'capsule') return inWorld(collider.a) && inWorld(collider.b)
+  return true
+}
+// 모은 점(xyz 수 배열) 가운데 껍질 좌표 한도 밖의 점이 있음(buildHull이 null을 내는 경우 가운데 퇴화가 아닌 것)
+function pointsOutOfRange(points: readonly number[]): boolean {
+  for (const value of points) if (!(Math.abs(value) <= HULL_MAX_COORD)) return true
+  return false
 }
 
 // 점 p(오브젝트 로컬)를 행렬로 옮겨 수 배열 끝에 붙인다(xyz)
@@ -341,6 +366,7 @@ function computeBody(
   const entries: WorldColliderEntry[] = []
   const pendingIds = new Set<string>()
   let degenerate = 0
+  let outOfRange = 0
   let hasColliders = false
   let enabledCount = 0
   for (const id of members) {
@@ -361,8 +387,9 @@ function computeBody(
         const gathered = gatherPoints(meshesUnder(id), shapes, fromRobot)
         state.pendingMeshes = gathered.pending.length
         if (enabled) for (const mesh of gathered.pending) pendingIds.add(mesh)
+        const outside = pointsOutOfRange(gathered.points)
         const entry =
-          gathered.points.length > 0
+          gathered.points.length > 0 && !outside
             ? convexEntry(
                 gathered.points,
                 collider.vertexLimit,
@@ -372,8 +399,9 @@ function computeBody(
                 colliderFriction(collider)
               )
             : null
-        // 점이 있는데 껍질이 없으면 퇴화, 점이 없으면 읽는 중이 먼저다(다 읽으면 점이 생길 수 있다)
+        // 점이 있는데 껍질이 없으면 퇴화(좌표 한도 밖이면 outOfRange), 점이 없으면 읽는 중이 먼저다(다 읽으면 점이 생길 수 있다)
         if (entry) state.entry = entry
+        else if (outside) state.status = 'outOfRange'
         else if (gathered.points.length > 0) state.status = 'degenerate'
         else if (gathered.pending.length > 0) state.status = 'pending'
         else if (gathered.degenerate > 0) state.status = 'degenerate'
@@ -381,9 +409,12 @@ function computeBody(
         if (enabled && state.status === 'degenerate') degenerate++
       } else {
         const toBody = toBodyOf(id)
-        if (toBody) state.entry = primitiveEntry(collider, id, toBody)
-        else state.status = 'none'
+        const entry = toBody ? primitiveEntry(collider, id, toBody) : null
+        if (!entry) state.status = 'none'
+        else if (!withinWorld(entry.collider)) state.status = 'outOfRange'
+        else state.entry = entry
       }
+      if (enabled && state.status === 'outOfRange') outOfRange++
       if (enabled && state.entry) entries.push(state.entry)
       states.push(state)
     }
@@ -403,7 +434,8 @@ function computeBody(
     if (!hasColliders) {
       const gathered = gatherPoints(meshes, shapes, fromRobot)
       pendingMeshes = gathered.pending.length
-      if (gathered.points.length > 0) {
+      if (pointsOutOfRange(gathered.points)) outOfRange++
+      else if (gathered.points.length > 0) {
         auto = convexEntry(
           gathered.points,
           HULL_DEFAULT_VERTEX_LIMIT,
@@ -433,7 +465,7 @@ function computeBody(
       if (state.entry && state.enabled && !kept.has(state.entry)) state.capped = true
     used = used.slice(0, MAX_BODY_COLLIDERS)
   }
-  return { source, entries: used, bodyCapped, states, pendingMeshes, degenerate }
+  return { source, entries: used, bodyCapped, states, pendingMeshes, degenerate, outOfRange }
 }
 
 // 섀시 대체 상자: 외곽 사각형의 경계 × [0, 높이](4ab 평면 프리즘과 같은 크기, 단위 회전, 기본 마찰)
@@ -629,6 +661,8 @@ export function buildCollisionModel(input: {
       warnings.push({ key: 'worldColliderPending', params: { name, count: core.pendingMeshes } })
     if (core.degenerate > 0)
       warnings.push({ key: 'worldColliderDegenerate', params: { name, count: core.degenerate } })
+    if (core.outOfRange > 0)
+      warnings.push({ key: 'worldColliderOutOfRange', params: { name, count: core.outOfRange } })
     if (core.bodyCapped)
       warnings.push({ key: 'worldTooManyColliders', params: { name, max: MAX_BODY_COLLIDERS } })
     const parent = body.body < 0 ? null : joints.parents[body.body]
@@ -662,6 +696,7 @@ export function buildCollisionModel(input: {
       colliders,
       pendingMeshes: core.pendingMeshes,
       degenerate: core.degenerate,
+      outOfRange: core.outOfRange,
       floorGap,
       states
     }

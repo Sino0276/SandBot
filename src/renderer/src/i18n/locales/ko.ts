@@ -986,6 +986,8 @@ const ko = {
         '{{name}}의 메시 {{count}}개를 아직 읽는 중이거나 읽지 못해 그 메시 없이 충돌 형상을 만듭니다.',
       worldColliderDegenerate:
         '{{name}}의 충돌 형상 {{count}}개가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 쓰지 않습니다.',
+      worldColliderOutOfRange:
+        '{{name}}의 충돌 형상 {{count}}개가 시뮬레이터 좌표 한도(몸체 기준 10 m, 볼록 껍질 점 6.5 m)를 넘어 쓰지 않습니다.',
       worldTooManyColliders:
         '{{name}}의 충돌체가 시뮬레이터 한도(몸체마다 {{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyWorldColliders:
@@ -2122,6 +2124,8 @@ const ko = {
     hullNone: '이 오브젝트와 하위에 이 몸체의 메시가 없어 충돌하지 않습니다.',
     hullDegenerate:
       '메시가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 충돌하지 않습니다.',
+    outOfRange:
+      '몸체 기준 위치가 시뮬레이터 좌표 한도(상자 중심·캡슐 끝점 10 m, 볼록 껍질 점 6.5 m)를 넘어 이 Collider는 충돌하지 않습니다. 중심이나 크기를 줄이세요.',
     hullErrorLarge:
       '볼록 껍질이 메시보다 약 {{error}}까지 작습니다. 꼭짓점 한도를 올리거나 부품마다 Collider를 나누세요.',
     orphan: '로봇 밖 Collider는 시뮬레이터가 쓰지 않습니다(정적 장애물이 아닙니다).',

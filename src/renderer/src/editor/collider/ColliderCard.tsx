@@ -359,10 +359,16 @@ function ColliderCard({
               ? t('collider.hullPending')
               : state.status === 'degenerate'
                 ? t('collider.hullDegenerate')
-                : t('collider.hullNone')}
+                : state.status === 'outOfRange'
+                  ? t('collider.outOfRange')
+                  : t('collider.hullNone')}
         </p>
       )}
       <ul className="hw-issues">
+        {/* 몸체 틀에서 세계 설명 좌표 한도를 넘어 시뮬레이터에 넣지 않음(Box·Capsule, Mesh는 결과 줄이 알린다) */}
+        {collider.kind !== 'mesh' && state?.status === 'outOfRange' && (
+          <li className="hw-issue is-warning">{t('collider.outOfRange')}</li>
+        )}
         {collider.kind === 'mesh' && entry && entry.error > HULL_ERROR_WARN && (
           <li className="hw-issue is-warning">
             {t('collider.hullErrorLarge', { error: lengthText(entry.error) })}

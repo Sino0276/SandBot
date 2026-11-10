@@ -31,6 +31,7 @@ import type { WorldWarning, WorldWarningKey } from './worldSpec'
 const COLLIDER_WARNINGS: WorldWarningKey[] = [
   'worldColliderPending',
   'worldColliderDegenerate',
+  'worldColliderOutOfRange',
   'worldTooManyColliders',
   'worldTooManyWorldColliders',
   'worldJointStartOverlap'
@@ -333,6 +334,46 @@ describe('B6 몸체 규칙', () => {
       })
     }).bodies.find((body) => body.objectId === 'arm')!
     expect(group.states[0].status).toBe('none')
+  })
+
+  it('B6 몸체 틀 좌표가 세계 설명 한도를 넘는 충돌체는 빼고 worldColliderOutOfRange(세계 설명 전체를 거절하지 않게)', () => {
+    // 캡슐 높이 20 m(문서 한도 안)는 관(팔 몸체 x 0.1)에서 끝점이 10 m를 넘는다. 섀시 판의 중심 10 m 상자도 판 위치만큼 넘는다
+    const objects = withColliders(
+      withColliders(robotScene(), 'tube', [
+        { id: 'c', kind: 'capsule', center: [0, 0, 0], radius: 0.05, height: 20, direction: 'x' }
+      ]),
+      'base',
+      [
+        { id: 'far', kind: 'box', center: [0, 0, 10], size: [0.1, 0.1, 0.1] },
+        { id: 'ok', kind: 'box', center: [0, 0, 0], size: [0.1, 0.1, 0.1] }
+      ]
+    )
+    const result = model(objects)
+    const chassis = result.bodies[0]
+    expect(chassis.source).toBe('colliders')
+    expect(chassis.colliders.map((entry) => entry.colliderId)).toEqual(['ok'])
+    expect(chassis.outOfRange).toBe(1)
+    expect(chassis.states.map((state) => [state.colliderId, state.status, state.entry])).toEqual([
+      ['far', 'outOfRange', null],
+      ['ok', 'ok', chassis.colliders[0]]
+    ])
+    // 팔은 켠 Collider가 모두 빠져 형상이 없다(관절 몸체는 대체 상자가 없다)
+    const arm = result.bodies.find((body) => body.objectId === 'arm')!
+    expect(arm).toMatchObject({ source: 'none', colliders: [], outOfRange: 1, degenerate: 0 })
+    expect(result.warnings).toEqual([
+      { key: 'worldColliderOutOfRange', params: { name: 'Robot', count: 1 } },
+      { key: 'worldColliderOutOfRange', params: { name: 'Arm', count: 1 } }
+    ])
+    // 메시 껍질 점이 껍질 좌표 한도(6.5 m) 밖이면(30° 돌린 판의 끝 x = 8·cos 30° ≈ 6.9 m) 퇴화가 아니라 한도 밖이다(자동 껍질·Mesh Collider)
+    const far = shapesOf({ ...SHAPES, plate: box(8, 0.1, 0.1) })
+    const lift = model(robotScene(), { shapes: far }).bodies.find((b) => b.objectId === 'lift')!
+    expect(lift).toMatchObject({ source: 'none', outOfRange: 1, degenerate: 0 })
+    const meshCollider = withColliders(robotScene(), 'plate', [
+      { id: 'm', kind: 'mesh', vertexLimit: 32 }
+    ])
+    const liftMesh = model(meshCollider, { shapes: far }).bodies.find((b) => b.objectId === 'lift')!
+    expect(liftMesh.states[0].status).toBe('outOfRange')
+    expect(liftMesh.outOfRange).toBe(1)
   })
 
   it(`B6 몸체 한도 ${MAX_BODY_COLLIDERS}·세계 한도 ${MAX_WORLD_COLLIDERS}를 넘으면 앞의 것만 쓰고 경고한다`, () => {
