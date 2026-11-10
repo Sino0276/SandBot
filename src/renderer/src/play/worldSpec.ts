@@ -63,6 +63,7 @@ import {
   type SensorExclusion,
   type WorldSensorEntry
 } from './worldSensors'
+import { buildWorldCameras, type CameraExclusion, type WorldCameraEntry } from './worldCameras'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
 // 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
@@ -426,18 +427,25 @@ export type WorldSpecResult = {
   sensors: WorldSensorEntry[]
   // 세계 설명에서 뺀 거리·컬러 센서 컴포넌트 id → 이유(play/worldSensors.ts sensorExclusions, spec이 null이어도 센다)
   sensorExclusions: Map<string, SensorExclusion>
+  // 세계 설명의 웹캠(4d, cameras 순서, 실행 상태 run.cameras가 이것이다). spec이 null이면 빈 목록
+  cameras: WorldCameraEntry[]
+  // 세계 설명에서 뺀 웹캠 컴포넌트 id → 이유(play/worldCameras.ts cameraExclusions, spec이 null이어도 센다)
+  cameraExclusions: Map<string, CameraExclusion>
 }
 
 const emptyResult = (
   warnings: WorldWarning[],
-  sensorExclusions: Map<string, SensorExclusion> = new Map()
+  sensorExclusions: Map<string, SensorExclusion> = new Map(),
+  cameraExclusions: Map<string, CameraExclusion> = new Map()
 ): WorldSpecResult => ({
   spec: null,
   warnings,
   jointObjectIds: [],
   jointMotorIds: [],
   sensors: [],
-  sensorExclusions
+  sensorExclusions,
+  cameras: [],
+  cameraExclusions
 })
 
 // 세계 설명을 만들어 관절을 구동하는 모터 id를 센다(문서·로봇마다 한 번, 씬 문서는 불변이라 문서로 캐시한다)
@@ -686,6 +694,20 @@ export function buildWorldSpec(
     usedDevices: worldUsedDevices(devices)
   })
   warnings.push(...sensors.warnings)
+  // 웹캠(4d): 이름은 위 장치·허브와 받아들인 거리·컬러 센서와 겹치지 않게 거른다(parseWorldSpec이 센서·카메라 이름을 합쳐
+  // 유일하게 본다, spec-4d §3.1)
+  const cameras = buildWorldCameras({
+    objects,
+    robotId,
+    entries,
+    joints,
+    bounds,
+    usedDevices: new Set([
+      ...worldUsedDevices(devices),
+      ...sensors.sensors.map((sensor) => sensor.device)
+    ])
+  })
+  warnings.push(...cameras.warnings)
   const spec: WorldSpec = {
     version: WORLD_SPEC_VERSION,
     // 빌더 기본 시즌 'none'. playActions.worldFor가 문서 시즌과 HIVE 설정으로 덮어쓴다(빌더 시그니처는 그대로, spec-4ab §3)
@@ -708,12 +730,14 @@ export function buildWorldSpec(
     distanceSensors: sensors.distanceSensors,
     colorSensors: sensors.colorSensors,
     // 잡음은 끔(playActions.worldFor가 개인 실행 설정으로 withSensorNoise)
-    noise: { enabled: false, seed: 0 }
+    noise: { enabled: false, seed: 0 },
+    // 웹캠(4d, play/worldCameras.ts)
+    cameras: cameras.cameras
   }
   const checked = parseWorldSpec(spec)
   if (typeof checked === 'string') {
     warnings.push({ key: 'worldInvalid', params: { detail: checked } })
-    return emptyResult(warnings, sensors.exclusions)
+    return emptyResult(warnings, sensors.exclusions, cameras.exclusions)
   }
   return {
     spec: checked,
@@ -721,7 +745,9 @@ export function buildWorldSpec(
     jointObjectIds: joints.objectIds,
     jointMotorIds: joints.motorIds,
     sensors: sensors.sensors,
-    sensorExclusions: sensors.exclusions
+    sensorExclusions: sensors.exclusions,
+    cameras: cameras.entries,
+    cameraExclusions: cameras.exclusions
   }
 }
 

@@ -153,7 +153,9 @@ function StartMarkerMeshes({
 
 function StartMarkers(): React.JSX.Element | null {
   const objects = useSceneStore((state) => state.objects)
-  const doc = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
+  const doc = useMemo(() => ({ season }), [season])
   const activeId = useEditorStore((state) => state.selectedId)
   const fieldSelected = useEditorStore((state) => state.fieldSelected)
   const locked = usePlayStore((state) => runLocksField(state.run))

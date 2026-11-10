@@ -27,7 +27,9 @@ export const FIELD_RENDER_ORDER = {
   wallLabel: 2,
   wallPanel: 3,
   hiveCell: 4,
-  ghost: 5
+  ghost: 5,
+  // 필드 CAD 위에 겹치는 단순 형상 충돌체 윤곽선(spec-4e §1.8, 잔상 뒤·씬 뷰 기즈모 앞)
+  colliderOutline: 6
 } as const
 // 시작 표시 순번마다 더하는 renderOrder
 export const START_MARKER_ORDER_STEP = 0.01
@@ -48,6 +50,10 @@ export const START_MARKER_LIFT = 0.0006
 const SEAM_WIDTH = 0.003
 // 태그를 앞면 쪽으로 띄우는 거리(m, spec-4ab §1.9)
 export const TAG_FRONT_OFFSET = 0.0005
+// 필드 CAD와 함께 그릴 때 태그를 앞면 쪽으로 띄우는 거리(m, spec-4e §1.6) [가정: 표시만]. 공식 CAD의 태그 스티커(두께 약
+// 0.254 mm)와 4ab 태그 참값(허용 0.508 mm)의 평면이 스티커 어디인지 몰라 0.5 mm로는 최악이면 스티커 앞면과 같은 평면이다.
+// 3.25 in 태그에서 1.5 mm의 시차는 무시할 만하다.
+export const CAD_TAG_FRONT_OFFSET = 0.0015
 // 흰 고리를 포함한 태그 전체 변 = 1.25 × 검은 테두리 변(tag36h11 10칸 / 8칸)
 export const TAG_TOTAL_SCALE = 1.25
 // 벽 라벨 크기(m)와 벽 바깥 면에서 띄우는 거리
@@ -373,6 +379,59 @@ export function fieldViewModel(
   }
 
   return { carriers, meshes }
+}
+
+// ---- 필드 CAD와 함께 그리는 단순 형상(spec-4e §1.6·§1.8) ----
+
+// CAD와 함께 그리는 단순 형상(companion): 태그(앞면 쪽으로 CAD_TAG_FRONT_OFFSET, 새 사본)·벽 라벨, 그리고 넘어간 HIVE의
+// carrier 구조물(HIVE CELL. CAD의 HIVE는 시작 상태라 넘어간 자리를 보인다). 나머지(바닥·이음선·테이프·벽·구조물·시작 상태
+// CELL)는 CAD가 그리므로 뺀다. 순서는 model.meshes 순서, carriers는 입력 그대로다. hiveTipped는 model을 만들 때 넘긴 값과
+// 같아야 한다(모델에는 넘어감 여부가 각으로만 있다).
+export function fieldCompanionModel(
+  model: FieldViewModel,
+  hiveTipped: readonly [boolean, boolean]
+): FieldViewModel {
+  // 태그 평면 +z(앞면 법선)로 더 옮기는 거리
+  const lift = new Matrix4().makeTranslation(0, 0, CAD_TAG_FRONT_OFFSET - TAG_FRONT_OFFSET)
+  const meshes: FieldMeshSpec[] = []
+  for (const mesh of model.meshes) {
+    if (mesh.role === 'tag')
+      meshes.push({
+        ...mesh,
+        matrix: elements(new Matrix4().fromArray(mesh.matrix).multiply(lift))
+      })
+    else if (mesh.role === 'wallLabel') meshes.push(mesh)
+    else if (
+      mesh.role === 'structure' &&
+      mesh.carrier !== 'field' &&
+      hiveTipped[hiveIndex(mesh.carrier)]
+    )
+      meshes.push(mesh)
+  }
+  return { carriers: model.carriers, meshes }
+}
+
+// 충돌체 윤곽으로 그릴 단순 형상(spec-4e §1.8, Unity 충돌체 기즈모): fieldViewModel(spec, hiveTipped, false)의 바닥·테이프·
+// 레일·판·판 이음과, 시뮬레이터가 계산에 쓰는 구조물(solid ∨ sensed ∨ occludes). 이음선·태그·벽 라벨·표시 전용 구조물
+// (HIVE CELL)은 뺀다(막거나 가린다고 오해하지 않게). carriers는 남은 메시가 쓰는 것만 둔다(BIOBUZZ에는 남는 HIVE 구조물이
+// 없어 비어 있다). 순서는 model.meshes 순서다.
+const OUTLINE_ROLES: ReadonlySet<FieldMeshRole> = new Set([
+  'floor',
+  'tape',
+  'rail',
+  'panel',
+  'panelSeam'
+])
+
+export function fieldOutlineMeshes(model: FieldViewModel, spec: FieldSpec): FieldViewModel {
+  const meshes = model.meshes.filter((mesh) => {
+    if (OUTLINE_ROLES.has(mesh.role)) return true
+    if (mesh.role !== 'structure' || mesh.structureIndex === undefined) return false
+    const structure = spec.structures[mesh.structureIndex]
+    return !!structure && (structure.solid || structure.sensed || structure.occludes)
+  })
+  const used = new Set(meshes.map((mesh) => mesh.carrier))
+  return { carriers: model.carriers.filter((carrier) => used.has(carrier.key)), meshes }
 }
 
 // ---- 시작 표시(StartMarkers.tsx) ----

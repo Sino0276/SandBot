@@ -9,7 +9,8 @@
 //   다른 값을 더하고 사이드카에 SimClock 구현을 하나 더 두면 된다. 지금 사이드카는 'virtual'이 아니면 거부한다.
 import type { DashConfigNode, DashConfigSet, DashOp } from './dashboard'
 
-export const SIDECAR_PROTOCOL_VERSION = 3
+// 4: 웹캠 입력 tags(4d, 이 판의 유일한 입력 배열), RunRequest.teamCalibrations, 비전 notice 여덟(spec-4d §3.2)
+export const SIDECAR_PROTOCOL_VERSION = 4
 
 // 틱 길이(가상 나노초). 틱 경계마다 장치 출력을 내보내고 입력(게임패드·센서)과 DS 사건(START·STOP)을 받는다.
 // 실제 Robot Controller의 이벤트 루프 한 바퀴에 해당한다(LinearOpMode.waitForStart가 깨어나는 때, 게임패드가 바뀌는 때).
@@ -95,6 +96,10 @@ export type RunRequest = {
   // 팀 코드의 System.currentTimeMillis() 시작값(가상 시간 0의 벽시계 시각)
   startEpochMillis: number
   stallMillis: number
+  // 팀 웹캠 보정(TeamCode/src/main/res/xml/teamwebcamcalibrations.xml)의 절대 경로, 없거나 받지 않는 파일이면 null.
+  // 사이드카는 실제 CameraCalibrationManager처럼 내장 보정 다음에 더한다(spec-4d §1.13). 메인이 열거나 저장한 루트의
+  // TeamCode 안 보통 파일(링크를 푼 위치도 안, 256 KB 이하)일 때만 보낸다.
+  teamCalibrations: string | null
 }
 
 // 이 틱 경계에서 적용할 Driver Station 사건. INIT은 run 자체다(run을 받으면 init 단계로 시작한다).
@@ -130,12 +135,32 @@ export type GamepadState = {
 // 장치 하나의 값. 키는 장치 종류마다 정한다(sidecar의 org.sandbot.sdk.devices 문서). 숫자는 SDK 단위 그대로다
 // (모터 power −1..1, 엔코더 tick, 서보 position 0..1 등). null은 값이 없음(출력: 예를 들어 한 번도 쓰지 않은 서보,
 // 입력: 거리 센서 distance가 범위 밖, 칩 8190 mm).
-// 숫자 배열은 사이드카 출력에만 쓴다(모터 velocityPidf·positionPidf의 [p, i, d, f], 길이 MAX_DEVICE_ARRAY까지).
-// 입력(tickReply.inputs)은 배열을 싣지 않는다(호스트가 거른다).
+// 숫자 배열은 출력(모터 velocityPidf·positionPidf의 [p, i, d, f], 길이 MAX_DEVICE_ARRAY까지)과 웹캠 입력 tags
+// (isTagsInput)에만 쓴다. 입력(tickReply.inputs)의 다른 배열은 싣지 않는다(호스트가 거른다).
 export type DeviceValues = Record<string, number | boolean | string | null | readonly number[]>
 
 // 장치 출력 값 하나가 숫자 배열일 때의 길이 한도(사이드카가 넘기면 프로토콜 오류)
 export const MAX_DEVICE_ARRAY = 16
+
+// 웹캠 입력 tags(4d): 태그마다 TAG_INPUT_STRIDE칸 [id, x0, y0, x1, y1, x2, y2, x3, y3](px, apriltag 3 픽셀 좌표 =
+// OpenCV 좌표 + 0.5, 꼭짓점은 apriltag 순서), id 오름차순, MAX_TAG_DETECTIONS까지(spec-4d §1.5·§3.2)
+export const TAG_INPUT_STRIDE = 9
+// 한 프레임의 검출 한도 [결정: BIOBUZZ 16장과 팀 라이브러리를 넉넉히 넘는 수, spec-4d §1.5]
+export const MAX_TAG_DETECTIONS = 64
+
+// 입력 키 하나가 배열일 때의 규칙(세계·호스트·사이드카가 같은 규칙): 키가 'tags'이고, 배열이고, 길이가 STRIDE의
+// 배수이며 STRIDE·MAX_TAG_DETECTIONS 이하이고, 모든 원소가 유한 수이고, 칸 0(id)이 0 이상의 안전한 정수
+export function isTagsInput(key: string, value: unknown): value is readonly number[] {
+  if (key !== 'tags' || !Array.isArray(value)) return false
+  if (value.length % TAG_INPUT_STRIDE !== 0) return false
+  if (value.length > TAG_INPUT_STRIDE * MAX_TAG_DETECTIONS) return false
+  for (let i = 0; i < value.length; i++) {
+    const v: unknown = value[i]
+    if (typeof v !== 'number' || !Number.isFinite(v)) return false
+    if (i % TAG_INPUT_STRIDE === 0 && !(Number.isSafeInteger(v) && v >= 0)) return false
+  }
+  return true
+}
 
 export type TickReply = {
   type: 'tickReply'
@@ -361,7 +386,27 @@ export type DashConfigMessage = { type: 'dashConfig'; tNanos: number; root: Dash
 // - dashCamera: Dashboard 카메라 스트림은 시뮬레이션하지 않는다
 // - dashImage: Dashboard sendImage는 보이지 않는다
 // - rrTuningSaved: Road Runner 튜닝 OpMode가 결과 JSON을 모의 저장소에 썼다(params.path, firstFolder 기준 상대 경로)
-export type SidecarNoticeCode = 'dashCamera' | 'dashImage' | 'rrTuningSaved'
+// 비전(4d, spec-4d §1.14, 필수 params 키는 호스트 protocol.ts의 NOTICE_PARAM_KEYS):
+// - visionProcessorUnsupported: AprilTag 처리기가 아닌 처리기는 프레임을 받지 않는다(params.processor, 바이너리 이름)
+// - aprilTagNoFieldPose: 묶음 metadata의 필드 자세가 0이라 robotPose가 묶음 틀 기준이다(params.cluster)
+// - visionSolverSubstituted: SQPNP·APRILTAG_BUILTIN 단일 태그를 ITERATIVE로 대신 푼다(params.solver)
+// - visionSolverStop: 그 풀이가 묶음을 풀지 못해 OpenCV 예외로 OpMode가 멈춘다(params.solver, error 바로 앞)
+// - visionMultipleAprilTag: 한 포털에 AprilTag 처리기가 둘 이상 켜져 있다
+// - visionFrameCapture: 프레임 저장(params.method)은 영상이 없어 아무것도 하지 않는다
+// - visionResumeNullFormat: 스트림 형식 없이 resumeStreaming을 불러 STARTING_STREAM에 머문다
+// - visionCalibrationSkipped: teamwebcamcalibrations.xml의 보정 하나를 SDK 규칙대로 버린다(params.detail, 영어)
+export type SidecarNoticeCode =
+  | 'dashCamera'
+  | 'dashImage'
+  | 'rrTuningSaved'
+  | 'visionProcessorUnsupported'
+  | 'aprilTagNoFieldPose'
+  | 'visionSolverSubstituted'
+  | 'visionSolverStop'
+  | 'visionMultipleAprilTag'
+  | 'visionFrameCapture'
+  | 'visionResumeNullFormat'
+  | 'visionCalibrationSkipped'
 export type NoticeMessage = {
   type: 'notice'
   tNanos: number

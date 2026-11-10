@@ -155,6 +155,40 @@ abstract class ClassSource {
         };
     }
 
+    /**
+     * 내부 이름이 prefixes 중 하나로 시작하는 클래스를 뺀 묶음(--real-exclude, spec-4d §1.9: OpenCV jar의 org/openftc/·
+     * org/opencv/osgi/). 접두어가 없으면 그 묶음 그대로.
+     */
+    static ClassSource excluding(ClassSource source, List<String> prefixes) {
+        if (prefixes.isEmpty()) return source;
+        return new ClassSource() {
+            private boolean excluded(String internalName) {
+                for (String p : prefixes) if (internalName.startsWith(p)) return true;
+                return false;
+            }
+
+            @Override
+            List<String> names() {
+                List<String> names = new ArrayList<>();
+                for (String n : source.names()) if (!excluded(n)) names.add(n);
+                return names;
+            }
+
+            @Override
+            byte[] bytes(String internalName) {
+                return excluded(internalName) ? null : source.bytes(internalName);
+            }
+        };
+    }
+
+    /** --real-exclude 값(쉼표로 나눈 내부 이름 접두어, 없거나 비면 빈 목록) */
+    static List<String> excludePrefixes(String option) {
+        List<String> prefixes = new ArrayList<>();
+        if (option == null) return prefixes;
+        for (String p : option.split(",")) if (!p.trim().isEmpty()) prefixes.add(p.trim());
+        return prefixes;
+    }
+
     /** 여러 묶음을 차례로(앞이 이김) */
     static ClassSource chain(List<ClassSource> sources) {
         return new ClassSource() {

@@ -17,6 +17,7 @@ import FocusController from '../scene/FocusController'
 import FrameAxes from '../scene/FrameAxes'
 import ImuIndicators from '../scene/ImuIndicators'
 import SensorGizmos from '../scene/SensorGizmos'
+import CameraGizmos from '../scene/CameraGizmos'
 import { FIELD_VIEW_POSITION } from '../scene/frameHooks'
 import SceneObjectsView from '../scene/SceneObjectsView'
 import TransformHandles from '../scene/TransformHandles'
@@ -155,6 +156,7 @@ function ScenePanel(): React.JSX.Element {
         <JointGizmo />
         {/* 고른 오브젝트(와 상위)의 거리·컬러 센서 원뿔·발자국(4c) */}
         <SensorGizmos />
+        <CameraGizmos />
         <TransformHandles />
         <EditorCameraControls />
         <FocusController />

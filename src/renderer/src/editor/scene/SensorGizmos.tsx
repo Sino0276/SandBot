@@ -262,7 +262,8 @@ function SensorGizmo({
   materials: GizmoMaterials
 }): React.JSX.Element | null {
   const objects = useSceneStore((state) => state.objects)
-  const fieldDoc = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const docSeason = useSceneStore((state) => state.field.season)
   const revision = useSceneStore((state) => state.geometryRevision)
   // 기즈모가 쓰는 실행 값만 구독한다(활성·떼어 놓음·로봇·센서 장착·관절·필드). 텔레메트리·장치마다 run이 새 객체가 되어도
   // 이것들은 그대로라 다시 계산하지 않는다(FieldView의 lockedRunField와 같은 이유). 계산은 지금 run을 읽는다.
@@ -298,7 +299,7 @@ function SensorGizmo({
     const play = { run, simPose }
     const pose = sensorGizmoPose(objects, target, play, preview, bounds)
     if (!pose) return null
-    const season = lockedRunField(run)?.season ?? documentSeasonId(fieldDoc)
+    const season = lockedRunField(run)?.season ?? documentSeasonId({ season: docSeason })
     const caster = raycasterFor(resolveSeason(season))
     // 실행이 잠근 로봇인데 run.sensors에 없는 센서는 시뮬레이터가 쓰지 않는다(빠졌거나 INIT 뒤에 붙임)
     const excluded =
@@ -361,7 +362,7 @@ function SensorGizmo({
       excluded,
       selfHitDistance
     })
-  }, [objects, fieldDoc, revision, runKey, simPose, preview, refresh, target])
+  }, [objects, docSeason, revision, runKey, simPose, preview, refresh, target])
   useEffect(() => {
     invalidate()
     return () => invalidate()

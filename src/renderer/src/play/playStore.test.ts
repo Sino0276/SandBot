@@ -3,7 +3,10 @@ import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { OpModeInfo, PlayDiagnostic, PlayEvent } from '../../../shared/play'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { JointSettings, SceneObjects } from '../scene/model'
-import { CONSOLE_LIMIT } from './consoleModel'
+import i18next from 'i18next'
+import en from '../i18n/locales/en'
+import ko from '../i18n/locales/ko'
+import { CONSOLE_LIMIT, entryHeadline } from './consoleModel'
 import { DEFAULT_CONSOLE_PREFS, DEFAULT_PLAY_SETTINGS } from './playSettings'
 import {
   applyPlayEvent,
@@ -865,5 +868,56 @@ describe('고를 수 있는 OpMode 목록', () => {
         registered: { ...waiting.registered, needsConsent: false }
       })
     ).toBe(false)
+  })
+})
+
+// 비전 notice 문구(spec-4d §1.14, C11): visionSolverSubstituted는 params.solver로 문구를 고르고, 새 notice가 ko·en에 있다
+describe('비전 notice 문구', () => {
+  const vision = (code: string, params: Record<string, string>): PlayEvent =>
+    ({ type: 'simNotice', runId: 'r1', tNanos: 1, code, params }) as PlayEvent
+
+  it('visionSolverSubstituted: OPENCV_SQPNP → sqpnp, APRILTAG_BUILTIN → builtin', () => {
+    const sq = apply(data(), vision('visionSolverSubstituted', { solver: 'OPENCV_SQPNP' }))
+    expect(sq.entries[0]).toMatchObject({ key: 'sim.visionSolverSubstituted.sqpnp' })
+    const builtin = apply(data(), vision('visionSolverSubstituted', { solver: 'APRILTAG_BUILTIN' }))
+    expect(builtin.entries[0]).toMatchObject({ key: 'sim.visionSolverSubstituted.builtin' })
+  })
+
+  it('ko·en 글자: 갈래 문구와 resume·보정 notice, 매개변수가 모두 채워진다', async () => {
+    for (const [lng, resources] of [
+      ['ko', ko],
+      ['en', en]
+    ] as const) {
+      const instance = i18next.createInstance()
+      await instance.init({
+        lng,
+        resources: { [lng]: { translation: resources } },
+        interpolation: { escapeValue: false }
+      })
+      const text = (event: PlayEvent): string =>
+        entryHeadline(apply(data(), event).entries[0], instance.t)
+      const sqpnp = text(vision('visionSolverSubstituted', { solver: 'OPENCV_SQPNP' }))
+      const builtin = text(vision('visionSolverSubstituted', { solver: 'APRILTAG_BUILTIN' }))
+      expect(sqpnp).toContain('OPENCV_SQPNP')
+      expect(builtin).toContain('APRILTAG_BUILTIN')
+      expect(sqpnp).not.toBe(builtin)
+      expect(text(vision('visionResumeNullFormat', {}))).toContain('setStreamFormat')
+      const skipped = text(
+        vision('visionCalibrationSkipped', { detail: 'Logitech 0x0825 640x480' })
+      )
+      expect(skipped).toContain('teamwebcamcalibrations.xml')
+      expect(skipped).toContain('Logitech 0x0825 640x480')
+      for (const [code, params] of [
+        ['visionProcessorUnsupported', { processor: 'org.example.Blob' }],
+        ['aprilTagNoFieldPose', { cluster: 'RED AUDIENCE' }],
+        ['visionSolverStop', { solver: 'APRILTAG_BUILTIN' }],
+        ['visionMultipleAprilTag', {}],
+        ['visionFrameCapture', { method: 'saveNextFrameRaw' }]
+      ] as const) {
+        const line = text(vision(code, params))
+        expect(line).not.toMatch(/\{\{|console\.notices/)
+        for (const value of Object.values(params)) expect(line).toContain(value)
+      }
+    }
   })
 })

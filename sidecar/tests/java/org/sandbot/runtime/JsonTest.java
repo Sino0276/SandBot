@@ -77,6 +77,34 @@ public final class JsonTest {
         Check.isTrue(!Json.write("x\ny").contains("\n"), "no raw newline in output");
     }
 
+    /** notice 값은 호스트 한도(protocol.ts MAX_NOTICE_TEXT 4096) 안의 글자다: 팀 보정 XML의 긴 속성·null 묶음 이름이 실행을 끝내지 않게 */
+    public static void testNoticeParamsClippedAndNeverNull() throws Exception {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        Protocol protocol = new Protocol(bytes);
+        StringBuilder longText = new StringBuilder("Camera vid=");
+        while (longText.length() < 5000) longText.append('x');
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("detail", longText.toString());
+        protocol.notice(7, "visionCalibrationSkipped", params);
+        protocol.notice(8, "aprilTagNoFieldPose", Collections.singletonMap("cluster", (String) null));
+        String[] lines = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8).split("\n");
+        Check.equal(2, lines.length, "two lines");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) ((Map<String, Object>) Json.parse(lines[0])).get("params");
+        String detail = (String) first.get("detail");
+        Check.equal(Protocol.MAX_NOTICE_CHARS, detail.length(), "clipped to the host limit");
+        Check.isTrue(detail.startsWith("Camera vid=xxx") && detail.endsWith("…"), "clipped with an ellipsis");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> second = (Map<String, Object>) ((Map<String, Object>) Json.parse(lines[1])).get("params");
+        Check.equal("null", second.get("cluster"), "null value is the text null");
+        // 서로게이트 짝을 가르지 않는다
+        StringBuilder emoji = new StringBuilder();
+        while (emoji.length() < 5000) emoji.append("\uD83D\uDE00");
+        String clipped = Protocol.clip(emoji.toString(), Protocol.MAX_NOTICE_CHARS);
+        Check.isTrue(clipped.length() <= Protocol.MAX_NOTICE_CHARS && !Character.isHighSurrogate(clipped.charAt(clipped.length() - 2)),
+                "no lone high surrogate before the ellipsis");
+    }
+
     public static void testRoundTrip() throws Exception {
         Object value = Json.parse("{\"s\":\"한\\u0000\\n\",\"n\":[1,-2.5,1.0E-9],\"o\":{\"k\":null}}");
         Check.equal(value, Json.parse(Json.write(value)), "round trip");

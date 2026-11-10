@@ -135,6 +135,10 @@ describe('생성 파일 출력 고정', () => {
       'digitalDevice.limitAt',
       'digitalDevice.limitDistance',
       'digitalDevice.limitAngle',
+      'webcam.cameraModel',
+      'webcam.aimYaw',
+      'webcam.aimPitch',
+      'webcam.aimRoll',
       'deadWheel.podType',
       'deadWheel.podDiameter',
       'deadWheel.podCpr'

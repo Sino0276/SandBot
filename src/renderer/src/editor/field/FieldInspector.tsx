@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SEASON_IDS, isSeasonId, resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { chooseFieldSeason } from '../../field/fieldActions'
@@ -7,6 +8,8 @@ import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import { formatLength } from '../../units/units'
 import { setFieldHidden, useSceneVisibilityStore } from '../sceneVisibility'
+import { clusterLines, type ClusterLine } from './clusterLines'
+import FieldCadSection from './FieldCadSection'
 import {
   displayedField,
   documentSeasonId,
@@ -17,14 +20,50 @@ import {
 
 // Field 인스펙터(spec-4ab §1.9): 하이어라키 Field 줄을 고르면 보인다. 시즌 선택(문서, 실행 취소 한 단계), 축 안내, 벽 안쪽
 // 반폭, HIVE 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 상태를
-// 보이고 고칠 수 없다.
+// 보이고 고칠 수 없다. 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역이 있다.
 
 const HIVE_SIDES: readonly HiveSide[] = ['start', 'tipped']
 const HIVE_KEYS = ['red', 'blue'] as const
+// [복사] 뒤 "복사함"을 보이는 시간(ms) [가정: 눈에 띄고 다음 복사를 막지 않는 길이]
+const COPIED_MS = 1500
+
+// "AprilTag 묶음(SDK 라이브러리용)" 줄 하나와 [복사](4d, spec-4d §1.15)
+function ClusterRow({ line }: { line: ClusterLine }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), COPIED_MS)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  const text = t('field.inspector.clusters.line', line.params)
+  return (
+    <div className="field-row field-cluster-row" data-cluster={line.name}>
+      <code className="field-inspector-value field-cluster-text" title={line.copyText}>
+        {text}
+      </code>
+      <button
+        type="button"
+        className="panel-button"
+        title={line.copyText}
+        onClick={() => {
+          // 클립보드를 쓸 수 없으면(권한 없음) 조용히 둔다: 글자는 줄에서 고를 수 있다
+          void navigator.clipboard
+            ?.writeText(line.copyText)
+            .then(() => setCopied(true))
+            .catch(() => {})
+        }}
+      >
+        {copied ? t('field.inspector.clusters.copied') : t('field.inspector.clusters.copy')}
+      </button>
+    </div>
+  )
+}
 
 function FieldInspector(): React.JSX.Element {
   const { t } = useTranslation()
   const doc = useSceneStore((state) => state.field)
+  const hasVisual = useSceneStore((state) => state.field.visual !== undefined)
   const run = usePlayStore((state) => state.run)
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   const fieldHidden = useSceneVisibilityStore((state) => state.fieldHidden)
@@ -41,6 +80,12 @@ function FieldInspector(): React.JSX.Element {
   const seasonAxes = shown.season !== 'none'
 
   const hiveValue = (index: 0 | 1): HiveSide => (shown.hiveTipped[index] ? 'tipped' : 'start')
+  // AprilTag 묶음 원점(4d): 보이는 시즌·HIVE 상태(잠기면 실행의 것). 묶음이 없는 시즌은 구역이 없다
+  const [redTipped, blueTipped] = shown.hiveTipped
+  const clusters = useMemo(
+    () => clusterLines(spec, [redTipped, blueTipped]),
+    [spec, redTipped, blueTipped]
+  )
 
   return (
     <>
@@ -94,7 +139,10 @@ function FieldInspector(): React.JSX.Element {
             {formatLength(spec.perimeter.innerHalf, lengthUnit)} {t(`units.symbols.${lengthUnit}`)}
           </output>
         </div>
-        <label className="field-check">
+        <label
+          className="field-check"
+          title={hasVisual ? t('field.inspector.showElementsCadHint') : undefined}
+        >
           <input
             type="checkbox"
             checked={!fieldHidden}
@@ -102,7 +150,14 @@ function FieldInspector(): React.JSX.Element {
           />
           {t('field.inspector.showElements')}
         </label>
+        {/* 숨기면 사실적인 CAD 바닥이 단순 회색 바닥으로 바뀐다(비평 U13) */}
+        {hasVisual && (
+          <p className="inspector-note" data-field-cad="showElementsHint">
+            {t('field.inspector.showElementsCadHint')}
+          </p>
+        )}
       </section>
+      <FieldCadSection />
       {spec.hives.length > 0 && (
         <section className="inspector-section">
           <header className="inspector-section-header">
@@ -130,6 +185,17 @@ function FieldInspector(): React.JSX.Element {
             </label>
           ))}
           <p className="inspector-note">{t('field.inspector.hiveHint')}</p>
+        </section>
+      )}
+      {clusters.length > 0 && (
+        <section className="inspector-section" aria-label={t('field.inspector.clusters.title')}>
+          <header className="inspector-section-header">
+            <span className="inspector-section-title">{t('field.inspector.clusters.title')}</span>
+          </header>
+          {clusters.map((line) => (
+            <ClusterRow key={line.name} line={line} />
+          ))}
+          <p className="inspector-note">{t('field.inspector.clusters.hint')}</p>
         </section>
       )}
     </>

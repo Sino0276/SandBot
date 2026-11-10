@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useProjectStore } from '../project/projectStore'
 
 // 진행 중인 STEP 불러오기(새로 불러오기, 파일 다시 찾기, 프로젝트를 열 때 CAD 형상 읽기).
 // 큰 STEP 하나에 메모리를 수 GB 쓰므로 한 번에 하나만 하도록 버튼·드롭을 막고, 창을 닫을 때 확인한다.
@@ -28,4 +29,10 @@ export function cancelAllImports(): void {
 
 export function isImporting(): boolean {
   return useImportStore.getState().running > 0
+}
+
+// 불러오기를 시작해도 되는지(한 번에 하나, 열기·저장 중이 아닐 때). 로봇 CAD 다시 찾기·다시 불러오기와 필드 CAD 불러오기가
+// 같이 쓴다(spec-4e §3.3, projectActions와 field/fieldVisualActions 사이의 순환을 피해 여기에 둔다).
+export function canStartImport(): boolean {
+  return !isImporting() && !useProjectStore.getState().busy
 }

@@ -19,6 +19,11 @@ final class Protocol {
     static final int MAX_LOG_LINES_PER_SECOND = 500;
     /** 글자 하나(log 줄, 오류 문장, 텔레메트리 줄)의 최대 길이(UTF-16 글자, 붙이는 "…" 포함). 호스트의 log 한도와 같다. */
     static final int MAX_TEXT_CHARS = 64 * 1024;
+    /**
+     * 안내(notice) 값 하나의 최대 길이(UTF-16 글자, 붙이는 "…" 포함). 호스트 protocol.ts의 MAX_NOTICE_TEXT와 같다. 넘는 값은 호스트가
+     * 프로토콜 오류로 실행을 끝내므로, 팀 파일·팀 코드에서 온 글자(보정 XML 속성, 묶음 이름)는 여기서 자른다
+     */
+    static final int MAX_NOTICE_CHARS = 4096;
     /** 텔레메트리 한 번(lines + log)의 최대 글자 수 */
     static final int MAX_FRAME_CHARS = 512 * 1024;
 
@@ -142,7 +147,13 @@ final class Protocol {
 
     /** 사이드카 안내(NoticeMessage). params는 키 정렬로 쓴다. */
     void notice(long tNanos, String code, Map<String, String> params) {
-        send(Json.obj("type", "notice", "tNanos", tNanos, "code", code, "params", new TreeMap<>(params)));
+        // 값은 늘 글자다: null은 Java 글자 잇기처럼 "null"(호스트는 JSON null을 받지 않는다), 길면 자른다
+        TreeMap<String, String> safe = new TreeMap<>();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            String value = e.getValue() == null ? "null" : e.getValue();
+            safe.put(e.getKey(), clip(value, MAX_NOTICE_CHARS));
+        }
+        send(Json.obj("type", "notice", "tNanos", tNanos, "code", code, "params", safe));
     }
 
     void finished(long tNanos, String reason) {
@@ -151,8 +162,13 @@ final class Protocol {
 
     /** {@link #MAX_TEXT_CHARS}보다 길면 자르고 "…"를 붙인다(서로게이트 짝을 가르지 않는다) */
     static String clip(String text) {
-        if (text == null || text.length() <= MAX_TEXT_CHARS) return text;
-        int end = MAX_TEXT_CHARS - 1;
+        return clip(text, MAX_TEXT_CHARS);
+    }
+
+    /** max보다 길면 자르고 "…"를 붙여 max 글자로 만든다(서로게이트 짝을 가르지 않는다) */
+    static String clip(String text, int max) {
+        if (text == null || text.length() <= max) return text;
+        int end = max - 1;
         if (Character.isLowSurrogate(text.charAt(end)) && Character.isHighSurrogate(text.charAt(end - 1))) end--;
         return text.substring(0, end) + "…";
     }

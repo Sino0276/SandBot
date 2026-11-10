@@ -135,6 +135,7 @@ function runSidecar(
       seed: 0,
       startEpochMillis: 1_700_000_000_000,
       stallMillis: 2000,
+      teamCalibrations: null,
       ...request
     }
     send(run)

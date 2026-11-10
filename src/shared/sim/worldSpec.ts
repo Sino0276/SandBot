@@ -4,17 +4,21 @@
 // 단위는 미터·라디안이다. 로봇 좌표는 X 앞·Y 왼쪽, 각은 반시계 +(로봇 위에서 볼 때). 필드 좌표는 원점 필드 중앙 타일 윗면,
 // Z 위, 축은 시즌 공식 좌표계(seasons/, 'none' 시즌은 축의 뜻이 없고 타일 두께가 없어 바닥과 같은 평면).
 
+import { isCameraModelId, type CameraModelId } from './cameraData'
 import { symmetricEigen3 } from './drivetrain'
 import type { SeasonId } from './seasons/fieldSpec'
 import { isSeasonId } from './seasons/seasons'
 
 // 4: 시즌 field({ season, hiveTipped }), robot.height, 거리·컬러 센서 목록(4c), 잡음(4c·4d)을 더함(spec-4ab §3)
-export const WORLD_SPEC_VERSION = 4
+// 5: 웹캠 cameras(4d)를 더함(spec-4d §3.1)
+export const WORLD_SPEC_VERSION = 5
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
 export const MAX_WORLD_WHEELS = 32
 export const MAX_WORLD_SENSORS = 32
+// 웹캠 목록 한도 [결정: Control Hub USB 포트 둘(USB 2·3)과 허브를 넘는 수. 보통 1–2, spec-4d §3.1]
+export const MAX_WORLD_CAMERAS = 4
 export const MAX_FOOTPRINT_POINTS = 64
 // 관절(3b, 메커니즘). FTC 로봇은 보통 2–8개(리프트 2–3단, 팔, 손목, 집게)
 export const MAX_WORLD_JOINTS = 16
@@ -122,10 +126,15 @@ export type SensorMount = { body: number; position: Vec3; rotation: Vec3 }
 // device: 구성 이름을 Java String.trim과 같게 자른 사이드카 장치 이름(hardware/naming.ts sidecarDeviceName)
 export type SimDistanceSensorSpec = { device: string; mount: SensorMount }
 export type SimColorSensorSpec = { device: string; mount: SensorMount }
+// 웹캠 하나(4d). device: 구성 이름을 Java trim한 장치 이름(구성 XML에 들어간 웹캠만: 시리얼이 있어야 구성에 들어간다).
+// mount: 4c SensorMount 그대로(position = 렌즈 = 하우징 앞면, rotation ZYX, +X 광축, +Z 영상 위). model: 렌즈·SDK 보정의
+// 카메라(cameraData.ts)
+export type SimCameraSpec = { device: string; mount: SensorMount; model: CameraModelId }
 
 export type WorldSpec = {
   version: typeof WORLD_SPEC_VERSION
-  // 시즌(메인이 seasons/resolveSeason으로 FieldSpec을 푼다, 렌더러가 보낸 형상은 받지 않는다)과 HIVE 상태 [빨강, 파랑](4d가 씀)
+  // 시즌(메인이 seasons/resolveSeason으로 FieldSpec을 푼다, 렌더러가 보낸 형상은 받지 않는다)과 HIVE 상태 [빨강, 파랑]
+  // (4d 카메라가 씀: 태그 필드 자세, seasons/tagPoses.ts)
   field: { season: SeasonId; hiveTipped: [boolean, boolean] }
   robot: {
     // 시작 자세(필드 좌표)
@@ -159,6 +168,10 @@ export type WorldSpec = {
   // 센서 잡음(spec-4c §1.6): 켜면 거리 센서만 장치 고정 오프셋과 측정마다 잡음을 시드 해시로 더한다(같은 시드면 같은
   // 값). 컬러에는 잡음이 없다. 시드는 Hub 타이밍과 같은 실행 설정 칸이다.
   noise: { enabled: boolean; seed: number }
+  // 웹캠(4d): 그 로봇의 구성에 들어간 webcam 컴포넌트(하이어라키 순서, 이름이 비었거나 겹치거나 한도를 넘은 것은 뺌).
+  // 시뮬레이터가 30 fps 격자의 틱 경계에서 스트리밍 중인 웹캠의 자세로 태그 꼭짓점을 투영해 tags 입력을 보낸다
+  // (spec-4d §1.5·§1.8). 4c까지는 없었다.
+  cameras: SimCameraSpec[]
 }
 
 // ---- 관절(3b, spec-3b §4, Unity ArticulationBody 하나 = 관절 하나 = 움직이는 몸체 하나) ----
@@ -759,7 +772,15 @@ function sensor(
   }
 }
 
-// 거리·컬러 센서 장치 이름: 두 목록을 합쳐 유일하고, 모터·데드휠·Pinpoint·OTOS·IMU·관절 서보·리밋 스위치와 겹치지 않는다
+// 웹캠 하나(4d): 장착은 거리·컬러 센서와 같은 검사, 모델은 cameraData.ts의 id
+function camera(value: unknown, what: string, jointCount: number): SimCameraSpec {
+  const { device, mount } = sensor(value, what, jointCount)
+  const model = (value as Record<string, unknown>).model
+  if (!isCameraModelId(model)) fail(`${what}.model`)
+  return { device, mount, model }
+}
+
+// 거리·컬러 센서·웹캠 장치 이름: 세 목록을 합쳐 유일하고, 모터·데드휠·Pinpoint·OTOS·IMU·관절 서보·리밋 스위치와 겹치지 않는다
 // (데드휠은 모터 이름을 함께 쓰므로 모터·데드휠끼리는 보지 않는다)
 function checkSensorNames(
   spec: WorldSpec,
@@ -782,6 +803,7 @@ function checkSensorNames(
     })
   check(spec.distanceSensors, 'distanceSensors')
   check(spec.colorSensors, 'colorSensors')
+  check(spec.cameras, 'cameras')
 }
 
 // 모양이 맞으면 새 객체(받은 값의 다른 키는 버린다), 아니면 무엇이 틀렸는지 글자로 돌려준다
@@ -840,7 +862,11 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
       colorSensors: list(value.colorSensors, MAX_WORLD_SENSORS, 'colorSensors', (v, i) =>
         sensor(v, `colorSensors[${i}]`, joints.length)
       ),
-      noise: noise(value.noise)
+      noise: noise(value.noise),
+      // v5(4d): noise 뒤, 이름 검사 전
+      cameras: list(value.cameras, MAX_WORLD_CAMERAS, 'cameras', (v, i) =>
+        camera(v, `cameras[${i}]`, joints.length)
+      )
     }
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')

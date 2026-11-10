@@ -216,6 +216,8 @@ export type PreparedRun = {
   // 디스크의 구성 XML이 지금 씬에서 만든 구성(configHash)과 다르다(그 파일로 실행, 렌더러가 경고)
   configStale: boolean
   preselectTeleOp: string
+  // 팀 웹캠 보정 XML(RunRequest.teamCalibrations): 받는 파일의 절대 경로, 없거나 받지 않으면 null(spec-4d §1.13)
+  teamCalibrations: string | null
 }
 
 const PRESELECT_READ_LIMIT = 1024 * 1024
@@ -232,6 +234,26 @@ async function isConfigStale(file: string, expected: string): Promise<boolean> {
   } catch {
     return true
   }
+}
+
+// 팀 웹캠 보정 파일(TeamCode 기준, 실제 SDK CameraCalibrationManager가 읽는 res/xml 자원 이름)과 크기 한도
+// [결정: spec-4d §1.13, 실제 보정 파일은 수 KB(내장 XML 9696 B)라 넉넉한 한도. 사이드카의 XML 파서에 큰 입력을 주지 않게]
+export const TEAM_CALIBRATIONS_PATH = 'src/main/res/xml/teamwebcamcalibrations.xml'
+export const MAX_TEAM_CALIBRATIONS_BYTES = 256 * 1024
+
+// 팀 웹캠 보정: 보통 파일(링크를 푼 위치도 TeamCode 안)이고 한도 이하일 때만 절대 경로. 없거나, 폴더이거나,
+// 링크로 밖을 가리키거나, 크거나, 읽지 못하면 null(실행은 막지 않는다: 실제 로봇도 파일이 없으면 내장 보정만 쓴다)
+export async function teamCalibrationsOf(teamCode: string): Promise<string | null> {
+  const file = path.join(teamCode, ...TEAM_CALIBRATIONS_PATH.split('/'))
+  // stat은 링크를 따라간다: TeamCode 안을 가리키는 링크는 받고, 밖이면 아래 realpath 확인이 거른다
+  const info = await stat(file).catch(() => null)
+  if (info === null || !info.isFile() || info.size > MAX_TEAM_CALIBRATIONS_BYTES) return null
+  const [realTeamCode, real] = await Promise.all([
+    realpath(teamCode).catch(() => null),
+    realpath(file).catch(() => null)
+  ])
+  if (!realTeamCode || !real || !containedIn(realTeamCode, real)) return null
+  return file
 }
 
 // Autonomous의 preselectTeleOp(목록과 같은 파서로 그 파일을 읽는다)
@@ -291,7 +313,8 @@ export async function prepareRun(request: ValidRequest): Promise<PreparedRun | F
     preselectTeleOp:
       request.opMode.flavor === 'Autonomous' && request.opMode.registeredName === null
         ? await preselectOf(located.file, request.opMode.className)
-        : ''
+        : '',
+    teamCalibrations: await teamCalibrationsOf(teamCode)
   }
 }
 
@@ -396,7 +419,9 @@ export function buildRunRequest(
     jitter: request.settings.jitter,
     seed: request.settings.seed,
     startEpochMillis: now,
-    stallMillis: DEFAULT_STALL_MILLIS
+    stallMillis: DEFAULT_STALL_MILLIS,
+    // 팀 웹캠 보정(spec-4d §1.13): prepareRun이 확인한 TeamCode 안 보통 파일, 없으면 null(내장 보정만)
+    teamCalibrations: prepared.teamCalibrations
   }
 }
 

@@ -366,7 +366,8 @@ describe('세계 설명 경고(console.notices.world*)', () => {
       'worldTooManyImus',
       'worldTooManyJoints',
       'worldTooManyDistanceSensors',
-      'worldTooManyColorSensors'
+      'worldTooManyColorSensors',
+      'worldTooManyCameras'
     ])
     for (const key of keys) {
       const entry = consoleEntry(

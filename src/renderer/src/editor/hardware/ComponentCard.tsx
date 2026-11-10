@@ -30,10 +30,13 @@ import {
   propertyLabelKey
 } from '../../hardware/labels'
 import {
+  cameraAim,
+  cameraModelOf,
   MM_PER_METER,
   otosOffsetInchDeg,
   pinpointComponentOffsetsMm,
-  robotFramePose
+  robotFramePose,
+  sdkCameraPose
 } from '../../hardware/mounting'
 import type { Issue } from '../../hardware/validation'
 import {
@@ -49,8 +52,12 @@ import { cadRootIdOf } from '../../cad/stepImport'
 import { useProjectStore, type CadGeometryStatus } from '../../project/projectStore'
 import { runningRobotId, usePlayStore } from '../../play/playStore'
 import { sensorExclusions } from '../../play/worldSensors'
+import { cameraExclusions, cameraMountInRobot } from '../../play/worldCameras'
 import { objectLocalBounds } from '../../scene/localBounds'
-import { documentSeasonId } from '../field/fieldDisplay'
+import { documentSeasonId, hiveTippedOf } from '../field/fieldDisplay'
+import { cameraReadingModel, cameraReadingText } from './cameraReading'
+import { cameraSelfHitFor } from './cameraSelfHit'
+import { useComponentGeometryRevision } from './geometryRevision'
 import { sensorReadingModel, sensorReadingText } from './sensorReading'
 import { selfHitFor, useSelfHitRefresh } from './sensorSelfHit'
 import { motorComponentParams } from '../../play/worldJoints'
@@ -138,6 +145,23 @@ function derivedText(
           })
         : null
     }
+    case 'webcam': {
+      // SDK setCameraPose 값(4d, spec-4d §1.3·§1.15): 렌즈 = 하우징 앞면(세계 설명과 같은 장착), in 소수 둘째·° 소수 첫째
+      const mount = cameraMountInRobot(objects, objectId, props, (id) =>
+        objectLocalBounds(objects, id)
+      )
+      if (!mount) return null
+      const pose = sdkCameraPose(mount.position, cameraAim(props))
+      // formatNumber: 행렬 곱의 반올림 찌꺼기(±1e-16)가 "-0.00"으로 보이지 않게(붙여 넣을 Java에 음의 0이 없게)
+      return t('hardware.derived.webcam', {
+        x: formatNumber(pose.x, 2),
+        y: formatNumber(pose.y, 2),
+        z: formatNumber(pose.z, 2),
+        yaw: formatNumber(pose.yaw, 1),
+        pitch: formatNumber(pose.pitch, 1),
+        roll: formatNumber(pose.roll, 1)
+      })
+    }
     default:
       return null
   }
@@ -219,7 +243,8 @@ function SensorReadingLines({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
-  const field = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
   const revision = useSceneStore((state) => state.geometryRevision)
   const cadStatus = useProjectStore((state) => state.cadStatus)
   const refresh = useSelfHitRefresh()
@@ -233,7 +258,7 @@ function SensorReadingLines({
       objectId,
       component,
       // 문서 시즌(실행 잠금과 관계없이: 실행 중 값은 장치 탭)
-      season: documentSeasonId(field),
+      season: documentSeasonId({ season }),
       bounds: (id) => objectLocalBounds(objects, id),
       exclusion: robotId
         ? (sensorExclusions(objects, robotId).get(component.id) ?? null)
@@ -244,10 +269,76 @@ function SensorReadingLines({
             selfHitFor(component.id, objects, revision, robotId, objectId, mount, type, reach)
         : undefined
     })
-  }, [objects, objectId, component, field, revision, cadStatus, refresh])
+  }, [objects, objectId, component, season, revision, cadStatus, refresh])
   if (!model) return null
   const text = sensorReadingText(model, t, lengthUnit, objects)
   const hint = t('hardware.sensorReading.hint')
+  return (
+    <>
+      {text.lines.map((line, index) => (
+        <p key={`line${index}`} className="hw-derived hw-sensor-reading" title={hint}>
+          {line}
+        </p>
+      ))}
+      {text.tails.map((tail, index) => (
+        <p key={`tail${index}`} className="hw-derived hw-sensor-tail" title={hint}>
+          {`⚠ ${tail}`}
+        </p>
+      ))}
+    </>
+  )
+}
+
+// 웹캠 카드의 "편집 자세" 줄(4d, spec-4d §1.15, 계산은 cameraReading.ts): 렌즈 값, 보이는 태그(묶음별)와 놓친 태그 수,
+// 경고 꼬리. 문서 시즌·HIVE 상태(개인 실행 설정)·형상 revision마다 한 번 계산하고, 자기 가림은 드래그가 끝날 때 한 번이다.
+function CameraReadingLines({
+  objects,
+  objectId,
+  component
+}: {
+  objects: SceneObjects
+  objectId: string
+  component: HardwareComponent
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const lengthUnit = useUnitStore((state) => state.lengthUnit)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
+  const revision = useSceneStore((state) => state.geometryRevision)
+  const hiveState = usePlayStore((state) => state.settings.hiveState)
+  const refresh = useSelfHitRefresh()
+  const model = useMemo(() => {
+    void refresh
+    void revision
+    const robotId = findRobotId(objects, objectId)
+    return cameraReadingModel({
+      objects,
+      objectId,
+      component,
+      // 문서 시즌(실행 잠금과 관계없이: 실행 중 값은 장치 탭)
+      season: documentSeasonId({ season }),
+      hiveTipped: hiveTippedOf(hiveState),
+      bounds: (id) => objectLocalBounds(objects, id),
+      exclusion: robotId
+        ? (cameraExclusions(objects, robotId).get(component.id) ?? null)
+        : 'outsideRobot',
+      selfHit: robotId
+        ? (mount) =>
+            cameraSelfHitFor(
+              component.id,
+              objects,
+              revision,
+              robotId,
+              objectId,
+              mount,
+              cameraModelOf(component.props)
+            )
+        : undefined
+    })
+  }, [objects, objectId, component, season, hiveState, revision, refresh])
+  if (!model) return null
+  const text = cameraReadingText(model, t, lengthUnit, objects)
+  const hint = t('hardware.cameraReading.hint')
   return (
     <>
       {text.lines.map((line, index) => (
@@ -279,6 +370,8 @@ function ComponentCard({
   const removeComponent = useSceneStore((state) => state.removeComponent)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const runningRobot = usePlayStore(runningRobotId)
+  // 웹캠 setCameraPose 줄(derivedText)은 형상 경계 상자를 쓰므로 형상 판이 바뀌면 다시 그린다
+  useComponentGeometryRevision(component.type)
   if (!isComponentType(component.type)) return null
   const type: ComponentType = component.type
   const def = componentDef(type)
@@ -472,9 +565,14 @@ function ComponentCard({
   const robotId = codePath ? findRobotId(objects, objectId) : null
   const robotClassName = robotId ? robotHardwareSettings(objects, robotId).className : ''
   const isSensor = type === 'distanceSensor' || type === 'colorSensor'
+  // 실행 중인 로봇의 시뮬레이터 전용 조준 칸(거리·컬러 센서 조준, 웹캠 모델·조준 4d)은 다음 INIT부터다
+  const runningKeys: readonly string[] = isSensor
+    ? ['aimYaw', 'aimPitch']
+    : type === 'webcam'
+      ? ['cameraModel', 'aimYaw', 'aimPitch', 'aimRoll']
+      : []
   const aimRunning = (property: PropertyDef): boolean =>
-    isSensor &&
-    (property.key === 'aimYaw' || property.key === 'aimPitch') &&
+    runningKeys.includes(property.key) &&
     runningRobot !== null &&
     findRobotId(objects, objectId) === runningRobot
 
@@ -597,7 +695,14 @@ function ComponentCard({
           </span>
         </div>
       )}
-      {derived && <p className="hw-derived">{derived}</p>}
+      {derived && (
+        <p
+          className="hw-derived"
+          title={type === 'webcam' ? t('hardware.derivedHints.webcam') : undefined}
+        >
+          {derived}
+        </p>
+      )}
       {simulated && (
         <p className="hw-derived" title={t('hardware.simulationOnly')}>
           {simulated}
@@ -605,6 +710,9 @@ function ComponentCard({
       )}
       {isSensor && (
         <SensorReadingLines objects={objects} objectId={objectId} component={component} />
+      )}
+      {type === 'webcam' && (
+        <CameraReadingLines objects={objects} objectId={objectId} component={component} />
       )}
       {hasHint(type) && <p className="inspector-note">{t(`hardware.hints.${type}`)}</p>}
       <IssueList issues={issues} />

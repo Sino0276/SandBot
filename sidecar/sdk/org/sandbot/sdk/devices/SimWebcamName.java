@@ -13,17 +13,23 @@ import org.sandbot.sim.SimDevice;
 import org.sandbot.sim.SimUnsupportedException;
 
 /**
- * 구성의 웹캠(Webcam 태그). 시뮬레이터에는 영상이 없어서 이름표 역할만 한다(VisionPortal 등 카메라를 여는 API는 아직
- * 지원하지 않는다). 실제 WebcamNameImpl처럼 isWebcam·isAttached는 true다.
+ * 구성의 웹캠(Webcam 태그). 실제 WebcamNameImpl처럼 isWebcam·isAttached는 true다. VisionPortal이 SimCamera.of로 이 웹캠의
+ * 시뮬레이터 쪽(프레임 입력·출력·카메라 제어, spec-4d §1.9)을 찾는다. 영상은 없다.
  */
 final class SimWebcamName implements WebcamName {
     static final String KIND = "webcam";
 
     private final String serial;
+    private final SimCamera camera;
 
     SimWebcamName(String serial, SimDevice device) {
         this.serial = serial;
         device.output("serialNumber", serial);
+        camera = new SimCamera(device);
+    }
+
+    SimCamera camera() {
+        return camera;
     }
 
     @Override public SerialNumber getSerialNumber() {

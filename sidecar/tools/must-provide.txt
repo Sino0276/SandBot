@@ -110,6 +110,26 @@ com.qualcomm.hardware.sparkfun.SparkFunOTOS
 com.qualcomm.hardware.sparkfun.SparkFunOTOS$Pose2D
 com.qualcomm.hardware.digitalchickenlabs.OctoQuad
 
+# AprilTag 비전(4d, spec-4d §1.9): VisionPortal·AprilTagProcessor 손 구현, 샘플이 부르는 CameraCompatibilityManager(VendorAndProductIds
+# 손 구현으로 실제 코드를 들여온다), 검출 좌표 형식인 OpenCV Point·Point3(실제 원천의 OpenCV classes.jar에서 들여온다)
+org.firstinspires.ftc.vision.VisionPortal
+org.firstinspires.ftc.vision.VisionPortal$Builder
+org.firstinspires.ftc.vision.VisionPortal$CameraState
+org.firstinspires.ftc.vision.VisionPortal$StreamFormat
+org.firstinspires.ftc.vision.VisionPortal$MultiPortalLayout
+org.firstinspires.ftc.vision.VisionPortalImpl
+org.firstinspires.ftc.vision.VisionProcessor
+org.firstinspires.ftc.vision.VisionProcessorInternal
+org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+org.firstinspires.ftc.vision.apriltag.AprilTagProcessor$Builder
+org.firstinspires.ftc.vision.apriltag.AprilTagProcessor$TagFamily
+org.firstinspires.ftc.vision.apriltag.AprilTagProcessor$PoseSolver
+org.firstinspires.ftc.vision.apriltag.AprilTagProcessorImpl
+org.firstinspires.ftc.robotcore.external.hardware.camera.CameraCompatibilityManager
+org.firstinspires.ftc.robotcore.external.hardware.camera.CameraCompatibilityManager$Quirk
+org.opencv.core.Point
+org.opencv.core.Point3
+
 # FTC Dashboard 대체(sandbot-dashboard.jar, 라이브러리 L2). Road Runner 1.0 라이브러리 바이트코드와 quickstart가 쓰는 형식이다
 # (빌드의 Dashboard 층이 확인한다).
 com.acmerobotics.dashboard.FtcDashboard

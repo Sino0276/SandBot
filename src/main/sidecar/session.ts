@@ -14,6 +14,7 @@ import {
   type SimNoticeCode
 } from '../../shared/play'
 import {
+  isTagsInput,
   SIDECAR_PROTOCOL_VERSION,
   type CompileDiagnostic,
   type DashConfigMessage,
@@ -156,7 +157,11 @@ function mergeInputs(into: InputState, inputs: unknown): void {
     if (typeof values !== 'object' || values === null) continue
     let known = into.get(device)
     for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+      // 배열은 웹캠 tags(isTagsInput: 키·길이·원소·id 규칙, 4d)만 복사해 받고 다른 배열·규칙에 어긋난 tags는 버린다
+      // (세계는 이 규칙에 맞지 않는 배열을 만들지 않는다. 사이드카가 같은 규칙으로 한 번 더 거른다)
+      const tags = isTagsInput(key, value)
       const ok =
+        tags ||
         value === null ||
         typeof value === 'boolean' ||
         typeof value === 'string' ||
@@ -166,7 +171,7 @@ function mergeInputs(into: InputState, inputs: unknown): void {
         known = new Map()
         into.set(device, known)
       }
-      known.set(key, value as DeviceValues[string])
+      known.set(key, tags ? [...value] : (value as DeviceValues[string]))
     }
   }
 }

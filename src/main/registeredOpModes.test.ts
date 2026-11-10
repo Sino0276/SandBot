@@ -5,11 +5,12 @@ import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GENERATED_JAVA_DIR } from '../shared/generatedFiles'
 import type { JdkInfo, ListOpModesResult, OpModeInfo } from '../shared/play'
-import type {
-  ErrorMessage,
-  ListRequest,
-  RegisteredOpMode,
-  SidecarMessage
+import {
+  SIDECAR_PROTOCOL_VERSION,
+  type ErrorMessage,
+  type ListRequest,
+  type RegisteredOpMode,
+  type SidecarMessage
 } from '../shared/sidecarProtocol'
 import { CodeTrustStore } from './codeTrust'
 import { clearOpModeCache, scanOpModes } from './opModes'
@@ -78,7 +79,7 @@ type Script = (request: ListRequest, proc: FakeProcess) => void
 // 사이드카처럼 답하는 가짜(요청을 받으면 다음 마이크로태스크에 hello → … → finished → 종료)
 function answer(messages: (SidecarMessage | Record<string, unknown>)[]): Script {
   return (_request, proc) => {
-    proc.line({ type: 'hello', protocol: 3, runtime: 'test', java: '21' })
+    proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'test', java: '21' })
     for (const message of messages) proc.line(message)
     proc.exit(0)
   }
@@ -227,7 +228,7 @@ describe('RegisteredOpModes', () => {
     expect(requests).toHaveLength(1)
     expect(requests[0]).toEqual({
       type: 'list',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: [javaRoot],

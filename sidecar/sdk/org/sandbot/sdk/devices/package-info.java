@@ -82,7 +82,14 @@
  *         Road Runner식(X 앞·Y 왼쪽, 오프셋 h −90°)이면 그 축이다</td></tr>
  * <tr><td>octoQuad(OctoQuadFTC)</td><td>directions(비트 i = 채널 i 반대), channelBankConfig</td>
  *     <td>position0..7(틱, 방향 적용 전), velocity0..7(틱/표본 간격), 로컬라이저 x·y(mm), h(rad), vx·vy(mm/s), vh(rad/s)</td></tr>
- * <tr><td>webcam(Webcam)</td><td>serialNumber</td><td>-(영상 없음)</td></tr>
+ * <tr><td>webcam(Webcam)</td><td>serialNumber, state(VisionPortal.CameraState 이름, 포털이 없으면 null),
+ *     streaming(state = STREAMING), width·height(포털 해상도 px, 포털이 없으면 null), aprilTag(켜진 AprilTag 처리기가 있음),
+ *     family(첫 켜진 AprilTag 처리기의 TagFamily 이름 또는 null), decimation(그 처리기가 다음 프레임에 쓸 데시메이션, 처음 3,
+ *     없으면 null), fps(getFps, float → double), exposureMs(ExposureControl이 Manual이면 노출 ms, 아니면 null),
+ *     gain(GainControl 값)(이 순서, 틱마다 다 보냄, spec-4d §1.10)</td>
+ *     <td>model(문자열: 렌즈·SDK 보정의 카메라 모델 id, 처음 한 번), frameNanos·frameWidth·frameHeight(정수: 프레임이 있는
+ *     틱의 틱 경계 시각 ns와 해상도 px), tags(숫자 배열: 태그마다 9칸 [id, x0, y0, …, x3, y3], apriltag 3 픽셀 좌표 = OpenCV
+ *     좌표 + 0.5, id 오름차순, 최대 64장; 영상은 없다, spec-4d §1.5·§3.2)</td></tr>
  * <tr><td>limelight(EthernetDevice)</td><td>running, pollRateHz, pipeline, robotYaw(°)</td><td>-(1단계는 결과 없음, 연결 안 됨)</td></tr>
  * </table>
  *
@@ -90,7 +97,9 @@
  * 쓰기·스칼라를 그 위에 얹는다({@link org.sandbot.sdk.devices.SimTrackedPose}).
  *
  * <p>입력을 만드는 쪽은 메인 프로세스의 운동학 시뮬레이터(src/shared/sim/world.ts)다. 틱마다 바뀐 키만 보내고(처음에는 전부),
- * 정수 키(position·velocity·encoderX·encoderY·red·green·blue·proximity)는 정수로 보낸다. 측정 시각이 있는 칩(VL53L0X·
+ * 정수 키(position·velocity·encoderX·encoderY·red·green·blue·proximity·frameNanos·frameWidth·frameHeight)는 정수로 보낸다.
+ * 문자열 입력은 웹캠 model 하나이고, 숫자 배열 입력은 웹캠 tags 하나다(키가 tags이고 길이가 9의 배수·576 이하, 모든 원소가
+ * 유한 수, 칸 0(id)이 0 이상 정수일 때만. 아니면 런타임이 그 키를 버린다, src/shared/sidecarProtocol.ts isTagsInput). 측정 시각이 있는 칩(VL53L0X·
  * APDS-9151)은 입력 훅({@link org.sandbot.sim.SimDevice.InputHook})으로 틱 경계 시각을 인자로 받아 그 전에 끝난 측정을 옛 입력으로
  * 잡는다(훅은 시계를 부르지 않는다). 모터 포트의 velocity 측정 규칙은 src/shared/sim/encoderVelocity.ts다.
  * Pinpoint 자세는 시뮬레이터가 펌웨어처럼 포드 틱과 이 장치의 출력(ticksPerMm·방향·오프셋)과 내장 IMU 요로 적분한 값이다(그래서

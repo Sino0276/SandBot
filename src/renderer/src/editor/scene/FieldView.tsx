@@ -5,6 +5,8 @@ import {
   BoxGeometry,
   CylinderGeometry,
   DoubleSide,
+  EdgesGeometry,
+  LineBasicMaterial,
   Matrix4,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -18,15 +20,21 @@ import {
 import type { FieldSpec, FieldWallName } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { wallLabelKey } from '../../field/fieldLabels'
+import { fieldCadReady, useFieldVisualStore } from '../../field/fieldVisualStore'
 import { looseT } from '../../hardware/labels'
 import { usePlayStore } from '../../play/playStore'
 import { useSceneStore } from '../../scene/sceneStore'
 import { documentField, lockedRunField } from '../field/fieldDisplay'
 import { fieldElementsHidden, useSceneVisibilityStore } from '../sceneVisibility'
 import { useDeferredDispose, type Disposable } from './deferredDispose'
+import FieldCadView from './FieldCadView'
 import FieldFloor from './FieldFloor'
+import { fieldLayers } from './fieldLayers'
 import {
+  fieldCompanionModel,
+  fieldOutlineMeshes,
   fieldViewModel,
+  FIELD_RENDER_ORDER,
   usesNominalFloor,
   WALL_LABEL_MATERIAL,
   type FieldGeometrySpec,
@@ -41,6 +49,8 @@ import { createTagTexture } from './tagTexture'
 // 표시. 씬 문서 밖이고 클릭되지 않는다(시작 표시만 예외). 'none'은 지금 FieldFloor 그대로다. 메시 목록은 fieldViewModel.ts.
 // 재질은 (색, 투명도, 오프셋 종류)마다 컴포넌트 수명 동안 하나를 함께 쓰고, 시즌·HIVE 상태·보기 상태가 바뀔 때만 형상을
 // 다시 만들고, 언어가 바뀌면 라벨 텍스처만 다시 만든다(frameloop demand라 바뀌면 invalidate).
+// 필드 CAD(보기용, 4e)가 그려져 있으면(spec-4e §1.6 fieldLayers) 단순 형상은 CAD와 함께 그리는 것(태그·벽 라벨·넘어간 HIVE
+// CELL)만 그리고, "단순 형상도 보기"면 시뮬레이터 형상을 초록 충돌체 윤곽선으로 겹친다(FieldColliderOutlines).
 
 // 필드 메시는 클릭되지 않는다(다리 뒤 로봇도 클릭된다)
 const noRaycast = (): void => {}
@@ -181,17 +191,20 @@ function placement(matrix: readonly number[]): Placement {
 // 바닥·겹 요소·태그·라벨은 빛과 관계없이 보이는 평면(MeshBasicMaterial), 나머지는 빛을 받는다
 const FLAT_ROLES = new Set(['floor', 'seam', 'tape'])
 
-// 속성(시즌·HIVE 상태·숨김)이 같으면 다시 그리지 않는다
+// 속성(시즌·HIVE 상태·숨김·층)이 같으면 다시 그리지 않는다. variant 'companion'은 필드 CAD와 함께 그리는 것만이다
+// (fieldCompanionModel). 그릴 모델(drawn)을 먼저 정하고 형상·자세·순번을 모두 그 모델 기준으로 만든다(비평 M3).
 const SeasonFieldView = memo(function SeasonFieldView({
   spec,
   tippedRed,
   tippedBlue,
-  elementsHidden
+  elementsHidden,
+  variant
 }: {
   spec: FieldSpec
   tippedRed: boolean
   tippedBlue: boolean
   elementsHidden: boolean
+  variant: 'all' | 'companion'
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const language = i18n.resolvedLanguage ?? i18n.language
@@ -202,10 +215,10 @@ const SeasonFieldView = memo(function SeasonFieldView({
   const tags = useMemo(() => new TagMaterials(), [])
   useDeferredDispose(tags)
 
-  const model = useMemo(
-    () => fieldViewModel(spec, [tippedRed, tippedBlue], elementsHidden),
-    [spec, tippedRed, tippedBlue, elementsHidden]
-  )
+  const model = useMemo(() => {
+    const full = fieldViewModel(spec, [tippedRed, tippedBlue], elementsHidden)
+    return variant === 'companion' ? fieldCompanionModel(full, [tippedRed, tippedBlue]) : full
+  }, [spec, tippedRed, tippedBlue, elementsHidden, variant])
   const geometries = useMemo(() => new GeometrySet(model.meshes), [model])
   useDeferredDispose(geometries)
   // 자세는 모델마다 한 번 푼다(다시 그릴 때 새 Quaternion을 넘기면 R3F가 모든 메시에 다시 적용한다)
@@ -275,24 +288,176 @@ const SeasonFieldView = memo(function SeasonFieldView({
   )
 })
 
+// ---- 단순 형상 충돌체 윤곽(spec-4e §1.8, Unity 충돌체 기즈모) ----
+
+// Unity 충돌체 기즈모 초록 [가정: 표시만]
+const COLLIDER_OUTLINE_COLOR = '#91f48b'
+// 앞 패스(깊이 검사 켬)·가려진 패스(깊이 검사 끔) 불투명도 [가정: 표시만]. 가려진 선은 흐리게 보인다(로봇 하부를 가로지르지
+// 않게, 비평 U8)
+const COLLIDER_OUTLINE_OPACITY = 0.9
+const COLLIDER_OUTLINE_HIDDEN_OPACITY = 0.2
+// 윤곽 모서리의 각 문턱(°): 상자 12변·평면 4변만 남는다
+const OUTLINE_THRESHOLD_DEG = 1
+
+class OutlineMaterials implements Disposable {
+  readonly front = new LineBasicMaterial({
+    color: COLLIDER_OUTLINE_COLOR,
+    transparent: true,
+    opacity: COLLIDER_OUTLINE_OPACITY,
+    depthTest: true,
+    depthWrite: false,
+    toneMapped: false
+  })
+  // CAD 면과 같은 평면의 선(바닥 사각형·FLOWER 벽 쪽 면)이 앞 패스에서 깜빡여도 이 패스가 잇는다
+  readonly hidden = new LineBasicMaterial({
+    color: COLLIDER_OUTLINE_COLOR,
+    transparent: true,
+    opacity: COLLIDER_OUTLINE_HIDDEN_OPACITY,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false
+  })
+  dispose(): void {
+    this.front.dispose()
+    this.hidden.dispose()
+  }
+}
+
+// 메시마다 EdgesGeometry 하나(앞·가려진 패스가 함께 쓴다). 면 형상은 모서리를 뽑은 뒤 바로 해제한다
+class OutlineGeometries implements Disposable {
+  readonly list: BufferGeometry[]
+  constructor(meshes: readonly FieldMeshSpec[]) {
+    this.list = meshes.map((mesh) => {
+      const solid = makeGeometry(mesh.geometry)
+      const edges = new EdgesGeometry(solid, OUTLINE_THRESHOLD_DEG)
+      solid.dispose()
+      return edges
+    })
+  }
+  dispose(): void {
+    for (const geometry of this.list) geometry.dispose()
+  }
+}
+
+// 시뮬레이터가 계산에 쓰는 단순 형상(fieldOutlineMeshes)의 윤곽. 재질 둘은 컴포넌트 수명 동안, 형상은 모델이 바뀔 때 새로
+// 만들고 이전 것은 미뤄 해제한다(StrictMode)
+const FieldColliderOutlines = memo(function FieldColliderOutlines({
+  spec,
+  tippedRed,
+  tippedBlue
+}: {
+  spec: FieldSpec
+  tippedRed: boolean
+  tippedBlue: boolean
+}): React.JSX.Element {
+  const invalidate = useThree((state) => state.invalidate)
+  const materials = useMemo(() => new OutlineMaterials(), [])
+  useDeferredDispose(materials)
+  const model = useMemo(
+    () => fieldOutlineMeshes(fieldViewModel(spec, [tippedRed, tippedBlue], false), spec),
+    [spec, tippedRed, tippedBlue]
+  )
+  const geometries = useMemo(() => new OutlineGeometries(model.meshes), [model])
+  useDeferredDispose(geometries)
+  const placements = useMemo(() => model.meshes.map((mesh) => placement(mesh.matrix)), [model])
+
+  useEffect(() => {
+    invalidate()
+  }, [model, invalidate])
+
+  const passes: readonly ['front' | 'hidden', Material][] = [
+    ['front', materials.front],
+    ['hidden', materials.hidden]
+  ]
+  const fieldLines: React.JSX.Element[] = []
+  const carried = new Map<string, React.JSX.Element[]>()
+  model.meshes.forEach((mesh, index) => {
+    const { position, quaternion } = placements[index]
+    const lines = passes.map(([pass, material]) => (
+      <lineSegments
+        key={`${mesh.key}.${pass}`}
+        name={`outline.${mesh.key}.${pass}`}
+        geometry={geometries.list[index]}
+        material={material}
+        position={position}
+        quaternion={quaternion}
+        renderOrder={FIELD_RENDER_ORDER.colliderOutline}
+        raycast={noRaycast}
+      />
+    ))
+    if (mesh.carrier === 'field') fieldLines.push(...lines)
+    else carried.set(mesh.carrier, [...(carried.get(mesh.carrier) ?? []), ...lines])
+  })
+
+  return (
+    <group name="fieldOutlines">
+      {fieldLines}
+      {model.carriers.map((carrier) => (
+        <group
+          key={carrier.key}
+          name={`outline.${carrier.key}`}
+          position={[carrier.pivot.x, carrier.pivot.y, carrier.pivot.z]}
+          rotation={[0, carrier.angle, 0]}
+        >
+          {carried.get(carrier.key)}
+        </group>
+      ))}
+    </group>
+  )
+})
+
 // 씬 뷰 필드: 실행이 잠갔으면 실행의 시즌·HIVE 상태, 아니면 문서 시즌(모르는 문자열은 'none')과 개인 실행 설정.
 // 실행 전체(state.run)가 아니라 잠근 run.field만 구독한다(텔레메트리·장치마다 바뀌는 run으로 다시 그리지 않게)
+// 문서 field 객체가 아니라 시즌 문자열과 visual을 따로 구독한다(4e부터 field는 정렬·경로 고침에도 바뀐다, spec-4e §0).
+// 필드 CAD는 그 경로의 형상이 칸에 있을 때만(fieldCadReady, 읽기 상태는 보지 않는다) 올려 두고, 숨김·고립 보기는 visible만
+// 바꾼다(spec-4e §1.9).
 function FieldView(): React.JSX.Element {
-  const doc = useSceneStore((state) => state.field)
+  const season = useSceneStore((state) => state.field.season)
+  const visual = useSceneStore((state) => state.field.visual)
+  const loaded = useFieldVisualStore((state) => state.loaded)
   const lockedField = usePlayStore((state) => lockedRunField(state.run))
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   const elementsHidden = useSceneVisibilityStore(fieldElementsHidden)
-  const shown = lockedField ?? documentField(doc, hiveState)
+  const shapesShown = useSceneVisibilityStore((state) => state.fieldShapesShown)
+  const shown = lockedField ?? documentField({ season }, hiveState)
+  const cadReady = fieldCadReady(visual, loaded)
+  const layers = fieldLayers({ cadReady, shapesShown, elementsHidden })
+  const nominal = usesNominalFloor(shown.season)
+  const spec = resolveSeason(shown.season)
   return (
     <>
-      {usesNominalFloor(shown.season) ? (
-        <FieldFloor />
+      {cadReady && visual && loaded && (
+        <FieldCadView visual={visual} revision={loaded.revision} visible={layers.cad} />
+      )}
+      {layers.simple === 'all' ? (
+        nominal ? (
+          <FieldFloor />
+        ) : (
+          <SeasonFieldView
+            spec={spec}
+            tippedRed={shown.hiveTipped[0]}
+            tippedBlue={shown.hiveTipped[1]}
+            elementsHidden={elementsHidden}
+            variant="all"
+          />
+        )
       ) : (
-        <SeasonFieldView
-          spec={resolveSeason(shown.season)}
+        // 'companion': 'none'·모르는 시즌은 비어 있다(FieldFloor도 그리지 않는다)
+        !nominal && (
+          <SeasonFieldView
+            spec={spec}
+            tippedRed={shown.hiveTipped[0]}
+            tippedBlue={shown.hiveTipped[1]}
+            elementsHidden={false}
+            variant="companion"
+          />
+        )
+      )}
+      {layers.outlines && (
+        <FieldColliderOutlines
+          spec={spec}
           tippedRed={shown.hiveTipped[0]}
           tippedBlue={shown.hiveTipped[1]}
-          elementsHidden={elementsHidden}
         />
       )}
       <StartMarkers />

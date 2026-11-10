@@ -14,6 +14,9 @@ type VisibilityState = {
   // 필드 요소(구조물·HIVE·태그·벽 라벨·시작 표시)를 숨겼는지(spec-4ab §1.9, 하이어라키 Field 줄의 눈 아이콘·Field 선택의 H·
   // Field 인스펙터 "필드 요소 보이기"). 바닥·벽·테이프는 남긴다. 보기만이라 숨겨도 시뮬레이터 접촉은 그대로다.
   fieldHidden: boolean
+  // 필드 CAD(보기용)가 그려져 있을 때 단순 형상을 초록 충돌체 윤곽선으로 겹쳐 보는가(spec-4e §1.10, Field 인스펙터
+  // "단순 형상도 보기"). 보기 상태라 씬 문서·실행 취소·저장·localStorage에 넣지 않는다.
+  fieldShapesShown: boolean
 }
 
 const EMPTY: ReadonlySet<string> = new Set()
@@ -21,12 +24,18 @@ const EMPTY: ReadonlySet<string> = new Set()
 export const useSceneVisibilityStore = create<VisibilityState>()(() => ({
   hidden: EMPTY,
   isolated: null,
-  fieldHidden: false
+  fieldHidden: false,
+  fieldShapesShown: false
 }))
 
 // 프로젝트를 새로 열면 보기 상태를 버린다(다른 씬의 id다)
 export function resetSceneVisibility(): void {
-  useSceneVisibilityStore.setState({ hidden: EMPTY, isolated: null, fieldHidden: false })
+  useSceneVisibilityStore.setState({
+    hidden: EMPTY,
+    isolated: null,
+    fieldHidden: false,
+    fieldShapesShown: false
+  })
 }
 
 // ---- 필드 요소(spec-4ab §1.9) ----
@@ -34,6 +43,12 @@ export function resetSceneVisibility(): void {
 export function setFieldHidden(fieldHidden: boolean): void {
   if (useSceneVisibilityStore.getState().fieldHidden !== fieldHidden)
     useSceneVisibilityStore.setState({ fieldHidden })
+}
+
+// Field 인스펙터 "단순 형상도 보기"(spec-4e §1.10). 같은 값이면 그대로 둔다.
+export function setFieldShapesShown(fieldShapesShown: boolean): void {
+  if (useSceneVisibilityStore.getState().fieldShapesShown !== fieldShapesShown)
+    useSceneVisibilityStore.setState({ fieldShapesShown })
 }
 
 // Field 줄의 눈 아이콘·Field 선택의 H
@@ -83,7 +98,8 @@ export function isolationSet(
 
 // 씬 뷰에서 그리지 않는가(자신을 숨겼거나, 고립 보기 밖)
 export function isHiddenInScene(
-  state: VisibilityState,
+  // 보기 플래그 fieldShapesShown은 오브젝트 표시와 관계없다(gizmo 모델이 이 형식을 그대로 쓴다)
+  state: Omit<VisibilityState, 'fieldShapesShown'>,
   objects: SceneObjects,
   id: string
 ): boolean {

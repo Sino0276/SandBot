@@ -10,4 +10,18 @@ public interface SimHost {
 
     /** 루프 표시(LinearOpMode.opModeIsActive·opModeInInit·idle, 반복 OpMode의 init_loop·loop 한 번) */
     void loopMarker();
+
+    /**
+     * 사이드카 안내(프로토콜 notice, src/shared/sidecarProtocol.ts의 SidecarNoticeCode, spec-4d §1.14). 호스트가 같은
+     * code·params는 실행마다 한 번 보인다. 기본은 아무것도 하지 않는다(시험 호스트가 깨지지 않게, Java 8 default).
+     */
+    default void notice(String code, java.util.Map<String, String> params) {}
+
+    /**
+     * 카메라 스레드의 예외로 OpMode를 멈춘다(EOCV emulateEStop의 대응, spec-4d §1.12). 런타임이 오류를 바로 보내고
+     * 정지는 DS STOP과 같은 자리에서 적용한다. 기본은 받지 않는다(이 호스트는 비상 정지를 모른다).
+     */
+    default void emergencyStop(Throwable cause) {
+        throw new IllegalStateException("this host does not support emergencyStop", cause);
+    }
 }

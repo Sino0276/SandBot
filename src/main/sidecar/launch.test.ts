@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { dirname, join, win32 } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GENERATED_MARKER, generatedHash, stampGenerated } from '../../shared/generatedFiles'
+import { SIDECAR_PROTOCOL_VERSION } from '../../shared/sidecarProtocol'
 import type { PlayInitRequest } from '../../shared/play'
 import { clearTrustedRoots, trustRoot } from '../projectRoots'
 import {
@@ -196,7 +197,8 @@ describe('prepareRun', () => {
       configXml: null,
       configMissing: true,
       configStale: false,
-      preselectTeleOp: ''
+      preselectTeleOp: '',
+      teamCalibrations: null
     })
     const config = await write(CONFIG, '<Robot/>')
     await mkdir(join(root, 'FtcRobotController', 'src', 'main', 'java'), { recursive: true })
@@ -254,6 +256,40 @@ describe('prepareRun', () => {
       ok: false,
       code: 'notAllowed'
     })
+  })
+
+  it('팀 웹캠 보정(A15): TeamCode 안 보통 파일만, 링크로 밖·256 KB 초과·폴더·없음은 null', async () => {
+    await write(`${PKG}/Drive.java`)
+    const rel = 'src/main/res/xml/teamwebcamcalibrations.xml'
+    const team = (): Promise<string | null> =>
+      prepareRun(valid(request({ root }))).then((p) =>
+        'teamCalibrations' in p ? p.teamCalibrations : 'failed'
+      )
+    // 없음
+    expect(await team()).toBeNull()
+    // 보통 파일
+    const file = await write(rel, '<Calibrations/>')
+    expect(await team()).toBe(file)
+    // 한도 그대로는 받고 1바이트 넘으면 null(실행은 막지 않는다)
+    await writeFile(file, Buffer.alloc(256 * 1024, 0x20))
+    expect(await team()).toBe(file)
+    await writeFile(file, Buffer.alloc(256 * 1024 + 1, 0x20))
+    expect(await team()).toBeNull()
+    expect(await prepareRun(valid(request({ root })))).toMatchObject({ teamCalibrations: null })
+    // 폴더
+    await rm(file)
+    await mkdir(file)
+    expect(await team()).toBeNull()
+    await rm(file, { recursive: true })
+    // TeamCode 밖을 가리키는 링크
+    await writeFile(join(outside, 'cal.xml'), '<Calibrations/>')
+    await symlink(join(outside, 'cal.xml'), file)
+    expect(await team()).toBeNull()
+    await rm(file)
+    // TeamCode 안을 가리키는 링크는 받는다(링크를 푼 위치도 TeamCode 안)
+    const inside = await write('src/main/res/xml/real-calibrations.xml', '<Calibrations/>')
+    await symlink(inside, file)
+    expect(await team()).toBe(file)
   })
 
   it('Autonomous면 그 클래스의 preselectTeleOp를 읽는다', async () => {
@@ -366,7 +402,7 @@ describe('모의 저장소와 목록 요청', () => {
       )
     ).toEqual({
       type: 'list',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
@@ -398,9 +434,12 @@ describe('사이드카 빌드 결과와 명령', () => {
     expect(await readSidecarFiles(dir)).toMatchObject({
       ok: false,
       code: 'noSidecar',
-      detail: 'sidecar protocol 1, expected 3'
+      detail: `sidecar protocol 1, expected ${SIDECAR_PROTOCOL_VERSION}`
     })
-    await writeFile(join(dir, 'sidecar.json'), JSON.stringify({ protocol: 3, sourceHash: 'x' }))
+    await writeFile(
+      join(dir, 'sidecar.json'),
+      JSON.stringify({ protocol: SIDECAR_PROTOCOL_VERSION, sourceHash: 'x' })
+    )
     await writeFile(join(dir, 'sandbot-runtime.jar'), '')
     expect(await readSidecarFiles(dir)).toMatchObject({ ok: false, code: 'noSidecar' })
     await writeFile(join(dir, 'sandbot-sdk.jar'), '')
@@ -447,7 +486,8 @@ describe('사이드카 빌드 결과와 명령', () => {
         configXml: null,
         configMissing: false,
         configStale: false,
-        preselectTeleOp: ''
+        preselectTeleOp: '',
+        teamCalibrations: '/proj/TeamCode/src/main/res/xml/teamwebcamcalibrations.xml'
       },
       valid(
         request({
@@ -470,7 +510,7 @@ describe('사이드카 빌드 결과와 명령', () => {
     )
     expect(run).toEqual({
       type: 'run',
-      protocol: 3,
+      protocol: SIDECAR_PROTOCOL_VERSION,
       clock: 'virtual',
       tickNanos: 5_000_000,
       sourceRoots: ['/proj/TeamCode/src/main/java'],
@@ -487,7 +527,8 @@ describe('사이드카 빌드 결과와 명령', () => {
       jitter: 0.1,
       seed: 42,
       startEpochMillis: 1234,
-      stallMillis: 2000
+      stallMillis: 2000,
+      teamCalibrations: '/proj/TeamCode/src/main/res/xml/teamwebcamcalibrations.xml'
     })
   })
 
