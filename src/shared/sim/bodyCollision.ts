@@ -339,10 +339,11 @@ export class BodyCollision {
       const result = collideShapes(A.shape, other, margin, pair.cache)
       pair.cache = result.cache
       const manifold = result.manifold
-      // 깊이는 투영·빼기 전 매니폴드로 잰다(P-L21)
+      // 깊이는 투영·빼기 전(P-L21) 짝의 SAT 최선 분리(둥근 짝은 거리 − 반지름, 바닥은 가장 낮은 z)로 잰다. 겹친 볼록 형상의 SAT
+      // 최선 분리는 정확한 침투 깊이다 [결정: spec-5 §4.2 3은 점 분리의 최소지만, 보충 점(+)은 다른 축의 분리라 깊이를 부풀린다]
       let deepest = Infinity
       if (manifold) for (const p of manifold.points) deepest = Math.min(deepest, p.separation)
-      const depth = manifold ? Math.max(0, -deepest) : 0
+      const depth = Math.max(0, -result.separation)
       if (this.first) pair.baseline = depth
       else if (!this.overlapNotified && depth - pair.baseline > OVERLAP_NOTICE_DEPTH) {
         this.overlapNotified = true
@@ -485,7 +486,10 @@ export class BodyCollision {
           point,
           n: [n[0] / lh, n[1] / lh, 0],
           gap: point.separation / lh,
-          robotFace: supplement ? point.id.startsWith('+fa') : manifold.reference.startsWith('fa')
+          // 정적 면이 기준(fb…)일 때만 법선이 필드에 고정이다. 섀시 면(fa…)·모서리 짝(ee…)·GJK 대체(gv)는 섀시와 함께 돈다고 본다
+          robotFace: !(supplement
+            ? point.id.startsWith('+fb')
+            : manifold.reference.startsWith('fb'))
         })
       }
       kept = mergeHorizontal(projected)
@@ -514,9 +518,11 @@ export class BodyCollision {
       if (k.gap > Math.abs(u) * h + COLLISION_MARGIN) continue
       let tighten = 0
       if (base) {
-        // 곡률 보정(4ab fieldContact.ts structureRows와 같은 식·같은 연산 순서, P-H1): 섀시 면이 기준(fa…)이면
-        // g̈ = ω²·(n̂·r) + 2ω·(t·v), 그 밖(fb…·ee…·gv)이면 g̈ = −ω²·(n̂·r), 음수일 때만 목표를 (h/2)·|g̈|만큼 조인다
-        // [결정: ee는 정적 법선 식으로 본다. 4ab에는 모서리 기준이 없다]
+        // 곡률 보정(4ab fieldContact.ts structureRows와 같은 식·같은 연산 순서, P-H1): 법선이 섀시와 함께 돌면(fa…·ee…·gv)
+        // g̈ = ω²·(n̂·r) + 2ω·(t·v), 정적 면이 기준(fb…)이면 g̈ = −ω²·(n̂·r), 음수일 때만 목표를 (h/2)·|g̈|만큼 조인다.
+        // [결정: spec-5 §1.7은 ee를 정적 법선 식으로 보지만, 섀시 수평 모서리 × 기운 다리 모서리의 축은 투영하면 섀시 면 법선처럼
+        // 돌아(평면에서는 다리 꼭짓점 대 섀시 변) 5 A16 퍼즈에서 2ω·(t·v) 항만큼(하위 단계마다 5e-8 m) 파고들었다. 세로 모서리면 법선이
+        // 고정이라 이 식은 조금 일찍 멈출 뿐이다(안전 쪽)]
         const r = { x: p.x, y: p.y }
         const t = { x: -d.y, y: d.x }
         const nr = d.x * r.x + d.y * r.y
@@ -597,27 +603,32 @@ export class BodyCollision {
     const c = vec(center)
     const vA = arr(art.pointVelocity(frames, pair.a, c))
     const vB: V3 = pair.b === null ? [0, 0, 0] : arr(art.pointVelocity(frames, pair.b, c))
-    const w = sub(vA, vB)
-    const wn = dot(w, n)
-    const wt: V3 = [w[0] - wn * n[0], w[1] - wn * n[1], w[2] - wn * n[2]]
-    const speed = norm(wt)
-    if (speed > SLIP_DIRECTION_SPEED) return [wt[0] / speed, wt[1] / speed, wt[2] / speed]
-    if (pair.t1) {
-      const t = pair.t1
-      const tn = dot(t, n)
-      const tau: V3 = [t[0] - tn * n[0], t[1] - tn * n[1], t[2] - tn * n[2]]
-      const l = norm(tau)
-      if (l >= TANGENT_KEEP_MIN) return [tau[0] / l, tau[1] / l, tau[2] / l]
-    }
-    let k = 0
-    if (Math.abs(n[1]) < Math.abs(n[k])) k = 1
-    if (Math.abs(n[2]) < Math.abs(n[k])) k = 2
-    const e: V3 = [0, 0, 0]
-    e[k] = 1
-    const t = cross(n, e)
-    const l = norm(t)
-    return [t[0] / l, t[1] / l, t[2] / l]
+    return frictionTangent(n, sub(vA, vB), pair.t1)
   }
+}
+
+// 접선 t1(§4.2 5, 순수·결정적): 상대 미끄럼 w의 접선 성분이 SLIP_DIRECTION_SPEED보다 크면 그 방향, 아니면 지난 t1을 새 접선 평면에
+// 투영한 길이가 TANGENT_KEEP_MIN 이상이면 그 방향(P-L22), 아니면 normalize(n × e_k)(|n_k|가 가장 작은 필드 축, 같으면 작은 k).
+// Duff·Frisvad 기저는 n_z = 0(모든 벽 법선)에서 뛰므로 쓰지 않는다(M§5 함정 7)
+export function frictionTangent(n: V3, slip: V3, previous: V3 | null): V3 {
+  const wn = dot(slip, n)
+  const wt: V3 = [slip[0] - wn * n[0], slip[1] - wn * n[1], slip[2] - wn * n[2]]
+  const speed = norm(wt)
+  if (speed > SLIP_DIRECTION_SPEED) return [wt[0] / speed, wt[1] / speed, wt[2] / speed]
+  if (previous) {
+    const tn = dot(previous, n)
+    const tau: V3 = [previous[0] - tn * n[0], previous[1] - tn * n[1], previous[2] - tn * n[2]]
+    const l = norm(tau)
+    if (l >= TANGENT_KEEP_MIN) return [tau[0] / l, tau[1] / l, tau[2] / l]
+  }
+  let k = 0
+  if (Math.abs(n[1]) < Math.abs(n[k])) k = 1
+  if (Math.abs(n[2]) < Math.abs(n[k])) k = 2
+  const e: V3 = [0, 0, 0]
+  e[k] = 1
+  const t = cross(n, e)
+  const l = norm(t)
+  return [t[0] / l, t[1] / l, t[2] / l]
 }
 
 // §1.7 수평 자리로 합치기: 법선이 같은 점 묶음(기준 점과 '+' 보충 점)마다 접선 t = ẑ × n̂ 위 s = t·p의 가장 작은 점과 가장 큰

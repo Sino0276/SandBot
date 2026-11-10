@@ -439,7 +439,11 @@ function edgeAxis(a: Prepared, b: Prepared, ea: number, eb: number): EdgeAxis | 
 
 type EdgeQuery = { sep: number; ea: number; eb: number; axis: V3 }
 
+// 시험 감시용 셈(결과에 쓰지 않는다): 모서리 전체 질의 횟수(닿은 동안 기억이 맞으면 건너뛰는지, spec-5 A6)
+export const SAT_COUNTERS = { edgeQueries: 0 }
+
 function edgeQuery(a: Prepared, b: Prepared, band: number): EdgeQuery | null {
+  SAT_COUNTERS.edgeQueries++
   let best: EdgeQuery | null = null
   for (let ea = 0; ea < a.hull.edges.length; ea++)
     for (let eb = 0; eb < b.hull.edges.length; eb++) {
@@ -716,11 +720,24 @@ function buildFeature(
   const normal = neg(feature.axis)
   const point = edgeContact(a, b, feature.ea, feature.eb, feature.axis)
   if (point) return { reference: referenceOf(feature), normal, tie: [1, 0, 0], points: [point] }
+  return gjkFallback(a, b, normal, feature.sep, band)
+}
+
+// 껍질–껍질 GJK 대체(§3.6): 꼭짓점–꼭짓점처럼 SAT 접촉이 비면 점 하나. d > GJK_MIN_DISTANCE이고 d ≤ band일 때 법선
+// (p_A − p_B)/d·분리 d, d ≤ GJK_MIN_DISTANCE면 SAT 축 법선(axisNormal, B → A)·그 분리로 같은 자리(가운데)에
+function gjkFallback(
+  a: Prepared,
+  b: Prepared,
+  axisNormal: V3,
+  axisSep: number,
+  band: number
+): { reference: string; normal: V3; tie: V3; points: Pt[] } {
   const gjk = gjkPoints(a, b)
+  const p = scale(add(gjk.pointA, gjk.pointB), 0.5)
   if (gjk.distance > GJK_MIN_DISTANCE) {
-    if (gjk.distance > band) return { reference: 'gv', normal, tie: [1, 0, 0], points: [] }
+    if (gjk.distance > band)
+      return { reference: 'gv', normal: axisNormal, tie: [1, 0, 0], points: [] }
     const n = scale(sub(gjk.pointA, gjk.pointB), 1 / gjk.distance)
-    const p = scale(add(gjk.pointA, gjk.pointB), 0.5)
     return {
       reference: 'gv',
       normal: n,
@@ -728,12 +745,11 @@ function buildFeature(
       points: [{ p, n, sep: gjk.distance, id: 'g' }]
     }
   }
-  const p = scale(add(gjk.pointA, gjk.pointB), 0.5)
   return {
     reference: 'gv',
-    normal,
+    normal: axisNormal,
     tie: [1, 0, 0],
-    points: [{ p, n: normal, sep: feature.sep, id: 'g' }]
+    points: [{ p, n: axisNormal, sep: axisSep, id: 'g' }]
   }
 }
 
@@ -763,21 +779,31 @@ function finish(
   chosen: Feature,
   built: { reference: string; normal: V3; tie: V3; points: Pt[] },
   best: Feature,
+  bestFace: FaceFeature,
   band: number,
   o: V3
 ): HullCollision {
   let points = built.points
+  const supplement = (feature: Feature, keep: (pt: Pt) => boolean): void => {
+    const extra = buildFeature(a, b, feature, band)
+    const tag = referenceOf(feature)
+    for (const pt of extra.points) if (keep(pt)) points.push({ ...pt, id: `+${tag}.${pt.id}` })
+  }
+  points = points.slice()
   // 9. 참 분리 축 보충(4ab 교훈, fieldContact.ts SUPPLEMENT_TOLERANCE): 고른 특징이 SAT 최대 분리보다 덜 떨어졌고 최대가 면 축이면
   // 그 면의 점도 만든다(자기 법선, id 앞에 '+'와 그 면). 위치 보정이 없어 기준 면만으로는 거의 나란한 면이 짧은 면 끝을 넘어 걸칠
   // 때 침투가 남는다. 기억은 고른 특징 그대로다
-  if (
-    best.kind !== 'edge' &&
-    best.sep > chosen.sep + SUPPLEMENT_TOLERANCE &&
-    !sameFeature(best, chosen)
-  ) {
-    const extra = buildFeature(a, b, best, band)
-    const tag = referenceOf(best)
-    points = [...points, ...extra.points.map((pt) => ({ ...pt, id: `+${tag}.${pt.id}` }))]
+  // [결정: spec-5 §3.5 9는 최대가 면 축일 때만이지만, 최대가 모서리 축이어도 그 점(하나)을 보충한다. 5 A16 퍼즈(BIOBUZZ 기운 다리)에서
+  // 섀시 면이 기준인 채 섀시 세로 모서리가 다리 모서리로 들어갔다(참 축은 두 모서리의 축)]
+  if (best.sep > chosen.sep + SUPPLEMENT_TOLERANCE && !sameFeature(best, chosen))
+    supplement(best, () => true)
+  else if (built.reference === 'gv' || chosen.kind === 'edge') {
+    // 모서리 접촉은 점 하나라, 모서리가 면과 거의 나란하면(기운 다리 모서리가 섀시 면을 따라 미끄러질 때) 그 점을 축으로 돌아 반대쪽
+    // 끝이 면으로 들어가고, 위치 보정이 없어 되돌아오지 않는다. 그래서 최선 면 축의 점 가운데 모서리 분리보다 FEATURE_TOLERANCE
+    // 넘게 깊지 않은 것(거의 나란한 면 부분)을 보충한다. 더 깊은 점은 그 면 축이 실제 분리를 과하게 재는 자리라 넣지 않는다
+    // [결정: spec-5 §3.5 9는 최대가 면 축일 때만 보충하지만, 5 A16 퍼즈(BIOBUZZ 다리)에서 모서리 기억이 이어지는 동안 반대쪽
+    // 끝이 수 cm까지 들어갔다]
+    supplement(bestFace, (pt) => pt.sep >= chosen.sep - FEATURE_TOLERANCE)
   }
   points = reducePoints(points, built.normal, built.tie)
   const manifold: Manifold | null =
@@ -825,37 +851,42 @@ function collidePrepared(
     if (fa.sep > band) return separated({ kind: 'faceA', face: fa.face, sep: fa.sep })
     const fb = faceQuery(b, a, band)
     if (fb.sep > band) return separated({ kind: 'faceB', face: fb.face, sep: fb.sep })
-    const faceMax: Feature =
+    const faceMax: FaceFeature =
       fb.sep > fa.sep
         ? { kind: 'faceB', face: fb.face, sep: fb.sep }
         : { kind: 'faceA', face: fa.face, sep: fa.sep }
     if (faceMax.sep <= remembered.sep + FEATURE_TOLERANCE) {
       const built = buildFeature(a, b, remembered, band)
-      if (built.points.length > 0) {
+      // 기억한 면이 그 분리를 자른 점으로 이룰 때만(가장 깊은 점이 면 분리에서 FEATURE_TOLERANCE 안) 모서리 질의를 건너뛴다(Box3D는 자른
+      // 점의 최소 분리를 기억과 비교한다, convex_manifold.c:1330). 면 분리를 이루는 꼭짓점이 자른 영역 밖이면 참 축은 다른 축(보통 모서리
+      // 축)이라 전체 SAT를 한다 [결정: 5 A16 퍼즈에서 섀시 면 분리가 −1.2 mm로 그대로인 동안 섀시 세로 모서리가 다리 모서리로 들어갔다]
+      const deepest = built.points.reduce((m, pt) => Math.min(m, pt.sep), Infinity)
+      const realized = remembered.kind === 'edge' || deepest <= remembered.sep + FEATURE_TOLERANCE
+      if (built.points.length > 0 && realized) {
         const best = faceMax.sep > remembered.sep ? faceMax : remembered
-        return finish(a, b, remembered, built, best, band, o)
+        return finish(a, b, remembered, built, best, faceMax, band, o)
       }
     }
   }
   // 3–4. 전체 SAT
   const fa = faceQuery(a, b, band)
-  const faceA: Feature = { kind: 'faceA', face: fa.face, sep: fa.sep }
+  const faceA: FaceFeature = { kind: 'faceA', face: fa.face, sep: fa.sep }
   if (fa.sep > band) return separated(faceA)
   const fb = faceQuery(b, a, band)
-  const faceB: Feature = { kind: 'faceB', face: fb.face, sep: fb.sep }
+  const faceB: FaceFeature = { kind: 'faceB', face: fb.face, sep: fb.sep }
   if (fb.sep > band) return separated(faceB)
   const eq = edgeQuery(a, b, band)
   const edge: Feature | null = eq
     ? { kind: 'edge', ea: eq.ea, eb: eq.eb, sep: eq.sep, axis: eq.axis }
     : null
   if (edge && edge.sep > band) return separated(edge)
-  let best: Feature = faceA
-  if (faceB.sep > best.sep) best = faceB
+  const bestFace: FaceFeature = faceB.sep > faceA.sep ? faceB : faceA
+  let best: Feature = bestFace
   if (edge && edge.sep > best.sep) best = edge
   // 히스테리시스: 기억한 특징의 분리 ≥ 최선 − FEATURE_TOLERANCE이면 기억한 특징을 쓴다
   if (remembered && remembered.sep >= best.sep - FEATURE_TOLERANCE) {
     const built = buildFeature(a, b, remembered, band)
-    if (built.points.length > 0) return finish(a, b, remembered, built, best, band, o)
+    if (built.points.length > 0) return finish(a, b, remembered, built, best, bestFace, band, o)
   }
   // 5. 특징 고르기(절대 공차만): B 면은 A 면보다 FEATURE_TOLERANCE 넘게 클 때만
   let chosen: Feature = faceB.sep > faceA.sep + FEATURE_TOLERANCE ? faceB : faceA
@@ -875,7 +906,18 @@ function collidePrepared(
       }
     }
   }
-  return finish(a, b, chosen, built, best, band, o)
+  // 면 접촉도 모서리 접촉도 비면(꼭짓점–꼭짓점: 어느 SAT 축의 자른 점도 띠 안에 없음) GJK 대체 점 하나 [결정: spec-5 §3.6은
+  // 모서리 접촉이 선분 밖일 때만 적지만, 면 축이 최선인 꼭짓점–꼭짓점(A7)도 같은 경우다. 기억은 고른 특징 그대로]
+  if (built.points.length === 0)
+    built = gjkFallback(a, b, featureNormal(a, b, best), best.sep, band)
+  return finish(a, b, chosen, built, best, bestFace, band, o)
+}
+
+// 특징 축의 B → A 법선(A 면이면 −n_A, B 면이면 n_B, 모서리면 −u)
+function featureNormal(a: Prepared, b: Prepared, feature: Feature): V3 {
+  if (feature.kind === 'faceA') return neg(normalOf(a, feature.face))
+  if (feature.kind === 'faceB') return normalOf(b, feature.face)
+  return neg(feature.axis)
 }
 
 // ---- 둥근 짝과 GJK(§3.6) ----
