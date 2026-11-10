@@ -32,7 +32,7 @@ import { fieldVisualGroups, fieldVisualState, useFieldVisualStore } from './fiel
 // 흉내 낸다. STEP 읽기(readStepCached)는 붙잡아 두었다가 차례로 끝낼 수 있다.
 
 // 열기 실패(catch 경로)와 로봇 CAD 읽기 예외를 만들 때만 끼어든다(나머지는 진짜 함수)
-const hooks = vi.hoisted(() => ({ failNotify: false, throwCadLoad: false }))
+const hooks = vi.hoisted(() => ({ failNotify: false, throwCadLoad: false, throwBuild: false }))
 vi.mock('./fieldActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./fieldActions')>()
   const notifyFieldState: typeof actual.notifyFieldState = (...args) => {
@@ -43,6 +43,18 @@ vi.mock('./fieldActions', async (importOriginal) => {
     actual.notifyFieldState(...args)
   }
   return { ...actual, notifyFieldState }
+})
+// 형상 합치기가 던지는 경우(메모리 부족 등)
+vi.mock('./fieldVisualModel', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./fieldVisualModel')>()
+  const buildFieldVisual: typeof actual.buildFieldVisual = (...args) => {
+    if (hooks.throwBuild) {
+      hooks.throwBuild = false
+      throw new RangeError('Array buffer allocation failed(시험)')
+    }
+    return actual.buildFieldVisual(...args)
+  }
+  return { ...actual, buildFieldVisual }
 })
 vi.mock('../cad/importStep', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../cad/importStep')>()
@@ -899,6 +911,23 @@ describe('A13 다시 불러오기', () => {
     expect(status()).toEqual({ path: FIELD_PATH, status: 'cancelled' })
     expect(loaded()).toBe(second)
     expect(noticesOf('cadLoadCancelled')).toHaveLength(1)
+  })
+})
+
+describe('A13 형상 만들기 실패', () => {
+  it('합치기가 던지면 failed와 importFailed(행동 showField)이고 이전 형상·읽는 중 상태가 남지 않는다', async () => {
+    await openWithField()
+    const before = loaded()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    disk.set(FIELD_PATH, fieldModel(4))
+    hooks.throwBuild = true
+    await reloadFieldVisual()
+    await settle()
+    expect(status()).toEqual({ path: FIELD_PATH, status: 'failed' })
+    expect(loaded()).toBe(before)
+    expect(state()).toBe('shown')
+    expect(noticesOf('importFailed')[0].action).toBe('showField')
+    expect(useNoticeStore.getState().notices.some((n) => n.key === 'importing')).toBe(false)
   })
 })
 

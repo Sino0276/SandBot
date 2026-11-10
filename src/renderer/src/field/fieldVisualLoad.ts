@@ -18,7 +18,7 @@ import {
 import { replaceProjectNotice } from '../project/projectNotices'
 import { setFieldVisualStatus, useProjectStore } from '../project/projectStore'
 import { useSceneStore } from '../scene/sceneStore'
-import { buildFieldVisual } from './fieldVisualModel'
+import { buildFieldVisual, type BuiltFieldVisual } from './fieldVisualModel'
 import { setLoadedFieldVisual } from './fieldVisualStore'
 
 // 필드 CAD 읽기(spec-4e §3.3). loadCadWithProgress(cad/importStep.ts) 꼴: 한 번에 하나, 진행 알림·취소, 메시 캐시·
@@ -68,7 +68,16 @@ export async function loadFieldVisualWithProgress(
     if (controller.signal.aborted) return 'cancelled'
     if (useProjectStore.getState().session !== session) return 'cancelled'
     if (!loaded) return 'missing'
-    setLoadedFieldVisual(path, buildFieldVisual(loaded.model))
+    // 합치기는 큰 형식 배열을 만든다(공식 파일 약 54 MB). 메모리가 모자라 던지면 읽는 중 상태가 남지 않게 실패로 알린다.
+    let built: BuiltFieldVisual
+    try {
+      built = buildFieldVisual(loaded.model)
+    } catch (error) {
+      console.error('필드 CAD 형상 만들기 실패', error)
+      showNotice('error', 'importFailed', { fileName }, { action: SHOW_FIELD_ACTION })
+      return 'failed'
+    }
+    setLoadedFieldVisual(path, built)
     notifyIncomplete(loaded, fileName)
     return 'loaded'
   } finally {

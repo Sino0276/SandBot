@@ -297,6 +297,9 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       disposeAllGeometry()
       // 필드 CAD 형상도 버린다(씬 문서 밖의 칸, 같은 이유)
       clearLoadedFieldVisual()
+      // 이전 프로젝트의 못 찾은 필드 CAD 파일 값도 버린다(아래에서 이 프로젝트의 값을 정한다. 그 전에 열기가 실패해도
+      // 이전 값이 새 씬의 저장에 쓰이지 않게)
+      setUnresolvedFieldVisualFile(null)
       useEditorStore.getState().select(null)
       // 이전 씬의 보기 상태(잘라낸 것, 검색어, 숨김·고립 보기)도 버린다
       useEditorStore.getState().setCut([])
@@ -343,7 +346,6 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       // 필드 CAD(보기용, spec-4e §3.4)도 같은 방식으로 찾는다. 찾으면 경로를 고치고(연 상태에 들어가 변경으로 치지 않는다)
       // 로봇 CAD 다음에 읽는다. 못 찾으면 경로는 파일 값 그대로 두고(다시 찾기의 기본 위치) 저장이 파일 값을 지킨다.
       const fieldVisual = useSceneStore.getState().field.visual
-      setUnresolvedFieldVisualFile(null)
       if (fieldVisual && fieldVisualFile) {
         const found = await findStepFile(root, fieldVisualFile)
         if (found) {
