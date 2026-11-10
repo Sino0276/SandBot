@@ -210,7 +210,8 @@ const en: Messages = {
     // 각도 기호(생성 코드 단위 줄)
     angleSymbols: {
       deg: '°',
-      rad: 'rad'
+      // 수와 사이를 띄운다(°는 붙인다)
+      rad: ' rad'
     },
     names: {
       mm: 'mm (millimeters)',
@@ -1624,7 +1625,7 @@ const en: Messages = {
     derived: {
       // 생성 상수와 같은 코드 단위·글자(프로젝트 설정)
       pinpoint: 'Offsets: X {{x}} {{unit}}, Y {{y}} {{unit}}',
-      otos: 'Offset: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}} {{angleUnit}}',
+      otos: 'Offset: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}}{{angleUnit}}',
       deadWheel: 'Position: X {{x}} {{unit}}, Y {{y}} {{unit}}',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
       motorOutputRatio:

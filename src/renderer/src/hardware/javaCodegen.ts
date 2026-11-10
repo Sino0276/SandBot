@@ -57,17 +57,7 @@ const LENGTH_WORDS: Record<LengthCodeUnit, string> = {
   in: 'inches'
 }
 const ANGLE_WORDS: Record<AngleCodeUnit, string> = { deg: 'degrees', rad: 'radians' }
-
-// 코드 단위 때문에 장치 종류의 카탈로그 import 밖에서 더 쓰는 형식(OTOS 단위 바꾸기)
-export function unitImports(type: string, units: CodeUnits): string[] {
-  if (type !== 'otos') return []
-  const imports: string[] = []
-  if (deviceLengthUnits(type, units)[0] !== 'in')
-    imports.push('org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit')
-  if (deviceAngleUnit(type, units) !== 'deg')
-    imports.push('org.firstinspires.ftc.robotcore.external.navigation.AngleUnit')
-  return imports
-}
+const NAVIGATION = 'org.firstinspires.ftc.robotcore.external.navigation'
 
 // 데드휠이 꽂힌 엔코더 포트와 같은 번호에 모터가 있으면, SDK에서는 그 모터 이름으로 엔코더를 읽는다
 export function deadWheelDeviceName(entry: ComponentEntry, entries: ComponentEntry[]): string {
@@ -194,8 +184,15 @@ function generateComponent(
       constants.push(
         `/**`,
         ` * ${commentText(component.name)}: sensor pose on the robot in the convention of the SDK OTOS sample`,
-        ` * (X right +, Y forward +, ${LENGTH_WORDS[unit]}; heading CCW +, ${ANGLE_WORDS[angle]}). getPosition() then reports the robot center`,
-        ` * in that convention. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`,
+        ...(unit === 'in' && angle === 'deg'
+          ? [
+              ` * (X right +, Y forward +, inches; heading CCW +, degrees). getPosition() then reports the robot center`,
+              ` * in that convention. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`
+            ]
+          : [
+              ` * (X right +, Y forward +, ${LENGTH_WORDS[unit]}; heading CCW +, ${ANGLE_WORDS[angle]}). The driver and getPosition()`,
+              ` * stay in inches and degrees. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`
+            ]),
         ` */`,
         `public static final double ${x} = ${lengthLiteral(offset.x, unit)};`,
         `public static final double ${y} = ${lengthLiteral(offset.y, unit)};`,
@@ -209,12 +206,15 @@ function generateComponent(
         init.push(
           "// Pose2D uses the driver's default units (inches, degrees): convert the constants."
         )
+      // 전체 이름으로 쓴다(import하면 팀이 고른 그룹·로봇 클래스 이름 AngleUnit 등이 가릴 수 있다)
       const len = (name: string): string =>
         unit === 'in'
           ? name
-          : `DistanceUnit.INCH.fromUnit(DistanceUnit.${length.distanceUnit}, ${name})`
+          : `${NAVIGATION}.DistanceUnit.INCH.fromUnit(${NAVIGATION}.DistanceUnit.${length.distanceUnit}, ${name})`
       const ang =
-        angle === 'deg' ? h : `AngleUnit.DEGREES.fromUnit(AngleUnit.${angleInfo.angleUnit}, ${h})`
+        angle === 'deg'
+          ? h
+          : `${NAVIGATION}.AngleUnit.DEGREES.fromUnit(${NAVIGATION}.AngleUnit.${angleInfo.angleUnit}, ${h})`
       if (converted)
         init.push(
           `${field}.setOffset(new SparkFunOTOS.Pose2D(`,
@@ -349,7 +349,6 @@ export function generateHardwareJava(
   const imports = new Set(['com.qualcomm.robotcore.hardware.HardwareMap'])
   for (const { component } of scopes.entries) {
     for (const name of componentDef(component.type as ComponentType).imports) imports.add(name)
-    for (const name of unitImports(component.type, units)) imports.add(name)
   }
 
   const lines = [

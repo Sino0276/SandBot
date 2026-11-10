@@ -214,7 +214,8 @@ const ko = {
     // 각도 기호(생성 코드 단위 줄)
     angleSymbols: {
       deg: '°',
-      rad: 'rad'
+      // 수와 사이를 띄운다(°는 붙인다)
+      rad: ' rad'
     },
     names: {
       mm: 'mm (밀리미터)',
@@ -1624,7 +1625,7 @@ const ko = {
     derived: {
       // 생성 상수와 같은 코드 단위·글자(프로젝트 설정)
       pinpoint: '오프셋: X {{x}} {{unit}}, Y {{y}} {{unit}}',
-      otos: '오프셋: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}} {{angleUnit}}',
+      otos: '오프셋: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}}{{angleUnit}}',
       deadWheel: '위치: X {{x}} {{unit}}, Y {{y}} {{unit}}',
       motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
       // 데이터시트 실제 감속비가 SDK 감속비(엔코더 틱)와 다를 때(UltraPlanetary·Core Hex 모델 기본 등)
