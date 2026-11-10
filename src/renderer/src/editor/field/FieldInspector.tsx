@@ -9,6 +9,7 @@ import { useUnitStore } from '../../units/unitStore'
 import { formatLength } from '../../units/units'
 import { setFieldHidden, useSceneVisibilityStore } from '../sceneVisibility'
 import { clusterLines, type ClusterLine } from './clusterLines'
+import FieldCadSection from './FieldCadSection'
 import {
   displayedField,
   documentSeasonId,
@@ -19,7 +20,7 @@ import {
 
 // Field 인스펙터(spec-4ab §1.9): 하이어라키 Field 줄을 고르면 보인다. 시즌 선택(문서, 실행 취소 한 단계), 축 안내, 벽 안쪽
 // 반폭, HIVE 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 상태를
-// 보이고 고칠 수 없다.
+// 보이고 고칠 수 없다. 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역이 있다.
 
 const HIVE_SIDES: readonly HiveSide[] = ['start', 'tipped']
 const HIVE_KEYS = ['red', 'blue'] as const
@@ -62,6 +63,7 @@ function ClusterRow({ line }: { line: ClusterLine }): React.JSX.Element {
 function FieldInspector(): React.JSX.Element {
   const { t } = useTranslation()
   const doc = useSceneStore((state) => state.field)
+  const hasVisual = useSceneStore((state) => state.field.visual !== undefined)
   const run = usePlayStore((state) => state.run)
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   const fieldHidden = useSceneVisibilityStore((state) => state.fieldHidden)
@@ -137,7 +139,10 @@ function FieldInspector(): React.JSX.Element {
             {formatLength(spec.perimeter.innerHalf, lengthUnit)} {t(`units.symbols.${lengthUnit}`)}
           </output>
         </div>
-        <label className="field-check">
+        <label
+          className="field-check"
+          title={hasVisual ? t('field.inspector.showElementsCadHint') : undefined}
+        >
           <input
             type="checkbox"
             checked={!fieldHidden}
@@ -145,7 +150,14 @@ function FieldInspector(): React.JSX.Element {
           />
           {t('field.inspector.showElements')}
         </label>
+        {/* 숨기면 사실적인 CAD 바닥이 단순 회색 바닥으로 바뀐다(비평 U13) */}
+        {hasVisual && (
+          <p className="inspector-note" data-field-cad="showElementsHint">
+            {t('field.inspector.showElementsCadHint')}
+          </p>
+        )}
       </section>
+      <FieldCadSection />
       {spec.hives.length > 0 && (
         <section className="inspector-section">
           <header className="inspector-section-header">

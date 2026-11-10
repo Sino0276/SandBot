@@ -22,7 +22,9 @@ const ALLIANCES: readonly Alliance[] = ['red', 'blue']
 function StartPresetSection({ robot }: { robot: SceneObject }): React.JSX.Element {
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
-  const doc = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
+  const doc = useMemo(() => ({ season }), [season])
   const locked = usePlayStore((state) => runLocksField(state.run))
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   // 맞는 프리셋이 없을 때의 면: 마지막으로 고른 값(처음 기본)

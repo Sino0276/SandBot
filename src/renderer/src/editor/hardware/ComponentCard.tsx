@@ -243,7 +243,8 @@ function SensorReadingLines({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
-  const field = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
   const revision = useSceneStore((state) => state.geometryRevision)
   const cadStatus = useProjectStore((state) => state.cadStatus)
   const refresh = useSelfHitRefresh()
@@ -257,7 +258,7 @@ function SensorReadingLines({
       objectId,
       component,
       // 문서 시즌(실행 잠금과 관계없이: 실행 중 값은 장치 탭)
-      season: documentSeasonId(field),
+      season: documentSeasonId({ season }),
       bounds: (id) => objectLocalBounds(objects, id),
       exclusion: robotId
         ? (sensorExclusions(objects, robotId).get(component.id) ?? null)
@@ -268,7 +269,7 @@ function SensorReadingLines({
             selfHitFor(component.id, objects, revision, robotId, objectId, mount, type, reach)
         : undefined
     })
-  }, [objects, objectId, component, field, revision, cadStatus, refresh])
+  }, [objects, objectId, component, season, revision, cadStatus, refresh])
   if (!model) return null
   const text = sensorReadingText(model, t, lengthUnit, objects)
   const hint = t('hardware.sensorReading.hint')
@@ -301,7 +302,8 @@ function CameraReadingLines({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
-  const field = useSceneStore((state) => state.field)
+  // 시즌 문자열만 구독한다(4e부터 field 객체는 필드 CAD 정렬·경로 고침에도 바뀐다, spec-4e §4.4)
+  const season = useSceneStore((state) => state.field.season)
   const revision = useSceneStore((state) => state.geometryRevision)
   const hiveState = usePlayStore((state) => state.settings.hiveState)
   const refresh = useSelfHitRefresh()
@@ -314,7 +316,7 @@ function CameraReadingLines({
       objectId,
       component,
       // 문서 시즌(실행 잠금과 관계없이: 실행 중 값은 장치 탭)
-      season: documentSeasonId(field),
+      season: documentSeasonId({ season }),
       hiveTipped: hiveTippedOf(hiveState),
       bounds: (id) => objectLocalBounds(objects, id),
       exclusion: robotId
@@ -333,7 +335,7 @@ function CameraReadingLines({
             )
         : undefined
     })
-  }, [objects, objectId, component, field, hiveState, revision, refresh])
+  }, [objects, objectId, component, season, hiveState, revision, refresh])
   if (!model) return null
   const text = cameraReadingText(model, t, lengthUnit, objects)
   const hint = t('hardware.cameraReading.hint')
