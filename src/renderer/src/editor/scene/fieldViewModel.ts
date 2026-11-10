@@ -27,7 +27,9 @@ export const FIELD_RENDER_ORDER = {
   wallLabel: 2,
   wallPanel: 3,
   hiveCell: 4,
-  ghost: 5
+  ghost: 5,
+  // 필드 CAD 위에 겹치는 단순 형상 충돌체 윤곽선(spec-4e §1.8, 잔상 뒤·씬 뷰 기즈모 앞)
+  colliderOutline: 6
 } as const
 // 시작 표시 순번마다 더하는 renderOrder
 export const START_MARKER_ORDER_STEP = 0.01

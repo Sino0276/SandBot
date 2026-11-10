@@ -3,7 +3,14 @@ import { isLinkableJavaPath, normalizeLinkPath } from '../../../shared/teamCodeP
 import { cadRootTransform, isValidAlignment, type CadAlignment } from '../cad/alignment'
 import { NO_TUNABLE_EDITS, withTunable, type TunableEdits } from '../java/tunableEdits'
 import { DEG, ROBOT_SIZE, TILE_SIZE } from './coordinates'
-import { DEFAULT_FIELD_DOC, isSeasonString, type FieldDoc } from './fieldDoc'
+import {
+  DEFAULT_FIELD_DOC,
+  isFieldVisual,
+  isSeasonString,
+  sameFieldVisual,
+  type FieldDoc,
+  type FieldVisual
+} from './fieldDoc'
 import {
   carryCadDependents,
   createEmptyParent,
@@ -137,6 +144,11 @@ type SceneState = {
   // 필드 시즌을 고른다(Field 인스펙터). 시즌 문자열 모양이 아니거나 같은 값이면 그대로 둔다(실행 취소에 빈 단계가 생기지
   // 않게). 모르는 시즌 문자열도 받는다(보존).
   setFieldSeason: (season: string) => void
+  // 필드 CAD 보기 설정(spec-4e §2.2)을 정하거나 null이면 뗀다(visual 키를 뺀다). 같은 값, 없는데 null, 모양이 틀린 값
+  // (isFieldVisual)이면 그대로 둔다(빈 실행 취소 단계와 틀린 값이 저장되는 길을 막는다). set() 한 번이라 실행 취소 한 단계다.
+  setFieldVisual: (visual: FieldVisual | null) => void
+  // 필드 CAD 정렬을 바꾼다. visual이 없거나, 같은 글자 축이거나, 같은 값이면 그대로 둔다. 다시 읽지 않는다.
+  setFieldVisualAlignment: (alignment: CadAlignment) => void
   // 튜닝 값 하나를 바꾼다(인스펙터). value는 쓸 리터럴, diskLiteral은 인스펙터가 보여 준 지금 디스크 리터럴이고
   // 편집의 base가 된다(둘 다 normalizeLiteral로 맞춘 글자). value가 디스크 값과 같으면 항목을 지운다.
   // 바뀐 것이 없으면 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
@@ -224,8 +236,32 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
     ),
   setFieldSeason: (season) =>
     set((state) =>
-      !isSeasonString(season) || season === state.field.season ? state : { field: { season } }
+      !isSeasonString(season) || season === state.field.season
+        ? state
+        : { field: { ...state.field, season } }
     ),
+  setFieldVisual: (visual) =>
+    set((state) => {
+      if (visual === null) {
+        if (!state.field.visual) return state
+        const next = { ...state.field }
+        delete next.visual
+        return { field: next }
+      }
+      if (!isFieldVisual(visual) || sameFieldVisual(visual, state.field.visual)) return state
+      // 네 칸만 골라 새 객체로 둔다(부르는 쪽 객체를 문서에 두지 않는다)
+      const { fileName, absolutePath, upAxis, forwardAxis } = visual
+      return { field: { ...state.field, visual: { fileName, absolutePath, upAxis, forwardAxis } } }
+    }),
+  setFieldVisualAlignment: (alignment) =>
+    set((state) => {
+      const { visual } = state.field
+      if (!visual) return state
+      const next = { ...visual, upAxis: alignment.upAxis, forwardAxis: alignment.forwardAxis }
+      // 축 방향 모양과 글자가 다른지(isValidAlignment)는 isFieldVisual이 함께 본다
+      if (!isFieldVisual(next) || sameFieldVisual(next, visual)) return state
+      return { field: { ...state.field, visual: next } }
+    }),
   setTunable: (path, fieldId, value, diskLiteral) =>
     set((state) => {
       const tunables = withTunable(state.tunables, path, fieldId, value, diskLiteral)
