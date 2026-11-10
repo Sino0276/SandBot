@@ -224,6 +224,13 @@ export function rewriteHistory(update: (objects: SceneObjects) => SceneObjects):
   rewriteAll('objects', update)
 }
 
+// 필드 문서 기록 전체에 같은 수정을 적용한다(기록하지 않음). 필드 CAD 파일 다시 찾기가 이전 경로인 visual만 새 경로로
+// 바꾸는 데 쓴다(scene/fieldDoc.ts withFieldVisualFile, spec-4e §2.4). 형상은 새 파일에서 읽었으므로 실행 취소로 경로만
+// 되돌아가지 않게 한다.
+export function rewriteFieldHistory(update: (field: FieldDoc) => FieldDoc): void {
+  rewriteAll('field', update)
+}
+
 // 튜닝 값 기록 전체에 같은 수정을 적용한다(기록하지 않음). 저장해 Java 파일에 쓴 뒤 모든 스냅샷을 새 디스크 값
 // 기준으로 옮기는 데 쓴다(java/tunableEdits.ts rebaseAfterWrite).
 export function rewriteTunableHistory(update: (tunables: TunableEdits) => TunableEdits): void {

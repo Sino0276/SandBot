@@ -6,7 +6,7 @@ import {
   loadCadWithProgress,
   type CadLoadStatus
 } from '../cad/importStep'
-import { cancelAllImports, isImporting, useImportStore } from '../cad/importStore'
+import { canStartImport, cancelAllImports, isImporting, useImportStore } from '../cad/importStore'
 import { isImportedModel, MESH_CACHE_TAG } from '../cad/stepImport'
 import { showDialog } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
@@ -15,6 +15,13 @@ import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { clearHistory, resumeHistory, rewriteHistory, suspendHistory } from '../editor/history'
 import { resetSceneVisibility } from '../editor/sceneVisibility'
 import { notifyFieldState, refreshFieldNotices } from '../field/fieldActions'
+import {
+  loadProjectFieldVisual,
+  setUnresolvedFieldVisualFile,
+  unresolvedFieldVisualFile
+} from '../field/fieldVisualActions'
+import { SHOW_FIELD_ACTION } from '../field/fieldVisualLoad'
+import { clearLoadedFieldVisual } from '../field/fieldVisualStore'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { uniqueIssues } from '../hardware/validation'
 import { refreshJavaIndex, scheduleFocusRefresh } from '../java/javaIndex'
@@ -32,12 +39,18 @@ import {
   initUsageIndex,
   setUsageBaseline
 } from '../java/usageIndex'
-import { DEFAULT_FIELD_DOC, type FieldDoc } from '../scene/fieldDoc'
+import { DEFAULT_FIELD_DOC, sameFieldDoc, type FieldDoc } from '../scene/fieldDoc'
 import type { SceneObjects } from '../scene/model'
 import { beginCadLoad, disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
 import { parseProject, ProjectFileError, serializeProject } from './projectFile'
-import { setCadStatus, useProjectStore, type GenerationResult } from './projectStore'
+import { clearProjectNotices, replaceProjectNotice } from './projectNotices'
+import {
+  setCadStatus,
+  setFieldVisualStatus,
+  useProjectStore,
+  type GenerationResult
+} from './projectStore'
 
 const LAST_PROJECT_KEY = 'sandbot:lastProject'
 
@@ -46,23 +59,12 @@ let loading = false
 
 // 마지막으로 저장하거나 연 씬. 실행 취소로 이 상태로 돌아오면 저장할 변경이 없는 것으로 본다.
 let savedObjects: SceneObjects | null = null
-// 마지막으로 저장하거나 연 필드 시즌(문자열). 시즌은 값으로 비교한다(되돌려 고르면 변경이 없다).
-let savedField: string | null = null
+// 마지막으로 저장하거나 연 필드 설정. 시즌과 필드 CAD 보기 설정을 값으로 비교한다(되돌려 고르면 변경이 없다).
+let savedField: FieldDoc | null = null
 // 마지막으로 생성 코드를 맞춘(synced) 저장의 씬. 열 때는 연 씬이다(디스크의 생성 코드·구성이 그것과 같다고 본다).
 // 생성이 막히거나 실패한 저장은 디스크를 바꾸지 않으므로 옮기지 않는다. 사용처의 기준 씬("이전 이름")과 저장 뒤
 // 확인(이번 저장이 구성에서 없앤 이름)이 이것과 비교한다.
 let generatedObjects: SceneObjects | null = null
-
-// 열린 프로젝트에 딸린 알림(TeamCode 없음, CAD 못 찾음, 버린 스크립트 연결). 다른 프로젝트를 열면 지운다.
-const projectNotices = { noTeamCode: 0, cadMissing: 0, scriptLinksDropped: 0 }
-
-function replaceProjectNotice(
-  key: keyof typeof projectNotices,
-  params: Record<string, string | number> | null
-): void {
-  dismissNotice(projectNotices[key])
-  projectNotices[key] = params ? showNotice('warning', key, params) : 0
-}
 
 // 코드 생성 알림은 저장할 때마다 새로 띄운다(이전 저장의 알림을 지운다)
 let generationNotices: number[] = []
@@ -75,9 +77,9 @@ function replaceGenerationNotices(notices: Parameters<typeof showNotice>[]): voi
 const fileNames = (paths: string[]): string => paths.map(fileNameOf).join(', ')
 
 // 저장할 변경이 있는지. 저장하지 않은 튜닝 값은 디스크와 다른 것만 담으므로 비어 있지 않으면 변경이다.
-// 씬은 마지막으로 저장하거나 연 objects와 같은 참조인지로, 필드는 시즌 문자열 값으로 본다(실행 취소로 돌아오거나 원래
-// 시즌을 다시 고르면 변경이 없다). 프로젝트 없이 임시 씬만 만지는 것(시즌만 바꾼 것 포함)은 저장할 변경으로 치지 않는다
-// (튜닝 값은 TeamCode 연결이 있어야 생긴다).
+// 씬은 마지막으로 저장하거나 연 objects와 같은 참조인지로, 필드는 시즌과 필드 CAD 보기 설정의 값으로 본다(실행 취소로
+// 돌아오거나 원래 시즌·정렬을 다시 고르면 변경이 없다, sameFieldDoc). 프로젝트 없이 임시 씬만 만지는 것(시즌·필드 CAD만
+// 바꾼 것 포함)은 저장할 변경으로 치지 않는다(튜닝 값은 TeamCode 연결이 있어야 생긴다).
 function computeDirty(state: {
   objects: SceneObjects
   tunables: TunableEdits
@@ -85,7 +87,7 @@ function computeDirty(state: {
 }): boolean {
   if (hasTunableEdits(state.tunables)) return true
   if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) return false
-  return state.objects !== savedObjects || state.field.season !== savedField
+  return state.objects !== savedObjects || !savedField || !sameFieldDoc(state.field, savedField)
 }
 
 // 메인 프로세스에는 initProjectSession의 구독이 알린다(확정하지 않은 입력칸 초안도 포함)
@@ -196,8 +198,12 @@ export function saveProject(): Promise<boolean> {
     // 저장하는 동안 바뀐 내용은 다음 저장 몫이다. 프로젝트 파일과 생성 코드는 같은 씬으로 만든다.
     // 튜닝 값도 여기서 잡은 것만 쓴다(저장하는 동안 고친 값은 rebase가 저장하지 않은 값으로 남긴다).
     const { objects, tunables, field } = useSceneStore.getState()
-    const content = serializeProject(objects, field, (path) =>
-      window.api.relativePath(projectRoot, path)
+    // 열 때 찾지 못한 필드 CAD는 파일 값을 그대로 쓴다(spec-4e §2.3)
+    const content = serializeProject(
+      objects,
+      field,
+      (path) => window.api.relativePath(projectRoot, path),
+      { fieldVisualFile: unresolvedFieldVisualFile() }
     )
     try {
       await window.api.saveProject(projectRoot, content)
@@ -208,7 +214,7 @@ export function saveProject(): Promise<boolean> {
     wrote = true
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
     savedObjects = objects
-    savedField = field.season
+    savedField = field
     setDirty(computeDirty(useSceneStore.getState()))
     // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
     const tunableOutcome = await saveTunables(projectRoot, tunables)
@@ -246,6 +252,8 @@ export async function openProjectFolder(): Promise<void> {
 export function openProjectAt(root: string, options: { quiet?: boolean } = {}): Promise<void> {
   // 형상을 읽을 CAD. endQueued는 차례를 기다리는 동안의 읽는 중 표시(beginCadLoad)를 끝낸다.
   let cads: QueuedCad[] = []
+  // 로봇 CAD 다음에 읽을 필드 CAD 경로(찾았을 때만). cads처럼 withBusy 밖이라 .then이 읽는다.
+  let fieldPath: string | null = null
   let session = 0
   let opened = false
   return withBusy(async () => {
@@ -257,12 +265,22 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
     try {
       const info = await window.api.openProject(root)
       // 새 프로젝트(내용 없음)도 기본 필드를 넘긴다(이전 프로젝트의 시즌이 넘어가지 않게)
-      const { objects, field, fieldDefaulted, cadFiles, droppedScripts } = info.content
+      const {
+        objects,
+        field,
+        fieldDefaulted,
+        fieldVisualFile,
+        fieldVisualDropped,
+        cadFiles,
+        droppedScripts
+      } = info.content
         ? parseProject(info.content)
         : {
             objects: {},
             field: { season: DEFAULT_FIELD_DOC.season },
             fieldDefaulted: false,
+            fieldVisualFile: null,
+            fieldVisualDropped: false,
             cadFiles: new Map(),
             droppedScripts: []
           }
@@ -277,6 +295,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       replaced = true
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
+      // 필드 CAD 형상도 버린다(씬 문서 밖의 칸, 같은 이유)
+      clearLoadedFieldVisual()
       useEditorStore.getState().select(null)
       // 이전 씬의 보기 상태(잘라낸 것, 검색어, 숨김·고립 보기)도 버린다
       useEditorStore.getState().setCut([])
@@ -287,12 +307,15 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         name: info.name,
         missingCad: [],
         cadStatus: {},
+        fieldVisualStatus: null,
         generation: null,
         session
       })
       replaceGenerationNotices([])
       replaceTunableNotices([])
       clearUsageNotices()
+      // 이전 프로젝트의 알림(CAD 못 찾음, 필드 CAD 못 찾음·버림 등)을 지운다
+      clearProjectNotices()
       localStorage.setItem(LAST_PROJECT_KEY, root)
       replaceProjectNotice('noTeamCode', info.hasTeamCode ? null : { name: info.name })
       replaceProjectNotice(
@@ -304,17 +327,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       // 경로를 고쳐 둔다. 고친 경로는 연 상태(savedObjects)에 들어가므로 변경으로 치지 않는다.
       const missing: string[] = []
       for (const [id, file] of cadFiles) {
-        const candidates = [
-          file.relativePath ? window.api.resolvePath(root, file.relativePath) : null,
-          file.absolutePath || null
-        ].filter((path): path is string => path !== null)
-        let found: string | null = null
-        for (const path of candidates) {
-          if (await window.api.statStepFile(path)) {
-            found = path
-            break
-          }
-        }
+        const found = await findStepFile(root, file)
         if (found) {
           useSceneStore.getState().setCadFile(id, found, fileNameOf(found))
           setCadStatus(id, 'loading')
@@ -326,8 +339,30 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       }
       useProjectStore.setState({ missingCad: missing })
       replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
+
+      // 필드 CAD(보기용, spec-4e §3.4)도 같은 방식으로 찾는다. 찾으면 경로를 고치고(연 상태에 들어가 변경으로 치지 않는다)
+      // 로봇 CAD 다음에 읽는다. 못 찾으면 경로는 파일 값 그대로 두고(다시 찾기의 기본 위치) 저장이 파일 값을 지킨다.
+      const fieldVisual = useSceneStore.getState().field.visual
+      setUnresolvedFieldVisualFile(null)
+      if (fieldVisual && fieldVisualFile) {
+        const found = await findStepFile(root, fieldVisualFile)
+        if (found) {
+          useSceneStore.getState().setFieldVisualFile(found, fileNameOf(found))
+          setFieldVisualStatus({ path: found, status: 'loading' })
+          fieldPath = found
+        } else {
+          setFieldVisualStatus({ path: fieldVisual.absolutePath, status: 'missing' })
+          replaceProjectNotice(
+            'fieldCadMissing',
+            { fileName: fieldVisual.fileName },
+            SHOW_FIELD_ACTION
+          )
+          setUnresolvedFieldVisualFile(fieldVisualFile)
+        }
+      }
+      if (fieldVisualDropped) replaceProjectNotice('fieldCadDropped', {})
       savedObjects = useSceneStore.getState().objects
-      savedField = useSceneStore.getState().field.season
+      savedField = useSceneStore.getState().field
       generatedObjects = savedObjects
       // 사용처의 "이전 이름"은 연 씬(고친 경로 포함)과 비교한다
       setUsageBaseline(savedObjects)
@@ -339,6 +374,10 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
     } catch (error) {
       for (const cad of cads) cad.endQueued()
       cads = []
+      // 찾아 둔 필드 CAD도 읽지 않는다(읽는 중 표시가 남지 않게)
+      if (fieldPath !== null && useProjectStore.getState().fieldVisualStatus?.path === fieldPath)
+        setFieldVisualStatus(null)
+      fieldPath = null
       if (options.quiet) {
         localStorage.removeItem(LAST_PROJECT_KEY)
       } else {
@@ -356,9 +395,29 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
     // 스크립트 연결의 선택창·다시 연결에 쓰는 TeamCode Java 목록(열기에 실패하면 이전 목록을 그대로 둔다)
     if (opened) void refreshJavaIndex()
     // CAD 형상은 열기가 끝난 뒤 하나씩 읽는다. 큰 STEP은 몇 분 걸리므로 그동안에도 편집·저장할 수 있다
-    // (형상은 씬 문서를 바꾸지 않는다). 다른 프로젝트를 열면 멈춘다.
+    // (형상은 씬 문서를 바꾸지 않는다). 다른 프로젝트를 열면 멈춘다. 필드 CAD는 로봇 CAD 다음이다(읽기가 던져도 읽는다).
+    const field = fieldPath
     void loadProjectCads(cads, session)
+      .catch((error) => console.error('CAD 형상 읽기 실패', error))
+      .finally(() => {
+        if (field !== null) void loadProjectFieldVisual(field, session)
+      })
   })
+}
+
+// STEP 원본을 프로젝트 기준 상대 경로 → 저장 당시 절대 경로 순으로 찾는다(위치만, 내용은 읽지 않음). 못 찾으면 null.
+async function findStepFile(
+  root: string,
+  file: { relativePath: string | null; absolutePath: string }
+): Promise<string | null> {
+  const candidates = [
+    file.relativePath ? window.api.resolvePath(root, file.relativePath) : null,
+    file.absolutePath || null
+  ].filter((path): path is string => path !== null)
+  for (const path of candidates) {
+    if (await window.api.statStepFile(path)) return path
+  }
+  return null
 }
 
 type QueuedCad = { id: string; path: string; endQueued: () => void }
@@ -399,11 +458,6 @@ function removeMissingCad(id: string): void {
   const missing = useProjectStore.getState().missingCad.filter((other) => other !== id)
   useProjectStore.setState({ missingCad: missing })
   replaceProjectNotice('cadMissing', missing.length > 0 ? { count: missing.length } : null)
-}
-
-// 불러오기를 시작해도 되는지(한 번에 하나, 열기·저장 중이 아닐 때)
-function canStartImport(): boolean {
-  return !isImporting() && !useProjectStore.getState().busy
 }
 
 // 인스펙터의 [다시 불러오기]. 취소했거나 실패한 CAD를 저장된 경로에서 다시 읽는다(파일 선택 없이).

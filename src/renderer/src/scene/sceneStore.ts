@@ -8,6 +8,7 @@ import {
   isFieldVisual,
   isSeasonString,
   sameFieldVisual,
+  withFieldVisualFile,
   type FieldDoc,
   type FieldVisual
 } from './fieldDoc'
@@ -149,6 +150,9 @@ type SceneState = {
   setFieldVisual: (visual: FieldVisual | null) => void
   // 필드 CAD 정렬을 바꾼다. visual이 없거나, 같은 글자 축이거나, 같은 값이면 그대로 둔다. 다시 읽지 않는다.
   setFieldVisualAlignment: (alignment: CadAlignment) => void
+  // 필드 CAD 원본 위치를 바꾼다(프로젝트를 열 때 상대 경로로 찾은 위치, spec-4e §2.2). visual이 없거나 같으면 그대로 둔다.
+  // 정렬은 그대로다. 열기의 suspendHistory·loading 동안만 부른다(setCadFile과 같은 쓰임).
+  setFieldVisualFile: (absolutePath: string, fileName: string) => void
   // 튜닝 값 하나를 바꾼다(인스펙터). value는 쓸 리터럴, diskLiteral은 인스펙터가 보여 준 지금 디스크 리터럴이고
   // 편집의 base가 된다(둘 다 normalizeLiteral로 맞춘 글자). value가 디스크 값과 같으면 항목을 지운다.
   // 바뀐 것이 없으면 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
@@ -261,6 +265,13 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       // 축 방향 모양과 글자가 다른지(isValidAlignment)는 isFieldVisual이 함께 본다
       if (!isFieldVisual(next) || sameFieldVisual(next, visual)) return state
       return { field: { ...state.field, visual: next } }
+    }),
+  setFieldVisualFile: (absolutePath, fileName) =>
+    set((state) => {
+      const { visual } = state.field
+      if (!visual) return state
+      const field = withFieldVisualFile(state.field, visual.absolutePath, absolutePath, fileName)
+      return field === state.field ? state : { field }
     }),
   setTunable: (path, fieldId, value, diskLiteral) =>
     set((state) => {

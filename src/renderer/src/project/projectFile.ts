@@ -3,9 +3,14 @@ import {
   javaClassNameOfPath,
   normalizeLinkPath
 } from '../../../shared/teamCodePaths'
-import { AXIS_DIRECTIONS } from '../cad/alignment'
+import { AXIS_DIRECTIONS, isValidAlignment } from '../cad/alignment'
 import { componentDef, isComponentType } from '../hardware/catalog'
-import { DEFAULT_FIELD_DOC, isSeasonString, type FieldDoc } from '../scene/fieldDoc'
+import {
+  DEFAULT_FIELD_DOC,
+  isSeasonString,
+  type FieldDoc,
+  type FieldVisual
+} from '../scene/fieldDoc'
 import { cadOriginOf } from '../scene/hierarchy'
 import type { MassSettings, RigidbodySettings } from '../mass/types'
 import {
@@ -51,23 +56,36 @@ export const PROJECT_FORMAT = 'sandbot-project'
 // 9: 바퀴 wheel.friction(잠근 바퀴의 겉보기 타일 마찰 계수, 0이면 종류 기본, 3c 구동계 동역학).
 // 10: 필드 field({ season }, 시즌 id 문자열, 모르는 값은 보존). 시즌 데이터는 src/shared/sim/seasons/ 한곳이라 시즌을
 //     더해도 이 버전을 올리지 않는다(모르는 시즌 문자열은 보존하고 표시·시뮬레이터는 'none'으로 처리한다).
+// 11: 필드 CAD 보기 field.visual({ fileName, upAxis, forwardAxis, file: { relativePath, absolutePath } }, 보기용,
+//     시뮬레이터는 쓰지 않음, spec-4e §2.3). 틀린 visual은 버리고 프로젝트는 연다(fieldVisualDropped).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
-// 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ).
+// 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ, 10 이하는 field.visual 없음).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 10
+export const PROJECT_VERSION = 11
 // field를 두기 시작한 버전
 const FIELD_VERSION = 10
+// field.visual(필드 CAD 보기)을 두기 시작한 버전
+export const FIELD_VISUAL_VERSION = 11
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
 type StoredCad = Omit<CadSource, 'absolutePath'> & { file: StoredCadFile }
 type StoredObject = Omit<SceneObject, 'cad'> & { cad?: StoredCad }
+// 파일의 필드 CAD 보기(v11): 문서 FieldVisual의 absolutePath 대신 로봇 CAD처럼 file(상대·절대 경로)을 쓴다
+type StoredFieldVisual = Omit<FieldVisual, 'absolutePath'> & { file: StoredCadFile }
+type StoredField = { season: string; visual?: StoredFieldVisual }
 
 type ProjectFileData = {
   format: typeof PROJECT_FORMAT
   version: number
-  field: FieldDoc
+  field: StoredField
   objects: StoredObject[]
+}
+
+export type SerializeOptions = {
+  // 열 때 찾지 못한 필드 CAD의 파일 값(spec-4e §2.3). 그 절대 경로가 지금 visual의 절대 경로와 같으면 file을 이 값
+  // 그대로 쓴다(저장한 사람의 절대 경로를 이 PC 기준으로 relativize해 원래 맞던 상대 경로를 잃지 않게).
+  fieldVisualFile?: StoredCadFile | null
 }
 
 export type ProjectFileErrorCode = 'invalidJson' | 'notProject' | 'newerVersion' | 'invalidData'
@@ -81,17 +99,36 @@ export class ProjectFileError extends Error {
   }
 }
 
+// 필드 설정을 파일 꼴로. 시즌 문자열(모르는 시즌도 그대로)과, 있으면 visual의 키를 골라 쓴다(문서에 끼어든 키가 파일로
+// 새지 않게 펼치지 않는다).
+function storedField(
+  field: FieldDoc,
+  relativize: (absolutePath: string) => string,
+  options: SerializeOptions
+): StoredField {
+  const { visual } = field
+  if (!visual) return { season: field.season }
+  const { fileName, absolutePath, upAxis, forwardAxis } = visual
+  const kept = options.fieldVisualFile
+  const file: StoredCadFile =
+    kept && kept.absolutePath === absolutePath
+      ? { relativePath: kept.relativePath, absolutePath: kept.absolutePath }
+      : { relativePath: absolutePath ? relativize(absolutePath) : null, absolutePath }
+  return { season: field.season, visual: { fileName, upAxis, forwardAxis, file } }
+}
+
 export function serializeProject(
   objects: SceneObjects,
-  // 필드 설정(v10). 시즌 문자열만 쓴다(모르는 시즌도 그대로)
+  // 필드 설정(v10 시즌, v11 필드 CAD 보기)
   field: FieldDoc,
   // 절대 경로를 프로젝트 기준 상대 경로로 바꾼다
-  relativize: (absolutePath: string) => string
+  relativize: (absolutePath: string) => string,
+  options: SerializeOptions = {}
 ): string {
   const data: ProjectFileData = {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
-    field: { season: field.season },
+    field: storedField(field, relativize, options),
     objects: Object.values(objects).map(({ cad, ...stored }) => {
       // 빈 연결 목록은 쓰지 않는다(스토어도 비면 필드를 지운다)
       const { scripts, ...rest } = stored
@@ -567,31 +604,92 @@ function checkCadOrigins(objects: SceneObjects): void {
   }
 }
 
+type ParsedFieldVisual = { visual: FieldVisual; file: StoredCadFile }
+
+// 필드 CAD 보기(v11). 객체이고 fileName 문자열, 두 축이 축 방향이고 글자가 다르며, file이 객체이고 relativePath가 null
+// 또는 문자열, absolutePath가 문자열이어야 한다. 틀리면 null(버린다). 다른 키는 버린다. 문서의 absolutePath는 파일의
+// absolutePath 그대로다(열기가 상대 경로 → 절대 경로 순으로 찾아 고친다).
+function parseFieldVisual(value: unknown): ParsedFieldVisual | null {
+  if (!isRecord(value)) return null
+  const { fileName, upAxis, forwardAxis, file } = value
+  if (typeof fileName !== 'string' || !isAxis(upAxis) || !isAxis(forwardAxis)) return null
+  const alignment = { upAxis, forwardAxis } as Pick<FieldVisual, 'upAxis' | 'forwardAxis'>
+  if (!isValidAlignment(alignment)) return null
+  if (!isRecord(file)) return null
+  const { relativePath, absolutePath } = file
+  if (
+    (relativePath !== null && typeof relativePath !== 'string') ||
+    typeof absolutePath !== 'string'
+  )
+    return null
+  return {
+    visual: { fileName, absolutePath, ...alignment },
+    file: { relativePath, absolutePath }
+  }
+}
+
 // 필드(v10). 객체이고 season이 시즌 문자열 모양(fieldDoc.ts isSeasonString)이어야 한다. 없거나 틀리면 파일 오류다.
 // 모양이 맞으면 모르는 시즌도 보존한다(다시 저장해도 그 문자열을 쓴다). 다른 키는 버린다.
 // v9 이하는 field를 보지 않고 BIOBUZZ(DEFAULT_PROJECT_SEASON, 사용자 결정 11/07)로 읽는다(fieldDefaulted).
+// v11은 visual(필드 CAD 보기)도 읽는다. 틀린 visual은 버리고 프로젝트는 연다 [결정: spec-4e §2.3, 비평 M5: 보기 전용이고
+// 개인 절대 경로가 든 설정이라 git 병합으로 깨지기 쉬운데 그것 하나로 팀 프로젝트 전체를 못 여는 것은 지나치다].
+// v10 이하는 visual을 보지 않는다(있어도 버림).
 function parseField(
   data: Record<string, unknown>,
   version: number
 ): {
   field: FieldDoc
   fieldDefaulted: boolean
+  fieldVisualFile: StoredCadFile | null
+  fieldVisualDropped: boolean
 } {
   if (version < FIELD_VERSION)
-    return { field: { season: DEFAULT_FIELD_DOC.season }, fieldDefaulted: true }
+    return {
+      field: { season: DEFAULT_FIELD_DOC.season },
+      fieldDefaulted: true,
+      fieldVisualFile: null,
+      fieldVisualDropped: false
+    }
   const { field } = data
   if (!isRecord(field) || !isSeasonString(field.season))
     throw new ProjectFileError('invalidData', 'field')
-  return { field: { season: field.season }, fieldDefaulted: false }
+  const season = field.season
+  if (version < FIELD_VISUAL_VERSION || field.visual === undefined)
+    return {
+      field: { season },
+      fieldDefaulted: false,
+      fieldVisualFile: null,
+      fieldVisualDropped: false
+    }
+  const parsed = parseFieldVisual(field.visual)
+  if (!parsed) {
+    console.warn('project.json: 읽을 수 없는 필드 CAD 설정(field.visual)을 버린다')
+    return {
+      field: { season },
+      fieldDefaulted: false,
+      fieldVisualFile: null,
+      fieldVisualDropped: true
+    }
+  }
+  return {
+    field: { season, visual: parsed.visual },
+    fieldDefaulted: false,
+    fieldVisualFile: parsed.file,
+    fieldVisualDropped: false
+  }
 }
 
 // 프로젝트 파일을 읽는다. CAD 파일 경로(상대·절대)는 따로 돌려주고, 경로 찾기는 호출한 쪽이 한다.
 // droppedScripts는 연결할 수 없는 경로라 버린 스크립트 연결의 경로다(호출한 쪽이 알린다).
 // fieldDefaulted는 field가 없는 예전 형식(v9 이하)이라 기본 시즌으로 읽었다는 뜻이다(열기가 알린다).
+// fieldVisualFile은 필드 CAD의 파일 경로(상대·절대, 열기가 찾는다), fieldVisualDropped는 틀린 field.visual을 버렸다는
+// 뜻이다(열기가 알린다).
 export function parseProject(content: string): {
   objects: SceneObjects
   field: FieldDoc
   fieldDefaulted: boolean
+  fieldVisualFile: StoredCadFile | null
+  fieldVisualDropped: boolean
   cadFiles: Map<string, StoredCadFile>
   droppedScripts: string[]
 } {
@@ -606,7 +704,10 @@ export function parseProject(content: string): {
     throw new ProjectFileError('newerVersion', String(data.version))
   }
   if (!Array.isArray(data.objects)) throw new ProjectFileError('invalidData', 'objects')
-  const { field, fieldDefaulted } = parseField(data, data.version)
+  const { field, fieldDefaulted, fieldVisualFile, fieldVisualDropped } = parseField(
+    data,
+    data.version
+  )
 
   const objects: SceneObjects = {}
   const cadFiles = new Map<string, StoredCadFile>()
@@ -628,5 +729,13 @@ export function parseProject(content: string): {
     console.warn(
       `project.json: 연결할 수 없는 스크립트 경로를 버린다: ${droppedScripts.join(', ')}`
     )
-  return { objects, field, fieldDefaulted, cadFiles, droppedScripts }
+  return {
+    objects,
+    field,
+    fieldDefaulted,
+    fieldVisualFile,
+    fieldVisualDropped,
+    cadFiles,
+    droppedScripts
+  }
 }

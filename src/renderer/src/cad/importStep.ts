@@ -270,8 +270,8 @@ function notifyError(error: unknown, fileName: string): void {
   showNotice('error', key, { fileName })
 }
 
-// 일부 형상이 빠진 결과를 알린다
-function notifyIncomplete(loaded: LoadedStep, fileName: string): void {
+// 일부 형상이 빠진 결과를 알린다(필드 CAD 보기도 쓴다, spec-4e §1.11)
+export function notifyIncomplete(loaded: LoadedStep, fileName: string): void {
   const count = droppedMeshCount(loaded.model)
   if (count > 0) showNotice('warning', 'importPartial', { fileName, count })
   if ((loaded.untranslated ?? 0) > 0) showNotice('warning', 'importIncomplete', { fileName })
