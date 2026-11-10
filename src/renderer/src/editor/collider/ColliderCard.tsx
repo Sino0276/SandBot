@@ -24,7 +24,6 @@ import {
   formatNumber,
   fromDisplayLength,
   LENGTH_DIGITS,
-  parseLength,
   toDisplayLength,
   type LengthUnit
 } from '../../units/units'
@@ -32,7 +31,12 @@ import { runLocksField } from '../field/fieldDisplay'
 import { ownCadAxes } from '../inspectorInfo'
 import OptionalField from '../mass/OptionalField'
 import NumberField from '../NumberField'
-import { colliderCardView, colliderFitBounds, fitCollider } from './colliderCardModel'
+import {
+  colliderCardView,
+  colliderFitBounds,
+  colliderLengthParser as lengthParser,
+  fitCollider
+} from './colliderCardModel'
 import { useCollisionModel } from './useCollisionModel'
 
 // Collider 카드(Unity Box·Capsule·Mesh Collider, spec-5 §6.2). 하드웨어 컴포넌트 카드와 같은 모양이고 시뮬레이터 설정이라 생성
@@ -41,14 +45,6 @@ import { useCollisionModel } from './useCollisionModel'
 // 같음). 길이는 표시 단위로 보이고 단위를 붙인 입력도 받으며, 받지 않는 값은 지우지 않고 틀렸다고 보인다.
 
 const AXES = ['x', 'y', 'z'] as const
-
-// 길이 입력: 표시 단위 값으로 읽고, [min, max](m) 밖이면 받지 않는다
-function lengthParser(unit: LengthUnit, min: number, max: number) {
-  return (text: string): number | null => {
-    const meters = parseLength(text, unit)
-    return meters === null || meters < min || meters > max ? null : toDisplayLength(meters, unit)
-  }
-}
 
 // 세 축 길이 칸(Center·Size)
 function LengthVector({
@@ -177,6 +173,7 @@ function ColliderCard({
         <button
           type="button"
           className="panel-button"
+          data-collider="fit"
           disabled={!fit.bounds}
           title={
             !fit.bounds
@@ -208,6 +205,7 @@ function ColliderCard({
         <span className="hw-check">
           <input
             type="checkbox"
+            data-collider="enabled"
             checked={enabled}
             title={t('collider.enabled')}
             aria-label={`${title}: ${t('collider.enabled')}`}
@@ -225,6 +223,7 @@ function ColliderCard({
           <button
             type="button"
             className="hw-card-remove"
+            data-collider="remove"
             title={t('collider.remove')}
             aria-label={t('hardware.removeLabel', { name: title })}
             onClick={remove}
@@ -307,6 +306,7 @@ function ColliderCard({
               <span className="hw-row-label">{t('collider.direction')}</span>
               <select
                 className="field-select"
+                data-collider="direction"
                 aria-label={t('collider.direction')}
                 value={collider.direction}
                 onChange={(event) =>

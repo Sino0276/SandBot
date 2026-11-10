@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import type { TFunction } from 'i18next'
+import { describe, expect, it, vi } from 'vitest'
+import { editPoseOverlaps, type StartBodyOverlap } from '../../../shared/sim/collision3d'
+import type { FieldSpec } from '../../../shared/sim/seasons/fieldSpec'
+import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { resolveMotorParams } from '../../../shared/sim/actuatorData'
 import {
   DEFAULT_WHEEL_FRICTION,
   DEFAULT_WHEEL_MASS,
   WHEEL_SPIN_INERTIA_FACTOR
 } from '../../../shared/sim/wheelData'
-import { parseWorldSpec, type Vec2 } from '../../../shared/sim/worldSpec'
+import { parseWorldSpec, type Vec2, type Vec3, type WorldSpec } from '../../../shared/sim/worldSpec'
 import { cadRootTransform } from '../cad/alignment'
 import { createComponent } from '../hardware/components'
 import { generateConfigXml } from '../hardware/configXml'
@@ -26,8 +30,16 @@ import {
   robotWheels,
   wheelPosition,
   wheelTopSpeed,
+  withRunField,
   type WorldWarning
 } from './worldSpec'
+import type { ColliderShapeLookup, ObjectHullPoints } from '../scene/meshHull'
+
+// 편집 자세 앞 계산(갈래 A)은 기본으로 진짜 함수를 쓰고, 무시 짝 시험만 시험 이중으로 바꾼다
+vi.mock('../../../shared/sim/collision3d', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../shared/sim/collision3d')>()
+  return { ...actual, editPoseOverlaps: vi.fn(actual.editPoseOverlaps) }
+})
 
 const DEG = Math.PI / 180
 const SETTINGS = { batteryVoltage: 12.5 }
@@ -1031,7 +1043,7 @@ function rounded(point: { x: number; y: number }): { x: number; y: number } {
   return { x: r(point.x), y: r(point.y) }
 }
 
-// 5: 충돌 형상 칸(spec-5 §5.5, K8). 계약 커밋에서는 형상 조회를 받아도 넣지 않는다(5 B가 넣는다)
+// 5: 충돌 형상 칸(spec-5 §5.5, K8). 형상 조회가 없으면(로봇 카드·motorDrivesJoint 경로) 넣지 않는다
 describe('buildWorldSpec 충돌 형상(K8)', () => {
   it('형상 조회가 없으면 세계 설명에 충돌 키가 없고 colliders·ignoredPairs가 빈 목록이다', () => {
     const result = buildWorldSpec(mecanumRobot(), 'R', SETTINGS, null, null, null)
@@ -1043,5 +1055,207 @@ describe('buildWorldSpec 충돌 형상(K8)', () => {
     expect(result.ignoredPairs).toEqual([])
     // 여섯째 인자를 주지 않은 것과 같다
     expect(buildWorldSpec(mecanumRobot(), 'R', SETTINGS)).toEqual(result)
+  })
+})
+
+// 상자 메시 껍질 점(오브젝트 로컬, 반 크기)
+function boxPoints(hx: number, hy: number, hz: number): ObjectHullPoints {
+  const points: Vec3[] = []
+  for (let k = 0; k < 8; k++)
+    points.push({ x: k & 1 ? hx : -hx, y: k & 2 ? hy : -hy, z: k & 4 ? hz : -hz })
+  return { kind: 'points', points, error: 0 }
+}
+
+// 메카넘 로봇 + 리프트 관절(그 아래 판 하나) + 메시 없는 관절
+function armRobot(): SceneObjects {
+  const objects = mecanumRobot()
+  return {
+    ...objects,
+    lift: {
+      id: 'lift',
+      name: 'Lift',
+      kind: 'group',
+      parentId: 'R',
+      transform: { position: [0, 0, 0.1], rotation: [0, 0, 0] },
+      // 구동 모터가 없는 관절(관절 경고 worldJointNoMotor, 충돌 경고보다 먼저)
+      joint: {
+        ...defaultJoint('prismatic'),
+        axis: 'z',
+        drive: {
+          kind: 'motor',
+          motors: [],
+          gearRatio: 1,
+          spoolDiameter: 0.03,
+          rigging: { kind: 'direct' }
+        }
+      }
+    },
+    plate: { ...part('plate', 'lift', [0, 0, 0.05]), name: 'Plate' },
+    wrist: {
+      id: 'wrist',
+      name: 'Wrist',
+      kind: 'group',
+      parentId: 'lift',
+      transform: { position: [0, 0, 0.3], rotation: [0, 0, 0] },
+      joint: defaultJoint('revolute')
+    }
+  }
+}
+
+describe('buildWorldSpec 충돌 형상(B8)', () => {
+  // 바퀴·drive 메시는 상자 점, 판은 읽는 중(충돌 경고 하나)
+  const shapes = (objects: SceneObjects, pendingPlate = false): ColliderShapeLookup => {
+    return (id) => {
+      if (id === 'plate' && pendingPlate) return { kind: 'pending' }
+      return objects[id]?.visual ? boxPoints(0.05, 0.05, 0.05) : { kind: 'none' }
+    }
+  }
+
+  it('B8 형상 조회가 있으면 robot.colliders는 늘 배열, 형상 없는 관절은 키가 없고, 메인과 같은 검사를 지난다', () => {
+    const objects = armRobot()
+    const result = buildWorldSpec(objects, 'R', SETTINGS, null, null, shapes(objects))
+    const spec = result.spec!
+    expect(spec.robot.colliders).toHaveLength(1)
+    expect(spec.robot.colliders![0].kind).toBe('convex')
+    expect(spec.joints).toHaveLength(2)
+    expect(spec.joints[0].colliders).toHaveLength(1)
+    expect('colliders' in spec.joints[1]).toBe(false)
+    expect('collisionIgnore' in spec).toBe(false)
+    // 충돌 형상은 메인이 다시 검사해도 같다(JSON 왕복. 관절 origin의 −0은 JSON에서 0이 되므로 형상만 비교한다)
+    const reparsed = parseWorldSpec(JSON.parse(JSON.stringify(spec)))
+    if (typeof reparsed === 'string') throw new Error(reparsed)
+    expect(reparsed.robot.colliders).toEqual(spec.robot.colliders)
+    expect(reparsed.joints.map((joint) => joint.colliders)).toEqual(
+      spec.joints.map((joint) => joint.colliders)
+    )
+    // 실행 표시용 몸체 목록(섀시 → 관절 순번)
+    expect(result.colliders.map((body) => [body.body, body.objectId, body.source])).toEqual([
+      [-1, 'R', 'auto'],
+      [0, 'lift', 'auto'],
+      [1, 'wrist', 'none']
+    ])
+    expect(result.ignoredPairs).toEqual([])
+  })
+
+  it('B8 섀시 Collider를 모두 끄면 robot.colliders는 빈 배열이다', () => {
+    const objects = armRobot()
+    const off: SceneObjects = {
+      ...objects,
+      R: {
+        ...objects.R,
+        colliders: [{ id: 'c', kind: 'box', enabled: false, center: [0, 0, 0], size: [1, 1, 1] }]
+      }
+    }
+    const spec = buildWorldSpec(off, 'R', SETTINGS, null, null, shapes(off)).spec!
+    expect(spec.robot.colliders).toEqual([])
+  })
+
+  it('B8 경고 순서는 관절·질량 → 충돌 → 센서다', () => {
+    const objects = armRobot()
+    const withSensors: SceneObjects = {
+      ...objects,
+      eyes: part('eyes', 'R', [0.2, 0, 0.1], {
+        components: [
+          { ...createComponent('distanceSensor', [], () => 'd1'), name: 'eye', port: 0 },
+          { ...createComponent('distanceSensor', [], () => 'd2'), name: 'eye', port: 1 }
+        ]
+      })
+    }
+    const warnings = keys(
+      buildWorldSpec(withSensors, 'R', SETTINGS, null, null, shapes(withSensors, true)).warnings
+    )
+    const joint = warnings.indexOf('worldJointNoMotor')
+    const collider = warnings.indexOf('worldColliderPending')
+    const sensor = warnings.indexOf('worldDuplicateSensor')
+    expect(joint).toBeGreaterThanOrEqual(0)
+    expect(collider).toBeGreaterThan(joint)
+    expect(sensor).toBeGreaterThan(collider)
+  })
+
+  it('B8 편집 자세 겹침 무시 짝은 [그래도 충돌]을 빼고 collisionIgnore로 간다', () => {
+    // 섀시 ↔ 손목(비인접, 손목에 Box Collider)이 겹친다고 하는 가짜 앞 계산(갈래 A의 editPoseOverlaps 대신)
+    vi.mocked(editPoseOverlaps).mockImplementation((bodies) => {
+      const ids = bodies.map((body) => body.body)
+      return ids.includes(-1) && ids.includes(1) ? [{ a: -1, b: 1, depth: 0.003 }] : []
+    })
+    try {
+      const base = armRobot()
+      const objects: SceneObjects = {
+        ...base,
+        wrist: {
+          ...base.wrist,
+          colliders: [{ id: 'w', kind: 'box', center: [0, 0, 0], size: [0.05, 0.05, 0.05] }]
+        }
+      }
+      const result = buildWorldSpec(objects, 'R', SETTINGS, null, null, shapes(objects))
+      expect(result.spec!.collisionIgnore).toEqual([[-1, 1]])
+      expect(result.ignoredPairs).toEqual([
+        { a: -1, b: 1, aObjectId: 'R', bObjectId: 'wrist', depth: 0.003, forced: false }
+      ])
+      const forced: SceneObjects = {
+        ...objects,
+        R: { ...objects.R, collision: { forceCollide: [['R', 'wrist']] } }
+      }
+      const forcedResult = buildWorldSpec(forced, 'R', SETTINGS, null, null, shapes(forced))
+      expect('collisionIgnore' in forcedResult.spec!).toBe(false)
+      expect(forcedResult.ignoredPairs[0].forced).toBe(true)
+    } finally {
+      vi.mocked(editPoseOverlaps).mockReset()
+    }
+  })
+})
+
+describe('withRunField 3D 시작 겹침(B10)', () => {
+  const keyT = ((key: string, params?: Record<string, unknown>) =>
+    params ? `${key}${JSON.stringify(params)}` : key) as unknown as TFunction
+  const doc = { season: 'biobuzz' }
+  const field = { season: 'biobuzz' as const, hiveTipped: [false, false] as [boolean, boolean] }
+  const objects = armRobot()
+  const shapesOf: ColliderShapeLookup = (id) =>
+    objects[id]?.visual ? boxPoints(0.05, 0.05, 0.05) : { kind: 'none' }
+
+  it('B10 섀시 대상은 worldStartOverlap(바퀴 있을 때만, 바닥은 빼고), 관절 몸체는 worldJointStartOverlap(바닥 글자 포함)', () => {
+    const built = buildWorldSpec(objects, 'R', SETTINGS, null, null, shapesOf)
+    const fake = vi.fn((): StartBodyOverlap[] => [
+      { body: -1, targets: [{ kind: 'wall', wall: 'y-' }, { kind: 'floor' }] },
+      { body: 0, targets: [{ kind: 'structure', index: 11 }, { kind: 'floor' }] },
+      { body: 1, targets: [] }
+    ])
+    const result = withRunField(built, doc, field, keyT, fake)
+    expect(fake).toHaveBeenCalledTimes(1)
+    const [spec, fieldSpec] = fake.mock.calls[0] as unknown as [WorldSpec, FieldSpec]
+    expect(spec.field.season).toBe('biobuzz')
+    expect(fieldSpec).toBe(resolveSeason('biobuzz'))
+    const added = result.warnings.slice(built.warnings.length)
+    expect(added.map((w) => w.key)).toEqual(['worldStartOverlap', 'worldJointStartOverlap'])
+    expect(added[0].params).toEqual({ targets: 'field.walls.red' })
+    expect(added[1].params).toEqual({
+      name: 'Lift',
+      targets: 'field.structures.flower, collider.target.floor'
+    })
+  })
+
+  it('B10 바퀴가 없으면 섀시 겹침은 내지 않고 관절 몸체 겹침은 낸다', () => {
+    const noWheels: SceneObjects = Object.fromEntries(
+      Object.entries(objects).filter(([, object]) => !object.wheel)
+    )
+    const built = buildWorldSpec(noWheels, 'R', SETTINGS, null, null, (id) =>
+      noWheels[id]?.visual ? boxPoints(0.05, 0.05, 0.05) : { kind: 'none' }
+    )
+    const fake = (): StartBodyOverlap[] => [
+      { body: -1, targets: [{ kind: 'wall', wall: 'y-' }] },
+      { body: 0, targets: [{ kind: 'floor' }] }
+    ]
+    const added = withRunField(built, doc, field, keyT, fake).warnings.slice(built.warnings.length)
+    expect(added).toEqual([
+      { key: 'worldJointStartOverlap', params: { name: 'Lift', targets: 'collider.target.floor' } }
+    ])
+  })
+
+  it('B10 평면 경로(형상 조회 없음)는 지금 그대로다(3D 판정을 부르지 않는다)', () => {
+    const built = buildWorldSpec(objects, 'R', SETTINGS)
+    const fake = vi.fn((): StartBodyOverlap[] => [])
+    withRunField(built, doc, field, keyT, fake)
+    expect(fake).not.toHaveBeenCalled()
   })
 })

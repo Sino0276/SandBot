@@ -581,6 +581,26 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     expect(notices()).toEqual([])
   })
 
+  it('B8 INIT은 메시 껍질로 섀시 충돌 형상(자동 볼록 껍질)을 넣고 실행이 그 몸체를 기억한다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world!.robot.colliders).toHaveLength(1)
+    expect(world!.robot.colliders![0].kind).toBe('convex')
+    expect(world).not.toHaveProperty('collisionIgnore')
+    expect(usePlayStore.getState().run!.colliders).toEqual([
+      { body: -1, objectId: 'bot', name: 'Bot', colliders: world!.robot.colliders }
+    ])
+  })
+
+  it('B8 바퀴 메시가 읽히지 않았으면 섀시는 외곽 대체 상자이고 Console이 알린다', async () => {
+    for (const id of WHEEL_MESHES) disposeGeometry(`g:${id}`)
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    expect(lastRequest().world!.robot.colliders![0].kind).toBe('box')
+    expect(notices()).toEqual(['worldColliderPending'])
+  })
+
   it('바퀴가 셋보다 적으면 하중을 나눌 수 없다고 경고한다', async () => {
     const { wheel } = withWheel()
     useSceneStore.setState({ objects: { ...SCENE, wheel } })
@@ -787,10 +807,20 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
   // spec-4ab §2.4·§3: 실행의 시즌은 문서 시즌(모르면 'none')과 실행 설정 hiveState에서 INIT 때 정한다
   describe('시즌과 HIVE 상태', () => {
     // 'none' +X 벽(안쪽 반폭 1.81630 m)에 붙인 18 in 로봇: BIOBUZZ 벽(1.79286 m)에 23 mm 걸친다
+    // 섀시 충돌 형상은 외곽과 같은 18 in 상자(Box Collider)라 3D 판정도 4ab 외곽 프리즘과 같은 겹침을 낸다
     const atNoneWall = (): SceneObjects => {
       const objects = withWheel()
       const x = 1.8163 - 0.2286
-      return { ...objects, bot: { ...objects.bot, transform: { ...T0, position: [x, 0, 0] } } }
+      return {
+        ...objects,
+        bot: {
+          ...objects.bot,
+          transform: { ...T0, position: [x, 0, 0] },
+          colliders: [
+            { id: 'box', kind: 'box', center: [0, 0, 0.2286], size: [0.4572, 0.4572, 0.4572] }
+          ]
+        }
+      }
     }
 
     it('B13: 세계 설명과 실행이 문서 시즌·HIVE 상태를 쓰고, INIT 뒤 문서 시즌을 바꿔도 실행은 그대로', async () => {
@@ -831,7 +861,7 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
 
     it('B9: none 벽에 붙인 바퀴 로봇을 BIOBUZZ로 INIT하면 worldStartOverlap(실행은 막지 않는다)', async () => {
       // 섀시는 3D 경로다(형상 조회를 늘 넘긴다, spec-5 §5.6). 시작 겹침 판정은 갈래 A의 startOverlaps라 여기서는 섀시 외곽
-      // 프리즘으로 같은 판정을 하는 시험 이중을 쓴다(진짜 함수와 잇는 시험은 통합 I3)
+      // 프리즘으로 같은 판정을 하는 시험 이중을 쓴다. 섀시 충돌 형상이 외곽 상자라 진짜 함수로 바꿔도 같은 결과여야 한다(통합 I3)
       vi.mocked(startOverlaps).mockImplementation((spec, field) => {
         const found = fieldOverlaps(
           field,

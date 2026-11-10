@@ -23,10 +23,23 @@ import {
 } from '../../scene/model'
 import type { CollisionModel, ColliderState, WorldColliderBody } from '../../play/worldColliders'
 import type { JointBodyFrames } from '../../play/worldJoints'
+import { parseLength, toDisplayLength, type LengthUnit } from '../../units/units'
 
 // Collider 카드(spec-5 §6.1·6.2)의 순수 모델: Add Component 기본값(하위 경계 상자, 로봇 위 축), [하위에 맞추기], 카드 줄(소속 몸체,
 // 결과, 다른 몸체 메시, 자동 껍질 대체). 렌더러 메인 스레드에서 부르므로 메시 꼭짓점·껍질을 훑지 않고 형상의 boundingBox
 // 8꼭짓점만 쓴다(큰 CAD에서 클릭이 멈추지 않게, F4·C-H3).
+
+// 길이 입력칸: 단위를 붙인 입력도 받아 표시 단위 값으로 읽고, [min, max](m) 밖이면 받지 않는다(null: 칸이 틀렸다고 보인다)
+export function colliderLengthParser(
+  unit: LengthUnit,
+  min: number,
+  max: number
+): (text: string) => number | null {
+  return (text) => {
+    const meters = parseLength(text, unit)
+    return meters === null || meters < min || meters > max ? null : toDisplayLength(meters, unit)
+  }
+}
 
 // Collider를 더 붙일 수 있는지(Unity처럼 여러 개, 한 오브젝트 MAX_OBJECT_COLLIDERS개까지)
 export function canAddCollider(object: SceneObject): boolean {

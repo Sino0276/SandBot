@@ -571,7 +571,7 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
 })
 
 // 5: 몸체 충돌 겹침 알림(spec-5 §5.7)
-describe('simNotice collisionOverlap', () => {
+describe('B15 simNotice collisionOverlap', () => {
   const withColliders = (): PlayData =>
     data({
       run: {
@@ -602,7 +602,7 @@ describe('simNotice collisionOverlap', () => {
     // 실행의 시즌(BIOBUZZ 구조물 17개)에 없는 순번
     [{ body: '0', target: 'structure:17' }, 'Lift', { kind: 'raw', text: 'structure:17' }],
     [{ target: 'floor' }, '', { kind: 'floor' }]
-  ])('params %o → 몸체 %s, 대상 %o', (params, body, target) => {
+  ])('B15 params %o → 몸체 %s, 대상 %o', (params, body, target) => {
     const next = apply(withColliders(), notice(params))
     expect(next.entries).toHaveLength(1)
     expect(next.entries[0]).toMatchObject({
@@ -615,7 +615,7 @@ describe('simNotice collisionOverlap', () => {
     })
   })
 
-  it('run.colliders가 비어도 동작하고, 한도·들림 알림은 기본 경로다', async () => {
+  it('B15 run.colliders가 비어도 동작하고, 한도·들림 알림은 기본 경로다', async () => {
     const next = apply(data(), notice({ body: '0', target: 'floor' }))
     expect(next.entries[0]).toMatchObject({ type: 'collisionOverlap', body: '', season: 'none' })
     // 'none' 시즌에는 구조물이 없다

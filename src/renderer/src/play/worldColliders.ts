@@ -397,7 +397,8 @@ function computeBody(
     pendingMeshes = 0
   } else if (hasColliders && entries.length > 0) source = 'colliders'
   else {
-    // 자동 볼록 껍질: Collider가 없거나, 켠 Collider가 모두 빠진 섀시(대체 상자를 쓰기 전에, 빠진 이유는 그 Collider 상태가 말한다)
+    // Collider가 없으면 자동 볼록 껍질. Collider가 있는데 켠 것이 모두 빠졌으면(읽는 중·퇴화·메시 없음, 이유는 그 Collider 상태가
+    // 말한다) 자동 껍질을 쓰지 않고 섀시는 외곽 대체 상자, 관절 몸체는 형상 없음이다(C-M6)
     let auto: WorldColliderEntry | null = null
     if (!hasColliders) {
       const gathered = gatherPoints(meshes, shapes, fromRobot)
