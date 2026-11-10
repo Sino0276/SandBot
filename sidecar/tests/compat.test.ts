@@ -17,6 +17,7 @@ import {
   testTempDir,
   type SidecarBuild
 } from './support'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../src/renderer/src/scene/projectSettings'
 
 // 호환 테스트: 팀 코드가 보는 sandbot-sdk.jar로 실제 FTC 코드가 수정 없이 컴파일되는지(--release 8, 사이드카가 플랫폼 jar
 // 없이(bootClasspath가 빔) 팀 코드를 컴파일하는 옵션. Android API 기준 컴파일은 platform.test.ts가 본다). 실행 동작은 런타임·
@@ -210,8 +211,10 @@ describe.skipIf(!hasJdk())('FTC 코드 호환(sandbot-sdk.jar로 컴파일)', ()
     '카탈로그의 모든 종류와 메커니즘 그룹으로 생성한 하드웨어 클래스가 컴파일된다',
     async () => {
       const objects = everyComponentScene()
-      expect(validateScene(objects).filter((issue) => issue.severity === 'error')).toEqual([])
-      const { files, blocked } = generateTeamCodeFiles(objects)
+      expect(
+        validateScene(objects, SDK_UNITS).filter((issue) => issue.severity === 'error')
+      ).toEqual([])
+      const { files, blocked } = generateTeamCodeFiles(objects, SDK_UNITS)
       expect(blocked).toBe(false)
       const dir = testTempDir('generated')
       const javaPaths: string[] = []

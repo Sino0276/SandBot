@@ -13,6 +13,13 @@ import {
   type FieldVisual
 } from './fieldDoc'
 import {
+  DEFAULT_PROJECT_SETTINGS,
+  isCodeUnits,
+  sameCodeUnits,
+  type CodeUnits,
+  type ProjectSettings
+} from './projectSettings'
+import {
   carryCadDependents,
   createEmptyParent,
   createGroup,
@@ -134,14 +141,19 @@ type SceneState = {
   tunables: TunableEdits
   // 필드 설정(시즌, scene/fieldDoc.ts). 프로젝트 설정이라 씬 문서의 일부다(바꿀 때마다 새 객체)
   field: FieldDoc
+  // 프로젝트 설정(코드 단위, scene/projectSettings.ts). 씬 문서의 일부다(바꿀 때마다 새 객체)
+  settings: ProjectSettings
   // geometryRegistry에 형상이 새로 등록될 때마다 올린다. CAD 메시가 이 값을 구독해 다시 그린다.
   geometryRevision: number
   bumpGeometryRevision: () => void
   // 씬 전체를 바꾼다(프로젝트 열기). 저장하지 않은 튜닝 값도 같은 set()에서 버린다.
   // 형상(geometryRegistry)은 여기서 해제하지 않는다. 실행 취소 기록이 지운 오브젝트를 되살릴 수 있으므로
   // 어떤 기록에서도 쓰지 않게 된 형상을 editor/history.ts가 해제한다.
-  // field를 넘기면 같은 set()에서 함께 바꾸고, 없으면 그대로 둔다(objects만 바꾸는 시험).
-  replaceObjects: (objects: SceneObjects, field?: FieldDoc) => void
+  // field·settings를 넘기면 같은 set()에서 함께 바꾸고, 없으면 그대로 둔다(objects만 바꾸는 시험).
+  replaceObjects: (objects: SceneObjects, field?: FieldDoc, settings?: ProjectSettings) => void
+  // 생성 코드의 코드 단위를 고른다(프로젝트 설정 창). 모양이 틀리거나 같은 값이면 그대로 둔다(빈 실행 취소 단계가
+  // 생기지 않게). set() 한 번이라 실행 취소 한 단계다.
+  setCodeUnits: (units: CodeUnits) => void
   // 필드 시즌을 고른다(Field 인스펙터). 시즌 문자열 모양이 아니거나 같은 값이면 그대로 둔다(실행 취소에 빈 단계가 생기지
   // 않게). 모르는 시즌 문자열도 받는다(보존).
   setFieldSeason: (season: string) => void
@@ -230,13 +242,23 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
   objects: PLACEHOLDER_SCENE,
   tunables: NO_TUNABLE_EDITS,
   field: DEFAULT_FIELD_DOC,
+  settings: DEFAULT_PROJECT_SETTINGS,
   geometryRevision: 0,
   bumpGeometryRevision: () => set((state) => ({ geometryRevision: state.geometryRevision + 1 })),
-  replaceObjects: (objects, field) =>
-    set(
-      field
-        ? { objects, tunables: NO_TUNABLE_EDITS, field }
-        : { objects, tunables: NO_TUNABLE_EDITS }
+  replaceObjects: (objects, field, settings) =>
+    set({
+      objects,
+      tunables: NO_TUNABLE_EDITS,
+      ...(field ? { field } : {}),
+      ...(settings ? { settings } : {})
+    }),
+  setCodeUnits: (units) =>
+    set((state) =>
+      !isCodeUnits(units) || sameCodeUnits(units, state.settings.codeUnits)
+        ? state
+        : {
+            settings: { ...state.settings, codeUnits: { length: units.length, angle: units.angle } }
+          }
     ),
   setFieldSeason: (season) =>
     set((state) =>

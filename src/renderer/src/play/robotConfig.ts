@@ -1,5 +1,6 @@
 import { generatedHash } from '../../../shared/generatedFiles'
 import { robotComponents, robotHardwareSettings } from '../hardware/components'
+import type { CodeUnits } from '../scene/projectSettings'
 import { generateTeamCodeFiles } from '../hardware/generate'
 import { configXmlFilePath } from '../hardware/naming'
 import { uniqueIssues } from '../hardware/validation'
@@ -39,8 +40,12 @@ export function chooseRobotConfig(
 // INIT이 메인에 보내 디스크 파일과 비교한다(다르면 configStale). 저장하지 않고 연 프로젝트도 이것으로 확인한다.
 export type ExpectedConfig = { blocked: boolean; errors: number; configHash: string | null }
 
-export function expectedConfig(objects: SceneObjects, configPath: string | null): ExpectedConfig {
-  const { files, issues, blocked } = generateTeamCodeFiles(objects)
+export function expectedConfig(
+  objects: SceneObjects,
+  units: CodeUnits,
+  configPath: string | null
+): ExpectedConfig {
+  const { files, issues, blocked } = generateTeamCodeFiles(objects, units)
   const errors = blocked ? uniqueIssues(issues).filter((i) => i.severity === 'error').length : 0
   const file = configPath === null ? undefined : files.find((f) => f.path === configPath)
   return { blocked, errors, configHash: file ? generatedHash(file.content) : null }

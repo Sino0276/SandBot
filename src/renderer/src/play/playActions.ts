@@ -436,7 +436,8 @@ async function runInit(): Promise<void> {
   )
   const configPath = config?.configPath ?? null
   // 지금 씬으로 만들 구성(저장 없이 연 프로젝트도 디스크 구성과 맞는지 메인이 해시로 확인한다)
-  const expected = expectedConfig(useSceneStore.getState().objects, configPath)
+  const { objects, settings } = useSceneStore.getState()
+  const expected = expectedConfig(objects, settings.codeUnits, configPath)
   const warning = generationWarning(generation, configPath, expected)
   // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).

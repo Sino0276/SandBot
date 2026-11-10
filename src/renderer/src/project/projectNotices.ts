@@ -8,7 +8,8 @@ const projectNotices = {
   cadMissing: 0,
   scriptLinksDropped: 0,
   fieldCadMissing: 0,
-  fieldCadDropped: 0
+  fieldCadDropped: 0,
+  settingsDropped: 0
 }
 
 export type ProjectNoticeKey = keyof typeof projectNotices

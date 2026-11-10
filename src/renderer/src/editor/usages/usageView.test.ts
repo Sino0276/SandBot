@@ -32,6 +32,7 @@ import {
   type UsageSectionView,
   type UsageView
 } from './usageView'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../scene/projectSettings'
 
 // ---- 씬 ----
 
@@ -182,6 +183,7 @@ describe('장치 카드', () => {
     const objects = scene(...baseScene())
     const view = deviceUsageView(
       objects,
+      SDK_UNITS,
       result({
         hits: [
           [
@@ -213,6 +215,7 @@ describe('장치 카드', () => {
     const objects = scene(...baseScene())
     const view = deviceUsageView(
       objects,
+      SDK_UNITS,
       result({
         hits: [[LL, [hit(PATH_A, 3, 'field'), hit(PATH_A, 4, 'constant')]]],
         totals: [[LL, { field: 250, constant: 10 }]]
@@ -230,11 +233,11 @@ describe('장치 카드', () => {
 
   it('찾은 것이 없으면 빈 보기이고, 찾은 이름은 생성 필드·상수·구성 이름이다', () => {
     const objects = scene(...baseScene())
-    const empty = deviceUsageView(objects, result(), null, 'liftMotor', 'll')!
+    const empty = deviceUsageView(objects, SDK_UNITS, result(), null, 'liftMotor', 'll')!
     expect(empty.empty).toBe(true)
     expect(empty.sections).toEqual([])
     expect(searchedTerms(empty)).toBe('robot.lift.liftLeft, "liftLeft"')
-    const perp = deviceUsageView(objects, result(), null, 'perpPart', 'pe')!
+    const perp = deviceUsageView(objects, SDK_UNITS, result(), null, 'perpPart', 'pe')!
     expect(perp.terms).toEqual([
       'robot.lift.perp',
       'MyBot.Lift.PERP_X_MM',
@@ -253,11 +256,11 @@ describe('장치 카드', () => {
       part('m', 'robot', component('mm', 'motor', 'leftFront', 2)),
       part('w', 'robot', component('dw', 'deadWheel', 'par', 2))
     )
-    const view = deviceUsageView(objects, result(), null, 'w', 'dw')!
+    const view = deviceUsageView(objects, SDK_UNITS, result(), null, 'w', 'dw')!
     expect(view.terms.at(-1)).toBe('"leftFront"')
     // 같은 이름을 같은 포트의 모터와 데드휠이 함께 쓴다(로봇은 하나라 다른 로봇 안내가 아니다)
     expect(view).toMatchObject({ sharedName: false, samePortName: true })
-    expect(deviceUsageView(objects, result(), null, 'm', 'mm')).toMatchObject({
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'm', 'mm')).toMatchObject({
       sharedName: false,
       samePortName: true
     })
@@ -269,11 +272,13 @@ describe('장치 카드', () => {
       robot('other', 'OtherBot'),
       part('otherPart', 'other', component('ol', 'motor', 'liftLeft', 0))
     )
-    expect(deviceUsageView(objects, result(), null, 'liftMotor', 'll')).toMatchObject({
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'liftMotor', 'll')).toMatchObject({
       sharedName: true,
       samePortName: false
     })
-    expect(deviceUsageView(objects, result(), null, 'drive', 'fl')!.sharedName).toBe(false)
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'drive', 'fl')!.sharedName).toBe(
+      false
+    )
   })
 
   it('데드휠 쌍과 다른 로봇이 함께 이름을 쓰면 둘 다, 같은 로봇의 겹친 이름(검증 오류)은 둘 다 아니다', () => {
@@ -290,11 +295,11 @@ describe('장치 카드', () => {
       robot('other', 'OtherBot'),
       part('otherPart', 'other', component('ol', 'motor', 'leftFront', 0))
     )
-    expect(deviceUsageView(objects, result(), null, 'w', 'dw')).toMatchObject({
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'w', 'dw')).toMatchObject({
       sharedName: true,
       samePortName: true
     })
-    expect(deviceUsageView(objects, result(), null, 'dup', 'd1')).toMatchObject({
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'dup', 'd1')).toMatchObject({
       sharedName: false,
       samePortName: false
     })
@@ -305,8 +310,8 @@ describe('장치 카드', () => {
       ...baseScene(),
       part('loose', 'nowhere', component('lo', 'motor', 'loose', 0))
     )
-    expect(deviceUsageView(objects, result(), null, 'loose', 'lo')).toBeNull()
-    expect(deviceUsageView(objects, result(), null, 'liftMotor', 'nope')).toBeNull()
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'loose', 'lo')).toBeNull()
+    expect(deviceUsageView(objects, SDK_UNITS, result(), null, 'liftMotor', 'nope')).toBeNull()
     expect(hasUsageSection(objects, { kind: 'device', objectId: 'loose', componentId: 'lo' })).toBe(
       false
     )
@@ -321,10 +326,10 @@ describe('장치 카드', () => {
       robot('other', 'RobotHardware'),
       part('otherPart', 'other', component('ol', 'motor', 'x', 0))
     )
-    const view = deviceUsageView(objects, result(), null, 'liftMotor', 'll')!
+    const view = deviceUsageView(objects, SDK_UNITS, result(), null, 'liftMotor', 'll')!
     expect(view.unavailable).toBe(true)
     expect(view.empty).toBe(false)
-    expect(robotUsageView(objects, result(), null, 'robot')!.unavailable).toBe(true)
+    expect(robotUsageView(objects, SDK_UNITS, result(), null, 'robot')!.unavailable).toBe(true)
   })
 })
 
@@ -346,7 +351,14 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
       ],
       unknownNames: [['liftLeft', [hit(PATH_B, 1, 'lookup')]]]
     })
-    const view = deviceUsageView(objects, res, baseline, 'liftMotor', 'll')!
+    const view = deviceUsageView(
+      objects,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'liftMotor',
+      'll'
+    )!
     expect(ids(view)).toEqual(['renamedCode', 'renamedName'])
     expect(section(view, 'renamedCode')).toMatchObject({
       tone: 'warning',
@@ -359,16 +371,64 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
     expect(view.terms[0]).toBe('robot.lift.liftL')
   })
 
+  it('코드 단위(프로젝트 설정)를 바꾸면 저장한 단위의 상수를 이전 이름으로 붙인다', () => {
+    const baseline = scene(...baseScene())
+    const res = result({
+      unresolved: [
+        [
+          LIFT,
+          [
+            hit(PATH_A, 3, 'unresolved', { member: 'PERP_X_MM' }),
+            hit(PATH_A, 4, 'unresolved', { member: 'PERP_Y_IN' }),
+            hit(PATH_A, 5, 'unresolved', { member: 'other' })
+          ]
+        ]
+      ]
+    })
+    const cm = { length: 'cm', angle: 'sdk' } as const
+    const view = deviceUsageView(
+      baseline,
+      cm,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'perpPart',
+      'pe'
+    )!
+    expect(ids(view)).toEqual(['renamedCode'])
+    expect(section(view, 'renamedCode')).toMatchObject({
+      old: 'MyBot.Lift.PERP_X_MM, MyBot.Lift.PERP_Y_IN',
+      total: 2
+    })
+    expect(view.terms).toContain('MyBot.Lift.PERP_X_CM')
+    // 같은 단위로 돌아오면 붙이지 않는다
+    const same = deviceUsageView(
+      baseline,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'perpPart',
+      'pe'
+    )!
+    expect(ids(same)).toEqual([])
+  })
+
   it('저장한 이름으로 되돌리면(Ctrl+Z) 붙이지 않는다', () => {
     const res = result({
       unresolved: [[LIFT, [hit(PATH_A, 3, 'unresolved', { member: 'liftLeft' })]]],
       unknownNames: [['liftLeft', [hit(PATH_B, 1, 'lookup')]]]
     })
-    const view = deviceUsageView(scene(...baseScene()), res, baseline, 'liftMotor', 'll')!
+    const view = deviceUsageView(
+      scene(...baseScene()),
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'liftMotor',
+      'll'
+    )!
     expect(ids(view)).toEqual([])
-    expect(deviceUsageView(scene(...baseScene()), res, null, 'liftMotor', 'll')!.sections).toEqual(
-      []
-    )
+    expect(
+      deviceUsageView(scene(...baseScene()), SDK_UNITS, res, null, 'liftMotor', 'll')!.sections
+    ).toEqual([])
   })
 
   it('그룹 밖으로 옮긴 장치: 이전 범위(Lift)에 없는 이름', () => {
@@ -379,7 +439,14 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
         [ROBOT, [hit(PATH_A, 4, 'unresolved', { member: 'liftLeft' })]]
       ]
     })
-    const view = deviceUsageView(objects, res, baseline, 'liftMotor', 'll')!
+    const view = deviceUsageView(
+      objects,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'liftMotor',
+      'll'
+    )!
     expect(section(view, 'renamedCode')).toMatchObject({ old: 'robot.lift.liftLeft', total: 1 })
     expect(section(view, 'renamedCode')!.hits[0].line).toBe(3)
   })
@@ -389,7 +456,14 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
     const res = result({
       unresolved: [[ROBOT, [hit(PATH_B, 2, 'unresolved', { member: 'frontLeft' })]]]
     })
-    const view = deviceUsageView(objects, res, baseline, 'drive', 'fl')!
+    const view = deviceUsageView(
+      objects,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'drive',
+      'fl'
+    )!
     expect(section(view, 'renamedCode')).toMatchObject({ old: 'robot.frontLeft', total: 1 })
   })
 
@@ -417,8 +491,17 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
     // 다른 그룹 안으로, 로봇 바로 아래로
     for (const parentId of ['wrist', 'robot']) {
       const moved = renamed(start, 'liftMotor', { parentId })
-      expect(groupUsageView(moved, res, start, 'lift')).toBeNull()
-      const view = deviceUsageView(moved, res, start, 'liftMotor', 'll')!
+      expect(
+        groupUsageView(moved, SDK_UNITS, res, { objects: start, units: SDK_UNITS }, 'lift')
+      ).toBeNull()
+      const view = deviceUsageView(
+        moved,
+        SDK_UNITS,
+        res,
+        { objects: start, units: SDK_UNITS },
+        'liftMotor',
+        'll'
+      )!
       expect(section(view, 'renamedCode')).toMatchObject({
         old: 'robot.lift, MyBot.Lift',
         total: 2
@@ -450,7 +533,17 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
       ]
     })
     expect(
-      section(deviceUsageView(moved, res, start, 'liftMotor', 'll'), 'renamedCode')
+      section(
+        deviceUsageView(
+          moved,
+          SDK_UNITS,
+          res,
+          { objects: start, units: SDK_UNITS },
+          'liftMotor',
+          'll'
+        ),
+        'renamedCode'
+      )
     ).toMatchObject({ old: 'robot.arm', total: 1 })
 
     // Arm에 장치가 있으면 Arm은 남고 Arm 안에서 lift·Lift를 찾지 못한다
@@ -465,8 +558,9 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
       section(
         deviceUsageView(
           renamed(withArm, 'liftMotor', { parentId: 'robot' }),
+          SDK_UNITS,
           armRes,
-          withArm,
+          { objects: withArm, units: SDK_UNITS },
           'liftMotor',
           'll'
         ),
@@ -481,7 +575,17 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
       unresolved: [[LIFT, [hit(PATH_A, 5, 'unresolved', { member: 'PERP_X_MM' })]]]
     })
     expect(
-      section(deviceUsageView(objects, onlyConstant, baseline, 'perpPart', 'pe'), 'renamedCode')
+      section(
+        deviceUsageView(
+          objects,
+          SDK_UNITS,
+          onlyConstant,
+          { objects: baseline, units: SDK_UNITS },
+          'perpPart',
+          'pe'
+        ),
+        'renamedCode'
+      )
     ).toMatchObject({ old: 'MyBot.Lift.PERP_X_MM', total: 1 })
     const both = result({
       unresolved: [
@@ -495,13 +599,30 @@ describe('장치 이름 바꾸기(기준 씬과 비교)', () => {
       ]
     })
     expect(
-      section(deviceUsageView(objects, both, baseline, 'perpPart', 'pe'), 'renamedCode')!.old
+      section(
+        deviceUsageView(
+          objects,
+          SDK_UNITS,
+          both,
+          { objects: baseline, units: SDK_UNITS },
+          'perpPart',
+          'pe'
+        ),
+        'renamedCode'
+      )!.old
     ).toBe('robot.lift.perp, MyBot.Lift.PERP_X_MM')
   })
 
   it('구성 이름만 남은 다른 장치가 쓰면 구성에 없는 이름이 아니라 붙이지 않는다', () => {
     const objects = renameComponent(baseline, 'liftMotor', 'll', 'liftL')
-    const view = deviceUsageView(objects, result(), baseline, 'liftMotor', 'll')!
+    const view = deviceUsageView(
+      objects,
+      SDK_UNITS,
+      result(),
+      { objects: baseline, units: SDK_UNITS },
+      'liftMotor',
+      'll'
+    )!
     expect(view.sections).toEqual([])
   })
 })
@@ -519,7 +640,13 @@ describe('그룹 카드', () => {
       ],
       unresolved: [[LIFT, [hit(PATH_A, 9, 'unresolved', { member: 'gone' })]]]
     })
-    const view = groupUsageView(baseline, res, baseline, 'lift')!
+    const view = groupUsageView(
+      baseline,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'lift'
+    )!
     expect(ids(view)).toEqual(['unresolvedInClass', 'code'])
     // 하위 장치: liftLeft 필드·찾기 2 + perp 상수 1(같은 글자의 다른 문자열과 다른 그룹 밖 장치는 넣지 않는다)
     expect(view.counts).toEqual({ code: 3, byName: 0, descendants: 3, warnings: 1 })
@@ -540,7 +667,13 @@ describe('그룹 카드', () => {
         ]
       ]
     })
-    const view = groupUsageView(objects, res, baseline, 'lift')!
+    const view = groupUsageView(
+      objects,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'lift'
+    )!
     expect(section(view, 'renamedCode')).toMatchObject({
       old: 'robot.lift, MyBot.Lift',
       total: 2
@@ -553,7 +686,12 @@ describe('그룹 카드', () => {
     const res = result({
       unresolved: [[ROBOT, [hit(PATH_A, 2, 'unresolved', { member: 'Lift' })]]]
     })
-    expect(section(groupUsageView(objects, res, baseline, 'lift'), 'renamedCode')).toMatchObject({
+    expect(
+      section(
+        groupUsageView(objects, SDK_UNITS, res, { objects: baseline, units: SDK_UNITS }, 'lift'),
+        'renamedCode'
+      )
+    ).toMatchObject({
       old: 'MyBot.Lift',
       total: 1
     })
@@ -569,7 +707,12 @@ describe('그룹 카드', () => {
     const res = result({
       unresolved: [[ROBOT, [hit(PATH_A, 1, 'unresolved', { member: 'lift' })]]]
     })
-    expect(section(groupUsageView(moved, res, start, 'lift'), 'renamedCode')).toMatchObject({
+    expect(
+      section(
+        groupUsageView(moved, SDK_UNITS, res, { objects: start, units: SDK_UNITS }, 'lift'),
+        'renamedCode'
+      )
+    ).toMatchObject({
       old: 'robot.lift',
       total: 1
     })
@@ -597,7 +740,13 @@ describe('그룹 카드', () => {
         ]
       ]
     })
-    const view = groupUsageView(moved, res, start, 'wrist')!
+    const view = groupUsageView(
+      moved,
+      SDK_UNITS,
+      res,
+      { objects: start, units: SDK_UNITS },
+      'wrist'
+    )!
     expect(section(view, 'renamedCode')).toMatchObject({
       old: 'robot.arm, MyBot.Arm',
       total: 3
@@ -611,8 +760,8 @@ describe('그룹 카드', () => {
       group('empty', 'robot', 'Empty'),
       group('free', 'nowhere', 'Free')
     )
-    expect(groupUsageView(objects, result(), null, 'empty')).toBeNull()
-    expect(groupUsageView(objects, result(), null, 'free')).toBeNull()
+    expect(groupUsageView(objects, SDK_UNITS, result(), null, 'empty')).toBeNull()
+    expect(groupUsageView(objects, SDK_UNITS, result(), null, 'free')).toBeNull()
     expect(hasUsageSection(objects, { kind: 'group', groupId: 'empty' })).toBe(false)
     expect(hasUsageSection(objects, { kind: 'group', groupId: 'lift' })).toBe(true)
   })
@@ -641,7 +790,7 @@ describe('로봇 카드', () => {
         ['spare', [hit(PATH_A, 7, 'lookup')]]
       ]
     })
-    const view = robotUsageView(baseline, res, null, 'robot')!
+    const view = robotUsageView(baseline, SDK_UNITS, res, null, 'robot')!
     expect(ids(view)).toEqual(['constructs', 'code', 'unknownNames'])
     expect(view.counts).toEqual({ code: 4, byName: 0, descendants: 2, warnings: 0 })
     const unknown = section(view, 'unknownNames')!
@@ -671,7 +820,7 @@ describe('로봇 카드', () => {
       ],
       totals: [[ROBOT, { unresolved: 40 }]]
     })
-    const view = robotUsageView(objects, res, null, 'robot')!
+    const view = robotUsageView(objects, SDK_UNITS, res, null, 'robot')!
     const unresolved = section(view, 'unresolved')!
     expect(unresolved.hits.map((h) => [h.path, h.line])).toEqual([
       [PATH_A, 1],
@@ -683,7 +832,7 @@ describe('로봇 카드', () => {
     expect(unresolved.cut).toEqual([PATH_B])
     expect(view.counts.warnings).toBe(42)
     // 다른 로봇 카드는 자기 범위와 *만
-    const other = section(robotUsageView(objects, res, null, 'other'), 'unresolved')!
+    const other = section(robotUsageView(objects, SDK_UNITS, res, null, 'other'), 'unresolved')!
     expect(other.hits.map((h) => h.member)).toEqual(['Ghost', 'x'])
   })
 
@@ -703,7 +852,13 @@ describe('로봇 카드', () => {
         ]
       ]
     })
-    const view = robotUsageView(objects, res, baseline, 'robot')!
+    const view = robotUsageView(
+      objects,
+      SDK_UNITS,
+      res,
+      { objects: baseline, units: SDK_UNITS },
+      'robot'
+    )!
     expect(ids(view)).toEqual(['renamedCode', 'unresolved'])
     expect(section(view, 'renamedCode')).toMatchObject({ old: 'MyBot', total: 2 })
     expect(section(view, 'unresolved')!.hits.map((h) => h.member)).toEqual(['Ghost'])
@@ -727,7 +882,7 @@ describe('로봇 카드', () => {
         [wheel, [{ ...shared }, hit(PATH_B, 1, 'constant'), hit(PATH_B, 2, 'text')]]
       ]
     })
-    expect(robotUsageView(objects, res, null, 'robot')!.counts.descendants).toBe(3)
+    expect(robotUsageView(objects, SDK_UNITS, res, null, 'robot')!.counts.descendants).toBe(3)
     const capped = result({
       hits: [
         [motor, [shared]],
@@ -735,7 +890,7 @@ describe('로봇 카드', () => {
       ],
       totals: [[motor, { lookup: 250 }]]
     })
-    expect(robotUsageView(objects, capped, null, 'robot')!.counts.descendants).toBe(250)
+    expect(robotUsageView(objects, SDK_UNITS, capped, null, 'robot')!.counts.descendants).toBe(250)
   })
 
   it('장치가 없는 로봇도 보인다(*가 남는다)', () => {
@@ -743,10 +898,10 @@ describe('로봇 카드', () => {
     const res = result({
       unresolved: [[MISSING_GENERATED_TYPE, [hit(PATH_A, 1, 'unresolved', { member: 'MyBot' })]]]
     })
-    const view = robotUsageView(objects, res, null, 'robot')!
+    const view = robotUsageView(objects, SDK_UNITS, res, null, 'robot')!
     expect(section(view, 'unresolved')!.total).toBe(1)
     expect(hasUsageSection(objects, { kind: 'robot', robotId: 'robot' })).toBe(true)
-    expect(robotUsageView(objects, res, null, 'nope')).toBeNull()
+    expect(robotUsageView(objects, SDK_UNITS, res, null, 'nope')).toBeNull()
   })
 })
 
@@ -799,7 +954,7 @@ describe('파일 묶음', () => {
       hits: [[LL, [...many(PATH_A, 150), ...many(PATH_B, 50)]]],
       totals: [[LL, { field: 290 }]]
     })
-    const code = section(deviceUsageView(objects, res, null, 'liftMotor', 'll'), 'code')!
+    const code = section(deviceUsageView(objects, SDK_UNITS, res, null, 'liftMotor', 'll'), 'code')!
     expect(code).toMatchObject({ total: 290, cut: [PATH_B] })
     expect(
       fileGroups(code.hits, FILE_GROUP_CAPS, code.cut).map((g) => [g.path, g.count, g.atLeast])
@@ -809,7 +964,14 @@ describe('파일 묶음', () => {
     ])
     // 자르지 않았으면 모두 전체 수다
     const whole = section(
-      deviceUsageView(objects, result({ hits: [[LL, many(PATH_A, 3)]] }), null, 'liftMotor', 'll'),
+      deviceUsageView(
+        objects,
+        SDK_UNITS,
+        result({ hits: [[LL, many(PATH_A, 3)]] }),
+        null,
+        'liftMotor',
+        'll'
+      ),
       'code'
     )!
     expect(whole.cut).toEqual([])
@@ -835,7 +997,7 @@ describe('파일 묶음', () => {
         ]
       ]
     })
-    const code = section(deviceUsageView(objects, res, null, 'liftMotor', 'll'), 'code')!
+    const code = section(deviceUsageView(objects, SDK_UNITS, res, null, 'liftMotor', 'll'), 'code')!
     expect(code.cut).toEqual([])
     const groups = fileGroups(code.hits, FILE_GROUP_CAPS, code.cut, code.fileCounts)
     expect(groups.map((g) => [g.path, g.count, g.atLeast, g.more])).toEqual([

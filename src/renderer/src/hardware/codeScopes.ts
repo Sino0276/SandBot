@@ -6,6 +6,7 @@ import {
   type SceneObject,
   type SceneObjects
 } from '../scene/model'
+import { codeUnitsKey, DEFAULT_CODE_UNITS, type CodeUnits } from '../scene/projectSettings'
 import { isComponentType } from './catalog'
 import { robotComponents, robotHardwareSettings, type ComponentEntry } from './components'
 import {
@@ -79,7 +80,8 @@ function collect(
   objects: SceneObjects,
   object: SceneObject,
   scope: CodeScope,
-  result: RobotCodeScopes
+  result: RobotCodeScopes,
+  units: CodeUnits
 ): void {
   for (const component of object.components ?? []) {
     // 코드 생성과 같은 기준: 카탈로그에 없는 종류는 코드를 만들지 않는다
@@ -89,14 +91,14 @@ function collect(
       objectId: object.id,
       component,
       field: javaIdentifier(component.name),
-      constants: generatedConstantNames(component.type, component.name)
+      constants: generatedConstantNames(component.type, component.name, units)
     }
     scope.members.push(member)
     result.devices.set(deviceKey(object.id, component.id), { scope, member })
   }
   for (const child of childrenInDocument(objects, object.id)) {
     if (!isCodeGroup(child)) {
-      collect(objects, child, scope, result)
+      collect(objects, child, scope, result, units)
       continue
     }
     const className = groupClassName(child)
@@ -111,7 +113,7 @@ function collect(
       fieldPath: [...scope.fieldPath, field],
       members: []
     }
-    collect(objects, child, nested, result)
+    collect(objects, child, nested, result, units)
     // 장치가 하나도 없는 그룹(빈 하위 그룹만 있는 그룹 포함)은 클래스를 만들지 않는다
     if (nested.members.length === 0) continue
     scope.members.push({ kind: 'group', objectId: child.id, field, scope: nested })
@@ -119,16 +121,22 @@ function collect(
   }
 }
 
-// 문서(불변)마다 로봇별로 한 번 만든다. 검증·코드 생성·인스펙터가 같은 결과를 읽는다.
+// 문서(불변)마다 코드 단위·로봇별로 한 번 만든다. 검증·코드 생성·인스펙터가 같은 결과를 읽는다.
+// 상수 이름 꼬리가 코드 단위(프로젝트 설정)를 따르므로 units도 키다.
 const scopeCache = new WeakMap<SceneObjects, Map<string, RobotCodeScopes>>()
 
-export function buildCodeScopes(objects: SceneObjects, robotId: string): RobotCodeScopes {
+export function buildCodeScopes(
+  objects: SceneObjects,
+  robotId: string,
+  units: CodeUnits
+): RobotCodeScopes {
   let byRobot = scopeCache.get(objects)
   if (!byRobot) {
     byRobot = new Map()
     scopeCache.set(objects, byRobot)
   }
-  const cached = byRobot.get(robotId)
+  const cacheKey = `${codeUnitsKey(units)}\n${robotId}`
+  const cached = byRobot.get(cacheKey)
   if (cached) return cached
 
   const settings = robotHardwareSettings(objects, robotId)
@@ -146,8 +154,8 @@ export function buildCodeScopes(objects: SceneObjects, robotId: string): RobotCo
     devices: new Map(),
     groups: new Map()
   }
-  if (robot) collect(objects, robot, result.root, result)
-  byRobot.set(robotId, result)
+  if (robot) collect(objects, robot, result.root, result, units)
+  byRobot.set(cacheKey, result)
   return result
 }
 
@@ -172,11 +180,14 @@ export type CodePath = {
 export function componentCodePath(
   objects: SceneObjects,
   objectId: string,
-  componentId: string
+  componentId: string,
+  units: CodeUnits
 ): CodePath | null {
   const robotId = findRobotId(objects, objectId)
   if (!robotId) return null
-  const found = buildCodeScopes(objects, robotId).devices.get(deviceKey(objectId, componentId))
+  const found = buildCodeScopes(objects, robotId, units).devices.get(
+    deviceKey(objectId, componentId)
+  )
   if (!found) return null
   return {
     fieldPath: [...found.scope.fieldPath, found.member.field],
@@ -189,7 +200,8 @@ export function componentCodePath(
 export function groupCodePath(objects: SceneObjects, groupId: string): CodePath | null {
   const robotId = findRobotId(objects, groupId)
   if (!robotId) return null
-  const scope = buildCodeScopes(objects, robotId).groups.get(groupId)
+  // 그룹 경로는 상수가 없어 코드 단위와 관계없다
+  const scope = buildCodeScopes(objects, robotId, DEFAULT_CODE_UNITS).groups.get(groupId)
   if (!scope) return null
   return { fieldPath: scope.fieldPath, typeName: scope.classPath.join('.'), constants: [] }
 }

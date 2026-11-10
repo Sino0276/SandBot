@@ -18,6 +18,7 @@ import {
 import { dismissNotice, showNotice } from '../editor/noticeStore'
 import { useProjectStore } from '../project/projectStore'
 import type { SceneObjects } from '../scene/model'
+import type { CodeUnits } from '../scene/projectSettings'
 import { useSceneStore } from '../scene/sceneStore'
 import { ipcErrorDetail } from './ipcError'
 import { useJavaIndexStore, type JavaIndexEntry } from './javaIndex'
@@ -39,9 +40,12 @@ export type UsageIndexState = {
   truncated: boolean
   // 마지막으로 열거나 생성 코드를 맞춘(synced) 저장의 씬(projectActions의 generatedObjects). 이름 바꾸기를 그 카드에
   // "이전 이름"으로 붙인다. 생성이 막히거나 실패한 저장은 디스크의 생성 코드·구성을 바꾸지 않으므로 옮기지 않는다.
-  baseline: SceneObjects | null
+  baseline: UsageBaseline | null
   detail: string | null
 }
+
+// 사용처의 기준: 생성 코드를 맞춘 씬과 그때의 코드 단위(상수 이름 꼬리가 코드 단위를 따른다)
+export type UsageBaseline = { objects: SceneObjects; units: CodeUnits }
 
 export const INITIAL_USAGE_INDEX: UsageIndexState = {
   status: 'none',
@@ -201,7 +205,8 @@ function onWorkerMessage(message: FromWorker): void {
 // 지금 씬의 기호표. 만들지 못하면(코드 생성 쪽 버그) failed로 두고 null.
 function currentSymbols(): UsageSymbols | null {
   try {
-    return usageSymbols(useSceneStore.getState().objects)
+    const { objects, settings } = useSceneStore.getState()
+    return usageSymbols(objects, settings.codeUnits)
   } catch (error) {
     console.error('사용처 기호표를 만들지 못했다', error)
     useUsageIndexStore.setState({ status: 'failed', detail: errorText(error) })
@@ -517,15 +522,15 @@ export function initUsageIndex(): void {
 
   // 핸들을 끄는 동안에도 문서는 프레임마다 바뀌므로, 기호표는 바뀐 뒤 묶음 시간이 지나서야 만든다
   useSceneStore.subscribe((state, previous) => {
-    if (state.objects === previous.objects) return
+    if (state.objects === previous.objects && state.settings === previous.settings) return
     if (symbolsTimer) clearTimeout(symbolsTimer)
     symbolsTimer = setTimeout(modelChanged, SYMBOLS_DEBOUNCE_MS)
   })
 }
 
 // 이름 바꾸기를 붙일 기준 씬(열 때 경로를 고친 뒤, 생성 코드를 맞춘 저장 뒤)
-export function setUsageBaseline(objects: SceneObjects | null): void {
-  useUsageIndexStore.setState({ baseline: objects })
+export function setUsageBaseline(baseline: UsageBaseline | null): void {
+  useUsageIndexStore.setState({ baseline })
 }
 
 // ---- 저장 뒤 확인 ----
@@ -613,8 +618,8 @@ async function matchFor(symbols: UsageSymbols): Promise<UsageResult | null> {
 // 생성이 막혔거나 실패했으면 하지 않는다(projectActions도 synced일 때만 부른다). 디스크에는 이전 클래스가 그대로라
 // 이전 알림·기다리는 확인도 그대로 둔다.
 export async function checkUsagesAfterSave(
-  previous: SceneObjects | null,
-  saved: SceneObjects,
+  previous: UsageBaseline | null,
+  saved: UsageBaseline,
   listed: Promise<unknown>
 ): Promise<void> {
   if (useProjectStore.getState().generation?.status !== 'synced') return
@@ -628,15 +633,15 @@ export async function checkUsagesAfterSave(
   let removedNames: Set<string>
   let symbols: UsageSymbols
   try {
-    const savedNames = lookupNamesOf(saved)
+    const savedNames = lookupNamesOf(saved.objects)
     // 이전 저장들이 없앤 이름 + 이번 저장이 없앤 이름, 이번에 다시 넣은 이름은 뺀다
     removedNames = new Set(
-      [...removedLookupNames, ...(previous ? lookupNamesOf(previous).keys() : [])].filter(
+      [...removedLookupNames, ...(previous ? lookupNamesOf(previous.objects).keys() : [])].filter(
         (name) => !savedNames.has(name)
       )
     )
     removedLookupNames = removedNames
-    symbols = usageSymbols(saved)
+    symbols = usageSymbols(saved.objects, saved.units)
   } catch (error) {
     console.error('사용처: 저장한 씬의 기호표를 만들지 못했다', error)
     return

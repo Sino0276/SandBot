@@ -37,9 +37,15 @@ import {
   checkUsagesAfterSave,
   clearUsageNotices,
   initUsageIndex,
-  setUsageBaseline
+  setUsageBaseline,
+  type UsageBaseline
 } from '../java/usageIndex'
 import { DEFAULT_FIELD_DOC, sameFieldDoc, type FieldDoc } from '../scene/fieldDoc'
+import {
+  DEFAULT_PROJECT_SETTINGS,
+  sameProjectSettings,
+  type ProjectSettings
+} from '../scene/projectSettings'
 import type { SceneObjects } from '../scene/model'
 import { beginCadLoad, disposeAllGeometry } from '../scene/geometryRegistry'
 import { isPlaceholderScene, useSceneStore, withCadFile } from '../scene/sceneStore'
@@ -64,7 +70,9 @@ let savedField: FieldDoc | null = null
 // 마지막으로 생성 코드를 맞춘(synced) 저장의 씬. 열 때는 연 씬이다(디스크의 생성 코드·구성이 그것과 같다고 본다).
 // 생성이 막히거나 실패한 저장은 디스크를 바꾸지 않으므로 옮기지 않는다. 사용처의 기준 씬("이전 이름")과 저장 뒤
 // 확인(이번 저장이 구성에서 없앤 이름)이 이것과 비교한다.
-let generatedObjects: SceneObjects | null = null
+let generatedObjects: UsageBaseline | null = null
+// 마지막으로 저장하거나 연 프로젝트 설정(값으로 비교한다)
+let savedSettings: ProjectSettings | null = null
 
 // 코드 생성 알림은 저장할 때마다 새로 띄운다(이전 저장의 알림을 지운다)
 let generationNotices: number[] = []
@@ -84,10 +92,17 @@ function computeDirty(state: {
   objects: SceneObjects
   tunables: TunableEdits
   field: FieldDoc
+  settings: ProjectSettings
 }): boolean {
   if (hasTunableEdits(state.tunables)) return true
   if (!useProjectStore.getState().root && isPlaceholderScene(state.objects)) return false
-  return state.objects !== savedObjects || !savedField || !sameFieldDoc(state.field, savedField)
+  return (
+    state.objects !== savedObjects ||
+    !savedField ||
+    !sameFieldDoc(state.field, savedField) ||
+    !savedSettings ||
+    !sameProjectSettings(state.settings, savedSettings)
+  )
 }
 
 // 메인 프로세스에는 initProjectSession의 구독이 알린다(확정하지 않은 입력칸 초안도 포함)
@@ -111,8 +126,12 @@ async function withBusy<T>(work: () => Promise<T>): Promise<T> {
 
 // 저장한 씬으로 TeamCode의 생성 코드(하드웨어 클래스·구성 XML)를 맞춘다.
 // 프로젝트 파일은 이미 저장했으므로, 여기서 실패해도 저장은 성공으로 친다.
-async function syncTeamCode(root: string, objects: SceneObjects): Promise<void> {
-  const { files, issues, blocked } = generateTeamCodeFiles(objects)
+async function syncTeamCode(
+  root: string,
+  objects: SceneObjects,
+  settings: ProjectSettings
+): Promise<void> {
+  const { files, issues, blocked } = generateTeamCodeFiles(objects, settings.codeUnits)
   let generation: GenerationResult
   if (blocked) {
     const errors = uniqueIssues(issues).filter((i) => i.severity === 'error').length
@@ -171,7 +190,7 @@ export function saveProject(): Promise<boolean> {
   if (useProjectStore.getState().busy) return Promise.resolve(false)
   let wrote = false
   // 생성 코드를 맞췄으면 저장 뒤 확인할 두 씬(그 전에 맞춘 씬, 이번에 저장한 씬)
-  let usageCheck: { previous: SceneObjects | null; saved: SceneObjects } | null = null
+  let usageCheck: { previous: UsageBaseline | null; saved: UsageBaseline } | null = null
   return withBusy(async () => {
     let { root } = useProjectStore.getState()
     if (!root) {
@@ -197,13 +216,13 @@ export function saveProject(): Promise<boolean> {
     const projectRoot = root
     // 저장하는 동안 바뀐 내용은 다음 저장 몫이다. 프로젝트 파일과 생성 코드는 같은 씬으로 만든다.
     // 튜닝 값도 여기서 잡은 것만 쓴다(저장하는 동안 고친 값은 rebase가 저장하지 않은 값으로 남긴다).
-    const { objects, tunables, field } = useSceneStore.getState()
+    const { objects, tunables, field, settings } = useSceneStore.getState()
     // 열 때 찾지 못한 필드 CAD는 파일 값을 그대로 쓴다(spec-4e §2.3)
     const content = serializeProject(
       objects,
       field,
       (path) => window.api.relativePath(projectRoot, path),
-      { fieldVisualFile: unresolvedFieldVisualFile() }
+      { fieldVisualFile: unresolvedFieldVisualFile(), settings }
     )
     try {
       await window.api.saveProject(projectRoot, content)
@@ -215,19 +234,21 @@ export function saveProject(): Promise<boolean> {
     localStorage.setItem(LAST_PROJECT_KEY, projectRoot)
     savedObjects = objects
     savedField = field
+    savedSettings = settings
     setDirty(computeDirty(useSceneStore.getState()))
     // 튜닝 값은 하드웨어 검증 오류와 관계없이 쓴다(생성 코드만 막힌다)
     const tunableOutcome = await saveTunables(projectRoot, tunables)
     applyTunableSaveOutcome(projectRoot, tunableOutcome)
     setDirty(computeDirty(useSceneStore.getState()))
-    await syncTeamCode(projectRoot, objects)
+    await syncTeamCode(projectRoot, objects, settings)
     // 생성 코드를 쓴 저장만 기준 씬을 옮기고 TeamCode가 깨지는지 본다. 막히거나 실패하면 디스크에는 이전 클래스·구성이
     // 그대로라, 카드의 "이전 이름"을 남기고 다음에 생성 코드를 맞추는 저장이 없앤 이름을 알린다.
     // 이어서 저장해도 이전 저장과 차례로 비교하도록 여기서 바로 옮긴다.
     if (useProjectStore.getState().generation?.status === 'synced') {
-      usageCheck = { previous: generatedObjects, saved: objects }
-      generatedObjects = objects
-      setUsageBaseline(objects)
+      const saved: UsageBaseline = { objects, units: settings.codeUnits }
+      usageCheck = { previous: generatedObjects, saved }
+      generatedObjects = saved
+      setUsageBaseline(saved)
     }
     return isCompleteTunableSave(tunableOutcome)
   }).then((saved) => {
@@ -271,6 +292,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         fieldDefaulted,
         fieldVisualFile,
         fieldVisualDropped,
+        settings,
+        settingsDropped,
         cadFiles,
         droppedScripts
       } = info.content
@@ -281,6 +304,8 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
             fieldDefaulted: false,
             fieldVisualFile: null,
             fieldVisualDropped: false,
+            settings: DEFAULT_PROJECT_SETTINGS,
+            settingsDropped: false,
             cadFiles: new Map(),
             droppedScripts: []
           }
@@ -291,7 +316,7 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
       useProjectStore.setState({ session })
       cancelAllImports()
 
-      useSceneStore.getState().replaceObjects(objects, field)
+      useSceneStore.getState().replaceObjects(objects, field, settings)
       replaced = true
       // 이전 씬의 형상을 버린다. 같은 프로젝트를 다시 열 때 이번에 읽지 못한 CAD가 예전 형상으로 보이지 않게 한다.
       disposeAllGeometry()
@@ -363,11 +388,13 @@ export function openProjectAt(root: string, options: { quiet?: boolean } = {}): 
         }
       }
       if (fieldVisualDropped) replaceProjectNotice('fieldCadDropped', {})
+      if (settingsDropped) replaceProjectNotice('settingsDropped', {})
       savedObjects = useSceneStore.getState().objects
       savedField = useSceneStore.getState().field
-      generatedObjects = savedObjects
+      savedSettings = useSceneStore.getState().settings
+      generatedObjects = { objects: savedObjects, units: savedSettings.codeUnits }
       // 사용처의 "이전 이름"은 연 씬(고친 경로 포함)과 비교한다
-      setUsageBaseline(savedObjects)
+      setUsageBaseline(generatedObjects)
       setDirty(false)
       opened = true
       // 필드 알림(v9 기본 시즌, 모르는 시즌, 시작 자세 겹침)은 CAD 못 찾음 알림 다음에 쌓는다. 외곽은 프로젝트 파일의
@@ -529,7 +556,8 @@ export function initProjectSession(): void {
     if (
       state.objects === previous.objects &&
       state.tunables === previous.tunables &&
-      state.field === previous.field
+      state.field === previous.field &&
+      state.settings === previous.settings
     )
       return
     setDirty(computeDirty(state))

@@ -11,6 +11,11 @@ import {
   type FieldDoc,
   type FieldVisual
 } from '../scene/fieldDoc'
+import {
+  DEFAULT_PROJECT_SETTINGS,
+  isCodeUnits,
+  type ProjectSettings
+} from '../scene/projectSettings'
 import { cadOriginOf } from '../scene/hierarchy'
 import type { MassSettings, RigidbodySettings } from '../mass/types'
 import {
@@ -58,14 +63,19 @@ export const PROJECT_FORMAT = 'sandbot-project'
 //     더해도 이 버전을 올리지 않는다(모르는 시즌 문자열은 보존하고 표시·시뮬레이터는 'none'으로 처리한다).
 // 11: 필드 CAD 보기 field.visual({ fileName, upAxis, forwardAxis, file: { relativePath, absolutePath } }, 보기용,
 //     시뮬레이터는 쓰지 않음, spec-4e §2.3). 틀린 visual은 버리고 프로젝트는 연다(fieldVisualDropped).
+// 12: 프로젝트 설정 settings({ codeUnits: { length, angle } }, 생성 Java의 코드 단위). 없거나 틀리면 기본값('sdk')으로
+//     읽고 프로젝트는 연다(settingsDropped, 틀린 값일 때만).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
-// 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ, 10 이하는 field.visual 없음).
+// 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ, 10 이하는 field.visual 없음, 11 이하는 settings 없음 =
+// 코드 단위 'sdk').
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 11
+export const PROJECT_VERSION = 12
 // field를 두기 시작한 버전
 const FIELD_VERSION = 10
 // field.visual(필드 CAD 보기)을 두기 시작한 버전
 export const FIELD_VISUAL_VERSION = 11
+// settings(프로젝트 설정)를 두기 시작한 버전
+export const SETTINGS_VERSION = 12
 
 // 파일에서 CAD 경로는 프로젝트 기준 상대 경로를 먼저 쓰고, 없거나 못 찾으면 절대 경로를 쓴다.
 export type StoredCadFile = { relativePath: string | null; absolutePath: string }
@@ -79,6 +89,7 @@ type ProjectFileData = {
   format: typeof PROJECT_FORMAT
   version: number
   field: StoredField
+  settings: ProjectSettings
   objects: StoredObject[]
 }
 
@@ -86,6 +97,8 @@ export type SerializeOptions = {
   // 열 때 찾지 못한 필드 CAD의 파일 값(spec-4e §2.3). 그 절대 경로가 지금 visual의 절대 경로와 같으면 file을 이 값
   // 그대로 쓴다(저장한 사람의 절대 경로를 이 PC 기준으로 relativize해 원래 맞던 상대 경로를 잃지 않게).
   fieldVisualFile?: StoredCadFile | null
+  // 프로젝트 설정(v12). 없으면 기본값을 쓴다(시험).
+  settings?: ProjectSettings
 }
 
 export type ProjectFileErrorCode = 'invalidJson' | 'notProject' | 'newerVersion' | 'invalidData'
@@ -117,6 +130,12 @@ function storedField(
   return { season: field.season, visual: { fileName, upAxis, forwardAxis, file } }
 }
 
+// 프로젝트 설정을 파일 꼴로(키를 골라 쓴다)
+function storedSettings(settings: ProjectSettings): ProjectSettings {
+  const { length, angle } = settings.codeUnits
+  return { codeUnits: { length, angle } }
+}
+
 export function serializeProject(
   objects: SceneObjects,
   // 필드 설정(v10 시즌, v11 필드 CAD 보기)
@@ -129,6 +148,7 @@ export function serializeProject(
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
     field: storedField(field, relativize, options),
+    settings: storedSettings(options.settings ?? DEFAULT_PROJECT_SETTINGS),
     objects: Object.values(objects).map(({ cad, ...stored }) => {
       // 빈 연결 목록은 쓰지 않는다(스토어도 비면 필드를 지운다)
       const { scripts, ...rest } = stored
@@ -679,6 +699,23 @@ function parseField(
   }
 }
 
+// 프로젝트 설정(v12). v11 이하나 키가 없으면 기본값이다. 틀린 값은 기본값으로 읽고 dropped로 알린다(보기 설정 하나로
+// 팀 프로젝트 전체를 못 열지 않게, field.visual과 같은 규칙). 모르는 키는 버린다.
+function parseSettings(
+  data: Record<string, unknown>,
+  version: number
+): { settings: ProjectSettings; settingsDropped: boolean } {
+  if (version < SETTINGS_VERSION || data.settings === undefined)
+    return { settings: DEFAULT_PROJECT_SETTINGS, settingsDropped: false }
+  const { settings } = data
+  if (!isRecord(settings) || !isCodeUnits(settings.codeUnits)) {
+    console.warn('project.json: 읽을 수 없는 프로젝트 설정(settings)을 기본값으로 읽는다')
+    return { settings: DEFAULT_PROJECT_SETTINGS, settingsDropped: true }
+  }
+  const { length, angle } = settings.codeUnits
+  return { settings: { codeUnits: { length, angle } }, settingsDropped: false }
+}
+
 // 프로젝트 파일을 읽는다. CAD 파일 경로(상대·절대)는 따로 돌려주고, 경로 찾기는 호출한 쪽이 한다.
 // droppedScripts는 연결할 수 없는 경로라 버린 스크립트 연결의 경로다(호출한 쪽이 알린다).
 // fieldDefaulted는 field가 없는 예전 형식(v9 이하)이라 기본 시즌으로 읽었다는 뜻이다(열기가 알린다).
@@ -690,6 +727,8 @@ export function parseProject(content: string): {
   fieldDefaulted: boolean
   fieldVisualFile: StoredCadFile | null
   fieldVisualDropped: boolean
+  settings: ProjectSettings
+  settingsDropped: boolean
   cadFiles: Map<string, StoredCadFile>
   droppedScripts: string[]
 } {
@@ -708,6 +747,7 @@ export function parseProject(content: string): {
     data,
     data.version
   )
+  const { settings, settingsDropped } = parseSettings(data, data.version)
 
   const objects: SceneObjects = {}
   const cadFiles = new Map<string, StoredCadFile>()
@@ -735,6 +775,8 @@ export function parseProject(content: string): {
     fieldDefaulted,
     fieldVisualFile,
     fieldVisualDropped,
+    settings,
+    settingsDropped,
     cadFiles,
     droppedScripts
   }

@@ -9,10 +9,11 @@ import { extractFacts, type FileFacts } from './usageFacts'
 import { resolveUsages } from './usageResolve'
 import { usageSymbols } from './usageSymbols'
 import type { UsageResult } from './usageTypes'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../scene/projectSettings'
 
 const GEN = 'org.firstinspires.ftc.teamcode.sandbot'
-const SYMBOLS = usageSymbols(corpusScene())
-const RENAMED = usageSymbols(renamedCorpusScene())
+const SYMBOLS = usageSymbols(corpusScene(), SDK_UNITS)
+const RENAMED = usageSymbols(renamedCorpusScene(), SDK_UNITS)
 
 // mulberry32: 작고 결정적인 의사 난수
 function random(seed: number): () => number {

@@ -33,6 +33,7 @@ import {
 } from './usages/__fixtures__/corpusScene'
 import type { FromWorker, ToWorker, UsageHit, UsageResult } from './usages/usageTypes'
 import { createUsageWorkerState, handleMessage } from './usages/usageWorkerCore'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 // 사용처 끝까지 잇기(통합) 테스트: 말뭉치(usages/__fixtures__/corpus, TeamCode 폴더 모양)를 디스크에서 읽는 가짜
 // window.api.readJavaSources → 조율(usageIndex) → 진짜 워커 논리(usageWorkerCore, 기본 의존성 = 진짜
@@ -172,7 +173,7 @@ async function edit(objects: SceneObjects): Promise<void> {
 async function openCorpus(objects: SceneObjects): Promise<void> {
   useSceneStore.setState({ objects })
   useProjectStore.setState({ root: ROOT, session: 1, busy: false })
-  setUsageBaseline(objects)
+  setUsageBaseline({ objects: objects, units: SDK_UNITS })
   useJavaIndexStore.setState({
     status: 'ready',
     root: ROOT,
@@ -186,6 +187,7 @@ async function openCorpus(objects: SceneObjects): Promise<void> {
 function deviceView(objects: SceneObjects, device = LIFT_LEFT): UsageView {
   const view = deviceUsageView(
     objects,
+    SDK_UNITS,
     result(),
     usage().baseline,
     device.objectId,
@@ -306,7 +308,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
 
     // Lift 그룹: 연쇄가 lift에서 끝나는 필드와 형식 RobotHardware.Lift. 하위 장치 수는 Claw 그룹의 grip까지
     // 장치 카드의 코드·이름 수를 더한 것이다.
-    const lift = groupUsageView(objects, result(), usage().baseline, 'lift')!
+    const lift = groupUsageView(objects, SDK_UNITS, result(), usage().baseline, 'lift')!
     const liftCode = section(lift, 'code')!
     expect(liftCode.hits.map(at).sort(compare)).toEqual(
       goldenPositions(/ (field RobotHardware\.lift|type RobotHardware\.Lift)$/)
@@ -325,7 +327,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
       [COMP_ROBOT_ID, 'RobotHardware'],
       [PRACTICE_ROBOT_ID, 'PracticeBotHardware']
     ]) {
-      const robot = robotUsageView(objects, result(), usage().baseline, robotId)!
+      const robot = robotUsageView(objects, SDK_UNITS, result(), usage().baseline, robotId)!
       const constructs = section(robot, 'constructs')?.hits ?? []
       const code = section(robot, 'code')!.hits
       expect(constructs.every((hit) => hit.kind === 'new' && hit.snippet.startsWith('new '))).toBe(
@@ -344,7 +346,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
       )
     }
     expect([...result().unknownNames.keys()]).toEqual(['leftBack', 'rightBack', 'rightFront'])
-    const comp = robotUsageView(objects, result(), usage().baseline, COMP_ROBOT_ID)!
+    const comp = robotUsageView(objects, SDK_UNITS, result(), usage().baseline, COMP_ROBOT_ID)!
     expect(section(comp, 'constructs')!.hits.length).toBeGreaterThan(0)
     // 로봇의 하위 장치 수는 자리 수다. par 데드휠은 같은 포트 모터(leftFront)의 찾기 문자열을 함께 가져 한 번만 센다.
     const compDevices = [
@@ -407,7 +409,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     expect(section(device, 'renamedName')).toBeUndefined()
 
     // 그룹 카드(Claw → Gripper): 부모 범위(Lift)에 없는 이전 필드 claw와 이전 멤버 형식 Claw
-    const group = groupUsageView(renamed, result(), usage().baseline, 'claw')!
+    const group = groupUsageView(renamed, SDK_UNITS, result(), usage().baseline, 'claw')!
     expect(group.sections[0]).toMatchObject({ id: 'renamedCode', tone: 'warning' })
     expect(group.sections[0].old).toBe('robot.lift.claw, RobotHardware.Lift.Claw')
     const clawLines = golden('golden-renamed.txt')
@@ -420,7 +422,13 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     )
 
     // 로봇 카드(Practice Bot): 생성 패키지에 없는 이전 클래스 이름
-    const practice = robotUsageView(renamed, result(), usage().baseline, PRACTICE_ROBOT_ID)!
+    const practice = robotUsageView(
+      renamed,
+      SDK_UNITS,
+      result(),
+      usage().baseline,
+      PRACTICE_ROBOT_ID
+    )!
     expect(practice.sections[0]).toMatchObject({
       id: 'renamedCode',
       old: 'PracticeBotHardware'
@@ -429,7 +437,7 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
       true
     )
     // Comp Bot 카드는 이 로봇 범위의 없는 이름과 '*'를 모두 보인다(장치·그룹 카드에 붙인 것도)
-    const comp = robotUsageView(renamed, result(), usage().baseline, COMP_ROBOT_ID)!
+    const comp = robotUsageView(renamed, SDK_UNITS, result(), usage().baseline, COMP_ROBOT_ID)!
     const unresolved = section(comp, 'unresolved')!
     expect(unresolved.total).toBe(
       [...result().unresolved.values()].reduce((sum, hits) => sum + hits.length, 0)
@@ -500,8 +508,12 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
         caseRenamed: []
       }
     })
-    setUsageBaseline(saved)
-    await checkUsagesAfterSave(objects, saved, Promise.resolve())
+    setUsageBaseline({ objects: saved, units: SDK_UNITS })
+    await checkUsagesAfterSave(
+      { objects: objects, units: SDK_UNITS },
+      { objects: saved, units: SDK_UNITS },
+      Promise.resolve()
+    )
     expect(readCount()).toBe(reads)
 
     const typed = [...result().unresolved.values()].flat()
@@ -519,13 +531,17 @@ describe('사용처 끝까지 잇기(말뭉치, 진짜 사실·맞추기·기호
     // 저장한 뒤에는 이전 이름이 로봇 카드로 옮겨 간다(기준 씬 = 저장한 씬)
     const device = deviceView(saved)
     expect(section(device, 'renamedCode')).toBeUndefined()
-    const comp = robotUsageView(saved, result(), usage().baseline, COMP_ROBOT_ID)!
+    const comp = robotUsageView(saved, SDK_UNITS, result(), usage().baseline, COMP_ROBOT_ID)!
     expect(section(comp, 'unresolved')!.total).toBe(typed.length)
 
     // 다시 저장한 이름으로 되돌려 저장하면 알림이 사라진다(교체)
     await edit(objects)
-    setUsageBaseline(objects)
-    await checkUsagesAfterSave(saved, objects, Promise.resolve())
+    setUsageBaseline({ objects: objects, units: SDK_UNITS })
+    await checkUsagesAfterSave(
+      { objects: saved, units: SDK_UNITS },
+      { objects: objects, units: SDK_UNITS },
+      Promise.resolve()
+    )
     expect(useNoticeStore.getState().notices).toEqual([])
     expect(readCount()).toBe(reads)
   })

@@ -12,7 +12,9 @@ import {
   type DeviceMember,
   type RobotCodeScopes
 } from '../../hardware/codeScopes'
+import type { UsageBaseline } from '../../java/usageIndex'
 import { lookupNamesOf, usageSymbols } from '../../java/usages/usageSymbols'
+import { DEFAULT_CODE_UNITS, type CodeUnits } from '../../scene/projectSettings'
 import {
   deviceUsageKey,
   groupUsageKey,
@@ -224,9 +226,9 @@ function lookupNameByKey(objects: SceneObjects): Map<UsageKey, string> {
 }
 
 // 대상의 로봇이 클래스 이름 문제로 기호표에서 빠졌는지(usageSymbols가 정한 것을 읽는다)
-function robotUnavailable(objects: SceneObjects, robotId: string): boolean {
+function robotUnavailable(objects: SceneObjects, units: CodeUnits, robotId: string): boolean {
   const key = robotUsageKey(robotId)
-  return usageSymbols(objects).unavailable.some((entry) => entry.key === key)
+  return usageSymbols(objects, units).unavailable.some((entry) => entry.key === key)
 }
 
 // 그룹 범위를 멤버로 가진 범위(바로 위 클래스)와 그 필드
@@ -242,8 +244,8 @@ function parentScopeOf(
 }
 
 // 기준 씬에서 이 오브젝트가 있던 로봇. 기준 씬이 없거나 그때 없던 오브젝트·로봇 밖이었으면 null.
-function baselineRobotId(baseline: SceneObjects | null, objectId: string): string | null {
-  return baseline && baseline[objectId] ? findRobotId(baseline, objectId) : null
+function baselineRobotId(baseline: UsageBaseline | null, objectId: string): string | null {
+  return baseline && baseline.objects[objectId] ? findRobotId(baseline.objects, objectId) : null
 }
 
 // 저장한 범위 중 지금 씬에도 클래스가 있는 가장 가까운 것(자신 또는 상위, 로봇 클래스는 늘 있다)과 그 바로 아래의
@@ -298,8 +300,9 @@ function renamedCodeSection(
 // 곳이다. 구성 이름이 바뀌었으면 이전 이름을 찾는 구성에 없는 이름(javac는 모르고 실행할 때 깨진다).
 function deviceRenames(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   objectId: string,
   componentId: string,
   current: { scope: CodeScope; member: DeviceMember },
@@ -308,10 +311,14 @@ function deviceRenames(
   const robotId = baselineRobotId(baseline, objectId)
   if (!baseline || !robotId) return []
   const sections: UsageSectionView[] = []
-  const savedScopes = buildCodeScopes(baseline, robotId)
+  const savedScopes = buildCodeScopes(baseline.objects, robotId, baseline.units)
   const saved = savedScopes.devices.get(deviceKey(objectId, componentId))
   if (saved) {
-    const from = nearestSurviving(savedScopes, saved.scope, buildCodeScopes(objects, robotId))
+    const from = nearestSurviving(
+      savedScopes,
+      saved.scope,
+      buildCodeScopes(objects, robotId, units)
+    )
     let oldForms = new Map<string, string>()
     if (from.vanished) {
       oldForms = vanishedForms(from.vanished)
@@ -319,7 +326,8 @@ function deviceRenames(
       const scopeChanged = saved.scope.objectId !== current.scope.objectId
       if (scopeChanged || saved.member.field !== current.member.field)
         oldForms.set(saved.member.field, robotPath([...saved.scope.fieldPath, saved.member.field]))
-      // 상수도 장치 이름(과 종류)에서 만들므로 이름을 바꾸면 함께 바뀐다(MyBot.Lift.LIFT_LEFT_X_MM)
+      // 상수도 장치 이름(과 종류)에서 만들므로 이름을 바꾸면 함께 바뀐다(MyBot.Lift.LIFT_LEFT_X_MM). 코드 단위
+      // (프로젝트 설정)를 바꿔도 꼬리가 바뀐다(_X_MM → _X_IN)
       const typeName = saved.scope.classPath.join('.')
       for (const constant of saved.member.constants)
         if (scopeChanged || !current.member.constants.includes(constant))
@@ -328,7 +336,7 @@ function deviceRenames(
     const section = renamedCodeSection(result, scopeKey(from.scope, robotId), oldForms)
     if (section) sections.push(section)
   }
-  const oldName = lookupNameByKey(baseline).get(deviceUsageKey(objectId, componentId)) ?? ''
+  const oldName = lookupNameByKey(baseline.objects).get(deviceUsageKey(objectId, componentId)) ?? ''
   if (oldName && oldName !== lookupName) {
     const hits = result.unknownNames.get(oldName) ?? []
     if (hits.length > 0)
@@ -417,14 +425,17 @@ function finish(
 // 장치 카드. 로봇 밖이거나 카탈로그에 없는 종류면 사용처가 없다(componentCodePath와 같은 조건).
 export function deviceUsageView(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   objectId: string,
   componentId: string
 ): UsageView | null {
   const robotId = findRobotId(objects, objectId)
   if (!robotId) return null
-  const found = buildCodeScopes(objects, robotId).devices.get(deviceKey(objectId, componentId))
+  const found = buildCodeScopes(objects, robotId, units).devices.get(
+    deviceKey(objectId, componentId)
+  )
   if (!found) return null
   const key = deviceUsageKey(objectId, componentId)
   const lookupName = lookupNameByKey(objects).get(key) ?? ''
@@ -432,7 +443,16 @@ export function deviceUsageView(
   const code = kindSection(result, key, 'code', ['field', 'constant'], 'field')
   const byName = kindSection(result, key, 'byName', ['lookup'], 'lookup')
   const sameText = kindSection(result, key, 'sameText', ['text'], 'text', 'folded')
-  const renames = deviceRenames(objects, result, baseline, objectId, componentId, found, lookupName)
+  const renames = deviceRenames(
+    objects,
+    units,
+    result,
+    baseline,
+    objectId,
+    componentId,
+    found,
+    lookupName
+  )
   const typeName = found.scope.classPath.join('.')
   const sharing = lookupName
     ? nameSharing(objects, robotId, key, lookupName)
@@ -447,7 +467,7 @@ export function deviceUsageView(
       ],
       sharedName: sharing.otherRobot,
       samePortName: sharing.samePort,
-      unavailable: robotUnavailable(objects, robotId)
+      unavailable: robotUnavailable(objects, units, robotId)
     },
     [...renames, code, byName, sameText],
     { code: code.total, byName: byName.total, descendants: 0 }
@@ -457,13 +477,14 @@ export function deviceUsageView(
 // 그룹 카드. 장치가 없어 클래스를 만들지 않는 그룹이나 로봇 밖 그룹은 사용처가 없다.
 export function groupUsageView(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   groupId: string
 ): UsageView | null {
   const robotId = findRobotId(objects, groupId)
   if (!robotId) return null
-  const scopes = buildCodeScopes(objects, robotId)
+  const scopes = buildCodeScopes(objects, robotId, units)
   const scope = scopes.groups.get(groupId)
   const parent = scope ? parentScopeOf(scopes.root, groupId) : null
   if (!scope || !parent) return null
@@ -474,14 +495,17 @@ export function groupUsageView(
   // (robot.lift는 부모 범위에서 필드 lift가, MyBot.Lift는 부모 클래스에서 멤버 형식 Lift가 없다). 저장한 부모가
   // 클래스를 잃었으면(장치 없는 Arm에서 Wrist를 꺼냄) 지금도 있는 상위 범위에서 사라진 부모의 이름(robot.arm)을 찾는다.
   const savedRobotId = baselineRobotId(baseline, groupId)
-  const savedScopes = baseline && savedRobotId ? buildCodeScopes(baseline, savedRobotId) : null
+  const savedScopes =
+    baseline && savedRobotId
+      ? buildCodeScopes(baseline.objects, savedRobotId, baseline.units)
+      : null
   const savedScope = savedScopes?.groups.get(groupId)
   const savedParent = savedScopes && savedScope ? parentScopeOf(savedScopes.root, groupId) : null
   if (savedRobotId && savedScopes && savedScope && savedParent) {
     const from = nearestSurviving(
       savedScopes,
       savedParent.parent,
-      buildCodeScopes(objects, savedRobotId)
+      buildCodeScopes(objects, savedRobotId, units)
     )
     let oldForms = new Map<string, string>()
     if (from.vanished) {
@@ -516,7 +540,7 @@ export function groupUsageView(
       terms: [robotPath(scope.fieldPath), scope.classPath.join('.')],
       sharedName: false,
       samePortName: false,
-      unavailable: robotUnavailable(objects, robotId)
+      unavailable: robotUnavailable(objects, units, robotId)
     },
     sections,
     { code: code.total, byName: 0, descendants: deviceTotals(result, allScopes(scope)) }
@@ -528,12 +552,13 @@ export function groupUsageView(
 // (장치·그룹 카드에 이전 이름으로 붙인 것도 여기 다시 보인다. 같은 카드에서 두 번 늘어놓지만 않는다).
 export function robotUsageView(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   robotId: string
 ): UsageView | null {
   if (objects[robotId]?.kind !== 'robot') return null
-  const scopes = buildCodeScopes(objects, robotId)
+  const scopes = buildCodeScopes(objects, robotId, units)
   const key = robotUsageKey(robotId)
   const className = scopes.root.className
   const sections: UsageSectionView[] = []
@@ -541,8 +566,8 @@ export function robotUsageView(
   // 이름 바꾸기: 저장한 클래스 이름을 생성 패키지에 없는 형식으로 쓰는 곳
   const missingTypes = result.unresolved.get(MISSING_GENERATED_TYPE) ?? []
   const savedClassName =
-    baseline && baseline[robotId]?.kind === 'robot'
-      ? buildCodeScopes(baseline, robotId).root.className
+    baseline && baseline.objects[robotId]?.kind === 'robot'
+      ? buildCodeScopes(baseline.objects, robotId, baseline.units).root.className
       : null
   const renamed =
     savedClassName !== null && savedClassName !== className
@@ -620,7 +645,7 @@ export function robotUsageView(
       terms: [className, `${className}.CONFIGURATION_NAME`],
       sharedName: false,
       samePortName: false,
-      unavailable: robotUnavailable(objects, robotId)
+      unavailable: robotUnavailable(objects, units, robotId)
     },
     sections,
     { code, byName: 0, descendants: deviceTotals(result, allScopes(scopes.root)) }
@@ -629,17 +654,18 @@ export function robotUsageView(
 
 export function usageView(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   target: UsageTarget
 ): UsageView | null {
   switch (target.kind) {
     case 'device':
-      return deviceUsageView(objects, result, baseline, target.objectId, target.componentId)
+      return deviceUsageView(objects, units, result, baseline, target.objectId, target.componentId)
     case 'group':
-      return groupUsageView(objects, result, baseline, target.groupId)
+      return groupUsageView(objects, units, result, baseline, target.groupId)
     case 'robot':
-      return robotUsageView(objects, result, baseline, target.robotId)
+      return robotUsageView(objects, units, result, baseline, target.robotId)
   }
 }
 
@@ -651,14 +677,18 @@ export function hasUsageSection(objects: SceneObjects, target: UsageTarget): boo
       const robotId = findRobotId(objects, target.objectId)
       return (
         robotId !== null &&
-        buildCodeScopes(objects, robotId).devices.has(
+        // 장치가 있는지만 보므로 코드 단위와 관계없다
+        buildCodeScopes(objects, robotId, DEFAULT_CODE_UNITS).devices.has(
           deviceKey(target.objectId, target.componentId)
         )
       )
     }
     case 'group': {
       const robotId = findRobotId(objects, target.groupId)
-      return robotId !== null && buildCodeScopes(objects, robotId).groups.has(target.groupId)
+      return (
+        robotId !== null &&
+        buildCodeScopes(objects, robotId, DEFAULT_CODE_UNITS).groups.has(target.groupId)
+      )
     }
     case 'robot':
       return objects[target.robotId]?.kind === 'robot'

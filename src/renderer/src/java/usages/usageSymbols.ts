@@ -2,6 +2,7 @@
 // 옮기고 여기서 다시 만들지 않는다(코드 생성과 다른 이름을 보면 javac와 다른 곳을 사용처로 보인다).
 // 키는 오브젝트·컴포넌트 id로 지어 이름을 바꿔도 같다. 오브젝트를 옮기기만 하면 signature가 그대로라 다시 맞추지 않는다.
 import { childrenInDocument, type SceneObjects } from '../../scene/model'
+import { codeUnitsKey, DEFAULT_CODE_UNITS, type CodeUnits } from '../../scene/projectSettings'
 import { buildCodeScopes, type CodeScope, type RobotCodeScopes } from '../../hardware/codeScopes'
 import { robotComponents } from '../../hardware/components'
 import { deadWheelDeviceName } from '../../hardware/javaCodegen'
@@ -78,25 +79,33 @@ function addLookupNames(scopes: RobotCodeScopes, names: Map<string, UsageKey[]>)
 
 function lookupNameMap(objects: SceneObjects, robotIds: string[]): Map<string, UsageKey[]> {
   const names = new Map<string, UsageKey[]>()
-  for (const robotId of robotIds) addLookupNames(buildCodeScopes(objects, robotId), names)
+  // 찾기 이름은 구성 이름이라 코드 단위와 관계없다
+  for (const robotId of robotIds)
+    addLookupNames(buildCodeScopes(objects, robotId, DEFAULT_CODE_UNITS), names)
   return names
 }
 
 // 문서(불변)마다 한 번 만든다. 씬 구독이 끌기 중에도 부르지만 같은 문서면 다시 계산하지 않는다.
-const symbolCache = new WeakMap<SceneObjects, UsageSymbols>()
+// 상수 이름 꼬리가 코드 단위를 따르므로 기호표는 코드 단위마다 따로다
+const symbolCache = new WeakMap<SceneObjects, Map<string, UsageSymbols>>()
 const lookupCache = new WeakMap<SceneObjects, Map<string, UsageKey[]>>()
 
 // 씬 → 워커에 넘길 생성 클래스 기호표. objects마다 한 번 만든다(WeakMap). 이름은 codeScopes에서만 가져온다.
-export function usageSymbols(objects: SceneObjects): UsageSymbols {
-  const cached = symbolCache.get(objects)
+export function usageSymbols(objects: SceneObjects, units: CodeUnits): UsageSymbols {
+  let byUnits = symbolCache.get(objects)
+  if (!byUnits) {
+    byUnits = new Map()
+    symbolCache.set(objects, byUnits)
+  }
+  const cached = byUnits.get(codeUnitsKey(units))
   if (cached) return cached
 
   const robotIds = generatedRobotIds(objects)
-  const issues = sceneIssues(objects)
+  const issues = sceneIssues(objects, units)
   const robots: SymbolClass[] = []
   const unavailable: UsageSymbols['unavailable'] = []
   for (const robotId of robotIds) {
-    const scopes = buildCodeScopes(objects, robotId)
+    const scopes = buildCodeScopes(objects, robotId, units)
     const problem = issues.find(
       (issue) =>
         issue.robotId === robotId && !issue.componentId && UNAVAILABLE_CODES.has(issue.code)
@@ -120,7 +129,7 @@ export function usageSymbols(objects: SceneObjects): UsageSymbols {
     lookupNames,
     signature: JSON.stringify({ robots, unavailable, lookupNames })
   }
-  symbolCache.set(objects, symbols)
+  byUnits.set(codeUnitsKey(units), symbols)
   return symbols
 }
 

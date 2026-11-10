@@ -22,6 +22,7 @@ import HierarchyPanel from './panels/HierarchyPanel'
 import InspectorPanel from './panels/InspectorPanel'
 import ScenePanel from './panels/ScenePanel'
 import PreferencesWindow from './PreferencesWindow'
+import ProjectSettingsWindow from './ProjectSettingsWindow'
 import ScriptPicker from './scripts/ScriptPicker'
 import {
   createEmpty,
@@ -238,6 +239,7 @@ function EditorLayout(): React.JSX.Element {
       <ContextMenu />
       <ScriptPicker />
       <PreferencesWindow />
+      <ProjectSettingsWindow />
     </div>
   )
 }

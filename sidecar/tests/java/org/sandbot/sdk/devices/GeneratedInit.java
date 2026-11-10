@@ -68,6 +68,14 @@ public final class GeneratedInit {
             Check.equal(expected, actual, message);
     }
 
+    /** 시뮬레이터 출력 수 하나가 tolerance 안인지(코드 단위 리터럴 반올림·레지스터 양자화) */
+    public static void expectOutputNear(String device, String key, double expected, double tolerance) {
+        Object actual = SimTestSupport.output(device, key);
+        String message = device + " output " + key;
+        if (!(actual instanceof Number)) Check.equal(expected, actual, message);
+        else Check.near(expected, ((Number) actual).doubleValue(), tolerance, message);
+    }
+
     /** 구성의 장치마다 시뮬레이터 장치가 있는지와 그 종류 */
     public static void expectDevices(Map<String, String> kinds) {
         for (Map.Entry<String, String> e : kinds.entrySet())

@@ -38,6 +38,10 @@ import {
   testTempDir,
   type SidecarBuild
 } from './support'
+import {
+  DEFAULT_CODE_UNITS as SDK_UNITS,
+  type CodeUnits
+} from '../../src/renderer/src/scene/projectSettings'
 
 const build = await sidecarBuild()
 
@@ -73,11 +77,19 @@ const SIM_KIND = {
 const WEBCAM_SERIAL = 'A1B2C3D4'
 const LIMELIGHT_SERIAL = 'EthernetOverUsb:eth1:172.29.0.29'
 
-type Expected = [device: string, key: string, value: string | number | boolean | null]
+// tolerance가 있으면 그 안의 수(코드 단위 리터럴의 반올림·장치 레지스터 양자화), 없으면 1e-5
+type Expected = [
+  device: string,
+  key: string,
+  value: string | number | boolean | null,
+  tolerance?: number
+]
 
 type Robot = {
   className: string
   objects: SceneObjects
+  // 생성 코드의 코드 단위(프로젝트 설정). 없으면 'sdk'
+  units?: CodeUnits
   // 생성 초기화 뒤 시뮬레이터 출력
   expected: Expected[]
 }
@@ -266,7 +278,68 @@ function motorRobots(): Robot[] {
   return robots
 }
 
-const robots: Robot[] = [controlRobot(), expansionRobot(), ...motorRobots()]
+// 4. 코드 단위(프로젝트 설정)마다 같은 장착: 생성 상수의 단위가 달라도 장치가 받는 오프셋은 같다
+function unitsRobot(units: CodeUnits): Robot {
+  const className = `Units${units.length.toUpperCase()}${units.angle.toUpperCase()}Hardware`
+  const objects: SceneObjects = { robot: robotObject('robot', className, className) }
+  const place = (id: string, x: number, y: number, components: HardwareComponent[]): void => {
+    objects[id] = {
+      id,
+      name: id,
+      kind: 'part',
+      parentId: 'robot',
+      transform: { position: [x, y, 0.02], rotation: [0, 0, 0] },
+      components
+    }
+  }
+  const make = (
+    type: ComponentType,
+    id: string,
+    change: Partial<HardwareComponent>
+  ): HardwareComponent => {
+    const created = createComponent(type, [], () => id)
+    return { ...created, ...change, props: { ...created.props, ...change.props } }
+  }
+  place('xPod', -0.05, 0.1234, [make('deadWheel', 'dx', { name: 'xPod', port: 0 })])
+  place('yPod', 0.0876, -0.03, [
+    make('deadWheel', 'dy', { name: 'yPod', port: 1, props: { measures: 'strafe' } })
+  ])
+  place('pinpoint', 0, 0, [
+    make('pinpoint', 'pp', { name: 'pinpoint', port: 1, props: { xPod: 'xPod', yPod: 'yPod' } })
+  ])
+  place('otos', 0.1111, 0.0777, [
+    make('otos', 'ot', { name: 'otos', port: 2, props: { mountingAngle: 33.3 } })
+  ])
+  return {
+    className,
+    objects,
+    units,
+    expected: [
+      // Pinpoint: X 포드의 옆 위치·Y 포드의 앞 위치(mm). 인치 리터럴(0.001 in)의 반올림까지
+      ['pinpoint', 'xOffsetMm', 123.4, 0.02],
+      ['pinpoint', 'yOffsetMm', 87.6, 0.02],
+      // OTOS: SDK 샘플 규약(X 오른쪽, Y 앞, m·rad). 레지스터 LSB 0.3 mm·0.0055°
+      ['otos', 'offsetX', -0.0777, 5e-4],
+      ['otos', 'offsetY', 0.1111, 5e-4],
+      ['otos', 'offsetH', (33.3 * Math.PI) / 180, 2e-4]
+    ]
+  }
+}
+
+const UNIT_ROBOTS: CodeUnits[] = [
+  { length: 'sdk', angle: 'sdk' },
+  { length: 'mm', angle: 'deg' },
+  { length: 'cm', angle: 'rad' },
+  { length: 'm', angle: 'rad' },
+  { length: 'in', angle: 'sdk' }
+]
+
+const robots: Robot[] = [
+  controlRobot(),
+  expansionRobot(),
+  ...motorRobots(),
+  ...UNIT_ROBOTS.map(unitsRobot)
+]
 
 function javaLiteral(value: string | number | boolean | null): string {
   if (value === null) return 'null'
@@ -280,9 +353,10 @@ function writeGenerated(dir: string): { testClass: string; methods: string[] } {
   const methods: string[] = []
   const lines: string[] = []
   for (const robot of robots) {
-    const errors = validateScene(robot.objects).filter((issue) => issue.severity === 'error')
+    const units = robot.units ?? SDK_UNITS
+    const errors = validateScene(robot.objects, units).filter((issue) => issue.severity === 'error')
     expect(errors, robot.className).toEqual([])
-    const { files, blocked } = generateTeamCodeFiles(robot.objects)
+    const { files, blocked } = generateTeamCodeFiles(robot.objects, units)
     expect(blocked).toBe(false)
     let xmlPath = ''
     for (const file of files) {
@@ -314,9 +388,10 @@ function writeGenerated(dir: string): { testClass: string; methods: string[] } {
       '        java.util.Map<String, String> kinds = new java.util.LinkedHashMap<>();',
       ...kinds.map((line) => `        ${line}`),
       '        GeneratedInit.expectDevices(kinds);',
-      ...robot.expected.map(
-        ([device, key, value]) =>
-          `        GeneratedInit.expectOutput(${JSON.stringify(device)}, ${JSON.stringify(key)}, ${javaLiteral(value)});`
+      ...robot.expected.map(([device, key, value, tolerance]) =>
+        tolerance === undefined
+          ? `        GeneratedInit.expectOutput(${JSON.stringify(device)}, ${JSON.stringify(key)}, ${javaLiteral(value)});`
+          : `        GeneratedInit.expectOutputNear(${JSON.stringify(device)}, ${JSON.stringify(key)}, ${value}, ${tolerance});`
       ),
       '        GeneratedInit.stop();',
       '    }'
@@ -529,7 +604,7 @@ describe.skipIf(build === null)('사이드카 장치', () => {
     async () => {
       const dir = testTempDir('devices-runtime')
       const robot = controlRobot()
-      const { files } = generateTeamCodeFiles(robot.objects)
+      const { files } = generateTeamCodeFiles(robot.objects, SDK_UNITS)
       let configXml = ''
       for (const file of files) {
         const path = join(dir, 'TeamCode', ...file.path.split('/'))
