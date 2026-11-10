@@ -7,6 +7,10 @@ import {
   type LibraryReason
 } from '../../../shared/libraries'
 import type { FinishReason, SimErrorKind } from '../../../shared/sidecarProtocol'
+import type { FieldOverlap } from '../../../shared/sim/seasons/fieldGeometry'
+import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
+import { resolveSeason } from '../../../shared/sim/seasons/seasons'
+import { overlapTargetLabel } from '../field/fieldLabels'
 import type {
   DiagnosticHint,
   ListRegisteredFailureCode,
@@ -77,6 +81,19 @@ export type ConsoleBody =
   // Road Runner 튜닝 OpMode가 결과 JSON을 모의 저장소에 썼다(simNotice rrTuningSaved). path는 모의 저장소 기준 경로,
   // file은 메인이 더한 절대 경로(모르면 null). 더블클릭·Enter로 파일 관리자에서 보인다.
   | { type: 'rrTuning'; path: string; file: string | null }
+  // 몸체 충돌 짝이 실행 중 1 mm 넘게 파고들었다(simNotice collisionOverlap, 5). body는 몸체 이름(run.colliders에서, 없으면 '' →
+  // collider.self.chassis), target은 푼 대상(벽·구조물은 그 시즌의 이름, 몸체는 이름, 풀지 못하면 원래 글자), season은 실행의
+  // 시즌(대상 이름을 그릴 때 번역한다)
+  | {
+      type: 'collisionOverlap'
+      body: string
+      target:
+        | FieldOverlap
+        | { kind: 'floor' }
+        | { kind: 'body'; name: string }
+        | { kind: 'raw'; text: string }
+      season: SeasonId
+    }
 
 export type ConsoleEntry = ConsoleBody & {
   id: number
@@ -134,6 +151,7 @@ export function consoleLevel(
       return libraryLevel(body.library)
     case 'gradle':
     case 'linkWarnings':
+    case 'collisionOverlap':
       return 'warning'
   }
 }
@@ -249,6 +267,30 @@ export function entryHeadline(entry: ConsoleEntry, t: TFunction): string {
       })
     case 'rrTuning':
       return t('console.notices.sim.rrTuningSaved', { file: entry.file ?? entry.path })
+    case 'collisionOverlap':
+      return t('console.notices.sim.collisionOverlap', {
+        body: entry.body || t('collider.self.chassis'),
+        target: collisionTargetText(entry, t)
+      })
+  }
+}
+
+// 몸체 충돌 겹침 대상의 글자: 벽·구조물은 그 시즌의 이름(field/fieldLabels.ts), 바닥은 collider.target.floor, 몸체는 이름
+function collisionTargetText(
+  entry: Extract<ConsoleBody, { type: 'collisionOverlap' }>,
+  t: TFunction
+): string {
+  const { target } = entry
+  switch (target.kind) {
+    case 'wall':
+    case 'structure':
+      return overlapTargetLabel(resolveSeason(entry.season), [target], t)
+    case 'floor':
+      return t('collider.target.floor')
+    case 'body':
+      return target.name
+    case 'raw':
+      return target.text
   }
 }
 

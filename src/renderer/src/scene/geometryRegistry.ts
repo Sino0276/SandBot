@@ -1,6 +1,6 @@
 import type { BufferGeometry } from 'three'
 import { meshMassState } from '../cad/meshMass'
-import { cadRootIdOf } from '../cad/stepImport'
+import { cadRootIdOf, type MeshHull } from '../cad/stepImport'
 import type { CadMassSummary, MeshMassProps, SourceNode } from '../mass/types'
 import { forgetAllBvh, forgetBvh, prepareBvh } from './meshBvh'
 import type { SceneObjects } from './model'
@@ -9,8 +9,9 @@ import { useSceneStore } from './sceneStore'
 // CAD 메시 형상 보관소. 씬 스토어에는 직렬화할 수 있는 데이터만 두고, 큰 형상은 id로 여기서 찾는다.
 const geometries = new Map<string, BufferGeometry>()
 
-// 형상과 같은 id·수명으로 두는 메시 정보(spec-3a §1): 질량 성질과 원래 이름 경로(cad/stepImport.ts의 meshSourcePaths)
-export type MeshInfo = { mass?: MeshMassProps; sourcePath?: readonly SourceNode[] }
+// 형상과 같은 id·수명으로 두는 메시 정보(spec-3a §1): 질량 성질과 원래 이름 경로(cad/stepImport.ts의 meshSourcePaths), 메시
+// 볼록 껍질(spec-5 §5.3, STEP 워커가 만든다)
+export type MeshInfo = { mass?: MeshMassProps; sourcePath?: readonly SourceNode[]; hull?: MeshHull }
 const meshInfo = new Map<string, MeshInfo>()
 // 형상을 읽는 중이거나 읽을 차례를 기다리는 CAD 루트 → 그 읽기의 표식. 읽기마다 다른 객체라 늦게 끝난 읽기가 새
 // 읽기의 상태를 지우지 않는다.
@@ -62,6 +63,12 @@ export function meshMassProps(id: string): MeshMassProps | undefined {
 // 이름을 바꾸거나 옮겨도 남는다.
 export function meshSourcePath(id: string): readonly SourceNode[] | undefined {
   return meshInfo.get(id)?.sourcePath
+}
+
+// 메시 볼록 껍질(spec-5 §5.3). 형상과 같은 id·수명이라 형상을 해제하면 함께 지워진다. 등록하는 곳은 5 B가 더한다(계약
+// 커밋에서는 늘 undefined)
+export function meshHull(id: string): MeshHull | undefined {
+  return meshInfo.get(id)?.hull
 }
 
 // CAD 루트를 읽는 중으로 둔다(cadMassSummary의 pendingMeshes). 형상을 읽는 동안과, 프로젝트를 열 때 차례를 기다리는

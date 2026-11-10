@@ -623,7 +623,9 @@ function worldFor(
       sensors: [],
       sensorExclusions: new Map(),
       cameras: [],
-      cameraExclusions: new Map()
+      cameraExclusions: new Map(),
+      colliders: [],
+      ignoredPairs: []
     }
   }
 }

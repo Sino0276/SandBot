@@ -971,6 +971,17 @@ const en: Messages = {
         "Your own robot's {{part}} blocks the view of webcam {{name}}. The simulator does not see your own robot, so the visible tags differ from the real robot.",
       worldWheelOnJoint:
         'Wheel {{name}} is on joint {{joint}}, but the simulator computes it as attached to the robot body (in the edit pose).',
+      // Body collision (5, play/worldColliders.ts and playActions worldFor)
+      worldColliderPending:
+        '{{count}} meshes of {{name}} are still loading or could not be read, so its collision shape is built without them.',
+      worldColliderDegenerate:
+        '{{count}} collision shapes of {{name}} are flat or too thin (under 1 mm) to make a convex hull, so they are not used.',
+      worldTooManyColliders:
+        'The colliders of {{name}} exceed the simulator limit ({{max}} per body), so only the first {{max}} are used.',
+      worldTooManyWorldColliders:
+        'The number of colliders exceeds the simulator limit ({{max}}), so only the first {{max}} in body order are used.',
+      worldJointStartOverlap:
+        'Joint body {{name}} overlaps {{targets}} at the start pose. Overlaps are not pushed apart.',
       worldGenerationStale:
         'Device names may differ from the generated configuration, so the wheels and joints may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
@@ -1010,6 +1021,13 @@ const en: Messages = {
           'The robot centre of mass went outside what the wheels can support (a real robot may tilt or tip over). The simulator only computes on the floor plane, so the robot does not tip.',
         wheelLift:
           'One or more wheels stayed off the floor with no load for more than 0.1 s. Those wheels spin freely meanwhile.',
+        // 5: body collision (once per run)
+        collisionOverlap:
+          '{{body}} penetrated {{target}} by more than 1 mm (shown once per run). For a fast-spinning body, make its Collider slightly larger.',
+        collisionLimit:
+          'Collision contacts exceeded the per-step row limit, so some contacts were dropped (shown once per run). Use fewer or merged Colliders.',
+        collisionLift:
+          "A mechanism pushes on the floor or a wall top harder than the robot's weight. A real robot would lift; the simulator does not (shown once per run).",
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -2059,6 +2077,102 @@ const en: Messages = {
       massPending: 'The mass of {{count}} meshes of the body still loading is missing.',
       cannotHold:
         'The stall torque (force) is less than the load in the edit pose, so the joint cannot hold.'
+    }
+  },
+  // Colliders (Unity Collider, simulator settings, editor/collider, spec-5). The Unity component names in card titles are not
+  // translated. Lengths, depths and errors are formatted in the display length unit (formatLength).
+  collider: {
+    addOptions: {
+      box: 'Box Collider',
+      capsule: 'Capsule Collider',
+      mesh: 'Mesh Collider'
+    },
+    titles: {
+      box: 'Box Collider',
+      capsule: 'Capsule Collider',
+      mesh: 'Mesh Collider'
+    },
+    simulationOnly: 'Simulator',
+    remove: 'Remove',
+    enabled:
+      'When off, this Collider does not collide. A body with a disabled Collider still does not use the automatic convex hull.',
+    center: 'Center',
+    centerHint: "Local coordinates of this object (from its pivot, along the object's own axes).",
+    size: 'Size',
+    radius: 'Radius',
+    height: 'Height',
+    heightHint: 'The full height including the hemispheres. Below twice the radius it is a sphere.',
+    direction: 'Direction',
+    directions: {
+      x: 'X-Axis',
+      y: 'Y-Axis',
+      z: 'Z-Axis'
+    },
+    convex: 'Convex',
+    convexHint:
+      'Only convex Mesh Colliders are supported. Split concave shapes into several Colliders.',
+    vertexLimit: 'Vertex Limit',
+    vertexLimitHint:
+      'The vertex limit of the convex hull (8–64). Higher follows the mesh more closely but costs more computation.',
+    friction: 'Friction',
+    frictionHint: 'Leave empty for 0.4. The two touching surfaces are averaged (Unity Average).',
+    fitChildren: 'Fit to Children',
+    fitChildrenHint:
+      'Fits the center and size to the bounding box of the meshes of this object and its children (Unity Fit to Children).',
+    fitChildrenNone: 'There are no child shapes to fit.',
+    fitChildrenPending: 'Fits without the {{count}} meshes that are still loading.',
+    cadAxes: 'Axes: CAD file axes (up = {{up}}, forward = {{forward}})',
+    hull: 'Convex hull {{points}} points · error about {{error}}',
+    hullPending: 'The meshes are still loading, so the convex hull is not built yet.',
+    hullNone: 'This object and its children have no meshes of this body, so it does not collide.',
+    hullDegenerate:
+      'The mesh is flat or too thin (under 1 mm) to make a convex hull, so it does not collide.',
+    hullErrorLarge:
+      'The convex hull is up to about {{error}} smaller than the mesh. Raise the vertex limit or split the Collider per part.',
+    orphan:
+      'Colliders outside a robot are not used by the simulator (they are not static obstacles).',
+    bodyOf: 'Collider of the body of joint {{name}}',
+    bodyOfChassis: 'Collider of the robot body (chassis)',
+    meshesInOtherBody:
+      'The child meshes belong to the body of joint {{name}}. Attach it to the joint object or its children.',
+    replacesAuto:
+      'When {{body}} has a Collider, the automatic convex hull is not used. This body collides only with its Colliders.',
+    runningHint: 'From the next INIT. The Scene view shows the shapes from when the run started.',
+    tooMany: 'An object can have up to {{max}} Colliders.',
+    // Body collision section of the Rigidbody and Articulation Body cards
+    body: {
+      title: 'Collision',
+      colliders: 'Collision shape: {{count}} Colliders',
+      disabled: 'Collision shape: all Colliders are off, so it does not collide',
+      auto: 'Collision shape: automatic convex hull {{points}} points · error about {{error}}',
+      autoHint: 'For more accuracy, add a Mesh Collider (vertex limit 64) or split it per part.',
+      fallback: 'Collision shape: outline box (the meshes are not loaded yet)',
+      none: 'Collision shape: none (this body has no meshes)',
+      pending: '{{count}} meshes that are still loading are not in the collision shape.',
+      fixedBase:
+        'The robot has no wheels, so the chassis is fixed. It does not collide with the field, only with the joint bodies.',
+      floorTouch:
+        'It touches the floor in the edit pose. Floor friction may slow the robot during the run.'
+    },
+    // Self collision (between bodies of the same robot)
+    self: {
+      title: 'Self collision',
+      adjacentHint:
+        'Directly connected parent and child bodies never collide (as in Unity ArticulationBody).',
+      adjacentParent: 'Never collides with its parent body {{name}}',
+      ignoredTitle: 'Ignored because they overlap from the start',
+      pair: '{{a}} ↔ {{b}} (overlap {{depth}})',
+      force: 'Collide anyway',
+      forceHint:
+        'Makes the two bodies collide even though they overlap in the edit pose. Overlaps are not pushed apart, so the bodies may stay locked where they start.',
+      none: 'No body pairs overlap in the edit pose.',
+      chassis: 'Robot body',
+      staleForced: '{{count}} [Collide anyway] settings for pairs that no longer overlap',
+      clearStale: 'Clear'
+    },
+    // Collision targets (Console collisionOverlap and start overlaps): walls and structures use the field.* names
+    target: {
+      floor: 'Floor'
     }
   },
   // Season field (spec-4ab). Season data keys are the keys (src/shared/sim/seasons/). The season name BIOBUZZ is not translated.

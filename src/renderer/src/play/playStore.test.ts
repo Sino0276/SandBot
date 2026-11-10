@@ -570,6 +570,70 @@ describe('시뮬레이터 자세·잔상·센서 값·안내', () => {
   })
 })
 
+// 5: 몸체 충돌 겹침 알림(spec-5 §5.7)
+describe('simNotice collisionOverlap', () => {
+  const withColliders = (): PlayData =>
+    data({
+      run: {
+        ...data().run!,
+        field: { season: 'biobuzz', hiveTipped: [false, false] },
+        colliders: [
+          { body: -1, objectId: 'R', name: 'Robot', colliders: [] },
+          { body: 0, objectId: 'L', name: 'Lift', colliders: [] },
+          { body: 1, objectId: 'A', name: 'Arm', colliders: [] }
+        ]
+      }
+    })
+  const notice = (params: Record<string, string>): PlayEvent => ({
+    type: 'simNotice',
+    runId: 'r1',
+    tNanos: 11,
+    code: 'collisionOverlap',
+    params
+  })
+
+  it.each([
+    [{ body: '1', target: 'wall:y-' }, 'Arm', { kind: 'wall', wall: 'y-' }],
+    [{ body: '-1', target: 'structure:11' }, 'Robot', { kind: 'structure', index: 11 }],
+    [{ body: '0', target: 'floor' }, 'Lift', { kind: 'floor' }],
+    [{ body: '1', target: 'body:-1' }, 'Arm', { kind: 'body', name: 'Robot' }],
+    [{ body: '1', target: 'body:7' }, 'Arm', { kind: 'raw', text: 'body:7' }],
+    [{ body: '9', target: 'wall:z' }, '', { kind: 'raw', text: 'wall:z' }],
+    [{ target: 'floor' }, '', { kind: 'floor' }]
+  ])('params %o → 몸체 %s, 대상 %o', (params, body, target) => {
+    const next = apply(withColliders(), notice(params))
+    expect(next.entries).toHaveLength(1)
+    expect(next.entries[0]).toMatchObject({
+      type: 'collisionOverlap',
+      body,
+      target,
+      season: 'biobuzz',
+      level: 'warning',
+      tNanos: 11
+    })
+  })
+
+  it('run.colliders가 비어도 동작하고, 한도·들림 알림은 기본 경로다', async () => {
+    const next = apply(data(), notice({ body: '0', target: 'floor' }))
+    expect(next.entries[0]).toMatchObject({ type: 'collisionOverlap', body: '', season: 'none' })
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'ko',
+      resources: { ko: { translation: ko } },
+      interpolation: { escapeValue: false }
+    })
+    for (const code of ['collisionLimit', 'collisionLift'] as const) {
+      const other = apply(data(), { type: 'simNotice', runId: 'r1', tNanos: 1, code, params: {} })
+      expect(other.entries[0]).toMatchObject({ type: 'notice', key: `sim.${code}`, params: {} })
+      expect(entryHeadline(other.entries[0], instance.t)).toBe(ko.console.notices.sim[code])
+    }
+  })
+
+  it('newRun의 colliders 기본은 빈 목록이다', () => {
+    expect(data().run!.colliders).toEqual([])
+  })
+})
+
 describe('라이브러리 진행·보고·링크 검사', () => {
   const progress: PlayEvent = {
     type: 'libraryProgress',

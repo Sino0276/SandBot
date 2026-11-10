@@ -586,7 +586,9 @@ describe('buildWorldSpec', () => {
       sensors: [],
       sensorExclusions: new Map(),
       cameras: [],
-      cameraExclusions: new Map()
+      cameraExclusions: new Map(),
+      colliders: [],
+      ignoredPairs: []
     }
     expect(buildWorldSpec(objects, 'FL', SETTINGS)).toEqual(none)
     expect(buildWorldSpec(objects, 'nope', SETTINGS)).toEqual(none)
@@ -1028,3 +1030,18 @@ function rounded(point: { x: number; y: number }): { x: number; y: number } {
   const r = (value: number): number => Math.round(value * 1e9) / 1e9 + 0
   return { x: r(point.x), y: r(point.y) }
 }
+
+// 5: 충돌 형상 칸(spec-5 §5.5, K8). 계약 커밋에서는 형상 조회를 받아도 넣지 않는다(5 B가 넣는다)
+describe('buildWorldSpec 충돌 형상(K8)', () => {
+  it('형상 조회가 없으면 세계 설명에 충돌 키가 없고 colliders·ignoredPairs가 빈 목록이다', () => {
+    const result = buildWorldSpec(mecanumRobot(), 'R', SETTINGS, null, null, null)
+    expect(result.spec).not.toBeNull()
+    expect('colliders' in result.spec!.robot).toBe(false)
+    expect('collisionIgnore' in result.spec!).toBe(false)
+    expect(result.spec!.joints.every((j) => !('colliders' in j))).toBe(true)
+    expect(result.colliders).toEqual([])
+    expect(result.ignoredPairs).toEqual([])
+    // 여섯째 인자를 주지 않은 것과 같다
+    expect(buildWorldSpec(mecanumRobot(), 'R', SETTINGS)).toEqual(result)
+  })
+})

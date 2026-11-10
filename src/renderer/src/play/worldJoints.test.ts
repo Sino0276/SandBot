@@ -17,6 +17,7 @@ import { defaultWheel } from '../scene/wheel'
 import {
   buildWorldJoints,
   FALLBACK_BODY_MASS,
+  jointBodyFrames,
   MAX_JOINT_SWITCHES,
   MIN_BODY_INERTIA,
   motorComponentParams
@@ -781,5 +782,38 @@ describe('buildWorldSpec의 관절', () => {
     expect(spec!.wheels[0].motor).toBe('lift')
     expect(spec!.joints[0].drive).toEqual({ kind: 'none' })
     expect(keys(warnings)).toContain('worldJointMotorOnWheel')
+  })
+})
+
+// 5: 몸체 나누기를 꺼낸 순수 함수(spec-5 §5.1, B4): buildWorldJoints와 같은 관절·몸체·틀
+describe('jointBodyFrames', () => {
+  it('buildWorldJoints의 관절 순서·몸체·관절 틀과 같고, 부모 몸체를 낸다', () => {
+    const objects = liftRobot()
+    const built = build(objects)
+    const frames = jointBodyFrames(objects, 'R')
+    expect(frames.objectIds).toEqual(built.objectIds)
+    expect([...frames.bodyOf]).toEqual([...built.bodyOf])
+    expect(frames.frames.map((m) => m.elements)).toEqual(built.frames.map((m) => m.elements))
+    expect(frames.parents).toEqual(built.joints.map((j) => j.parent))
+  })
+
+  it(`관절은 ${MAX_WORLD_JOINTS}개까지(넘는 관절의 하위는 가장 가까운 남은 관절), 없는 로봇은 빈 결과`, () => {
+    const objects: SceneObjects = { R: liftRobot().R }
+    let parent = 'R'
+    for (let i = 0; i < MAX_WORLD_JOINTS + 2; i++) {
+      objects[`j${i}`] = group(`j${i}`, parent, [0, 0, 0.01], { joint: joint() })
+      parent = `j${i}`
+    }
+    const frames = jointBodyFrames(objects, 'R')
+    const built = build(objects)
+    expect(frames.objectIds).toEqual(built.objectIds)
+    expect([...frames.bodyOf]).toEqual([...built.bodyOf])
+    expect(frames.bodyOf.get(`j${MAX_WORLD_JOINTS + 1}`)).toBe(MAX_WORLD_JOINTS - 1)
+    expect(jointBodyFrames(objects, 'nope')).toEqual({
+      objectIds: [],
+      parents: [],
+      bodyOf: new Map([['nope', -1]]),
+      frames: []
+    })
   })
 })

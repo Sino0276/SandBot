@@ -164,7 +164,9 @@ describe('withRunField(B3·B9·B12)', () => {
       sensors: [],
       sensorExclusions: new Map(),
       cameras: [],
-      cameraExclusions: new Map()
+      cameraExclusions: new Map(),
+      colliders: [],
+      ignoredPairs: []
     }
     expect(withRunField(none, { season: 'x' }, runFieldOf({ season: 'x' }, START), keyT)).toBe(none)
   })

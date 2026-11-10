@@ -6,6 +6,7 @@ import ko from '../i18n/locales/ko'
 import type { SceneObjects } from '../scene/model'
 import {
   consoleCounts,
+  entryHeadline,
   diagnosticLocation,
   entryDetailLines,
   entrySummary,
@@ -355,7 +356,7 @@ describe('세계 설명 경고(console.notices.world*)', () => {
     ])
   })
 
-  it('목록마다의 한도 문장은 ko·en에 같이 있고 한도만 받는다', () => {
+  it('목록마다의 한도 문장은 ko·en에 같이 있고 한도만 받는다(몸체 충돌체 한도는 몸체 이름도)', () => {
     const keys = Object.keys(ko.console.notices).filter((key) => key.startsWith('worldTooMany'))
     expect(keys).toEqual([
       'worldTooManyMotors',
@@ -367,11 +368,15 @@ describe('세계 설명 경고(console.notices.world*)', () => {
       'worldTooManyJoints',
       'worldTooManyDistanceSensors',
       'worldTooManyColorSensors',
-      'worldTooManyCameras'
+      'worldTooManyCameras',
+      'worldTooManyColliders',
+      'worldTooManyWorldColliders'
     ])
     for (const key of keys) {
+      const params: Record<string, string | number> =
+        key === 'worldTooManyColliders' ? { name: 'Arm', max: 32 } : { max: 32 }
       const entry = consoleEntry(
-        { type: 'notice', key: key as ConsoleNoticeKey, params: { max: 32 } },
+        { type: 'notice', key: key as ConsoleNoticeKey, params },
         null,
         'warning'
       )
@@ -381,5 +386,39 @@ describe('세계 설명 경고(console.notices.world*)', () => {
         expect(text).not.toMatch(/\{\{|console\.notices/)
       }
     }
+  })
+})
+
+// 5: 몸체 충돌 겹침(simNotice collisionOverlap)의 Console 본문(spec-5 §5.7, K11)
+describe('collisionOverlap 본문', () => {
+  const overlap = (
+    body: string,
+    target: Extract<ConsoleEntry, { type: 'collisionOverlap' }>['target'],
+    season: 'biobuzz' | 'none' = 'biobuzz'
+  ): ConsoleEntry => consoleEntry({ type: 'collisionOverlap', body, target, season }, 5_000_000)
+
+  it('벽·구조물·바닥·몸체·원래 글자를 ko·en으로 번역하고 수준은 경고다', () => {
+    const wall = overlap('Arm', { kind: 'wall', wall: 'y-' })
+    expect(wall.level).toBe('warning')
+    expect(entryHeadline(wall, t)).toBe(
+      t('console.notices.sim.collisionOverlap', { body: 'Arm', target: '빨강 벽' })
+    )
+    expect(entryHeadline(wall, t)).toContain('Arm이(가) 빨강 벽에 1 mm 넘게')
+    expect(entryHeadline(wall, tEn)).toContain('Arm penetrated Red wall by more than 1 mm')
+    expect(entryHeadline(overlap('Arm', { kind: 'structure', index: 11 }), t)).toContain('FLOWER에')
+    expect(entryHeadline(overlap('Arm', { kind: 'floor' }), tEn)).toContain('penetrated Floor')
+    expect(entryHeadline(overlap('Arm', { kind: 'body', name: 'Lift' }), t)).toContain('Lift에')
+    expect(entryHeadline(overlap('Arm', { kind: 'raw', text: 'wall:q' }), t)).toContain('wall:q에')
+    // 'none' 시즌의 벽은 일반 이름, 몸체 이름이 비면 로봇 몸체
+    expect(entryHeadline(overlap('', { kind: 'wall', wall: 'x+' }, 'none'), tEn)).toContain(
+      'Robot body penetrated Field wall'
+    )
+  })
+
+  it('같은 항목을 언어만 바꿔 다시 번역한다(스토어에는 번역하지 않은 값)', () => {
+    const entry = overlap('Arm', { kind: 'floor' })
+    expect(entryHeadline(entry, t)).toContain('바닥')
+    expect(entryHeadline(entry, tEn)).toContain('Floor')
+    expect(JSON.stringify(entry)).not.toContain('바닥')
   })
 })

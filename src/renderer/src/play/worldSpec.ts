@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { Vector3 } from 'three'
 import type { PlaySettings } from '../../../shared/play'
+import { startOverlaps } from '../../../shared/sim/collision3d'
 import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { NOMINAL_VOLTAGE } from '../../../shared/sim/motorOutputs'
@@ -64,6 +65,8 @@ import {
   type WorldSensorEntry
 } from './worldSensors'
 import { buildWorldCameras, type CameraExclusion, type WorldCameraEntry } from './worldCameras'
+import type { IgnoredPair, WorldColliderBody } from './worldColliders'
+import type { ColliderShapeLookup } from '../scene/meshHull'
 
 // 시뮬레이터의 세계 설명(src/shared/sim/worldSpec.ts)을 씬에서 만든다(INIT 때 고른 로봇, 순수 함수).
 // 바퀴는 SceneObject.wheel, 모터·오도메트리는 하드웨어 컴포넌트, 메커니즘 관절은 SceneObject.joint(play/worldJoints.ts)에서
@@ -431,6 +434,10 @@ export type WorldSpecResult = {
   cameras: WorldCameraEntry[]
   // 세계 설명에서 뺀 웹캠 컴포넌트 id → 이유(play/worldCameras.ts cameraExclusions, spec이 null이어도 센다)
   cameraExclusions: Map<string, CameraExclusion>
+  // 몸체마다 충돌 형상(5, play/worldColliders.ts, 실행 상태 run.colliders가 이것이다). 형상 조회가 없거나 spec이 null이면 빈 목록
+  colliders: WorldColliderBody[]
+  // 편집 자세에서 겹쳐 무시하는 자기 몸체 짝(5, [그래도 충돌] 포함, 인스펙터 목록). 형상 조회가 없거나 spec이 null이면 빈 목록
+  ignoredPairs: IgnoredPair[]
 }
 
 const emptyResult = (
@@ -445,7 +452,9 @@ const emptyResult = (
   sensors: [],
   sensorExclusions,
   cameras: [],
-  cameraExclusions
+  cameraExclusions,
+  colliders: [],
+  ignoredPairs: []
 })
 
 // 세계 설명을 만들어 관절을 구동하는 모터 id를 센다(문서·로봇마다 한 번, 씬 문서는 불변이라 문서로 캐시한다)
@@ -505,13 +514,17 @@ export function robotNeedsMassModel(objects: SceneObjects, robotId: string): boo
 // bounds는 형상 조회다(spec-4c §3): 거리·컬러 센서 원점을 하우징 앞면에 둔다. null이면 피벗이고 형상 경고를 내지 않는다
 // (로봇 카드 경로. INIT은 playActions.worldFor가 형상 경고를 withSensorWarnings로 더한다). 센서 잡음은 끔으로 둔다
 // (worldFor가 withSensorNoise로 넣는다).
+// shapes는 충돌 형상 조회다(spec-5 §5.5): null이면 충돌 형상을 넣지 않는다(세계 설명에 키가 없음, 로봇 카드·motorDrivesJoint
+// 경로). 계약 커밋에서는 아직 쓰지 않는다(5 B가 buildCollisionModel로 넣는다).
 export function buildWorldSpec(
   objects: SceneObjects,
   robotId: string,
   settings: Pick<PlaySettings, 'batteryVoltage'>,
   mass: MassModel | null = null,
-  bounds: LocalBoundsLookup | null = null
+  bounds: LocalBoundsLookup | null = null,
+  shapes: ColliderShapeLookup | null = null
 ): WorldSpecResult {
+  void shapes
   const robot = objects[robotId]
   if (!robot || robot.kind !== 'robot') return emptyResult([])
   const warnings: WorldWarning[] = []
@@ -747,7 +760,9 @@ export function buildWorldSpec(
     sensors: sensors.sensors,
     sensorExclusions: sensors.exclusions,
     cameras: cameras.entries,
-    cameraExclusions: cameras.exclusions
+    cameraExclusions: cameras.exclusions,
+    colliders: [],
+    ignoredPairs: []
   }
 }
 
@@ -766,12 +781,16 @@ export function runFieldOf(doc: FieldDoc, hiveState: HiveState): PlayRunField {
 // - 바퀴가 있는 로봇(부유 기저, 접촉이 있음)의 시작 자세가 벽·solid 구조물과 겹침: worldStartOverlap { targets }. 실행은 막지
 //   않는다(걸친 채로는 밀어내지 않는다). 바퀴 없는 로봇은 고정 기저라 접촉이 없으므로 내지 않는다.
 // targets는 대상 이름(field/fieldLabels.ts)을 t로 옮긴 글자다.
+// overlaps는 3D 경로(spec.robot.colliders가 있음)의 시작 겹침 판정이다(spec-5 §5.6, 시험이 가짜를 넘긴다). 계약 커밋에서는 아직
+// 쓰지 않는다(5 B가 3D 경로의 섀시·관절 몸체 경고로 넣는다).
 export function withRunField(
   result: WorldSpecResult,
   doc: FieldDoc,
   field: PlayRunField,
-  t: TFunction
+  t: TFunction,
+  overlaps: typeof startOverlaps = startOverlaps
 ): WorldSpecResult {
+  void overlaps
   if (!result.spec) return result
   const spec: WorldSpec = {
     ...result.spec,

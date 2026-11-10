@@ -1,4 +1,5 @@
 import type { MassSettings, RigidbodySettings } from '../mass/types'
+import type { ColliderSettings, RobotCollisionSettings } from './collider'
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 
 export type Vec3 = [number, number, number]
@@ -114,6 +115,10 @@ export type SceneObject = {
   // 메커니즘 관절(Unity ArticulationBody, group·assembly·part·CAD 루트에, robot·바퀴 오브젝트에는 두지 않는다,
   // PROJECT_VERSION 8). 시뮬레이터 전용 설정이라 생성 코드·구성 XML·검증과 관계없다.
   joint?: JointSettings
+  // 충돌체(Unity Collider, 모든 kind, PROJECT_VERSION 13, scene/collider.ts). 비면 키를 두지 않는다
+  colliders?: ColliderSettings[]
+  // 자기 충돌 설정(robot에만, PROJECT_VERSION 13)
+  collision?: RobotCollisionSettings
 }
 
 // 관절(spec-3b §2). 편집 자세가 q = 0이다. 회전 관절은 rad, 직선 관절은 m.

@@ -50,6 +50,16 @@ import {
   sanitizeRigidbody
 } from './massSettings'
 import { canHaveJoint, sameJoint, sanitizeJoint } from './joint'
+import {
+  canHaveColliders,
+  canHaveRobotCollision,
+  sameColliders,
+  sameRobotCollision,
+  sanitizeColliders,
+  sanitizeRobotCollision,
+  type ColliderSettings,
+  type RobotCollisionSettings
+} from './collider'
 import { canHaveWheel, sameWheel, sanitizeWheel } from './wheel'
 
 // CAD를 불러오기 전까지 보여 주는 임시 씬: 18 in 상자 로봇과 앞쪽에 달린 웹캠
@@ -84,7 +94,9 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
       !object.wheel &&
       !object.mass &&
       !object.rigidbody &&
-      !object.joint
+      !object.joint &&
+      !object.colliders?.length &&
+      !object.collision
   )
 }
 
@@ -229,6 +241,13 @@ type SceneState = {
   // 붙일 수 없는 오브젝트(로봇, 바퀴가 있는 오브젝트, scene/joint.ts canHaveJoint)면 그대로 두고, 범위 밖 수는 기본값으로
   // 바꾼다(sanitizeJoint). 바뀐 것이 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   setJoint: (id: string, settings: JointSettings | null) => void
+  // 충돌체(Unity Collider, scene/collider.ts) 목록을 바꾼다. 비거나 null이면 키를 지운다. set() 한 번이라 실행 취소 한 단계다.
+  // 없는 오브젝트·붙일 수 없는 오브젝트(canHaveColliders)면 그대로 두고, 범위 밖 수는 자른다(sanitizeColliders). 바뀐 것이
+  // 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  setColliders: (id: string, colliders: readonly ColliderSettings[] | null) => void
+  // 로봇의 자기 충돌 설정([그래도 충돌] 짝). robot에만, 정리(sanitizeRobotCollision)한 결과가 비거나 null이면 키를 지운다.
+  // 바뀐 것이 없으면 그대로 둔다.
+  setRobotCollision: (id: string, settings: RobotCollisionSettings | null) => void
   // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
   // (없는 오브젝트, 이미 있는 경로, 없는 연결, 연결할 수 없는 경로) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   // 같은 경로를 이미 연결했으면 더하지 않는다. 경로는 NFC로 바꿔 둔다(프로젝트 파일 읽기와 같은 규칙).
@@ -461,6 +480,27 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       if (sameJoint(object.joint, joint)) return state
       const next: SceneObject = { ...object, joint }
       if (!joint) delete next.joint
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setColliders: (id, list) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object || !canHaveColliders(object)) return state
+      const sanitized = list ? sanitizeColliders(list) : []
+      const colliders = sanitized.length > 0 ? sanitized : undefined
+      if (sameColliders(object.colliders, colliders)) return state
+      const next: SceneObject = { ...object, colliders }
+      if (!colliders) delete next.colliders
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setRobotCollision: (id, settings) =>
+    set((state) => {
+      const object = state.objects[id]
+      if (!object || !canHaveRobotCollision(object)) return state
+      const collision = (settings && sanitizeRobotCollision(settings)) ?? undefined
+      if (sameRobotCollision(object.collision, collision)) return state
+      const next: SceneObject = { ...object, collision }
+      if (!collision) delete next.collision
       return { objects: { ...state.objects, [id]: next } }
     }),
   addScriptLink: (objectId, input) =>

@@ -6,12 +6,15 @@
 
 import { isCameraModelId, type CameraModelId } from './cameraData'
 import { symmetricEigen3 } from './drivetrain'
+import { canonicalHull, HULL_MAX_COORD, MAX_HULL_POINTS } from './hull'
 import type { SeasonId } from './seasons/fieldSpec'
 import { isSeasonId } from './seasons/seasons'
 
 // 4: 시즌 field({ season, hiveTipped }), robot.height, 거리·컬러 센서 목록(4c), 잡음(4c·4d)을 더함(spec-4ab §3)
 // 5: 웹캠 cameras(4d)를 더함(spec-4d §3.1)
-export const WORLD_SPEC_VERSION = 5
+// 6: 3D 충돌 형상 robot.colliders·joints[i].colliders, 자기 충돌 무시 collisionIgnore(spec-5 §2.2). 셋 다 선택 칸이고,
+//    없으면 5와 같은 경로(섀시 평면 프리즘, 관절 몸체는 충돌 없음)다.
+export const WORLD_SPEC_VERSION = 6
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
@@ -27,6 +30,25 @@ export const MAX_JOINT_MOTORS = 4
 // 서보 펄스(µs): 허브 서보 포트 출력 범위(REV Control Hub 서보 포트 사양 500–2500 µs, actuators.ts와 같다)
 export const MIN_SERVO_PULSE_US = 500
 export const MAX_SERVO_PULSE_US = 2500
+// 몸체 하나의 충돌체 수, 세계 전체 충돌체 수 [결정: LCP·넓은 단계 비용, spec-5 부록 A], 무시 짝 수(몸체 17개 = 섀시 + 관절
+// 16의 짝 17·16/2)
+export const MAX_BODY_COLLIDERS = 16
+export const MAX_WORLD_COLLIDERS = 64
+export const MAX_COLLISION_IGNORE = 136
+// 캡슐 반지름(m) [결정]·충돌체 마찰 한도 [결정: Unity Physics Material 칸과 같은 0 이상, FTC 재질에는 2면 넉넉하다]·기본
+// 마찰. 렌더러 scene/collider.ts와 시뮬레이터 bodyCollision.ts가 여기서 가져간다(한곳, spec-5 C-H2)
+export const MIN_CAPSULE_RADIUS = 5e-4
+export const MAX_CAPSULE_RADIUS = 1
+export const MAX_COLLIDER_FRICTION = 2
+// [가정: 사용자 결정 11/10, 3c WALL_FRICTION(wheelData.ts)과 같다]
+export const DEFAULT_COLLIDER_FRICTION = 0.4
+// [가정: 사용자 결정 11/10, 타일 위 알루미늄·PLA, 실측 없음]
+export const FLOOR_FRICTION = 0.4
+// 상자 충돌체 크기 하한(m, 각 축). 세계 설명의 반 크기는 MIN_BOX_SIZE/2 이상이다(렌더러 scene/collider.ts가 다시 내보낸다)
+// [결정: spec-5 §2.1]
+export const MIN_BOX_SIZE = 1e-3
+// 상자 회전 행렬 검사 공차(|RᵀR − I| 원소 최대, det > 0) [결정: three Matrix4 곱 사슬의 반올림 ~1e-15보다 넉넉히]
+export const BOX_ROTATION_TOLERANCE = 1e-9
 
 export type Vec2 = { x: number; y: number }
 export type Vec3 = { x: number; y: number; z: number }
@@ -131,6 +153,21 @@ export type SimColorSensorSpec = { device: string; mount: SensorMount }
 // 카메라(cameraData.ts)
 export type SimCameraSpec = { device: string; mount: SensorMount; model: CameraModelId }
 
+// 충돌체 하나(5, 몸체 틀: 섀시는 로봇 좌표, 관절 몸체는 관절 틀, m). friction: [0, MAX_COLLIDER_FRICTION], 짝의 마찰은 두 면의
+// 평균(Unity Friction Combine Average).
+// convex: 볼록 껍질을 만들 점(메인이 hull.ts canonicalHull로 다시 만든다, 4–MAX_HULL_POINTS개, |좌표| ≤ HULL_MAX_COORD, 퇴화
+//   아님). 렌더러가 보내는 점은 buildHull(…).vertices라 이미 0.1 mm 격자 위다
+// box: 몸체 틀의 중심, 회전 행렬(행 우선 9개, 정규 직교·det > 0), 반 크기(각 ≥ MIN_BOX_SIZE/2). 정확한 상자 위상(boxHull,
+//   양자화 없음)
+// capsule: 선분 a–b와 반지름(|a − b| < MIN_CAPSULE_SEGMENT(collision3d.ts)면 구)
+export type SimCollider =
+  | { kind: 'convex'; points: Vec3[]; friction: number }
+  | { kind: 'box'; center: Vec3; rotation: number[]; half: Vec3; friction: number }
+  | { kind: 'capsule'; a: Vec3; b: Vec3; radius: number; friction: number }
+
+// 무시할 몸체 짝 [a, b](−1 ≤ a < b < joints.length, −1 = 섀시). 바로 붙은 부모–자식은 적지 않아도 늘 무시한다
+export type SimBodyPair = [number, number]
+
 export type WorldSpec = {
   version: typeof WORLD_SPEC_VERSION
   // 시즌(메인이 seasons/resolveSeason으로 FieldSpec을 푼다, 렌더러가 보낸 형상은 받지 않는다)과 HIVE 상태 [빨강, 파랑]
@@ -147,6 +184,9 @@ export type WorldSpec = {
     // 섀시(로봇 전체 − 관절 몸체, 3a 질량 모델): 로봇 좌표, 무게중심 기준 관성. 늘 있고, 바퀴가 없는 세계는 기저가
     // 고정이라 쓰지 않는다(3c).
     body: SimBody
+    // 섀시 충돌체(5, 로봇 좌표). 있으면(빈 배열도) 섀시는 3D 경로이고 footprint·height는 시뮬레이터 접촉에 쓰지 않는다(빈
+    // 배열이면 섀시는 아무것과도 충돌하지 않는다). 없으면 지금의 평면 프리즘 경로다(spec-5 §1.4)
+    colliders?: SimCollider[]
   }
   // 배터리 전압(V). 모터 무부하 속도 비율(전압 ÷ 12)과 허브 voltage 입력.
   batteryVoltage: number
@@ -172,6 +212,8 @@ export type WorldSpec = {
   // 시뮬레이터가 30 fps 격자의 틱 경계에서 스트리밍 중인 웹캠의 자세로 태그 꼭짓점을 투영해 tags 입력을 보낸다
   // (spec-4d §1.5·§1.8). 4c까지는 없었다.
   cameras: SimCameraSpec[]
+  // 자기 충돌에서 무시할 몸체 짝(5, 편집 자세에서 겹친 짝, 렌더러 빌더가 앞 계산). 없으면 바로 붙은 부모–자식만 무시한다
+  collisionIgnore?: SimBodyPair[]
 }
 
 // ---- 관절(3b, spec-3b §4, Unity ArticulationBody 하나 = 관절 하나 = 움직이는 몸체 하나) ----
@@ -259,9 +301,12 @@ export type SimJointSpec = {
   drive: SimJointDriveSpec
   // 한계 근처에서 눌리는 리밋 스위치: touch는 pressed true, digital은 state false
   switches: { device: string; kind: 'touch' | 'digital'; at: 'lower' | 'upper'; within: number }[]
+  // 이 몸체의 충돌체(5, 관절 틀). 없거나 비면 그 몸체는 충돌하지 않는다
+  colliders?: SimCollider[]
 }
 
-// 시뮬레이터가 렌더러에 보이는 로봇 자세(필드 좌표). blocked: 이번 틱에 필드 벽이나 고정 구조물에 막혔다.
+// 시뮬레이터가 렌더러에 보이는 로봇 자세(필드 좌표). blocked: 이번 틱에 섀시가 필드 벽이나 고정 구조물에 막혔다(관절
+// 몸체·자기 충돌은 세지 않는다).
 // joints: 관절 순번 순 q(rad 또는 m). 관절이 없는 세계는 키를 넣지 않는다.
 export type SimPose = { x: number; y: number; yaw: number; blocked: boolean; joints?: number[] }
 
@@ -780,6 +825,95 @@ function camera(value: unknown, what: string, jointCount: number): SimCameraSpec
   return { device, mount, model }
 }
 
+// ---- 충돌 형상 검증(5, spec-5 §2.2) ----
+
+// 상자 회전: 길이 9의 유한 수, |RᵀR − I| 원소 최대 ≤ BOX_ROTATION_TOLERANCE, det > 0
+function boxRotation(value: unknown, what: string): number[] {
+  if (!Array.isArray(value) || value.length !== 9) fail(what)
+  const r: unknown[] = value
+  if (!r.every((x) => finite(x) && Math.abs(x) <= 2)) fail(what)
+  const m = r as number[]
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++) {
+      const product = m[i] * m[j] + m[3 + i] * m[3 + j] + m[6 + i] * m[6 + j]
+      if (!(Math.abs(product - (i === j ? 1 : 0)) <= BOX_ROTATION_TOLERANCE)) fail(what)
+    }
+  const det =
+    m[0] * (m[4] * m[8] - m[5] * m[7]) -
+    m[1] * (m[3] * m[8] - m[5] * m[6]) +
+    m[2] * (m[3] * m[7] - m[4] * m[6])
+  if (!(det > 0)) fail(what)
+  return m.slice()
+}
+
+// 충돌체 하나. 받은 값의 다른 키는 버리고 받은 수를 그대로 돌려준다(껍질은 PhysicsWorld가 다시 만든다)
+function collider(value: unknown, what: string): SimCollider {
+  if (!isRecord(value)) fail(what)
+  let shape: SimCollider
+  switch (value.kind) {
+    case 'convex': {
+      // 껍질 양자화가 받는 좌표 한도(HULL_MAX_COORD) 안의 점만 받는다
+      const points = list(value.points, MAX_HULL_POINTS, `${what}.points`, (v, k) =>
+        vec3(v, `${what}.points[${k}]`, HULL_MAX_COORD)
+      )
+      if (points.length < 4) fail(`${what}.points`)
+      if (canonicalHull(points) === null) fail(`${what}.points: degenerate`)
+      shape = { kind: 'convex', points, friction: 0 }
+      break
+    }
+    case 'box': {
+      const center = vec3(value.center, `${what}.center`)
+      const half = value.half
+      if (
+        !isRecord(half) ||
+        ![half.x, half.y, half.z].every((h) => inRange(h, MIN_BOX_SIZE / 2, MAX_COORD))
+      )
+        fail(`${what}.half`)
+      const rotation = boxRotation(value.rotation, `${what}.rotation`)
+      shape = {
+        kind: 'box',
+        center,
+        rotation,
+        half: { x: half.x as number, y: half.y as number, z: half.z as number },
+        friction: 0
+      }
+      break
+    }
+    case 'capsule': {
+      const a = vec3(value.a, `${what}.a`)
+      const b = vec3(value.b, `${what}.b`)
+      if (!inRange(value.radius, MIN_CAPSULE_RADIUS, MAX_CAPSULE_RADIUS)) fail(`${what}.radius`)
+      shape = { kind: 'capsule', a, b, radius: value.radius, friction: 0 }
+      break
+    }
+    default:
+      fail(`${what}.kind`)
+  }
+  if (!inRange(value.friction, 0, MAX_COLLIDER_FRICTION)) fail(`${what}.friction`)
+  shape.friction = value.friction
+  return shape
+}
+
+const colliderList = (value: unknown, what: string): SimCollider[] =>
+  list(value, MAX_BODY_COLLIDERS, what, (v, k) => collider(v, `${what}[${k}]`))
+
+// 무시 짝 [a, b]: 정수 −1 ≤ a < b < joints.length
+function bodyPair(value: unknown, what: string, jointCount: number): SimBodyPair {
+  if (!Array.isArray(value) || value.length !== 2) fail(what)
+  const [a, b]: unknown[] = value
+  if (
+    typeof a !== 'number' ||
+    typeof b !== 'number' ||
+    !Number.isInteger(a) ||
+    !Number.isInteger(b) ||
+    a < -1 ||
+    !(a < b) ||
+    b >= jointCount
+  )
+    fail(what)
+  return [a, b]
+}
+
 // 거리·컬러 센서·웹캠 장치 이름: 세 목록을 합쳐 유일하고, 모터·데드휠·Pinpoint·OTOS·IMU·관절 서보·리밋 스위치와 겹치지 않는다
 // (데드휠은 모터 이름을 함께 쓰므로 모터·데드휠끼리는 보지 않는다)
 function checkSensorNames(
@@ -868,6 +1002,33 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
         camera(v, `cameras[${i}]`, joints.length)
       )
     }
+    // v6(5): 충돌 형상은 지금 칸을 모두 읽은 뒤 이 순서로 읽는다(지금 칸의 오류가 먼저 나온다). 받은 값에 없으면 결과에도
+    // 키를 두지 않는다(형상 없는 세계는 v5와 키·값이 같다)
+    let colliderCount = 0
+    if (robot.colliders !== undefined) {
+      spec.robot.colliders = colliderList(robot.colliders, 'robot.colliders')
+      colliderCount += spec.robot.colliders.length
+    }
+    const jointValues = value.joints as Record<string, unknown>[]
+    spec.joints.forEach((j, i) => {
+      const received = jointValues[i].colliders
+      if (received === undefined) return
+      j.colliders = colliderList(received, `joints[${i}].colliders`)
+      colliderCount += j.colliders.length
+    })
+    if (value.collisionIgnore !== undefined) {
+      const pairs = list(value.collisionIgnore, MAX_COLLISION_IGNORE, 'collisionIgnore', (v, i) =>
+        bodyPair(v, `collisionIgnore[${i}]`, joints.length)
+      )
+      const seen = new Set<string>()
+      for (const [a, b] of pairs) {
+        const key = `${a},${b}`
+        if (seen.has(key)) fail('collisionIgnore: duplicate')
+        seen.add(key)
+      }
+      spec.collisionIgnore = pairs
+    }
+    if (colliderCount > MAX_WORLD_COLLIDERS) fail('colliders: too many')
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')
     spec.wheels.forEach((w, i) => {

@@ -65,14 +65,20 @@ export type DriveModel = (z: readonly number[], v: readonly number[]) => DriveFo
 // joint: 세계 설명 joints 순번(기저·자유 좌표는 −1)
 export type Coordinate = { kind: 'joint' | 'motor' | 'base' | 'free'; joint: number }
 
-// 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±mu·(그 키 법선 행의 충격)로 정한다(lo·hi 무시).
+// 마찰 행의 상자(spec-5 §2.4): 지금 모양은 법선 행 하나의 충격 × mu, 패치 모양(5 몸체 충돌)은 법선 행 여럿의
+// Σ weight·max(0, λ) × mu이고 cap이 있으면 min(합, cap) × mu다(cap: 바닥·윗면 마찰 하중 상한 h·W, spec-5 §1.6)
+export type ContactFriction =
+  | { normal: string; mu: number }
+  | { patch: readonly { normal: string; weight: number }[]; mu: number; cap?: number }
+
+// 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±(ContactFriction 상자)로 정한다(lo·hi 무시).
 export type ContactRow = {
   key: string
   j: number[]
   target: number
   lo: number
   hi: number
-  friction?: { normal: string; mu: number }
+  friction?: ContactFriction
 }
 
 // 하위 단계 하나의 밖에서 주는 행과 행 점성 감쇠(힘 = −c·(j·v), c > 0)
@@ -419,7 +425,21 @@ type Body = {
 }
 
 // 구속 행. key는 하위 단계 사이에서 같은 행을 알아보는 이름(LCP를 앞 답에서 시작한다)
-type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
+export type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
+
+// ---- 몸체 충돌(5, spec-5 §4.1)의 접촉 틀 ----
+
+// 몸체 하나의 속도(C 축): 각속도와 몸체 원점의 속도
+export type BodyVelocity = { omega: Vec3; linear: Vec3 }
+// 하위 단계의 접촉 틀 C: 축은 관절 나무 틀(부유 기저면 필드 축, 고정 기저면 로봇 축), 원점은 지금 섀시 원점
+// (부유: (basePose.x, basePose.y, 0), 고정: 로봇 원점). bodies[0] = 섀시, bodies[i + 1] = 세계 설명 관절 i
+export type ContactFrames = {
+  readonly origin: Vec3
+  readonly bodies: readonly Frame3[]
+  readonly velocities: readonly BodyVelocity[]
+  // 나무 관절 축·앵커(C 좌표, 행렬 연산 없이 bodies() 한 번에서 꺼낸 것). Articulation만 읽는다
+  readonly tree: readonly { axis: Vec3; anchor: Vec3 }[]
+}
 
 export class Articulation {
   // 세계 설명의 관절(공개 순번)
@@ -678,6 +698,46 @@ export class Articulation {
     const n = add3([f[0], f[1], f[2]], scale3(cross3(chassis.origin, [f[3], f[4], f[5]]), -1))
     const local = apply3(transpose3(chassis.rotation), n)
     return { fz: f[5], mx: local[0], my: local[1] }
+  }
+
+  // ---- 몸체 충돌(5, spec-5 §4.1). 계약: 서명만, 5 A가 구현한다(부르는 곳이 아직 없다) ----
+
+  // 하위 단계의 접촉 틀(지금 z·v)
+  contactFrames(): ContactFrames {
+    throw new Error('5-A')
+  }
+
+  // 점 p(C 좌표)에서 방향 d(단위)의 상대 속도 행 J_a − J_b(z 공간, 길이 = coordinates.length). body −1 = 섀시,
+  // b = null이면 정적(J_a만). 두 경로에 다 있는 나무 관절(공통 조상)은 더하지 않는다(정확한 0)
+  relativeJacobian(frames: ContactFrames, a: number, b: number | null, p: Vec3, d: Vec3): number[] {
+    void frames
+    void a
+    void b
+    void p
+    void d
+    throw new Error('5-A')
+  }
+
+  // = relativeJacobian(frames, body, null, p, d)
+  pointJacobian(frames: ContactFrames, body: number, p: Vec3, d: Vec3): number[] {
+    return this.relativeJacobian(frames, body, null, p, d)
+  }
+
+  // 축 n 둘레 상대 각속도(비틀림) 행: 경로의 회전 관절 a_i·n(직선 0), 기저 요 열은 n.z. 공통 조상은 뺀다
+  twistJacobian(frames: ContactFrames, a: number, b: number | null, n: Vec3): number[] {
+    void frames
+    void a
+    void b
+    void n
+    throw new Error('5-A')
+  }
+
+  // 점 p(C)의 속도(C 축): v_o + ω × (p − o)
+  pointVelocity(frames: ContactFrames, body: number, p: Vec3): Vec3 {
+    void frames
+    void body
+    void p
+    throw new Error('5-A')
   }
 
   // 세계 설명 관절 i 몸체의 자세(로봇 좌표, 부유 기저면 필드 좌표, 시험·표시용). q는 나무 관절 변위
@@ -1205,12 +1265,21 @@ function baseJoints(body: SimBody, start: Pose2): SimJointSpec[] {
   ]
 }
 
-// 밖에서 준 행을 LCP 행으로(마찰 행은 법선 충격 normal(key)로 상자를 정하고, 상자가 0이면 넣지 않는다)
-function externalRows(rows: readonly ContactRow[], normal: (key: string) => number): Row[] {
+// 밖에서 준 행을 LCP 행으로(마찰 행은 법선 충격 normal(key)로 상자를 정하고, 상자가 0이면 넣지 않는다). 시험용으로 내보낸다.
+// 지금 모양(normal)의 식과 연산 순서는 5 전과 같다(기준 해시, spec-5 §2.4 K4)
+export function externalRows(rows: readonly ContactRow[], normal: (key: string) => number): Row[] {
   const out: Row[] = []
   for (const row of rows) {
-    if (row.friction) {
-      const bound = row.friction.mu * Math.max(0, normal(row.friction.normal))
+    const f = row.friction
+    if (f) {
+      const bound =
+        'normal' in f
+          ? f.mu * Math.max(0, normal(f.normal))
+          : f.mu *
+            Math.min(
+              f.patch.reduce((sum, p) => sum + p.weight * Math.max(0, normal(p.normal)), 0),
+              f.cap ?? Infinity
+            )
       if (!(bound > 0)) continue
       out.push({ key: row.key, j: row.j, target: row.target, lo: -bound, hi: bound })
     } else out.push({ key: row.key, j: row.j, target: row.target, lo: row.lo, hi: row.hi })

@@ -250,6 +250,49 @@ export function jointBodyMass(
 
 type Candidate = { objectId: string; name: string; joint: JointSettings }
 
+// 로봇의 몸체 나누기(spec-5 §5.1): 세계 설명에 들어갈 관절(문서 순서, MAX_WORLD_JOINTS까지)과 오브젝트마다 몸체, 관절 틀.
+// 충돌체 빌더·인스펙터·기즈모가 모터 목록 없이 몸체를 알아야 해서 buildWorldJoints의 같은 계산을 꺼낸 것이다(같은 식, 계약 커밋:
+// buildWorldJoints는 5 B가 이것으로 바꾼다).
+export type JointBodyFrames = {
+  // kept 관절 오브젝트(세계 설명 관절 순번)
+  objectIds: string[]
+  // parents[i]: 관절 i 몸체의 부모 몸체(−1 = 섀시)
+  parents: number[]
+  // 로봇 하위 오브젝트 → 몸체(가장 가까운 자신·상위 관절 순번, −1 섀시). 한도로 뺀 관절의 하위는 가장 가까운 남은 관절
+  bodyOf: Map<string, number>
+  // 관절 틀(로봇 좌표, 편집 자세 q = 0: 오브젝트 자세(회전 포함)에 앵커만큼 옮긴 것)
+  frames: Matrix4[]
+}
+
+export function jointBodyFrames(objects: SceneObjects, robotId: string): JointBodyFrames {
+  const robotTree = objects[robotId] ? subtreeIds(objects, robotId) : []
+  const kept: Candidate[] = []
+  for (const id of robotTree) {
+    const object = objects[id]
+    if (id === robotId || !object.joint || !isJointObject(object)) continue
+    if (kept.length === MAX_WORLD_JOINTS) break
+    kept.push({ objectId: id, name: object.name, joint: sanitizeJoint(object.joint) })
+  }
+  const indexOf = new Map(kept.map((candidate, i) => [candidate.objectId, i]))
+  const bodyOf = new Map<string, number>([[robotId, -1]])
+  for (const id of robotTree) {
+    if (id === robotId) continue
+    const own = indexOf.get(id)
+    const parentId = objects[id].parentId
+    bodyOf.set(id, own ?? (parentId !== null ? (bodyOf.get(parentId) ?? -1) : -1))
+  }
+  const parents = kept.map(({ objectId }) => {
+    const parentId = objects[objectId].parentId
+    return parentId !== null ? (bodyOf.get(parentId) ?? -1) : -1
+  })
+  const frames = kept.map(({ objectId, joint }) =>
+    robotFrame(objects, objectId).multiply(
+      new Matrix4().makeTranslation(joint.anchor[0], joint.anchor[1], joint.anchor[2])
+    )
+  )
+  return { objectIds: kept.map((candidate) => candidate.objectId), parents, bodyOf, frames }
+}
+
 export function buildWorldJoints(input: JointBuildInput): JointBuildResult {
   const { objects, robotId, entries, motorDevices, wheelMotorIds, mass } = input
   const warnings: WorldWarning[] = []

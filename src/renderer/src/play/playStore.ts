@@ -12,7 +12,7 @@ import type {
 } from '../../../shared/play'
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import type { CameraModelId } from '../../../shared/sim/cameraData'
-import type { SensorMount } from '../../../shared/sim/worldSpec'
+import type { SensorMount, SimCollider } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { RootOverride, SceneObjects, Transform } from '../scene/model'
@@ -150,6 +150,9 @@ export type PlayRun = {
   // 시뮬레이터가 쓰는 웹캠(4d, INIT 때 세계 설명의 cameras 순서). 실행 중 씬 뷰 기즈모가 문서 조준 대신 이 장착을 표시
   // 자세 몸체 틀로 그린다(run.sensors와 같은 규칙). 세계 설명이 없으면 비어 있다.
   cameras: readonly PlayRunCamera[]
+  // 시뮬레이터가 쓰는 충돌 몸체(5, INIT 때 세계 설명 그대로: 섀시 다음 관절 순번 순). 실행 중 씬 뷰 기즈모가 이 형상을 표시
+  // 자세 몸체 틀로 그리고, Console의 collisionOverlap이 몸체 이름을 찾는다. 세계 설명이 없으면 비어 있다.
+  colliders: readonly PlayRunCollider[]
   // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
   // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
   field: PlayRunField
@@ -162,6 +165,15 @@ export type PlayRunCamera = {
   body: number
   mount: SensorMount
   model: CameraModelId
+}
+
+// 실행의 충돌 몸체 하나(5, INIT 때 세계 설명 그대로): 몸체 번호(−1 섀시, ≥ 0 세계 설명 관절 순번), 몸체 오브젝트(섀시 = 로봇,
+// 관절 = 관절 오브젝트), 이름(Console), 충돌체(몸체 틀)
+export type PlayRunCollider = {
+  body: number
+  objectId: string
+  name: string
+  colliders: readonly SimCollider[]
 }
 
 // 실행의 센서 하나: 붙은 오브젝트·컴포넌트, 종류, 몸체(−1 섀시, ≥ 0 세계 설명 관절 순번), 세계 설명 장착 그대로
@@ -376,6 +388,40 @@ export function poseTransform(pose: { x: number; y: number; yaw: number }): Tran
   return { position: [pose.x, pose.y, 0], rotation: [0, 0, pose.yaw] }
 }
 
+// simNotice collisionOverlap의 params(src/shared/play.ts SimNoticeCode 주석)를 Console 본문으로: 몸체 이름은 run.colliders에서
+// (없으면 '' → 번역할 때 로봇 몸체), 대상은 벽·구조물·바닥·몸체 이름, 풀지 못하면 원래 글자다. 시즌은 실행의 시즌이다.
+const OVERLAP_WALLS = ['x+', 'x-', 'y+', 'y-'] as const
+export function collisionOverlapBody(
+  run: Pick<PlayRun, 'colliders' | 'field'>,
+  params: Record<string, string>
+): Extract<ConsoleBody, { type: 'collisionOverlap' }> {
+  const bodyName = (text: string | undefined): string | null => {
+    if (text === undefined || !/^-?\d+$/.test(text)) return null
+    const index = Number(text)
+    return run.colliders.find((entry) => entry.body === index)?.name ?? null
+  }
+  const raw = params.target ?? ''
+  let target: Extract<ConsoleBody, { type: 'collisionOverlap' }>['target'] = {
+    kind: 'raw',
+    text: raw
+  }
+  const wall = OVERLAP_WALLS.find((side) => raw === `wall:${side}`)
+  const structure = /^structure:(\d+)$/.exec(raw)
+  if (wall) target = { kind: 'wall', wall }
+  else if (structure) target = { kind: 'structure', index: Number(structure[1]) }
+  else if (raw === 'floor') target = { kind: 'floor' }
+  else if (raw.startsWith('body:')) {
+    const name = bodyName(raw.slice('body:'.length))
+    if (name !== null) target = { kind: 'body', name }
+  }
+  return {
+    type: 'collisionOverlap',
+    body: bodyName(params.body) ?? '',
+    target,
+    season: run.field.season
+  }
+}
+
 // 씬 뷰 표시용 worldMatrix 덮어쓰기(scene/model.ts). F 포커스·IMU·무게중심 표시가 실행 중 로봇을 표시 자세로 계산한다.
 // objects를 주면 관절 값도 넣는다(관절의 앵커·축은 지금 문서의 관절 설정, 씬 뷰가 그리는 것과 같다).
 export function displayRootOverride(
@@ -407,6 +453,7 @@ export function newRun(options: {
   joints?: readonly string[]
   sensors?: readonly PlayRunSensor[]
   cameras?: readonly PlayRunCamera[]
+  colliders?: readonly PlayRunCollider[]
   field?: PlayRunField
 }): PlayRun {
   return {
@@ -435,6 +482,7 @@ export function newRun(options: {
     joints: options.joints ?? [],
     sensors: options.sensors ?? [],
     cameras: options.cameras ?? [],
+    colliders: options.colliders ?? [],
     field: options.field ?? DEFAULT_RUN_FIELD
   }
 }
@@ -619,6 +667,11 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             'info',
             run.root
           )
+        ])
+      // 몸체 충돌 겹침(5)은 몸체·대상을 풀어 둔다(번역은 그릴 때 consoleModel.entryHeadline, 언어를 바꾸면 따라 바뀐다)
+      if (event.code === 'collisionOverlap')
+        return withEntries(data, [
+          consoleEntry(collisionOverlapBody(run, event.params), event.tNanos, 'warning')
         ])
       // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다). 대체 자세 풀이
       // 안내(4d)는 params.solver로 문구를 고른다(spec-4d §1.14)

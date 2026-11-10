@@ -9,6 +9,7 @@ import {
 import {
   parseWorldSpec,
   WORLD_SPEC_VERSION,
+  type SimCollider,
   type SimJointDriveSpec,
   type SimJointSpec,
   type WorldSpec
@@ -319,7 +320,7 @@ describe('parseWorldSpec v4', () => {
 
   it("{ version }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
     expect(parseWorldSpec({ version: WORLD_SPEC_VERSION })).toBe('robot')
-    expect(WORLD_SPEC_VERSION).toBe(5)
+    expect(WORLD_SPEC_VERSION).toBe(6)
     expect(parseWorldSpec({ ...valid(), version: 3 })).toBe('version')
   })
 
@@ -502,9 +503,9 @@ describe('parseWorldSpec v5', () => {
     })
   })
 
-  it('버전 4는 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
-    expect(WORLD_SPEC_VERSION).toBe(5)
-    expect(parseWorldSpec({ ...valid(), version: 4 })).toBe('version')
+  it('버전 5는 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
+    expect(WORLD_SPEC_VERSION).toBe(6)
+    expect(parseWorldSpec({ ...valid(), version: 5 })).toBe('version')
   })
 
   it.each([
@@ -557,5 +558,152 @@ describe('parseWorldSpec v5', () => {
     expect(parseWorldSpec({ ...base, ...change })).toBe(
       `cameras[${index}].device: duplicate device`
     )
+  })
+})
+
+// 5: 3D 충돌 형상(spec-5 §2.2, K1·K2)
+describe('parseWorldSpec v6', () => {
+  const v = (x: number, y: number, z: number): { x: number; y: number; z: number } => ({ x, y, z })
+  const cube = (s: number): { x: number; y: number; z: number }[] =>
+    Array.from({ length: 8 }, (_, k) => v(k & 1 ? s : -s, k & 2 ? s : -s, k & 4 ? s : -s))
+  const convex = (points = cube(0.1), extra: Record<string, unknown> = {}): SimCollider => ({
+    kind: 'convex',
+    points,
+    friction: 0.4,
+    ...extra
+  })
+  const box = (extra: Record<string, unknown> = {}): SimCollider =>
+    ({
+      kind: 'box',
+      center: v(0, 0, 0.1),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      half: v(0.2, 0.2, 0.1),
+      friction: 0.5,
+      ...extra
+    }) as SimCollider
+  const capsule = (extra: Record<string, unknown> = {}): SimCollider =>
+    ({
+      kind: 'capsule',
+      a: v(0, 0, 0),
+      b: v(0.25, 0, 0),
+      radius: 0.02,
+      friction: 1,
+      ...extra
+    }) as SimCollider
+  const withRobot = (colliders: unknown[]): WorldSpec =>
+    ({ ...withJoints(), robot: { ...withJoints().robot, colliders } }) as WorldSpec
+  // 관절 넷(몸체 다섯: 몸체마다 16개까지라 합 65를 만들 수 있다)
+  const fourJoints = (): WorldSpec => {
+    const spec = withJoints()
+    return {
+      ...spec,
+      joints: [...spec.joints, { ...spec.joints[2], parent: 2, drive: { kind: 'none' } }]
+    }
+  }
+
+  it('형상이 없는 세계의 결과에는 충돌 키가 없다(v5와 키·값이 같다, K1)', () => {
+    const parsed = parseWorldSpec(withJoints()) as WorldSpec
+    expect(typeof parsed).toBe('object')
+    expect('colliders' in parsed.robot).toBe(false)
+    expect('collisionIgnore' in parsed).toBe(false)
+    expect(parsed.joints.every((j) => !('colliders' in j))).toBe(true)
+  })
+
+  it('충돌체 셋 종류·구·관절 충돌체·무시 짝을 그대로 읽는다(다른 키는 버린다)', () => {
+    const sphere = capsule({ b: v(0, 0, 0) })
+    const spec: WorldSpec = {
+      ...withJoints(),
+      robot: { ...withJoints().robot, colliders: [convex(), box(), capsule(), sphere] },
+      collisionIgnore: [[-1, 2]]
+    }
+    spec.joints[0].colliders = [box()]
+    spec.joints[2].colliders = []
+    const parsed = parseWorldSpec(spec)
+    expect(parsed).toEqual(spec)
+    const extra = parseWorldSpec(withRobot([{ ...box(), junk: 1 }])) as WorldSpec
+    expect(extra.robot.colliders).toEqual([box()])
+    const empty = parseWorldSpec(withRobot([])) as WorldSpec
+    expect(empty.robot.colliders).toEqual([])
+  })
+
+  const plate = (thickness: number): { x: number; y: number; z: number }[] =>
+    Array.from({ length: 8 }, (_, k) =>
+      v(k & 1 ? 0.05 : -0.05, k & 2 ? 0.05 : -0.05, k & 4 ? thickness : 0)
+    )
+  const tilted = [0.6, -0.8, 0, 0.8, 0.6, 0, 0, 0, 1]
+
+  it.each([
+    ['robot.colliders[0].points', withRobot([convex(cube(0.1).slice(0, 3))])],
+    [
+      'robot.colliders[0].points',
+      withRobot([
+        convex(
+          Array.from({ length: 65 }, (_, i) => v(i * 0.01, ((i * i) % 7) * 0.01, (i % 3) * 0.01))
+        )
+      ])
+    ],
+    ['robot.colliders[0].points: degenerate', withRobot([convex(plate(0))])],
+    ['robot.colliders[0].points: degenerate', withRobot([convex(plate(0.0005))])],
+    ['robot.colliders[0].points[0]', withRobot([convex([v(7, 0, 0), ...cube(0.1).slice(1)])])],
+    ['robot.colliders[0].rotation', withRobot([box({ rotation: [1, 0, 0, 0, 1, 0.1, 0, 0, 1] })])],
+    ['robot.colliders[0].rotation', withRobot([box({ rotation: [1, 0, 0, 0, 1, 0, 0, 0, -1] })])],
+    ['robot.colliders[0].rotation', withRobot([box({ rotation: tilted.slice(0, 8) })])],
+    ['robot.colliders[0].half', withRobot([box({ half: v(0.2, 1e-4, 0.1) })])],
+    ['robot.colliders[0].radius', withRobot([capsule({ radius: 0 })])],
+    ['robot.colliders[0].radius', withRobot([capsule({ radius: 2 })])],
+    ['robot.colliders[0].friction', withRobot([capsule({ friction: -0.1 })])],
+    ['robot.colliders[0].friction', withRobot([box({ friction: 2.1 })])],
+    [
+      'robot.colliders[0].kind',
+      withRobot([{ kind: 'sphere', center: v(0, 0, 0), radius: 0.1, friction: 0.4 }])
+    ],
+    ['robot.colliders', withRobot(new Array(17).fill(box()))],
+    ['robot.colliders', { ...withJoints(), robot: { ...withJoints().robot, colliders: {} } }],
+    ['collisionIgnore[0]', { ...withJoints(), collisionIgnore: [[2, 1]] }],
+    ['collisionIgnore[0]', { ...withJoints(), collisionIgnore: [[-2, 0]] }],
+    ['collisionIgnore[0]', { ...withJoints(), collisionIgnore: [[0, 3]] }],
+    ['collisionIgnore[0]', { ...withJoints(), collisionIgnore: [[0, 1.5]] }],
+    [
+      'collisionIgnore: duplicate',
+      {
+        ...withJoints(),
+        collisionIgnore: [
+          [0, 1],
+          [0, 1]
+        ]
+      }
+    ]
+  ])('%s가 틀리면 그 이름을 돌려준다', (what, value) => {
+    expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  it('회전한 상자(정규 직교·det > 0)는 받는다', () => {
+    expect(typeof parseWorldSpec(withRobot([box({ rotation: tilted })]))).toBe('object')
+  })
+
+  it('관절 충돌체 칸은 그 관절 이름으로 거른다', () => {
+    const spec = withJoints()
+    spec.joints[1].colliders = [capsule({ radius: 0 })]
+    expect(parseWorldSpec(spec)).toBe('joints[1].colliders[0].radius')
+  })
+
+  it('충돌체 합은 MAX_WORLD_COLLIDERS(64)까지', () => {
+    const spec = fourJoints()
+    spec.robot.colliders = new Array(16).fill(box())
+    spec.joints.forEach((j, i) => (j.colliders = new Array(i === 3 ? 0 : 16).fill(box())))
+    expect(typeof parseWorldSpec(spec)).toBe('object')
+    spec.joints[3].colliders = [box()]
+    expect(parseWorldSpec(spec)).toBe('colliders: too many')
+  })
+
+  it('지금 칸의 오류가 새 칸의 오류보다 먼저 나온다', () => {
+    const bad = withRobot([capsule({ radius: 0 })])
+    expect(parseWorldSpec({ ...bad, cameras: undefined })).toBe('cameras')
+    expect(parseWorldSpec({ ...bad, robot: { ...bad.robot, height: 0 } })).toBe('robot.height')
+    expect(parseWorldSpec({ ...bad, noise: null })).toBe('noise')
+    // 이름·참조 검사는 새 칸 뒤다
+    expect(
+      parseWorldSpec({ ...bad, motors: [withJoints().motors[0], withJoints().motors[0]] })
+    ).toBe('robot.colliders[0].radius')
   })
 })

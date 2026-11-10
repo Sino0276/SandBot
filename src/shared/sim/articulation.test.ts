@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   Articulation,
   bodyPoint,
+  externalRows,
   ldlFactor,
   ldlSolve,
   solveBoxLcp,
+  type ContactRow,
   type DriveForces,
   type LcpState,
   type DriveModel
@@ -1108,5 +1110,89 @@ describe('Articulation 3c 확장', () => {
     expect(run(15)).toBeCloseTo(0, 12)
     // 넘으면 하위 단계마다 2회차가 이번 법선으로 상자를 정하므로 정확한 쿨롱이다
     expect(run(30)).toBeCloseTo(((30 - mu * push) / (CENTERED.mass + 1e-9)) * 200 * h, 9)
+  })
+})
+
+// 5: 마찰 행 상자 모양 넓히기(spec-5 §2.4, K4)
+describe('externalRows 마찰 상자', () => {
+  // 고정 시드 선형 합동(결정적 입력)
+  const random = (seed: number): (() => number) => {
+    let state = seed >>> 0
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+      return state / 4294967296
+    }
+  }
+
+  it('지금 모양(법선 하나)은 바뀌기 전 식과 같은 비트다(고정 입력 100개)', () => {
+    const next = random(5)
+    const rows: ContactRow[] = []
+    const impulses = new Map<string, number>()
+    for (let k = 0; k < 100; k++) {
+      // 법선 충격은 음수·0·양수가 섞이게
+      impulses.set(`n${k}`, (next() - 0.3) * 10)
+      rows.push({
+        key: `t${k}`,
+        j: [next(), next()],
+        target: next() - 0.5,
+        lo: 0,
+        hi: 0,
+        friction: { normal: `n${k}`, mu: next() * 2 }
+      })
+    }
+    const normal = (key: string): number => impulses.get(key) ?? 0
+    const out = externalRows(rows, normal)
+    // 바뀌기 전: bound = mu · max(0, λ), 0이면 넣지 않는다
+    const expected = rows.flatMap((row) => {
+      const f = row.friction as { normal: string; mu: number }
+      const bound = f.mu * Math.max(0, normal(f.normal))
+      return bound > 0
+        ? [{ key: row.key, j: row.j, target: row.target, lo: -bound, hi: bound }]
+        : []
+    })
+    expect(out.length).toBeGreaterThan(50)
+    expect(out.length).toBeLessThan(100)
+    expect(out).toEqual(expected)
+    out.forEach((row, i) => {
+      expect(Object.is(row.lo, expected[i].lo)).toBe(true)
+      expect(Object.is(row.hi, expected[i].hi)).toBe(true)
+    })
+  })
+
+  it('패치 모양은 Σ weight·max(0, λ)·μ이고 cap이 있으면 min(합, cap)·μ다', () => {
+    const impulses = new Map([
+      ['a', 2],
+      ['b', -1],
+      ['c', 0.5]
+    ])
+    const normal = (key: string): number => impulses.get(key) ?? 0
+    const patch = [
+      { normal: 'a', weight: 1 },
+      { normal: 'b', weight: 1 },
+      { normal: 'c', weight: 0.4 }
+    ]
+    const row = (friction: ContactRow['friction']): ContactRow => ({
+      key: 'ct1',
+      j: [1, 0],
+      target: 0,
+      lo: 0,
+      hi: 0,
+      friction
+    })
+    // 2 + 0(음수는 0) + 0.4·0.5 = 2.2
+    const [plain] = externalRows([row({ patch, mu: 0.5 })], normal)
+    expect(plain.hi).toBeCloseTo(1.1, 15)
+    expect(plain.lo).toBe(-plain.hi)
+    const [capped] = externalRows([row({ patch, mu: 0.5, cap: 1.5 })], normal)
+    expect(capped.hi).toBe(0.75)
+    const [loose] = externalRows([row({ patch, mu: 0.5, cap: 10 })], normal)
+    expect(loose.hi).toBe(plain.hi)
+    // 모두 음수거나 비면 상자 0이라 넣지 않는다
+    expect(externalRows([row({ patch: [{ normal: 'b', weight: 1 }], mu: 1 })], normal)).toEqual([])
+    expect(externalRows([row({ patch: [], mu: 1 })], normal)).toEqual([])
+    // 마찰 없는 행은 lo·hi 그대로
+    expect(externalRows([{ key: 'n', j: [1], target: 0.1, lo: 0, hi: Infinity }], normal)).toEqual([
+      { key: 'n', j: [1], target: 0.1, lo: 0, hi: Infinity }
+    ])
   })
 })

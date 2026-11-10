@@ -41,6 +41,11 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 // 기준 해시에 넣는다(잡음 끔이라 log는 없다). 기존 해시도 sin·cos·sqrt에 기대므로 같은 성질이지만, Node·Electron을 올릴 때 다시
 // 볼 해시가 하나 는다.
 //
+// 여덟째는 5의 메커니즘 충돌 기준이다(BIOBUZZ, 섀시·관절 몸체의 3D 충돌체, spec-5 §11). 세계 설명 v6의 충돌 형상은 선택 칸이고
+// 형상이 없는 세계는 5 전의 연산 그대로라 앞의 일곱 해시는 5가 바꾸지 않는다(세계 설명 판만 6으로 올랐다). 여덟째는 3D 충돌의
+// Math.sqrt·cos·sin(섀시 틀)과 SAT·GJK 반올림에 기대므로 Node·Electron을 올릴 때 다시 볼 해시가 하나 는다. 계약 커밋에서는
+// 자리(it.todo)만 있고 5 A가 장면을 넣고 잰 값을 고정한다.
+//
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
 // 쓰지 않는다.
@@ -75,7 +80,7 @@ function traceWith(
   nullable: (text: string) => string
 ): { ticks: Tick[]; hash: string } {
   // 4ab 계약: 넷째까지는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
-  expect(s.spec.version).toBe(5)
+  expect(s.spec.version).toBe(6)
   expect(s.spec.field).toEqual({ season, hiveTipped: [false, false] })
   const world = new PhysicsWorld(s.spec)
   const ticks: Tick[] = []
@@ -557,7 +562,7 @@ const seen = (ticks: Tick[], device: string, key: string, value: unknown): boole
 const notified = (ticks: Tick[], code: string): boolean =>
   ticks.some((t) => t.notices.some((n) => n.code === code))
 
-describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서, 일곱째는 4d 웹캠)", () => {
+describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서, 일곱째는 4d 웹캠, 여덟째는 5 메커니즘 충돌)", () => {
   it('메카넘 + Pinpoint + 리프트', () => {
     const { ticks, hash } = trace(mecanumLift())
     const last = ticks[ticks.length - 1].pose
@@ -652,6 +657,8 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(ticks[0].input.front).toEqual({ model: 'logitechC920' })
     expect(hash).toBe('f6d7c14e8289b755b48818f7176b9baed885861069aa47afee722e7e98789b2c')
   })
+
+  it.todo('5 메커니즘 충돌(BIOBUZZ, 같은 프로세스에서 두 번 바이트가 같다)')
 
   it('바퀴·관절 없음', () => {
     const { ticks, hash } = trace(motorsOnly())

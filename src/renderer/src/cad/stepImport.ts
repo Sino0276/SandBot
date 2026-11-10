@@ -25,6 +25,12 @@ export type ImportedMesh = {
   mass: MeshMassProps
 }
 
+// 메시 하나의 볼록 껍질 꼭짓점(피벗 기준, xyz 이어 붙임, ≤ MESH_HULL_VERTEX_LIMIT점)과 오차(m). 퇴화(평평함·얇음)면 points가
+// 빈 배열(spec-5 §5.3). 계약 커밋: 타입만 있다(ImportedMesh·메시 캐시 태그는 그대로, 5 B가 워커에서 만든다)
+export type MeshHull = { points: number[]; error: number }
+// = MAX_HULL_POINTS(src/shared/sim/hull.ts)
+export const MESH_HULL_VERTEX_LIMIT = 64
+
 export type ImportedNode = {
   name: string
   kind: 'assembly' | 'part'

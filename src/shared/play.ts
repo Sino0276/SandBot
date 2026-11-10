@@ -364,7 +364,19 @@ export type PlayEvent =
 //   visionResumeNullFormat, visionCalibrationSkipped(params.detail)
 // - tipping(3c): 바닥이 받쳐야 할 모멘트가 바퀴 접점 밖이다(넘어질 상황, 시뮬레이터는 넘어지지 않음). params 없음
 // - wheelLift(3c): 바퀴 하나 이상이 하중 0(뜸)인 채 0.1 s 넘게 이어졌다. params 없음
+// - collisionOverlap(5): 몸체 충돌 짝의 겹침이 실행 시작(t = 0) 겹침보다 1 mm 넘게 깊어졌다(실행마다 첫 짝 한 번).
+//   params.body: 몸체 번호('-1' 섀시, '0'… 세계 설명 관절 순번), params.target: 'wall:x+'·'wall:x-'·'wall:y+'·'wall:y-'·
+//   'structure:<구조물 순번>'·'floor'·'body:<몸체 번호>'
+// - collisionLimit(5): 한 하위 단계의 충돌 행이 한도를 넘어 일부 짝을 뺐다. params 없음
+// - collisionLift(5): 메커니즘이 로봇 무게보다 세게 바닥·벽 윗면을 누른 상태가 0.1 s 이어졌다(로봇이 들리지 않음). params 없음
 export type SimNoticeCode =
-  'sharedEncoderMode' | 'worldError' | 'tipping' | 'wheelLift' | SidecarNoticeCode
+  | 'sharedEncoderMode'
+  | 'worldError'
+  | 'tipping'
+  | 'wheelLift'
+  | 'collisionOverlap'
+  | 'collisionLimit'
+  | 'collisionLift'
+  | SidecarNoticeCode
 
 export type { GamepadState }
