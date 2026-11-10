@@ -367,6 +367,10 @@ describe('단순 형상 확인란·안내 줄(B4)', () => {
       settings: { ...DEFAULT_PLAY_SETTINGS, hiveState: { red: 'start', blue: 'tipped' } }
     })
     expect(html()).toContain(ko.field.inspector.cad.hiveTippedNote)
+    // 숨김·고립 보기면 CAD 층을 그리지 않아 안내가 없다
+    setStore(useSceneVisibilityStore, { fieldHidden: true })
+    expect(html()).not.toContain('data-field-cad="hiveTipped"')
+    setStore(useSceneVisibilityStore, { fieldHidden: false })
     // 잠근 실행은 실행의 상태(시작 상태)
     setStore(usePlayStore, { run: run({ season: 'biobuzz', hiveTipped: [false, false] }) })
     expect(html()).not.toContain('data-field-cad="hiveTipped"')

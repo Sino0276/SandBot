@@ -81,8 +81,9 @@ function FieldCadSection(): React.JSX.Element {
   const layers = fieldLayers({ cadReady: ready, shapesShown, elementsHidden })
   // 실행이 잠그면 실행의 시즌·HIVE 상태(씬 뷰와 같다)
   const shown = displayedField(run, { season }, hiveState)
+  // CAD 층이 그려질 때만(숨김·고립 보기면 CAD도 단순 CELL·태그도 그리지 않아 안내가 틀린다)
   const hiveTipped =
-    ready &&
+    layers.cad &&
     resolveSeason(shown.season).hives.length > 0 &&
     (shown.hiveTipped[0] || shown.hiveTipped[1])
   // 숫자는 UI 언어의 형식으로(인자 없는 toLocaleString은 OS 로캘을 따른다, 비평 U12)
