@@ -63,6 +63,7 @@ export {
   MIN_BOX_SIZE,
   MIN_CAPSULE_RADIUS
 }
+// Mesh Collider 꼭짓점 한도 칸의 하한 [결정: spec-5 §1.2 Vertex Limit 8–64]
 export const MIN_VERTEX_LIMIT = 8
 // 64(src/shared/sim/hull.ts)
 export const MAX_VERTEX_LIMIT = MAX_HULL_POINTS
@@ -90,6 +91,30 @@ export function canHaveColliders(object: SceneObject): boolean {
 
 export function canHaveRobotCollision(object: SceneObject): boolean {
   return object.kind === 'robot'
+}
+
+// 스토어가 받는 값의 형식(spec-5 §2.1 "형식 검사는 스토어·파일이 먼저 한다"): id가 1–64자 글자이고(프로젝트 파일 규칙과 같다),
+// 종류·방향이 아는 값이고, 칸의 수가 모두 유한하다. 유한하지 않은 수는 자르기(sanitizeCollider)를 그대로 지나 문서에 남고, JSON에서
+// null이 되어 저장한 프로젝트를 다시 열지 못하게 한다. friction은 범위 밖(유한하지 않은 수 포함)이면 정리가 키를 지우므로 보지 않는다
+const finiteVec = (v: unknown): boolean =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => Number.isFinite(x))
+export function isWellFormedCollider(c: ColliderSettings): boolean {
+  if (typeof c.id !== 'string' || c.id.length < 1 || c.id.length > 64) return false
+  switch (c.kind) {
+    case 'box':
+      return finiteVec(c.center) && finiteVec(c.size)
+    case 'capsule':
+      return (
+        finiteVec(c.center) &&
+        Number.isFinite(c.radius) &&
+        Number.isFinite(c.height) &&
+        COLLIDER_DIRECTIONS.includes(c.direction)
+      )
+    case 'mesh':
+      return Number.isFinite(c.vertexLimit)
+    default:
+      return false
+  }
 }
 
 // [min, max]로 자르고 −0을 0으로

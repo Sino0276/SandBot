@@ -4,7 +4,7 @@ import { cadRootTransform } from '../cad/alignment'
 import { clearHistory, initHistory, undo, useHistoryStore } from '../editor/history'
 import { childrenInDocument, worldMatrix, type SceneObjects, type Vec3 } from './model'
 import { isPlaceholderScene, useSceneStore } from './sceneStore'
-import { defaultBox, defaultMesh } from './collider'
+import { defaultBox, defaultCapsule, defaultMesh } from './collider'
 import { defaultJoint } from './joint'
 import { defaultWheel } from './wheel'
 
@@ -575,6 +575,14 @@ describe('충돌체', () => {
     expect(state().objects).toBe(withCollider)
     // 정리(범위 밖 한도) 뒤 같은 값이어도 그대로
     state().setColliders('P1', [{ ...defaultMesh('m'), vertexLimit: 32.2 }])
+    expect(state().objects).toBe(withCollider)
+    // 형식이 틀린 값(유한하지 않은 수, 모르는 방향, 빈 id)은 받지 않는다(JSON에서 null이 되어 프로젝트를 다시 열지 못한다)
+    state().setColliders('P1', [{ ...defaultBox('a', null), size: [Number.NaN, 0.1, 0.1] }])
+    state().setColliders('P1', [{ ...defaultMesh('m'), vertexLimit: Number.POSITIVE_INFINITY }])
+    state().setColliders('P1', [
+      { ...defaultCapsule('c', null, 'z'), direction: 'w' as unknown as 'x' }
+    ])
+    state().setColliders('P1', [defaultMesh('')])
     expect(state().objects).toBe(withCollider)
     expect(undo()).toBe(true)
     expect(undo()).toBe(false)

@@ -831,6 +831,7 @@ function camera(value: unknown, what: string, jointCount: number): SimCameraSpec
 function boxRotation(value: unknown, what: string): number[] {
   if (!Array.isArray(value) || value.length !== 9) fail(what)
   const r: unknown[] = value
+  // 정규 직교 행렬의 원소는 |x| ≤ 1이다. 2는 곱을 재기 전에 터무니없는 수를 거르는 넉넉한 한도다 [결정]
   if (!r.every((x) => finite(x) && Math.abs(x) <= 2)) fail(what)
   const m = r as number[]
   for (let i = 0; i < 3; i++)

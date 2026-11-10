@@ -11,6 +11,7 @@ import type {
   RegistrarInfo
 } from '../../../shared/play'
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
+import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import type { CameraModelId } from '../../../shared/sim/cameraData'
 import type { SensorMount, SimCollider } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
@@ -389,7 +390,8 @@ export function poseTransform(pose: { x: number; y: number; yaw: number }): Tran
 }
 
 // simNotice collisionOverlap의 params(src/shared/play.ts SimNoticeCode 주석)를 Console 본문으로: 몸체 이름은 run.colliders에서
-// (없으면 '' → 번역할 때 로봇 몸체), 대상은 벽·구조물·바닥·몸체 이름, 풀지 못하면 원래 글자다. 시즌은 실행의 시즌이다.
+// (없으면 '' → 번역할 때 로봇 몸체), 대상은 벽·구조물·바닥·몸체 이름, 풀지 못하면 원래 글자다. 시즌은 실행의 시즌이고, 그 시즌에
+// 없는 구조물 순번도 원래 글자로 둔다(그릴 때 이름을 찾다 멈추지 않게).
 const OVERLAP_WALLS = ['x+', 'x-', 'y+', 'y-'] as const
 export function collisionOverlapBody(
   run: Pick<PlayRun, 'colliders' | 'field'>,
@@ -408,7 +410,8 @@ export function collisionOverlapBody(
   const wall = OVERLAP_WALLS.find((side) => raw === `wall:${side}`)
   const structure = /^structure:(\d+)$/.exec(raw)
   if (wall) target = { kind: 'wall', wall }
-  else if (structure) target = { kind: 'structure', index: Number(structure[1]) }
+  else if (structure && Number(structure[1]) < resolveSeason(run.field.season).structures.length)
+    target = { kind: 'structure', index: Number(structure[1]) }
   else if (raw === 'floor') target = { kind: 'floor' }
   else if (raw.startsWith('body:')) {
     const name = bodyName(raw.slice('body:'.length))

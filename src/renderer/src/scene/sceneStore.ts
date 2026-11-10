@@ -53,6 +53,7 @@ import { canHaveJoint, sameJoint, sanitizeJoint } from './joint'
 import {
   canHaveColliders,
   canHaveRobotCollision,
+  isWellFormedCollider,
   sameColliders,
   sameRobotCollision,
   sanitizeColliders,
@@ -242,8 +243,8 @@ type SceneState = {
   // 바꾼다(sanitizeJoint). 바뀐 것이 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   setJoint: (id: string, settings: JointSettings | null) => void
   // 충돌체(Unity Collider, scene/collider.ts) 목록을 바꾼다. 비거나 null이면 키를 지운다. set() 한 번이라 실행 취소 한 단계다.
-  // 없는 오브젝트·붙일 수 없는 오브젝트(canHaveColliders)면 그대로 두고, 범위 밖 수는 자른다(sanitizeColliders). 바뀐 것이
-  // 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  // 없는 오브젝트·붙일 수 없는 오브젝트(canHaveColliders)·형식이 틀린 값(isWellFormedCollider)이면 그대로 두고, 범위 밖 수는
+  // 자른다(sanitizeColliders). 바뀐 것이 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   setColliders: (id: string, colliders: readonly ColliderSettings[] | null) => void
   // 로봇의 자기 충돌 설정([그래도 충돌] 짝). robot에만, 정리(sanitizeRobotCollision)한 결과가 비거나 null이면 키를 지운다.
   // 바뀐 것이 없으면 그대로 둔다.
@@ -486,6 +487,8 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
     set((state) => {
       const object = state.objects[id]
       if (!object || !canHaveColliders(object)) return state
+      // 형식이 틀린 값(유한하지 않은 수, 모르는 종류·방향)은 받지 않는다(정리는 범위만 자른다)
+      if (list && !list.every(isWellFormedCollider)) return state
       const sanitized = list ? sanitizeColliders(list) : []
       const colliders = sanitized.length > 0 ? sanitized : undefined
       if (sameColliders(object.colliders, colliders)) return state

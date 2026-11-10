@@ -408,7 +408,7 @@ export function buildHull(
   const hull = finishHull(
     kept.map((i) => point(p, i)),
     polys.map((poly) => poly.v.map((v) => renumber.get(v)!)),
-    HULL_MERGE_DISTANCE
+    CLOUD_LIMITS
   )
   if (!hull) return null
   let error = 0
@@ -547,10 +547,28 @@ function mergePolygons(
   return { v: merged, n }
 }
 
+// 검사(8)의 허용과 하한. plane: 모든 꼭짓점이 모든 면 평면 안쪽이어야 하는 허용, volume·thickness: 부피·가장 얇은 폭의 하한
+// (이상이면 받는다).
+type HullLimits = { plane: number; volume: number; thickness: number }
+// 점 구름 껍질(buildHull): 합친 면의 허용과 퇴화 하한(spec-5 §3.1 8)
+const CLOUD_LIMITS: HullLimits = {
+  plane: HULL_MERGE_DISTANCE,
+  volume: HULL_MIN_VOLUME,
+  thickness: HULL_MIN_THICKNESS
+}
+// 위상을 아는 정확한 껍질(boxHull·prismHull): 평면은 반올림만 허용하고(좌표 10 m에서 1e-14 크기) 부피·폭은 0보다 크기만 본다
+// (Number.MIN_VALUE 이상 = 양수) [결정: 상자 반 크기 하한 MIN_BOX_SIZE/2(worldSpec.ts)에서는 폭이 정확히 HULL_MIN_THICKNESS라
+// 반올림으로 하한 아래가 될 수 있다. 퇴화 하한은 점 구름의 양자화 잡음을 거르는 것이라 정해진 위상에는 쓰지 않는다]
+const EXACT_LIMITS: HullLimits = {
+  plane: HULL_EPSILON,
+  volume: Number.MIN_VALUE,
+  thickness: Number.MIN_VALUE
+}
+
 // 정규화(6)·평면(7)·검사(8): faces는 꼭짓점 번호(vertices 순번)의 반시계 목록. 면 목록은 가장 작은 번호부터 돌리고 사전순으로
-// 정렬하고, 모서리는 (a, b) 사전순이다. 법선은 Newell(단위), offset은 면 꼭짓점의 n·v 최대. planeTolerance: 모든 꼭짓점이 모든
-// 면 평면 안쪽이어야 하는 허용. 검사(Euler, 다양체, 볼록, 부피, 폭)에 실패하면 null
-function finishHull(points: readonly V3[], faces: number[][], planeTolerance: number): Hull | null {
+// 정렬하고, 모서리는 (a, b) 사전순이다. 법선은 Newell(단위), offset은 면 꼭짓점의 n·v 최대. 검사(Euler, 다양체, 볼록, 부피,
+// 폭, limits)에 실패하면 null
+function finishHull(points: readonly V3[], faces: number[][], limits: HullLimits): Hull | null {
   const rotated = faces.map((list) => {
     let k = 0
     for (let i = 1; i < list.length; i++) if (list[i] < list[k]) k = i
@@ -595,16 +613,16 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
   const used = new Set(rotated.flat())
   if (used.size !== points.length) return null
   if (points.length - edges.length + outFaces.length !== 2) return null
-  // 모든 꼭짓점이 모든 면 평면 안쪽이고, 가장 얇은 폭 min_f (offset_f − min_v n_f·v)가 HULL_MIN_THICKNESS 이상(한 번에 잰다)
+  // 모든 꼭짓점이 모든 면 평면 안쪽이고, 가장 얇은 폭 min_f (offset_f − min_v n_f·v)가 하한 이상(한 번에 잰다)
   for (const face of outFaces) {
     const { x: nx, y: ny, z: nz } = face.normal
     let low = Infinity
     for (const q of points) {
       const d = nx * q[0] + ny * q[1] + nz * q[2]
-      if (d - face.offset > planeTolerance) return null
+      if (d - face.offset > limits.plane) return null
       if (d < low) low = d
     }
-    if (!(face.offset - low >= HULL_MIN_THICKNESS)) return null
+    if (!(face.offset - low >= limits.thickness)) return null
   }
   // 부피·무게중심: 꼭짓점 평균에서 면 부채꼴로 나눈 사면체(발산 정리)
   const ref: V3 = [0, 0, 0]
@@ -623,7 +641,7 @@ function finishHull(points: readonly V3[], faces: number[][], planeTolerance: nu
     }
   }
   volume /= 6
-  if (!(volume >= HULL_MIN_VOLUME)) return null
+  if (!(volume >= limits.volume)) return null
   // 사면체 무게중심 = (ref + a + b + c)/4 → Σ(six/6)·(a + b + c)/4 / V + ref
   const centroid: V3 = [0, 1, 2].map((k) => ref[k] + moment[k] / (24 * volume)) as V3
   return {
@@ -643,11 +661,10 @@ export function canonicalHull(points: readonly Vec3[]): Hull | null {
 
 // ---- 위상을 아는 정확한 껍질(양자화·합치기 없음) ----
 
-// 위상이 정해진 껍질의 평면·모서리·부피(검사 공차는 HULL_EPSILON 크기의 반올림만 허용한다). 위상이 틀리면 던진다(호출하는 쪽의
-// 버그다)
+// 위상이 정해진 껍질의 평면·모서리·부피(검사는 EXACT_LIMITS: 평면은 반올림만 허용하고 부피·폭은 양수만 본다). 위상이 틀리면
+// 던진다(호출하는 쪽의 버그다)
 function exactHull(points: readonly V3[], faces: number[][]): Hull {
-  // 정해진 위상이라 평면 검사는 반올림만 허용한다(좌표 10 m에서 1e-14 크기)
-  const hull = finishHull(points, faces, HULL_EPSILON)
+  const hull = finishHull(points, faces, EXACT_LIMITS)
   if (!hull) throw new RangeError('hull: invalid exact hull')
   return hull
 }

@@ -12,7 +12,7 @@ import {
   transformHull,
   type Hull
 } from './hull'
-import type { Vec3 } from './worldSpec'
+import { MIN_BOX_SIZE, type Vec3 } from './worldSpec'
 
 // 볼록 껍질(spec-5 §3.1) 시험: K3(껍질)·K9(정규 껍질 고정점). three ConvexHull 오라클은 렌더러 쪽 scene/hullOracle.test.ts다.
 
@@ -261,6 +261,24 @@ describe('정규 껍질(K9)', () => {
       hull.faces.map((face) => face.vertices)
     )
     expect(turned.volume).toBeCloseTo(0.2 * 0.4 * 0.6, 14)
+  })
+
+  it('boxHull: 세계 설명이 받는 가장 작은 상자(반 크기 MIN_BOX_SIZE/2)도 반올림과 관계없이 위상 그대로다', () => {
+    // 폭이 정확히 HULL_MIN_THICKNESS(1 mm)라 중심·회전에 따라 반올림으로 1 mm 아래가 된다(점 구름의 퇴화 하한을 쓰면 던진다)
+    const h = MIN_BOX_SIZE / 2
+    const s = Math.SQRT1_2
+    const rotations = [
+      [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      [s, -s, 0, s, s, 0, 0, 0, 1]
+    ]
+    for (const rotation of rotations)
+      for (const c of [0, 0.1, 0.37, 1.23, 1.7, -3.3, 7.77])
+        for (const half of [v(h, h, h), v(h, 0.1, 0.1), v(0.1, h, 0.2)]) {
+          const hull = boxHull(v(c, -c, c), rotation, half)
+          expect(hull.faces).toHaveLength(6)
+          expect(hull.edges).toHaveLength(12)
+          expect(hull.volume).toBeGreaterThan(0)
+        }
   })
 
   it('prismHull: 16각 기둥은 면 18·모서리 48·꼭짓점 32(입력 순서), 시계 방향 입력도 바깥 법선', () => {

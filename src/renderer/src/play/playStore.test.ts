@@ -599,6 +599,8 @@ describe('simNotice collisionOverlap', () => {
     [{ body: '1', target: 'body:-1' }, 'Arm', { kind: 'body', name: 'Robot' }],
     [{ body: '1', target: 'body:7' }, 'Arm', { kind: 'raw', text: 'body:7' }],
     [{ body: '9', target: 'wall:z' }, '', { kind: 'raw', text: 'wall:z' }],
+    // 실행의 시즌(BIOBUZZ 구조물 17개)에 없는 순번
+    [{ body: '0', target: 'structure:17' }, 'Lift', { kind: 'raw', text: 'structure:17' }],
     [{ target: 'floor' }, '', { kind: 'floor' }]
   ])('params %o → 몸체 %s, 대상 %o', (params, body, target) => {
     const next = apply(withColliders(), notice(params))
@@ -616,6 +618,10 @@ describe('simNotice collisionOverlap', () => {
   it('run.colliders가 비어도 동작하고, 한도·들림 알림은 기본 경로다', async () => {
     const next = apply(data(), notice({ body: '0', target: 'floor' }))
     expect(next.entries[0]).toMatchObject({ type: 'collisionOverlap', body: '', season: 'none' })
+    // 'none' 시즌에는 구조물이 없다
+    expect(apply(data(), notice({ target: 'structure:0' })).entries[0]).toMatchObject({
+      target: { kind: 'raw', text: 'structure:0' }
+    })
     const instance = i18next.createInstance()
     await instance.init({
       lng: 'ko',
