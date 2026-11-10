@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { propertyDefaults } from '../hardware/catalog'
 import type { SceneObject, SceneObjects } from '../scene/model'
 import { deviceRows } from './deviceRows'
-import { chooseRobotConfig, generationWarning } from './robotConfig'
+import { generatedHash } from '../../../shared/generatedFiles'
+import { generateTeamCodeFiles } from '../hardware/generate'
+import { chooseRobotConfig, expectedConfig, generationWarning } from './robotConfig'
 
 const T0 = { position: [0, 0, 0], rotation: [0, 0, 0] } as SceneObject['transform']
 
@@ -104,6 +106,53 @@ describe('마지막 저장의 생성 결과 경고', () => {
     })
     expect(generationWarning({ ...synced, skipped: [path] }, null)).toBeNull()
     expect(generationWarning({ status: 'noTeamCode' }, path)).toBeNull()
+  })
+})
+
+describe('지금 씬의 구성(INIT 확인)', () => {
+  const path = 'src/main/res/xml/sandbot_beta_bot.xml'
+  // 같은 로봇 안 두 모터가 같은 포트를 쓰면 검증 오류(portConflict)라 아무 파일도 만들지 않는다
+  const blockedScene: SceneObjects = {
+    ...SCENE,
+    betaClaw: part('betaClaw', 'beta', [
+      ['m3', 'claw', 1],
+      ['m4', 'wrist', 3]
+    ])
+  }
+
+  it('막히지 않으면 저장할 때와 같은 구성 XML의 표식 해시', () => {
+    const file = generateTeamCodeFiles(SCENE).files.find((f) => f.path === path)!
+    expect(expectedConfig(SCENE, path)).toEqual({
+      blocked: false,
+      errors: 0,
+      configHash: generatedHash(file.content)
+    })
+    expect(expectedConfig(SCENE, path).configHash).toMatch(/^[0-9a-f]{14}$/)
+    expect(expectedConfig(SCENE, null).configHash).toBeNull()
+  })
+
+  it('검증 오류가 있으면 막힘과 오류 수, 해시 없음', () => {
+    const expected = expectedConfig(blockedScene, path)
+    expect(expected.blocked).toBe(true)
+    expect(expected.errors).toBeGreaterThan(0)
+    expect(expected.configHash).toBeNull()
+  })
+
+  it('저장하지 않고 연 프로젝트(생성 결과 없음)도 막힌 씬이면 configBlocked', () => {
+    const current = expectedConfig(blockedScene, path)
+    expect(generationWarning(null, path, current)).toEqual({
+      key: 'configBlocked',
+      params: { count: current.errors, file: path }
+    })
+    // 이번 세션의 저장이 이미 막혔으면 기존 경고 그대로
+    expect(generationWarning({ status: 'blocked', errors: 4 }, path, current)).toEqual({
+      key: 'generationBlocked',
+      params: { count: 4 }
+    })
+    // 하드웨어가 있는 로봇이 없으면 쓸 구성이 없다
+    expect(generationWarning(null, null, current)).toBeNull()
+    // 막히지 않은 씬은 생성 결과만 본다(디스크 비교는 메인의 configStale)
+    expect(generationWarning(null, path, expectedConfig(SCENE, path))).toBeNull()
   })
 })
 

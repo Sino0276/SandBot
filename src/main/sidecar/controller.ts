@@ -340,7 +340,11 @@ export class PlayController {
         void session.dispose()
         return { ok: false, code: 'failed', detail: 'the window was closed' }
       }
-      return prepared.configMissing ? { ok: true, configMissing: true } : { ok: true }
+      return {
+        ok: true,
+        ...(prepared.configMissing ? { configMissing: true as const } : {}),
+        ...(prepared.configStale ? { configStale: true as const } : {})
+      }
     } finally {
       this.starting = false
       // Gradle 읽기·플랫폼 jar에서 끝났거나 던졌을 때(starting이라 이 INIT의 것이다)

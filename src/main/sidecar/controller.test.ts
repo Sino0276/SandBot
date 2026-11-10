@@ -111,6 +111,7 @@ describe('PlayController + 가짜 사이드카', () => {
       flavor: 'TeleOp'
     },
     configPath: null,
+    configHash: null,
     settings: { speed: 1, jitter: 0, seed: 7, autoStopAutonomous: true, batteryVoltage: 12.5 },
     world: null,
     ...overrides
@@ -167,6 +168,16 @@ describe('PlayController + 가짜 사이드카', () => {
 
   afterEach(async () => {
     await controller.disposeAll()
+  })
+
+  it('디스크 구성이 지금 씬의 구성 해시와 다르면 결과에 configStale(실행은 한다)', async () => {
+    // 디스크의 sandbot_robot.xml은 생성 표식이 없는 '<Robot/>'라 어떤 해시와도 다르다
+    const request = opModeRequest('Normal', {
+      configPath: 'src/main/res/xml/sandbot_robot.xml',
+      configHash: '0123456789abcd'
+    })
+    expect(await controller.init(request, owner)).toEqual({ ok: true, configStale: true })
+    await waitFor(() => of('phase').some((event) => event.phase === 'init'))
   })
 
   it('INIT → START → STOP: 단계·텔레메트리·장치·로그, RunRequest와 JVM 명령, 모든 이벤트에 runId', async () => {

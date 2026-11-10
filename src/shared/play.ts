@@ -182,6 +182,9 @@ export type PlayInitRequest = {
   opMode: { className: string; path: string; flavor: OpModeFlavor; registeredName?: string }
   // 로봇 구성 XML의 TeamCode 기준 경로(src/main/res/xml/sandbot_*.xml, generatedFiles.ts 규칙). 없으면 null.
   configPath: string | null
+  // 렌더러가 지금 씬으로 만들 구성 XML의 표식 해시(generatedFiles.ts generatedHash). 씬에 하드웨어 검증 오류가 있어
+  // 만들 수 없거나 configPath가 null이면 null. 메인이 디스크 파일의 해시와 비교해 다르면 configStale로 알린다.
+  configHash: string | null
   settings: PlaySettings
   // 시뮬레이터의 세계(src/shared/sim/worldSpec.ts). 로봇이 없으면 null(센서는 사이드카 기본값).
   world: WorldSpec | null
@@ -198,6 +201,7 @@ export type PlayInitRequest = {
 //   'android-36.1' 등, Android Studio에서 설치)
 // - cancelled: 라이브러리를 받는 중 사용자가 STOP으로 취소했다
 // ok의 configMissing: 요청한 구성 XML이 디스크에 없어 장치 없는 hardwareMap으로 실행한다(렌더러가 Console에 경고)
+// ok의 configStale: 디스크의 구성 XML이 configHash(지금 씬에서 만든 구성)와 다르다. 그 파일로 실행한다(렌더러가 경고)
 export type PlayInitFailureCode =
   | 'notAllowed'
   | 'missing'
@@ -210,7 +214,8 @@ export type PlayInitFailureCode =
   | 'cancelled'
 
 export type PlayInitResult =
-  { ok: true; configMissing?: true } | { ok: false; code: PlayInitFailureCode; detail: string }
+  | { ok: true; configMissing?: true; configStale?: true }
+  | { ok: false; code: PlayInitFailureCode; detail: string }
 
 export type PlayCommand =
   | { type: 'start' }

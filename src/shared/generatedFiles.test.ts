@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   GENERATED_MARKER,
+  generatedHash,
   generatedState,
   isAllowedGeneratedPath,
   planGeneratedSync,
@@ -24,6 +25,25 @@ describe('isAllowedGeneratedPath', () => {
     expect(isAllowedGeneratedPath(`${XML}/sandbot_Robot.xml`)).toBe(false)
     expect(isAllowedGeneratedPath(`/${XML}/sandbot_robot.xml`)).toBe(false)
     expect(isAllowedGeneratedPath('RobotHardware.java')).toBe(false)
+  })
+})
+
+describe('generatedHash', () => {
+  const content = generated('public class A {}\n')
+
+  it('도구가 쓴 그대로면 표식 해시, CRLF로 바뀌어도 같은 해시', () => {
+    const hash = generatedHash(content)
+    expect(hash).toMatch(/^[0-9a-f]{14}$/)
+    expect(content).toContain(`${GENERATED_MARKER} ${hash}`)
+    expect(generatedHash(content.replace(/\n/g, '\r\n'))).toBe(hash)
+    // 내용이 다르면 해시도 다르다(다른 씬에서 만든 구성)
+    expect(generatedHash(generated('public class B {}\n'))).not.toBe(hash)
+  })
+
+  it('고친 파일·해시 없는 이전 형식·표식 없는 파일은 null', () => {
+    expect(generatedHash(content.replace('class A', 'class MyA'))).toBeNull()
+    expect(generatedHash(`// ${GENERATED_MARKER}\nclass A {}`)).toBeNull()
+    expect(generatedHash('class A {}')).toBeNull()
   })
 })
 
