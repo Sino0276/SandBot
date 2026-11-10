@@ -84,7 +84,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, FIELD, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 11 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 12 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -878,7 +878,13 @@ describe('필드(v10)', () => {
     const content = serializeProject(objects, { season: 'biobuzz' }, relativize)
     expect(content).toContain('"field": {\n    "season": "biobuzz"\n  }')
     // 머리(format, version, field) 다음에 objects
-    expect(Object.keys(JSON.parse(content))).toEqual(['format', 'version', 'field', 'objects'])
+    expect(Object.keys(JSON.parse(content))).toEqual([
+      'format',
+      'version',
+      'field',
+      'settings',
+      'objects'
+    ])
     const loaded = parseProject(content)
     expect(loaded.field).toEqual({ season: 'biobuzz' })
     expect(loaded.fieldDefaulted).toBe(false)
@@ -980,11 +986,11 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
   const WITH_VISUAL: FieldDoc = { season: 'biobuzz', visual: { ...VISUAL } }
 
   // A1
-  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 11과 키를 골라 쓴 모양이다', () => {
+  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 12(지금 판)와 키를 골라 쓴 모양이다', () => {
     const content = serializeProject(objects, WITH_VISUAL, relativize)
     const data = JSON.parse(content)
-    expect(data.version).toBe(11)
-    expect(PROJECT_VERSION).toBe(11)
+    expect(data.version).toBe(12)
+    expect(PROJECT_VERSION).toBe(12)
     expect(data.field).toEqual({
       season: 'biobuzz',
       visual: {
@@ -1049,7 +1055,7 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
     expect(loaded.fieldVisualDropped).toBe(false)
   })
 
-  it('v10 파일은 visual 키가 있어도 버리고, 다시 쓰면 v11이다', () => {
+  it('v10 파일은 visual 키가 있어도 버리고, 다시 쓰면 지금 판이다', () => {
     const data = JSON.parse(serializeProject(objects, WITH_VISUAL, relativize))
     data.version = 10
     const loaded = parseProject(JSON.stringify(data))
@@ -1057,7 +1063,7 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
     expect('visual' in loaded.field).toBe(false)
     expect(loaded.fieldVisualFile).toBeNull()
     expect(loaded.fieldVisualDropped).toBe(false)
-    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(11)
+    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(12)
   })
 
   // A3
@@ -1100,5 +1106,65 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
     const bad = JSON.parse(withVisual(good))
     bad.field.season = 'Bad'
     expect(() => parseProject(JSON.stringify(bad))).toThrow('invalidData: field')
+  })
+})
+
+describe('프로젝트 설정(v12 settings, 코드 단위)', () => {
+  const CM_RAD = { codeUnits: { length: 'cm', angle: 'rad' } } as const
+
+  it('왕복: settings를 키를 골라 쓰고 그대로 읽는다', () => {
+    const content = serializeProject(objects, FIELD, relativize, { settings: CM_RAD })
+    const data = JSON.parse(content)
+    expect(data.version).toBe(12)
+    expect(data.settings).toEqual({ codeUnits: { length: 'cm', angle: 'rad' } })
+    const loaded = parseProject(content)
+    expect(loaded.settings).toEqual(CM_RAD)
+    expect(loaded.settingsDropped).toBe(false)
+  })
+
+  it('settings를 넘기지 않으면 기본값(sdk)을 쓴다', () => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    expect(data.settings).toEqual({ codeUnits: { length: 'sdk', angle: 'sdk' } })
+  })
+
+  it('v11 이하는 settings를 보지 않고 기본값이다(알리지 않음)', () => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize, { settings: CM_RAD }))
+    data.version = 11
+    const loaded = parseProject(JSON.stringify(data))
+    expect(loaded.settings.codeUnits).toEqual({ length: 'sdk', angle: 'sdk' })
+    expect(loaded.settingsDropped).toBe(false)
+  })
+
+  it('v12에 settings가 없으면 기본값이고 알리지 않는다', () => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    delete data.settings
+    const loaded = parseProject(JSON.stringify(data))
+    expect(loaded.settings.codeUnits).toEqual({ length: 'sdk', angle: 'sdk' })
+    expect(loaded.settingsDropped).toBe(false)
+  })
+
+  it.each([
+    ['배열', []],
+    ['codeUnits 없음', {}],
+    ['모르는 길이', { codeUnits: { length: 'ft', angle: 'deg' } }],
+    ['모르는 각도', { codeUnits: { length: 'mm', angle: 'grad' } }],
+    ['문자열', 'mm']
+  ])('틀린 settings(%s)는 기본값으로 읽고 프로젝트는 연다', (_label, settings) => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    data.settings = settings
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const loaded = parseProject(JSON.stringify(data))
+    warn.mockRestore()
+    expect(loaded.settings.codeUnits).toEqual({ length: 'sdk', angle: 'sdk' })
+    expect(loaded.settingsDropped).toBe(true)
+    expect(Object.keys(loaded.objects)).toEqual(Object.keys(objects))
+  })
+
+  it('모르는 키는 버린다', () => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize, { settings: CM_RAD }))
+    data.settings.extra = 1
+    data.settings.codeUnits.extra = 2
+    const loaded = parseProject(JSON.stringify(data))
+    expect(loaded.settings).toEqual(CM_RAD)
   })
 })

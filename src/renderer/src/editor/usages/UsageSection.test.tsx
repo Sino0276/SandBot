@@ -20,6 +20,7 @@ import { useSceneStore } from '../../scene/sceneStore'
 import ScriptCard from '../scripts/ScriptCard'
 import { useUsageOpenStore } from './usageOpenStore'
 import UsageSection from './UsageSection'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../scene/projectSettings'
 
 // 그리기 확인(renderToStaticMarkup, DOM 없음): 머리줄·트리의 역할과 ARIA, 상태별 문구. 보기 모델 자체는
 // usageView.test.ts가 확인한다.
@@ -213,7 +214,7 @@ describe('사용처 칸 그리기', () => {
     setStore(useUsageIndexStore, {
       status: 'ready',
       root: '/p',
-      baseline,
+      baseline: { objects: baseline, units: SDK_UNITS },
       result: resultWith([], {
         fileTotals: new Map(),
         unresolved: new Map([

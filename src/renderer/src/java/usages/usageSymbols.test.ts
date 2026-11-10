@@ -3,6 +3,7 @@ import type { HardwareComponent, SceneObject, SceneObjects } from '../../scene/m
 import { propertyDefaults, type ComponentType } from '../../hardware/catalog'
 import { lookupNamesOf, usageSymbols } from './usageSymbols'
 import type { SymbolClass, UsageSymbols } from './usageTypes'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../scene/projectSettings'
 
 function component(
   id: string,
@@ -104,7 +105,7 @@ function lookup(symbols: UsageSymbols, name: string): string[] | undefined {
 
 describe('usageSymbols', () => {
   it('codeScopes의 클래스·필드·상수를 키와 함께 옮긴다', () => {
-    const symbols = usageSymbols(liftScene())
+    const symbols = usageSymbols(liftScene(), SDK_UNITS)
     expect(symbols.unavailable).toEqual([])
     expect(symbols.robots).toHaveLength(1)
     const root = symbols.robots[0]
@@ -132,28 +133,28 @@ describe('usageSymbols', () => {
   })
 
   it('장치가 없는 그룹은 클래스가 없다', () => {
-    const symbols = usageSymbols(liftScene())
+    const symbols = usageSymbols(liftScene(), SDK_UNITS)
     expect(symbols.robots[0].fields.some((f) => f.key === 'g:empty')).toBe(false)
     expect(symbols.signature).not.toContain('g:empty')
   })
 
   it('같은 문서면 같은 결과(WeakMap), 다른 문서면 다시 만든다', () => {
     const objects = liftScene()
-    expect(usageSymbols(objects)).toBe(usageSymbols(objects))
+    expect(usageSymbols(objects, SDK_UNITS)).toBe(usageSymbols(objects, SDK_UNITS))
     expect(lookupNamesOf(objects)).toBe(lookupNamesOf(objects))
     const copy = { ...objects }
-    expect(usageSymbols(copy)).not.toBe(usageSymbols(objects))
-    expect(usageSymbols(copy).signature).toBe(usageSymbols(objects).signature)
+    expect(usageSymbols(copy, SDK_UNITS)).not.toBe(usageSymbols(objects, SDK_UNITS))
+    expect(usageSymbols(copy, SDK_UNITS).signature).toBe(usageSymbols(objects, SDK_UNITS).signature)
   })
 
   it('이름을 바꿔도 키는 그대로다(장치·그룹·클래스)', () => {
-    const before = usageSymbols(liftScene())
+    const before = usageSymbols(liftScene(), SDK_UNITS)
     let objects = renameComponent(liftScene(), 'liftMotor', 'll', 'liftL')
     objects = rename(objects, 'lift', { name: 'Elevator' })
     objects = rename(objects, 'bot', {
       hardware: { ...objects.bot.hardware!, className: 'OtherHardware' }
     })
-    const after = usageSymbols(objects)
+    const after = usageSymbols(objects, SDK_UNITS)
     expect(after.robots[0].key).toBe(before.robots[0].key)
     expect(after.robots[0].name).toBe('OtherHardware')
     const elevator = nested(after.robots[0], 'elevator')
@@ -166,30 +167,33 @@ describe('usageSymbols', () => {
 
   it('signature: 옮기기만 하면 그대로, 이름·소속 그룹·클래스 이름을 바꾸면 달라진다', () => {
     const base = liftScene()
-    const signature = usageSymbols(base).signature
+    const signature = usageSymbols(base, SDK_UNITS).signature
     const moved = rename(base, 'liftMotor', {
       transform: { position: [0.1, 0.2, 0.3], rotation: [0, 0, 1] }
     })
-    expect(usageSymbols(moved).signature).toBe(signature)
+    expect(usageSymbols(moved, SDK_UNITS).signature).toBe(signature)
 
-    expect(usageSymbols(renameComponent(base, 'drive', 'fl', 'leftFront')).signature).not.toBe(
+    expect(
+      usageSymbols(renameComponent(base, 'drive', 'fl', 'leftFront'), SDK_UNITS).signature
+    ).not.toBe(signature)
+    expect(usageSymbols(rename(base, 'claw', { name: 'Gripper' }), SDK_UNITS).signature).not.toBe(
       signature
     )
-    expect(usageSymbols(rename(base, 'claw', { name: 'Gripper' })).signature).not.toBe(signature)
     expect(
       usageSymbols(
-        rename(base, 'bot', { hardware: { ...base.bot.hardware!, className: 'BotHardware' } })
+        rename(base, 'bot', { hardware: { ...base.bot.hardware!, className: 'BotHardware' } }),
+        SDK_UNITS
       ).signature
     ).not.toBe(signature)
     // 장치를 Lift에서 로봇 바로 아래로 옮기면 필드가 다른 클래스에 생긴다
-    expect(usageSymbols(rename(base, 'liftMotor', { parentId: 'bot' })).signature).not.toBe(
-      signature
-    )
+    expect(
+      usageSymbols(rename(base, 'liftMotor', { parentId: 'bot' }), SDK_UNITS).signature
+    ).not.toBe(signature)
   })
 
   it('codeClassName 덮어쓰기가 클래스 이름과 필드 이름이 된다', () => {
     const objects = rename(liftScene(), 'lift', { name: '리프트', codeClassName: 'Elevator' })
-    const root = usageSymbols(objects).robots[0]
+    const root = usageSymbols(objects, SDK_UNITS).robots[0]
     const elevator = nested(root, 'elevator')
     expect(elevator.name).toBe('Elevator')
     expect(elevator.key).toBe('g:lift')
@@ -200,13 +204,13 @@ describe('usageSymbols', () => {
       robot('bot', 'MyBotHardware'),
       part('p', 'bot', component('m', 'motor', '왼쪽모터', 0))
     )
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols.robots[0].fields[0]).toEqual({ name: '왼쪽모터', key: 'd:p\nm', group: null })
     expect(lookup(symbols, '왼쪽모터')).toEqual(['d:p\nm'])
   })
 
   it('데드휠은 같은 포트 모터의 이름으로 찾고, 모터가 없으면 자기 이름이다', () => {
-    const symbols = usageSymbols(liftScene())
+    const symbols = usageSymbols(liftScene(), SDK_UNITS)
     // par(포트 0)는 frontLeft(포트 0)의 엔코더를 읽는다
     expect(lookup(symbols, 'frontLeft')).toEqual(['d:drive\nfl', 'd:parPart\npa'])
     expect(lookup(symbols, 'par')).toBeUndefined()
@@ -230,7 +234,7 @@ describe('usageSymbols', () => {
       robot('b', 'BetaHardware'),
       part('pb', 'b', component('m', 'motor', 'arm', 0))
     )
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols.robots.map((r) => [r.key, r.name])).toEqual([
       ['r:a', 'AlphaHardware'],
       ['r:b', 'BetaHardware']
@@ -246,7 +250,7 @@ describe('usageSymbols', () => {
       robot('b'),
       part('pb', 'b', component('m', 'motor', 'lift', 0))
     )
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols.robots).toEqual([])
     expect(symbols.unavailable).toEqual([
       { key: 'r:a', className: 'RobotHardware', reason: 'duplicateClassName' },
@@ -261,7 +265,7 @@ describe('usageSymbols', () => {
       robot('bot', 'my bot'),
       part('p', 'bot', component('m', 'motor', 'arm', 0))
     )
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols.robots).toEqual([])
     expect(symbols.unavailable).toEqual([
       { key: 'r:bot', className: 'my bot', reason: 'invalidClassName' }
@@ -271,7 +275,7 @@ describe('usageSymbols', () => {
 
   it('컴포넌트가 없는 로봇은 클래스가 없다', () => {
     const objects = scene(robot('bot', 'MyBotHardware'), part('p', 'bot'), group('g', 'bot', 'G'))
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols).toMatchObject({ robots: [], unavailable: [], lookupNames: [] })
   })
 
@@ -281,7 +285,7 @@ describe('usageSymbols', () => {
       part('p', 'bot', component('m', 'motor', 'arm', 0)),
       object('loose', 'part', null, { components: [component('x', 'servo', 'stray', 0)] })
     )
-    const symbols = usageSymbols(objects)
+    const symbols = usageSymbols(objects, SDK_UNITS)
     expect(symbols.signature).not.toContain('stray')
     expect(lookupNamesOf(objects).has('stray')).toBe(false)
   })
@@ -292,7 +296,7 @@ describe('usageSymbols', () => {
       part('p', 'bot', component('a', 'motor', 'arm', 0)),
       part('q', 'bot', component('b', 'servo', 'arm', 0))
     )
-    const fields = usageSymbols(objects).robots[0].fields
+    const fields = usageSymbols(objects, SDK_UNITS).robots[0].fields
     expect(fields.map((f) => [f.name, f.key])).toEqual([
       ['arm', 'd:p\na'],
       ['arm', 'd:q\nb']

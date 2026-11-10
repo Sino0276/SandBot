@@ -7,24 +7,26 @@ import {
   type RobotCodeScopes
 } from './codeScopes'
 import { isInConfiguration, robotHardwareSettings, type ComponentEntry } from './components'
+import type { CodeUnits } from '../scene/projectSettings'
 import {
-  INCH_PER_METER,
-  MM_PER_METER,
-  otosOffsetInchDeg,
-  pinpointComponentOffsetsMm,
-  robotFramePose
-} from './mounting'
+  ANGLE_CODE_UNITS,
+  angleLiteral,
+  type AngleCodeUnit,
+  type LengthCodeUnit,
+  deviceAngleUnit,
+  deviceLengthUnits,
+  javaDouble,
+  LENGTH_CODE_UNITS,
+  lengthLiteral
+} from './codeUnits'
+import { otosOffsetMetersDeg, pinpointComponentOffsetsMeters, robotFramePose } from './mounting'
 import { GENERATED_MARKER } from '../../../shared/generatedFiles'
 import { configXmlFilePath, constantName, GENERATED_JAVA_PACKAGE, javaString } from './naming'
 
 const INDENT = '    '
 
-// Java double 리터럴: 반올림 후 끝의 0을 지우되 소수점은 남긴다(12 → 12.0)
-export function javaDouble(value: number, digits: number): string {
-  const fixed = (Math.abs(value) < 0.5 * 10 ** -digits ? 0 : value).toFixed(digits)
-  const trimmed = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '.0') : `${fixed}.0`
-  return trimmed === '-0.0' ? '0.0' : trimmed
-}
+// 예전 import 경로(시험)
+export { javaDouble }
 
 // 주석 안에 넣는 문자열이 주석을 닫거나 줄을 끊지 않게 한다. javac는 주석 안의 \u 이스케이프도
 // 먼저 해석하므로(잘못된 \u는 컴파일 오류, \u000a는 줄바꿈) 역슬래시를 두 번 써서 이스케이프가 되지 않게 한다.
@@ -47,6 +49,16 @@ const HUB_DIRECTION_ENUM: Record<string, string> = {
 
 type Generated = { constants: string[]; init: string[] }
 
+// 생성 주석에 쓰는 단위 이름(OTOS)
+const LENGTH_WORDS: Record<LengthCodeUnit, string> = {
+  mm: 'millimeters',
+  cm: 'centimeters',
+  m: 'meters',
+  in: 'inches'
+}
+const ANGLE_WORDS: Record<AngleCodeUnit, string> = { deg: 'degrees', rad: 'radians' }
+const NAVIGATION = 'org.firstinspires.ftc.robotcore.external.navigation'
+
 // 데드휠이 꽂힌 엔코더 포트와 같은 번호에 모터가 있으면, SDK에서는 그 모터 이름으로 엔코더를 읽는다
 export function deadWheelDeviceName(entry: ComponentEntry, entries: ComponentEntry[]): string {
   const motor = entries.find(
@@ -62,7 +74,8 @@ export function deadWheelDeviceName(entry: ComponentEntry, entries: ComponentEnt
 function generateComponent(
   objects: SceneObjects,
   entry: DeviceMember,
-  entries: ComponentEntry[]
+  entries: ComponentEntry[],
+  units: CodeUnits
 ): Generated {
   const { component, objectId, field } = entry
   const type = component.type as ComponentType
@@ -128,11 +141,15 @@ function generateComponent(
       break
     case 'pinpoint': {
       // 포드 파트가 없거나 다른 로봇에 있으면 오프셋을 0으로 둔다(검증 경고 pinpointPodMissing)
-      const offsets = pinpointComponentOffsetsMm(objects, objectId, props)
+      const offsets = pinpointComponentOffsetsMeters(objects, objectId, props)
+      const unit = deviceLengthUnits(type, units)[0]
+      const { suffix, distanceUnit } = LENGTH_CODE_UNITS[unit]
+      const x = `${constant}_X_OFFSET_${suffix}`
+      const y = `${constant}_Y_OFFSET_${suffix}`
       constants.push(
-        `/** ${commentText(component.name)}: X pod offset (left +) and Y pod offset (forward +) from the robot center, mm. */`,
-        `public static final double ${constant}_X_OFFSET_MM = ${javaDouble(offsets?.x ?? 0, 2)};`,
-        `public static final double ${constant}_Y_OFFSET_MM = ${javaDouble(offsets?.y ?? 0, 2)};`
+        `/** ${commentText(component.name)}: X pod offset (left +) and Y pod offset (forward +) from the robot center, ${unit}. */`,
+        `public static final double ${x} = ${lengthLiteral(offsets?.x ?? 0, unit)};`,
+        `public static final double ${y} = ${lengthLiteral(offsets?.y ?? 0, unit)};`
       )
       const pods = props.podType === 'swingarm' ? 'goBILDA_SWINGARM_POD' : 'goBILDA_4_BAR_POD'
       const direction = (value: string | number): string =>
@@ -143,7 +160,7 @@ function generateComponent(
           '// Choose the X and Y pod parts in SandBot to compute these offsets from the CAD.'
         )
       init.push(
-        `${field}.setOffsets(${constant}_X_OFFSET_MM, ${constant}_Y_OFFSET_MM, DistanceUnit.MM);`,
+        `${field}.setOffsets(${x}, ${y}, DistanceUnit.${distanceUnit});`,
         `${field}.setEncoderResolution(GoBildaPinpointDriver.GoBildaOdometryPods.${pods});`,
         `${field}.setEncoderDirections(GoBildaPinpointDriver.EncoderDirection.${direction(props.xDirection)}, ` +
           `GoBildaPinpointDriver.EncoderDirection.${direction(props.yDirection)});`,
@@ -152,24 +169,61 @@ function generateComponent(
       break
     }
     case 'otos': {
-      const offset = otosOffsetInchDeg(objects, objectId, Number(props.mountingAngle)) ?? {
+      const offset = otosOffsetMetersDeg(objects, objectId, Number(props.mountingAngle)) ?? {
         x: 0,
         y: 0,
         h: 0
       }
+      const unit = deviceLengthUnits(type, units)[0]
+      const angle = deviceAngleUnit(type, units)
+      const length = LENGTH_CODE_UNITS[unit]
+      const angleInfo = ANGLE_CODE_UNITS[angle]
+      const x = `${constant}_OFFSET_X_${length.suffix}`
+      const y = `${constant}_OFFSET_Y_${length.suffix}`
+      const h = `${constant}_OFFSET_H_${angleInfo.suffix}`
       constants.push(
         `/**`,
         ` * ${commentText(component.name)}: sensor pose on the robot in the convention of the SDK OTOS sample`,
-        ` * (X right +, Y forward +, inches; heading CCW +, degrees). getPosition() then reports the robot center`,
-        ` * in that convention. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`,
+        ...(unit === 'in' && angle === 'deg'
+          ? [
+              ` * (X right +, Y forward +, inches; heading CCW +, degrees). getPosition() then reports the robot center`,
+              ` * in that convention. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`
+            ]
+          : [
+              ` * (X right +, Y forward +, ${LENGTH_WORDS[unit]}; heading CCW +, ${ANGLE_WORDS[angle]}). The driver and getPosition()`,
+              ` * stay in inches and degrees. Road Runner / Pedro Pathing use X forward / Y left: set their own offsets instead.`
+            ]),
         ` */`,
-        `public static final double ${constant}_OFFSET_X_IN = ${javaDouble(offset.x, 3)};`,
-        `public static final double ${constant}_OFFSET_Y_IN = ${javaDouble(offset.y, 3)};`,
-        `public static final double ${constant}_OFFSET_H_DEG = ${javaDouble(offset.h, 2)};`
+        `public static final double ${x} = ${lengthLiteral(offset.x, unit)};`,
+        `public static final double ${y} = ${lengthLiteral(offset.y, unit)};`,
+        `public static final double ${h} = ${angleLiteral(offset.h, angle)};`
       )
       init.push(get(def.javaType))
+      // Pose2D는 드라이버의 지금 단위(기본 인치·도)다. 코드 단위가 다르면 넘길 때 바꾼다(setLinearUnit은 팀 코드의
+      // getPosition 단위까지 바꾸므로 부르지 않는다).
+      const converted = unit !== 'in' || angle !== 'deg'
+      if (converted)
+        init.push(
+          "// Pose2D uses the driver's default units (inches, degrees): convert the constants."
+        )
+      // 전체 이름으로 쓴다(import하면 팀이 고른 그룹·로봇 클래스 이름 AngleUnit 등이 가릴 수 있다)
+      const len = (name: string): string =>
+        unit === 'in'
+          ? name
+          : `${NAVIGATION}.DistanceUnit.INCH.fromUnit(${NAVIGATION}.DistanceUnit.${length.distanceUnit}, ${name})`
+      const ang =
+        angle === 'deg'
+          ? h
+          : `${NAVIGATION}.AngleUnit.DEGREES.fromUnit(${NAVIGATION}.AngleUnit.${angleInfo.angleUnit}, ${h})`
+      if (converted)
+        init.push(
+          `${field}.setOffset(new SparkFunOTOS.Pose2D(`,
+          `${INDENT}${INDENT}${len(x)},`,
+          `${INDENT}${INDENT}${len(y)},`,
+          `${INDENT}${INDENT}${ang}));`
+        )
+      else init.push(`${field}.setOffset(new SparkFunOTOS.Pose2D(${x}, ${y}, ${h}));`)
       init.push(
-        `${field}.setOffset(new SparkFunOTOS.Pose2D(${constant}_OFFSET_X_IN, ${constant}_OFFSET_Y_IN, ${constant}_OFFSET_H_DEG));`,
         `${field}.setLinearScalar(${javaDouble(Number(props.linearScalar), 3)});`,
         `${field}.setAngularScalar(${javaDouble(Number(props.angularScalar), 3)});`,
         `${field}.calibrateImu();`,
@@ -182,10 +236,13 @@ function generateComponent(
       const measures = props.measures === 'strafe' ? 'strafe (left/right)' : 'forward/backward'
       constants.push(
         `/** ${commentText(component.name)}: dead wheel measuring ${measures} motion; position from the robot center (X forward +, Y left +). */`,
-        `public static final double ${constant}_X_MM = ${javaDouble(pose.x * MM_PER_METER, 2)};`,
-        `public static final double ${constant}_Y_MM = ${javaDouble(pose.y * MM_PER_METER, 2)};`,
-        `public static final double ${constant}_X_IN = ${javaDouble(pose.x * INCH_PER_METER, 3)};`,
-        `public static final double ${constant}_Y_IN = ${javaDouble(pose.y * INCH_PER_METER, 3)};`,
+        ...deviceLengthUnits(type, units).flatMap((unit) => {
+          const { suffix } = LENGTH_CODE_UNITS[unit]
+          return [
+            `public static final double ${constant}_X_${suffix} = ${lengthLiteral(pose.x, unit)};`,
+            `public static final double ${constant}_Y_${suffix} = ${lengthLiteral(pose.y, unit)};`
+          ]
+        }),
         `public static final boolean ${constant}_MEASURES_FORWARD = ${props.measures !== 'strafe'};`,
         `public static final boolean ${constant}_REVERSED = ${props.reversed === 'yes'};`
       )
@@ -215,7 +272,12 @@ const indent = (line: string): string => (line ? `${INDENT}${line}` : '')
 
 // 범위 하나의 클래스 본문(들여쓰기 전). 상수 → 필드(하이어라키 순서) → 생성자 → 중첩 클래스 묶음이고,
 // 묶음 사이에 빈 줄을 하나씩 둔다. 그룹이 없는 로봇은 예전 출력과 바이트 단위로 같아야 한다(generatedOutput.test.ts).
-function classBlocks(objects: SceneObjects, scopes: RobotCodeScopes, scope: CodeScope): string[][] {
+function classBlocks(
+  objects: SceneObjects,
+  scopes: RobotCodeScopes,
+  scope: CodeScope,
+  units: CodeUnits
+): string[][] {
   const constants: string[] = []
   const fields: string[] = []
   const init: string[] = []
@@ -223,7 +285,7 @@ function classBlocks(objects: SceneObjects, scopes: RobotCodeScopes, scope: Code
   for (const member of scope.members) {
     if (init.length) init.push('')
     if (member.kind === 'device') {
-      const generated = generateComponent(objects, member, scopes.entries)
+      const generated = generateComponent(objects, member, scopes.entries, units)
       const def = componentDef(member.component.type as ComponentType)
       constants.push(...generated.constants)
       fields.push(`public final ${def.javaType} ${member.field};`)
@@ -232,7 +294,7 @@ function classBlocks(objects: SceneObjects, scopes: RobotCodeScopes, scope: Code
       const { className, name } = member.scope
       fields.push(`public final ${className} ${member.field};`)
       init.push(`// ${commentText(name)}`, `${member.field} = new ${className}(hardwareMap);`)
-      nested.push(nestedClass(objects, scopes, member.scope, member.field))
+      nested.push(nestedClass(objects, scopes, member.scope, member.field, units))
     }
   }
   const constructor = [
@@ -249,7 +311,8 @@ function nestedClass(
   objects: SceneObjects,
   scopes: RobotCodeScopes,
   scope: CodeScope,
-  field: string
+  field: string,
+  units: CodeUnits
 ): string[] {
   const typeName = scope.classPath.join('.')
   const enclosing = scope.classPath.slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('.'))
@@ -265,7 +328,7 @@ function nestedClass(
     ` * ${once}`,
     ' */',
     `public static final class ${scope.className} {`,
-    ...classBlocks(objects, scopes, scope).flatMap((block, i) => [
+    ...classBlocks(objects, scopes, scope, units).flatMap((block, i) => [
       ...(i > 0 ? [''] : []),
       ...block.map(indent)
     ]),
@@ -274,9 +337,13 @@ function nestedClass(
 }
 
 // 로봇 하나의 하드웨어 클래스(Java 소스). 검증 오류가 없는 상태에서 부른다.
-export function generateHardwareJava(objects: SceneObjects, robotId: string): string {
+export function generateHardwareJava(
+  objects: SceneObjects,
+  robotId: string,
+  units: CodeUnits
+): string {
   const settings = robotHardwareSettings(objects, robotId)
-  const scopes = buildCodeScopes(objects, robotId)
+  const scopes = buildCodeScopes(objects, robotId, units)
   const robotName = objects[robotId]?.name ?? ''
 
   const imports = new Set(['com.qualcomm.robotcore.hardware.HardwareMap'])
@@ -301,7 +368,10 @@ export function generateHardwareJava(objects: SceneObjects, robotId: string): st
     `public class ${settings.className} {`,
     `${INDENT}/** Robot configuration name to activate on the Driver Station. */`,
     `${INDENT}public static final String CONFIGURATION_NAME = ${javaString(settings.configName)};`,
-    ...classBlocks(objects, scopes, scopes.root).flatMap((block) => ['', ...block.map(indent)]),
+    ...classBlocks(objects, scopes, scopes.root, units).flatMap((block) => [
+      '',
+      ...block.map(indent)
+    ]),
     '}',
     ''
   ]

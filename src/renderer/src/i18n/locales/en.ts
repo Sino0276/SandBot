@@ -19,7 +19,9 @@ const en: Messages = {
     redoShortcut: 'Redo (Ctrl+Shift+Z or Ctrl+Y)',
     // Preferences window (Unity's Edit > Preferences)
     preferences: 'Preferences',
-    preferencesTooltip: 'Preferences (external script editor, JDK, simulation)'
+    preferencesTooltip: 'Preferences (external script editor, JDK, simulation)',
+    projectSettings: 'Project Settings',
+    projectSettingsTooltip: 'Project Settings (shared by the team: units of the generated code)'
   },
   project: {
     chooseFolderTitle: 'Choose the FtcRobotController folder',
@@ -96,6 +98,8 @@ const en: Messages = {
       'Could not find the field CAD file {{fileName}}. Use [Locate file] in the Field inspector to relink.',
     fieldCadDropped:
       'Could not read the field CAD setting in project.json, so it was dropped. Import it again in the Field inspector.',
+    settingsDropped:
+      'Could not read the project settings in project.json, so the defaults (code units: SDK default) were used. Choose them again in [Project Settings].',
     cadChanged:
       'The part count of {{fileName}} differs from when it was saved. The CAD may have changed, so some parts may not match.',
     codegenBlocked:
@@ -202,6 +206,12 @@ const en: Messages = {
       kg: 'kg',
       lb: 'lb',
       oz: 'oz'
+    },
+    // 각도 기호(생성 코드 단위 줄)
+    angleSymbols: {
+      deg: '°',
+      // 수와 사이를 띄운다(°는 붙인다)
+      rad: ' rad'
     },
     names: {
       mm: 'mm (millimeters)',
@@ -531,6 +541,31 @@ const en: Messages = {
       "No robot in SandBot has a device with this name. Run with the generated configuration and the device won't be found."
   },
   // Preferences window (Unity's Edit > Preferences). Editor product names (Android Studio etc.) are not translated.
+  // 프로젝트 설정 창(Unity Project Settings, editor/ProjectSettingsWindow.tsx). project.json에 저장하는 팀 설정
+  projectSettings: {
+    title: 'Project Settings',
+    codeGeneration: {
+      title: 'Code Generation',
+      lengthUnit: 'Length unit',
+      angleUnit: 'Angle unit',
+      lengthUnits: {
+        sdk: 'SDK default (each device API unit)',
+        mm: 'mm (millimeters)',
+        cm: 'cm (centimeters)',
+        m: 'm (meters)',
+        in: 'in (inches)'
+      },
+      angleUnits: {
+        sdk: 'SDK default (each device API unit)',
+        deg: '° (degrees)',
+        rad: 'rad (radians)'
+      },
+      sdkHint:
+        'Units of the offset and position constants in the generated hardware classes. This is a project setting shared by the team and is written to the generated code when you save (Ctrl+S). SDK default uses the unit each device API takes (Pinpoint mm, OTOS in and °, dead wheels both mm and in).',
+      renameHint:
+        'The unit at the end of constant names (_MM, _IN, _DEG, …) changes too, so team code that uses those constants must be updated. Saving reports where usages break.'
+    }
+  },
   preferences: {
     title: 'Preferences',
     close: 'Close',
@@ -1588,9 +1623,10 @@ const en: Messages = {
         'The position comes from this part. If a motor uses the motor port with the same number, the encoder is read through that motor.'
     },
     derived: {
-      pinpoint: 'Offsets: X {{x}} mm, Y {{y}} mm',
-      otos: 'Offset: X {{x}} in, Y {{y}} in, H {{h}}°',
-      deadWheel: 'Position: X {{x}} mm, Y {{y}} mm',
+      // 생성 상수와 같은 코드 단위·글자(프로젝트 설정)
+      pinpoint: 'Offsets: X {{x}} {{unit}}, Y {{y}} {{unit}}',
+      otos: 'Offset: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}}{{angleUnit}}',
+      deadWheel: 'Position: X {{x}} {{unit}}, Y {{y}} {{unit}}',
       motorOutput: 'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev',
       motorOutputRatio:
         'Output shaft {{rpm}} RPM (free, 12 V) · {{ticks}} ticks/rev · torque and speed use the actual ratio {{ratio}}:1',

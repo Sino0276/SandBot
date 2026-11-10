@@ -32,13 +32,19 @@ import {
 import {
   cameraAim,
   cameraModelOf,
-  MM_PER_METER,
-  otosOffsetInchDeg,
-  pinpointComponentOffsetsMm,
+  otosOffsetMetersDeg,
+  pinpointComponentOffsetsMeters,
   robotFramePose,
   sdkCameraPose
 } from '../../hardware/mounting'
+import {
+  angleLiteral,
+  deviceAngleUnit,
+  deviceLengthUnits,
+  lengthLiteral
+} from '../../hardware/codeUnits'
 import type { Issue } from '../../hardware/validation'
+import type { CodeUnits } from '../../scene/projectSettings'
 import {
   findRobotId,
   subtreeIds,
@@ -111,37 +117,51 @@ type ComponentCardProps = {
   issues: Issue[]
 }
 
-// 생성 코드에 들어갈 계산값(CAD 위치에서 구한 오프셋)
+// 생성 코드에 들어갈 계산값(CAD 위치에서 구한 오프셋). 값은 생성 상수와 같은 단위(프로젝트 설정 코드 단위)·같은
+// 리터럴 글자(hardware/codeUnits.ts)라 생성 파일과 반올림이 어긋나지 않는다.
 function derivedText(
   t: ReturnType<typeof looseT>,
   objects: SceneObjects,
   objectId: string,
-  component: HardwareComponent
+  component: HardwareComponent,
+  units: CodeUnits
 ): string | null {
   const props = component.props
-  switch (component.type) {
+  const type = component.type
+  const lengthUnit = deviceLengthUnits(type, units)[0]
+  const unit = lengthUnit ? t(`units.symbols.${lengthUnit}`) : ''
+  switch (type) {
     case 'pinpoint': {
-      const offsets = pinpointComponentOffsetsMm(objects, objectId, props)
+      const offsets = pinpointComponentOffsetsMeters(objects, objectId, props)
       return offsets
-        ? t('hardware.derived.pinpoint', { x: offsets.x.toFixed(1), y: offsets.y.toFixed(1) })
+        ? t('hardware.derived.pinpoint', {
+            x: lengthLiteral(offsets.x, lengthUnit),
+            y: lengthLiteral(offsets.y, lengthUnit),
+            unit
+          })
         : null
     }
     case 'otos': {
-      const offset = otosOffsetInchDeg(objects, objectId, Number(props.mountingAngle))
+      const offset = otosOffsetMetersDeg(objects, objectId, Number(props.mountingAngle))
+      const angle = deviceAngleUnit(type, units)
       return offset
         ? t('hardware.derived.otos', {
-            x: offset.x.toFixed(2),
-            y: offset.y.toFixed(2),
-            h: offset.h.toFixed(1)
+            x: lengthLiteral(offset.x, lengthUnit),
+            y: lengthLiteral(offset.y, lengthUnit),
+            h: angleLiteral(offset.h, angle),
+            unit,
+            angleUnit: t(`units.angleSymbols.${angle}`)
           })
         : null
     }
     case 'deadWheel': {
+      // 'sdk'는 mm와 in을 함께 만든다. 줄에는 첫 단위(mm)만 보인다.
       const pose = robotFramePose(objects, objectId)
       return pose
         ? t('hardware.derived.deadWheel', {
-            x: (pose.x * MM_PER_METER).toFixed(1),
-            y: (pose.y * MM_PER_METER).toFixed(1)
+            x: lengthLiteral(pose.x, lengthUnit),
+            y: lengthLiteral(pose.y, lengthUnit),
+            unit
           })
         : null
     }
@@ -366,6 +386,7 @@ function ComponentCard({
 }: ComponentCardProps): React.JSX.Element | null {
   const { t } = useTranslation()
   const tl = looseT(t)
+  const codeUnits = useSceneStore((state) => state.settings.codeUnits)
   const updateComponent = useSceneStore((state) => state.updateComponent)
   const removeComponent = useSceneStore((state) => state.removeComponent)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
@@ -546,7 +567,7 @@ function ComponentCard({
     }
   }
 
-  const derived = derivedText(tl, objects, objectId, component)
+  const derived = derivedText(tl, objects, objectId, component, codeUnits)
   const rowLabel = (property: PropertyDef): string =>
     property.kind === 'length'
       ? `${tl(propertyLabelKey(property.key))} (${t(`units.symbols.${lengthUnit}`)})`
@@ -561,7 +582,7 @@ function ComponentCard({
   const typeLabel = t(`hardware.types.${type}`)
   // 생성 코드에서 이 장치를 쓰는 식(robot.lift.liftLeft)과 상수의 형식 경로(MyBotHardware.Lift.PAR_X_MM).
   // 이름은 codeScopes가 정한 그대로다. 변수 이름 robot은 생성 Javadoc의 사용 예와 같다.
-  const codePath = componentCodePath(objects, objectId, component.id)
+  const codePath = componentCodePath(objects, objectId, component.id, codeUnits)
   const robotId = codePath ? findRobotId(objects, objectId) : null
   const robotClassName = robotId ? robotHardwareSettings(objects, robotId).className : ''
   const isSensor = type === 'distanceSensor' || type === 'colorSensor'

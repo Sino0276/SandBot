@@ -1,9 +1,10 @@
 import { useId, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useJavaIndexStore } from '../../java/javaIndex'
-import { useUsageIndexStore } from '../../java/usageIndex'
+import { useUsageIndexStore, type UsageBaseline } from '../../java/usageIndex'
 import type { UsageResult } from '../../java/usages/usageTypes'
 import type { SceneObjects } from '../../scene/model'
+import type { CodeUnits } from '../../scene/projectSettings'
 import { useSceneStore } from '../../scene/sceneStore'
 import { focusDropped, focusMovedOut } from './focusRestore'
 import { useUsageOpenStore } from './usageOpenStore'
@@ -34,13 +35,14 @@ function targetOf(kind: UsageCardKind, id: string, componentId: string): UsageTa
 // 보기 모델. 기호표·범위를 만들다 던지면(코드 생성 쪽 버그) 인스펙터를 깨지 않고 결과가 없는 것처럼 둔다.
 function safeView(
   objects: SceneObjects,
+  units: CodeUnits,
   result: UsageResult | null,
-  baseline: SceneObjects | null,
+  baseline: UsageBaseline | null,
   target: UsageTarget
 ): UsageView | null {
   if (!result) return null
   try {
-    return usageView(objects, result, baseline, target)
+    return usageView(objects, units, result, baseline, target)
   } catch (error) {
     console.error('사용처 보기를 만들지 못했다', error)
     return null
@@ -233,6 +235,7 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
         : target.robotId
   const componentId = target.kind === 'device' ? target.componentId : ''
   const objects = useSceneStore((state) => state.objects)
+  const units = useSceneStore((state) => state.settings.codeUnits)
   const status = useUsageIndexStore((state) => state.status)
   const result = useUsageIndexStore((state) => state.result)
   const baseline = useUsageIndexStore((state) => state.baseline)
@@ -248,8 +251,8 @@ function UsageSection({ target }: { target: UsageTarget }): React.JSX.Element | 
     [objects, kind, id, componentId]
   )
   const view = useMemo(
-    () => safeView(objects, result, baseline, targetOf(kind, id, componentId)),
-    [objects, result, baseline, kind, id, componentId]
+    () => safeView(objects, units, result, baseline, targetOf(kind, id, componentId)),
+    [objects, units, result, baseline, kind, id, componentId]
   )
   if (!exists) return null
 

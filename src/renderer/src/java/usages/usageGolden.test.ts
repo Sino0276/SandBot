@@ -8,6 +8,7 @@ import { extractFacts, type FileFacts } from './usageFacts'
 import { resolveUsages } from './usageResolve'
 import { usageSymbols } from './usageSymbols'
 import type { SymbolClass, UsageKey, UsageResult, UsageSymbols } from './usageTypes'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../../scene/projectSettings'
 
 // javac와 견주는 사용처 차분 테스트(spec §10.2). 정답표(__fixtures__/golden*.txt)는 scripts/usage-oracle이
 // javac의 이름 풀이로 만든 것이고(pnpm usage-oracle, JDK 11+), CI는 JDK 없이 커밋한 정답표만 읽는다.
@@ -170,7 +171,7 @@ describe('javac 정답표와 견주기', () => {
     const golden = [
       ...new Set(readGolden('golden.txt').filter((line) => !/\[(import|qualifier)\]/.test(line)))
     ]
-    const symbols = usageSymbols(corpusScene())
+    const symbols = usageSymbols(corpusScene(), SDK_UNITS)
     const ours = typedLines(resolveUsages(corpusFacts(), symbols), symbols)
     expect(new Set(ours).size, '같은 자리의 사용처가 둘 있다').toBe(ours.length)
     expect(minus(ours, golden), '잘못 찾은 사용처').toEqual([])
@@ -179,13 +180,13 @@ describe('javac 정답표와 견주기', () => {
   })
 
   it('보통 씬: 이스케이프 파일은 건너뛰고, 생성 코드에 없는 이름이 없다', () => {
-    const result = resolveUsages(corpusFacts(), usageSymbols(corpusScene()))
+    const result = resolveUsages(corpusFacts(), usageSymbols(corpusScene(), SDK_UNITS))
     expect(result.files.unicodeEscape).toEqual([`${T}Escapes.java`])
     expect(result.unresolved).toEqual(new Map())
   })
 
   it('보통 씬: 이름으로 찾기(찾기는 세고, 같은 글자는 따로, 없는 이름은 구성에 없는 이름)', () => {
-    const result = resolveUsages(corpusFacts(), usageSymbols(corpusScene()))
+    const result = resolveUsages(corpusFacts(), usageSymbols(corpusScene(), SDK_UNITS))
     const sites = (key: UsageKey, kind: string): string[] =>
       (result.hits.get(key) ?? [])
         .filter((hit) => hit.kind === kind)
@@ -219,7 +220,7 @@ describe('javac 정답표와 견주기', () => {
 
   it('이름을 바꾼 씬: 생성 코드에 없는 이름', () => {
     const golden = readGolden('golden-renamed.txt')
-    const result = resolveUsages(corpusFacts(), usageSymbols(renamedCorpusScene()))
+    const result = resolveUsages(corpusFacts(), usageSymbols(renamedCorpusScene(), SDK_UNITS))
     const ours = [...result.unresolved.values()].flatMap((hits) =>
       hits.map((hit) => `${hit.path}:${hit.line} ${hit.member}`)
     )

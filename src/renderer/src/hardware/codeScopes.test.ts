@@ -8,6 +8,7 @@ import { generateHardwareJava } from './javaCodegen'
 import { groupFieldName, isValidGroupClassName, javaClassName } from './naming'
 import { objectLevelIssues, severityByObject } from './sceneIssues'
 import { uniqueIssues, validateScene, type Issue, type IssueCode } from './validation'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 function component(
   id: string,
@@ -86,11 +87,11 @@ function mechanismScene(): SceneObjects {
 }
 
 function codes(objects: SceneObjects): IssueCode[] {
-  return validateScene(objects).map((i) => i.code)
+  return validateScene(objects, SDK_UNITS).map((i) => i.code)
 }
 
 function issuesOf(objects: SceneObjects, code: IssueCode): Issue[] {
-  return validateScene(objects).filter((i) => i.code === code)
+  return validateScene(objects, SDK_UNITS).filter((i) => i.code === code)
 }
 
 describe('그룹 이름 규칙', () => {
@@ -121,7 +122,7 @@ describe('그룹 이름 규칙', () => {
 describe('코드 범위', () => {
   it('하이어라키 순서로 장치와 그룹을 넣고, 장치가 없는 그룹은 뺀다', () => {
     const objects = mechanismScene()
-    const { root, groups } = buildCodeScopes(objects, 'robot')
+    const { root, groups } = buildCodeScopes(objects, 'robot', SDK_UNITS)
     expect(root.members.map((m) => m.field)).toEqual([
       'frontLeft',
       'lift',
@@ -135,22 +136,24 @@ describe('코드 범위', () => {
     expect(groups.get('claw')!.members.map((m) => m.field)).toEqual(['claw'])
     expect(groups.has('empty')).toBe(false)
     // 문서마다 한 번 만든다
-    expect(buildCodeScopes(objects, 'robot')).toBe(buildCodeScopes(objects, 'robot'))
+    expect(buildCodeScopes(objects, 'robot', SDK_UNITS)).toBe(
+      buildCodeScopes(objects, 'robot', SDK_UNITS)
+    )
   })
 
   it('필드 경로와 상수의 형식 경로', () => {
     const objects = mechanismScene()
-    expect(componentCodePath(objects, 'claw', 'cs')).toEqual({
+    expect(componentCodePath(objects, 'claw', 'cs', SDK_UNITS)).toEqual({
       fieldPath: ['lift', 'claw', 'claw'],
       typeName: 'MyBotHardware.Lift.Claw',
       constants: []
     })
-    expect(componentCodePath(objects, 'perpPart', 'pe')).toMatchObject({
+    expect(componentCodePath(objects, 'perpPart', 'pe', SDK_UNITS)).toMatchObject({
       fieldPath: ['lift', 'perp'],
       typeName: 'MyBotHardware.Lift',
       constants: expect.arrayContaining(['PERP_X_MM'])
     })
-    expect(componentCodePath(objects, 'drive', 'fl')).toMatchObject({
+    expect(componentCodePath(objects, 'drive', 'fl', SDK_UNITS)).toMatchObject({
       fieldPath: ['frontLeft'],
       typeName: 'MyBotHardware'
     })
@@ -169,12 +172,12 @@ describe('코드 범위', () => {
       part('p', 'g', { ...component('x', 'motor', 'x', 1), type: 'futureDevice' })
     )
     expect(groupCodePath(objects, 'g')).toBeNull()
-    expect(generateHardwareJava(objects, 'robot')).not.toContain('Future')
+    expect(generateHardwareJava(objects, 'robot', SDK_UNITS)).not.toContain('Future')
   })
 })
 
 describe('그룹 코드 생성', () => {
-  const java = generateHardwareJava(mechanismScene(), 'robot')
+  const java = generateHardwareJava(mechanismScene(), 'robot', SDK_UNITS)
   const lines = java.split('\n')
 
   it('필드는 계층 순서, 그룹은 생성자에서 중첩 클래스를 만든다', () => {
@@ -261,7 +264,7 @@ describe('그룹 코드 생성', () => {
 
   it('데드휠과 같은 번호의 모터가 다른 그룹에 있어도 그 모터 이름으로 읽는다', () => {
     const objects = mechanismScene()
-    expect(generateHardwareJava(objects, 'robot')).toContain(
+    expect(generateHardwareJava(objects, 'robot', SDK_UNITS)).toContain(
       '            par = hardwareMap.get(DcMotorEx.class, "intake");'
     )
     const xml = generateConfigXml(objects, 'robot')
@@ -277,13 +280,15 @@ describe('그룹 코드 생성', () => {
       group('g2', 'g', 'Inner'),
       part('p', 'g2')
     )
-    expect(generateTeamCodeFiles(withEmpty)).toEqual(generateTeamCodeFiles(plain))
+    expect(generateTeamCodeFiles(withEmpty, SDK_UNITS)).toEqual(
+      generateTeamCodeFiles(plain, SDK_UNITS)
+    )
   })
 
   it('검증 오류 없이 생성되고, 모든 final 필드는 자기 생성자에서 한 번 대입된다', () => {
     const objects = mechanismScene()
-    expect(validateScene(objects).filter((i) => i.severity === 'error')).toEqual([])
-    expect(generateTeamCodeFiles(objects).blocked).toBe(false)
+    expect(validateScene(objects, SDK_UNITS).filter((i) => i.severity === 'error')).toEqual([])
+    expect(generateTeamCodeFiles(objects, SDK_UNITS).blocked).toBe(false)
     const fields = [...java.matchAll(/public final (\w+) (\w+);/g)].map((m) => m[2])
     for (const field of fields)
       expect(java.match(new RegExp(`^\\s+${field} = (hardwareMap|new )`, 'gm'))).not.toBeNull()
@@ -299,7 +304,7 @@ describe('그룹 검증', () => {
       group('g', 'robot', '리프트'),
       part('p', 'g', component('m', 'motor', 'liftLeft', 0))
     )
-    const issues = validateScene(objects)
+    const issues = validateScene(objects, SDK_UNITS)
     expect(issues).toEqual([
       expect.objectContaining({
         code: 'invalidGroupName',
@@ -312,7 +317,7 @@ describe('그룹 검증', () => {
     expect(issues[0].componentId).toBeUndefined()
     const named = { ...objects, g: { ...objects.g, codeClassName: 'Lift' } }
     expect(codes(named)).toEqual([])
-    expect(generateHardwareJava(named, 'robot')).toContain(
+    expect(generateHardwareJava(named, 'robot', SDK_UNITS)).toContain(
       '     * Group "리프트" in SandBot (robot.lift).'
     )
   })
@@ -352,7 +357,7 @@ describe('그룹 검증', () => {
       group('inner', 'outer', 'Group'),
       part('p', 'inner', component('m', 'motor', 'm', 0))
     )
-    expect(validateScene(groupInGroup)).toEqual([
+    expect(validateScene(groupInGroup, SDK_UNITS)).toEqual([
       expect.objectContaining({
         code: 'duplicateGroupClass',
         params: { names: 'Group', className: 'Group' },
@@ -461,7 +466,10 @@ describe('그룹 검증', () => {
       const hardware = { ...objects.robot.hardware!, className }
       const renamed = { ...objects, robot: { ...objects.robot, hardware } }
       expect(codes(renamed), className).toEqual(['reservedFileName'])
-      expect(generateTeamCodeFiles(renamed), className).toMatchObject({ blocked: true, files: [] })
+      expect(generateTeamCodeFiles(renamed, SDK_UNITS), className).toMatchObject({
+        blocked: true,
+        files: []
+      })
     }
     // 그룹의 중첩 클래스는 Bot$Aux.class가 되므로 괜찮다
     const grouped = scene(
@@ -485,9 +493,9 @@ describe('그룹 검증', () => {
       group('g', 'outer', 'String'),
       part('p', 'g', component('m', 'motor', 'm', 0))
     )
-    const issues = validateScene(objects)
+    const issues = validateScene(objects, SDK_UNITS)
     expect(issues.every((i) => i.robotId === 'robot')).toBe(true)
-    expect(generateTeamCodeFiles(objects)).toMatchObject({ blocked: true, files: [] })
+    expect(generateTeamCodeFiles(objects, SDK_UNITS)).toMatchObject({ blocked: true, files: [] })
     expect(objectLevelIssues(issues, 'g').map((i) => i.code)).toEqual(['reservedGroupName'])
     const severities = severityByObject(objects, issues)
     expect(severities.get('g')).toEqual({ severity: 'error', own: true })

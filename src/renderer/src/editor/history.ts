@@ -3,10 +3,11 @@ import type { TunableEdits } from '../java/tunableEdits'
 import type { FieldDoc } from '../scene/fieldDoc'
 import { disposeGeometry, geometryIds } from '../scene/geometryRegistry'
 import type { SceneObjects } from '../scene/model'
+import type { ProjectSettings } from '../scene/projectSettings'
 import { useSceneStore } from '../scene/sceneStore'
 import { useEditorStore } from './editorStore'
 
-// 실행 취소·다시 실행. 씬 문서(sceneStore의 objects, 저장하지 않은 튜닝 값 tunables, 필드 시즌 field)는 바꿀 때마다 새
+// 실행 취소·다시 실행. 씬 문서(sceneStore의 objects, 저장하지 않은 튜닝 값 tunables, 필드 시즌 field, 프로젝트 설정 settings)는 바꿀 때마다 새
 // 객체를 만드는 불변 데이터라서 바뀌기 전 문서를 그대로 스냅샷으로 쌓는다(바뀌지 않은 오브젝트와, 튜닝 값·시즌만 바꾼 단계의
 // objects는 스냅샷끼리 공유된다). 하나의 기록이라 씬 편집·튜닝 값 편집·시즌 고르기가 고친 순서대로 되돌아간다.
 // 실행 중에도 시즌을 되돌린다(씬 뷰·시뮬레이터는 실행의 시즌 PlayRun.field를 쓴다).
@@ -19,7 +20,12 @@ type HistoryFlags = { canUndo: boolean; canRedo: boolean }
 // 툴바 버튼의 활성 상태
 export const useHistoryStore = create<HistoryFlags>()(() => ({ canUndo: false, canRedo: false }))
 
-type HistoryDoc = { objects: SceneObjects; tunables: TunableEdits; field: FieldDoc }
+type HistoryDoc = {
+  objects: SceneObjects
+  tunables: TunableEdits
+  field: FieldDoc
+  settings: ProjectSettings
+}
 
 let past: HistoryDoc[] = []
 let future: HistoryDoc[] = []
@@ -33,12 +39,17 @@ let initialized = false
 let suspended = false
 
 function current(): HistoryDoc {
-  const { objects, tunables, field } = useSceneStore.getState()
-  return { objects, tunables, field }
+  const { objects, tunables, field, settings } = useSceneStore.getState()
+  return { objects, tunables, field, settings }
 }
 
 function sameDoc(a: HistoryDoc, b: HistoryDoc): boolean {
-  return a.objects === b.objects && a.tunables === b.tunables && a.field === b.field
+  return (
+    a.objects === b.objects &&
+    a.tunables === b.tunables &&
+    a.field === b.field &&
+    a.settings === b.settings
+  )
 }
 
 function syncFlags(): void {
@@ -105,13 +116,15 @@ export function initHistory(): void {
     if (
       state.objects === previous.objects &&
       state.tunables === previous.tunables &&
-      state.field === previous.field
+      state.field === previous.field &&
+      state.settings === previous.settings
     )
       return
     const before: HistoryDoc = {
       objects: previous.objects,
       tunables: previous.tunables,
-      field: previous.field
+      field: previous.field,
+      settings: previous.settings
     }
     if (changeDepth > 0) {
       changeStart ??= before
@@ -164,7 +177,12 @@ function setUnrecorded(patch: Partial<HistoryDoc>): void {
 }
 
 function apply(doc: HistoryDoc): void {
-  setUnrecorded({ objects: doc.objects, tunables: doc.tunables, field: doc.field })
+  setUnrecorded({
+    objects: doc.objects,
+    tunables: doc.tunables,
+    field: doc.field,
+    settings: doc.settings
+  })
   // 되돌린 씬에 없는 오브젝트만 선택·이름 바꾸기에서 뺀다(남은 선택은 그대로 둔다)
   const { objects } = doc
   useEditorStore.getState().pruneSelection((id) => !!objects[id])

@@ -81,6 +81,18 @@ export function closePreferences(): void {
   usePreferencesStore.setState({ open: false })
 }
 
+// 프로젝트 설정 창(Unity의 Edit > Project Settings, editor/ProjectSettingsWindow.tsx). 팀 설정(project.json)이고 툴바
+// 버튼으로 연다.
+export const useProjectSettingsStore = create<{ open: boolean }>()(() => ({ open: false }))
+
+export function openProjectSettings(): void {
+  useProjectSettingsStore.setState({ open: true })
+}
+
+export function closeProjectSettings(): void {
+  useProjectSettingsStore.setState({ open: false })
+}
+
 // 스크립트 선택창(인스펙터 Add Component의 TeamCode 스크립트, editor/scripts/ScriptPicker.tsx).
 // 위치는 연 컨트롤의 화면(client) 좌표 상자다. 선택창은 그 아래(자리가 없으면 위)에 뜬다.
 export type ScriptPickerRequest = {
@@ -100,7 +112,7 @@ export function closeScriptPicker(): void {
   if (useScriptPickerStore.getState().request) useScriptPickerStore.setState({ request: null })
 }
 
-// 대화상자나 메뉴처럼 화면 위에 떠서 키보드를 차지하는 것이 있는지(확인 대화상자, 우클릭 메뉴, 환경 설정 창,
+// 대화상자나 메뉴처럼 화면 위에 떠서 키보드를 차지하는 것이 있는지(확인 대화상자, 우클릭 메뉴, 환경 설정 창, 프로젝트 설정 창,
 // 스크립트 선택창). 창 단축키와 파일 드롭은 이때 쓰지 않는다
 // (메뉴가 떠 있는 동안 Delete가 뒤의 선택을 지우거나 Ctrl+Z가 메뉴 뒤에서 되돌리지 않게).
 export function isModalOpen(): boolean {
@@ -108,6 +120,7 @@ export function isModalOpen(): boolean {
     useDialogStore.getState().request !== null ||
     useContextMenuStore.getState().menu !== null ||
     usePreferencesStore.getState().open ||
+    useProjectSettingsStore.getState().open ||
     useScriptPickerStore.getState().request !== null
   )
 }

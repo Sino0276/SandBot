@@ -41,14 +41,34 @@ export function pinpointOffsetsMm(
   xPodObjectId: string,
   yPodObjectId: string
 ): { x: number; y: number } | null {
+  const offsets = pinpointOffsetsMeters(objects, xPodObjectId, yPodObjectId)
+  return offsets && { x: offsets.x * MM_PER_METER, y: offsets.y * MM_PER_METER }
+}
+
+// 같은 값(미터). 코드 단위(hardware/codeUnits.ts)로 바꾸기 전의 값이다.
+export function pinpointOffsetsMeters(
+  objects: SceneObjects,
+  xPodObjectId: string,
+  yPodObjectId: string
+): { x: number; y: number } | null {
   const xPod = robotFramePose(objects, xPodObjectId)
   const yPod = robotFramePose(objects, yPodObjectId)
   if (!xPod || !yPod) return null
-  return { x: xPod.y * MM_PER_METER, y: yPod.x * MM_PER_METER }
+  return { x: xPod.y, y: yPod.x }
 }
 
 // Pinpoint 컴포넌트의 오프셋. 포드 파트가 없거나 다른 로봇에 있으면 null(검증 경고 pinpointPodMissing).
 export function pinpointComponentOffsetsMm(
+  objects: SceneObjects,
+  objectId: string,
+  props: Record<string, string | number>
+): { x: number; y: number } | null {
+  const offsets = pinpointComponentOffsetsMeters(objects, objectId, props)
+  return offsets && { x: offsets.x * MM_PER_METER, y: offsets.y * MM_PER_METER }
+}
+
+// 같은 값(미터)
+export function pinpointComponentOffsetsMeters(
   objects: SceneObjects,
   objectId: string,
   props: Record<string, string | number>
@@ -61,7 +81,7 @@ export function pinpointComponentOffsetsMm(
     findRobotId(objects, id) === robotId
       ? id
       : ''
-  return pinpointOffsetsMm(objects, pod(props.xPod), pod(props.yPod))
+  return pinpointOffsetsMeters(objects, pod(props.xPod), pod(props.yPod))
 }
 
 // SparkFun OTOS setOffset(new Pose2D(x, y, h)) 값. 드라이버 기본 단위(인치, 도)로 낸다.
@@ -74,13 +94,19 @@ export function otosOffsetInchDeg(
   objectId: string,
   mountingAngleDeg: number
 ): { x: number; y: number; h: number } | null {
+  const offset = otosOffsetMetersDeg(objects, objectId, mountingAngleDeg)
+  return offset && { x: offset.x * INCH_PER_METER, y: offset.y * INCH_PER_METER, h: offset.h }
+}
+
+// 같은 값(위치 미터, h 도). 코드 단위(hardware/codeUnits.ts)로 바꾸기 전의 값이다.
+export function otosOffsetMetersDeg(
+  objects: SceneObjects,
+  objectId: string,
+  mountingAngleDeg: number
+): { x: number; y: number; h: number } | null {
   const pose = robotFramePose(objects, objectId)
   if (!pose) return null
-  return {
-    x: -pose.y * INCH_PER_METER,
-    y: pose.x * INCH_PER_METER,
-    h: normalizeDegrees(mountingAngleDeg)
-  }
+  return { x: -pose.y, y: pose.x, h: normalizeDegrees(mountingAngleDeg) }
 }
 
 export function normalizeDegrees(degrees: number): number {

@@ -6,6 +6,7 @@ import { COMPONENT_TYPE_KEYS, componentDef, type ComponentType } from './catalog
 import { createComponent } from './components'
 import { generateTeamCodeFiles } from './generate'
 import { validateScene } from './validation'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 // 생성 파일 전체(스탬프 줄 포함)를 파일 스냅샷으로 고정한다. 출력이 한 글자라도 바뀌면 저장할 때 모든 팀 프로젝트의
 // 생성 파일이 다시 쓰이고 Android Studio가 다시 빌드하므로, 의도한 변경일 때만 스냅샷을 고친다(vitest -u).
@@ -64,8 +65,10 @@ function everyComponentScene(): SceneObjects {
 describe('생성 파일 출력 고정', () => {
   it('모든 컴포넌트 종류', async () => {
     const objects = everyComponentScene()
-    expect(validateScene(objects).filter((issue) => issue.severity === 'error')).toEqual([])
-    const { files, blocked } = generateTeamCodeFiles(objects)
+    expect(validateScene(objects, SDK_UNITS).filter((issue) => issue.severity === 'error')).toEqual(
+      []
+    )
+    const { files, blocked } = generateTeamCodeFiles(objects, SDK_UNITS)
     expect(blocked).toBe(false)
     expect(files.map((file) => file.path)).toMatchInlineSnapshot(`
       [
@@ -80,9 +83,27 @@ describe('생성 파일 출력 고정', () => {
     }
   })
 
+  // 코드 단위(프로젝트 설정)마다 하드웨어 클래스. 구성 XML은 단위와 관계없다.
+  it.each([
+    ['mm', 'deg'],
+    ['cm', 'rad'],
+    ['m', 'sdk'],
+    ['in', 'deg']
+  ] as const)('코드 단위 %s·%s', async (length, angle) => {
+    const objects = everyComponentScene()
+    const units = { length, angle }
+    const { files, blocked } = generateTeamCodeFiles(objects, units)
+    expect(blocked).toBe(false)
+    const sdk = generateTeamCodeFiles(objects, SDK_UNITS).files
+    expect(files[1]).toEqual(sdk[1])
+    await expect(files[0].content).toMatchFileSnapshot(
+      `./__snapshots__/units/EveryBotHardware.${length}-${angle}.java`
+    )
+  })
+
   it('시뮬레이터 전용 속성(감속비·포드 종류·서보 모델·리밋 스위치 등)과 바퀴·관절은 생성 파일을 바꾸지 않는다', () => {
     const objects = everyComponentScene()
-    const before = generateTeamCodeFiles(objects).files
+    const before = generateTeamCodeFiles(objects, SDK_UNITS).files
     const simulated: string[] = []
     const changed: SceneObjects = Object.fromEntries(
       Object.entries(objects).map(([id, object]) => [
@@ -143,7 +164,7 @@ describe('생성 파일 출력 고정', () => {
       'deadWheel.podDiameter',
       'deadWheel.podCpr'
     ])
-    const after = generateTeamCodeFiles(changed)
+    const after = generateTeamCodeFiles(changed, SDK_UNITS)
     expect(after.blocked).toBe(false)
     expect(after.files).toEqual(before)
   })

@@ -9,7 +9,7 @@ import { ipcErrorDetail, resetLineSupport } from '../java/openScript'
 import AndroidSdkSection from '../play/ui/AndroidSdkSection'
 import JdkSection from '../play/ui/JdkSection'
 import SimulationPreferences from '../play/ui/SimulationPreferences'
-import { closePreferences, useDialogStore, usePreferencesStore } from './dialogStore'
+import { closePreferences, usePreferencesStore } from './dialogStore'
 import {
   EXTERNAL_EDITOR_BROWSE,
   EXTERNAL_EDITOR_ERROR_NOTICES,
@@ -18,6 +18,7 @@ import {
   externalEditorValue
 } from './externalEditorOptions'
 import { dismissNotice, showNotice } from './noticeStore'
+import SettingsDialog from './SettingsDialog'
 import TextField from './TextField'
 
 // 닫힌 선택 상자에서 값을 바로 바꾸는 키(Windows)
@@ -31,10 +32,6 @@ const SELECT_MOVE_KEYS = new Set([
   'PageUp',
   'PageDown'
 ])
-
-// 창 안에서 Tab으로 도는 요소
-const FOCUSABLE =
-  'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 // 외부 편집기 설정의 마지막 알림. 다음에 고르면 지운다(고친 뒤에도 이전 오류가 남지 않게).
 let lastNotice = 0
@@ -212,135 +209,28 @@ function PreferencesDialog(): React.JSX.Element {
   const [category, setCategory] = useState<Category>(() =>
     usePreferencesStore.getState().target === 'simulation' ? 'simulation' : 'externalTools'
   )
-  const dialogRef = useRef<HTMLDivElement>(null)
-  // 연 곳(툴바 버튼). StrictMode가 effect를 다시 실행하면 그때는 포커스가 이미 창 안이므로 처음 값을 ref에 지킨다.
-  const previousFocus = useRef<HTMLElement | null>(null)
-
-  // 포커스: 열 때 창 안으로 옮기고, Tab은 창 안에서만 돌고, Esc로 닫으며, 닫으면 연 곳으로 돌려준다(DialogHost와 같음)
-  useEffect(() => {
-    const active = document.activeElement
-    if (active instanceof HTMLElement && !dialogRef.current?.contains(active))
-      previousFocus.current = active
-    const focusable = (): HTMLElement[] =>
-      Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
-    // 처음에는 고른 분류에 둔다. JDK·Android SDK 칸을 열라고 했으면 그 칸으로 옮긴다.
-    const target = usePreferencesStore.getState().target
-    const section =
-      target === 'jdk' || target === 'androidSdk'
-        ? dialogRef.current?.querySelector<HTMLElement>(`[data-preferences-section="${target}"]`)
-        : null
-    if (section) {
-      section.scrollIntoView({ block: 'nearest' })
-      section.focus({ preventScroll: true })
-    } else
-      (
-        dialogRef.current?.querySelector<HTMLElement>('.preferences-category.is-active') ??
-        focusable()[0]
-      )?.focus()
-    // 확인 대화상자(창 닫기 확인 등)가 위에 뜨면 키보드·포커스는 그 대화상자 몫이다
-    const dialogOnTop = (): boolean => useDialogStore.getState().request !== null
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (dialogOnTop()) return
-      if (event.key === 'Escape') {
-        // 입력칸의 Esc는 그 칸의 편집 취소다(TextField가 초안을 버리고 포커스를 놓는다). 한 번 더 누르면 닫는다.
-        if (
-          event.target instanceof HTMLInputElement &&
-          event.target.type === 'text' &&
-          dialogRef.current?.contains(event.target)
-        )
-          return
-        event.preventDefault()
-        closePreferences()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const items = focusable()
-      if (items.length === 0) return
-      const index = items.indexOf(document.activeElement as HTMLElement)
-      const next = event.shiftKey
-        ? index <= 0
-          ? items.length - 1
-          : index - 1
-        : index < 0 || index === items.length - 1
-          ? 0
-          : index + 1
-      event.preventDefault()
-      items[next].focus()
-    }
-    // 포커스가 창 밖으로 나가면(클릭 등) 다시 안으로 가져온다
-    const onFocusIn = (event: FocusEvent): void => {
-      if (dialogOnTop()) return
-      if (event.target instanceof Node && dialogRef.current?.contains(event.target)) return
-      focusable()[0]?.focus()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    document.addEventListener('focusin', onFocusIn)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('focusin', onFocusIn)
-      // StrictMode의 정리→재실행에서는 아직 열려 있으므로 포커스를 돌려주지 않는다
-      if (usePreferencesStore.getState().open) return
-      const previous = previousFocus.current
-      previousFocus.current = null
-      if (previous?.isConnected) previous.focus({ preventScroll: true })
-    }
-  }, [])
-
   return (
-    <div
-      className="dialog-backdrop"
-      onPointerDown={(event) => {
-        // 바깥(어두운 배경)을 누르면 닫는다. 입력 중인 칸은 먼저 확정한다(닫기 버튼을 누를 때 포커스가 옮겨 확정되는 것과 같게).
-        if (event.target !== event.currentTarget) return
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-        closePreferences()
+    <SettingsDialog
+      title={t('preferences.title')}
+      categories={CATEGORIES.map((id) => ({ id, label: t(`preferences.${id}.title`) }))}
+      category={category}
+      onCategory={setCategory}
+      onClose={closePreferences}
+      isOpen={() => usePreferencesStore.getState().open}
+      initialFocus={(dialog) => {
+        // JDK·Android SDK 칸을 열라고 했으면 그 칸으로 옮긴다
+        const target = usePreferencesStore.getState().target
+        const section =
+          target === 'jdk' || target === 'androidSdk'
+            ? dialog.querySelector<HTMLElement>(`[data-preferences-section="${target}"]`)
+            : null
+        section?.scrollIntoView({ block: 'nearest' })
+        return section
       }}
     >
-      <div
-        ref={dialogRef}
-        className="dialog preferences"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('preferences.title')}
-      >
-        <header className="preferences-header">
-          <span className="preferences-title">{t('preferences.title')}</span>
-          <button
-            type="button"
-            className="hw-card-remove"
-            title={t('preferences.close')}
-            aria-label={t('preferences.close')}
-            onClick={closePreferences}
-          >
-            ×
-          </button>
-        </header>
-        <div className="preferences-body">
-          <nav className="preferences-categories" aria-label={t('preferences.categories')}>
-            {CATEGORIES.map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={
-                  id === category ? 'preferences-category is-active' : 'preferences-category'
-                }
-                aria-current={id === category || undefined}
-                onClick={() => setCategory(id)}
-              >
-                {t(`preferences.${id}.title`)}
-              </button>
-            ))}
-          </nav>
-          {category === 'externalTools' && <ExternalToolsPage />}
-          {category === 'simulation' && <SimulationPreferences />}
-        </div>
-        <div className="dialog-buttons">
-          <button type="button" className="dialog-button" onClick={closePreferences}>
-            {t('preferences.close')}
-          </button>
-        </div>
-      </div>
-    </div>
+      {category === 'externalTools' && <ExternalToolsPage />}
+      {category === 'simulation' && <SimulationPreferences />}
+    </SettingsDialog>
   )
 }
 

@@ -203,7 +203,7 @@ describe('열기·저장의 field와 dirty(B6)', () => {
     expect(await saveProject()).toBe(true)
     await settle()
     expect(dirty()).toBe(false)
-    expect(JSON.parse(projectJson!)).toMatchObject({ version: 11, field: { season: 'biobuzz' } })
+    expect(JSON.parse(projectJson!)).toMatchObject({ version: 12, field: { season: 'biobuzz' } })
     chooseFieldSeason('none')
     expect(dirty()).toBe(true)
   })

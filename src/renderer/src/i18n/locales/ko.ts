@@ -18,7 +18,9 @@ const ko = {
     redoShortcut: '다시 실행 (Ctrl+Shift+Z 또는 Ctrl+Y)',
     // 환경 설정 창(Unity의 Edit > Preferences)
     preferences: '환경 설정',
-    preferencesTooltip: '환경 설정 (외부 스크립트 편집기, JDK, 시뮬레이션)'
+    preferencesTooltip: '환경 설정 (외부 스크립트 편집기, JDK, 시뮬레이션)',
+    projectSettings: '프로젝트 설정',
+    projectSettingsTooltip: '프로젝트 설정 (팀이 함께 쓰는 설정: 생성 코드의 단위)'
   },
   project: {
     chooseFolderTitle: 'FtcRobotController 폴더 선택',
@@ -93,6 +95,8 @@ const ko = {
       '필드 CAD 파일 {{fileName}}을(를) 찾지 못했습니다. Field 인스펙터의 [파일 다시 찾기]로 연결하세요.',
     fieldCadDropped:
       'project.json의 필드 CAD 설정을 읽지 못해 버렸습니다. Field 인스펙터에서 다시 불러오세요.',
+    settingsDropped:
+      'project.json의 프로젝트 설정을 읽지 못해 기본값(코드 단위 SDK 기본)으로 열었습니다. [프로젝트 설정]에서 다시 고르세요.',
     cadChanged:
       '{{fileName}}의 파트 수가 저장할 때와 다릅니다. CAD가 바뀌어 일부 파트가 맞지 않을 수 있습니다.',
     codegenBlocked:
@@ -206,6 +210,12 @@ const ko = {
       kg: 'kg',
       lb: 'lb',
       oz: 'oz'
+    },
+    // 각도 기호(생성 코드 단위 줄)
+    angleSymbols: {
+      deg: '°',
+      // 수와 사이를 띄운다(°는 붙인다)
+      rad: ' rad'
     },
     names: {
       mm: 'mm (밀리미터)',
@@ -548,6 +558,31 @@ const ko = {
       'SandBot의 어느 로봇에도 이 구성 이름의 장치가 없습니다. 생성한 구성으로 실행하면 이 장치를 찾지 못합니다.'
   },
   // 환경 설정 창(Unity의 Edit > Preferences). 편집기 제품 이름(Android Studio 등)은 번역하지 않는다.
+  // 프로젝트 설정 창(Unity Project Settings, editor/ProjectSettingsWindow.tsx). project.json에 저장하는 팀 설정
+  projectSettings: {
+    title: '프로젝트 설정',
+    codeGeneration: {
+      title: '코드 생성',
+      lengthUnit: '길이 단위',
+      angleUnit: '각도 단위',
+      lengthUnits: {
+        sdk: 'SDK 기본 (장치마다 API 단위)',
+        mm: 'mm (밀리미터)',
+        cm: 'cm (센티미터)',
+        m: 'm (미터)',
+        in: 'in (인치)'
+      },
+      angleUnits: {
+        sdk: 'SDK 기본 (장치마다 API 단위)',
+        deg: '° (도)',
+        rad: 'rad (라디안)'
+      },
+      sdkHint:
+        '생성 하드웨어 클래스의 오프셋·위치 상수 단위입니다. 팀이 함께 쓰는 프로젝트 설정이라 저장(Ctrl+S)할 때 생성 코드에 씁니다. SDK 기본은 장치마다 그 API가 받는 단위입니다(Pinpoint mm, OTOS in·°, 데드휠은 mm와 in 둘 다).',
+      renameHint:
+        '상수 이름 끝의 단위(_MM, _IN, _DEG 등)도 함께 바뀌므로 그 상수를 쓰는 팀 코드는 고쳐야 합니다. 저장하면 사용처가 깨지는 곳을 알립니다.'
+    }
+  },
   preferences: {
     title: '환경 설정',
     close: '닫기',
@@ -1588,9 +1623,10 @@ const ko = {
         '위치는 이 파트에서 계산합니다. 같은 번호 모터 포트에 모터가 있으면 그 모터 이름으로 엔코더를 읽습니다.'
     },
     derived: {
-      pinpoint: '오프셋: X {{x}} mm, Y {{y}} mm',
-      otos: '오프셋: X {{x}} in, Y {{y}} in, H {{h}}°',
-      deadWheel: '위치: X {{x}} mm, Y {{y}} mm',
+      // 생성 상수와 같은 코드 단위·글자(프로젝트 설정)
+      pinpoint: '오프셋: X {{x}} {{unit}}, Y {{y}} {{unit}}',
+      otos: '오프셋: X {{x}} {{unit}}, Y {{y}} {{unit}}, H {{h}}{{angleUnit}}',
+      deadWheel: '위치: X {{x}} {{unit}}, Y {{y}} {{unit}}',
       motorOutput: '출력축 {{rpm}} RPM (무부하, 12 V) · {{ticks}} 틱/회전',
       // 데이터시트 실제 감속비가 SDK 감속비(엔코더 틱)와 다를 때(UltraPlanetary·Core Hex 모델 기본 등)
       motorOutputRatio:

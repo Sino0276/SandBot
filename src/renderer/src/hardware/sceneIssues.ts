@@ -1,17 +1,21 @@
 import { ancestorIds, type SceneObjects } from '../scene/model'
 import { useSceneStore } from '../scene/sceneStore'
+import { sameCodeUnits, type CodeUnits } from '../scene/projectSettings'
 import { validateScene, type Issue, type IssueSeverity } from './validation'
 
 // 하이어라키와 인스펙터가 같은 씬으로 검증을 두 번 하지 않게 마지막 결과를 기억한다
-let cache: { objects: SceneObjects; issues: Issue[] } | null = null
+let cache: { objects: SceneObjects; units: CodeUnits; issues: Issue[] } | null = null
 
-export function sceneIssues(objects: SceneObjects): Issue[] {
-  if (cache?.objects !== objects) cache = { objects, issues: validateScene(objects) }
+export function sceneIssues(objects: SceneObjects, units: CodeUnits): Issue[] {
+  if (cache?.objects !== objects || !sameCodeUnits(cache.units, units))
+    cache = { objects, units, issues: validateScene(objects, units) }
   return cache.issues
 }
 
 export function useSceneIssues(): Issue[] {
-  return sceneIssues(useSceneStore((state) => state.objects))
+  const objects = useSceneStore((state) => state.objects)
+  const units = useSceneStore((state) => state.settings.codeUnits)
+  return sceneIssues(objects, units)
 }
 
 // 오브젝트 자신이 받은 문제 중 컴포넌트에 붙지 않은 것(그룹의 클래스 이름·필드 충돌, 로봇 설정 등).

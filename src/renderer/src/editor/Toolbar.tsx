@@ -4,7 +4,7 @@ import { isLanguage, LANGUAGE_NAMES, SUPPORTED_LANGUAGES } from '../i18n/languag
 import { openProjectFolder, saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { useUnitStore } from '../units/unitStore'
-import { openPreferences } from './dialogStore'
+import { openPreferences, openProjectSettings } from './dialogStore'
 import { redo, undo, useHistoryStore } from './history'
 import { isLengthUnit, LENGTH_UNITS } from '../units/units'
 import PlayControls from '../play/ui/PlayControls'
@@ -68,6 +68,15 @@ function Toolbar(): React.JSX.Element {
       {/* Unity 툴바 가운데의 Play·Pause·Step 자리 */}
       <PlayControls />
       <div className="toolbar-group toolbar-group--end">
+        <button
+          type="button"
+          className="panel-button"
+          title={t('toolbar.projectSettingsTooltip')}
+          aria-haspopup="dialog"
+          onClick={() => openProjectSettings()}
+        >
+          {t('toolbar.projectSettings')}
+        </button>
         <button
           type="button"
           className="panel-button"

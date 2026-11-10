@@ -67,6 +67,7 @@ import {
   simJointValue,
   usePlayStore
 } from './playStore'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 // 실행 흐름(playActions)을 window.api 모의로 시험한다. 저장(projectActions)은 모의로 바꾼다.
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
@@ -447,7 +448,7 @@ describe('INIT의 구성 확인(저장하지 않고 연 프로젝트)', () => {
   it('지금 씬으로 만들 구성의 표식 해시를 보낸다', async () => {
     await initPlay()
     const { configPath, configHash } = lastRequest()
-    const file = generateTeamCodeFiles(SCENE).files.find((f) => f.path === configPath)!
+    const file = generateTeamCodeFiles(SCENE, SDK_UNITS).files.find((f) => f.path === configPath)!
     expect(configHash).toBe(generatedHash(file.content))
     expect(configHash).toMatch(/^[0-9a-f]{14}$/)
   })

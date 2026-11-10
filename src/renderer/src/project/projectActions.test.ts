@@ -22,6 +22,7 @@ import { useSceneStore } from '../scene/sceneStore'
 import { openProjectAt, saveProject } from './projectActions'
 import { serializeProject } from './projectFile'
 import { useProjectStore } from './projectStore'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 // 저장과 사용처(spec §7.4): 진짜 projectActions(열기·저장)·usageIndex·기호표·워커 논리(진짜 사실·맞추기)에 메모리
 // 디스크로 window.api를 흉내 낸다. 생성 코드를 맞춘 저장만 기준 씬을 옮기고, 저장 뒤 파일로 판정하는지 본다.
@@ -224,7 +225,7 @@ const generation = (): string | undefined => useProjectStore.getState().generati
 
 function liftView(): ReturnType<typeof deviceUsageView> {
   const { result, baseline } = usage()
-  return deviceUsageView(useSceneStore.getState().objects, result!, baseline, 'lm', 'll')
+  return deviceUsageView(useSceneStore.getState().objects, SDK_UNITS, result!, baseline, 'lm', 'll')
 }
 
 async function edit(objects: SceneObjects): Promise<void> {

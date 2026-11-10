@@ -1,4 +1,5 @@
 import { isWindowsReservedName } from '../../../shared/teamCodePaths'
+import type { CodeUnits } from '../scene/projectSettings'
 import { childrenOf, findRobotId, type HardwareComponent, type SceneObjects } from '../scene/model'
 import {
   COMPONENT_TYPE_KEYS,
@@ -389,7 +390,7 @@ function checkScope(robotId: string, scope: CodeScope, issues: Issue[]): void {
 }
 
 // 컴포넌트가 없는 로봇은 생성할 파일이 없으므로 검사하지 않는다
-export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
+export function validateRobot(objects: SceneObjects, robotId: string, units: CodeUnits): Issue[] {
   const entries = robotComponents(objects, robotId)
   if (entries.length === 0) return []
   const issues: Issue[] = []
@@ -440,7 +441,7 @@ export function validateRobot(objects: SceneObjects, robotId: string): Issue[] {
 
   // Java 이름(그룹 클래스, 필드, 상수)은 생성 코드와 같은 범위 트리로 클래스마다 검사한다.
   // 장치가 없어 클래스를 만들지 않는 그룹은 트리에 없으므로 검사하지 않는다.
-  for (const scope of allScopes(buildCodeScopes(objects, robotId).root)) {
+  for (const scope of allScopes(buildCodeScopes(objects, robotId, units).root)) {
     checkScope(robotId, scope, issues)
   }
 
@@ -467,13 +468,14 @@ function pushGroupIssues(
 }
 
 // 씬 전체: 로봇마다 검사하고, 로봇 간 이름 중복과 로봇 밖 컴포넌트를 더한다.
-export function validateScene(objects: SceneObjects): Issue[] {
+// 상수 이름 꼬리가 코드 단위(프로젝트 설정)를 따르므로 units를 받는다(상수 이름 충돌 검사)
+export function validateScene(objects: SceneObjects, units: CodeUnits): Issue[] {
   // 컴포넌트가 하나도 없으면 검사할 것이 없다(씬을 끌 때마다 불리므로 빨리 끝낸다)
   if (!Object.values(objects).some((object) => object.components?.length)) return []
   const robots = childrenOf(objects, null).filter(
     (object) => object.kind === 'robot' && robotComponents(objects, object.id).length > 0
   )
-  const issues = robots.flatMap((robot) => validateRobot(objects, robot.id))
+  const issues = robots.flatMap((robot) => validateRobot(objects, robot.id, units))
 
   // 생성 파일 경로가 겹치면 한쪽이 다른 쪽을 덮어쓴다. Java 파일은 대소문자를 구분하지 않는
   // 파일 시스템(Windows·macOS)에서도 겹치지 않아야 하고, XML 파일 이름은 클래스 이름을 소문자로 바꿔 만든다.

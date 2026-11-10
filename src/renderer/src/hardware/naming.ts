@@ -1,5 +1,7 @@
 // 구성 이름 → Java 식별자·상수 이름, 클래스 이름 → 생성 파일 경로
 import { isWindowsReservedName } from '../../../shared/teamCodePaths'
+import type { CodeUnits } from '../scene/projectSettings'
+import { constantSuffixes } from './codeUnits'
 
 const JAVA_KEYWORDS = new Set(
   (
@@ -79,16 +81,11 @@ export function constantName(identifier: string): string {
   return !upper || /^\p{Nd}/u.test(upper) ? `_${upper}` : upper
 }
 
-// 장치 하나가 생성 코드에 만드는 상수(위치 오프셋 등). 검증이 로봇 안의 상수 이름 충돌을 찾는 데도 쓴다.
-const CONSTANT_SUFFIXES: Record<string, string[]> = {
-  pinpoint: ['_X_OFFSET_MM', '_Y_OFFSET_MM'],
-  otos: ['_OFFSET_X_IN', '_OFFSET_Y_IN', '_OFFSET_H_DEG'],
-  deadWheel: ['_X_MM', '_Y_MM', '_X_IN', '_Y_IN', '_MEASURES_FORWARD', '_REVERSED']
-}
-
-export function generatedConstantNames(type: string, name: string): string[] {
+// 장치 하나가 생성 코드에 만드는 상수(위치 오프셋 등). 꼬리는 코드 단위를 따른다(codeUnits.constantSuffixes).
+// 검증이 로봇 안의 상수 이름 충돌을 찾는 데도 쓴다.
+export function generatedConstantNames(type: string, name: string, units: CodeUnits): string[] {
   const prefix = constantName(javaIdentifier(name))
-  return (CONSTANT_SUFFIXES[type] ?? []).map((suffix) => `${prefix}${suffix}`)
+  return constantSuffixes(type, units).map((suffix) => `${prefix}${suffix}`)
 }
 
 // 로봇 클래스 이름. `$`는 받지 않는다(그룹의 중첩 클래스는 `Bot$Lift` 같은 바이너리 이름이 되므로 다른 로봇의 클래스와 겹친다).

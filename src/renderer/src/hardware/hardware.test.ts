@@ -27,6 +27,7 @@ import {
   sidecarDeviceName
 } from './naming'
 import { uniqueIssues, validateScene, type IssueCode } from './validation'
+import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 
 const DEG = Math.PI / 180
 const INCH = 0.0254
@@ -69,7 +70,7 @@ function scene(
 }
 
 function codes(objects: SceneObjects): IssueCode[] {
-  return validateScene(objects).map((i) => i.code)
+  return validateScene(objects, SDK_UNITS).map((i) => i.code)
 }
 
 describe('이름 규칙', () => {
@@ -246,7 +247,7 @@ describe('검증', () => {
         ]
       }
     })
-    expect(validateScene(objects).map((i) => [i.code, i.severity])).toEqual([
+    expect(validateScene(objects, SDK_UNITS).map((i) => [i.code, i.severity])).toEqual([
       ['deadWheelSlowPort', 'warning']
     ])
   })
@@ -279,7 +280,7 @@ describe('검증', () => {
         ]
       }
     })
-    const issues = validateScene(objects)
+    const issues = validateScene(objects, SDK_UNITS)
     expect(issues.map((i) => i.code).sort()).toEqual([
       'pinpointPodMissing',
       'serialMissing',
@@ -385,7 +386,7 @@ describe('코드 생성', () => {
   }
 
   it('하드웨어 클래스(Java)', () => {
-    const java = generateHardwareJava(objects, 'robot')
+    const java = generateHardwareJava(objects, 'robot', SDK_UNITS)
     expect(java).toContain(`// ${GENERATED_MARKER}`)
     expect(java).toContain('package org.firstinspires.ftc.teamcode.sandbot;')
     expect(java).toContain('public class MyBotHardware {')
@@ -449,8 +450,8 @@ describe('코드 생성', () => {
   })
 
   it('오류가 있으면 파일을 만들지 않고, 없으면 로봇마다 Java와 XML 두 개', () => {
-    expect(generateTeamCodeFiles(objects)).toMatchObject({ blocked: false })
-    const { files } = generateTeamCodeFiles(objects)
+    expect(generateTeamCodeFiles(objects, SDK_UNITS)).toMatchObject({ blocked: false })
+    const { files } = generateTeamCodeFiles(objects, SDK_UNITS)
     expect(files.map((f) => f.path)).toEqual([
       'src/main/java/org/firstinspires/ftc/teamcode/sandbot/MyBotHardware.java',
       'src/main/res/xml/sandbot_my_bot_hardware.xml'
@@ -460,7 +461,7 @@ describe('코드 생성', () => {
     const broken = scene({
       a: { position: [0, 0, 0], components: [component('a', 'motor', '', 0)] }
     })
-    expect(generateTeamCodeFiles(broken)).toMatchObject({ blocked: true, files: [] })
+    expect(generateTeamCodeFiles(broken, SDK_UNITS)).toMatchObject({ blocked: true, files: [] })
   })
 })
 
@@ -473,7 +474,7 @@ describe('리뷰에서 찾은 경우', () => {
     expect(javaIdentifier('!!!')).toBe('device')
     expect(javaIdentifier('hardware map')).toBe('hardwareMap_')
     expect(javaIdentifier('x²')).toBe('x')
-    expect(generatedConstantNames('deadWheel', '1')).toContain('_1_X_MM')
+    expect(generatedConstantNames('deadWheel', '1', SDK_UNITS)).toContain('_1_X_MM')
   })
 
   it('Java 주석에 들어가는 이름의 역슬래시는 \\u 이스케이프가 되지 않는다', () => {
@@ -481,7 +482,7 @@ describe('리뷰에서 찾은 경우', () => {
       a: { position: [0, 0, 0], components: [component('a', 'motor', 'C:\\users', 0)] }
     })
     objects.robot.name = 'bot \\u000a evil'
-    const java = generateHardwareJava(objects, 'robot')
+    const java = generateHardwareJava(objects, 'robot', SDK_UNITS)
     expect(java).toContain('// C:\\\\users')
     expect(java).toContain('"bot \\\\u000a evil"')
     expect(java).not.toMatch(/(^|[^\\])(\\\\)*\\u/)
@@ -492,7 +493,7 @@ describe('리뷰에서 찾은 경우', () => {
       cam: { position: [0, 0, 0], components: [component('w', 'webcam', 'Webcam 1', 0)] }
     })
     expect(codes(objects)).toEqual(['serialMissing'])
-    const java = generateHardwareJava(objects, 'robot')
+    const java = generateHardwareJava(objects, 'robot', SDK_UNITS)
     expect(java).toContain('webcam1 = hardwareMap.tryGet(WebcamName.class, "Webcam 1");')
     expect(java).not.toContain('hardwareMap.get(WebcamName.class')
     expect(generateConfigXml(objects, 'robot')).not.toContain('<Webcam')
@@ -512,7 +513,7 @@ describe('리뷰에서 찾은 경우', () => {
     expect(generateConfigXml(objects, 'robot')).toContain(
       '<EthernetDevice name="limelight" serialNumber="EthernetOverUsb:eth0:172.29.0.25" ipAddress="172.29.0.1" />'
     )
-    expect(generateHardwareJava(objects, 'robot')).toContain(
+    expect(generateHardwareJava(objects, 'robot', SDK_UNITS)).toContain(
       'limelight = hardwareMap.get(Limelight3A.class, "limelight");'
     )
   })
@@ -574,7 +575,7 @@ describe('리뷰에서 찾은 경우', () => {
       configName: 'Robot',
       expansionHub: { enabled: true, address: 42 }
     }
-    expect(validateScene(objects).map((i) => [i.code, i.severity])).toEqual([
+    expect(validateScene(objects, SDK_UNITS).map((i) => [i.code, i.severity])).toEqual([
       ['expansionHubAddressReserved', 'warning']
     ])
     objects.r2 = {
@@ -600,7 +601,7 @@ describe('리뷰에서 찾은 경우', () => {
         components: [component('a', 'motor', '', 0), component('b', 'motor', '', 1)]
       }
     })
-    const issues = validateScene(objects).filter((i) => i.code === 'emptyName')
+    const issues = validateScene(objects, SDK_UNITS).filter((i) => i.code === 'emptyName')
     expect(uniqueIssues(issues)).toHaveLength(2)
   })
 
