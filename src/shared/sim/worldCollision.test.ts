@@ -475,8 +475,11 @@ describe('A1 형상 없는 세계', () => {
     new Runner(fixedSpec([arm])).run(0.1, () => ({}))
     expect(thirds.length).toBeGreaterThan(50)
     expect(thirds.every((c) => c === undefined)).toBe(true)
-    new Runner(robotSpec()).run(0.1, () => outputs(mecanum(0.5, 0, 0)))
+    const plain = new Runner(robotSpec()).run(0.1, () => outputs(mecanum(0.5, 0, 0)))
     expect(rows).not.toHaveBeenCalled()
+    // bodyCollisionNeeded false인 세계는 BodyCollision을 만들지 않는다
+    for (const world of [plain.world, new Runner(fixedSpec([arm])).world])
+      expect((world as unknown as { bodyCollision: unknown }).bodyCollision).toBeNull()
   })
 })
 
@@ -1142,5 +1145,47 @@ describe('A25 마찰 하중 상한', () => {
     const { liftAt, normalOverW } = press(0)
     expect(normalOverW).toBeLessThan(1)
     expect(liftAt).toBeNull()
+  })
+})
+
+describe('A16 섀시 3D 경로: 3c·4ab 벽 성질(구조물 없는 BIOBUZZ 반폭)', () => {
+  // worldField.test.ts '4ab BIOBUZZ 반폭 벽'의 A15 시험을 섀시 상자 충돌체로
+  const options = { field: { ...BIOBUZZ, structures: [] } }
+  const touching = { x: INNER - HALF, y: 0, yaw: 0 }
+  const POD = {
+    device: 'par',
+    position: { x: 0, y: 0.1 },
+    measures: 'forward' as const,
+    reversed: false,
+    ticksPerMeter: 2000
+  }
+
+  it('A16 벽 밀기: 침투 없음·blocked, 전출력이면 헛돌아 바퀴 엔코더가 늘고 데드휠은 0', () => {
+    const r = new Runner(spec3d(touching, {}, { deadWheels: [POD] }), options).run(0.5, () =>
+      outputs(mecanum(1, 0.3, 0))
+    )
+    const ticks = r.value('fl', 'position')
+    r.run(0.5, () => outputs(mecanum(1, 0.3, 0)))
+    expect(Math.abs(r.value('fl', 'position') - ticks)).toBeGreaterThan(500)
+    expect(r.value('par', 'position')).toBe(0)
+    expect(wallPenetration(r.poses)).toBeLessThan(1e-6)
+    expect(r.poses.slice(5).every((p) => p.blocked)).toBe(true)
+    expect(worldErrors(r)).toBe(0)
+  })
+
+  it('A16 걸친 시작: 꼭짓점이 1 cm 침투한 채 정지하면 자세가 1e-9 안 그대로이고, 밀어도 더 들어가지 않고, 물러나면 빠져나간다', () => {
+    const yaw = 0.1
+    const reach = HALF * (Math.cos(yaw) + Math.sin(yaw))
+    const start = { x: INNER + 0.01 - reach, y: 0.3, yaw }
+    const r = new Runner(spec3d(start), options).run(1, () => outputs({}))
+    const pose = r.pose()
+    expect(Math.abs(pose.x - start.x)).toBeLessThan(1e-9)
+    expect(Math.abs(pose.y - start.y)).toBeLessThan(1e-9)
+    expect(Math.abs(pose.yaw - start.yaw)).toBeLessThan(1e-9)
+    r.run(0.5, () => outputs(mecanum(0.5, 0, 0)))
+    expect(wallPenetration(r.poses)).toBeLessThan(0.01 + 1e-6)
+    r.run(0.5, () => outputs(mecanum(-0.5, 0, 0)))
+    expect(wallPenetration([r.pose()])).toBe(0)
+    expect(worldErrors(r)).toBe(0)
   })
 })
