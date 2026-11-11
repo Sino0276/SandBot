@@ -65,8 +65,9 @@ export function meshSourcePath(id: string): readonly SourceNode[] | undefined {
   return meshInfo.get(id)?.sourcePath
 }
 
-// 메시 볼록 껍질(spec-5 §5.3). 형상과 같은 id·수명이라 형상을 해제하면 함께 지워진다. 등록하는 곳은 5 B가 더한다(계약
-// 커밋에서는 늘 undefined)
+// 메시 볼록 껍질(spec-5 §5.3). 형상과 같은 id·수명이라 형상을 해제하면 함께 지워진다. STEP 워커가 만든 껍질
+// (ImportedMesh.hull)을 cad/importStep.ts registerModelGeometries가 형상과 함께 등록한다. 껍질 없이 등록된 형상은
+// undefined다(scene/meshHull.ts가 읽는 중으로 본다)
 export function meshHull(id: string): MeshHull | undefined {
   return meshInfo.get(id)?.hull
 }

@@ -1283,6 +1283,8 @@ describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
 
   it.each([
     ['배열 아님', { id: 'a', kind: 'mesh', vertexLimit: 32 }],
+    // null은 빈 목록이 아니라 형식 오류다(빈 배열만 키를 두지 않는다)
+    ['null', null],
     ['원소가 객체 아님', ['box']],
     ['id 없음', [{ kind: 'mesh', vertexLimit: 32 }]],
     ['빈 id', [{ id: '', kind: 'mesh', vertexLimit: 32 }]],
@@ -1318,6 +1320,7 @@ describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
   it.each([
     ['로봇이 아닌 오브젝트', 2, { forceCollide: [['a', 'b']] }],
     ['객체 아님', 0, [['a', 'b']]],
+    ['null', 0, null],
     ['forceCollide 없음', 0, {}],
     ['원소가 셋', 0, { forceCollide: [['a', 'b', 'c']] }],
     ['같은 id 둘', 0, { forceCollide: [['a', 'a']] }],
