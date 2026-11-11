@@ -21,7 +21,13 @@ import { useEditorStore } from '../editorStore'
 import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { useSceneVisibilityStore } from '../sceneVisibility'
 import ColliderGizmos from './ColliderGizmos'
-import { capsuleSegments, colliderGizmoTargets, CAPSULE_SEGMENTS } from './colliderGizmoModel'
+import {
+  capsuleSegments,
+  colliderGizmoTargets,
+  CAPSULE_SEGMENTS,
+  gizmoBodyNumbers
+} from './colliderGizmoModel'
+import { defaultJoint } from '../../scene/joint'
 import { colliderScene, registerSceneMeshes, resetCollisionModels } from './colliderTestkit'
 import { jointBodyFrames } from '../../play/worldJoints'
 
@@ -299,6 +305,95 @@ describe('B14 그리기', () => {
     // 실행 중 문서에 Collider를 붙여도 실행의 형상 그대로
     await setObjects(withColliders(colliderScene(), 'base', [BOX, { ...BOX, id: 'b2' }]))
     expect(lines()).toHaveLength(2)
+  })
+
+  it('5 리뷰: 실행 중 관절을 붙이거나 떼도 고른 오브젝트의 INIT 몸체를 그린다(실행의 몸체 번호)', async () => {
+    const op: OpModeInfo = {
+      className: 'a.B',
+      path: 'src/main/java/a/B.java',
+      line: 1,
+      flavor: 'TeleOp',
+      name: 'B',
+      group: '',
+      preselectTeleOp: ''
+    }
+    // INIT 때 관절은 lift(0)·arm(1). 리프트 몸체는 상자(모서리 12), 팔 몸체는 캡슐(선분이 많다)
+    const liftBox = {
+      kind: 'box' as const,
+      center: { x: 0, y: 0, z: 0.05 },
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      half: { x: 0.05, y: 0.1, z: 0.005 },
+      friction: 0.4
+    }
+    const armCapsule = {
+      kind: 'capsule' as const,
+      a: { x: 0, y: 0, z: 0 },
+      b: { x: 0.2, y: 0, z: 0 },
+      radius: 0.01,
+      friction: 0.4
+    }
+    const run = newRun({
+      runId: 'r',
+      root: '/p',
+      opMode: op,
+      robotId: 'R',
+      configPath: null,
+      speed: 1,
+      paused: false,
+      joints: ['lift', 'arm'],
+      colliders: [
+        { body: 0, objectId: 'lift', name: 'Lift', colliders: [liftBox] },
+        { body: 1, objectId: 'arm', name: 'Arm', colliders: [armCapsule] }
+      ]
+    })
+    const locked = { ...run, phase: 'running' as const }
+    // 실행 중 문서 순서로 앞인 base에 관절을 붙이면 문서 번호는 base 0·lift 1·arm 2가 된다
+    const added: SceneObjects = {
+      ...colliderScene(),
+      base: { ...colliderScene().base, joint: defaultJoint('revolute') }
+    }
+    expect(jointBodyFrames(added, 'R').objectIds).toEqual(['base', 'lift', 'arm'])
+    const targets = (objects: SceneObjects, id: string): number[] =>
+      colliderGizmoTargets(objects, [id], (robotId) =>
+        gizmoBodyNumbers(objects, robotId, locked, jointBodyFrames(objects, robotId))
+      ).get('R') ?? []
+    expect(targets(added, 'plate')).toEqual([0])
+    expect(targets(added, 'tube')).toEqual([1])
+    expect(targets(added, 'base')).toEqual([-1])
+    expect(targets(added, 'R')).toEqual([-1, 0, 1])
+    // 리프트 관절을 떼어도 팔은 실행의 1번
+    const removed: SceneObjects = {
+      ...colliderScene(),
+      lift: { ...colliderScene().lift, joint: undefined }
+    }
+    expect(targets(removed, 'tube')).toEqual([1])
+    // 잠그지 않으면 문서 번호
+    expect(
+      colliderGizmoTargets(added, ['plate'], (robotId) =>
+        gizmoBodyNumbers(added, robotId, null, jointBodyFrames(added, robotId))
+      ).get('R')
+    ).toEqual([1])
+    // 그리기: plate를 고르면 리프트의 INIT 상자(모서리 12 × 두 패스), tube를 고르면 팔의 캡슐
+    await act(async () => {
+      store = root.render(<ColliderGizmos />)
+    })
+    await act(async () => {
+      usePlayStore.setState({
+        run: locked,
+        simPose: { robotId: 'R', tNanos: 1, x: 0, y: 0, yaw: 0, blocked: false }
+      })
+    })
+    await setObjects(added)
+    await select('plate')
+    const plate = lines()
+    expect(plate).toHaveLength(2)
+    expect(plate[0].geometry.getAttribute('position').count).toBe(24)
+    await select('tube')
+    const tube = lines()
+    expect(tube).toHaveLength(2)
+    expect(tube[0].geometry.getAttribute('position').count).toBe(
+      capsuleSegments(armCapsule.a, armCapsule.b, armCapsule.radius).length / 3
+    )
   })
 
   it('B14 StrictMode의 정리 → 재실행 뒤에도 재질을 해제하지 않고, 내려가면 해제한다', async () => {

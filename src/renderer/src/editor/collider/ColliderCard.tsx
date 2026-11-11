@@ -16,6 +16,7 @@ import {
   type ColliderSettings
 } from '../../scene/collider'
 import { findRobotId, type SceneObject, type Vec3 } from '../../scene/model'
+import { MAX_BODY_COLLIDERS, MAX_WORLD_COLLIDERS } from '../../../../shared/sim/worldSpec'
 import { useSceneStore } from '../../scene/sceneStore'
 import { usePlayStore } from '../../play/playStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -259,7 +260,7 @@ function ColliderCard({
         {collider.kind === 'box' && (
           <LengthVector
             label={t('collider.size')}
-            title={t('collider.centerHint')}
+            title={t('collider.sizeHint')}
             values={collider.size}
             unit={lengthUnit}
             min={MIN_BOX_SIZE}
@@ -368,6 +369,12 @@ function ColliderCard({
         {/* 몸체 틀에서 세계 설명 좌표 한도를 넘어 시뮬레이터에 넣지 않음(Box·Capsule, Mesh는 결과 줄이 알린다) */}
         {collider.kind !== 'mesh' && state?.status === 'outOfRange' && (
           <li className="hw-issue is-warning">{t('collider.outOfRange')}</li>
+        )}
+        {/* 몸체·세계 한도로 세계 설명에서 뺌(씬 뷰에 흐리게 그린다) */}
+        {state?.capped && (
+          <li className="hw-issue is-warning">
+            {t('collider.capped', { body: MAX_BODY_COLLIDERS, world: MAX_WORLD_COLLIDERS })}
+          </li>
         )}
         {collider.kind === 'mesh' && entry && entry.error > HULL_ERROR_WARN && (
           <li className="hw-issue is-warning">

@@ -978,6 +978,8 @@ const en: Messages = {
         '{{count}} collision shapes of {{name}} are flat or too thin (under 1 mm) to make a convex hull, so they are not used.',
       worldColliderOutOfRange:
         '{{count}} collision shapes of {{name}} exceed the simulator coordinate limit (10 m from the body, 6.5 m for convex hull points), so they are not used.',
+      worldColliderNoMeshes:
+        '{{count}} enabled Mesh Colliders of {{name}} contain no mesh of this body, so they are not used. Attach them to an object (or a parent in the same body) that has meshes.',
       worldTooManyColliders:
         'The colliders of {{name}} exceed the simulator limit ({{max}} per body), so only the first {{max}} are used.',
       worldTooManyWorldColliders:
@@ -2100,6 +2102,7 @@ const en: Messages = {
       'When off, this Collider does not collide. A body with a disabled Collider still does not use the automatic convex hull.',
     center: 'Center',
     centerHint: "Local coordinates of this object (from its pivot, along the object's own axes).",
+    sizeHint: "Full size along the object's own axes (at least 1 mm on each axis).",
     size: 'Size',
     radius: 'Radius',
     height: 'Height',
@@ -2145,6 +2148,8 @@ const en: Messages = {
       'When {{body}} has a Collider, the automatic convex hull is not used. This body collides only with its Colliders.',
     runningHint: 'From the next INIT. The Scene view shows the shapes from when the run started.',
     tooMany: 'An object can have up to {{max}} Colliders.',
+    capped:
+      'This Collider is over the simulator limit ({{body}} per body, {{world}} per robot), so it is not used. Colliders earlier in body and hierarchy order are used first.',
     // Explanations for rejected field values (the field keeps the text and shows it as invalid)
     invalid: {
       friction: 'Enter a number from 0 to 2. Leave empty for the default 0.4. Press Esc to revert.',
@@ -2159,8 +2164,18 @@ const en: Messages = {
       disabled: 'Collision shape: all Colliders are off, so it does not collide',
       auto: 'Collision shape: automatic convex hull {{points}} points · error about {{error}}',
       autoHint: 'For more accuracy, add a Mesh Collider (vertex limit 64) or split it per part.',
-      fallback: 'Collision shape: outline box (the meshes are not loaded yet)',
-      none: 'Collision shape: none (this body has no meshes)',
+      fallback: 'Collision shape: outline box ({{reason}})',
+      none: 'Collision shape: none ({{reason}})',
+      // Why the outline box or no shape (editor/collider/colliderCardModel.ts bodyShapeReason)
+      reasons: {
+        colliders: 'no enabled Collider made a shape; see each Collider card',
+        loading: 'the meshes are not loaded yet',
+        degenerate: 'the meshes are flat or too thin',
+        outOfRange: 'the coordinates exceed the simulator limit',
+        noMeshes: 'this body has no meshes'
+      },
+      capped:
+        '{{count}} Colliders are over the simulator limit ({{body}} per body, {{world}} per robot), so they are not used (dimmed in the Scene view).',
       pending:
         '{{count}} meshes without a shape (not loaded yet or failed to load) are not in the collision shape.',
       fixedBase:

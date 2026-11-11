@@ -23,6 +23,7 @@ import { useSceneVisibilityStore } from '../sceneVisibility'
 import {
   colliderGizmoBodies,
   colliderGizmoTargets,
+  gizmoBodyNumbers,
   type ColliderGizmoBody,
   type ColliderGizmoItem,
   type ColliderGizmoStyle
@@ -191,10 +192,9 @@ function ColliderGizmos(): React.JSX.Element {
     const run = usePlayStore.getState().run
     const models = (robotId: string): ReturnType<typeof collisionModelEntry> =>
       collisionModelEntry(objects, revision, robotId)
-    const targets = colliderGizmoTargets(
-      objects,
-      selectedIds,
-      (robotId) => models(robotId)?.joints ?? null
+    // 잠그는 실행이면 실행의 몸체 번호로 고른다(run.colliders·run.joints의 번호, 실행 중 관절을 붙이거나 떼도 INIT 때의 몸체)
+    const targets = colliderGizmoTargets(objects, selectedIds, (robotId) =>
+      gizmoBodyNumbers(objects, robotId, run, models(robotId)?.joints ?? null)
     )
     return colliderGizmoBodies({
       objects,

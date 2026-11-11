@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import i18n from 'i18next'
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -368,6 +369,43 @@ describe('B12 Collider 카드', () => {
     expect(cardHtml('mech')).not.toContain('CAD 파일 축')
     withColliders('loose', [BOX])
     expect(cardHtml('loose')).toContain(t('collider.orphan'))
+  })
+
+  it('5 리뷰: 크기 칸 도움말은 중심 도움말이 아니라 자기 축 방향 전체 크기다', () => {
+    withColliders('plate', [BOX])
+    const list = cardTree('plate')
+    expect(byLabel(list, t('collider.size'))!.props.title).toBe(t('collider.sizeHint'))
+    expect(byLabel(list, t('collider.center'))!.props.title).toBe(t('collider.centerHint'))
+    expect(t('collider.sizeHint')).not.toBe(t('collider.centerHint'))
+  })
+
+  it('5 리뷰: 몸체 한도로 시뮬레이터가 쓰지 않는 켠 Collider는 카드가 알린다(씬 뷰의 흐린 색과 같은 까닭)', () => {
+    // 섀시에 6개씩 셋 = 18 > 16: 마지막 오브젝트의 뒤 둘이 빠진다
+    const many = (prefix: string): ColliderSettings[] =>
+      Array.from({ length: 6 }, (_, k) => ({ ...BOX, id: `${prefix}${k}` }))
+    scene({
+      ...objectsNow(),
+      g0: { ...objectsNow().mech, id: 'g0', parentId: 'R', colliders: many('a') },
+      g1: { ...objectsNow().mech, id: 'g1', parentId: 'R', colliders: many('b') },
+      g2: { ...objectsNow().mech, id: 'g2', parentId: 'R', colliders: many('c') }
+    })
+    const capped = t('collider.capped', { body: 16, world: 64 })
+    expect(cardHtml('g2', 5)).toContain(capped)
+    expect(cardHtml('g2', 3)).not.toContain(capped)
+    expect(cardHtml('g0', 0)).not.toContain(capped)
+  })
+
+  it('5 리뷰: 머리줄 "시뮬레이터" 배지는 줄어든 줄(.hw-inline) 안에서 잘리지 않는다(main.css)', () => {
+    withColliders('plate', [BOX])
+    expect(cardHtml('plate')).toMatch(
+      /<span class="hw-inline">(?:(?!<\/span><\/header>).)*<span class="inspector-file">시뮬레이터<\/span>/
+    )
+    // .inspector-file의 max-width 60%는 줄어든 부모 폭 기준이라 "시뮬레..."로 잘렸다
+    const css = readFileSync(new URL('../../assets/main.css', import.meta.url), 'utf8')
+    const rule = /\n\.hw-inline > \.inspector-file\s*\{([^}]*)\}/.exec(css)
+    expect(rule).not.toBeNull()
+    expect(rule![1]).toMatch(/max-width:\s*none/)
+    expect(rule![1]).toMatch(/flex:\s*none/)
   })
 
   it('B12 실행이 그 로봇을 잠그면 "실행 중" 배지(편집은 막지 않음)', () => {

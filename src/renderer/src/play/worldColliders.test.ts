@@ -1,11 +1,16 @@
 import { Euler, Matrix4, Vector3 } from 'three'
 import { describe, expect, it, vi } from 'vitest'
-import type { EditPoseBody, EditPoseOverlap } from '../../../shared/sim/collision3d'
+import {
+  editPoseOverlaps,
+  type EditPoseBody,
+  type EditPoseOverlap
+} from '../../../shared/sim/collision3d'
 import { HULL_DEFAULT_VERTEX_LIMIT, MAX_HULL_POINTS, canonicalHull } from '../../../shared/sim/hull'
 import {
   DEFAULT_COLLIDER_FRICTION,
   MAX_BODY_COLLIDERS,
   MAX_WORLD_COLLIDERS,
+  MIN_BOX_SIZE,
   type Vec3
 } from '../../../shared/sim/worldSpec'
 import en from '../i18n/locales/en'
@@ -22,7 +27,7 @@ import {
   type CollisionModelCache
 } from './worldColliders'
 import { jointBodyFrames } from './worldJoints'
-import type { WorldWarning, WorldWarningKey } from './worldSpec'
+import { buildWorldSpec, type WorldWarning, type WorldWarningKey } from './worldSpec'
 
 // 몸체마다 충돌 형상(spec-5 §5.4, B5–B7·B16). 메시 껍질 점은 가짜 조회(STEP 워커가 만드는 meshHull 대신)이고, 편집 자세 앞
 // 계산은 가짜 overlaps(갈래 A의 editPoseOverlaps 대신)다.
@@ -32,6 +37,7 @@ const COLLIDER_WARNINGS: WorldWarningKey[] = [
   'worldColliderPending',
   'worldColliderDegenerate',
   'worldColliderOutOfRange',
+  'worldColliderNoMeshes',
   'worldTooManyColliders',
   'worldTooManyWorldColliders',
   'worldJointStartOverlap'
@@ -336,6 +342,71 @@ describe('B6 몸체 규칙', () => {
     expect(group.states[0].status).toBe('none')
   })
 
+  it('5 리뷰: 이 몸체의 메시를 품지 않은 켠 Mesh Collider는 worldColliderNoMeshes(섀시는 대체 상자, 관절은 형상 없음)', () => {
+    // 섀시 소속 빈 그룹의 Mesh Collider: 섀시 자동 껍질이 꺼지고 외곽 대체 상자가 되는데 INIT에 알림이 없었다
+    const chassisGroup = model({
+      ...robotScene(),
+      g: object('g', 'R', [0, 0, 0], {
+        kind: 'group',
+        name: 'Holder',
+        colliders: [{ id: 'm', kind: 'mesh', vertexLimit: 32 }]
+      })
+    })
+    expect(chassisGroup.bodies[0]).toMatchObject({ source: 'fallback', noMeshes: 1 })
+    expect(chassisGroup.warnings).toEqual([
+      { key: 'worldColliderNoMeshes', params: { name: 'Robot', count: 1 } }
+    ])
+    // 관절 몸체 안의 빈 그룹: 팔의 자동 껍질이 꺼지고 형상이 없다. 끈 Mesh Collider는 세지 않는다
+    const armGroup = model({
+      ...robotScene(),
+      g: object('g', 'arm', [0, 0, 0], {
+        kind: 'group',
+        colliders: [
+          { id: 'm', kind: 'mesh', vertexLimit: 32 },
+          { id: 'off', kind: 'mesh', vertexLimit: 32, enabled: false }
+        ]
+      })
+    })
+    expect(armGroup.bodies.find((body) => body.objectId === 'arm')).toMatchObject({
+      source: 'none',
+      noMeshes: 1
+    })
+    expect(armGroup.warnings).toEqual([
+      { key: 'worldColliderNoMeshes', params: { name: 'Arm', count: 1 } }
+    ])
+  })
+
+  it('5 리뷰: 1 mm보다 얇은 외곽의 섀시 대체 상자도 세계 설명이 받는다(반 크기 ≥ MIN_BOX_SIZE/2)', () => {
+    // 0.6 mm 판 하나뿐인 CAD: 자동 껍질은 퇴화라 대체 상자인데 반 크기 x 0.3 mm가 세계 설명 하한 아래라 세계 설명 전체가 거절됐다
+    const objects: SceneObjects = {
+      R: object('R', null, [0, 0, 0], { kind: 'robot', name: 'Robot' }),
+      C: object('C', 'R', [0, 0, 0.1], {
+        kind: 'assembly',
+        name: 'Plate',
+        cad: {
+          fileName: 'p.step',
+          absolutePath: '/p.step',
+          upAxis: '+Z',
+          forwardAxis: '+X',
+          bounds: { min: [-0.0003, -0.1, -0.1], max: [0.0003, 0.1, 0.1] },
+          meshCount: 1,
+          meshIndexing: 'source'
+        }
+      }),
+      P: object('P', 'C', [0, 0, 0], mesh('P'))
+    }
+    const result = buildWorldSpec(objects, 'R', { batteryVoltage: 12 }, null, null, () => ({
+      kind: 'degenerate'
+    }))
+    expect(keys(result.warnings)).not.toContain('worldInvalid')
+    expect(result.spec).not.toBeNull()
+    const [chassis] = result.spec!.robot.colliders!
+    expect(chassis.kind).toBe('box')
+    if (chassis.kind !== 'box') return
+    expect(chassis.half.x).toBe(MIN_BOX_SIZE / 2)
+    expect(chassis.half.y).toBeCloseTo(0.1, 12)
+  })
+
   it('B6 몸체 틀 좌표가 세계 설명 한도를 넘는 충돌체는 빼고 worldColliderOutOfRange(세계 설명 전체를 거절하지 않게)', () => {
     // 캡슐 높이 20 m(문서 한도 안)는 관(팔 몸체 x 0.1)에서 끝점이 10 m를 넘는다. 섀시 판의 중심 10 m 상자도 판 위치만큼 넘는다
     const objects = withColliders(
@@ -562,6 +633,69 @@ describe('B16 몸체 단위 기억', () => {
     expect(second.bodies[0]).toBe(first.bodies[0])
     expect(second.bodies[1].source).toBe('auto')
     expect(second.bodies[2]).toBe(first.bodies[2])
+  })
+})
+
+describe('5 리뷰: 짝 기억과 세계 한도', () => {
+  it('세계 한도로 잘린 목록으로 잰 짝 깊이를 한도가 풀린 뒤 다시 쓰지 않는다(인스펙터 무시 목록 = INIT)', () => {
+    // 섀시 16 + J0 16 + J1 16 + J2 15 + J3 2 = 65 > 64라 J3은 첫 Collider(멀리)만 들어간다. J3의 둘째는 J1의 첫 상자와 겹친다.
+    // J2에서 Collider를 지우면 J3이 다 들어가는데, 몸체 결과가 그대로라 잘린 목록으로 잰 "겹침 없음"이 남았다
+    const boxes = (prefix: string, n: number, z: number): ColliderSettings[] =>
+      Array.from({ length: n }, (_, k) => ({
+        id: `${prefix}${k}`,
+        kind: 'box',
+        center: [k * 0.05, 0, z],
+        size: [0.01, 0.01, 0.01]
+      }))
+    const scene = (j2b: number): SceneObjects => {
+      const objects: SceneObjects = {
+        R: object('R', null, [0, 0, 0], { kind: 'robot', name: 'Robot' }),
+        c1: object('c1', 'R', [0, 0, 0], { kind: 'group', colliders: boxes('c1-', 8, 0.1) }),
+        c2: object('c2', 'R', [0, 0, 0], { kind: 'group', colliders: boxes('c2-', 8, 0.2) })
+      }
+      const joint = (id: string, y: number, second: number): void => {
+        objects[id] = object(id, 'R', [0, y, 0.5], {
+          kind: 'group',
+          joint: defaultJoint('revolute')
+        })
+        objects[`${id}a`] = object(`${id}a`, id, [0, 0, 0], {
+          kind: 'group',
+          colliders: boxes('a', 8, 0)
+        })
+        objects[`${id}b`] = object(`${id}b`, id, [0, 0, 0], {
+          kind: 'group',
+          colliders: boxes('b', second, 0.1)
+        })
+      }
+      joint('J0', 1, 8)
+      joint('J1', 2, 8)
+      joint('J2', 3, j2b)
+      objects.J3 = object('J3', 'R', [0, 2, 0.5], {
+        kind: 'group',
+        joint: defaultJoint('revolute')
+      })
+      objects.J3a = object('J3a', 'J3', [0, 0, 0], {
+        kind: 'group',
+        colliders: [
+          { id: 'far', kind: 'box', center: [2, 0, 0], size: [0.01, 0.01, 0.01] },
+          { id: 'hit', kind: 'box', center: [0, 0, 0], size: [0.01, 0.01, 0.01] }
+        ]
+      })
+      return objects
+    }
+    const names = (result: CollisionModel): string[] =>
+      result.pairs.map((pair) => `${pair.aObjectId}|${pair.bObjectId}`)
+    const cache = createCollisionModelCache()
+    const base = scene(7)
+    const capped = model(base, { cache, overlaps: editPoseOverlaps })
+    expect(capped.bodies.find((body) => body.objectId === 'J3')!.colliders).toHaveLength(1)
+    expect(names(capped)).not.toContain('J1|J3')
+    // J2의 Collider만 지운다(다른 오브젝트는 같은 객체라 몸체 결과 기억이 맞는다)
+    const objects = { ...base, J2b: { ...base.J2b, colliders: base.J2b.colliders!.slice(0, 1) } }
+    const cached = model(objects, { cache, overlaps: editPoseOverlaps })
+    const fresh = model(objects, { overlaps: editPoseOverlaps })
+    expect(names(fresh)).toContain('J1|J3')
+    expect(cached.pairs).toEqual(fresh.pairs)
   })
 })
 

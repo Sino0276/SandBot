@@ -7,8 +7,10 @@ import { usePlayStore } from '../../play/playStore'
 import { staleForcePairs, type IgnoredPair } from '../../play/worldColliders'
 import { useUnitStore } from '../../units/unitStore'
 import { formatLength } from '../../units/units'
+import { MAX_BODY_COLLIDERS, MAX_WORLD_COLLIDERS } from '../../../../shared/sim/worldSpec'
 import { useEditorStore } from '../editorStore'
 import { runLocksField } from '../field/fieldDisplay'
+import { bodyShapeReason } from './colliderCardModel'
 import { useCollisionModel } from './useCollisionModel'
 
 // Rigidbody(섀시, body −1)·Articulation Body(관절 몸체) 카드의 "충돌" 구역(spec-5 §6.3). 몸체 충돌 형상의 출처 줄, 읽는 중 메시,
@@ -70,11 +72,13 @@ function CollisionSection({
         })
       }
       case 'fallback':
-        return t('collider.body.fallback')
       case 'none':
-        return t('collider.body.none')
+        return t(`collider.body.${body.source}`, {
+          reason: t(`collider.body.reasons.${bodyShapeReason(body)}`)
+        })
     }
   })()
+  const capped = body.states.filter((state) => state.capped).length
 
   return (
     <div className="collision-section" aria-label={t('collider.body.title')}>
@@ -96,6 +100,15 @@ function CollisionSection({
         {body.pendingMeshes > 0 && (
           <li className="hw-issue is-info">
             {t('collider.body.pending', { count: body.pendingMeshes })}
+          </li>
+        )}
+        {capped > 0 && (
+          <li className="hw-issue is-warning">
+            {t('collider.body.capped', {
+              count: capped,
+              body: MAX_BODY_COLLIDERS,
+              world: MAX_WORLD_COLLIDERS
+            })}
           </li>
         )}
         {chassis && !hasWheels && (

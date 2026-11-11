@@ -8,7 +8,7 @@ import type { OpModeInfo } from '../../../../shared/play'
 import ko from '../../i18n/locales/ko'
 import { newRun, usePlayStore } from '../../play/playStore'
 import type { ColliderSettings } from '../../scene/collider'
-import { disposeAllGeometry } from '../../scene/geometryRegistry'
+import { disposeAllGeometry, disposeGeometry } from '../../scene/geometryRegistry'
 import { defaultWheel } from '../../scene/wheel'
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
@@ -141,7 +141,9 @@ describe('B13 몸체 충돌 줄', () => {
     disposeAllGeometry()
     resetCollisionModels()
     const fallback = html('R')
-    expect(fallback).toContain(t('collider.body.fallback'))
+    expect(fallback).toContain(
+      t('collider.body.fallback', { reason: t('collider.body.reasons.loading') })
+    )
     expect(fallback).toContain(t('collider.body.pending', { count: 2 }))
     // 메시 없는 관절 몸체
     scene({
@@ -161,7 +163,51 @@ describe('B13 몸체 충돌 줄', () => {
         }
       })
     })
-    expect(html('empty')).toContain(t('collider.body.none'))
+    expect(html('empty')).toContain(
+      t('collider.body.none', { reason: t('collider.body.reasons.noMeshes') })
+    )
+  })
+
+  it('5 리뷰: 대체 상자·없음 줄은 진짜 까닭을 말하고(켠 Collider 실패·읽는 중·메시 없음), 한도로 뺀 Collider 수를 알린다', () => {
+    const reason = (key: string): string => t(`collider.body.reasons.${key}`)
+    // 섀시 그룹 mech의 Mesh Collider: 하위 메시는 모두 팔 몸체라 형상이 없다 → 섀시는 외곽 상자(메시는 다 읽었다)
+    scene({
+      ...colliderScene(),
+      mech: { ...colliderScene().mech, colliders: [{ id: 'm', kind: 'mesh', vertexLimit: 32 }] }
+    })
+    const chassis = html('R')
+    expect(chassis).toContain(t('collider.body.fallback', { reason: reason('colliders') }))
+    expect(chassis).not.toContain(reason('loading'))
+    // 팔 몸체 안 빈 그룹의 Mesh Collider: 팔에는 관이 있지만 형상이 없다(메시가 없다고 하지 않는다)
+    scene({
+      ...colliderScene(),
+      holder: sceneObject('holder', 'arm', [0, 0, 0], {
+        kind: 'group',
+        colliders: [{ id: 'm', kind: 'mesh', vertexLimit: 32 }]
+      })
+    })
+    expect(html('arm')).toContain(t('collider.body.none', { reason: reason('colliders') }))
+    // 팔의 관 메시를 읽는 중: 형상 없음(읽는 중)과 읽는 중 메시 수가 함께(서로 어긋나지 않는다)
+    scene(colliderScene())
+    disposeAllGeometry()
+    registerSceneMeshes()
+    disposeGeometry('g:tube')
+    resetCollisionModels()
+    const loading = html('arm')
+    expect(loading).toContain(t('collider.body.none', { reason: reason('loading') }))
+    expect(loading).toContain(t('collider.body.pending', { count: 1 }))
+    // 몸체 한도(16)를 넘은 Collider 둘
+    registerSceneMeshes()
+    const many = (prefix: string): ColliderSettings[] =>
+      Array.from({ length: 6 }, (_, k) => ({ ...OFF, id: `${prefix}${k}`, enabled: undefined }))
+    const objects = colliderScene()
+    for (const k of [0, 1, 2])
+      objects[`g${k}`] = sceneObject(`g${k}`, 'R', [0, 0, 0], {
+        kind: 'group',
+        colliders: many(`g${k}-`)
+      })
+    scene(objects)
+    expect(html('R')).toContain(t('collider.body.capped', { count: 2, body: 16, world: 64 }))
   })
 
   it('B13 관절: 부모 몸체 안내와 바닥 닿음 줄', () => {

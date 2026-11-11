@@ -988,6 +988,8 @@ const ko = {
         '{{name}}의 충돌 형상 {{count}}개가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 쓰지 않습니다.',
       worldColliderOutOfRange:
         '{{name}}의 충돌 형상 {{count}}개가 시뮬레이터 좌표 한도(몸체 기준 10 m, 볼록 껍질 점 6.5 m)를 넘어 쓰지 않습니다.',
+      worldColliderNoMeshes:
+        '{{name}}의 켠 Mesh Collider {{count}}개가 이 몸체의 메시를 하나도 품지 않아 쓰지 않습니다. 메시가 있는 오브젝트나 그 상위(같은 몸체)에 붙이세요.',
       worldTooManyColliders:
         '{{name}}의 충돌체가 시뮬레이터 한도(몸체마다 {{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyWorldColliders:
@@ -2094,6 +2096,7 @@ const ko = {
       '끄면 이 Collider는 충돌하지 않습니다. 끈 Collider가 있어도 이 몸체는 자동 볼록 껍질을 쓰지 않습니다.',
     center: '중심 (Center)',
     centerHint: '이 오브젝트의 로컬 좌표(피벗 기준, 이 오브젝트 자신의 축)입니다.',
+    sizeHint: '이 오브젝트 자신의 축 방향 전체 크기입니다(각 축 1 mm 이상).',
     size: '크기 (Size)',
     radius: '반지름 (Radius)',
     height: '높이 (Height)',
@@ -2137,6 +2140,8 @@ const ko = {
       '{{body}}에 Collider가 있으면 자동 볼록 껍질을 쓰지 않습니다. 이 몸체는 붙인 Collider로만 충돌합니다.',
     runningHint: '다음 INIT부터. 씬 뷰는 실행을 시작할 때의 형상입니다.',
     tooMany: '한 오브젝트에 Collider는 {{max}}개까지 붙일 수 있습니다.',
+    capped:
+      '시뮬레이터 한도(몸체마다 {{body}}개, 로봇 전체 {{world}}개)를 넘어 이 Collider는 쓰지 않습니다. 몸체·하이어라키 순서로 앞의 것이 먼저 쓰입니다.',
     // 받지 않은 입력칸 값의 설명(입력칸은 글자를 남겨 틀렸다고 보인다)
     invalid: {
       friction: '0–2 사이 수를 넣으세요. 비우면 기본값 0.4입니다. Esc로 되돌립니다.',
@@ -2151,8 +2156,18 @@ const ko = {
       disabled: '충돌 형상: 모든 Collider가 꺼져 충돌하지 않음',
       auto: '충돌 형상: 자동 볼록 껍질 {{points}}점 · 오차 약 {{error}}',
       autoHint: '더 정확히 하려면 Mesh Collider(꼭짓점 한도 64)를 붙이거나 부품마다 나누세요.',
-      fallback: '충돌 형상: 외곽 상자(메시를 아직 읽지 못함)',
-      none: '충돌 형상: 없음(이 몸체에 메시가 없음)',
+      fallback: '충돌 형상: 외곽 상자({{reason}})',
+      none: '충돌 형상: 없음({{reason}})',
+      // 외곽 상자·없음의 까닭(editor/collider/colliderCardModel.ts bodyShapeReason)
+      reasons: {
+        colliders: '켠 Collider가 형상을 만들지 못함, 각 Collider 카드 참고',
+        loading: '메시를 아직 읽지 못함',
+        degenerate: '메시가 평평하거나 너무 얇음',
+        outOfRange: '좌표가 시뮬레이터 한도를 넘음',
+        noMeshes: '이 몸체에 메시가 없음'
+      },
+      capped:
+        'Collider {{count}}개는 시뮬레이터 한도(몸체마다 {{body}}개, 로봇 전체 {{world}}개)를 넘어 쓰지 않습니다(씬 뷰에 흐리게).',
       pending:
         '형상이 없는 메시 {{count}}개(아직 읽지 않았거나 읽지 못함)는 충돌 형상에 들지 않았습니다.',
       fixedBase: '바퀴가 없어 섀시는 고정입니다. 필드와는 충돌하지 않고 관절 몸체와만 충돌합니다.',

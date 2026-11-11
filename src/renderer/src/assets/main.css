@@ -730,6 +730,13 @@ body {
   flex: 1;
 }
 
+/* 줄 안의 배지(Collider 카드 머리줄의 "시뮬레이터"): .inspector-file의 max-width 60%는 줄어든 .hw-inline 자신의 폭 기준이라
+   글자가 잘린다. 짧은 배지이므로 줄이지 않는다 */
+.hw-inline > .inspector-file {
+  flex: none;
+  max-width: none;
+}
+
 /* 줄 안의 벡터 입력칸은 남은 너비를 쓴다 */
 .hw-inline > .vector-row-fields {
   flex: 1;

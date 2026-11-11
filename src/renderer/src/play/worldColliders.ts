@@ -16,6 +16,7 @@ import {
   DEFAULT_COLLIDER_FRICTION,
   MAX_BODY_COLLIDERS,
   MAX_WORLD_COLLIDERS,
+  MIN_BOX_SIZE,
   type SimCollider,
   type Vec2,
   type Vec3
@@ -50,7 +51,8 @@ import type { WorldWarning } from './worldSpec'
 // 속성 같은 충돌 무관 편집은 다시 계산하지 않는다. 앞 계산은 두 몸체 결과가 같은 짝을 다시 하지 않는다.
 
 // colliders: 켠 Collider에서 나옴, disabled: Collider가 있으나 모두 꺼짐(충돌 없음), auto: 자동 볼록 껍질, fallback: 섀시 외곽 대체
-// 상자(메시를 읽지 못함), none: 형상 없음(관절 몸체에 메시가 없음)
+// 상자, none: 관절 몸체의 형상 없음. fallback·none의 까닭(켠 Collider가 모두 빠짐, 메시를 읽는 중·퇴화·좌표 한도·메시 없음)은
+// 상태·개수가 말한다(editor/collider/colliderCardModel.ts bodyShapeReason)
 export type BodyShapeSource = 'colliders' | 'disabled' | 'auto' | 'fallback' | 'none'
 
 export type WorldColliderEntry = {
@@ -103,6 +105,8 @@ export type WorldColliderBody = {
   degenerate: number
   // 몸체 틀 좌표가 세계 설명 한도를 넘어 뺀 충돌체 수(켠 Collider·자동 껍질)
   outOfRange: number
+  // 이 몸체의 메시를 하나도 품지 않아 형상이 없는 켠 Mesh Collider 수
+  noMeshes: number
   // 관절 몸체의 편집 자세 바닥 간격(min z, m, F10), 섀시 null
   floorGap: number | null
   // 몸체 소속 Collider(소속 오브젝트 문서 순서, 그 안에서 배열 순서, 끈 것 포함)
@@ -139,6 +143,7 @@ type BodyCore = {
   pendingMeshes: number
   degenerate: number
   outOfRange: number
+  noMeshes: number
 }
 
 type BodyCacheEntry = {
@@ -151,10 +156,17 @@ type BodyCacheEntry = {
 type PairCacheEntry = {
   a: BodyCore
   b: BodyCore
+  // 깊이를 잰 충돌체 목록(세계 한도 뒤). 몸체 결과가 같아도 앞 몸체의 충돌체 수가 바뀌면 세계 한도로 자른 목록이 달라진다
+  collidersA: readonly WorldColliderEntry[]
+  collidersB: readonly WorldColliderEntry[]
   frameA: Frame3
   frameB: Frame3
   depth: number | null
 }
+
+// 같은 충돌체(참조)를 같은 순서로 가진 목록
+const sameEntries = (a: readonly WorldColliderEntry[], b: readonly WorldColliderEntry[]): boolean =>
+  a.length === b.length && a.every((entry, k) => entry === b[k])
 
 export type CollisionModelCache = {
   bodies: Map<string, BodyCacheEntry>
@@ -367,6 +379,7 @@ function computeBody(
   const pendingIds = new Set<string>()
   let degenerate = 0
   let outOfRange = 0
+  let noMeshes = 0
   let hasColliders = false
   let enabledCount = 0
   for (const id of members) {
@@ -407,6 +420,8 @@ function computeBody(
         else if (gathered.degenerate > 0) state.status = 'degenerate'
         else state.status = 'none'
         if (enabled && state.status === 'degenerate') degenerate++
+        // 같은 몸체 메시를 품지 않은 Mesh Collider(관절 하위 메시만 품은 그룹, 빈 그룹). 그 몸체의 자동 껍질도 꺼지므로 알린다(5 리뷰)
+        if (enabled && state.status === 'none') noMeshes++
       } else {
         const toBody = toBodyOf(id)
         const entry = toBody ? primitiveEntry(collider, id, toBody) : null
@@ -465,10 +480,21 @@ function computeBody(
       if (state.entry && state.enabled && !kept.has(state.entry)) state.capped = true
     used = used.slice(0, MAX_BODY_COLLIDERS)
   }
-  return { source, entries: used, bodyCapped, states, pendingMeshes, degenerate, outOfRange }
+  return {
+    source,
+    entries: used,
+    bodyCapped,
+    states,
+    pendingMeshes,
+    degenerate,
+    outOfRange,
+    noMeshes
+  }
 }
 
-// 섀시 대체 상자: 외곽 사각형의 경계 × [0, 높이](4ab 평면 프리즘과 같은 크기, 단위 회전, 기본 마찰)
+// 섀시 대체 상자: 외곽 사각형의 경계 × [0, 높이](4ab 평면 프리즘과 같은 크기, 단위 회전, 기본 마찰). 반 크기는 세계 설명이 받는
+// 하한 MIN_BOX_SIZE/2 이상이다(0.6 mm 판 하나뿐인 CAD처럼 외곽이 1 mm보다 얇으면 상자 하나 때문에 세계 설명 전체가 거절되어
+// 시뮬레이터 없이 실행했다. 사용자 Box는 sanitizeCollider가 같은 하한을 지킨다, 5 리뷰)
 function fallbackBox(
   outline: { footprint: Vec2[]; height: number },
   objectId: string
@@ -491,9 +517,9 @@ function fallbackBox(
       },
       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
       half: {
-        x: plain((maxX - minX) / 2),
-        y: plain((maxY - minY) / 2),
-        z: plain(outline.height / 2)
+        x: plain(Math.max(MIN_BOX_SIZE / 2, (maxX - minX) / 2)),
+        y: plain(Math.max(MIN_BOX_SIZE / 2, (maxY - minY) / 2)),
+        z: plain(Math.max(MIN_BOX_SIZE / 2, outline.height / 2))
       },
       friction: DEFAULT_COLLIDER_FRICTION
     },
@@ -663,6 +689,8 @@ export function buildCollisionModel(input: {
       warnings.push({ key: 'worldColliderDegenerate', params: { name, count: core.degenerate } })
     if (core.outOfRange > 0)
       warnings.push({ key: 'worldColliderOutOfRange', params: { name, count: core.outOfRange } })
+    if (core.noMeshes > 0)
+      warnings.push({ key: 'worldColliderNoMeshes', params: { name, count: core.noMeshes } })
     if (core.bodyCapped)
       warnings.push({ key: 'worldTooManyColliders', params: { name, max: MAX_BODY_COLLIDERS } })
     const parent = body.body < 0 ? null : joints.parents[body.body]
@@ -697,6 +725,7 @@ export function buildCollisionModel(input: {
       pendingMeshes: core.pendingMeshes,
       degenerate: core.degenerate,
       outOfRange: core.outOfRange,
+      noMeshes: core.noMeshes,
       floorGap,
       states
     }
@@ -729,14 +758,16 @@ export function buildCollisionModel(input: {
       livePairs.add(pairKey)
       let depth: number | null
       const hit = cache?.pairs.get(pairKey)
+      // 세계 한도로 자른 목록은 앞 몸체의 충돌체 수에 기대므로, 잰 목록과 지금 목록이 같을 때만 다시 쓴다(몸체 결과가 같아도 J1|J3
+      // 깊이를 J3의 잘린 목록으로 잰 뒤 앞 몸체가 Collider를 지우면 J3이 다 들어가는데 옛 깊이가 남았다, 5 리뷰)
       if (
         hit &&
         hit.a === cores[i].core &&
         hit.b === cores[j].core &&
+        sameEntries(hit.collidersA, bodies[i].colliders) &&
+        sameEntries(hit.collidersB, bodies[j].colliders) &&
         sameFrame(hit.frameA, a.frame) &&
-        sameFrame(hit.frameB, b.frame) &&
-        bodies[i].colliders.length === cores[i].core.entries.length &&
-        bodies[j].colliders.length === cores[j].core.entries.length
+        sameFrame(hit.frameB, b.frame)
       )
         depth = hit.depth
       else {
@@ -747,6 +778,8 @@ export function buildCollisionModel(input: {
         cache?.pairs.set(pairKey, {
           a: cores[i].core,
           b: cores[j].core,
+          collidersA: bodies[i].colliders,
+          collidersB: bodies[j].colliders,
           frameA: a.frame,
           frameB: b.frame,
           depth

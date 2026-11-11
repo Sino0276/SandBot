@@ -162,6 +162,19 @@ export function fitCollider(
 
 // ---- 카드 줄 ----
 
+// 섀시 외곽 대체 상자('fallback')·관절 몸체 형상 없음('none')의 까닭(spec-5 §6.3 형상 줄, 5 리뷰): 켠 Collider가 있으면 그것들이 모두
+// 형상을 만들지 못한 것(이유는 각 Collider 카드), 아니면 자동 볼록 껍질이 나오지 않은 까닭(computeBody가 세는 것: 좌표 한도 → 퇴화
+// → 읽는 중 → 메시 없음. 앞의 둘은 메시를 다 읽어도 그대로다)
+export type BodyShapeReason = 'colliders' | 'outOfRange' | 'degenerate' | 'loading' | 'noMeshes'
+
+export function bodyShapeReason(body: WorldColliderBody): BodyShapeReason {
+  if (body.states.some((state) => state.enabled)) return 'colliders'
+  if (body.outOfRange > 0) return 'outOfRange'
+  if (body.degenerate > 0) return 'degenerate'
+  if (body.pendingMeshes > 0) return 'loading'
+  return 'noMeshes'
+}
+
 export type ColliderMembership =
   | { kind: 'chassis'; body: WorldColliderBody | null }
   | { kind: 'joint'; body: WorldColliderBody | null; name: string }

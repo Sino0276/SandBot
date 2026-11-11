@@ -8,6 +8,7 @@ import { sanitizeJoint } from '../../scene/joint'
 import {
   ancestorIds,
   findRobotId,
+  subtreeIds,
   worldMatrix,
   type RootOverride,
   type SceneObjects
@@ -162,11 +163,56 @@ export function colliderSegments(
 
 // ---- 대상 ----
 
-// 로봇마다 그릴 몸체 번호(고른 오브젝트들의 몸체, 하위 관절 몸체 포함, 로봇을 고르면 그 로봇의 모든 몸체)
+// 대상 규칙이 쓰는 몸체 번호: 관절 몸체 순번의 관절 오브젝트와 오브젝트 → 몸체(없으면 섀시 −1)
+export type GizmoBodyNumbers = {
+  objectIds: readonly string[]
+  bodyOf: ReadonlyMap<string, number>
+}
+
+// 실행의 몸체 번호(run.joints 순번, run.colliders의 body가 이 번호다): 오브젝트마다 자신 또는 가장 가까운 상위 가운데 run.joints에 든
+// 것, 없으면 섀시 −1. 실행 중에도 편집할 수 있어 문서의 관절 번호(jointBodyFrames)는 INIT 때와 다를 수 있다(앞에 관절을 붙이거나
+// 떼면 번호가 밀린다, 5 리뷰)
+export function runBodyNumbers(
+  objects: SceneObjects,
+  robotId: string,
+  jointIds: readonly string[]
+): GizmoBodyNumbers {
+  const index = new Map(jointIds.map((id, i) => [id, i]))
+  const bodyOf = new Map<string, number>()
+  for (const id of subtreeIds(objects, robotId)) {
+    if (id === robotId) continue
+    let body = -1
+    for (const candidate of [id, ...ancestorIds(objects, id)]) {
+      if (candidate === robotId) break
+      const k = index.get(candidate)
+      if (k !== undefined) {
+        body = k
+        break
+      }
+    }
+    bodyOf.set(id, body)
+  }
+  return { objectIds: jointIds, bodyOf }
+}
+
+// 그 로봇의 몸체 번호: 그 로봇을 잠그는 실행이면 실행의 번호(그리기가 run.colliders·run.joints를 쓰므로), 아니면 문서의 번호
+export function gizmoBodyNumbers(
+  objects: SceneObjects,
+  robotId: string,
+  run: PlayRun | null,
+  documentJoints: JointBodyFrames | null
+): GizmoBodyNumbers | null {
+  if (runLocksField(run) && run.robotId === robotId)
+    return runBodyNumbers(objects, robotId, run.joints)
+  return documentJoints
+}
+
+// 로봇마다 그릴 몸체 번호(고른 오브젝트들의 몸체, 하위 관절 몸체 포함, 로봇을 고르면 그 로봇의 모든 몸체). 번호는 bodiesOf가 정한다
+// (잠그는 실행이면 실행의 번호, gizmoBodyNumbers)
 export function colliderGizmoTargets(
   objects: SceneObjects,
   selectedIds: readonly string[],
-  bodiesOf: (robotId: string) => JointBodyFrames | null
+  bodiesOf: (robotId: string) => GizmoBodyNumbers | null
 ): Map<string, number[]> {
   const byRobot = new Map<string, Set<number>>()
   for (const id of selectedIds) {
