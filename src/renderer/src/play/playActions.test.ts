@@ -6,8 +6,6 @@ import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import { generatedHash } from '../../../shared/generatedFiles'
 import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
 import { parseWorldSpec, WORLD_SPEC_VERSION, type WorldSpec } from '../../../shared/sim/worldSpec'
-import { startOverlaps } from '../../../shared/sim/collision3d'
-import { fieldOverlaps } from '../../../shared/sim/seasons/fieldGeometry'
 import { meshHullOf } from '../cad/stepImport'
 import type {
   GrantCodeTrustResult,
@@ -56,6 +54,7 @@ import {
   stopPlay,
   togglePause
 } from './playActions'
+import { snapRobotToPreset } from '../editor/field/startPresetModel'
 import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
@@ -76,11 +75,6 @@ import { DEFAULT_CODE_UNITS as SDK_UNITS } from '../scene/projectSettings'
 vi.mock('../project/projectActions', () => ({ saveProject: vi.fn(async () => true) }))
 // 자기 로봇 가림(갈래 C가 BVH로 구현)은 시험 이중으로 바꾼다(기본: 가림 없음, spec-4c B11)
 vi.mock('../editor/hardware/sensorSelfHit', () => ({ sensorSelfHit: vi.fn(() => null) }))
-// 3D 시작 겹침(spec-5 §3.8, 갈래 A가 구현)은 기본으로 진짜 함수를 쓰고, 시즌 시작 겹침 시험만 갈래 B 시험 이중으로 바꾼다
-vi.mock('../../../shared/sim/collision3d', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../shared/sim/collision3d')>()
-  return { ...actual, startOverlaps: vi.fn(actual.startOverlaps) }
-})
 
 const P = 'src/main/java/org/firstinspires/ftc/teamcode/'
 
@@ -554,7 +548,6 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
   })
   afterEach(() => {
     for (const id of WHEEL_MESHES) disposeGeometry(`g:${id}`)
-    vi.mocked(startOverlaps).mockReset()
   })
 
   it('구성과 같은 로봇의 세계 설명을 보낸다', async () => {
@@ -860,17 +853,8 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     })
 
     it('B9: none 벽에 붙인 바퀴 로봇을 BIOBUZZ로 INIT하면 worldStartOverlap(실행은 막지 않는다)', async () => {
-      // 섀시는 3D 경로다(형상 조회를 늘 넘긴다, spec-5 §5.6). 시작 겹침 판정은 갈래 A의 startOverlaps라 여기서는 섀시 외곽
-      // 프리즘으로 같은 판정을 하는 시험 이중을 쓴다. 섀시 충돌 형상이 외곽 상자라 진짜 함수로 바꿔도 같은 결과여야 한다(통합 I3)
-      vi.mocked(startOverlaps).mockImplementation((spec, field) => {
-        const found = fieldOverlaps(
-          field,
-          spec.robot.footprint,
-          spec.robot.start,
-          spec.robot.height
-        )
-        return found.length > 0 ? [{ body: -1, targets: found }] : []
-      })
+      // 섀시는 3D 경로다(형상 조회를 늘 넘긴다, spec-5 §5.6). 시작 겹침은 진짜 3D 판정(startOverlaps)이고, 섀시 충돌 형상이
+      // 18 in Box Collider(외곽 × 높이)라 4ab 외곽 프리즘 판정과 같은 결과다(통합 I3)
       useSceneStore.setState({ objects: atNoneWall(), field: { season: 'biobuzz' } })
       await initPlay()
       expect(lastRequest().world).not.toBeNull()
@@ -883,6 +867,64 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       useSceneStore.setState({ field: { season: 'none' } })
       await initPlay()
       expect(notices().filter((key) => key === 'worldStartOverlap')).toHaveLength(1)
+    })
+
+    // 5 통합 I3(spec-5 §10): INIT의 진짜 3D 시작 겹침(startOverlaps). 바퀴 로봇 + 18 in Box Collider 섀시를 빨강 관중석 벽
+    // 프리셋에 스냅한다(로봇 앞이 필드 안쪽, 뒷면이 벽 안쪽 면에 간격 0)
+    const snappedBot = (extra: SceneObjects = {}): void => {
+      const objects = withWheel()
+      useSceneStore.setState({
+        objects: {
+          ...objects,
+          bot: {
+            ...objects.bot,
+            colliders: [
+              { id: 'box', kind: 'box', center: [0, 0, 0.2286], size: [0.4572, 0.4572, 0.4572] }
+            ]
+          },
+          ...extra
+        },
+        field: { season: 'biobuzz' }
+      })
+      expect(snapRobotToPreset('bot', 'audienceWall', 'default')).toBe(true)
+    }
+    const startKeys = (): unknown[] =>
+      notices().filter((key) => key === 'worldStartOverlap' || key === 'worldJointStartOverlap')
+
+    it('5 통합 I3: 프리셋에 스냅한 18 in 로봇은 벽에 닿기만 해 시작 겹침 경고가 없다(진짜 startOverlaps)', async () => {
+      snappedBot()
+      await initPlay()
+      expect(lastRequest().world!.robot.colliders).toHaveLength(1)
+      // 벽에 닿기만 한 섀시(분리 0 ≥ −1 mm)는 겹침이 아니다
+      expect(startKeys()).toEqual([])
+    })
+
+    it('5 통합 I3: 벽 너머로 뻗은 팔 관절은 INIT에 worldJointStartOverlap(실행은 막지 않는다)', async () => {
+      // 로봇 뒤(−X)로 3 cm 뻗은 팔 관절(Box Collider): 시작 자세에서 관중석 벽 판에 걸친다(바퀴와 관계없이 관절 몸체는 알린다)
+      snappedBot({
+        swing: {
+          id: 'swing',
+          name: 'Swing',
+          kind: 'group',
+          parentId: 'bot',
+          transform: { position: [-0.2, 0, 0.15], rotation: [0, 0, 0] },
+          joint: { ...defaultJoint('revolute'), axis: 'y' },
+          colliders: [{ id: 'ab', kind: 'box', center: [-0.03, 0, 0], size: [0.06, 0.04, 0.04] }]
+        }
+      })
+      await initPlay()
+      const world = lastRequest().world!
+      expect(world.joints).toHaveLength(1)
+      expect(world.joints[0].colliders).toHaveLength(1)
+      expect(startKeys()).toEqual(['worldJointStartOverlap'])
+      const entry = usePlayStore
+        .getState()
+        .entries.find((e) => e.type === 'notice' && e.key === 'worldJointStartOverlap')
+      expect(entry).toMatchObject({
+        level: 'warning',
+        params: { name: 'Swing', targets: expect.any(String) }
+      })
+      expect(usePlayStore.getState().run!.colliders.map((body) => body.body)).toEqual([-1, 0])
     })
   })
 })

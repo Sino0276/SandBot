@@ -242,6 +242,31 @@ describe('정규 껍질(K9)', () => {
     }
   })
 
+  it('canonicalHull 기억: 같은 배열·같은 좌표면 같은(얼린) 결과, 배열을 고치면 다시 만들고, 기억 없이 만든 값과 같다', () => {
+    const points = buildHull(meshCloud(7), HULL_DEFAULT_VERTEX_LIMIT)!.vertices.map((p) => ({
+      ...p
+    }))
+    const hull = canonicalHull(points)!
+    expect(canonicalHull(points)).toBe(hull)
+    expect(Object.isFrozen(hull)).toBe(true)
+    expect(Object.isFrozen(hull.vertices[0])).toBe(true)
+    expect(Object.isFrozen(hull.faces[0].vertices)).toBe(true)
+    expect(Object.isFrozen(hull.edges[0])).toBe(true)
+    // 기억 없이 같은 함수로 만든 값과 같다
+    expect(hull).toEqual(buildHull(points, MAX_HULL_POINTS))
+    // 같은 배열의 점 하나를 옮기면 기억을 쓰지 않는다
+    points[0] = { x: points[0].x + 0.05, y: points[0].y, z: points[0].z }
+    const moved = canonicalHull(points)!
+    expect(moved).not.toBe(hull)
+    expect(moved).toEqual(buildHull(points, MAX_HULL_POINTS))
+    // 퇴화(null)도 기억하고, 배열 길이가 바뀌면 다시 만든다
+    const flat = [v(0, 0, 0), v(1, 0, 0), v(0, 1, 0), v(1, 1, 0)]
+    expect(canonicalHull(flat)).toBeNull()
+    expect(canonicalHull(flat)).toBeNull()
+    flat.push(v(0, 0, 1))
+    expect(canonicalHull(flat)).not.toBeNull()
+  })
+
   it('boxHull: 꼭짓점은 boxVertices 비트 순서, 면 6·모서리 12, 축 정렬 면은 정확한 평면', () => {
     const hull = boxHull(v(1.8, -0.5, 0.1), [1, 0, 0, 0, 1, 0, 0, 0, 1], v(0.0135, 1.8, 0.2))
     expect(hull.vertices[0]).toEqual(v(1.8 - 0.0135, -0.5 - 1.8, 0.1 - 0.2))

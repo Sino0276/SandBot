@@ -654,9 +654,59 @@ function finishHull(points: readonly V3[], faces: number[][], limits: HullLimits
   }
 }
 
-// 정규 껍질(spec-5 §1.11): buildHull(points, MAX_HULL_POINTS). 렌더러 표시·앞 계산·메인 생성이 모두 이것을 쓴다
+// 정규 껍질 기억(spec-5 §12 생성자 예산): 메인은 parseWorldSpec 검사에서 만든 껍질을 BodyCollision이 같은 점 배열로 다시 만들고
+// (검사가 돌려주는 충돌체가 검사한 배열을 그대로 담는다), 렌더러는 같은 V로 표시·앞 계산·시작 겹침을 여러 번 부른다. 64점 껍질
+// 하나가 0.5–0.7 ms라 충돌체 64개 세계에서 두 번 만들면 생성자 목표(30 ms)를 넘었다. 그래서 점 배열 객체를 키로 마지막 결과를
+// 기억한다(WeakMap: 키 찾기에만 쓰고 순서를 쓰지 않는다, 배열이 사라지면 함께 사라진다). 그 배열의 지금 좌표가 기억한 좌표와
+// Object.is로 모두 같을 때만 쓰므로(배열을 고쳐 쓰면 다시 만든다) 결과 값은 기억 없이 만든 것과 같다(같은 입력 → 같은 함수).
+// 같은 객체를 나눠 쓰므로 결과를 깊게 얼린다(고치면 다른 호출이 본다. staticShapes와 같은 규칙).
+type CanonicalEntry = { coords: Float64Array; hull: Hull | null }
+const canonicalCache = new WeakMap<readonly Vec3[], CanonicalEntry>()
+
+function sameCoords(points: readonly Vec3[], coords: Float64Array): boolean {
+  if (coords.length !== 3 * points.length) return false
+  for (let i = 0; i < points.length; i++) {
+    const q = points[i]
+    if (
+      !Object.is(q.x, coords[3 * i]) ||
+      !Object.is(q.y, coords[3 * i + 1]) ||
+      !Object.is(q.z, coords[3 * i + 2])
+    )
+      return false
+  }
+  return true
+}
+
+function freezeHull(hull: Hull): Hull {
+  for (const v of hull.vertices) Object.freeze(v)
+  Object.freeze(hull.vertices)
+  for (const face of hull.faces) {
+    Object.freeze(face.vertices)
+    Object.freeze(face.normal)
+    Object.freeze(face)
+  }
+  Object.freeze(hull.faces)
+  for (const edge of hull.edges) Object.freeze(edge)
+  Object.freeze(hull.edges)
+  Object.freeze(hull.centroid)
+  return Object.freeze(hull)
+}
+
+// 정규 껍질(spec-5 §1.11): buildHull(points, MAX_HULL_POINTS). 렌더러 표시·앞 계산·메인 생성이 모두 이것을 쓴다. 결과는 얼어 있다
+// (위 기억)
 export function canonicalHull(points: readonly Vec3[]): Hull | null {
-  return buildHull(points, MAX_HULL_POINTS)
+  const cached = canonicalCache.get(points)
+  if (cached && sameCoords(points, cached.coords)) return cached.hull
+  const coords = new Float64Array(3 * points.length)
+  points.forEach((q, i) => {
+    coords[3 * i] = q.x
+    coords[3 * i + 1] = q.y
+    coords[3 * i + 2] = q.z
+  })
+  const built = buildHull(points, MAX_HULL_POINTS)
+  const hull = built ? freezeHull(built) : null
+  canonicalCache.set(points, { coords, hull })
+  return hull
 }
 
 // ---- 위상을 아는 정확한 껍질(양자화·합치기 없음) ----
