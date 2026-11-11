@@ -76,8 +76,9 @@ export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[]; source
 
 // 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
 // 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가. v3: 메시 질량 성질(mass)과
-// 붙인 이름 표시(ImportedNode.generatedName) 추가. v4: 메시 볼록 껍질(hull, spec-5 §5.3).
-export const MESH_CACHE_TAG = 'model-v4'
+// 붙인 이름 표시(ImportedNode.generatedName) 추가. v4: 메시 볼록 껍질(hull, spec-5 §5.3). v5: 합치기가 위상을 깨는 얇은 메시의
+// 껍질이 빈 배열 대신 삼각형 껍질(hull.ts, 5 리뷰. v4 캐시의 빈 껍질이 남으면 PC마다 몸체 껍질이 달라진다).
+export const MESH_CACHE_TAG = 'model-v5'
 
 function isFloat32OrNull(value: unknown): boolean {
   return value === null || value instanceof Float32Array

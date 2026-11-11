@@ -225,8 +225,8 @@ describe('메시 볼록 껍질(spec-5 §5.3)', () => {
 })
 
 describe('메시 캐시 형식', () => {
-  it('B9 메시 볼록 껍질을 더해 형식 태그를 v4로 올렸다(이전 캐시는 다시 변환한다)', () => {
-    expect(MESH_CACHE_TAG).toBe('model-v4')
+  it('B9 메시 볼록 껍질을 더해 형식 태그를 v4로, 5 리뷰의 껍질 삼각형 대체로 v5로 올렸다(이전 캐시는 다시 변환한다)', () => {
+    expect(MESH_CACHE_TAG).toBe('model-v5')
   })
 
   it('B9 isImportedModel은 메시마다 껍질의 모양을 확인한다(hull 없는 v3 값은 받지 않는다)', () => {
