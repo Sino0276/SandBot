@@ -44,6 +44,11 @@ import {
 import StartMarkers from './StartMarkers'
 import { createLabelTexture } from './labelTexture'
 import { createTagTexture } from './tagTexture'
+import {
+  COLLIDER_OUTLINE_COLOR,
+  COLLIDER_OUTLINE_HIDDEN_OPACITY,
+  COLLIDER_OUTLINE_OPACITY
+} from './colliderColors'
 
 // 씬 뷰의 시즌 필드(spec-4ab §1.9): 타일·이음선·테이프·벽(레일 불투명, 판 반투명)·구조물·HIVE CELL·AprilTag·벽 라벨과 시작
 // 표시. 씬 문서 밖이고 클릭되지 않는다(시작 표시만 예외). 'none'은 지금 FieldFloor 그대로다. 메시 목록은 fieldViewModel.ts.
@@ -290,12 +295,7 @@ const SeasonFieldView = memo(function SeasonFieldView({
 
 // ---- 단순 형상 충돌체 윤곽(spec-4e §1.8, Unity 충돌체 기즈모) ----
 
-// Unity 충돌체 기즈모 초록 [가정: 표시만]
-const COLLIDER_OUTLINE_COLOR = '#91f48b'
-// 앞 패스(깊이 검사 켬)·가려진 패스(깊이 검사 끔) 불투명도 [가정: 표시만]. 가려진 선은 흐리게 보인다(로봇 하부를 가로지르지
-// 않게, 비평 U8)
-const COLLIDER_OUTLINE_OPACITY = 0.9
-const COLLIDER_OUTLINE_HIDDEN_OPACITY = 0.2
+// 색·불투명도는 Collider 기즈모(spec-5 §7)와 같은 값이다(colliderColors.ts)
 // 윤곽 모서리의 각 문턱(°): 상자 12변·평면 4변만 남는다
 const OUTLINE_THRESHOLD_DEG = 1
 

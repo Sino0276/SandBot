@@ -15,6 +15,8 @@ import {
   emptyResultReason,
   isImportedModel,
   MESH_CACHE_TAG,
+  MESH_HULL_VERTEX_LIMIT,
+  meshHullOf,
   meshGeometryIds,
   meshSourcePaths,
   type ImportedModel,
@@ -135,9 +137,112 @@ describe('메시 질량 성질', () => {
   })
 })
 
+describe('메시 볼록 껍질(spec-5 §5.3)', () => {
+  // 닫힌 정육면체(꼭짓점 8, 삼각형 12)와 원기둥 옆면 점 구름
+  const cube = (size: number): OcctResult['meshes'][number] => {
+    const positions: number[] = []
+    for (let i = 0; i < 8; i++) positions.push(i & 1 ? size : 0, i & 2 ? size : 0, i & 4 ? size : 0)
+    // prettier-ignore
+    const indices = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5]
+    return {
+      name: 'cube',
+      brep_faces: [{ first: 0, last: 11, color: null }],
+      attributes: { position: { array: positions } },
+      index: { array: indices }
+    }
+  }
+  const resultOf = (meshes: OcctResult['meshes']): OcctResult => ({
+    success: true,
+    root: { name: '', meshes: meshes.map((_, i) => i), children: [] },
+    meshes
+  })
+
+  it('B9 convertMesh가 피벗 기준 껍질 꼭짓점(≤ 64점)과 오차를 낸다', () => {
+    const model = convertOcctResult(resultOf([cube(0.1)]), 'cube.step')!
+    const { hull } = model.meshes[0]
+    expect(hull.points).toHaveLength(8 * 3)
+    // 피벗(경계 상자 중심) 기준: ±0.05
+    expect(new Set(hull.points)).toEqual(new Set([-0.05, 0.05]))
+    expect(hull.error).toBe(0)
+    // 점이 많은 원기둥 옆면도 MESH_HULL_VERTEX_LIMIT(64)점까지
+    const positions: number[] = []
+    for (let k = 0; k < 400; k++) {
+      const a = (2 * Math.PI * k) / 400
+      positions.push(
+        0.05 * Math.cos(a),
+        0.05 * Math.sin(a),
+        0,
+        0.05 * Math.cos(a),
+        0.05 * Math.sin(a),
+        0.2
+      )
+    }
+    const cylinder = convertOcctResult(
+      resultOf([
+        {
+          name: 'cyl',
+          brep_faces: [{ first: 0, last: 0, color: null }],
+          attributes: { position: { array: positions } },
+          index: { array: [0, 1, 2] }
+        }
+      ]),
+      'cyl.step'
+    )!.meshes[0].hull
+    expect(cylinder.points.length / 3).toBeLessThanOrEqual(MESH_HULL_VERTEX_LIMIT)
+    expect(cylinder.points.length / 3).toBeGreaterThan(8)
+    expect(cylinder.error).toBeGreaterThan(0)
+    expect(cylinder.error).toBeLessThan(1e-3)
+  })
+
+  it('B9 평평하거나 얇은 메시는 빈 껍질(points [], error 0)이다', () => {
+    // synthetic의 삼각형 하나짜리 메시는 평면이다
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    for (const mesh of model.meshes) expect(mesh.hull).toEqual({ points: [], error: 0 })
+    expect(meshHullOf(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0.0004]))).toEqual({
+      points: [],
+      error: 0
+    })
+  })
+
+  it('B9 네이티브 결과(Float32·Uint32 배열)도 같은 경로라 같은 껍질이다', () => {
+    const wasm = resultOf([cube(0.123)])
+    const native: OcctResult = {
+      ...wasm,
+      meshes: [
+        {
+          ...wasm.meshes[0],
+          attributes: {
+            position: { array: Float32Array.from(wasm.meshes[0].attributes.position.array) }
+          },
+          index: { array: Uint32Array.from(wasm.meshes[0].index.array) }
+        }
+      ]
+    }
+    expect(convertOcctResult(native, 'c.step')!.meshes[0].hull).toEqual(
+      convertOcctResult(wasm, 'c.step')!.meshes[0].hull
+    )
+  })
+})
+
 describe('메시 캐시 형식', () => {
-  it('질량 성질을 더해 형식 태그를 v3으로 올렸다(이전 캐시는 다시 변환한다)', () => {
-    expect(MESH_CACHE_TAG).toBe('model-v3')
+  it('B9 메시 볼록 껍질을 더해 형식 태그를 v4로, 5 리뷰의 껍질 삼각형 대체로 v5로 올렸다(이전 캐시는 다시 변환한다)', () => {
+    expect(MESH_CACHE_TAG).toBe('model-v5')
+  })
+
+  it('B9 isImportedModel은 메시마다 껍질의 모양을 확인한다(hull 없는 v3 값은 받지 않는다)', () => {
+    const model = convertOcctResult(synthetic, 'robot.step')!
+    const withMesh = (patch: Record<string, unknown>): unknown => ({
+      ...model,
+      meshes: [{ ...model.meshes[0], ...patch }, ...model.meshes.slice(1)]
+    })
+    expect(isImportedModel(withMesh({ hull: undefined }))).toBe(false)
+    expect(isImportedModel(withMesh({ hull: { points: [0, 0], error: 0 } }))).toBe(false)
+    expect(isImportedModel(withMesh({ hull: { points: [0, 0, NaN], error: 0 } }))).toBe(false)
+    expect(isImportedModel(withMesh({ hull: { points: [], error: -1 } }))).toBe(false)
+    expect(
+      isImportedModel(withMesh({ hull: { points: new Array(3 * 65).fill(0), error: 0 } }))
+    ).toBe(false)
+    expect(isImportedModel(withMesh({ hull: { points: [0, 0, 0], error: 0.001 } }))).toBe(true)
   })
 
   it('isImportedModel은 메시마다 질량 성질의 모양을 확인한다', () => {

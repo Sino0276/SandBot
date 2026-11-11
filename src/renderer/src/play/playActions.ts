@@ -17,6 +17,7 @@ import { ipcErrorDetail } from '../java/ipcError'
 import { saveProject } from '../project/projectActions'
 import { useProjectStore } from '../project/projectStore'
 import { objectLocalBounds } from '../scene/localBounds'
+import { objectHullPoints } from '../scene/meshHull'
 import { useSceneStore } from '../scene/sceneStore'
 import { formatLength, loadLengthUnit, type LengthUnit } from '../units/units'
 import type { ConsoleEntry } from './consoleModel'
@@ -472,6 +473,13 @@ async function runInit(): Promise<void> {
       })),
       // 시뮬레이터가 쓰는 웹캠 장착(4d, 세계 설명 cameras 순서, 실행 중 씬 뷰 기즈모가 그린다)
       cameras: world ? runCamerasOf(world) : [],
+      // 시뮬레이터가 쓰는 충돌 몸체(5, 세계 설명 그대로: 실행 중 씬 뷰 기즈모, Console collisionOverlap의 몸체 이름)
+      colliders: (world?.spec ? world.colliders : []).map((body) => ({
+        body: body.body,
+        objectId: body.objectId,
+        name: body.name,
+        colliders: body.colliders.map((entry) => entry.collider)
+      })),
       field: runField
     })
   })
@@ -580,8 +588,14 @@ function worldFor(
     const mass = robotNeedsMassModel(objects, robotId)
       ? massModelFor(objects, geometryRevision)
       : null
-    const built = buildWorldSpec(objects, robotId, settings, mass, (id) =>
-      objectLocalBounds(objects, id)
+    // 충돌 형상(5)은 STEP 워커가 형상과 함께 등록한 메시 껍질을 읽는다(메시 꼭짓점을 훑지 않아 INIT은 동기 그대로)
+    const built = buildWorldSpec(
+      objects,
+      robotId,
+      settings,
+      mass,
+      (id) => objectLocalBounds(objects, id),
+      (id) => objectHullPoints(objects, id)
     )
     // 표시 단위(개인 설정, units/unitStore.ts가 같은 저장소에 쓴다. 고르기 전에는 그 기본 'in'). 스토어를 import하면 모듈을
     // 읽을 때 localStorage가 있어야 해서 저장소를 읽는다
@@ -623,7 +637,9 @@ function worldFor(
       sensors: [],
       sensorExclusions: new Map(),
       cameras: [],
-      cameraExclusions: new Map()
+      cameraExclusions: new Map(),
+      colliders: [],
+      ignoredPairs: []
     }
   }
 }

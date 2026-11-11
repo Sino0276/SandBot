@@ -7,8 +7,12 @@
 //  - 같은 입력으로 두 번 → 같은 자세열(바이트까지)
 //  - 4c 거리·컬러 센서(spec-4c I1·I2·I4): 벽으로 다가가는 메카넘의 거리 센서를 읽는 OpMode, 테이프를 가로지르는 컬러 센서
 //    OpMode(속도·시작 위상별), 고치지 않은 SDK 샘플 RobotAutoDriveToLine_Linear(회색 타일 위 컬러 센서)
+//  - 5 메커니즘 충돌(spec-5 I4): 렌더러 빌더가 만든 팔 관절(Box Collider) 세계와 생성 구성 XML로, RUN_TO_POSITION 팔을 바닥
+//    너머로 보내면 바닥에 막혀 엔코더가 목표 전에 멈춘다
 import { spawn } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
+import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TICK_NANOS,
@@ -22,7 +26,18 @@ import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
 import { resolveSeason } from '../../src/shared/sim/seasons/seasons'
 import { testChassis, testMotorParams, testWheelPhysics } from '../../src/shared/sim/testkit'
 import { PhysicsWorld } from '../../src/shared/sim/world'
-import { WORLD_SPEC_VERSION, type SimPose, type WorldSpec } from '../../src/shared/sim/worldSpec'
+import {
+  parseWorldSpec,
+  WORLD_SPEC_VERSION,
+  type SimPose,
+  type WorldSpec
+} from '../../src/shared/sim/worldSpec'
+import { createComponent } from '../../src/renderer/src/hardware/components'
+import { generateConfigXml } from '../../src/renderer/src/hardware/configXml'
+import { buildWorldSpec, runFieldOf, withRunField } from '../../src/renderer/src/play/worldSpec'
+import { defaultJoint } from '../../src/renderer/src/scene/joint'
+import { objectHullPoints } from '../../src/renderer/src/scene/meshHull'
+import type { SceneObjects } from '../../src/renderer/src/scene/model'
 import { SIDECAR_TEST_TIMEOUT, sidecarBuild, testTempDir, type SidecarBuild } from './support'
 
 const build = await sidecarBuild()
@@ -474,6 +489,90 @@ function intersectPhases(a: PhaseSet, b: PhaseSet): PhaseSet {
   return out
 }
 
+// ---- 5 메커니즘 충돌(spec-5 I4) ----
+
+// 팔 피벗(로봇 좌표, 섀시 앞 위)과 팔 Box Collider(관절 틀: x 0…ARM_LENGTH, 반 두께 ARM_HALF)
+const ARM_PIVOT: [number, number, number] = [0.25, 0, 0.3]
+const ARM_LENGTH = 0.3
+const ARM_HALF = 0.02
+
+// 렌더러 씬: 바퀴 없는 로봇(고정 기저) + 팔 모터 + 로봇 +Y 축 회전 관절(한계 없음, 그 모터로 구동, 팔 Box Collider)
+function armScene(): SceneObjects {
+  const motor = { ...createComponent('motor', [], () => 'armMotor'), name: 'arm', port: 0 }
+  return {
+    robot: {
+      id: 'robot',
+      name: 'Arm Bot',
+      kind: 'robot',
+      parentId: null,
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+      hardware: {
+        className: 'ArmBotHardware',
+        configName: 'Arm Bot',
+        expansionHub: { enabled: false, address: 2 }
+      }
+    },
+    motorMount: {
+      id: 'motorMount',
+      name: 'Arm Motor',
+      kind: 'part',
+      parentId: 'robot',
+      transform: { position: [0.2, 0, 0.3], rotation: [0, 0, 0] },
+      components: [motor]
+    },
+    arm: {
+      id: 'arm',
+      name: 'Arm',
+      kind: 'group',
+      parentId: 'robot',
+      transform: { position: ARM_PIVOT, rotation: [0, 0, 0] },
+      joint: {
+        ...defaultJoint('revolute'),
+        axis: 'y',
+        limits: null,
+        // 감속비 1(모터 출력축 = 팔), 스풀 지름은 직선 관절에만 쓴다
+        drive: {
+          kind: 'motor',
+          motors: [motor.id],
+          gearRatio: 1,
+          spoolDiameter: 0.03,
+          rigging: { kind: 'direct' }
+        }
+      },
+      colliders: [
+        {
+          id: 'armBox',
+          kind: 'box',
+          center: [ARM_LENGTH / 2, 0, 0],
+          size: [ARM_LENGTH, 2 * ARM_HALF, 2 * ARM_HALF]
+        }
+      ]
+    }
+  }
+}
+
+// 렌더러 빌더 → withRunField('none') → JSON → parseWorldSpec(메인과 같은 경로)
+function armWorld(objects: SceneObjects): WorldSpec {
+  const doc = { season: 'none' }
+  const keyT = ((key: string) => key) as unknown as TFunction
+  const built = buildWorldSpec(objects, 'robot', { batteryVoltage: 12 }, null, null, (id) =>
+    objectHullPoints(objects, id)
+  )
+  const result = withRunField(built, doc, runFieldOf(doc, { red: 'start', blue: 'start' }), keyT)
+  const parsed = parseWorldSpec(JSON.parse(JSON.stringify(result.spec)))
+  if (typeof parsed === 'string') throw new Error(parsed)
+  return parsed
+}
+
+// 팔 관절 각 q에서 팔 상자의 가장 낮은 z(R_y(q): x̂ → (cos q, 0, −sin q), ẑ → (sin q, 0, cos q))
+function armLowestZ(q: number): number {
+  let low = Infinity
+  for (const x of [0, ARM_LENGTH])
+    for (const z of [-ARM_HALF, ARM_HALF])
+      low = Math.min(low, ARM_PIVOT[2] - x * Math.sin(q) + z * Math.cos(q))
+  return low
+}
+
 // 앞으로 1초(왼쪽 스틱 위 0.6), 그다음 왼쪽(반시계)으로 회전(오른쪽 스틱 왼쪽 0.5)
 const TELEOP_PAD = (tick: number): GamepadState =>
   tick < START_TICK + 200 ? gamepad({ left_stick_y: -0.6 }) : gamepad({ right_stick_x: -0.5 })
@@ -751,6 +850,46 @@ describe.skipIf(build === null)('시뮬레이터 + 진짜 사이드카', () => {
       const again = await runSim(sidecar, setup, () => null)
       expect(deterministicMessages(again)).toBe(deterministicMessages(run))
       expect(JSON.stringify(again.states)).toBe(JSON.stringify(run.states))
+    },
+    SIDECAR_TEST_TIMEOUT
+  )
+  it(
+    '5 I4 렌더러 → 사이드카: RUN_TO_POSITION 팔을 바닥 너머로 보내면 팔 Collider가 바닥에 막혀 엔코더가 목표 전에 멈춘다',
+    async () => {
+      const objects = armScene()
+      const spec = armWorld(objects)
+      expect(spec.wheels).toEqual([])
+      expect(spec.joints).toHaveLength(1)
+      expect(spec.joints[0].colliders?.map((c) => c.kind)).toEqual(['box'])
+      // 구성 XML은 저장할 때 TeamCode에 쓰는 생성 결과 그대로
+      const dir = testTempDir('sim-arm')
+      mkdirSync(dir, { recursive: true })
+      const config = join(dir, 'sandbot_arm_bot.xml')
+      writeFileSync(config, generateConfigXml(objects, 'robot'))
+      const run = await runSim(sidecar, teamOpMode('SimArmFloor', spec, config), () => null)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('returned')
+      const { values, tNanos } = result(run)
+      console.info(
+        `5 I4: position=${values.position} busy=${values.busy} q=${run.poses.at(-1)?.pose.joints?.[0]}`
+      )
+      // 목표(2500틱)에 가지 못하고 RUN_TO_POSITION이 아직 바쁘다
+      expect(values.target).toBe(2500)
+      expect(values.busy).toBe(1)
+      expect(values.position).toBeGreaterThan(300)
+      expect(values.position).toBeLessThan(values.target - 1000)
+      // 엔코더가 멈췄다: RESULT 앞 1 s 동안 팔 모터 원시 틱이 2틱 넘게 바뀌지 않는다
+      const window = run.encoders.filter((e) => e.tNanos <= tNanos && e.tNanos > tNanos - 1e9)
+      const ticks = window.map((e) => e.position.arm)
+      expect(window.length).toBeGreaterThan(150)
+      expect(Math.max(...ticks) - Math.min(...ticks)).toBeLessThanOrEqual(2)
+      // 팔은 바닥에 닿는 각(아래 모서리 z = 0, q ≈ 1.4375)에서 멈추고 바닥으로 파고들지 않는다
+      const angles = run.poses.map((p) => p.pose.joints?.[0] ?? NaN)
+      const end = angles[angles.length - 1]
+      expect(Math.abs(armLowestZ(end))).toBeLessThan(1e-4)
+      expect(Math.min(...angles.map(armLowestZ))).toBeGreaterThan(-1e-4)
+      // 고정 기저라 로봇은 움직이지 않고 blocked도 아니다(관절 몸체 접촉은 blocked가 아니다)
+      expect(run.poses.every((p) => !p.pose.blocked)).toBe(true)
     },
     SIDECAR_TEST_TIMEOUT
   )

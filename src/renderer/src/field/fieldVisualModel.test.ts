@@ -5,7 +5,12 @@ import { Vector3 } from 'three'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { alignmentRotation, ALIGNMENT_PRESETS, boundsCenter } from '../cad/alignment'
 import { computeMeshMass } from '../cad/meshMass'
-import { convertOcctResult, type ImportedMesh, type ImportedModel } from '../cad/stepImport'
+import {
+  convertOcctResult,
+  meshHullOf,
+  type ImportedMesh,
+  type ImportedModel
+} from '../cad/stepImport'
 import { useNoticeStore } from '../editor/noticeStore'
 import { DEFAULT_FIELD_VISUAL_ALIGNMENT } from '../scene/fieldDoc'
 import type { Vec3 } from '../scene/model'
@@ -51,7 +56,8 @@ function boxMesh(
     colors: options.colors ? new Float32Array(24).fill(0.25) : null,
     color: options.color ?? [0.5, 0.5, 0.5],
     bounds,
-    mass: computeMeshMass(positions, indices, bounds)
+    mass: computeMeshMass(positions, indices, bounds),
+    hull: meshHullOf(positions)
   }
 }
 

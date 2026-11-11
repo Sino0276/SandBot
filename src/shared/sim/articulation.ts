@@ -1,6 +1,6 @@
 import { GRAVITY } from './physics'
 import type { Pose2, SimBody, SimJointSpec, Vec3 } from './worldSpec'
-import type { Frame3 } from './sensorFrame'
+import { planarFrame, type Frame3 } from './sensorFrame'
 
 // 메커니즘 관절 동역학(3b): 움직이지 않는 로봇 몸체(뿌리) 위의 관절 나무를 감소 좌표로 푼다(Unity ArticulationBody·PhysX
 // articulation처럼 Featherstone 계열). 순수 TS이고 결정적이다(배열 순서만 쓰고, 벽시계·난수·Map 순서를 쓰지 않는다).
@@ -65,14 +65,20 @@ export type DriveModel = (z: readonly number[], v: readonly number[]) => DriveFo
 // joint: 세계 설명 joints 순번(기저·자유 좌표는 −1)
 export type Coordinate = { kind: 'joint' | 'motor' | 'base' | 'free'; joint: number }
 
-// 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±mu·(그 키 법선 행의 충격)로 정한다(lo·hi 무시).
+// 마찰 행의 상자(spec-5 §2.4): 지금 모양은 법선 행 하나의 충격 × mu, 패치 모양(5 몸체 충돌)은 법선 행 여럿의
+// Σ weight·max(0, λ) × mu이고 cap이 있으면 min(합, cap) × mu다(cap: 바닥·윗면 마찰 하중 상한 h·W, spec-5 §1.6)
+export type ContactFriction =
+  | { normal: string; mu: number }
+  | { patch: readonly { normal: string; weight: number }[]; mu: number; cap?: number }
+
+// 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±(ContactFriction 상자)로 정한다(lo·hi 무시).
 export type ContactRow = {
   key: string
   j: number[]
   target: number
   lo: number
   hi: number
-  friction?: { normal: string; mu: number }
+  friction?: ContactFriction
 }
 
 // 하위 단계 하나의 밖에서 주는 행과 행 점성 감쇠(힘 = −c·(j·v), c > 0)
@@ -120,6 +126,7 @@ const IDENTITY3: M3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 // ---- 작은 선형 대수(사칙연산과 Math.sin·cos·sqrt만) ----
 
 const v3 = (v: Vec3): V3 => [v.x, v.y, v.z]
+const vec3 = (v: V3): Vec3 => ({ x: v[0], y: v[1], z: v[2] })
 const add3 = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 const scale3 = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s]
 const cross3 = (a: V3, b: V3): V3 => [
@@ -298,6 +305,11 @@ const LCP_RELATIVE_TOLERANCE = 1e-12
 // 한 번의 주축 전환 반복 상한. 정칙화한 문제는 P 행렬이라 유한하지만 반올림으로 순환하면 여기서 멈추고 던진다(조용히 상자로
 // 자르지 않는다 — world.ts가 그 하위 단계의 속도를 0으로 두고 다음 하위 단계에서 다시 풀며 worldError로 알린다). 가정: 행이 50개 아래면 보통 10번 안에 끝난다.
 const LCP_MAX_ITERATIONS = 2000
+// 이 반복 뒤에는 블록 전환으로 돌아가지 않고 Murty 규칙(가장 큰 첨자 하나만 바꿈)만 쓴다. [결정: 5 LCP 퍼즈(spec-5 A26, P-M10)에서
+// 블록 전환과 Murty를 오가는 혼합이 순위가 크게 모자란 접촉꼴 문제(행 40·좌표 12)를 2000회 안에 끝내지 못했다(같은 문제를 Murty만
+// 쓰면 562회). P 행렬에서 Murty 규칙은 유한하다. 이 수 안에 끝나는 풀이(3b–4e 시험과 기준 해시의 모든 풀이, 보통 10번 안)는 연산이
+// 그대로다]
+const LCP_MURTY_ONLY_AFTER = 200
 
 // 행의 끝 상태: 아래 경계, 자유(w = 0), 위 경계
 export type LcpState = 'lower' | 'free' | 'upper'
@@ -372,7 +384,9 @@ export function solveBoxLcp(
       }
       if (bad.length === 0) return
       let flip = bad
-      if (bad.length < best) {
+      if (iteration >= LCP_MURTY_ONLY_AFTER) {
+        flip = [bad[bad.length - 1]]
+      } else if (bad.length < best) {
         best = bad.length
         tries = BPP_TRIES
       } else if (tries > 0) {
@@ -416,10 +430,28 @@ type Body = {
   motion: S6
   // 공간 관성(로봇 좌표 원점 기준)
   inertia: M66
+  // 관절 축(나무 틀)과 관절 틀 원점(q = 0의 몸체 원점 = 회전 관절의 앵커). bodies()가 이미 계산한 값을 담기만 한다(5 접촉 행,
+  // spec-5 §4.1: 연산을 더하지 않아 기준 해시가 그대로다)
+  jointAxis: V3
+  jointOrigin: V3
 }
 
 // 구속 행. key는 하위 단계 사이에서 같은 행을 알아보는 이름(LCP를 앞 답에서 시작한다)
-type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
+export type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
+
+// ---- 몸체 충돌(5, spec-5 §4.1)의 접촉 틀 ----
+
+// 몸체 하나의 속도(C 축): 각속도와 몸체 원점의 속도
+export type BodyVelocity = { omega: Vec3; linear: Vec3 }
+// 하위 단계의 접촉 틀 C: 축은 관절 나무 틀(부유 기저면 필드 축, 고정 기저면 로봇 축), 원점은 지금 섀시 원점
+// (부유: (basePose.x, basePose.y, 0), 고정: 로봇 원점). bodies[0] = 섀시, bodies[i + 1] = 세계 설명 관절 i
+export type ContactFrames = {
+  readonly origin: Vec3
+  readonly bodies: readonly Frame3[]
+  readonly velocities: readonly BodyVelocity[]
+  // 나무 관절 축·앵커(C 좌표, 행렬 연산 없이 bodies() 한 번에서 꺼낸 것). Articulation만 읽는다
+  readonly tree: readonly { axis: Vec3; anchor: Vec3 }[]
+}
 
 export class Articulation {
   // 세계 설명의 관절(공개 순번)
@@ -444,6 +476,11 @@ export class Articulation {
   // 직선 관절 축(관절 틀 단위 벡터)·회전 관절 축
   private readonly axes: V3[]
   private readonly origins: { rotation: M3; position: V3 }[]
+  // 몸체(−1 섀시, i ≥ 0 세계 설명 관절)마다 뿌리에서 그 몸체까지의 나무 관절 순번(오름차순, 몸체 b는 paths[b + 1]). 고정 기저의
+  // 섀시는 빈 경로다(움직이지 않는다). 5 접촉 행의 공통 조상은 두 경로의 같은 앞부분이다
+  private readonly paths: readonly (readonly number[])[]
+  // 나무 관절마다 S 행의 0이 아닌 좌표(오름차순)
+  private readonly sparseS: readonly (readonly number[])[]
   private readonly gravity: number
   // 앞 하위 단계 LCP의 행 상태(이름으로 찾기만 한다)
   private lcpStates = new Map<string, LcpState>()
@@ -527,6 +564,13 @@ export class Articulation {
       rotation: rotationZYX(j.origin.rotation),
       position: v3(j.origin.position)
     }))
+    const pathTo = (leaf: number): number[] => {
+      const path: number[] = []
+      for (let k = leaf; k >= 0; k = tree[k].parent) path.push(k)
+      return path.reverse()
+    }
+    this.paths = [pathTo(offset - 1), ...joints.map((_, i) => pathTo(i + offset))]
+    this.sparseS = this.s.map((row) => row.flatMap((x, c) => (x !== 0 ? [c] : [])))
   }
 
   // 부유 기저의 필드 자세(시작 자세 + 기저 좌표, 요는 감지 않음). 기저가 없으면 null
@@ -586,7 +630,14 @@ export class Articulation {
       const body = joint.body
       const com = add3(origin, apply3(rotation, v3(body.centerOfMass)))
       const ic = mul3(mul3(rotation, inertiaMatrix(body.inertia)), transpose3(rotation))
-      bodies.push({ rotation, origin, motion, inertia: spatialInertia(body.mass, com, ic) })
+      bodies.push({
+        rotation,
+        origin,
+        motion,
+        inertia: spatialInertia(body.mass, com, ic),
+        jointAxis: axis,
+        jointOrigin: p0
+      })
     })
     return bodies
   }
@@ -678,6 +729,137 @@ export class Articulation {
     const n = add3([f[0], f[1], f[2]], scale3(cross3(chassis.origin, [f[3], f[4], f[5]]), -1))
     const local = apply3(transpose3(chassis.rotation), n)
     return { fz: f[5], mx: local[0], my: local[1] }
+  }
+
+  // ---- 몸체 충돌(5, spec-5 §4.1)의 접촉 틀과 점 야코비안 ----
+
+  // 하위 단계의 접촉 틀(지금 z·v). 축은 나무 틀(부유 기저면 필드 축, 고정 기저면 로봇 축)이고 원점 O는 지금 섀시 원점이다
+  // (부유: (basePose.x, basePose.y, 0), 고정: 로봇 원점). 필드 좌표가 1.8 m까지 가므로 지렛대를 섀시 가까이에서 재 반올림을 줄인다.
+  // bodies()를 한 번만 부르고, 섀시 회전은 planarFrame(basePose())의 c·s 연산 그대로다(평면 경로 wallRows와 같은 비트).
+  // 몸체 속도는 나무 경로를 따라 q̇ = treeQ(v)로 낸다: ω = Σ_회전 a_k·q̇_k, v_o = Σ_회전 a_k × (o − o_k)·q̇_k + Σ_직선 a_k·q̇_k.
+  contactFrames(): ContactFrames {
+    const bodies = this.bodies(this.treeQ(this.z))
+    const qd = this.treeQ(this.v)
+    const base = this.basePose()
+    const o: V3 = base ? [base.x, base.y, 0] : [0, 0, 0]
+    const tree = bodies.map((b) => ({
+      axis: vec3(b.jointAxis),
+      anchor: vec3([b.jointOrigin[0] - o[0], b.jointOrigin[1] - o[1], b.jointOrigin[2] - o[2]])
+    }))
+    const chassis: Frame3 = base
+      ? { rotation: planarFrame(base).rotation, origin: { x: 0, y: 0, z: 0 } }
+      : { rotation: IDENTITY3.slice(), origin: { x: 0, y: 0, z: 0 } }
+    const frames: Frame3[] = [chassis]
+    for (let i = this.offset; i < bodies.length; i++) {
+      const b = bodies[i]
+      frames.push({
+        rotation: b.rotation.slice(),
+        origin: vec3([b.origin[0] - o[0], b.origin[1] - o[1], b.origin[2] - o[2]])
+      })
+    }
+    const velocities = frames.map((frame, index) => {
+      const at = v3(frame.origin)
+      let omega: V3 = [0, 0, 0]
+      let linear: V3 = [0, 0, 0]
+      for (const k of this.paths[index]) {
+        const rate = qd[k]
+        if (rate === 0) continue
+        const axis = v3(tree[k].axis)
+        if (this.tree[k].type === 'revolute') {
+          omega = add3(omega, scale3(axis, rate))
+          const arm: V3 = [
+            at[0] - tree[k].anchor.x,
+            at[1] - tree[k].anchor.y,
+            at[2] - tree[k].anchor.z
+          ]
+          linear = add3(linear, scale3(cross3(axis, arm), rate))
+        } else linear = add3(linear, scale3(axis, rate))
+      }
+      return { omega: vec3(omega), linear: vec3(linear) }
+    })
+    return { origin: vec3(o), bodies: frames, velocities, tree }
+  }
+
+  // 점 p(C 좌표)에서 방향 d(단위)의 상대 속도 행 J_a − J_b(z 공간, 길이 = coordinates.length). body −1 = 섀시,
+  // b = null이면 정적(J_a만). 두 경로에 다 있는 나무 관절(공통 조상 = 두 경로의 같은 앞부분)은 더하지 않는다(반올림 잡음이 아닌
+  // 정확한 0, M§5 함정 1). 기저 관절 셋은 contact.ts wallRows의 row()와 같은 식·같은 결합 순서다(j[0] = d.x, j[1] = d.y,
+  // j[2] = −d.x·p.y + d.y·p.x: 섀시 원점이 C 원점이라 지렛대가 p 그대로). 세계 설명 관절은 회전이면 d·(a × (p − o_k)), 직선이면
+  // d·a이고(지렛대는 p − o_k: Plücker v_O + ω×p의 상쇄를 피한다, M§5 함정 2) S 행의 0이 아닌 좌표에 c 순으로 더한다.
+  relativeJacobian(frames: ContactFrames, a: number, b: number | null, p: Vec3, d: Vec3): number[] {
+    const j = new Array<number>(this.coordinates.length).fill(0)
+    const pathA = this.paths[a + 1]
+    const pathB = b === null ? [] : this.paths[b + 1]
+    let common = 0
+    while (common < pathA.length && common < pathB.length && pathA[common] === pathB[common])
+      common++
+    const add = (path: readonly number[], sign: number): void => {
+      for (let index = common; index < path.length; index++) {
+        const k = path[index]
+        let value: number
+        if (k < this.offset) {
+          value = k === 0 ? d.x : k === 1 ? d.y : -d.x * p.y + d.y * p.x
+        } else {
+          const axis = frames.tree[k].axis
+          if (this.tree[k].type === 'revolute') {
+            const o = frames.tree[k].anchor
+            const rx = p.x - o.x
+            const ry = p.y - o.y
+            const rz = p.z - o.z
+            value =
+              d.x * (axis.y * rz - axis.z * ry) +
+              d.y * (axis.z * rx - axis.x * rz) +
+              d.z * (axis.x * ry - axis.y * rx)
+          } else value = d.x * axis.x + d.y * axis.y + d.z * axis.z
+        }
+        if (value === 0) continue
+        for (const c of this.sparseS[k]) j[c] += sign * value * this.s[k][c]
+      }
+    }
+    add(pathA, 1)
+    add(pathB, -1)
+    return j
+  }
+
+  // = relativeJacobian(frames, body, null, p, d)
+  pointJacobian(frames: ContactFrames, body: number, p: Vec3, d: Vec3): number[] {
+    return this.relativeJacobian(frames, body, null, p, d)
+  }
+
+  // 축 n 둘레 상대 각속도(비틀림) 행: 경로의 회전 관절 a_k·n(직선 0), 기저 요 열은 n.z(기저 직선 둘은 0). 공통 조상은 뺀다
+  twistJacobian(frames: ContactFrames, a: number, b: number | null, n: Vec3): number[] {
+    const j = new Array<number>(this.coordinates.length).fill(0)
+    const pathA = this.paths[a + 1]
+    const pathB = b === null ? [] : this.paths[b + 1]
+    let common = 0
+    while (common < pathA.length && common < pathB.length && pathA[common] === pathB[common])
+      common++
+    const add = (path: readonly number[], sign: number): void => {
+      for (let index = common; index < path.length; index++) {
+        const k = path[index]
+        if (this.tree[k].type !== 'revolute') continue
+        const axis = frames.tree[k].axis
+        const value = k < this.offset ? n.z : n.x * axis.x + n.y * axis.y + n.z * axis.z
+        if (value === 0) continue
+        for (const c of this.sparseS[k]) j[c] += sign * value * this.s[k][c]
+      }
+    }
+    add(pathA, 1)
+    add(pathB, -1)
+    return j
+  }
+
+  // 점 p(C)의 속도(C 축): v_o + ω × (p − o)
+  pointVelocity(frames: ContactFrames, body: number, p: Vec3): Vec3 {
+    const { omega, linear } = frames.velocities[body + 1]
+    const o = frames.bodies[body + 1].origin
+    const rx = p.x - o.x
+    const ry = p.y - o.y
+    const rz = p.z - o.z
+    return {
+      x: linear.x + (omega.y * rz - omega.z * ry),
+      y: linear.y + (omega.z * rx - omega.x * rz),
+      z: linear.z + (omega.x * ry - omega.y * rx)
+    }
   }
 
   // 세계 설명 관절 i 몸체의 자세(로봇 좌표, 부유 기저면 필드 좌표, 시험·표시용). q는 나무 관절 변위
@@ -1205,12 +1387,21 @@ function baseJoints(body: SimBody, start: Pose2): SimJointSpec[] {
   ]
 }
 
-// 밖에서 준 행을 LCP 행으로(마찰 행은 법선 충격 normal(key)로 상자를 정하고, 상자가 0이면 넣지 않는다)
-function externalRows(rows: readonly ContactRow[], normal: (key: string) => number): Row[] {
+// 밖에서 준 행을 LCP 행으로(마찰 행은 법선 충격 normal(key)로 상자를 정하고, 상자가 0이면 넣지 않는다). 시험용으로 내보낸다.
+// 지금 모양(normal)의 식과 연산 순서는 5 전과 같다(기준 해시, spec-5 §2.4 K4)
+export function externalRows(rows: readonly ContactRow[], normal: (key: string) => number): Row[] {
   const out: Row[] = []
   for (const row of rows) {
-    if (row.friction) {
-      const bound = row.friction.mu * Math.max(0, normal(row.friction.normal))
+    const f = row.friction
+    if (f) {
+      const bound =
+        'normal' in f
+          ? f.mu * Math.max(0, normal(f.normal))
+          : f.mu *
+            Math.min(
+              f.patch.reduce((sum, p) => sum + p.weight * Math.max(0, normal(p.normal)), 0),
+              f.cap ?? Infinity
+            )
       if (!(bound > 0)) continue
       out.push({ key: row.key, j: row.j, target: row.target, lo: -bound, hi: bound })
     } else out.push({ key: row.key, j: row.j, target: row.target, lo: row.lo, hi: row.hi })

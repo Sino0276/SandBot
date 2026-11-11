@@ -6,6 +6,7 @@ import { MAX_DASH_TEXT, type DashConfigNode } from '../../../shared/dashboard'
 import { generatedHash } from '../../../shared/generatedFiles'
 import { motorType, rotationSign } from '../../../shared/sim/motorTypes'
 import { parseWorldSpec, WORLD_SPEC_VERSION, type WorldSpec } from '../../../shared/sim/worldSpec'
+import { meshHullOf } from '../cad/stepImport'
 import type {
   GrantCodeTrustResult,
   ListOpModesResult,
@@ -53,6 +54,7 @@ import {
   stopPlay,
   togglePause
 } from './playActions'
+import { snapRobotToPreset } from '../editor/field/startPresetModel'
 import { shortcutCommand } from '../editor/shortcuts'
 import { emptyGamepadState } from './gamepad'
 import { SCENE_VIEW_ATTRIBUTE, useKeyboardPadStore } from './keyboardGamepad'
@@ -534,6 +536,19 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       .getState()
       .entries.filter((entry) => entry.type === 'notice')
       .map((entry) => (entry.type === 'notice' ? entry.key : null))
+  // 바퀴 메시 형상과 메시 껍질(STEP 워커가 내는 것, spec-5 §5.3)을 등록해 둔다(읽는 중인 메시가 없는 씬: 충돌 형상 경고가 없다)
+  const WHEEL_MESHES = ['wheel', 'wheelFR', 'wheelBL', 'wheelBR']
+  beforeEach(() => {
+    for (const id of WHEEL_MESHES) {
+      const geometry = new BoxGeometry(0.096, 0.096, 0.096)
+      registerGeometry(`g:${id}`, geometry, {
+        hull: meshHullOf(geometry.getAttribute('position').array)
+      })
+    }
+  })
+  afterEach(() => {
+    for (const id of WHEEL_MESHES) disposeGeometry(`g:${id}`)
+  })
 
   it('구성과 같은 로봇의 세계 설명을 보낸다', async () => {
     useSceneStore.setState({ objects: withWheel() })
@@ -557,6 +572,26 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     })
     expect(world!.wheels[0].position.x).toBeCloseTo(0.1, 12)
     expect(notices()).toEqual([])
+  })
+
+  it('B8 INIT은 메시 껍질로 섀시 충돌 형상(자동 볼록 껍질)을 넣고 실행이 그 몸체를 기억한다', async () => {
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    const { world } = lastRequest()
+    expect(world!.robot.colliders).toHaveLength(1)
+    expect(world!.robot.colliders![0].kind).toBe('convex')
+    expect(world).not.toHaveProperty('collisionIgnore')
+    expect(usePlayStore.getState().run!.colliders).toEqual([
+      { body: -1, objectId: 'bot', name: 'Bot', colliders: world!.robot.colliders }
+    ])
+  })
+
+  it('B8 바퀴 메시가 읽히지 않았으면 섀시는 외곽 대체 상자이고 Console이 알린다', async () => {
+    for (const id of WHEEL_MESHES) disposeGeometry(`g:${id}`)
+    useSceneStore.setState({ objects: withWheel() })
+    await initPlay()
+    expect(lastRequest().world!.robot.colliders![0].kind).toBe('box')
+    expect(notices()).toEqual(['worldColliderPending'])
   })
 
   it('바퀴가 셋보다 적으면 하중을 나눌 수 없다고 경고한다', async () => {
@@ -765,10 +800,20 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
   // spec-4ab §2.4·§3: 실행의 시즌은 문서 시즌(모르면 'none')과 실행 설정 hiveState에서 INIT 때 정한다
   describe('시즌과 HIVE 상태', () => {
     // 'none' +X 벽(안쪽 반폭 1.81630 m)에 붙인 18 in 로봇: BIOBUZZ 벽(1.79286 m)에 23 mm 걸친다
+    // 섀시 충돌 형상은 외곽과 같은 18 in 상자(Box Collider)라 3D 판정도 4ab 외곽 프리즘과 같은 겹침을 낸다
     const atNoneWall = (): SceneObjects => {
       const objects = withWheel()
       const x = 1.8163 - 0.2286
-      return { ...objects, bot: { ...objects.bot, transform: { ...T0, position: [x, 0, 0] } } }
+      return {
+        ...objects,
+        bot: {
+          ...objects.bot,
+          transform: { ...T0, position: [x, 0, 0] },
+          colliders: [
+            { id: 'box', kind: 'box', center: [0, 0, 0.2286], size: [0.4572, 0.4572, 0.4572] }
+          ]
+        }
+      }
     }
 
     it('B13: 세계 설명과 실행이 문서 시즌·HIVE 상태를 쓰고, INIT 뒤 문서 시즌을 바꿔도 실행은 그대로', async () => {
@@ -808,6 +853,8 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
     })
 
     it('B9: none 벽에 붙인 바퀴 로봇을 BIOBUZZ로 INIT하면 worldStartOverlap(실행은 막지 않는다)', async () => {
+      // 섀시는 3D 경로다(형상 조회를 늘 넘긴다, spec-5 §5.6). 시작 겹침은 진짜 3D 판정(startOverlaps)이고, 섀시 충돌 형상이
+      // 18 in Box Collider(외곽 × 높이)라 4ab 외곽 프리즘 판정과 같은 결과다(통합 I3)
       useSceneStore.setState({ objects: atNoneWall(), field: { season: 'biobuzz' } })
       await initPlay()
       expect(lastRequest().world).not.toBeNull()
@@ -820,6 +867,64 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       useSceneStore.setState({ field: { season: 'none' } })
       await initPlay()
       expect(notices().filter((key) => key === 'worldStartOverlap')).toHaveLength(1)
+    })
+
+    // 5 통합 I3(spec-5 §10): INIT의 진짜 3D 시작 겹침(startOverlaps). 바퀴 로봇 + 18 in Box Collider 섀시를 빨강 관중석 벽
+    // 프리셋에 스냅한다(로봇 앞이 필드 안쪽, 뒷면이 벽 안쪽 면에 간격 0)
+    const snappedBot = (extra: SceneObjects = {}): void => {
+      const objects = withWheel()
+      useSceneStore.setState({
+        objects: {
+          ...objects,
+          bot: {
+            ...objects.bot,
+            colliders: [
+              { id: 'box', kind: 'box', center: [0, 0, 0.2286], size: [0.4572, 0.4572, 0.4572] }
+            ]
+          },
+          ...extra
+        },
+        field: { season: 'biobuzz' }
+      })
+      expect(snapRobotToPreset('bot', 'audienceWall', 'default')).toBe(true)
+    }
+    const startKeys = (): unknown[] =>
+      notices().filter((key) => key === 'worldStartOverlap' || key === 'worldJointStartOverlap')
+
+    it('5 통합 I3: 프리셋에 스냅한 18 in 로봇은 벽에 닿기만 해 시작 겹침 경고가 없다(진짜 startOverlaps)', async () => {
+      snappedBot()
+      await initPlay()
+      expect(lastRequest().world!.robot.colliders).toHaveLength(1)
+      // 벽에 닿기만 한 섀시(분리 0 ≥ −1 mm)는 겹침이 아니다
+      expect(startKeys()).toEqual([])
+    })
+
+    it('5 통합 I3: 벽 너머로 뻗은 팔 관절은 INIT에 worldJointStartOverlap(실행은 막지 않는다)', async () => {
+      // 로봇 뒤(−X)로 3 cm 뻗은 팔 관절(Box Collider): 시작 자세에서 관중석 벽 판에 걸친다(바퀴와 관계없이 관절 몸체는 알린다)
+      snappedBot({
+        swing: {
+          id: 'swing',
+          name: 'Swing',
+          kind: 'group',
+          parentId: 'bot',
+          transform: { position: [-0.2, 0, 0.15], rotation: [0, 0, 0] },
+          joint: { ...defaultJoint('revolute'), axis: 'y' },
+          colliders: [{ id: 'ab', kind: 'box', center: [-0.03, 0, 0], size: [0.06, 0.04, 0.04] }]
+        }
+      })
+      await initPlay()
+      const world = lastRequest().world!
+      expect(world.joints).toHaveLength(1)
+      expect(world.joints[0].colliders).toHaveLength(1)
+      expect(startKeys()).toEqual(['worldJointStartOverlap'])
+      const entry = usePlayStore
+        .getState()
+        .entries.find((e) => e.type === 'notice' && e.key === 'worldJointStartOverlap')
+      expect(entry).toMatchObject({
+        level: 'warning',
+        params: { name: 'Swing', targets: expect.any(String) }
+      })
+      expect(usePlayStore.getState().run!.colliders.map((body) => body.body)).toEqual([-1, 0])
     })
   })
 })

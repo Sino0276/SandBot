@@ -219,8 +219,8 @@ function createGeometry(mesh: ImportedMesh): BufferGeometry {
   return geometry
 }
 
-// 모델의 메시를 CAD 루트 기준 id(cadGeometryId)로 등록하고 씬을 다시 그리게 한다. 질량 성질과 원래 이름 경로도
-// 같은 id로 둔다(형상과 같이 등록·해제).
+// 모델의 메시를 CAD 루트 기준 id(cadGeometryId)로 등록하고 씬을 다시 그리게 한다. 질량 성질과 원래 이름 경로, 메시 볼록
+// 껍질(spec-5 §5.3)도 같은 id로 둔다(형상과 같이 등록·해제).
 export function registerModelGeometries(
   cadRootId: string,
   model: ImportedModel,
@@ -231,7 +231,8 @@ export function registerModelGeometries(
   model.meshes.forEach((mesh, index) =>
     registerGeometry(ids[index], createGeometry(mesh), {
       mass: mesh.mass,
-      sourcePath: paths[index]
+      sourcePath: paths[index],
+      hull: mesh.hull
     })
   )
   // 이 CAD의 이전 형상 중 새 결과에 없는 id(다시 찾기로 바꾼 파일에 없는 파트 등)는 지운다.

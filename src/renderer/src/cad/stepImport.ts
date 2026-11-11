@@ -1,4 +1,5 @@
 import type { OcctMesh, OcctNode, OcctResult } from 'occt-import-js'
+import { buildHull, MAX_HULL_POINTS } from '../../../shared/sim/hull'
 import type { MeshMassProps, SourceNode } from '../mass/types'
 import { boundsCenter, cadRootTransform, type CadAlignment } from './alignment'
 import { computeMeshMass, isMeshMassProps } from './meshMass'
@@ -23,6 +24,40 @@ export type ImportedMesh = {
   bounds: Bounds
   // 단위 밀도 질량 성질(피벗 기준, cad/meshMass.ts). 변환할 때 double 좌표로 한 번 계산한다.
   mass: MeshMassProps
+  // 볼록 껍질(피벗 기준, meshHullOf). 충돌 형상(spec-5 §5.3)의 메시 단위 입력이라 렌더러 메인 스레드는 메시 꼭짓점을 훑지 않는다
+  hull: MeshHull
+}
+
+// 메시 하나의 볼록 껍질 꼭짓점(피벗 기준, xyz 이어 붙임, ≤ MESH_HULL_VERTEX_LIMIT점)과 오차(m, hull.ts Hull.error: 넣지 못한
+// 점의 평면 거리 최대). 퇴화(평평함·얇음·좌표 한도 밖)면 points가 빈 배열이고 error 0이다(spec-5 §5.3).
+export type MeshHull = { points: number[]; error: number }
+// = MAX_HULL_POINTS(src/shared/sim/hull.ts)
+export const MESH_HULL_VERTEX_LIMIT = MAX_HULL_POINTS
+
+// 메시 꼭짓점(피벗 기준, Float32 positions)의 볼록 껍질(spec-5 §5.3): 질량 성질과 같은 자리(convertMesh, WASM·네이티브 공통)에서
+// 한 번 만들어 메시 캐시에 둔다. 인덱스는 보지 않는다(껍질은 점 집합만으로 정해진다). 꼭짓점은 hull.ts가 0.1 mm 격자로 맞춘
+// 값이라 몸체 껍질을 다시 만들 때(play/worldColliders.ts) 같은 격자 위다.
+export function meshHullOf(positions: ArrayLike<number>): MeshHull {
+  const hull = buildHull(positions, MESH_HULL_VERTEX_LIMIT)
+  if (!hull) return { points: [], error: 0 }
+  const points: number[] = []
+  for (const v of hull.vertices) points.push(v.x, v.y, v.z)
+  return { points, error: hull.error }
+}
+
+// 메시 캐시에서 읽은 껍질 값의 모양(수 배열, 길이 3의 배수 ≤ 3·MESH_HULL_VERTEX_LIMIT, 유한, 오차 유한 ≥ 0)
+export function isMeshHull(value: unknown): value is MeshHull {
+  if (!value || typeof value !== 'object') return false
+  const { points, error } = value as Partial<MeshHull>
+  return (
+    Array.isArray(points) &&
+    points.length % 3 === 0 &&
+    points.length <= 3 * MESH_HULL_VERTEX_LIMIT &&
+    points.every((x) => typeof x === 'number' && Number.isFinite(x)) &&
+    typeof error === 'number' &&
+    Number.isFinite(error) &&
+    error >= 0
+  )
 }
 
 export type ImportedNode = {
@@ -41,8 +76,9 @@ export type ImportedModel = { root: ImportedNode; meshes: ImportedMesh[]; source
 
 // 메시 캐시(앱 데이터 폴더)의 형식 태그. convertOcctResult의 출력이나 occt-import-js 버전이 바뀌면 올린다.
 // 올리면 기존 캐시는 쓰지 않고 다시 변환한다. v2: sourceIndex·sourceMeshCount 추가. v3: 메시 질량 성질(mass)과
-// 붙인 이름 표시(ImportedNode.generatedName) 추가.
-export const MESH_CACHE_TAG = 'model-v3'
+// 붙인 이름 표시(ImportedNode.generatedName) 추가. v4: 메시 볼록 껍질(hull, spec-5 §5.3). v5: 합치기가 위상을 깨는 얇은 메시의
+// 껍질이 빈 배열 대신 삼각형 껍질(hull.ts, 5 리뷰. v4 캐시의 빈 껍질이 남으면 PC마다 몸체 껍질이 달라진다).
+export const MESH_CACHE_TAG = 'model-v5'
 
 function isFloat32OrNull(value: unknown): boolean {
   return value === null || value instanceof Float32Array
@@ -68,7 +104,8 @@ export function isImportedModel(value: unknown): value is ImportedModel {
         mesh.indices instanceof Uint32Array &&
         isFloat32OrNull(mesh.normals) &&
         isFloat32OrNull(mesh.colors) &&
-        isMeshMassProps(mesh.mass)
+        isMeshMassProps(mesh.mass) &&
+        isMeshHull(mesh.hull)
     )
   )
 }
@@ -138,7 +175,9 @@ function convertMesh(mesh: OcctMesh, sourceIndex: number): ImportedMesh | null {
     color,
     bounds,
     // 피벗을 뺀 double 좌표로 적분한다(Float32로 줄인 positions가 아니라 원래 값). WASM과 네이티브가 같은 경로다.
-    mass: computeMeshMass(source, mesh.index.array, bounds)
+    mass: computeMeshMass(source, mesh.index.array, bounds),
+    // 껍질은 Float32 positions(피벗 기준)로 만든다(spec-5 §5.3). WASM·네이티브가 같은 positions라 같은 껍질이다
+    hull: meshHullOf(positions)
   }
 }
 

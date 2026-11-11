@@ -4,6 +4,7 @@ import { cadRootTransform } from '../cad/alignment'
 import { clearHistory, initHistory, undo, useHistoryStore } from '../editor/history'
 import { childrenInDocument, worldMatrix, type SceneObjects, type Vec3 } from './model'
 import { isPlaceholderScene, useSceneStore } from './sceneStore'
+import { defaultBox, defaultCapsule, defaultMesh } from './collider'
 import { defaultJoint } from './joint'
 import { defaultWheel } from './wheel'
 
@@ -528,6 +529,93 @@ describe('관절', () => {
     state().replaceObjects(placeholder)
     expect(isPlaceholderScene(state().objects)).toBe(true)
     state().setJoint('webcam', defaultJoint())
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+  })
+})
+
+// 충돌체·자기 충돌 설정(spec-5 §6.4, K6·K10)
+describe('충돌체', () => {
+  beforeEach(() => {
+    initHistory()
+    state().replaceObjects(objects)
+    clearHistory()
+  })
+
+  it('붙이고 바꾸고 떼며 각 변경은 실행 취소 한 단계, null·[]면 키가 없다', () => {
+    const before = state().objects
+    state().setColliders('P1', [defaultBox('a', null)])
+    expect(state().objects.P1.colliders).toEqual([defaultBox('a', null)])
+    expect(state().objects.P2).toBe(before.P2)
+    state().setColliders('P1', [defaultBox('a', null), defaultMesh('b')])
+    state().setColliders('P1', [])
+    expect('colliders' in state().objects.P1).toBe(false)
+    state().setColliders('R', [defaultMesh('r')])
+    state().setColliders('R', null)
+    expect('colliders' in state().objects.R).toBe(false)
+    expect(undo()).toBe(true)
+    expect(state().objects.R.colliders).toEqual([defaultMesh('r')])
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(state().objects.P1.colliders).toHaveLength(2)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('같은 값·없는 오브젝트·떼어 있는 것을 떼기는 씬을 그대로 둔다', () => {
+    const before = state().objects
+    state().setColliders('nope', [defaultMesh('m')])
+    state().setColliders('P1', null)
+    state().setColliders('P1', [])
+    expect(state()).toMatchObject({ objects: before })
+    expect(state().objects).toBe(before)
+    state().setColliders('P1', [defaultMesh('m')])
+    const withCollider = state().objects
+    state().setColliders('P1', [{ ...defaultMesh('m') }])
+    expect(state().objects).toBe(withCollider)
+    // 정리(범위 밖 한도) 뒤 같은 값이어도 그대로
+    state().setColliders('P1', [{ ...defaultMesh('m'), vertexLimit: 32.2 }])
+    expect(state().objects).toBe(withCollider)
+    // 형식이 틀린 값(유한하지 않은 수, 모르는 방향, 빈 id)은 받지 않는다(JSON에서 null이 되어 프로젝트를 다시 열지 못한다)
+    state().setColliders('P1', [{ ...defaultBox('a', null), size: [Number.NaN, 0.1, 0.1] }])
+    state().setColliders('P1', [{ ...defaultMesh('m'), vertexLimit: Number.POSITIVE_INFINITY }])
+    state().setColliders('P1', [
+      { ...defaultCapsule('c', null, 'z'), direction: 'w' as unknown as 'x' }
+    ])
+    state().setColliders('P1', [defaultMesh('')])
+    expect(state().objects).toBe(withCollider)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(false)
+  })
+
+  it('setRobotCollision은 robot에만, 정리한 결과가 비면 키를 지운다', () => {
+    const before = state().objects
+    state().setRobotCollision('G', { forceCollide: [['a', 'b']] })
+    state().setRobotCollision('nope', { forceCollide: [['a', 'b']] })
+    state().setRobotCollision('R', null)
+    state().setRobotCollision('R', { forceCollide: [] })
+    expect(state().objects).toBe(before)
+    state().setRobotCollision('R', { forceCollide: [['b', 'a']] })
+    expect(state().objects.R.collision).toEqual({ forceCollide: [['a', 'b']] })
+    const set = state().objects
+    state().setRobotCollision('R', { forceCollide: [['a', 'b']] })
+    expect(state().objects).toBe(set)
+    state().setRobotCollision('R', { forceCollide: [] })
+    expect('collision' in state().objects.R).toBe(false)
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(set)
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('충돌체·자기 충돌 설정을 붙인 임시 씬은 임시 씬이 아니다', () => {
+    const placeholder = useSceneStore.getInitialState().objects
+    state().replaceObjects(placeholder)
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().setColliders('webcam', [defaultMesh('m')])
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+    state().replaceObjects(placeholder)
+    state().setRobotCollision('robot', { forceCollide: [['robot', 'x']] })
     expect(isPlaceholderScene(state().objects)).toBe(false)
   })
 })

@@ -730,6 +730,13 @@ body {
   flex: 1;
 }
 
+/* 줄 안의 배지(Collider 카드 머리줄의 "시뮬레이터"): .inspector-file의 max-width 60%는 줄어든 .hw-inline 자신의 폭 기준이라
+   글자가 잘린다. 짧은 배지이므로 줄이지 않는다 */
+.hw-inline > .inspector-file {
+  flex: none;
+  max-width: none;
+}
+
 /* 줄 안의 벡터 입력칸은 남은 너비를 쓴다 */
 .hw-inline > .vector-row-fields {
   flex: 1;
@@ -2951,4 +2958,25 @@ button.usage-header:hover {
 /* 거리·컬러 센서 카드의 편집 자세 값 줄과 경고 꼬리(4c, editor/hardware/sensorReading.ts) */
 .hw-derived.hw-sensor-tail {
   color: #e0b341;
+}
+
+/* 끈 Collider 카드(5, editor/collider/ColliderCard.tsx): 칸을 흐리게 보이되 편집은 된다(Unity와 같음) */
+.hw-card.is-disabled .collider-fields {
+  opacity: 0.55;
+}
+
+/* Rigidbody·Articulation Body 카드의 충돌 구역(5, editor/collider/CollisionSection.tsx) */
+.collision-section {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+
+.collision-section-title {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.collision-pairs .hw-inline {
+  justify-content: space-between;
 }

@@ -981,6 +981,21 @@ const ko = {
         '웹캠 {{name}}의 시야를 자기 로봇의 {{part}}이(가) 가립니다. 시뮬레이터는 자기 로봇을 보지 않으므로 보이는 태그가 실제 로봇과 다릅니다.',
       worldWheelOnJoint:
         '바퀴 {{name}}이(가) 관절 {{joint}} 위에 있지만 시뮬레이터는 로봇 몸체에 붙은 것으로(편집 자세에서) 계산합니다.',
+      // 몸체 충돌(5, play/worldColliders.ts·playActions worldFor)
+      worldColliderPending:
+        '{{name}}의 메시 {{count}}개를 아직 읽는 중이거나 읽지 못해 그 메시 없이 충돌 형상을 만듭니다.',
+      worldColliderDegenerate:
+        '{{name}}의 충돌 형상 {{count}}개가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 쓰지 않습니다.',
+      worldColliderOutOfRange:
+        '{{name}}의 충돌 형상 {{count}}개가 시뮬레이터 좌표 한도(몸체 기준 10 m, 볼록 껍질 점 6.5 m)를 넘어 쓰지 않습니다.',
+      worldColliderNoMeshes:
+        '{{name}}의 켠 Mesh Collider {{count}}개가 이 몸체의 메시를 하나도 품지 않아 쓰지 않습니다. 메시가 있는 오브젝트나 그 상위(같은 몸체)에 붙이세요.',
+      worldTooManyColliders:
+        '{{name}}의 충돌체가 시뮬레이터 한도(몸체마다 {{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
+      worldTooManyWorldColliders:
+        '충돌체 수가 시뮬레이터 한도({{max}}개)를 넘어 몸체 순서로 앞의 {{max}}개만 씁니다.',
+      worldJointStartOverlap:
+        '관절 몸체 {{name}}이(가) 시작 자세에서 {{targets}}와(과) 겹칩니다. 걸친 채로는 밀어내지 않습니다.',
       worldGenerationStale:
         '장치 이름이 생성 구성과 다를 수 있어 바퀴·관절이 움직이지 않을 수 있습니다.',
       worldInvalid: '시뮬레이터 세계를 만들지 못해 로봇이 움직이지 않습니다 ({{detail}}).',
@@ -1022,6 +1037,13 @@ const ko = {
           '로봇 무게중심이 바퀴가 받칠 수 있는 범위 밖으로 나갔습니다(실제 로봇은 기울거나 넘어질 수 있습니다). 시뮬레이터는 평면에서만 계산해 넘어지지 않습니다.',
         wheelLift:
           '바퀴 하나 이상이 하중 없이 바닥에서 뜬 상태가 0.1초 넘게 이어졌습니다. 그동안 그 바퀴는 헛돕니다.',
+        // 5: 몸체 충돌(실행마다 한 번)
+        collisionOverlap:
+          '{{body}}이(가) {{target}}에 1 mm 넘게 파고들었습니다(실행마다 한 번). 빠르게 도는 몸체라면 Collider를 조금 크게 잡으세요.',
+        collisionLimit:
+          '충돌 접촉이 한 계산 단계의 행 한도를 넘어 일부 접촉을 뺐습니다(실행마다 한 번). Collider를 줄이거나 합치면 줄어듭니다.',
+        collisionLift:
+          '메커니즘이 로봇 무게보다 세게 바닥이나 벽 윗면을 누릅니다. 실제 로봇은 들리지만 시뮬레이터는 들지 않습니다(실행마다 한 번).',
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
@@ -2053,6 +2075,124 @@ const ko = {
         '몸체(이 오브젝트 하위에서 안쪽 관절의 하위를 뺀 것)의 질량을 알 수 없어(형상이 없거나 질량 0) 시뮬레이터가 1 g으로 둡니다. 질량 카드에서 질량을 넣으세요.',
       massPending: '몸체에서 아직 읽는 중인 메시 {{count}}개의 질량이 빠져 있습니다.',
       cannotHold: '정지 토크(힘)가 편집 자세의 부하보다 작아 버티지 못합니다.'
+    }
+  },
+  // 충돌체(Unity Collider, 시뮬레이터 설정, editor/collider, spec-5). 카드 제목의 Unity 컴포넌트 이름은 번역하지 않는다.
+  // 길이·깊이·오차는 표시 길이 단위(formatLength)로 바꿔 넣는다.
+  collider: {
+    addOptions: {
+      box: '상자 충돌체 (Box Collider)',
+      capsule: '캡슐 충돌체 (Capsule Collider)',
+      mesh: '메시 충돌체 (Mesh Collider)'
+    },
+    titles: {
+      box: 'Box Collider',
+      capsule: 'Capsule Collider',
+      mesh: 'Mesh Collider'
+    },
+    simulationOnly: '시뮬레이터',
+    remove: '제거',
+    enabled:
+      '끄면 이 Collider는 충돌하지 않습니다. 끈 Collider가 있어도 이 몸체는 자동 볼록 껍질을 쓰지 않습니다.',
+    center: '중심 (Center)',
+    centerHint: '이 오브젝트의 로컬 좌표(피벗 기준, 이 오브젝트 자신의 축)입니다.',
+    sizeHint: '이 오브젝트 자신의 축 방향 전체 크기입니다(각 축 1 mm 이상).',
+    size: '크기 (Size)',
+    radius: '반지름 (Radius)',
+    height: '높이 (Height)',
+    heightHint: '반구를 포함한 전체 높이입니다. 반지름의 두 배보다 작으면 구입니다.',
+    direction: '방향 (Direction)',
+    directions: {
+      x: 'X축',
+      y: 'Y축',
+      z: 'Z축'
+    },
+    convex: '볼록 (Convex)',
+    convexHint: '볼록한 Mesh Collider만 지원합니다. 오목한 모양은 Collider를 여러 개로 나누세요.',
+    vertexLimit: '꼭짓점 한도 (Vertex Limit)',
+    vertexLimitHint:
+      '볼록 껍질 꼭짓점 수의 한도(8–64)입니다. 크게 하면 메시에 더 가깝지만 계산이 늘어납니다.',
+    friction: '마찰 (Friction)',
+    frictionHint: '비우면 0.4. 닿는 두 면의 값을 평균합니다(Unity Average).',
+    fitChildren: '하위에 맞추기',
+    fitChildrenHint:
+      '이 오브젝트와 하위 메시의 경계 상자에 중심과 크기를 맞춥니다(Unity Fit to Children).',
+    fitChildrenNone: '맞출 하위 형상이 없습니다.',
+    fitChildrenPending:
+      '형상이 없는 메시 {{count}}개(아직 읽지 않았거나 읽지 못함)를 빼고 맞춥니다.',
+    cadAxes: '축: CAD 파일 축(위 = {{up}}, 앞 = {{forward}})',
+    hull: '볼록 껍질 {{points}}점 · 오차 약 {{error}}',
+    hullPending:
+      '메시 형상이 없어(아직 읽지 않았거나 읽지 못함) 볼록 껍질을 만들지 못했습니다. 메시를 읽으면 다시 만듭니다.',
+    hullNone: '이 오브젝트와 하위에 이 몸체의 메시가 없어 충돌하지 않습니다.',
+    hullDegenerate:
+      '메시가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 충돌하지 않습니다.',
+    outOfRange:
+      '몸체 기준 위치가 시뮬레이터 좌표 한도(상자 중심·캡슐 끝점 10 m, 볼록 껍질 점 6.5 m)를 넘어 이 Collider는 충돌하지 않습니다. 중심이나 크기를 줄이세요.',
+    hullErrorLarge:
+      '볼록 껍질이 메시보다 약 {{error}}까지 작습니다. 꼭짓점 한도를 올리거나 부품마다 Collider를 나누세요.',
+    orphan: '로봇 밖 Collider는 시뮬레이터가 쓰지 않습니다(정적 장애물이 아닙니다).',
+    bodyOf: '관절 {{name}}의 몸체 충돌체',
+    bodyOfChassis: '로봇 몸체(섀시)의 충돌체',
+    meshesInOtherBody:
+      '하위 메시는 관절 {{name}}의 몸체입니다. 관절 오브젝트나 그 하위에 붙이세요.',
+    replacesAuto:
+      '{{body}}에 Collider가 있으면 자동 볼록 껍질을 쓰지 않습니다. 이 몸체는 붙인 Collider로만 충돌합니다.',
+    runningHint: '다음 INIT부터. 씬 뷰는 실행을 시작할 때의 형상입니다.',
+    tooMany: '한 오브젝트에 Collider는 {{max}}개까지 붙일 수 있습니다.',
+    capped:
+      '시뮬레이터 한도(몸체마다 {{body}}개, 로봇 전체 {{world}}개)를 넘어 이 Collider는 쓰지 않습니다. 몸체·하이어라키 순서로 앞의 것이 먼저 쓰입니다.',
+    // 받지 않은 입력칸 값의 설명(입력칸은 글자를 남겨 틀렸다고 보인다)
+    invalid: {
+      friction: '0–2 사이 수를 넣으세요. 비우면 기본값 0.4입니다. Esc로 되돌립니다.',
+      size: '1 mm 이상 10 m 이하 길이를 넣으세요. 단위를 붙일 수 있습니다. Esc로 되돌립니다.',
+      length: '길이로 읽을 수 없거나 범위 밖입니다. 단위를 붙일 수 있습니다. Esc로 되돌립니다.',
+      vertexLimit: '8–64 정수를 넣으세요. Esc로 되돌립니다.'
+    },
+    // Rigidbody·Articulation Body 카드의 몸체 충돌 구역
+    body: {
+      title: '충돌',
+      colliders: '충돌 형상: Collider {{count}}개',
+      disabled: '충돌 형상: 모든 Collider가 꺼져 충돌하지 않음',
+      auto: '충돌 형상: 자동 볼록 껍질 {{points}}점 · 오차 약 {{error}}',
+      autoHint: '더 정확히 하려면 Mesh Collider(꼭짓점 한도 64)를 붙이거나 부품마다 나누세요.',
+      fallback: '충돌 형상: 외곽 상자({{reason}})',
+      none: '충돌 형상: 없음({{reason}})',
+      // 외곽 상자·없음의 까닭(editor/collider/colliderCardModel.ts bodyShapeReason)
+      reasons: {
+        colliders: '켠 Collider가 형상을 만들지 못함, 각 Collider 카드 참고',
+        loading: '메시를 아직 읽지 못함',
+        degenerate: '메시가 평평하거나 너무 얇음',
+        outOfRange: '좌표가 시뮬레이터 한도를 넘음',
+        noMeshes: '이 몸체에 메시가 없음'
+      },
+      capped:
+        'Collider {{count}}개는 시뮬레이터 한도(몸체마다 {{body}}개, 로봇 전체 {{world}}개)를 넘어 쓰지 않습니다(씬 뷰에 흐리게).',
+      pending:
+        '형상이 없는 메시 {{count}}개(아직 읽지 않았거나 읽지 못함)는 충돌 형상에 들지 않았습니다.',
+      fixedBase: '바퀴가 없어 섀시는 고정입니다. 필드와는 충돌하지 않고 관절 몸체와만 충돌합니다.',
+      floorTouch:
+        '편집 자세에서 바닥에 닿아 있습니다. 실행 중 바닥 마찰이 로봇 이동을 늦출 수 있습니다.'
+    },
+    // 자기 충돌(같은 로봇의 몸체끼리)
+    self: {
+      title: '자기 충돌',
+      adjacentHint:
+        '바로 붙은 부모·자식 몸체끼리는 늘 충돌하지 않습니다(Unity ArticulationBody와 같음).',
+      adjacentParent: '부모 몸체 {{name}}와(과)는 늘 충돌하지 않습니다',
+      ignoredTitle: '처음부터 겹쳐 무시함',
+      pair: '{{a}} ↔ {{b}} (겹침 {{depth}})',
+      force: '그래도 충돌',
+      forceHint:
+        '편집 자세에서 겹친 두 몸체를 실행 중에도 충돌시킵니다. 겹친 채로는 밀어내지 않아 그 자리에서 서로 묶일 수 있습니다.',
+      none: '편집 자세에서 겹친 몸체 짝이 없습니다.',
+      chassis: '로봇 몸체',
+      staleForced: '지금은 겹치지 않는 짝의 [그래도 충돌] 설정 {{count}}개',
+      clearStale: '지우기'
+    },
+    // 충돌 대상(Console collisionOverlap·시작 겹침): 벽·구조물은 field.* 이름을 쓴다
+    target: {
+      floor: '바닥'
     }
   },
   // 시즌 필드(spec-4ab). 시즌 데이터의 key가 키다(src/shared/sim/seasons/). 시즌 이름 BIOBUZZ는 번역하지 않는다.

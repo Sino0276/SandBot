@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from 'react'
-import { Box3, DoubleSide, Matrix4, Ray, Vector3 } from 'three'
+import { Box3, DoubleSide, Ray, Vector3 } from 'three'
 import { rotationMatrix } from '../../../../shared/sim/seasons/fieldGeometry'
 import type { SensorComponentType, SensorMountInRobot } from '../../hardware/mounting'
 import { getGeometry } from '../../scene/geometryRegistry'
 import { buildBvh } from '../../scene/meshBvh'
-import { childrenInDocument, transformToMatrix, type SceneObjects } from '../../scene/model'
+import { childrenInDocument, type SceneObjects } from '../../scene/model'
+import { robotMeshes, type RobotMeshEntry } from '../../scene/robotMeshIndex'
 import { isChangeOpen, onChangeClosed } from '../history'
 import { sensorOuterRays } from '../scene/sensorGizmoModel'
 
@@ -26,46 +27,10 @@ export type SelfHit = { kind: 'axis'; partId: string; distance: number } | { kin
 // 원점에서 맞지 않게. 1 mm는 FTC 파트 틈보다 작다]
 export const SELF_HIT_ORIGIN_OFFSET = 0.001
 
-type MeshEntry = {
-  id: string
-  geometryId: string
-  // 로봇 좌표 → 메시 로컬
-  toLocal: Matrix4
-  // 메시 로컬 → 로봇 좌표(넓은 단계의 로봇 좌표 상자를 만들 때만)
-  toRobot: Matrix4
-}
-
-// 씬 문서·로봇마다 한 번: 로봇 하위의 형상 오브젝트와 로봇 좌표 행렬(부모 사슬을 한 번만 내려가며 곱한다)
-const meshIndex = new WeakMap<SceneObjects, Map<string, MeshEntry[]>>()
-
-function robotMeshes(objects: SceneObjects, robotId: string): MeshEntry[] {
-  let byRobot = meshIndex.get(objects)
-  if (!byRobot) meshIndex.set(objects, (byRobot = new Map()))
-  let entries = byRobot.get(robotId)
-  if (entries) return entries
-  entries = []
-  const walk = (parentId: string, parentMatrix: Matrix4): void => {
-    for (const child of childrenInDocument(objects, parentId)) {
-      const matrix = parentMatrix.clone().multiply(transformToMatrix(child.transform))
-      if (child.visual?.type === 'mesh')
-        entries!.push({
-          id: child.id,
-          geometryId: child.visual.geometryId,
-          toLocal: matrix.clone().invert(),
-          toRobot: matrix
-        })
-      walk(child.id, matrix)
-    }
-  }
-  walk(robotId, new Matrix4())
-  byRobot.set(robotId, entries)
-  return entries
-}
-
 // 형상 id → 로봇 좌표 경계 상자(문서마다, 형상이 바뀌면 다시)
-const robotBoxes = new WeakMap<MeshEntry, { box: Box3; source: Box3 }>()
+const robotBoxes = new WeakMap<RobotMeshEntry, { box: Box3; source: Box3 }>()
 
-function robotBox(entry: MeshEntry, local: Box3): Box3 {
+function robotBox(entry: RobotMeshEntry, local: Box3): Box3 {
   const cached = robotBoxes.get(entry)
   if (cached && cached.source === local) return cached.box
   const box = local.clone().applyMatrix4(entry.toRobot)
@@ -157,7 +122,8 @@ export function castSelfHit(
   let axisHit: { partId: string; t: number } | null = null
   let outerHit = false
   for (const entry of robotMeshes(objects, robotId)) {
-    if (skip.has(entry.id)) continue
+    // CAD 메시만(임시 모양은 가리지 않는다, 4c 그대로)
+    if (entry.kind !== 'mesh' || skip.has(entry.id)) continue
     const geometry = getGeometry(entry.geometryId)
     if (!geometry) continue
     if (!geometry.boundingBox) geometry.computeBoundingBox()

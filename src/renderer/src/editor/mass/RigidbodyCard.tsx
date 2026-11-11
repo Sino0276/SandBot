@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import CollisionSection from '../collider/CollisionSection'
 import { DEFAULT_MATERIAL } from '../../mass/materials'
 import type { MaterialKey, RigidbodySettings } from '../../mass/types'
 import { MAX_WEIGHED_MASS } from '../../scene/massSettings'
@@ -174,6 +175,8 @@ function RigidbodyCard({ robot }: { robot: SceneObject }): React.JSX.Element {
         </ul>
       )}
       <p className="inspector-note">{t('mass.rigidbody.hint')}</p>
+      {/* 섀시 몸체의 충돌 형상과 자기 충돌(spec-5 §6.3) */}
+      <CollisionSection robotId={robot.id} bodyObjectId={robot.id} />
     </section>
   )
 }
