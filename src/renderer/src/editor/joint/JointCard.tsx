@@ -3,6 +3,7 @@ import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MAX_JOINT_MOTORS } from '../../../../shared/sim/worldSpec'
 import { usePlayStore } from '../../play/playStore'
+import CollisionSection from '../collider/CollisionSection'
 import { DEG } from '../../scene/coordinates'
 import {
   defaultJointDrive,
@@ -19,13 +20,14 @@ import {
   MIN_JOINT_GEAR_RATIO,
   MIN_SPOOL_DIAMETER
 } from '../../scene/joint'
-import type {
-  JointAxis,
-  JointDrive,
-  JointSettings,
-  JointType,
-  SceneObject,
-  SceneObjects
+import {
+  findRobotId,
+  type JointAxis,
+  type JointDrive,
+  type JointSettings,
+  type JointType,
+  type SceneObject,
+  type SceneObjects
 } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -120,6 +122,7 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
   const batteryVoltage = usePlayStore((state) => state.settings.batteryVoltage)
   const massModel = useMassModel()
   const joint = object.joint
+  const robotId = findRobotId(objects, object.id)
   const view = useMemo(
     () => jointCardView(objects, object.id, massModel, batteryVoltage),
     [objects, object.id, massModel, batteryVoltage]
@@ -338,6 +341,8 @@ function JointCard({ object }: { object: SceneObject }): React.JSX.Element | nul
           ))}
         </ul>
       )}
+      {/* 이 관절 몸체의 충돌 형상과 자기 충돌(spec-5 §6.3). 로봇 밖·한도 밖 관절은 몸체가 없어 보이지 않는다 */}
+      {robotId && <CollisionSection robotId={robotId} bodyObjectId={object.id} />}
     </li>
   )
 }

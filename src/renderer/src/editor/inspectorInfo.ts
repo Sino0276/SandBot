@@ -45,3 +45,18 @@ export function parentCadAxes(objects: SceneObjects, id: string): CadSource | un
   const root = worldRotation(worldMatrix(objects, rootId))
   return 1 - Math.abs(parent.dot(root)) < SAME_ROTATION_EPSILON ? cad : undefined
 }
+
+// 오브젝트 자신의 축(Collider 칸의 Center·Size·Direction 축, spec-5 §6.2 F6)이 CAD 파일의 축이면 그 CAD 정보. parentCadAxes와
+// 같은 판정을 자기 오브젝트에 한다: 자기 월드 방향이 출처 CAD 루트의 월드 방향과 같을 때만이고, CAD 루트 자신은 늘이다.
+// 그룹·로봇은 해당하지 않는다(그 축은 사용자가 만든 축이거나 로봇 축 X 앞·Z 위다).
+export function ownCadAxes(objects: SceneObjects, id: string): CadSource | undefined {
+  const object = objects[id]
+  if (!object || object.kind === 'robot' || object.kind === 'group') return undefined
+  if (object.cad) return object.cad
+  const rootId = cadOriginOf(objects, id)
+  const cad = rootId !== null ? objects[rootId]?.cad : undefined
+  if (rootId === null || !cad) return undefined
+  const own = worldRotation(worldMatrix(objects, id))
+  const root = worldRotation(worldMatrix(objects, rootId))
+  return 1 - Math.abs(own.dot(root)) < SAME_ROTATION_EPSILON ? cad : undefined
+}

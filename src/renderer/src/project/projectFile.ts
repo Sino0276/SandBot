@@ -46,6 +46,18 @@ import {
   sanitizeJoint
 } from '../scene/joint'
 import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
+import {
+  canHaveColliders,
+  canHaveRobotCollision,
+  COLLIDER_DIRECTIONS,
+  MAX_FORCE_COLLIDE,
+  MAX_OBJECT_COLLIDERS,
+  sanitizeColliders,
+  sanitizeRobotCollision,
+  type ColliderDirection,
+  type ColliderSettings,
+  type RobotCollisionSettings
+} from '../scene/collider'
 
 // sandbot/project.json 형식. 사람이 git diff로 읽을 수 있게 들여쓴 JSON으로 저장한다.
 export const PROJECT_FORMAT = 'sandbot-project'
@@ -65,11 +77,14 @@ export const PROJECT_FORMAT = 'sandbot-project'
 //     시뮬레이터는 쓰지 않음, spec-4e §2.3). 틀린 visual은 버리고 프로젝트는 연다(fieldVisualDropped).
 // 12: 프로젝트 설정 settings({ codeUnits: { length, angle } }, 생성 Java의 코드 단위). 없거나 틀리면 기본값('sdk')으로
 //     읽고 프로젝트는 연다(settingsDropped, 틀린 값일 때만).
+// 13: 오브젝트 충돌체 colliders([{ id, kind, enabled?, center·size | center·radius·height·direction | vertexLimit,
+//     friction? }], 모든 kind, scene/collider.ts)와 로봇 자기 충돌 collision({ forceCollide: [[a, b]…] }, robot에만).
+//     둘 다 시뮬레이터 설정이다(spec-5 §2.3).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
 // 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ, 10 이하는 field.visual 없음, 11 이하는 settings 없음 =
-// 코드 단위 'sdk').
+// 코드 단위 'sdk', 12 이하는 colliders·collision 없음).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 12
+export const PROJECT_VERSION = 13
 // field를 두기 시작한 버전
 const FIELD_VERSION = 10
 // field.visual(필드 CAD 보기)을 두기 시작한 버전
@@ -402,6 +417,83 @@ function parseJoint(value: unknown, index: number): JointSettings {
   })
 }
 
+// 충돌체(v13). 다른 오브젝트 칸처럼 버전으로 가르지 않는다(바퀴·관절과 같다). 배열이 아니거나, 원소가 객체가 아니거나, id가
+// 1–64자 글자가 아니거나, 종류를 모르거나, 칸 형식이 틀리면(수가 아님, 길이 3이 아닌 배열, 방향이 x·y·z가 아님), enabled가
+// boolean이 아니거나, friction이 수가 아니거나, 같은 id가 둘이거나 MAX_OBJECT_COLLIDERS를 넘으면 파일 오류다. 범위 밖 수는
+// 정리(sanitizeColliders)가 자르고(friction은 키를 지운다), enabled true는 키를 지운다. 비면 null(키를 두지 않는다).
+const isColliderId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length >= 1 && value.length <= 64
+function parseColliders(value: unknown, index: number): ColliderSettings[] | null {
+  if (!Array.isArray(value) || value.length > MAX_OBJECT_COLLIDERS) invalid(index, 'colliders')
+  const ids = new Set<string>()
+  const list = value.map((entry): ColliderSettings => {
+    if (!isRecord(entry) || !isColliderId(entry.id) || ids.has(entry.id))
+      invalid(index, 'colliders')
+    ids.add(entry.id)
+    const { id, kind, enabled, friction } = entry
+    if (enabled !== undefined && typeof enabled !== 'boolean') invalid(index, 'colliders')
+    if (friction !== undefined && !isFiniteNumber(friction)) invalid(index, 'colliders')
+    // enabled true·범위 밖 friction은 정리가 지운다(타입은 정리 전 값이라 넓혀 둔다)
+    const tail = {
+      ...(enabled !== undefined ? { enabled: enabled as false } : {}),
+      ...(friction !== undefined ? { friction } : {})
+    }
+    switch (kind) {
+      case 'box':
+        if (!isVec3(entry.center) || !isVec3(entry.size)) invalid(index, 'colliders')
+        return { id, kind, center: [...entry.center], size: [...entry.size], ...tail }
+      case 'capsule':
+        if (
+          !isVec3(entry.center) ||
+          !isFiniteNumber(entry.radius) ||
+          !isFiniteNumber(entry.height) ||
+          !(COLLIDER_DIRECTIONS as readonly unknown[]).includes(entry.direction)
+        )
+          invalid(index, 'colliders')
+        return {
+          id,
+          kind,
+          center: [...entry.center],
+          radius: entry.radius,
+          height: entry.height,
+          direction: entry.direction as ColliderDirection,
+          ...tail
+        }
+      case 'mesh':
+        if (!isFiniteNumber(entry.vertexLimit)) invalid(index, 'colliders')
+        return { id, kind, vertexLimit: entry.vertexLimit, ...tail }
+      default:
+        invalid(index, 'colliders')
+    }
+  })
+  const sanitized = sanitizeColliders(list)
+  return sanitized.length > 0 ? sanitized : null
+}
+
+// 로봇 자기 충돌 설정(v13, robot에만). 객체가 아니거나, forceCollide가 배열이 아니거나 MAX_FORCE_COLLIDE를 넘거나, 원소가
+// 서로 다른 1–64자 글자 둘의 배열이 아니면 파일 오류다. 정리(sanitizeRobotCollision)가 짝·목록을 사전순으로 놓고 같은
+// 짝을 빼며, 비면 null(키를 두지 않는다). 끊긴 id(지운 관절)는 남긴다(빌더가 무시).
+function parseCollision(value: unknown, index: number): RobotCollisionSettings | null {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.forceCollide) ||
+    value.forceCollide.length > MAX_FORCE_COLLIDE
+  )
+    invalid(index, 'collision')
+  const pairs = value.forceCollide.map((pair): [string, string] => {
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      !isColliderId(pair[0]) ||
+      !isColliderId(pair[1]) ||
+      pair[0] === pair[1]
+    )
+      invalid(index, 'collision')
+    return [pair[0], pair[1]]
+  })
+  return sanitizeRobotCollision({ forceCollide: pairs })
+}
+
 // 패키지까지 붙인 클래스 이름(점으로 이은 Java 식별자)
 const QUALIFIED_CLASS =
   /^[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*(\.[\p{L}\p{Nl}_$][\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}$]*)*$/u
@@ -457,7 +549,9 @@ function parseObject(
     wheel,
     mass,
     rigidbody,
-    joint
+    joint,
+    colliders,
+    collision
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -561,6 +655,17 @@ function parseObject(
   if (joint !== undefined) {
     if (!canHaveJoint(object)) invalid(index, 'joint')
     object.joint = parseJoint(joint, index)
+  }
+  // 충돌체는 모든 kind에(scene/collider.ts canHaveColliders), 자기 충돌 설정은 robot에만 둔다
+  if (colliders !== undefined) {
+    if (!canHaveColliders(object)) invalid(index, 'colliders')
+    const list = parseColliders(colliders, index)
+    if (list) object.colliders = list
+  }
+  if (collision !== undefined) {
+    if (!canHaveRobotCollision(object)) invalid(index, 'collision')
+    const settings = parseCollision(collision, index)
+    if (settings) object.collision = settings
   }
   return object
 }

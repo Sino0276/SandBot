@@ -986,6 +986,8 @@ const ko = {
         '{{name}}의 메시 {{count}}개를 아직 읽는 중이거나 읽지 못해 그 메시 없이 충돌 형상을 만듭니다.',
       worldColliderDegenerate:
         '{{name}}의 충돌 형상 {{count}}개가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 쓰지 않습니다.',
+      worldColliderOutOfRange:
+        '{{name}}의 충돌 형상 {{count}}개가 시뮬레이터 좌표 한도(몸체 기준 10 m, 볼록 껍질 점 6.5 m)를 넘어 쓰지 않습니다.',
       worldTooManyColliders:
         '{{name}}의 충돌체가 시뮬레이터 한도(몸체마다 {{max}}개)를 넘어 앞의 {{max}}개만 씁니다.',
       worldTooManyWorldColliders:
@@ -2113,13 +2115,17 @@ const ko = {
     fitChildrenHint:
       '이 오브젝트와 하위 메시의 경계 상자에 중심과 크기를 맞춥니다(Unity Fit to Children).',
     fitChildrenNone: '맞출 하위 형상이 없습니다.',
-    fitChildrenPending: '읽는 중인 메시 {{count}}개를 빼고 맞춥니다.',
+    fitChildrenPending:
+      '형상이 없는 메시 {{count}}개(아직 읽지 않았거나 읽지 못함)를 빼고 맞춥니다.',
     cadAxes: '축: CAD 파일 축(위 = {{up}}, 앞 = {{forward}})',
     hull: '볼록 껍질 {{points}}점 · 오차 약 {{error}}',
-    hullPending: '메시를 읽는 중이라 볼록 껍질을 아직 만들지 못했습니다.',
+    hullPending:
+      '메시 형상이 없어(아직 읽지 않았거나 읽지 못함) 볼록 껍질을 만들지 못했습니다. 메시를 읽으면 다시 만듭니다.',
     hullNone: '이 오브젝트와 하위에 이 몸체의 메시가 없어 충돌하지 않습니다.',
     hullDegenerate:
       '메시가 평평하거나 너무 얇아(1 mm 아래) 볼록 껍질을 만들 수 없어 충돌하지 않습니다.',
+    outOfRange:
+      '몸체 기준 위치가 시뮬레이터 좌표 한도(상자 중심·캡슐 끝점 10 m, 볼록 껍질 점 6.5 m)를 넘어 이 Collider는 충돌하지 않습니다. 중심이나 크기를 줄이세요.',
     hullErrorLarge:
       '볼록 껍질이 메시보다 약 {{error}}까지 작습니다. 꼭짓점 한도를 올리거나 부품마다 Collider를 나누세요.',
     orphan: '로봇 밖 Collider는 시뮬레이터가 쓰지 않습니다(정적 장애물이 아닙니다).',
@@ -2131,6 +2137,13 @@ const ko = {
       '{{body}}에 Collider가 있으면 자동 볼록 껍질을 쓰지 않습니다. 이 몸체는 붙인 Collider로만 충돌합니다.',
     runningHint: '다음 INIT부터. 씬 뷰는 실행을 시작할 때의 형상입니다.',
     tooMany: '한 오브젝트에 Collider는 {{max}}개까지 붙일 수 있습니다.',
+    // 받지 않은 입력칸 값의 설명(입력칸은 글자를 남겨 틀렸다고 보인다)
+    invalid: {
+      friction: '0–2 사이 수를 넣으세요. 비우면 기본값 0.4입니다. Esc로 되돌립니다.',
+      size: '1 mm 이상 10 m 이하 길이를 넣으세요. 단위를 붙일 수 있습니다. Esc로 되돌립니다.',
+      length: '길이로 읽을 수 없거나 범위 밖입니다. 단위를 붙일 수 있습니다. Esc로 되돌립니다.',
+      vertexLimit: '8–64 정수를 넣으세요. Esc로 되돌립니다.'
+    },
     // Rigidbody·Articulation Body 카드의 몸체 충돌 구역
     body: {
       title: '충돌',
@@ -2140,7 +2153,8 @@ const ko = {
       autoHint: '더 정확히 하려면 Mesh Collider(꼭짓점 한도 64)를 붙이거나 부품마다 나누세요.',
       fallback: '충돌 형상: 외곽 상자(메시를 아직 읽지 못함)',
       none: '충돌 형상: 없음(이 몸체에 메시가 없음)',
-      pending: '읽는 중인 메시 {{count}}개는 충돌 형상에 들지 않았습니다.',
+      pending:
+        '형상이 없는 메시 {{count}}개(아직 읽지 않았거나 읽지 못함)는 충돌 형상에 들지 않았습니다.',
       fixedBase: '바퀴가 없어 섀시는 고정입니다. 필드와는 충돌하지 않고 관절 몸체와만 충돌합니다.',
       floorTouch:
         '편집 자세에서 바닥에 닿아 있습니다. 실행 중 바닥 마찰이 로봇 이동을 늦출 수 있습니다.'

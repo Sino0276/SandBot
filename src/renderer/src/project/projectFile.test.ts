@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { ColliderSettings, RobotCollisionSettings } from '../scene/collider'
 import type { FieldDoc } from '../scene/fieldDoc'
 import { createGroup, moveObjects } from '../scene/hierarchy'
 import type { JointSettings, SceneObjects } from '../scene/model'
@@ -84,7 +85,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, FIELD, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 12 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 13 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -986,11 +987,11 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
   const WITH_VISUAL: FieldDoc = { season: 'biobuzz', visual: { ...VISUAL } }
 
   // A1
-  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 12(지금 판)와 키를 골라 쓴 모양이다', () => {
+  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 13(지금 판)와 키를 골라 쓴 모양이다', () => {
     const content = serializeProject(objects, WITH_VISUAL, relativize)
     const data = JSON.parse(content)
-    expect(data.version).toBe(12)
-    expect(PROJECT_VERSION).toBe(12)
+    expect(data.version).toBe(13)
+    expect(PROJECT_VERSION).toBe(13)
     expect(data.field).toEqual({
       season: 'biobuzz',
       visual: {
@@ -1063,7 +1064,7 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
     expect('visual' in loaded.field).toBe(false)
     expect(loaded.fieldVisualFile).toBeNull()
     expect(loaded.fieldVisualDropped).toBe(false)
-    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(12)
+    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(13)
   })
 
   // A3
@@ -1115,7 +1116,7 @@ describe('프로젝트 설정(v12 settings, 코드 단위)', () => {
   it('왕복: settings를 키를 골라 쓰고 그대로 읽는다', () => {
     const content = serializeProject(objects, FIELD, relativize, { settings: CM_RAD })
     const data = JSON.parse(content)
-    expect(data.version).toBe(12)
+    expect(data.version).toBe(13)
     expect(data.settings).toEqual({ codeUnits: { length: 'cm', angle: 'rad' } })
     const loaded = parseProject(content)
     expect(loaded.settings).toEqual(CM_RAD)
@@ -1135,7 +1136,7 @@ describe('프로젝트 설정(v12 settings, 코드 단위)', () => {
     expect(loaded.settingsDropped).toBe(false)
   })
 
-  it('v12에 settings가 없으면 기본값이고 알리지 않는다', () => {
+  it('v12 이상에 settings가 없으면 기본값이고 알리지 않는다', () => {
     const data = JSON.parse(serializeProject(objects, FIELD, relativize))
     delete data.settings
     const loaded = parseProject(JSON.stringify(data))
@@ -1166,5 +1167,166 @@ describe('프로젝트 설정(v12 settings, 코드 단위)', () => {
     data.settings.codeUnits.extra = 2
     const loaded = parseProject(JSON.stringify(data))
     expect(loaded.settings).toEqual(CM_RAD)
+  })
+})
+
+describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
+  const COLLIDERS: ColliderSettings[] = [
+    { id: 'c-box', kind: 'box', center: [0.01, 0, 0.02], size: [0.1, 0.2, 0.05] },
+    {
+      id: 'c-cap',
+      kind: 'capsule',
+      enabled: false,
+      center: [0, 0, 0],
+      radius: 0.02,
+      height: 0.3,
+      direction: 'y',
+      friction: 0.9
+    },
+    { id: 'c-mesh', kind: 'mesh', vertexLimit: 48, friction: 0 }
+  ]
+  const COLLISION: RobotCollisionSettings = {
+    forceCollide: [
+      ['cad', 'robot'],
+      ['deleted-joint', 'robot']
+    ]
+  }
+  const withColliders = (): SceneObjects => ({
+    ...objects,
+    robot: { ...objects.robot, collision: structuredClone(COLLISION) },
+    plate: { ...objects.plate, colliders: structuredClone(COLLIDERS) },
+    cad: { ...objects.cad, colliders: [structuredClone(COLLIDERS[0])] }
+  })
+  // 저장한 파일의 오브젝트(index)에 칸 하나를 넣는다
+  const fileWith = (index: number, key: string, value: unknown, version = 13): string => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    data.version = version
+    data.objects[index][key] = value
+    return JSON.stringify(data)
+  }
+
+  it('B1 왕복: 종류마다(끈 것 하나) colliders와 collision을 그대로 읽고 바이트 단위로 같게 다시 쓴다', () => {
+    const content = serializeProject(withColliders(), FIELD, relativize)
+    const data = JSON.parse(content)
+    expect(data.version).toBe(13)
+    expect(data.objects[2].colliders).toEqual(COLLIDERS)
+    expect(data.objects[0].collision).toEqual(COLLISION)
+    // 키 순서는 정리 순서(id, kind, enabled?, 종류 칸, friction)라 git diff가 안정하다
+    expect(Object.keys(data.objects[2].colliders[1])).toEqual([
+      'id',
+      'kind',
+      'enabled',
+      'center',
+      'radius',
+      'height',
+      'direction',
+      'friction'
+    ])
+    const { objects: loaded } = parseProject(content)
+    expect(loaded).toEqual(withColliders())
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
+  })
+
+  it('B2 v12 파일은 colliders 없이 열리고 다시 쓰면 13, 충돌체 없는 오브젝트는 바이트 같다', () => {
+    const v13 = serializeProject(objects, FIELD, relativize)
+    const v12 = JSON.parse(v13)
+    v12.version = 12
+    const { objects: loaded } = parseProject(JSON.stringify(v12))
+    expect(loaded).toEqual(objects)
+    for (const object of Object.values(loaded)) {
+      expect('colliders' in object).toBe(false)
+      expect('collision' in object).toBe(false)
+    }
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(v13)
+  })
+
+  it('B3 범위 밖 수는 자르고, friction 범위 밖·enabled true는 키를 지우며, 빈 목록은 키를 두지 않는다', () => {
+    const { objects: loaded } = parseProject(
+      fileWith(2, 'colliders', [
+        {
+          id: 'a',
+          kind: 'box',
+          enabled: true,
+          center: [20, -20, 0],
+          size: [0, 11, -0],
+          friction: 3
+        },
+        { id: 'b', kind: 'capsule', center: [0, 0, 0], radius: 5, height: 30, direction: 'z' },
+        { id: 'c', kind: 'mesh', vertexLimit: 7.6, friction: -0.1 }
+      ])
+    )
+    expect(loaded.plate.colliders).toEqual([
+      { id: 'a', kind: 'box', center: [10, -10, 0], size: [1e-3, 10, 1e-3] },
+      { id: 'b', kind: 'capsule', center: [0, 0, 0], radius: 1, height: 20, direction: 'z' },
+      { id: 'c', kind: 'mesh', vertexLimit: 8 }
+    ])
+    expect('colliders' in parseProject(fileWith(2, 'colliders', [])).objects.plate).toBe(false)
+    // 자기 충돌 설정은 짝·목록을 사전순으로 놓고 같은 짝을 뺀다. 비면 키가 없다
+    const collision = parseProject(
+      fileWith(0, 'collision', {
+        forceCollide: [
+          ['z', 'a'],
+          ['a', 'z'],
+          ['b', 'a']
+        ]
+      })
+    ).objects.robot.collision
+    expect(collision).toEqual({
+      forceCollide: [
+        ['a', 'b'],
+        ['a', 'z']
+      ]
+    })
+    const empty = parseProject(fileWith(0, 'collision', { forceCollide: [] })).objects.robot
+    expect('collision' in empty).toBe(false)
+  })
+
+  it.each([
+    ['배열 아님', { id: 'a', kind: 'mesh', vertexLimit: 32 }],
+    ['원소가 객체 아님', ['box']],
+    ['id 없음', [{ kind: 'mesh', vertexLimit: 32 }]],
+    ['빈 id', [{ id: '', kind: 'mesh', vertexLimit: 32 }]],
+    ['65자 id', [{ id: 'x'.repeat(65), kind: 'mesh', vertexLimit: 32 }]],
+    ['모르는 종류', [{ id: 'a', kind: 'sphere', center: [0, 0, 0], radius: 1 }]],
+    ['길이 2 center', [{ id: 'a', kind: 'box', center: [0, 0], size: [1, 1, 1] }]],
+    ['글자 size', [{ id: 'a', kind: 'box', center: [0, 0, 0], size: [1, '1', 1] }]],
+    [
+      '방향 w',
+      [{ id: 'a', kind: 'capsule', center: [0, 0, 0], radius: 1, height: 1, direction: 'w' }]
+    ],
+    [
+      '글자 radius',
+      [{ id: 'a', kind: 'capsule', center: [0, 0, 0], radius: '1', height: 1, direction: 'x' }]
+    ],
+    ['글자 vertexLimit', [{ id: 'a', kind: 'mesh', vertexLimit: '32' }]],
+    ['글자 enabled', [{ id: 'a', kind: 'mesh', vertexLimit: 32, enabled: 'false' }]],
+    ['글자 friction', [{ id: 'a', kind: 'mesh', vertexLimit: 32, friction: '0.4' }]],
+    [
+      '같은 id 둘',
+      [
+        { id: 'a', kind: 'mesh', vertexLimit: 32 },
+        { id: 'a', kind: 'mesh', vertexLimit: 16 }
+      ]
+    ],
+    ['9개', Array.from({ length: 9 }, (_, i) => ({ id: `c${i}`, kind: 'mesh', vertexLimit: 32 }))]
+  ])('B3 틀린 colliders(%s)는 invalidData(colliders)', (_label, colliders) => {
+    expect(() => parseProject(fileWith(2, 'colliders', colliders))).toThrow(
+      'invalidData: objects[2].colliders'
+    )
+  })
+
+  it.each([
+    ['로봇이 아닌 오브젝트', 2, { forceCollide: [['a', 'b']] }],
+    ['객체 아님', 0, [['a', 'b']]],
+    ['forceCollide 없음', 0, {}],
+    ['원소가 셋', 0, { forceCollide: [['a', 'b', 'c']] }],
+    ['같은 id 둘', 0, { forceCollide: [['a', 'a']] }],
+    ['수 id', 0, { forceCollide: [['a', 1]] }],
+    ['빈 id', 0, { forceCollide: [['a', '']] }],
+    ['137개', 0, { forceCollide: Array.from({ length: 137 }, (_, i) => [`a${i}`, `b${i}`]) }]
+  ])('B3 틀린 collision(%s)은 invalidData(collision)', (_label, index, collision) => {
+    expect(() => parseProject(fileWith(index, 'collision', collision))).toThrow(
+      `invalidData: objects[${index}].collision`
+    )
   })
 })

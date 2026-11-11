@@ -5,7 +5,7 @@ import type { StepReadResult } from '../../../shared/ipc'
 import { boundsCenter } from '../cad/alignment'
 import { beginImport, endImport } from '../cad/importStore'
 import { computeMeshMass } from '../cad/meshMass'
-import type { ImportedMesh, ImportedModel } from '../cad/stepImport'
+import { meshHullOf, type ImportedMesh, type ImportedModel } from '../cad/stepImport'
 import { useDialogStore } from '../editor/dialogStore'
 import { useEditorStore } from '../editor/editorStore'
 import { initHistory, redo, undo } from '../editor/history'
@@ -232,7 +232,8 @@ function boxMesh(index: number, min: Vec3, max: Vec3): ImportedMesh {
     colors: null,
     color: [0.5, 0.5, 0.5],
     bounds,
-    mass: computeMeshMass(positions, indices, bounds)
+    mass: computeMeshMass(positions, indices, bounds),
+    hull: meshHullOf(positions)
   }
 }
 

@@ -797,6 +797,15 @@ describe('jointBodyFrames', () => {
     expect(frames.parents).toEqual(built.joints.map((j) => j.parent))
   })
 
+  it('B4 buildWorldJoints는 jointBodyFrames를 쓴다(결과의 bodyFrames가 같은 값, 관절·몸체·틀이 그것에서 온다)', () => {
+    const objects = liftRobot()
+    const built = build(objects)
+    expect(built.bodyFrames).toEqual(jointBodyFrames(objects, 'R'))
+    expect(built.bodyOf).toBe(built.bodyFrames.bodyOf)
+    expect(built.frames).toBe(built.bodyFrames.frames)
+    expect(built.objectIds).toEqual(built.bodyFrames.objectIds)
+  })
+
   it(`관절은 ${MAX_WORLD_JOINTS}개까지(넘는 관절의 하위는 가장 가까운 남은 관절), 없는 로봇은 빈 결과`, () => {
     const objects: SceneObjects = { R: liftRobot().R }
     let parent = 'R'

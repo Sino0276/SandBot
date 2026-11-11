@@ -976,6 +976,8 @@ const en: Messages = {
         '{{count}} meshes of {{name}} are still loading or could not be read, so its collision shape is built without them.',
       worldColliderDegenerate:
         '{{count}} collision shapes of {{name}} are flat or too thin (under 1 mm) to make a convex hull, so they are not used.',
+      worldColliderOutOfRange:
+        '{{count}} collision shapes of {{name}} exceed the simulator coordinate limit (10 m from the body, 6.5 m for convex hull points), so they are not used.',
       worldTooManyColliders:
         'The colliders of {{name}} exceed the simulator limit ({{max}} per body), so only the first {{max}} are used.',
       worldTooManyWorldColliders:
@@ -2120,13 +2122,17 @@ const en: Messages = {
     fitChildrenHint:
       'Fits the center and size to the bounding box of the meshes of this object and its children (Unity Fit to Children).',
     fitChildrenNone: 'There are no child shapes to fit.',
-    fitChildrenPending: 'Fits without the {{count}} meshes that are still loading.',
+    fitChildrenPending:
+      'Fits without the {{count}} meshes that have no shape yet (not loaded yet or failed to load).',
     cadAxes: 'Axes: CAD file axes (up = {{up}}, forward = {{forward}})',
     hull: 'Convex hull {{points}} points · error about {{error}}',
-    hullPending: 'The meshes are still loading, so the convex hull is not built yet.',
+    hullPending:
+      'The meshes have no shape (not loaded yet or failed to load), so the convex hull could not be built. It is rebuilt when they load.',
     hullNone: 'This object and its children have no meshes of this body, so it does not collide.',
     hullDegenerate:
       'The mesh is flat or too thin (under 1 mm) to make a convex hull, so it does not collide.',
+    outOfRange:
+      'Relative to its body this Collider exceeds the simulator coordinate limit (box center and capsule end points 10 m, convex hull points 6.5 m), so it does not collide. Reduce its center or size.',
     hullErrorLarge:
       'The convex hull is up to about {{error}} smaller than the mesh. Raise the vertex limit or split the Collider per part.',
     orphan:
@@ -2139,6 +2145,13 @@ const en: Messages = {
       'When {{body}} has a Collider, the automatic convex hull is not used. This body collides only with its Colliders.',
     runningHint: 'From the next INIT. The Scene view shows the shapes from when the run started.',
     tooMany: 'An object can have up to {{max}} Colliders.',
+    // Explanations for rejected field values (the field keeps the text and shows it as invalid)
+    invalid: {
+      friction: 'Enter a number from 0 to 2. Leave empty for the default 0.4. Press Esc to revert.',
+      size: 'Enter a length from 1 mm to 10 m. You can add a unit. Press Esc to revert.',
+      length: 'Not a length or out of range. You can add a unit. Press Esc to revert.',
+      vertexLimit: 'Enter a whole number from 8 to 64. Press Esc to revert.'
+    },
     // Body collision section of the Rigidbody and Articulation Body cards
     body: {
       title: 'Collision',
@@ -2148,7 +2161,8 @@ const en: Messages = {
       autoHint: 'For more accuracy, add a Mesh Collider (vertex limit 64) or split it per part.',
       fallback: 'Collision shape: outline box (the meshes are not loaded yet)',
       none: 'Collision shape: none (this body has no meshes)',
-      pending: '{{count}} meshes that are still loading are not in the collision shape.',
+      pending:
+        '{{count}} meshes without a shape (not loaded yet or failed to load) are not in the collision shape.',
       fixedBase:
         'The robot has no wheels, so the chassis is fixed. It does not collide with the field, only with the joint bodies.',
       floorTouch:
