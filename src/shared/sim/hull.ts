@@ -390,26 +390,31 @@ export function buildHull(
   // (전개 인자는 큰 메시의 충돌점 수에서 호출 스택을 넘으므로 하나씩 넣는다)
   for (const tri of tris) if (tri.alive) for (const i of tri.conflict) remaining.push(i)
 
-  // 5. 면 합치기
-  let polys = mergeFaces(
-    tris.filter((tri) => tri.alive).map((tri) => ({ v: [...tri.v], n: tri.n })),
-    p
-  )
+  // 5. 면 합치기(합치지 않은 삼각형은 아래 대체에 쓴다)
+  const triangles: Poly[] = tris
+    .filter((tri) => tri.alive)
+    .map((tri) => ({ v: [...tri.v], n: tri.n }))
+  let polys = mergeFaces(triangles, p)
   // 차수 2인 꼭짓점(면 둘만 만남 = 모서리 위)을 두 면에서 뺀다
   const degree = new Map<number, number>()
   for (const poly of polys) for (const v of poly.v) degree.set(v, (degree.get(v) ?? 0) + 1)
-  if ([...degree.values()].some((k) => k === 2)) {
+  if ([...degree.values()].some((k) => k === 2))
     polys = polys.map((poly) => ({ v: poly.v.filter((v) => degree.get(v) !== 2), n: poly.n }))
-    if (polys.some((poly) => poly.v.length < 3)) return null
-  }
   // 6–9. 정규화·평면·검사·오차
-  const kept = [...new Set(polys.flatMap((poly) => poly.v))].sort((x, y) => x - y)
-  const renumber = new Map(kept.map((v, i) => [v, i]))
-  const hull = finishHull(
-    kept.map((i) => point(p, i)),
-    polys.map((poly) => poly.v.map((v) => renumber.get(v)!)),
-    CLOUD_LIMITS
-  )
+  const finish = (list: Poly[]): Hull | null => {
+    if (list.some((poly) => poly.v.length < 3)) return null
+    const kept = [...new Set(list.flatMap((poly) => poly.v))].sort((x, y) => x - y)
+    const renumber = new Map(kept.map((v, i) => [v, i]))
+    return finishHull(
+      kept.map((i) => point(p, i)),
+      list.map((poly) => poly.v.map((v) => renumber.get(v)!)),
+      CLOUD_LIMITS
+    )
+  }
+  // 합치기·차수 2 빼기가 위상을 깨면(얇은 조각 삼각형이 합친 면과 모서리 둘을 나눠 꼭짓점 둘로 줄거나, 빼낸 꼭짓점이 새 면 밖에
+  // 남음) 합치지 않은 Quickhull 삼각형으로 마친다. 삼각형 껍질은 늘 볼록 다양체라 퇴화(부피·폭)만 null이 된다. 합치기가 되는
+  // 입력은 그대로다 [결정: 5 리뷰, 얇은 판 구름 0.3%가 퇴화가 아닌데 null이었다]
+  const hull = finish(polys) ?? finish(triangles)
   if (!hull) return null
   let error = 0
   for (const i of remaining) {

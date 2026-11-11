@@ -224,6 +224,50 @@ describe('buildHull(K3)', () => {
       expect(buildHull(shuffled(cloud, seed + 1000), limit)).toEqual(hull)
     }
   })
+
+  it('5 리뷰: 합치기·차수 2 빼기가 위상을 깨는 얇은 판(약 27 × 30 cm × 2 mm)도 퇴화가 아니면 껍질이 있다(삼각형으로 마침)', () => {
+    // 재현(리뷰): 합친 사각형의 거의 같은 직선 위 꼭짓점이 조각 삼각형과 모서리 둘을 나눠 차수 2가 되고, 빼면 그 삼각형이 두
+    // 꼭짓점으로 줄어 null이었다(부피 약 87 cm³, 폭 > 1 mm인데 "퇴화")
+    const points = [
+      [0.011, 0.0073, 0.0024],
+      [0.1774, 0.1755, 0.0016],
+      [0.268, 0.0562, 0.0005],
+      [0.011, 0.1526, 0.0005],
+      [0.0874, 0.2061, 0.0003],
+      [0.1561, 0.1997, 0.0006],
+      [0.1688, 0.1155, 0.0008],
+      [0.1348, 0.2127, 0.0011],
+      [0.0838, 0.1451, 0.0009],
+      [0.0834, 0.1277, 0.0022],
+      [0.2149, 0.2352, 0.0024],
+      [0.0946, 0.0833, 0.0012],
+      [0.0003, 0.0035, 0.0015],
+      [0.0473, 0.1714, 0.0014],
+      [0.1074, 0.016, 0.002],
+      [0.0829, 0.2624, 0.002],
+      [0.0332, 0.2316, 0.0016],
+      [0.2268, 0.2996, 0.0021],
+      [0.2259, 0.0157, 0.0006],
+      [0.0094, 0.1062, 0.0003],
+      [0.232, 0.2894, 0.0007],
+      [0.0726, 0.0163, 0.0012],
+      [0.238, 0.2957, 0.0021],
+      [0.1774, 0.1807, 0.0008],
+      [0.0948, 0.0314, 0.0005],
+      [0.1262, 0.2018, 0.0019],
+      [0.2227, 0.2987, 0.002]
+    ].map(([x, y, z]) => v(x, y, z))
+    const hull = buildHull(points, MAX_HULL_POINTS)
+    expect(hull).not.toBeNull()
+    expectValidHull(hull!)
+    expect(hull!.volume).toBeGreaterThan(8e-5)
+    expect(hull!.error).toBeLessThanOrEqual(hullError(points, hull!))
+    for (const p of points)
+      for (const face of hull!.faces)
+        expect(dot(face.normal, p) - face.offset).toBeLessThanOrEqual(HULL_MERGE_DISTANCE)
+    expect(canonicalHull(points)).toEqual(hull)
+    expect(buildHull(shuffled(points, 7), MAX_HULL_POINTS)).toEqual(hull)
+  })
 })
 
 describe('정규 껍질(K9)', () => {

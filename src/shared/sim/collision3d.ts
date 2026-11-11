@@ -34,7 +34,7 @@ export const MIN_CAPSULE_SEGMENT = 1e-6
 // Box3D kTolerance(convex_manifold.c:685): |n_ref·δ| > 이 값이면 캡슐 선분을 기준 면 옆 평면으로 잘라 2점
 export const CAPSULE_FACE_PARALLEL = 0.998
 
-// 아래 다섯은 bodyCollision.ts가 같은 이름으로 다시 내보낸다(spec-5 §4.2 부록 A의 자리). 좁은 단계(이 파일)가 쓰므로 여기서
+// 아래 넷은 bodyCollision.ts가 같은 이름으로 다시 내보낸다(spec-5 §4.2 부록 A의 자리). 좁은 단계(이 파일)가 쓰므로 여기서
 // 정한다(bodyCollision.ts는 이 파일을 import하므로 거꾸로 import하면 순환이 된다).
 // 특징(기준 면·모서리) 히스테리시스(m) = fieldContact.ts REFERENCE_TOLERANCE(Box2D k_tol = 0.1·linearSlop)
 export const FEATURE_TOLERANCE = 5e-4
@@ -44,6 +44,11 @@ export const PARALLEL_EDGE_TOLERANCE = 0.005
 export const MAX_MANIFOLD_POINTS = 4
 // 벽 상자를 바닥 아래로 늘이는 깊이(m) [결정: 벽 밑면이 분리 축으로 뽑히지 않게. 바닥 아래에는 아무것도 없다]
 export const WALL_BASE_DEPTH = 0.05
+
+// 모서리 축의 공식 분리 u·(q_B − q_A)가 그 축의 지지 분리를 이보다 넘게 넘으면 지지 분리로 자른다(m) [결정: 5 리뷰. 정확한
+// 껍질(boxHull·prismHull)의 참 Minkowski 면에서는 두 값이 반올림(1e-15 크기)만 달라 값이 그대로이고(기준 해시), 합친 면의 거짓
+// Minkowski 판정이 낸 +0.6 m 같은 분리는 잡는다. 4ab 수용 기준 1e-6 m의 1/1000]
+export const EDGE_SUPPORT_TOLERANCE = 1e-9
 
 // 점 줄이기(§3.5 8)의 공차(m): 두 점이 이보다 가깝거나 삼각형 넓이(×2)가 이것의 제곱보다 작으면 더하지 않는다. Box3D는
 // B3_SPECULATIVE_DISTANCE(4·linearSlop = 2 cm)를 쓴다. [결정: FTC 부품 크기에 맞춰 예측 띠 여유 COLLISION_MARGIN 1 mm]
@@ -448,6 +453,31 @@ function edgeAxis(a: Prepared, b: Prepared, ea: number, eb: number): EdgeAxis | 
   return { sep: dot(axis, sub(pB, pA)), axis }
 }
 
+// 축 u 위의 지지 분리 min_B u·q − max_A u·p(옮긴 틀). 어느 축이든 두 껍질 사이 거리의 하한이다(겹치면 그 축의 겹침 깊이의 음수)
+function supportSeparation(a: Prepared, b: Prepared, u: V3): number {
+  const [ux, uy, uz] = u
+  let maxA = -Infinity
+  for (let i = 0; i < a.vertexCount; i++) {
+    const s = ux * a.p[3 * i] + uy * a.p[3 * i + 1] + uz * a.p[3 * i + 2]
+    if (s > maxA) maxA = s
+  }
+  let minB = Infinity
+  for (let i = 0; i < b.vertexCount; i++) {
+    const s = ux * b.p[3 * i] + uy * b.p[3 * i + 1] + uz * b.p[3 * i + 2]
+    if (s < minB) minB = s
+  }
+  return minB - maxA
+}
+
+// 모서리 축의 분리: 공식 u·(q_B − q_A)는 그 짝이 참 Minkowski 면일 때만 지지 분리다. 합친 면(buildHull)의 Newell 법선은 짧은 모서리에
+// 수직이 아니라(면이 평면에서 HULL_MERGE_DISTANCE까지 벗어나 5 mm 모서리에 약 2° 기움) 거의 나란한 짝에서 Gauss 판정이 틀리게 지나가고,
+// 공식이 +0.6 m 같은 거짓 분리를 내 닿은 짝을 분리로 보고 기억(SatCache)까지 이어졌다. 그래서 공식이 지지 분리를
+// EDGE_SUPPORT_TOLERANCE 넘게 넘으면 지지 분리를 쓴다(어느 쪽이든 거리의 하한이라 거짓 분리가 없다) [결정: 5 리뷰]
+function edgeSeparation(a: Prepared, b: Prepared, found: EdgeAxis): number {
+  const support = supportSeparation(a, b, found.axis)
+  return found.sep > support + EDGE_SUPPORT_TOLERANCE ? support : found.sep
+}
+
 type EdgeQuery = { sep: number; ea: number; eb: number; axis: V3 }
 
 // 시험 감시용 셈(결과에 쓰지 않는다): 모서리 전체 질의 횟수(닿은 동안 기억이 맞으면 건너뛰는지, spec-5 A6)
@@ -481,9 +511,13 @@ function edgeQuery(a: Prepared, b: Prepared, band: number): EdgeQuery | null {
       if (Math.max(cba * cba, dba * dba) < tolerance) continue
       const found = edgeAxis(a, b, ea, eb)
       if (!found) continue
+      // 지지 분리로 자르는 것은 공식 값이 지금 최선을 넘을 때만 잰다(자른 값 ≤ 공식 값이라 아니면 바뀌지 않는다)
       if (!best || found.sep > best.sep) {
-        best = { sep: found.sep, ea, eb, axis: found.axis }
-        if (found.sep > band) return best
+        const sep = edgeSeparation(a, b, found)
+        if (!best || sep > best.sep) {
+          best = { sep, ea, eb, axis: found.axis }
+          if (sep > band) return best
+        }
       }
     }
   }
@@ -725,7 +759,9 @@ function cachedFeature(a: Prepared, b: Prepared, cache: NonNullable<SatCache>): 
   }
   if (cache.a >= a.hull.edges.length || cache.b >= b.hull.edges.length) return null
   const found = edgeAxis(a, b, cache.a, cache.b)
-  return found ? { kind: 'edge', ea: cache.a, eb: cache.b, sep: found.sep, axis: found.axis } : null
+  return found
+    ? { kind: 'edge', ea: cache.a, eb: cache.b, sep: edgeSeparation(a, b, found), axis: found.axis }
+    : null
 }
 
 const cacheOf = (feature: Feature, touching: boolean): NonNullable<SatCache> =>
@@ -1262,7 +1298,18 @@ function collideHullRound(
     const t = cba / (cba - dba)
     const axis = normalize(add(uB, scale(sub(vB, uB), t)))
     if (!axis) return
-    const sep = dot(axis, sub(seg.b, vertexOf(hull, e.b))) - r
+    let sep = dot(axis, sub(seg.b, vertexOf(hull, e.b))) - r
+    if (sep > edgeSep) {
+      // 껍질–껍질 모서리 축과 같은 까닭으로 지지 분리(선분 끝 최소 − 껍질 꼭짓점 최대 − r)로 자른다 [결정: 5 리뷰]
+      let maxHull = -Infinity
+      for (let i = 0; i < hull.vertexCount; i++) {
+        const s =
+          axis[0] * hull.p[3 * i] + axis[1] * hull.p[3 * i + 1] + axis[2] * hull.p[3 * i + 2]
+        if (s > maxHull) maxHull = s
+      }
+      const support = Math.min(dot(axis, seg.a), dot(axis, seg.b)) - maxHull - r
+      if (sep > support + EDGE_SUPPORT_TOLERANCE) sep = support
+    }
     if (sep > edgeSep) {
       edgeSep = sep
       edge = index
