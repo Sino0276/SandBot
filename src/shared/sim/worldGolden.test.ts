@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { resolveServoParams } from './actuatorData'
 import { Articulation } from './articulation'
+import { BodyCollision } from './bodyCollision'
+import { startOverlaps } from './collision3d'
 import {
   HALF,
   HUB_SIGN,
@@ -22,8 +24,8 @@ import { testMotorParams } from './testkit'
 import { PhysicsWorld } from './world'
 import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec'
 
-// 시뮬레이터 출력 기준 해시. 대표 시나리오 일곱(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준, 일곱째는
-// 4d 웹캠 기준)을 고정한 출력열로
+// 시뮬레이터 출력 기준 해시. 대표 시나리오 여덟(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준, 일곱째는
+// 4d 웹캠 기준, 여덟째는 5 메커니즘 충돌 기준)을 고정한 출력열로
 // 돌려, 틱마다 step()이 돌려준 입력, pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(),
 // drainNotices()를 JSON으로 이어 sha256을 잰다.
 //
@@ -43,8 +45,8 @@ import type { SimJointSpec, SimMotorSpec, SimPose, WorldSpec } from './worldSpec
 //
 // 여덟째는 5의 메커니즘 충돌 기준이다(BIOBUZZ, 섀시·관절 몸체의 3D 충돌체, spec-5 §11). 세계 설명 v6의 충돌 형상은 선택 칸이고
 // 형상이 없는 세계는 5 전의 연산 그대로라 앞의 일곱 해시는 5가 바꾸지 않는다(세계 설명 판만 6으로 올랐다). 여덟째는 3D 충돌의
-// Math.sqrt·cos·sin(섀시 틀)과 SAT·GJK 반올림에 기대므로 Node·Electron을 올릴 때 다시 볼 해시가 하나 는다. 계약 커밋에서는
-// 자리(it.todo)만 있고 5 A가 장면을 넣고 잰 값을 고정한다.
+// Math.sqrt·cos·sin(섀시 틀)과 SAT·GJK 반올림에 기대므로 Node·Electron을 올릴 때 다시 볼 해시가 하나 는다. 5 A가 잰 값이고
+// 다음 단계가 지킨다.
 //
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
@@ -556,6 +558,99 @@ function biobuzzCameras(): Scenario {
   }
 }
 
+// (8) 5 메커니즘 충돌(BIOBUZZ, spec-5 §11 — 기하와 덮을 키는 명세 고정, 시각·출력 크기는 5 A가 맞춤): 빨강 벽(w3)을 보는(요 −π/2)
+// 메카넘, 섀시 상자 충돌체(외곽 × [0, 0.2], 3D 경로), 리프트(직선 z, 상자, 섀시와 인접) 위 팔(회전 축 로봇 +Y, goBILDA Torque 서보,
+// 캡슐 0.25 m, 반지름 0.02). 팔이 떨어져 바닥에 닿고(j1k0/fl), 수평으로 돌아와 앞으로 가다 벽 판에 막히고(j1k0/w3 +y), 리프트를
+// 올려 넘긴 뒤 내려 레일 윗면에 얹고(j1k0/w3 +z), 섀시가 벽에 막히고(rk0/w3), 옆걸음으로 FLOWER <3>에 막힌다(rk0/s11).
+// [결정: 명세 출력열의 앞 0.4는 팔이 벽 판에 부딪힐 때 서보(정지 토크 약 1.8 N·m)가 버티지 못해 팔이 접혀 0.3으로, 단계 4의 앞은
+// 0.1(팔이 벽 위를 넘기 전에 로봇이 다시 다가가 팔이 판에 다시 걸리지 않게), 리프트 up 0.8은 1.8 s까지, 단계 5는 리프트 down 0.1·
+// 앞 0.6(레일 윗면 접촉과 섀시 벽 막힘이 함께 나오게)으로 맞췄다]
+function mechanismCollision(): Scenario {
+  const base = robotSpec(
+    { start: { x: 0.25, y: -(1.79286 - HALF - 0.4), yaw: -Math.PI / 2 } },
+    { field: { season: 'biobuzz', hiveTipped: [false, false] } }
+  )
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  const lift: SimJointSpec = {
+    parent: -1,
+    type: 'prismatic',
+    origin: { position: { x: 0, y: 0, z: 0.1 }, rotation: ZERO },
+    axis: { x: 0, y: 0, z: 1 },
+    limits: { lower: 0, upper: 0.4 },
+    body: { mass: 1.5, centerOfMass: ZERO, inertia: [1e-3, 1e-3, 1e-3, 0, 0, 0] },
+    friction: { coulomb: 1, viscous: 0 },
+    spring: null,
+    drive: {
+      kind: 'motor',
+      devices: ['lift'],
+      ratio: 0.112 / (2 * Math.PI),
+      params: LIFT_PARAMS,
+      rigging: { kind: 'direct' }
+    },
+    switches: [],
+    colliders: [
+      { kind: 'box', center: ZERO, rotation: I, half: { x: 0.02, y: 0.15, z: 0.09 }, friction: 0.4 }
+    ]
+  }
+  const arm: SimJointSpec = {
+    parent: 0,
+    type: 'revolute',
+    origin: { position: { x: 0.27, y: 0, z: 0.15 }, rotation: ZERO },
+    axis: { x: 0, y: 1, z: 0 },
+    limits: { lower: -0.6, upper: 1.4 },
+    body: {
+      mass: 0.3,
+      centerOfMass: { x: 0.125, y: 0, z: 0 },
+      inertia: [2e-5, 1.6e-3, 1.6e-3, 0, 0, 0]
+    },
+    friction: { coulomb: 0.02, viscous: 0.001 },
+    spring: null,
+    drive: {
+      kind: 'servo',
+      device: 'armServo',
+      ratio: 1,
+      params: resolveServoParams('gobildaTorque', 'servo'),
+      zeroPulseUs: 1500,
+      direction: 1
+    },
+    switches: [],
+    colliders: [
+      { kind: 'capsule', a: ZERO, b: { x: 0.25, y: 0, z: 0 }, radius: 0.02, friction: 0.4 }
+    ]
+  }
+  const spec: WorldSpec = {
+    ...base,
+    robot: {
+      ...base.robot,
+      colliders: [
+        {
+          kind: 'box',
+          center: { x: 0, y: 0, z: 0.1 },
+          rotation: I,
+          half: { x: HALF, y: HALF, z: 0.1 },
+          friction: 0.4
+        }
+      ]
+    },
+    motors: [...base.motors, liftMotor('lift')],
+    joints: [lift, arm]
+  }
+  const on: DeviceValues = { position: 0.5, pulseUs: 1500, pwm: true }
+  const out = (k: number): Outputs => {
+    // 1. 0–0.4 s 서보 끔(팔이 떨어짐) 2. 0.4–0.7 s 서보 켬 3. 0.7–1.3 s 앞 0.3 4. 1.3–1.8 s 리프트 up 0.8·앞 0.1
+    // 5. 1.8–2.7 s 리프트 down 0.1·앞 0.6 6. 2.7–3.2 s 필드 +X 옆걸음 0.5 7. 3.2–3.4 s 모두 0
+    if (k < 80)
+      return { ...outputs({}), lift: liftOut(0), armServo: { ...on, pulseUs: null, pwm: false } }
+    if (k < 140) return { ...outputs({}), lift: liftOut(0), armServo: on }
+    if (k < 260) return { ...outputs(mecanum(0.3, 0, 0)), lift: liftOut(0), armServo: on }
+    if (k < 360) return { ...outputs(mecanum(0.1, 0, 0)), lift: liftOut(0.8), armServo: on }
+    if (k < 540) return { ...outputs(mecanum(0.6, 0, 0)), lift: liftOut(-0.1), armServo: on }
+    if (k < 640) return { ...outputs(mecanum(0, -0.5, 0)), lift: liftOut(0), armServo: on }
+    return { ...outputs({}), lift: liftOut(0), armServo: on }
+  }
+  return { spec, ticks: 680, time: uneven, out }
+}
+
 // 시나리오가 덮으려는 것을 실제로 지나가는지(해시만으로는 시나리오가 아무 일도 하지 않아도 통과한다)
 const seen = (ticks: Tick[], device: string, key: string, value: unknown): boolean =>
   ticks.some((t) => t.input[device]?.[key] === value)
@@ -658,7 +753,41 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(hash).toBe('f6d7c14e8289b755b48818f7176b9baed885861069aa47afee722e7e98789b2c')
   })
 
-  it.todo('5 메커니즘 충돌(BIOBUZZ, 같은 프로세스에서 두 번 바이트가 같다)')
+  it('5 메커니즘 충돌(BIOBUZZ, 같은 프로세스에서 두 번 바이트가 같다)', () => {
+    expect(startOverlaps(mechanismCollision().spec, resolveSeason('biobuzz'))).toEqual([])
+    // 한 번은 밖의 행 키(짝 토큰까지)와 팔–벽 매니폴드 법선을 모은다(해시에는 들어가지 않는다)
+    const keys = new Set<string>()
+    const original = Articulation.prototype.step
+    const spy = vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h,
+      drive,
+      contacts
+    ) {
+      for (const row of contacts?.rows ?? [])
+        if (row.key.startsWith('cn.')) keys.add(row.key.split('.').slice(0, 2).join('.'))
+      return original.call(this, h, drive, contacts)
+    })
+    let side = false
+    let top = false
+    BodyCollision.manifoldHook = (token, manifold) => {
+      if (token !== 'j1k0/w3') return
+      // 부유 기저의 접촉 틀은 필드 축: 빨강 벽 판에서 팔 쪽은 +y, 레일 윗면은 +z
+      if (manifold.normal.y > 0.99) side = true
+      if (manifold.normal.z > 0.99) top = true
+    }
+    const first = trace(mechanismCollision(), 'biobuzz')
+    BodyCollision.manifoldHook = null
+    spy.mockRestore()
+    const { ticks, hash } = trace(mechanismCollision(), 'biobuzz')
+    expect(hash).toBe(first.hash)
+    for (const key of ['cn.j1k0/fl', 'cn.j1k0/w3', 'cn.rk0/w3', 'cn.rk0/s11'])
+      expect(keys.has(key)).toBe(true)
+    expect(side).toBe(true)
+    expect(top).toBe(true)
+    expect(ticks.filter((t) => t.pose.blocked).length).toBeGreaterThan(20)
+    expect(hash).toBe('c98655b20b36b68af6a3cb5fa0abaf8e4a9b684a0f623c1d8bab814735d7e6cf')
+  })
 
   it('바퀴·관절 없음', () => {
     const { ticks, hash } = trace(motorsOnly())

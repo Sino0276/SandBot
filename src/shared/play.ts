@@ -356,7 +356,8 @@ export type PlayEvent =
 
 // - sharedEncoderMode: 데드휠과 포트를 함께 쓰는 모터를 엔코더 모드로 돌린다(실제로는 포드 엔코더로 제어되지만
 //   시뮬레이터는 축 엔코더로 제어한다고 가정), params.device
-// - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail
+// - worldError: 시뮬레이터 계산 중 오류(이전 센서 값을 계속 보낸다), params.detail(5 몸체 충돌의 비유한 행은
+//   'collision <짝 토큰>', 예: 'collision j1k0/w3'. 그 짝의 행만 빠진다)
 // - 사이드카 안내(sidecarProtocol SidecarNoticeCode): dashCamera, dashImage, rrTuningSaved(params.path, 호스트가 더한
 //   params.file: 모의 저장소 안의 절대 경로. 모의 저장소 밖을 가리키는 path면 없다), 비전(4d)
 //   visionProcessorUnsupported(params.processor), aprilTagNoFieldPose(params.cluster),

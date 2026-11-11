@@ -266,7 +266,8 @@ export function wallRows(
   return rows
 }
 
-// 막는 법선 행인지(blocked 판정): 마찰 없는 한쪽 행(hi = ∞)은 벽 법선과 고정 구조물 법선(fieldContact.ts)뿐이다
+// 막는 법선 행인지(blocked 판정): 평면 경로의 벽·구조물 법선(마찰 없는 한쪽 행, hi = ∞, fieldContact.ts). 3D 몸체 충돌의 법선
+// 행(cn.…)도 같은 꼴이지만 world가 따로 가른다(섀시–정적 짝만 blocked, bodyCollision.ts rows의 blocking)
 export function isBlockingNormal(row: ContactRow): boolean {
   return row.friction === undefined && row.hi === Infinity
 }
