@@ -114,6 +114,22 @@ describe('SAT 껍질–껍질', () => {
     expect(SAT_COUNTERS.edgeQueries - before).toBe(0)
   })
 
+  it('A6 기억한 분리는 마지막 전체 SAT의 값이다: 하위 단계마다 조금씩 흘러가도 합이 FEATURE_TOLERANCE를 넘으면 전체 SAT를 다시 한다', () => {
+    const floor = boxHull({ x: 0, y: 0, z: -0.5 }, I, { x: 0.5, y: 0.5, z: 0.5 })
+    const at = (dz: number): Hull => cube({ x: 0.03, y: -0.02, z: 0.1 + 3e-4 + dz }, I, 0.1)
+    let cache: SatCache = collideHulls(at(0), floor, 2e-3, null).cache
+    const before = SAT_COUNTERS.edgeQueries
+    // 하위 단계마다 0.1 mm(FEATURE_TOLERANCE 0.5 mm 안)씩 내려가 모두 2 mm
+    for (let k = 1; k <= 20; k++) {
+      const r = collideHulls(at(-1e-4 * k), floor, 2e-3, cache)
+      cache = r.cache
+      expect(cache?.touching).toBe(true)
+    }
+    // 기억이 맞는 동안 분리를 새 값으로 바꾸면 전체 SAT를 한 번도 하지 않는다(Box3D는 맞은 기억을 바꾸지 않는다)
+    expect(SAT_COUNTERS.edgeQueries - before).toBeGreaterThan(0)
+    expect(SAT_COUNTERS.edgeQueries - before).toBeLessThanOrEqual(5)
+  })
+
   it('A7 비틀린 상자 모서리 대 모서리: reference ee…, 점 1, 법선 = −u(B → A)', () => {
     const gap = 5e-4
     const h = 0.1
@@ -353,6 +369,42 @@ describe('둥근 짝과 GJK', () => {
       }
       previous = n
     }
+  })
+
+  it('A9 둥근 짝의 분리는 GJK 거리 − 반지름: 면에 거의 나란한 캡슐의 가장 가까운 점이 자른 구간 밖이어도(§3.7)', () => {
+    const r = 0.02
+    // 윗면에 2° 기울어 +x 모서리 너머로 내려가는 캡슐: 기준 면은 윗면(2점)이지만 가장 가까운 점은 모서리 너머에 있다
+    const slope = Math.tan((2 * Math.PI) / 180)
+    const a = { x: 0.1, y: 0, z: 0.5 }
+    const b = { x: 0.6, y: 0, z: 0.5 - 0.5 * slope }
+    const gjk = gjkDistance(box.vertices, [a, b])
+    const result = collideShapes(capsule(a, b, r), hull(box), 1, null)
+    expect(result.manifold?.reference).toBe(`fb${top}`)
+    // 자른 점의 평면 거리는 실제 거리보다 크다(그래서 짝의 분리로 쓰지 않는다)
+    for (const p of result.manifold!.points)
+      expect(p.separation).toBeGreaterThan(gjk.distance - r + 1e-5)
+    expect(Math.abs(result.separation - (gjk.distance - r))).toBeLessThan(1e-12)
+    expect(
+      Math.abs(shapeSeparation(capsule(a, b, r), hull(box)) - (gjk.distance - r))
+    ).toBeLessThan(1e-12)
+    // 거의 나란한 캡슐 둘(2점)도 선분 거리 − 반지름 합
+    const ra = 0.02
+    const rb = 0.015
+    const tilted = collideShapes(
+      capsule({ x: -0.1, y: 0, z: 0 }, { x: 0.1, y: 0, z: 0 }, ra),
+      capsule({ x: -0.05, y: 0, z: 0.04 }, { x: 0.25, y: 0, z: 0.04 - 0.3 * 0.004 }, rb),
+      2e-2,
+      null
+    )
+    expect(tilted.manifold?.points.map((p) => p.id)).toEqual(['c0', 'c1'])
+    const pair = shapeSeparation(
+      capsule({ x: -0.1, y: 0, z: 0 }, { x: 0.1, y: 0, z: 0 }, ra),
+      capsule({ x: -0.05, y: 0, z: 0.04 }, { x: 0.25, y: 0, z: 0.04 - 0.3 * 0.004 }, rb)
+    )
+    expect(Math.abs(tilted.separation - pair)).toBeLessThan(1e-12)
+    expect(Math.min(...tilted.manifold!.points.map((p) => p.separation))).toBeGreaterThanOrEqual(
+      pair - 1e-15
+    )
   })
 
   it('A9 구(a = b) 대 껍질 모서리: 닿음·모서리 위 중심(깊음)에서 NaN 없음', () => {

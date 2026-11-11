@@ -471,18 +471,17 @@ export class BodyCollision {
     }
     const b = pair.b
     const prefix = `${pair.token}.${manifold.reference}`
-    // 섀시–정적이면 §1.7 투영·합치기, 아니면 점 그대로(점마다 법선 n, 간격 g)
+    // 섀시–정적이면 §1.7 투영(점마다 수평 법선 n̂, 간격 g′ = g/|n_h|)·합치기, 아니면 점 그대로(점마다 법선 n, 간격 g)
     type Kept = { point: ManifoldPoint; n: V3; gap: number; robotFace: boolean }
-    let kept: Kept[]
-    let patchNormal: V3
+    let candidates: Kept[]
     if (pair.chassisStatic) {
-      const projected: Kept[] = []
+      candidates = []
       for (const point of manifold.points) {
         const n = arr(point.normal)
         const lh = Math.hypot(n[0], n[1])
         if (lh < MIN_HORIZONTAL_NORMAL) continue
         const supplement = point.id.startsWith('+')
-        projected.push({
+        candidates.push({
           point,
           n: [n[0] / lh, n[1] / lh, 0],
           gap: point.separation / lh,
@@ -492,24 +491,19 @@ export class BodyCollision {
             : manifold.reference.startsWith('fb'))
         })
       }
-      kept = mergeHorizontal(projected)
-      if (kept.length === 0) return null
-      const mn = arr(manifold.normal)
-      const mh = Math.hypot(mn[0], mn[1])
-      patchNormal = mh >= MIN_HORIZONTAL_NORMAL ? [mn[0] / mh, mn[1] / mh, 0] : kept[0].n
+      if (candidates.length === 0) return null
     } else {
-      kept = manifold.points.map((point) => ({
+      candidates = manifold.points.map((point) => ({
         point,
         n: arr(point.normal),
         gap: point.separation,
         robotFace: false
       }))
-      patchNormal = arr(manifold.normal)
     }
     const base = pair.chassisStatic ? art.baseVelocity() : null
-    const normals: ContactRow[] = []
-    const used: Kept[] = []
-    for (const k of kept) {
+    // 점마다 법선 행(합치기 전): 행과 그 목표 여유 c = max(g, 0) − h·조임(행은 J·v ≥ −c/h)
+    let made: { k: Kept; row: ContactRow; offset: number }[] = []
+    for (const k of candidates) {
       const p = k.point.position
       const d = vec(k.n)
       const j = art.relativeJacobian(frames, pair.a, b, p, d)
@@ -532,16 +526,29 @@ export class BodyCollision {
           : -omega * omega * nr
         tighten = (Math.max(0, -curvature) * h) / 2
       }
-      normals.push({
-        key: `cn.${prefix}.${k.point.id}`,
-        j,
-        target: -Math.max(k.gap, 0) / h + tighten,
-        lo: 0,
-        hi: Infinity
+      made.push({
+        k,
+        row: {
+          key: `cn.${prefix}.${k.point.id}`,
+          j,
+          target: -Math.max(k.gap, 0) / h + tighten,
+          lo: 0,
+          hi: Infinity
+        },
+        offset: Math.max(k.gap, 0) - h * tighten
       })
-      used.push(k)
     }
+    if (pair.chassisStatic) made = mergeHorizontal(made)
+    const normals = made.map((x) => x.row)
+    const used = made.map((x) => x.k)
     if (normals.length === 0) return null
+    // 패치 법선: 매니폴드 법선(섀시–정적은 수평 투영, 수평 성분이 너무 작으면 남은 첫 점의 법선)
+    let patchNormal: V3 = arr(manifold.normal)
+    if (pair.chassisStatic) {
+      const mh = Math.hypot(patchNormal[0], patchNormal[1])
+      patchNormal =
+        mh >= MIN_HORIZONTAL_NORMAL ? [patchNormal[0] / mh, patchNormal[1] / mh, 0] : used[0].n
+    }
     const rows: ContactRow[] = [...normals]
     const upward = b === null && patchNormal[2] >= UPWARD_NORMAL_Z
     if (pair.mu > 0) {
@@ -631,37 +638,65 @@ export function frictionTangent(n: V3, slip: V3, previous: V3 | null): V3 {
   return [t[0] / l, t[1] / l, t[2] / l]
 }
 
-// §1.7 수평 자리로 합치기: 법선이 같은 점 묶음(기준 점과 '+' 보충 점)마다 접선 t = ẑ × n̂ 위 s = t·p의 가장 작은 점과 가장 큰
-// 점만 남긴다(같은 s는 CHASSIS_MERGE_TOLERANCE 안에서 같게 보고 그중 g′가 가장 작은 점, 같으면 작은 순번). 두 점의 s 차가 그
-// 공차 이하면 g′가 작은 쪽 하나. 투영 뒤 같은 (x, y)의 점은 섀시 열에서 J가 같아 LCP를 특이하게 만든다(P-M5). 남긴 점은 원래
-// 순서다 [결정: 보충 점은 기준 점과 법선이 달라 같은 행이 아니므로 따로 합친다]
-function mergeHorizontal<T extends { point: ManifoldPoint; n: V3; gap: number }>(points: T[]): T[] {
-  const groups: T[][] = []
-  const groupOf = (p: T): number => (p.point.id.startsWith('+') ? 1 : 0)
-  for (const p of points) (groups[groupOf(p)] ??= []).push(p)
-  const keep = new Set<T>()
+// §1.7 수평 자리로 합치기: 법선이 같은 점 묶음(기준 점과 '+' 보충 점)마다 접선 t = ẑ × n̂ 위 s = t·p로 점을 늘어놓는다. 투영 뒤
+// 섀시 열의 행은 J = (n̂.x, n̂.y, ±s)라 s만 다르다. 그래서
+// 1. 같은 s(CHASSIS_MERGE_TOLERANCE 안, s 오름차순으로 첫 점부터 공차 창)는 한 점으로 본다: g′가 가장 작은 점, 같으면 작은 순번.
+//    같은 (x, y)의 점(상자 면 대 벽 면의 z = 0·H 짝)은 J가 같아 LCP를 정확히 특이하게 만든다(P-M5).
+// 2. 남은 점 가운데 (s, c)의 아래 볼록 껍질 꼭짓점만 남긴다(c = max(g′, 0) − h·조임: 행은 J·v ≥ −c/h). 껍질 위나 그 위쪽 점의
+//    행은 양옆 두 점 행의 볼록 결합으로 이미 지켜진다. 벽 수직 면 대 섀시 상자면 s의 두 끝(4ab 접촉 띠의 두 끝)만 남는다.
+// [결정: spec-5 §1.7은 s의 두 끝만 남기지만, 기운 면(곡면 CAD 껍질, 기운 다리 면)에서는 가운데 s의 점이 더 깊을 수 있다. 두
+// 끝만 남기면 그 점에 행이 없어 하위 단계마다 파고들었다(32점 둥근 섀시가 발판 막대 면을 따라 돌며 0.5 s에 1 mm). 아래 껍질은
+// 두 끝을 포함하므로 두 끝만으로 되는 경우의 행은 바뀌지 않는다]
+// 남긴 점은 원래 순서다 [결정: 보충 점은 기준 점과 법선이 달라 같은 행이 아니므로 따로 합친다]
+function mergeHorizontal<
+  T extends { k: { point: ManifoldPoint; n: V3; gap: number }; offset: number }
+>(points: T[]): T[] {
+  const groups: number[][] = []
+  points.forEach((p, i) => (groups[p.k.point.id.startsWith('+') ? 1 : 0] ??= []).push(i))
+  const keep = new Set<number>()
   for (const group of groups) {
     if (!group || group.length === 0) continue
-    const n = group[0].n
-    const s = group.map((p) => -n[1] * p.point.position.x + n[0] * p.point.position.y)
-    const lo = Math.min(...s)
-    const hi = Math.max(...s)
-    const pick = (inside: (value: number) => boolean): number => {
-      let best = -1
-      group.forEach((p, i) => {
-        if (!inside(s[i])) return
-        if (best < 0 || p.gap < group[best].gap) best = i
-      })
-      return best
+    const n = points[group[0]].k.n
+    const s = new Map<number, number>()
+    for (const i of group) {
+      const position = points[i].k.point.position
+      s.set(i, -n[1] * position.x + n[0] * position.y)
     }
-    const first = pick((value) => value <= lo + CHASSIS_MERGE_TOLERANCE)
-    const last = pick((value) => value >= hi - CHASSIS_MERGE_TOLERANCE)
-    if (hi - lo <= CHASSIS_MERGE_TOLERANCE) {
-      keep.add(group[group[first].gap <= group[last].gap ? first : last])
-    } else {
-      keep.add(group[first])
-      keep.add(group[last])
+    const at = (i: number): number => s.get(i) as number
+    const sorted = group.slice().sort((x, y) => at(x) - at(y) || x - y)
+    // 1. 같은 s 묶음의 대표
+    const representatives: number[] = []
+    for (let k = 0; k < sorted.length;) {
+      const from = at(sorted[k])
+      let best = sorted[k]
+      let next = k + 1
+      while (next < sorted.length && at(sorted[next]) - from <= CHASSIS_MERGE_TOLERANCE) {
+        const i = sorted[next]
+        if (
+          points[i].k.gap < points[best].k.gap ||
+          (points[i].k.gap === points[best].k.gap && i < best)
+        )
+          best = i
+        next++
+      }
+      representatives.push(best)
+      k = next
     }
+    // 2. (s, c)의 아래 볼록 껍질(Andrew 단조 사슬, 같은 직선 위의 가운데 점은 뺀다)
+    const hull: number[] = []
+    for (const i of representatives) {
+      while (hull.length >= 2) {
+        const o = hull[hull.length - 2]
+        const a = hull[hull.length - 1]
+        const turn =
+          (at(a) - at(o)) * (points[i].offset - points[o].offset) -
+          (points[a].offset - points[o].offset) * (at(i) - at(o))
+        if (turn > 0) break
+        hull.pop()
+      }
+      hull.push(i)
+    }
+    for (const i of hull) keep.add(i)
   }
-  return points.filter((p) => keep.has(p))
+  return points.filter((_, i) => keep.has(i))
 }

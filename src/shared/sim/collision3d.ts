@@ -897,7 +897,10 @@ function collidePrepared(
       const realized = remembered.kind === 'edge' || deepest <= remembered.sep + FEATURE_TOLERANCE
       if (built.points.length > 0 && realized) {
         const best = faceMax.sep > remembered.sep ? faceMax : remembered
-        return finish(a, b, remembered, built, best, faceMax, band, o)
+        const hit = finish(a, b, remembered, built, best, faceMax, band, o)
+        // 기억이 맞은 하위 단계는 기억한 분리를 바꾸지 않는다(Box3D: 맞으면 cache를 그대로 둔다, convex_manifold.c:1330). 그래야
+        // 모서리 질의를 건너뛰는 동안 분리가 FEATURE_TOLERANCE씩 하위 단계마다 흘러가 전체 SAT를 끝없이 미루지 않는다
+        return hit.cache ? { ...hit, cache: { ...hit.cache, separation: cache.separation } } : hit
       }
     }
   }
@@ -1202,9 +1205,11 @@ function collideHullRound(
               sep: dist[i] - r,
               id: `c${c.k}`
             }))
+            // 짝의 분리는 GJK 거리 − 반지름이다(§3.7 shapeSeparation, 깊이·편집 자세 겹침). 자른 점의 평면 거리는 자른
+            // 구간 밖에 가장 가까운 점이 있으면(선분 끝이 면 모서리 너머로 기울어 나감) 그보다 커서 겹침을 작게 잰다
             return {
               manifold: out(`${faceTag}${ref}`, n, points),
-              separation: Math.min(points[0].sep, points[1].sep)
+              separation: d - r
             }
           }
         }
@@ -1424,9 +1429,10 @@ function collideCapsules(
                 `c${x.s.k}`
               )
             )
+            // 짝의 분리는 선분 거리 − 반지름 합이다(shapeSeparation과 같은 값, 잘린 점의 거리는 그 이상)
             return {
               manifold: { reference: 'cc', normal: vec(normal), points },
-              separation: Math.min(points[0].separation, points[1].separation)
+              separation: distance - radius
             }
           }
         }

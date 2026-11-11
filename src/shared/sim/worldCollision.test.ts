@@ -32,6 +32,7 @@ import {
 import type { FieldSpec, FieldStructure } from './seasons/fieldSpec'
 import { resolveSeason } from './seasons/seasons'
 import { presetWallFrame, snapRobotToStart } from './seasons/startPose'
+import { planarFrame } from './sensorFrame'
 import { TEST_ROBOT_HEIGHT, testMotorParams } from './testkit'
 import type { Pose2, SimCollider, SimJointSpec, Vec2, Vec3, WorldSpec } from './worldSpec'
 
@@ -378,6 +379,96 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
         expect(worldErrors(r)).toBe(0)
       }
     }, 30_000)
+
+  // 자동 껍질과 같은 꼴의 섀시: 0.1 mm 격자 위 32점 둥근 상자(초타원체 |x/a|^p + |y/b|^p + |z/c|^p = 1, p = 1/0.3). 옆면이
+  // 기울고 굽어 있어 기준 면에 자른 점들의 간격이 높이마다 다르다
+  function roundedChassis(): SimCollider {
+    const points: Vec3[] = []
+    const golden = Math.PI * (3 - Math.sqrt(5))
+    const shape = (v: number): number => Math.sign(v) * Math.abs(v) ** 0.3
+    const grid = (v: number): number => Math.round(v * 10000) / 10000
+    for (let k = 0; k < 32; k++) {
+      const z = 1 - (2 * (k + 0.5)) / 32
+      const r = Math.sqrt(1 - z * z)
+      const t = golden * k
+      points.push({
+        x: grid(HALF * shape(r * Math.cos(t))),
+        y: grid(HALF * shape(r * Math.sin(t))),
+        z: grid(0.12 + 0.12 * shape(z))
+      })
+    }
+    return { kind: 'convex', points, friction: 0.4 }
+  }
+  const ROUNDED = roundedChassis()
+  const ROUNDED_SHAPE = bodyShape(ROUNDED)!
+  const CHASSIS_STATICS = staticShapes(BIOBUZZ).filter((s) => s.hull && s.chassis)
+  // 둥근 섀시 껍질과 섀시가 닿는 정적 형상(벽·solid 구조물)의 3D 침투(SAT 최선 분리: 겹친 볼록의 정확한 깊이)
+  const roundedPenetration = (poses: readonly Pose2[]): number => {
+    let worst = 0
+    for (const pose of poses) {
+      const placed = placeShape(ROUNDED_SHAPE, planarFrame(pose))
+      for (const st of CHASSIS_STATICS)
+        worst = Math.max(worst, -shapeSeparation(placed, { kind: 'hull', hull: st.hull! }))
+    }
+    return worst
+  }
+  const roundedSpec = (start: Pose2): WorldSpec => {
+    const spec = robotSpec({ start }, { field: FIELD })
+    return { ...spec, robot: { ...spec.robot, colliders: [ROUNDED] } }
+  }
+
+  it('A16 둥근 섀시 껍질(32점, 기운 옆면): 발판 막대 면에 비스듬히 닿아 돌아도 가운데 s의 더 깊은 점에 행이 있어 침투 증가 < 1e-6 m', () => {
+    // s의 두 끝만 남기면(§1.7 판 2) 가운데 점(v7.25)에 행이 없어 0.5 s에 1 mm 넘게 파고들던 자세·명령(고정 시드 퍼즈에서 찾음)
+    const start = { x: -0.19481132016966754, y: -0.13566731870368753, yaw: 0.9915979881049569 }
+    expect(roundedPenetration([start])).toBe(0)
+    const command = {
+      fl: 0.7677801251411438,
+      bl: -0.6853687167167664,
+      fr: -0.9296895861625671,
+      br: 0.523459255695343
+    }
+    const steps = recordRows()
+    const r = new Runner(roundedSpec(start)).run(1.5, () => outputs(command))
+    vi.restoreAllMocks()
+    expect(steps.some((keys) => chassisStructureKeys(keys, FOOT_BAR_RED).length >= 3)).toBe(true)
+    expect(roundedPenetration(r.poses)).toBeLessThan(1e-6)
+    expect(r.poses.some((p) => p.blocked)).toBe(true)
+    expect(worldErrors(r)).toBe(0)
+  })
+
+  it('A16 둥근 섀시 껍질 퍼즈: 구조물 근처 무작위 자세·명령 12개에서 침투 증가 < 1e-6 m, worldError 없음', () => {
+    let seed = 777
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    let trials = 0
+    while (trials < 12) {
+      const s = CHASSIS_STATICS[Math.floor(random() * CHASSIS_STATICS.length)]
+      const vs = s.hull!.vertices
+      const cx = vs.reduce((a, v) => a + v.x, 0) / vs.length
+      const cy = vs.reduce((a, v) => a + v.y, 0) / vs.length
+      const angle = random() * 2 * Math.PI
+      const distance = 0.35 + random() * 0.3
+      const start = {
+        x: cx + distance * Math.cos(angle),
+        y: cy + distance * Math.sin(angle),
+        yaw: random() * 2 * Math.PI
+      }
+      const placed = placeShape(ROUNDED_SHAPE, planarFrame(start))
+      if (
+        CHASSIS_STATICS.some(
+          (st) => shapeSeparation(placed, { kind: 'hull', hull: st.hull! }) < 5e-3
+        )
+      )
+        continue
+      const command = mecanum(random() * 2 - 1, random() * 2 - 1, random() * 2 - 1)
+      const r = new Runner(roundedSpec(start)).run(1.5, () => outputs(command))
+      expect(roundedPenetration(r.poses)).toBeLessThan(1e-6)
+      expect(worldErrors(r)).toBe(0)
+      trials++
+    }
+  }, 60_000)
 })
 
 // ---- 메커니즘(관절 몸체) 충돌 ----
