@@ -7,7 +7,8 @@
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
  * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
  * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
- * preventDangerousHardwareAccess. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
+ * preventDangerousHardwareAccess. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
+ * CLOCK_READ만 청구한다. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
  * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다),
  * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
@@ -135,7 +136,9 @@
  * 실제 Lynx 명령은 보내기 전에 MessageKeyedLock.acquire(lockInterruptibly)를 거친다. 그래서 끊긴(interrupt) 스레드의 명령은
  * 허브에 가지 않고, 컨트롤러는 InterruptedException을 handleException(스레드를 다시 끊음)으로 넘긴 뒤 쓰기는 버리고 읽기는 실제
  * 자리값을 돌려준다(LastKnown에 넣지 않는다. 보내기 전에 한 LastKnown.updateValue는 남는다). STOP은 LinearOpMode 스레드를
- * 끊으므로 팀이 끊김을 지우지 않는 한 STOP 뒤의 허브 명령이 모두 이렇다. 끊김을 지워도 위험한 명령은 STOP 뒤 계속 취소된다.
+ * 끊으므로 팀이 끊김을 지우지 않는 한 STOP 뒤의 허브 명령이 모두 이렇다. 끊김을 지워도 위험한 명령은 STOP 뒤 계속 취소되고
+ * (실제 LynxModule.sendCommand의 CANCELLED_FOR_SAFETY), 그 취소도 실제처럼 먼저 잡은 잠금 한 번으로 CLOCK_READ를 청구한다(그래서
+ * 끊김을 지우고 STOP을 무시한 채 위험한 명령만 부르는 루프도 stuckInStop으로 끝난다).
  * SandBot은 팀 코드가 도는 동안(beforeInit ~ afterStop) 끊긴 스레드의 LYNX_COMMAND·BULK_READ·I2C_TRANSACTION 대신 잠금 시도
  * 한 번으로 CLOCK_READ만 청구한다(SimHub.acquireNetworkLock, STOP을 무시하고 하드웨어만 부르는 루프도 가상 시간이 흘러
  * stuckInStop이 된다). 끊김 표시는 그대로 둔다. Lynx 컨트롤러(모터·서보·디지털·아날로그·배터리)의 자리값 예: 엔코더·목표 위치·

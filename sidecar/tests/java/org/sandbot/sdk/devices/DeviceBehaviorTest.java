@@ -194,7 +194,9 @@ public final class DeviceBehaviorTest {
         long before = SimTestSupport.now();
         tetrix.setPower(0.8);
         servo.setPosition(0.9);
-        tetrix.setTargetPosition(100);
+        // 실제 send()는 LynxModule.sendCommand의 안전 검사 전에 네트워크 잠금을 잡는다: 취소된 명령은 허브 명령 비용이 아니라
+        // 잠금 한 번(CLOCK_READ)이다
+        attemptsRun(1, () -> tetrix.setTargetPosition(100), "a cancelled target position");
         tetrix.setVelocity(300);
         Check.equal(0.0, bot.out("tetrix", "power"), "power after STOP is cancelled");
         Check.equal(false, bot.out("servo", "pwm"), "servo PWM stays off after STOP");
@@ -550,7 +552,9 @@ public final class DeviceBehaviorTest {
             Check.equal(77, tetrix.getCurrentPosition(), "reads reach the hub again");
 
             tetrix.setPower(0.7);
-            gobilda.setTargetPosition(300);
+            // 취소도 실제 send()처럼 먼저 잡은 잠금 한 번(CLOCK_READ)이 걸린다. 그래서 끊김을 지우고 STOP을 무시한 채 위험한 명령만
+            // 부르는 루프도 가상 시간이 흘러 stuckInStop으로 끝난다
+            attemptsRun(1, () -> gobilda.setTargetPosition(300), "a cancelled target on the cleared thread");
             gobilda.setVelocity(200);
             servo.setPosition(0.9);
             Check.equal(0.0, bot.out("tetrix", "power"), "nonzero power stays cancelled");

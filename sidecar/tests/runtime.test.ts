@@ -768,7 +768,13 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   // 읽기 루프는 끊긴 스레드의 명령을 버리면서도 잠금 시도 비용을 청구하는지 지킨다(버리기 전에도 명령을 보내 시간이 흘렀다).
   // power 루프의 0이 아닌 쓰기는 버리기 전에는 STOP 뒤의 위험한 명령이라 비용 없이 취소되었다. 그래서 가상 시간이 멈춘 채
   // 하드웨어를 계속 불러 stall도 stuckInStop도 아니었다(호스트가 STOP 5초 뒤 JVM을 끝낼 때까지 돌았다, 여기서는 시간 제한).
-  for (const opMode of ['StopIgnoredHardwareLoop', 'StopIgnoredPowerLoop']) {
+  // 끊김을 지운 power 루프는 잠금은 잡히지만 위험한 명령이라 취소된다. 실제 send()가 그 안전 검사 전에 잡은 잠금 한 번도
+  // CLOCK_READ로 청구해야 같은 까닭으로 멈추지 않는다.
+  for (const opMode of [
+    'StopIgnoredHardwareLoop',
+    'StopIgnoredPowerLoop',
+    'StopClearedInterruptPowerLoop'
+  ]) {
     it(
       `${opMode}: STOP을 무시하고 하드웨어만 부르는 루프는 잠금 시도마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다`,
       async () => {

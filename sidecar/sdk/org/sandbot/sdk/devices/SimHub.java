@@ -150,14 +150,22 @@ public final class SimHub {
     }
 
     /**
-     * Lynx 명령 하나. 보냈으면 true(그때만 비용을 청구한다). 실제 순서 그대로 먼저 네트워크 잠금({@link #acquireNetworkLock}:
-     * 끊긴 스레드면 false), 다음 LynxModule.sendCommand의 안전 검사다: dangerous(실제 LynxMessage.isDangerous가 true: 0이 아닌
-     * 모터 power·목표 속도, 목표 위치, 서보 펄스 폭, 서보 PWM 켜기)이고 STOP을 받은 뒤면 보내지 않고 false다(비용 없음). 실제는
-     * CANCELLED_FOR_SAFETY NACK으로 끝내고 컨트롤러의 예외 처리가 그것을 조용히 버린다.
+     * Lynx 명령 하나. 보냈으면 true(그때만 LYNX_COMMAND 비용을 청구한다). 실제 순서 그대로 먼저 네트워크 잠금
+     * ({@link #acquireNetworkLock}: 끊긴 스레드면 false), 다음 LynxModule.sendCommand의 안전 검사다: dangerous(실제
+     * LynxMessage.isDangerous가 true: 0이 아닌 모터 power·목표 속도, 목표 위치, 서보 펄스 폭, 서보 PWM 켜기)이고 STOP을 받은
+     * 뒤면 보내지 않고 false다. 실제는 CANCELLED_FOR_SAFETY NACK으로 끝내고 컨트롤러의 예외 처리가 그것을 조용히 버린다.
+     *
+     * <p>취소된 명령도 실제 send·sendReceive가 sendCommand 전에 잡은 네트워크 잠금 한 번의 비용으로 CLOCK_READ를 청구한다(끊긴
+     * 스레드의 잠금 시도와 같은 값). 그래서 팀 코드가 끊김을 지운 뒤(8.2 규칙: 위험한 명령은 계속 취소된다) STOP을 무시하고 위험한
+     * 명령만 부르는 루프도 가상 시간이 흘러 stuckInStop으로 끝난다(실제는 OpModeStuckCodeMonitor가 잠금을 잡으려는 그 루프를
+     * 강제로 멈춘다). 실제는 허브와 주고받지 않으므로 허브 명령 비용은 아니다.
      */
     public boolean lynxCommand(boolean dangerous) {
         if (!acquireNetworkLock()) return false;
-        if (dangerous && preventDangerousHardwareAccess) return false;
+        if (dangerous && preventDangerousHardwareAccess) {
+            if (charging) Sim.charge(SimCost.CLOCK_READ); // SandBot: 잡은 잠금 한 번(실제 send()의 acquireNetworkLock)
+            return false;
+        }
         if (charging) Sim.charge(SimCost.LYNX_COMMAND, kind);
         return true;
     }
