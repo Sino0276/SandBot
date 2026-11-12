@@ -694,6 +694,55 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     TIMEOUT
   )
 
+  // STOP을 싣는 틱 경계가 허브 명령의 비용 안(명령을 보내고 응답을 기다리는 사이)에 떨어져도 실제처럼 그 명령이 먼저 허브에 가고
+  // fail safe가 마지막이다(SimHub.keepFailSafeLast). 고치기 전에는 fail safe 뒤에 돌아온 setPower가 정전력을 다시 쓰고(LinearOpMode),
+  // 끊기지 않는 반복 OpMode는 fail safe가 잊은 켜기까지 다시 보내 모터가 다시 돌았다.
+  for (const [opMode, guard] of [
+    ['StopDuringSetPower', {}],
+    ['StopDuringSetPowerIterative', { raceCalls: '1' }]
+  ] as const) {
+    it(
+      `${opMode}: STOP이 setPower의 허브 명령 비용 안에 떨어져도 STOP 뒤 모터는 멈추고 꺼진 채다`,
+      async () => {
+        const script: Script = {
+          opMode,
+          events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+          request: { configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']) }
+        }
+        const run = await runSidecar(b, script)
+        expect(errors(run), run.stderr).toEqual([])
+        expect(finishedReason(run)).toBe('stopped')
+        // 반복 OpMode: 정전력 명령 + 켜기(3.0 ms)인 setPower가 꼭 하나 — 경계가 정말 그 명령 안에 떨어졌다
+        expect(results(run)).toEqual(guard)
+        const all = ticks(run)
+        const drive = (t: Tick): DeviceValues => t.outputs.drive ?? {}
+        // STOP 전에는 0이 아닌 power로 켜져 돈다
+        expect(
+          all.some(
+            (t) =>
+              t.phase === 'running' &&
+              t.tick < STOP_TICK &&
+              drive(t).enabled === true &&
+              Math.abs(Number(drive(t).power)) > 0.2
+          )
+        ).toBe(true)
+        // STOP 뒤(afterStop 전 OpMode가 50 ms 자는 동안 포함): fail safe가 마지막이다
+        const after = all.filter((t) => t.tick > STOP_TICK)
+        expect(after.length).toBeGreaterThanOrEqual(5)
+        for (const t of after) {
+          expect(drive(t), `tick ${t.tick}`).toMatchObject({
+            power: 0,
+            apiPower: 0,
+            enabled: false
+          })
+        }
+        const again = await runSidecar(b, script)
+        expect(normalized(again)).toEqual(normalized(run))
+      },
+      TIMEOUT
+    )
+  }
+
   // Lynx 컨트롤러 밖의 허브 트랜잭션(LynxModule ADC, I2C 장치)도 같다: 실제 LynxI2cDeviceSynch는 모두 0인 가짜 데이터를 주고
   // "placeholder: readTimestamped"를 한 번 남기며, 옮긴 실제 드라이버가 그 0을 해석한다.
   it(

@@ -9,7 +9,8 @@
  * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
  * preventDangerousHardwareAccess. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
  * CLOCK_READ만 청구한다. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
- * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다),
+ * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다. STOP을 싣는
+ * 틱 경계가 허브 명령의 비용 안에 떨어져도 실제처럼 그 명령이 먼저이고 fail safe가 마지막이다: 아래 "STOP과 진행 중인 명령"),
  * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
  * <h2>시뮬레이터 장치(SimDevice)</h2>
@@ -159,8 +160,21 @@
  * 경고와 단위 사원수(요·피치·롤 0), resetYaw는 시간 제한(50·100 ms)까지 다시 읽고 마지막 방향을 쓰며, 각속도는 0, initialize는
  * 칩 확인 읽기가 0이라 실패한다. 옛 BNO055IMU는 Euler 0(heading −0), 단위 사원수, 각속도 −0·−0·0, 중력·가속도 0, 온도 0, 상태
  * IDLE, 보정 상태 0(isXxxCalibrated false)이고 initialize는 CHIP_ID 0으로 실패해 이전 매개변수를 지킨다. 실제처럼 IMU 인터페이스와
- * 옛 BNO055IMU는 I2C 클라이언트(자리값 로그)가 따로다. 한계: STOP은 틱 경계에서만 와서 실제의 경쟁 창(stopRequested와 끊기
- * 사이, 명령을 보낸 뒤 응답을 기다리는 사이)은 없다. IMU 초기화 도중에 끊기면 남은 트랜잭션은 자리값이고 초기화는 실패로 보며
+ * 옛 BNO055IMU는 I2C 클라이언트(자리값 로그)가 따로다. 한계: STOP은 틱 경계에서만 와서 실제의 stopRequested와 끊기 사이의
+ * 경쟁 창은 없다(한 경계에서 fail safe → stopRequested → 끊기가 한꺼번에). 명령을 보내고 응답을 기다리는 사이에 STOP이 오는 경우는
+ * 아래 "STOP과 진행 중인 명령"이다. IMU 초기화 도중에 끊기면 남은 트랜잭션은 자리값이고 초기화는 실패로 보며
  * 실제의 단계별 기다림·로그는 흉내 내지 않는다. 초기화 실패 로그의 클래스 이름은 SandBot 클래스다(SimImu 등).
+ *
+ * <h3>STOP과 진행 중인 명령</h3>
+ * 틱 경계는 비용 청구(Sim.charge) 안에서 처리되므로, STOP을 싣는 경계가 허브 명령의 비용 안(팀 코드가 명령을 보내고 응답을
+ * 기다리는 사이)에 떨어지면 fail safe가 컨트롤러가 그 명령의 상태를 쓰기 전에 돈다. 실제(OpModeManagerImpl.callActiveOpModeStop,
+ * LynxModule 네트워크 잠금)는 그 명령이 이미 전선 위에 있고 fail safe가 잠금을 기다려 그 뒤에 가므로 fail safe가 마지막이다. 그래서
+ * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·끄기·모드·close, 서보 펄스·PWM 켜기)은 시작할 때 허브의 fail safe
+ * 수를 읽어 두고, 그사이 fail safe가 있었으면 끝날 때 그 효과(모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기)를 비용 없이 다시 놓는다
+ * (SimHub.keepFailSafeLast). 그 호출이 쓴 값 가운데 fail safe가 지우지 않는 것(모드·엔코더 리셋·목표 위치·펄스 폭·PIDF)은 남는다.
+ * 명령 시도와 비용은 그대로라 이 경쟁이 없는 실행의 출력은 바뀌지 않는다. 그 호출의 뒤따르는 명령(power 뒤 켜기, 모드 뒤 power
+ * 다시 보내기)은 fail safe 뒤의 규칙(끊긴 스레드·위험한 명령)으로 시도하고 청구하며, 보냈더라도 그 효과는 fail safe가 덮는다(실제는
+ * 잠금을 잡는 순서에 따라 fail safe 앞에 갈 수도 있다). STOP 뒤의 새 호출은 이 규칙과 관계없다: 끊김을 지운 스레드나 반복 OpMode의
+ * power 0·켜기는 실제처럼 허브에 간다.
  */
 package org.sandbot.sdk.devices;

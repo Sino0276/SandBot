@@ -30,6 +30,10 @@ import java.util.Map;
  *   <li>끊긴 스레드: 팀 코드가 도는 동안 끊긴(interrupt) 스레드의 명령은 보내지 않는다({@link #acquireNetworkLock}). 비용
  *       메서드({@link #lynxCommand}·{@link #bulkReadCommand}·{@link #i2cTransaction})가 false를 돌려주면 컨트롤러는 실제
  *       try 블록을 건너뛰는 자리에서 실제 자리값으로 돌아간다(쓰기는 버리고, 읽기는 자리값이며 LastKnown에 넣지 않는다).</li>
+ *   <li>STOP과 진행 중인 명령: 틱 경계는 비용 청구({@link Sim#charge}) 안에서 처리되므로 STOP의 fail safe가 명령의 비용 안에서,
+ *       즉 컨트롤러가 그 명령의 상태를 쓰기 전에 돈다. 실제는 그 명령이 이미 전선 위에 있고 fail safe는 네트워크 잠금을 기다려 그
+ *       뒤에 가므로 fail safe가 마지막이다. 그래서 fail safe가 덮는 출력(모터 정전력·목표 속도·켜기, 서보 PWM 켜기)을 쓰는 컨트롤러
+ *       호출은 시작할 때 {@link #failSafes()}를 읽어 두고 끝날 때 {@link #keepFailSafeLast}로 넘긴다. 명령 시도와 비용은 그대로다.</li>
  * </ul>
  */
 public final class SimHub {
@@ -62,6 +66,12 @@ public final class SimHub {
     SimServoController servos;
     SimDigitalChannelController digital;
     SimAnalogInputController analog;
+
+    /**
+     * 이 허브에 간 fail safe(LynxFailSafeCommand) 수. OpMode 스레드만 쓴다(런타임의 fail safe도 그 스레드의 틱 경계에서 돈다).
+     * {@link #keepFailSafeLast}가 컨트롤러 호출 사이에 fail safe가 있었는지 알아보는 데 쓴다.
+     */
+    private int failSafes = 0;
 
     // BulkCachingMode 상태(실제 LynxModule.bulkCachingMode·bulkCachingHistory·lastBulkData)
     private LynxModule.BulkCachingMode bulkCachingMode = LynxModule.BulkCachingMode.OFF;
@@ -317,10 +327,35 @@ public final class SimHub {
      */
     public boolean failSafe() {
         if (!lynxCommand()) return false; // LynxFailSafeCommand
+        failSafes++;
+        applyFailSafe();
+        return true;
+    }
+
+    /** fail safe가 허브와 컨트롤러에 남기는 것: 모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기 */
+    private void applyFailSafe() {
         if (motors != null) motors.hubFailSafe();
         if (servos != null) servos.hubFailSafe();
         forgetLastKnown();
-        return true;
+    }
+
+    /** 지금까지 이 허브에 간 fail safe 수({@link #keepFailSafeLast}에 넘긴다) */
+    int failSafes() {
+        return failSafes;
+    }
+
+    /**
+     * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·모드, 서보 펄스·PWM 켜기)이 끝날 때 부른다. since는 그 호출을
+     * 시작할 때 읽은 {@link #failSafes()}다. 그사이 fail safe가 있었으면 — STOP을 싣는 틱 경계가 그 호출의 허브 명령 비용 안에
+     * 떨어졌다 — fail safe의 효과({@link #applyFailSafe})를 다시 놓는다. 실제(OpModeManagerImpl.callActiveOpModeStop, LynxModule
+     * 네트워크 잠금)는 진행 중이던 명령이 먼저 허브에 가고 fail safe가 그 뒤라 fail safe가 마지막이다. SandBot은 fail safe를 그 명령의
+     * 비용 안에서 하므로, 돌아온 호출이 쓴 정전력·목표 속도·켜기(뒤따르는 켜기 포함)와 LastKnown을 여기서 fail safe가 남긴 것으로
+     * 되돌린다. fail safe가 지우지 않는 값(모드·엔코더 리셋·목표 위치·펄스 폭·PIDF)은 그 호출이 쓴 그대로다.
+     *
+     * <p>비용을 청구하지 않고 시계를 부르지 않는다(finally 안에서 부른다). 명령 시도와 비용은 그대로라 경쟁이 없는 실행은 바뀌지 않는다.
+     */
+    void keepFailSafeLast(int since) {
+        if (failSafes != since) applyFailSafe();
     }
 
     void forgetLastKnown() {
