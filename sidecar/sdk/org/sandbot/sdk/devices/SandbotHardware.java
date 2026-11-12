@@ -378,7 +378,8 @@ public final class SandbotHardware {
                         // 실제 SDK처럼 한 구성 항목에 두 드라이버(IMU와 옛 BNO055IMU, 같은 칩): HardwareFactory.addUserDevicesToMap
                         List<HardwareDevice> drivers = new ArrayList<>();
                         drivers.add(imu);
-                        drivers.add(new SimBNO055IMU(client, imu));
+                        // 드라이버마다 따로인 I2C 클라이언트(실제 HardwareDeviceManager.createI2cDeviceSynchSimple, 같은 버스·주소)
+                        drivers.add(new SimBNO055IMU(new SimI2cDeviceSynch(hub, bus, I2cAddr.create7bit(0x28), name, new SilentChip()), imu));
                         for (HardwareDevice driver : drivers) addUserDevice(name, driver);
                         map.put(name, drivers);
                         return;

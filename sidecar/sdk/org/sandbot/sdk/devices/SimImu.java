@@ -5,6 +5,7 @@ import com.qualcomm.robotcore.hardware.I2cDeviceSynchDeviceWithParameters;
 import com.qualcomm.robotcore.hardware.I2cDeviceSynchSimple;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.QuaternionBasedImuHelper;
+import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.robotcore.external.matrices.VectorF;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -30,21 +31,30 @@ import org.sandbot.sim.SimDevice;
  *
  * <p>I2C 트랜잭션 수(실제 드라이버 소스로 셈): 초기화(hardwareMap.get의 지연 초기화, initialize(Parameters)) BHI260AP 13번,
  * BNO055 18번 + 모드 전환 대기 40 ms. 방향 읽기 1번(쿼터니언 8바이트), 각속도 읽기 1번. resetYaw는 방향 읽기 1번.
+ *
+ * <p>끊긴 스레드(STOP 뒤의 LinearOpMode 스레드)에서는 I2C 읽기가 보내지지 않고 모두 0 바이트다({@link SimI2cDeviceSynch}). 실제
+ * 드라이버(BHI260IMU.getRawQuaternion, BNO055Util.getRawQuaternion)는 모두 0인 쿼터니언을 FailedToRetrieveQuaternionException으로
+ * 거절하고 QuaternionBasedImuHelper가 경고("…Returning the identity quaternion.")와 단위 사원수를 낸다(그래서 요·피치·롤 0). resetYaw는
+ * 시간 제한까지 다시 읽다가 마지막으로 받은 방향을 쓴다. 각속도는 0 바이트 그대로 0이다. 여기서는 바이트로 값을 만들지 않으므로
+ * 읽기가 자리값이었는지({@link SimI2cDeviceSynch#lastReadWasPlaceholder})를 보고 같은 결과를 낸다.
  */
 public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSimple, IMU.Parameters> implements IMU {
     public static final String KIND = "imu";
 
     /** 칩 종류 */
     public enum Chip {
-        BHI260AP("REV internal IMU (BHI260AP)", 13, 0),
-        BNO055("REV internal IMU (BNO055)", 18, 40);
+        BHI260AP("REV internal IMU (BHI260AP)", "BHI260IMU", 13, 0),
+        BNO055("REV internal IMU (BNO055)", "BNO055IMU (new)", 18, 40);
 
         final String deviceName;
+        /** 실제 드라이버의 로그 태그(BHI260IMU.TAG, BNO055IMUNew.TAG) */
+        final String tag;
         final int initTransactions;
         final int initSleepMs;
 
-        Chip(String deviceName, int initTransactions, int initSleepMs) {
+        Chip(String deviceName, String tag, int initTransactions, int initSleepMs) {
             this.deviceName = deviceName;
+            this.tag = tag;
             this.initTransactions = initTransactions;
             this.initSleepMs = initSleepMs;
         }
@@ -71,15 +81,45 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
         publish();
     }
 
-    private void transactions(int count) {
-        for (int i = 0; i < count; i++) deviceClient.read(0, 1);
+    /** I2C 트랜잭션 count번. 모두 보냈으면 true(하나라도 끊긴 스레드라 자리값이었으면 false, 남은 것도 실제처럼 시도한다). */
+    private boolean transactions(int count) {
+        boolean sent = true;
+        for (int i = 0; i < count; i++) {
+            deviceClient.read(0, 1);
+            if (placeholder(deviceClient)) sent = false;
+        }
+        return sent;
     }
 
+    /** 이 클라이언트의 마지막 읽기가 보내지 못한 자리값(모두 0)이었나 */
+    static boolean placeholder(I2cDeviceSynchSimple client) {
+        return client instanceof SimI2cDeviceSynch && ((SimI2cDeviceSynch) client).lastReadWasPlaceholder();
+    }
+
+    /**
+     * 실제처럼 매개변수와 장착 방향은 먼저 바꾸고 칩을 확인한다(BHI260IMU·BNO055IMUNew.internalInitialize). 끊긴 스레드라 첫 읽기가
+     * 자리값(0)이면 실제처럼 칩이 없다고 보고 실패한다: BHI260은 PRODUCT_IDENTIFIER가 0이라 "Could not find Control Hub IMU
+     * (BHI260AP)", BNO055는 BNO055Util.imuIsPresent(retryAfterWaiting)가 CHIP_ID 0을 보고 Thread.sleep(650)(끊긴 스레드라 바로
+     * InterruptedException, 다시 끊음) 뒤 한 번 더 읽고 InitException("IMU appears to not be present") → "Failed to initialize BNO055
+     * IMU"다. 실패하면 I2cDeviceSynchDeviceWithParameters.initialize가 isInitialized를 false로 두고 장치를 건강하지 않다고 남긴다.
+     */
     @Override protected boolean internalInitialize(IMU.Parameters parameters) {
         parameters = parameters.copy();
         this.parameters = parameters;
         helper.setImuOrientationOnRobot(parameters.imuOrientationOnRobot);
-        transactions(chip.initTransactions);
+        if (!transactions(1)) { // imuIsPresent
+            if (chip == Chip.BHI260AP) {
+                RobotLog.ee(chip.tag, "Could not find Control Hub IMU (BHI260AP)");
+            } else {
+                transactions(1); // Thread.sleep(650)이 끊긴 스레드라 바로 끝나고 CHIP_ID를 다시 읽는다
+                // SandBot: 실제는 RobotLog.ee(TAG, e, …)라 InitException의 스택도 남긴다(BNO055Util은 껍데기라 만들지 않는다)
+                RobotLog.ee(chip.tag, "Failed to initialize BNO055 IMU");
+            }
+            return false;
+        }
+        // SandBot: STOP이 초기화 도중에 스레드를 끊으면 남은 트랜잭션은 자리값이고 초기화는 실패로 본다(실제 단계별 기다림·로그는
+        // 흉내 내지 않는다. BNO055는 마지막 SYS_STAT이 0 = IDLE이라 실패다)
+        boolean sent = transactions(chip.initTransactions - 1);
         if (chip.initSleepMs > 0) {
             try {
                 Sim.sleepMillis(chip.initSleepMs);
@@ -88,16 +128,27 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
             }
         }
         publish();
-        return true;
+        return sent;
     }
 
     private void publish() {
         device.output("chip", chip.name());
     }
 
-    /** 칩 좌표의 방향(실제 getRawQuaternion). 입력 로봇 방향을 장착 방향으로 거꾸로 바꾼다. */
-    private Quaternion getRawQuaternion() {
-        deviceClient.read(0, 8); // 쿼터니언 읽기 한 번
+    /**
+     * 칩 좌표의 방향(실제 getRawQuaternion). 입력 로봇 방향을 장착 방향으로 거꾸로 바꾼다. 읽기가 자리값(모두 0)이면 실제처럼
+     * FailedToRetrieveQuaternionException이다.
+     */
+    private Quaternion getRawQuaternion() throws QuaternionBasedImuHelper.FailedToRetrieveQuaternionException {
+        Quaternion raw = readChipQuaternion(deviceClient);
+        if (raw == null) throw new QuaternionBasedImuHelper.FailedToRetrieveQuaternionException();
+        return raw;
+    }
+
+    /** client로 쿼터니언을 한 번 읽는다. 보내지 못한 읽기(모두 0, 유효한 쿼터니언이 아님)면 null. */
+    Quaternion readChipQuaternion(I2cDeviceSynchSimple client) {
+        client.read(0, 8); // 쿼터니언 읽기 한 번
+        if (placeholder(client)) return null;
         long now = SimLastKnown.now();
         double yaw = device.inputDouble("yaw", 0) - yawAtReset;
         double pitch = device.inputDouble("pitch", 0), roll = device.inputDouble("roll", 0);
@@ -112,8 +163,17 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
     }
 
     private AngularVelocity getRawAngularVelocity() {
-        deviceClient.read(0, 6); // 각속도 읽기 한 번
+        return readChipAngularVelocity(deviceClient);
+    }
+
+    /**
+     * client로 칩 좌표의 각속도(°/s)를 한 번 읽는다. 보내지 못한 읽기면 실제처럼 0 바이트에서 나온 (0, 0, 0)이다(드라이버는 0을
+     * 거절하지 않는다).
+     */
+    AngularVelocity readChipAngularVelocity(I2cDeviceSynchSimple client) {
+        client.read(0, 6); // 각속도 읽기 한 번
         long now = SimLastKnown.now();
+        if (placeholder(client)) return new AngularVelocity(AngleUnit.DEGREES, 0, 0, 0, now);
         VectorF robot = new VectorF(
                 (float) Math.toDegrees(device.inputDouble("pitchRate", 0)),
                 (float) Math.toDegrees(device.inputDouble("rollRate", 0)),
@@ -128,14 +188,14 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
         return chip;
     }
 
-    /** 칩 좌표의 방향(쿼터니언 읽기 한 번) */
-    Quaternion chipQuaternion() {
-        return getRawQuaternion();
+    /** 칩 좌표의 방향(옛 드라이버의 client로 쿼터니언 읽기 한 번). 보내지 못한 읽기면 null. */
+    Quaternion chipQuaternion(I2cDeviceSynchSimple client) {
+        return readChipQuaternion(client);
     }
 
-    /** 칩 좌표의 각속도(°/s, 각속도 읽기 한 번) */
-    AngularVelocity chipAngularVelocity() {
-        return getRawAngularVelocity();
+    /** 칩 좌표의 각속도(°/s, 옛 드라이버의 client로 각속도 읽기 한 번, 보내지 못하면 0) */
+    AngularVelocity chipAngularVelocity(I2cDeviceSynchSimple client) {
+        return readChipAngularVelocity(client);
     }
 
     /**
@@ -152,19 +212,19 @@ public class SimImu extends I2cDeviceSynchDeviceWithParameters<I2cDeviceSynchSim
     // ---- IMU ----
 
     @Override public void resetYaw() {
-        helper.resetYaw(chip.name(), this::getRawQuaternion, chip == Chip.BNO055 ? 100 : 50);
+        helper.resetYaw(chip.tag, this::getRawQuaternion, chip == Chip.BNO055 ? 100 : 50);
     }
 
     @Override public YawPitchRollAngles getRobotYawPitchRollAngles() {
-        return helper.getRobotYawPitchRollAngles(chip.name(), this::getRawQuaternion);
+        return helper.getRobotYawPitchRollAngles(chip.tag, this::getRawQuaternion);
     }
 
     @Override public Orientation getRobotOrientation(AxesReference reference, AxesOrder order, AngleUnit angleUnit) {
-        return helper.getRobotOrientation(chip.name(), this::getRawQuaternion, reference, order, angleUnit);
+        return helper.getRobotOrientation(chip.tag, this::getRawQuaternion, reference, order, angleUnit);
     }
 
     @Override public Quaternion getRobotOrientationAsQuaternion() {
-        return helper.getRobotOrientationAsQuaternion(chip.name(), this::getRawQuaternion, true);
+        return helper.getRobotOrientationAsQuaternion(chip.tag, this::getRawQuaternion, true);
     }
 
     @Override public AngularVelocity getRobotAngularVelocity(AngleUnit angleUnit) {

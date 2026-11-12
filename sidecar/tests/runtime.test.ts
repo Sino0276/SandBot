@@ -42,6 +42,8 @@ type Script = {
   // 그 틱의 tickReply에 실을 DS 사건
   events?: Record<number, DsEvent[]>
   gamepads?: (tick: number) => [GamepadState | null, GamepadState | null]
+  // 그 틱의 tickReply에 실을 장치 입력(없으면 {})
+  inputs?: (tick: number) => Record<string, DeviceValues>
   request?: Partial<RunRequest>
   // 메시지를 받을 때마다. true를 돌려주면 shutdown을 보낸다(틱이면 답하지 않고).
   shutdownWhen?: (message: SidecarMessage) => boolean
@@ -144,7 +146,7 @@ function runSidecar(b: SidecarBuild, script: Script): Promise<RunResult> {
           tick: message.tick,
           events: script.events?.[message.tick] ?? [],
           gamepads: script.gamepads?.(message.tick) ?? [null, null],
-          inputs: {},
+          inputs: script.inputs?.(message.tick) ?? {},
           configSet: []
         })
       }
@@ -685,6 +687,77 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       // 끊긴 스레드의 setPower(0)은 모터를 다시 켜지 않는다
       for (const t of ticks(run).filter((t) => t.tick > STOP_TICK)) {
         expect(t.outputs.drive).toMatchObject({ power: 0, enabled: false })
+      }
+      const again = await runSidecar(b, script)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    TIMEOUT
+  )
+
+  // Lynx 컨트롤러 밖의 허브 트랜잭션(LynxModule ADC, I2C 장치)도 같다: 실제 LynxI2cDeviceSynch는 모두 0인 가짜 데이터를 주고
+  // "placeholder: readTimestamped"를 한 번 남기며, 옮긴 실제 드라이버가 그 0을 해석한다.
+  it(
+    'STOP으로 끊긴 스레드의 엔코더·IMU·I2C 거리 센서·허브 전압 읽기는 실제 자리값이고 목표 위치 쓰기는 허브에 가지 않는다',
+    async () => {
+      // VL53L0X 초기화(hardwareMap.get, I2C 트랜잭션 100여 번)가 가상 수백 ms라 그 뒤에 START·STOP한다(초기화 도중의 STOP은
+      // 그다음 명령을 모두 끊는다)
+      const start = 150
+      const stop = 180
+      const script: Script = {
+        opMode: 'StopInterruptedSensors',
+        events: { [start]: ['start'], [stop]: ['stop'] },
+        // 진짜 값이 자리값과 다르게: 엔코더 321틱, 요 30°, 거리 0.5 m
+        inputs: (tick): Record<string, DeviceValues> =>
+          tick === 1
+            ? { drive: { position: 321 }, imu: { yaw: Math.PI / 6 }, distance: { distance: 0.5 } }
+            : {},
+        request: {
+          configXml: writeConfig([
+            '<TetrixMotor name="drive" port="0" />',
+            '<ControlHubImuBHI260AP name="imu" port="0" bus="0" />',
+            '<REV_VL53L0X_RANGE_SENSOR name="distance" port="0" bus="1" />'
+          ])
+        }
+      }
+      const run = await runSidecar(b, script)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      expect(results(run)).toEqual({
+        interrupted: 'true',
+        position: '0',
+        yaw: '0.0',
+        distanceMm: '65535.0',
+        volts: '0.0',
+        stillInterrupted: 'true',
+        positionCleared: '321',
+        yawCleared: '30',
+        voltsCleared: '12.5'
+      })
+      const robotLogs = run.messages.flatMap((m) =>
+        m.type === 'log' && m.stream === 'robotLog' ? [m.text] : []
+      )
+      // I2C 클라이언트(IMU·거리 센서)마다 한 번, IMU 도우미의 경고
+      expect(
+        robotLogs.filter((t) => t === 'E/LynxI2cDeviceSynch: placeholder: readTimestamped')
+      ).toHaveLength(2)
+      expect(robotLogs).toContain(
+        'W/BHI260IMU: getRobotOrientationAsQuaternion(): Failed to retrieve valid quaternion from IMU. Returning the identity quaternion.'
+      )
+      const all = ticks(run)
+      // 초기화가 START 전에 끝나 RUN_TO_POSITION으로 돌았다
+      expect(
+        all.some(
+          (t) =>
+            t.tick < stop &&
+            t.outputs.drive?.mode === 'RUN_TO_POSITION' &&
+            Number(t.outputs.drive?.power) > 0.49
+        )
+      ).toBe(true)
+      // STOP 뒤: 모터는 꺼진 채이고 목표 위치는 그대로다(끊긴 스레드의 setTargetPosition은 가지 않았다)
+      const after = all.filter((t) => t.tick > stop)
+      expect(after.length).toBeGreaterThan(0)
+      for (const t of after) {
+        expect(t.outputs.drive).toMatchObject({ power: 0, enabled: false, targetPosition: 1000 })
       }
       const again = await runSidecar(b, script)
       expect(normalized(again)).toEqual(normalized(run))

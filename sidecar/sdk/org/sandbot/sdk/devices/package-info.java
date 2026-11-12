@@ -118,14 +118,17 @@
  *       디지털 출력 쓰기는 늘 보낸다. 배터리 전압·모터 전류는 늘 명령 하나다. PIDF 계수도 LastKnown이 없어 쓰기·읽기마다 보낸다:
  *       그 포트·모드의 첫 쓰기는 원래 계수 읽기 + 쓰기 = 2개, 그 뒤 쓰기(같은 값이어도)와 getPIDFCoefficients는 1개,
  *       getPIDCoefficients는 F가 0이면 1개, 아니면 허브가 NACK해 PIDF로 다시 물어 2개. PIDF 알고리즘의 RUN_TO_POSITION에 I·D·F를 주면
- *       보내지 않고 UnsupportedOperationException(첫 번째면 원래 계수 읽기 1개).</li>
+ *       보내지 않고 UnsupportedOperationException(첫 번째면 원래 계수 읽기 1개). LynxModule의 전압·전류·온도·펌웨어 읽기, LED 패턴,
+ *       충전·디버그, 팀이 부른 failSafe는 하나씩이고 getImuType은 실제처럼 먼저 묻는 getRevProductNumber 하나다(그 뒤의 I2C 칩
+ *       찾기는 세지 않는다).</li>
  *   <li>BULK_READ: LynxGetBulkInputDataCommand. BulkCachingMode(LynxModule)를 따른다: OFF는 엔코더·디지털·아날로그·busy 읽기마다
  *       명령 하나(속도·과전류는 OFF에서도 bulk read), AUTO는 캐시가 없거나 같은 명령(태그 안에서 명령·포트가 같음)을 다시 읽을 때
  *       bulk read(캐시를 비우면 모든 태그의 기록도 지운다), MANUAL은 clearBulkCache() 뒤 첫 읽기, getBulkData()는 늘.
  *       OpMode마다 OFF로 돌아간다.</li>
  *   <li>I2C_TRANSACTION: 장치 드라이버(실제 소스 그대로)가 부르는 I2cDeviceSynch read·write 한 번. 예: BHI260AP initialize 13번,
  *       BNO055 18번 + 40 ms(옛 BNO055IMU initialize는 칩 리셋과 CHIP_ID 다시 묻기까지라 기본 비용표에서 24번 + 780 ms), 방향·각속도
- *       읽기 1번, Pinpoint update 1번(처음은 펌웨어 버전 읽기 1번 더), VL53L0X getDistance 3번(새 측정을 기다리는 상태 읽기 포함).</li>
+ *       읽기 1번, Pinpoint update 1번(처음은 펌웨어 버전 읽기 1번 더), VL53L0X getDistance 3번(새 측정을 기다리는 상태 읽기 포함),
+ *       옛 BNO055IMU의 getCalibrationStatus·isXxxCalibrated는 CALIB_STAT 읽기 1번씩.</li>
  * </ul>
  *
  * <h3>끊긴 스레드</h3>
@@ -140,5 +143,21 @@
  * 디지털 모드 INPUT·입력 false, 서보 펄스 폭 0. bulk read는 실제처럼 가짜 값
  * (모두 0, 그래서 모터 넷 모두 busy true)을 캐시에 넣어 MANUAL에서는 clearBulkCache까지 남는다. 런타임의 fail safe(stopRequested·
  * afterStop)와 수명 알림 postStop은 실제로 끊기지 않는 이벤트 루프 스레드의 일이라 막히지 않는다.
+ *
+ * <p>LynxModule(손 구현): 전압·전류·온도 읽기는 단위와 관계없이 0.0(makePlaceholderValue), 펌웨어 문자열은 null("firmware
+ * version unavailable"), LED 패턴은 버리고(getPattern은 바뀜), getBulkData는 isFake true다. 예외를 넘기는 failSafe·
+ * enablePhoneCharging·isPhoneChargingEnabled·setDebug는 InterruptedException을 던지고 끊김이 지워진다(lockInterruptibly). 그것을
+ * 잡는 attemptFailSafeAndIgnoreErrors와 getRevProductNumber(로그를 남기고 Expansion Hub 번호, getImuType이 먼저 부른다)도 끊김을
+ * 지운 채 돌아오므로 그 뒤의 명령은 다시 간다(실제와 같다). I2C(SimI2cDeviceSynch = 실제 LynxI2cDeviceSynch V2): 읽기는 칩을 부르지
+ * 않고 모두 0인 creg 바이트(TimestampedI2cData.makeFakeData)이고 "placeholder: readTimestamped" 오류 로그를 클라이언트마다 한 번
+ * 남긴다(보낸 읽기가 되살린다). 쓰기는 버린다. 옮긴 실제 드라이버는 그 0을 그대로 해석한다(예: VL53L0X는 상태 레지스터 0에 끊긴
+ * 스레드라 65535 mm, Color Sensor V3는 색 0·근접 최대 6 in, OTOS isConnected false). 바이트로 값을 만들지 않는 IMU는 마지막 읽기가
+ * 자리값인지 보고 실제 드라이버와 같은 결과를 낸다: IMU 인터페이스(BHI260AP·BNO055)는 0 쿼터니언을 거절해 QuaternionBasedImuHelper
+ * 경고와 단위 사원수(요·피치·롤 0), resetYaw는 시간 제한(50·100 ms)까지 다시 읽고 마지막 방향을 쓰며, 각속도는 0, initialize는
+ * 칩 확인 읽기가 0이라 실패한다. 옛 BNO055IMU는 Euler 0(heading −0), 단위 사원수, 각속도 −0·−0·0, 중력·가속도 0, 온도 0, 상태
+ * IDLE, 보정 상태 0(isXxxCalibrated false)이고 initialize는 CHIP_ID 0으로 실패해 이전 매개변수를 지킨다. 실제처럼 IMU 인터페이스와
+ * 옛 BNO055IMU는 I2C 클라이언트(자리값 로그)가 따로다. 한계: STOP은 틱 경계에서만 와서 실제의 경쟁 창(stopRequested와 끊기
+ * 사이, 명령을 보낸 뒤 응답을 기다리는 사이)은 없다. IMU 초기화 도중에 끊기면 남은 트랜잭션은 자리값이고 초기화는 실패로 보며
+ * 실제의 단계별 기다림·로그는 흉내 내지 않는다. 초기화 실패 로그의 클래스 이름은 SandBot 클래스다(SimImu 등).
  */
 package org.sandbot.sdk.devices;

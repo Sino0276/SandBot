@@ -32,6 +32,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 // SandBot: 실제 API(필드·메서드·중첩 클래스)는 그대로 두고, 허브 상태·BulkCachingMode·비용은 org.sandbot.sdk.devices.SimHub가 맡는다.
 // USB·Lynx 프로토콜(명령 전송, ping, 펌웨어 질의, 디버그)은 시뮬레이터에 없으므로 SimUnsupportedException을 던진다.
+// SandBot: 끊긴 스레드에서 보내지 못한 명령(SimHub의 비용 메서드가 false)은 실제 catch 블록처럼 자리값·로그·InterruptedException으로 끝난다.
 package com.qualcomm.hardware.lynx;
 
 import android.graphics.Color;
@@ -49,6 +50,7 @@ import com.qualcomm.robotcore.hardware.HardwareDeviceHealth;
 import com.qualcomm.robotcore.hardware.LynxModuleImuType;
 import com.qualcomm.robotcore.hardware.VisuallyIdentifiableHardwareDevice;
 import com.qualcomm.robotcore.hardware.usb.RobotArmingStateNotifier;
+import com.qualcomm.robotcore.util.RobotLog;
 import com.qualcomm.robotcore.util.SerialNumber;
 
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
@@ -237,6 +239,18 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
         return new SimUnsupportedException("com.qualcomm.hardware.lynx.LynxModule#" + method);
         }
 
+    /**
+     * SandBot: 끊긴 스레드라 보내지 못한 명령의 예외. 실제 LynxRespondable.send·sendReceive의 MessageKeyedLock.acquire는
+     * lockInterruptibly라 끊김 표시를 지우고 InterruptedException을 낸다. SimHub는 표시를 남겨 둔다(컨트롤러의 handleException이 다시
+     * 세우는 경우와 결과가 같으므로). 그 예외가 handleException을 거치지 않는 곳(throws InterruptedException으로 넘기거나 직접 잡는
+     * 곳)은 실제처럼 여기서 표시를 지운다.
+     */
+    private static InterruptedException lockInterrupted()
+        {
+        Thread.interrupted();
+        return new InterruptedException();
+        }
+
     @Override public String toString()
         {
         return String.format("LynxModule(mod#=%d, serial=%s)", getModuleAddress(), "(embedded)");
@@ -277,10 +291,17 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
         this.controllers.add(controller);
         }
 
-    /** Expansion Hub·Control Hub의 제품 번호(LynxConstants.EXPANSION_HUB_PRODUCT_NUMBER) */
+    /**
+     * Expansion Hub·Control Hub의 제품 번호(LynxConstants.EXPANSION_HUB_PRODUCT_NUMBER). 실제는 SERVO_HUB 인터페이스를 묻고
+     * NACK이면(Expansion Hub·Control Hub) 이 값이다. 끊긴 스레드면 실제처럼 catch (InterruptedException)이 끊김이 지워진 채 로그를
+     * 남기고 같은 값을 돌려준다(그래서 뒤의 명령은 다시 간다).
+     */
     public int getRevProductNumber()
         {
-        sim().lynxCommand(); // LynxQueryInterfaceCommand(SERVO_HUB)
+        if (!sim().lynxCommand()) // LynxQueryInterfaceCommand(SERVO_HUB)
+            {
+            RobotLog.ee(TAG, lockInterrupted(), "Failed to determine the REV product number");
+            }
         return 3215698;
         }
 
@@ -327,7 +348,7 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
 
     protected void sendGetModuleStatusAndProcessResponse(boolean clearStatus)
         {
-        sim().lynxCommand(); // LynxGetModuleStatusCommand
+        if (!sim().lynxCommand()) return; // LynxGetModuleStatusCommand. 끊김: 실제 catch → handleException(다시 끊음)
         }
 
     protected void forgetLastKnown()
@@ -358,10 +379,10 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
         return result == null ? "firmware version unavailable" : result;
         }
 
-    /** LynxReadVersionStringCommand 하나. 지금 REV 허브 펌웨어(1.8.2)의 문자열 모양이다. */
+    /** LynxReadVersionStringCommand 하나. 지금 REV 허브 펌웨어(1.8.2)의 문자열 모양이다. 끊긴 스레드면 실제처럼 null. */
     @Override public String getNullableFirmwareVersionString()
         {
-        sim().lynxCommand();
+        if (!sim().lynxCommand()) return null; // 끊김: 실제 catch → handleException(다시 끊음) 뒤 null
         return "HW: 20, Maj: 1, Min: 8, Eng: 2";
         }
 
@@ -537,7 +558,9 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
     private void sendLEDPatternSteps(Collection<Step> steps)
         {
         SimHub hub = sim();
-        hub.lynxCommand(); // LynxSetModuleLEDPatternCommand
+        // SandBot: 실제는 ping(LynxKeepAliveCommand) 뒤 패턴을 보낸다. 비용은 패턴 명령 하나만 센다. 끊긴 스레드면 둘 다 catch →
+        // handleException(다시 끊음)이라 LED는 그대로다(currentSteps는 실제처럼 이미 바뀌었다)
+        if (!hub.lynxCommand()) return; // LynxSetModuleLEDPatternCommand
         hub.publishLed(new ArrayList<Step>(steps));
         }
 
@@ -695,12 +718,16 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
             }
         }
 
-    /** 캐시를 비우고 모드와 관계없이 bulk read를 한다 */
+    /**
+     * 캐시를 비우고 모드와 관계없이 bulk read를 한다. 끊긴 스레드면 실제 catch 블록처럼 가짜 값(모두 0, isFake true)을
+     * 돌려주고 캐시에 둔다({@link SimHub#getBulkData}).
+     */
     public BulkData getBulkData()
         {
         synchronized (bulkCachingLock)
             {
-            lastBulkData = new BulkData(sim().getBulkData(), false);
+            SimHub.Snapshot snapshot = sim().getBulkData();
+            lastBulkData = new BulkData(snapshot, snapshot.fake);
             return lastBulkData;
             }
         }
@@ -745,10 +772,13 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
     // Misc other commands
     //----------------------------------------------------------------------------------------------
 
-    /** LynxFailSafeCommand: 허브가 모터를 멈추고 서보 PWM을 끈다. 그 뒤 컨트롤러가 마지막 값을 잊는다. */
+    /**
+     * LynxFailSafeCommand: 허브가 모터를 멈추고 서보 PWM을 끈다. 그 뒤 컨트롤러가 마지막 값을 잊는다. 끊긴 스레드면 실제
+     * command.send()처럼 InterruptedException(끊김을 지움)이고 forgetLastKnown까지 가지 않는다.
+     */
     public void failSafe() throws RobotCoreException, InterruptedException, LynxNackException
         {
-        sim().failSafe();
+        if (!sim().failSafe()) throw lockInterrupted(); // SandBot: 끊김
         forgetLastKnown();
         }
 
@@ -760,12 +790,12 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
 
     public void enablePhoneCharging(boolean enable) throws RobotCoreException, InterruptedException, LynxNackException
         {
-        sim().lynxCommand(); // LynxPhoneChargeControlCommand
+        if (!sim().lynxCommand()) throw lockInterrupted(); // LynxPhoneChargeControlCommand. SandBot: 끊김은 실제 send()처럼 던진다
         }
 
     public boolean isPhoneChargingEnabled() throws RobotCoreException, InterruptedException, LynxNackException
         {
-        sim().lynxCommand(); // LynxPhoneChargeQueryCommand
+        if (!sim().lynxCommand()) throw lockInterrupted(); // LynxPhoneChargeQueryCommand. SandBot: 끊김은 실제 sendReceive()처럼 던진다
         return isParent;
         }
 
@@ -787,10 +817,16 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
         return readAdcMilli(unit, "i2cCurrent", 0);
         }
 
+    /**
+     * LynxGetADCCommand 하나. 끊긴 스레드면(SimHub의 비용 메서드가 false) 실제 catch → handleException(다시 끊음) 뒤의
+     * LynxUsbUtil.makePlaceholderValue(0.0)이다: 단위를 바꾸지 않은 0.0이라 getTemperature(FARENHEIT)도 0.0이다.
+     */
+    private static final double ADC_PLACEHOLDER = 0.0;
+
     private double readAdcMilli(CurrentUnit unit, String key, double fallbackAmps)
         {
         SimHub hub = sim();
-        hub.lynxCommand();
+        if (!hub.lynxCommand()) return ADC_PLACEHOLDER;
         int milliamps = (int) Math.round(hub.input(key, fallbackAmps) * 1000);
         return unit.convert(milliamps, CurrentUnit.MILLIAMPS);
         }
@@ -799,7 +835,7 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
     public double getInputVoltage(VoltageUnit unit)
         {
         SimHub hub = sim();
-        hub.lynxCommand();
+        if (!hub.lynxCommand()) return ADC_PLACEHOLDER;
         int millivolts = (int) Math.round(hub.batteryVolts() * 1000);
         return unit.convert(millivolts, VoltageUnit.MILLIVOLTS);
         }
@@ -808,7 +844,7 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
     public double getAuxiliaryVoltage(VoltageUnit unit)
         {
         SimHub hub = sim();
-        hub.lynxCommand();
+        if (!hub.lynxCommand()) return ADC_PLACEHOLDER;
         int millivolts = (int) Math.round(hub.input("auxVoltage", 5.0) * 1000);
         return unit.convert(millivolts, VoltageUnit.MILLIVOLTS);
         }
@@ -817,20 +853,25 @@ public class LynxModule extends LynxCommExceptionHandler implements LynxModuleIn
     public double getTemperature(TempUnit unit)
         {
         SimHub hub = sim();
-        hub.lynxCommand();
+        if (!hub.lynxCommand()) return ADC_PLACEHOLDER;
         int deciCelsius = (int) Math.round(hub.input("temperature", 25.0) * 10);
         return unit.fromCelsius(deciCelsius / 10.0);
         }
 
-    /** 구성에 있는 내장 IMU 종류(실제는 I2C 버스 0을 확인한다) */
+    /**
+     * 구성에 있는 내장 IMU 종류. 실제처럼 먼저 getRevProductNumber(명령 하나)를 묻는다: 끊긴 스레드면 그것이 끊김을 지우고 로그를
+     * 남긴다. 실제는 그다음 I2C 버스 0에서 BNO055·BHI260을 찾는다(SandBot: 그 I2C 트랜잭션은 세지 않고 구성의 종류를 쓴다).
+     */
     public LynxModuleImuType getImuType()
         {
+        getRevProductNumber(); // 실제 revHubTypeCanHaveImu(getRevProductNumber()): Expansion Hub·Control Hub는 늘 true
         return sim().imuType();
         }
 
     public void setDebug(DebugGroup group, DebugVerbosity verbosity) throws InterruptedException
         {
-        sim().lynxCommand(); // LynxSetDebugLogLevelCommand
+        // LynxSetDebugLogLevelCommand. SandBot: 끊김은 실제 send()처럼 던진다(실제 catch는 LynxNackException·RuntimeException만)
+        if (!sim().lynxCommand()) throw lockInterrupted();
         }
 
     public enum DebugGroup

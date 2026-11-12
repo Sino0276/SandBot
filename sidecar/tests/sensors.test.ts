@@ -223,7 +223,15 @@ describe.skipIf(build === null)('사이드카 센서 칩', () => {
       const errors = run.messages.filter((m) => m.type === 'error')
       expect(errors, run.stderr).toEqual([])
       expect(finishedReason(run)).toBe('stopped')
-      const frames = run.messages.flatMap((m) => (m.type === 'telemetry' ? [m] : []))
+      // STOP 뒤의 프레임은 뺀다: STOP은 LinearOpMode 스레드를 끊어 그 루프의 나머지 읽기가 실제처럼 자리값(VL53L0X 65535 mm,
+      // 모델 ID 0)이다. 실제 DS도 STOP 뒤에는 그 OpMode가 아니라 기본 OpMode의 텔레메트리("Robot is stopped")를 보인다
+      const stoppingAt =
+        run.messages.flatMap((m) =>
+          m.type === 'state' && m.phase === 'stopping' ? [m.tNanos] : []
+        )[0] ?? Infinity
+      const frames = run.messages.flatMap((m) =>
+        m.type === 'telemetry' && m.tNanos < stoppingAt ? [m] : []
+      )
       const ranges = frames.flatMap((m) => {
         const line = m.frame.lines.find((l) => / mm$/.test(l))
         return line ? [{ tNanos: m.tNanos, line }] : []

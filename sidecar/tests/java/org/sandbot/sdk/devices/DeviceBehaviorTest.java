@@ -592,6 +592,274 @@ public final class DeviceBehaviorTest {
         }
     }
 
+    /** 지금까지 남은 RobotLog 줄 수(가짜 호스트) */
+    static int logCount() {
+        return ((SimTestSupport.FakeHost) org.sandbot.sim.Sim.host()).logs.size();
+    }
+
+    /** from번째 줄부터의 RobotLog 줄 */
+    static List<String> logsSince(int from) {
+        List<String> logs = ((SimTestSupport.FakeHost) org.sandbot.sim.Sim.host()).logs;
+        synchronized (logs) {
+            return new ArrayList<>(logs.subList(from, logs.size()));
+        }
+    }
+
+    /** body가 실제 lockInterruptibly처럼 InterruptedException을 던지고 끊김을 지웠는지(잠금 시도 한 번) */
+    static void throwsInterrupted(Check.Body body, String message) {
+        Thread.currentThread().interrupt();
+        long start = CLOCK.nanos;
+        Check.throwsType(InterruptedException.class, body, message);
+        Check.equal(CLOCK_READ, CLOCK.nanos - start, message + ": one lock attempt");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), message + ": the interrupt is cleared (lockInterruptibly)");
+    }
+
+    public static void testInterruptedThreadLynxModule() {
+        // 실제 LynxModule(12.0)의 catch 블록: ADC 읽기는 handleException(다시 끊음) 뒤 LynxUsbUtil.makePlaceholderValue(0.0)
+        // (단위를 바꾸지 않은 0.0), 펌웨어 문자열은 null, LED 패턴은 버림. throws InterruptedException인 failSafe·
+        // enablePhoneCharging·isPhoneChargingEnabled·setDebug는 send()의 InterruptedException을 그대로 넘기고(끊김은 지워진다),
+        // getRevProductNumber는 그것을 잡아 로그를 남기고 EXPANSION_HUB_PRODUCT_NUMBER를 돌려준다(끊김은 지워진 채).
+        Bot bot = new Bot(null, MOTORS, null);
+        LynxModule module = bot.get(LynxModule.class, "Control Hub");
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        tetrix.setPower(0.5);
+        bot.in("Control Hub", "voltage", 11.8);
+        bot.in("Control Hub", "current", 3.0);
+        bot.in("Control Hub", "temperature", 30.0);
+        module.setConstant(0xFF00FF00);
+        String[] names = {"Control Hub", "gobilda", "tetrix", "hex"};
+        Map<String, Object> before = outputsOf(bot, names);
+
+        Thread.currentThread().interrupt();
+        try {
+            Check.equal(0.0, attempts(1, () -> module.getInputVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS),
+                    "battery"), "battery voltage placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getCurrent(CurrentUnit.AMPS), "current"), "hub current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getGpioBusCurrent(CurrentUnit.AMPS), "GPIO"), "GPIO current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getI2cBusCurrent(CurrentUnit.AMPS), "I2C"), "I2C current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getAuxiliaryVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS),
+                    "5 V"), "5 V rail placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getTemperature(org.firstinspires.ftc.robotcore.external.navigation.TempUnit.FARENHEIT),
+                    "temperature"), "temperature placeholder is 0.0 in any unit (not 32 °F)");
+            Check.equal(null, attempts(1, module::getNullableFirmwareVersionString, "firmware"), "firmware version null");
+            Check.equal("firmware version unavailable", attempts(1, module::getFirmwareVersionString, "firmware string"),
+                    "firmware version unavailable");
+            attemptsRun(1, () -> module.setConstant(0xFFFF0000), "LED pattern");
+            Check.equal(1, module.getPattern().size(), "the pattern is remembered before the send");
+            Check.isTrue(attempts(1, module::getBulkData, "bulk").isFake(), "LynxModule.getBulkData is fake");
+            Check.equal(before, outputsOf(bot, names), "nothing reached the hub");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "handleException re-interrupts");
+        } finally {
+            Thread.interrupted();
+        }
+
+        Object power = bot.out("tetrix", "power");
+        throwsInterrupted(module::failSafe, "team failSafe");
+        Check.equal(power, bot.out("tetrix", "power"), "the team fail safe was not sent");
+        throwsInterrupted(() -> module.enablePhoneCharging(true), "enablePhoneCharging");
+        throwsInterrupted(module::isPhoneChargingEnabled, "isPhoneChargingEnabled");
+        throwsInterrupted(() -> module.setDebug(LynxModule.DebugGroup.MOTOR0, LynxModule.DebugVerbosity.HIGH), "setDebug");
+
+        // attemptFailSafeAndIgnoreErrors는 InterruptedException을 삼켜 끊김이 지워진다(실제와 같다)
+        Thread.currentThread().interrupt();
+        Check.equal(CLOCK_READ, SimTestSupport.elapsed(module::attemptFailSafeAndIgnoreErrors), "attemptFailSafeAndIgnoreErrors: one attempt");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "attemptFailSafeAndIgnoreErrors swallows the interrupt");
+        Check.equal(power, bot.out("tetrix", "power"), "the fail safe was not sent");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        Check.equal(3215698, attempts(1, module::getRevProductNumber, "product number"), "EXPANSION_HUB_PRODUCT_NUMBER");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "getRevProductNumber catches the InterruptedException");
+        List<String> lines = logsSince(logs);
+        Check.isTrue(!lines.isEmpty() && lines.get(0).equals("robotLog: E/LynxModule: Failed to determine the REV product number"),
+                "getRevProductNumber logs the failure: " + lines);
+        // getImuType은 먼저 getRevProductNumber를 묻는다: 끊김이 지워져 다음 명령은 간다
+        Thread.currentThread().interrupt();
+        Check.equal(com.qualcomm.robotcore.hardware.LynxModuleImuType.NONE, attempts(1, module::getImuType, "IMU type"),
+                "IMU type from the configuration");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "getImuType clears the interrupt through getRevProductNumber");
+        bot.in("Control Hub", "voltage", 12.2);
+        Check.near(12.2, module.getInputVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS), 1e-9,
+                "commands reach the hub again");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadI2cPlaceholders() {
+        // 실제 LynxI2cDeviceSynch(V2): 끊긴 스레드의 읽기는 TimestampedI2cData.makeFakeData(모두 0)이고
+        // readTimeStampedPlaceholder가 "placeholder: readTimestamped"를 한 번만 남긴다(보낸 읽기가 되살림). 쓰기는 버린다.
+        // 옮긴 실제 드라이버는 그 0을 받아 로봇에서와 같이 동작한다.
+        Bot bot = new Bot(null, I2C, null);
+        DistanceSensor distance = bot.get(DistanceSensor.class, "distance");
+        RevColorSensorV3 color = bot.get(RevColorSensorV3.class, "color");
+        SparkFunOTOS otos = bot.get(SparkFunOTOS.class, "otos");
+        OctoQuad octoquad = bot.get(OctoQuad.class, "octoquad");
+        GoBildaPinpointDriver pinpoint = bot.get(GoBildaPinpointDriver.class, "pinpoint");
+        SimI2cDeviceSynch client = (SimI2cDeviceSynch) ((com.qualcomm.robotcore.hardware.I2cDeviceSynchDevice<?>) distance).getDeviceClient();
+        bot.in("distance", "distance", 0.5);
+        bot.in("color", "red", 4000L);
+        bot.in("color", "distance", 0.05);
+        CLOCK.nanos += ms(200);
+        Check.near(500, distance.getDistance(DistanceUnit.MM), 1e-9, "a real reading first");
+        String[] names = {"distance", "color", "otos", "octoquad", "pinpoint"};
+        Map<String, Object> before = outputsOf(bot, names);
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            byte[] bytes = attempts(1, () -> client.read(0x14, 12), "register read");
+            Check.equal(Arrays.toString(new byte[12]), Arrays.toString(bytes), "makeFakeData: creg zero bytes");
+            Check.isTrue(client.lastReadWasPlaceholder(), "the read was a placeholder");
+            Check.equal(Arrays.toString(new byte[3]), Arrays.toString(attempts(1, () -> client.read(3), "plain read")),
+                    "non-register read: zero bytes");
+            com.qualcomm.robotcore.hardware.TimestampedData stamped = attempts(1, () -> client.readTimeStamped(0x14, 2), "timestamped");
+            Check.equal(CLOCK.nanos, stamped.nanoTime, "fake data time is the time of the failed read");
+            attemptsRun(1, () -> client.write8(0x00, 0x01), "write");
+            Check.equal(Arrays.asList("robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped"), logsSince(logs),
+                    "the placeholder is logged once");
+
+            // VL53L0X: 0인 상태 레지스터에 끊긴 스레드라 FAKE_DISTANCE_MM(65535)
+            Check.near(65535, distance.getDistance(DistanceUnit.MM), 1e-9, "VL53L0X fails fast on an interrupted thread");
+            // Color Sensor V3: 0 바이트라 색 0, 근접 0이라 최대 거리 6 in
+            Check.equal(0, color.red(), "color red 0");
+            Check.near(6.0, color.getDistance(DistanceUnit.INCH), 1e-9, "proximity 0 is the 6 in maximum");
+            Check.isTrue(!otos.isConnected(), "OTOS product id reads 0");
+            Check.equal((byte) 0, octoquad.getChipId(), "OctoQuad chip id reads 0");
+            // 쓰기는 버린다
+            otos.setLinearScalar(1.05);
+            pinpoint.setOffsets(10, 20, DistanceUnit.MM);
+            Check.equal(before, outputsOf(bot, names), "no write reached a chip");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        // 보낸 읽기가 자리값 로그를 되살린다
+        Check.isTrue(client.read(0x14, 2) != null && !client.lastReadWasPlaceholder(), "a real read");
+        logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            client.read(0x14, 2);
+            client.read(0x14, 2);
+        } finally {
+            Thread.interrupted();
+        }
+        Check.equal(Arrays.asList("robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped"), logsSince(logs),
+                "logged again once after a real read");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadImu() {
+        // 실제 BHI260IMU·BNO055IMUNew: 모두 0인 쿼터니언은 FailedToRetrieveQuaternionException이고 QuaternionBasedImuHelper가
+        // 경고와 단위 사원수를 낸다(요·피치·롤 0). 각속도는 0 바이트 그대로 0. resetYaw는 시간 제한까지 다시 읽고 마지막 방향을 쓴다.
+        // initialize는 칩 확인 읽기가 0이라 실패한다.
+        Bot bot = new Bot("            <LynxEmbeddedIMU name=\"imu2\" port=\"0\" bus=\"0\" />\n",
+                "            <ControlHubImuBHI260AP name=\"imu\" port=\"0\" bus=\"0\" />\n", null);
+        IMU bhi = bot.get(IMU.class, "imu");
+        IMU bno = bot.get(IMU.class, "imu2");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "pitch", Math.toRadians(10));
+        bot.in("imu", "yawRate", 1.0);
+        bot.in("imu2", "yaw", Math.toRadians(-40));
+        Check.near(30, bhi.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "a real yaw first");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            YawPitchRollAngles angles = attempts(1, bhi::getRobotYawPitchRollAngles, "BHI260 orientation");
+            Check.near(0, Math.abs(angles.getYaw(AngleUnit.DEGREES)) + Math.abs(angles.getPitch(AngleUnit.DEGREES))
+                    + Math.abs(angles.getRoll(AngleUnit.DEGREES)), 0, "identity quaternion: yaw, pitch, roll 0");
+            Check.equal(0L, angles.getAcquisitionTime(), "the identity quaternion has acquisition time 0");
+            Check.near(0, attempts(1, () -> bno.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), "BNO055 yaw"), 0,
+                    "BNO055 yaw 0");
+            Check.equal(0.0f, attempts(1, () -> bhi.getRobotAngularVelocity(AngleUnit.DEGREES), "rate").zRotationRate,
+                    "angular velocity from zero bytes");
+            Check.equal(Arrays.asList(
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/BHI260IMU: getRobotOrientationAsQuaternion(): Failed to retrieve valid quaternion from IMU. Returning the identity quaternion.",
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/BNO055IMU (new): getRobotOrientationAsQuaternion(): Failed to retrieve valid quaternion from IMU. Returning the identity quaternion."),
+                    logsSince(logs), "placeholder log per client and helper warnings with the real tags");
+
+            // resetYaw: 50 ms까지 다시 읽고 경고 뒤 마지막(30°)으로 오프셋을 정한다
+            long start = CLOCK.nanos;
+            logs = logCount();
+            bhi.resetYaw();
+            Check.isTrue(CLOCK.nanos - start >= ms(50), "resetYaw retries until its timeout");
+            Check.equal("robotLog: W/BHI260IMU: Failed to retrieve valid quaternion for resetYaw(). Using stale orientation to compute yaw offset.",
+                    logsSince(logs).get(logsSince(logs).size() - 1), "resetYaw warns");
+
+            // initialize: 칩 확인 읽기가 0
+            logs = logCount();
+            Check.isTrue(!attempts(1, () -> bhi.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP, RevHubOrientationOnRobot.UsbFacingDirection.FORWARD))), "BHI260 init"),
+                    "BHI260 initialize fails");
+            Check.equal("robotLog: E/BHI260IMU: Could not find Control Hub IMU (BHI260AP)", logsSince(logs).get(0), "BHI260 init log");
+            logs = logCount();
+            Check.isTrue(!attempts(2, () -> bno.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP, RevHubOrientationOnRobot.UsbFacingDirection.FORWARD))), "BNO055 init"),
+                    "BNO055 initialize fails after the retry read");
+            Check.equal("robotLog: E/BNO055IMU (new): Failed to initialize BNO055 IMU", logsSince(logs).get(0), "BNO055 init log");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        // resetYaw가 마지막 방향(30°)으로 오프셋을 정했다
+        bot.in("imu", "yaw", Math.toRadians(50));
+        Check.near(20, bhi.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "the stale orientation set the offset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadLegacyBno055() {
+        // 실제 BNO055IMUImpl은 0 바이트를 그대로 해석한다: Euler 0이라 heading −0, 0 쿼터니언은 단위 사원수, 각속도 X·Y는 부호를
+        // 바꿔 −0, 중력 0, 온도 0, 보정 상태 0, 상태 IDLE. initialize는 CHIP_ID가 0이라 실패하고 매개변수를 되돌린다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        parameters.loggingEnabled = true;
+        parameters.loggingTag = "legacy";
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "yawRate", 1.0);
+        Check.isTrue(legacy.isGyroCalibrated(), "calibrated on a live thread");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            Orientation o = attempts(1, legacy::getAngularOrientation, "orientation");
+            Check.equal(Arrays.asList(-0.0f, 0.0f, 0.0f), Arrays.asList(o.firstAngle, o.secondAngle, o.thirdAngle),
+                    "Euler zeros: heading is -0");
+            org.firstinspires.ftc.robotcore.external.navigation.Quaternion q = attempts(1, legacy::getQuaternionOrientation, "quaternion");
+            Check.equal(Arrays.asList(1.0f, 0.0f, 0.0f, 0.0f, 0L), Arrays.<Object>asList(q.w, q.x, q.y, q.z, q.acquisitionTime),
+                    "identity quaternion");
+            AngularVelocity rates = attempts(1, legacy::getAngularVelocity, "rates");
+            Check.equal(Arrays.asList(-0.0f, -0.0f, 0.0f), Arrays.asList(rates.xRotationRate, rates.yRotationRate, rates.zRotationRate),
+                    "X and Y are negated zeros");
+            Acceleration gravity = attempts(1, legacy::getGravity, "gravity");
+            Check.equal(Arrays.asList(0.0, 0.0, 0.0), Arrays.asList(gravity.xAccel, gravity.yAccel, gravity.zAccel), "gravity zeros");
+            Check.equal(0.0, attempts(1, legacy::getTemperature, "temperature").temperature, "temperature 0");
+            Check.equal(BNO055IMU.SystemStatus.IDLE, attempts(1, legacy::getSystemStatus, "status"), "status IDLE");
+            Check.equal(false, attempts(1, legacy::isGyroCalibrated, "calibrated"), "CALIB_STAT 0: not calibrated");
+            Check.equal(0, (int) attempts(1, legacy::getCalibrationStatus, "calibration").calibrationStatus, "calibration status 0");
+            Check.equal(Arrays.asList(
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/legacy: Failed to retrieve valid quaternion. Returning identity quaternion."),
+                    logsSince(logs), "one placeholder log and the loggingEnabled warning");
+
+            logs = logCount();
+            BNO055IMU.Parameters other = parameters.clone();
+            other.angleUnit = BNO055IMU.AngleUnit.RADIANS;
+            Check.isTrue(!attempts(2, () -> legacy.initialize(other), "initialize"), "initialize fails: CHIP_ID reads 0 twice");
+            Check.equal(BNO055IMU.AngleUnit.DEGREES, legacy.getParameters().angleUnit, "the previous parameters stay");
+            Check.equal(Arrays.asList("robotLog: E/legacy: IMU appears to not be present", "robotLog: E/legacy: IMU initialization failed"),
+                    logsSince(logs).subList(0, 2), "loggingEnabled initialization logs");
+        } finally {
+            Thread.interrupted();
+        }
+        // 실패한 initialize는 칩을 리셋하지 않았다(heading 그대로)
+        Check.near(30, legacy.getAngularOrientation().firstAngle, 1e-3, "the chip was not reset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
     public static void testEncoderOffsetGivesRawRunToPositionTarget() {
         // 시뮬레이터는 원시 엔코더 틱(position 입력)으로 모터를 돌리므로 RUN_TO_POSITION의 원시 목표를 targetPosition +
         // encoderOffset으로 만든다. 팀 코드가 한 루프에서 리셋 → 목표 → RUN_TO_POSITION을 해도(틱 하나 안) 맞아야 한다.
@@ -970,7 +1238,7 @@ public final class DeviceBehaviorTest {
         parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
         Check.isTrue(legacy.initialize(parameters), "initialize");
         bot.in("imu", "yawRate", 1.0);
-        AngularVelocity raw = imu.chipAngularVelocity().toAngleUnit(AngleUnit.DEGREES);
+        AngularVelocity raw = imu.chipAngularVelocity(imu.getDeviceClient()).toAngleUnit(AngleUnit.DEGREES);
         Check.isTrue(Math.abs(raw.xRotationRate) + Math.abs(raw.yRotationRate) > 30, "the yaw rate shows on a chip X/Y axis");
         AngularVelocity rates = legacy.getAngularVelocity();
         Check.near(-raw.xRotationRate, rates.xRotationRate, 1e-4, "legacy X is the negated register value");
