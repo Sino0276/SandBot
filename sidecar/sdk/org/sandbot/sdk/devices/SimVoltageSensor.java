@@ -15,7 +15,7 @@ public final class SimVoltageSensor implements VoltageSensor, RobotCoreLynxContr
     }
 
     @Override public double getVoltage() {
-        hub.lynxCommand(); // LynxGetADCCommand(BATTERY_MONITOR)
+        if (!hub.lynxCommand()) return 0.0; // LynxGetADCCommand(BATTERY_MONITOR). 끊김: 실제 자리값 0.0
         int mv = (int) Math.round(hub.batteryVolts() * 1000);
         return mv * 0.001;
     }

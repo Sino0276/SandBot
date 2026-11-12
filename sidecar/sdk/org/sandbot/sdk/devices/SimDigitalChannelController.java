@@ -128,7 +128,7 @@ public final class SimDigitalChannelController implements DigitalChannelControll
         int pinZ = pin - API_PIN_FIRST;
         DigitalChannel.Mode result = pins[pinZ].lastKnownMode.getValue();
         if (result != null) return result;
-        hub.lynxCommand(); // LynxGetDIODirectionCommand
+        if (!hub.lynxCommand()) return DigitalChannel.Mode.INPUT; // LynxGetDIODirectionCommand. 끊김: 실제 자리값 INPUT(캐시하지 않음)
         result = hardware[pinZ].mode;
         pins[pinZ].lastKnownMode.setValue(result);
         return result;
@@ -151,7 +151,11 @@ public final class SimDigitalChannelController implements DigitalChannelControll
     }
 
     private void internalSetDigitalChannelMode(int pinZ, DigitalChannel.Mode mode) {
-        hub.lynxCommand(); // LynxSetDIODirectionCommand
+        if (!hub.lynxCommand()) { // LynxSetDIODirectionCommand
+            // 끊김: 실제 catch 블록처럼 모드 캐시를 잊는다(setDigitalChannelMode의 INPUT → OUTPUT 출력 0 기억은 실제처럼 그대로 한다)
+            pins[pinZ].lastKnownMode.invalidate();
+            return;
+        }
         Pin p = hardware[pinZ];
         if (p.mode == DigitalChannel.Mode.INPUT && mode == DigitalChannel.Mode.OUTPUT) p.outputState = false;
         p.mode = mode;
@@ -170,7 +174,7 @@ public final class SimDigitalChannelController implements DigitalChannelControll
         if (hub.isBulkCaching()) {
             return hub.recordBulkCachingCommandIntent("getSingleDIOInput:" + pinZ, "").digitalInputs[pinZ];
         }
-        hub.lynxCommand(); // LynxGetSingleDIOInputCommand
+        if (!hub.lynxCommand()) return false; // LynxGetSingleDIOInputCommand. 끊김: 실제 자리값 false(캐시하지 않음)
         boolean result = hardware[pinZ].level();
         pins[pinZ].lastKnownState.setValue(result);
         return result;
@@ -181,7 +185,10 @@ public final class SimDigitalChannelController implements DigitalChannelControll
         validatePin(pin);
         int pinZ = pin - API_PIN_FIRST;
         if (mode == DigitalChannel.Mode.OUTPUT) {
-            hub.lynxCommand(); // LynxSetSingleDIOOutputCommand
+            if (!hub.lynxCommand()) { // LynxSetSingleDIOOutputCommand
+                pins[pinZ].lastKnownState.invalidate(); // 끊김: 실제 catch 블록처럼 출력 캐시를 잊는다
+                return;
+            }
             hardware[pinZ].outputState = state;
             hardware[pinZ].publish();
             pins[pinZ].lastKnownState.setValue(state);

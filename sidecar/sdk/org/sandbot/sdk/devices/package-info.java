@@ -127,5 +127,18 @@
  *       BNO055 18번 + 40 ms(옛 BNO055IMU initialize는 칩 리셋과 CHIP_ID 다시 묻기까지라 기본 비용표에서 24번 + 780 ms), 방향·각속도
  *       읽기 1번, Pinpoint update 1번(처음은 펌웨어 버전 읽기 1번 더), VL53L0X getDistance 3번(새 측정을 기다리는 상태 읽기 포함).</li>
  * </ul>
+ *
+ * <h3>끊긴 스레드</h3>
+ * 실제 Lynx 명령은 보내기 전에 MessageKeyedLock.acquire(lockInterruptibly)를 거친다. 그래서 끊긴(interrupt) 스레드의 명령은
+ * 허브에 가지 않고, 컨트롤러는 InterruptedException을 handleException(스레드를 다시 끊음)으로 넘긴 뒤 쓰기는 버리고 읽기는 실제
+ * 자리값을 돌려준다(LastKnown에 넣지 않는다. 보내기 전에 한 LastKnown.updateValue는 남는다). STOP은 LinearOpMode 스레드를
+ * 끊으므로 팀이 끊김을 지우지 않는 한 STOP 뒤의 허브 명령이 모두 이렇다. 끊김을 지워도 위험한 명령은 STOP 뒤 계속 취소된다.
+ * SandBot은 팀 코드가 도는 동안(beforeInit ~ afterStop) 끊긴 스레드의 LYNX_COMMAND·BULK_READ·I2C_TRANSACTION 대신 잠금 시도
+ * 한 번으로 CLOCK_READ만 청구한다(SimHub.acquireNetworkLock, STOP을 무시하고 하드웨어만 부르는 루프도 가상 시간이 흘러
+ * stuckInStop이 된다). 끊김 표시는 그대로 둔다. Lynx 컨트롤러(모터·서보·디지털·아날로그·배터리)의 자리값 예: 엔코더·목표 위치·
+ * 속도·전류·아날로그·배터리 0, 모드 RUN_WITHOUT_ENCODER, zero power BRAKE, power 0, 모터 켜짐·서보 PWM true, isBusy false,
+ * 디지털 모드 INPUT·입력 false, 서보 펄스 폭 0. bulk read는 실제처럼 가짜 값
+ * (모두 0, 그래서 모터 넷 모두 busy true)을 캐시에 넣어 MANUAL에서는 clearBulkCache까지 남는다. 런타임의 fail safe(stopRequested·
+ * afterStop)와 수명 알림 postStop은 실제로 끊기지 않는 이벤트 루프 스레드의 일이라 막히지 않는다.
  */
 package org.sandbot.sdk.devices;

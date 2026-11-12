@@ -661,6 +661,56 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     )
   }
 
+  // STOP은 LinearOpMode 스레드를 끊는다. 실제 Lynx 명령은 보내기 전에 MessageKeyedLock.acquire(lockInterruptibly)를
+  // 거치므로 끊긴 스레드의 명령은 허브에 가지 않고 읽기는 자리값이다(SimHub.acquireNetworkLock).
+  it(
+    'STOP으로 끊긴 LinearOpMode 스레드의 하드웨어 호출은 자리값이고, 팀 코드가 끊김을 지우면 다시 허브에 간다',
+    async () => {
+      const script: Script = {
+        opMode: 'StopInterruptedHardware',
+        events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+        request: { configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']) }
+      }
+      const run = await runSidecar(b, script)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      expect(results(run)).toEqual({
+        interrupted: 'true',
+        // 모드 캐시는 fail safe가 잊었고 모드 읽기의 자리값은 RUN_WITHOUT_ENCODER라 at-target을 묻지 않는다
+        busyInterrupted: 'false',
+        stillInterrupted: 'true',
+        // 엔코더 입력이 없어 목표 1000에 닿지 않았다
+        busyCleared: 'true'
+      })
+      // 끊긴 스레드의 setPower(0)은 모터를 다시 켜지 않는다
+      for (const t of ticks(run).filter((t) => t.tick > STOP_TICK)) {
+        expect(t.outputs.drive).toMatchObject({ power: 0, enabled: false })
+      }
+      const again = await runSidecar(b, script)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    TIMEOUT
+  )
+
+  it(
+    'STOP을 무시하고 하드웨어만 부르는 루프는 잠금 시도마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다',
+    async () => {
+      const run = await runSidecar(b, {
+        opMode: 'StopIgnoredHardwareLoop',
+        events: { 2: ['start'], 50: ['stop'] },
+        request: {
+          configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']),
+          stallMillis: 1000
+        }
+      })
+      expect(errors(run).map((e) => e.kind)).toEqual(['stuckInStop'])
+      const finished = run.messages[run.messages.length - 1] as { tNanos: number; reason: string }
+      expect(finished.reason).toBe('stuck')
+      expect(finished.tNanos).toBeGreaterThanOrEqual(50 * DEFAULT_TICK_NANOS + 900_000_000)
+    },
+    TIMEOUT
+  )
+
   it(
     '고치지 않은 SDK 샘플 RobotAutoDriveByEncoder_Linear를 첫 encoderDrive 중에 STOP해도 오류 없이 끝난다',
     async (ctx) => {

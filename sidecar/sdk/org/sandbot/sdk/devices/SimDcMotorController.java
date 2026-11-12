@@ -349,7 +349,9 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     void internalSetMotorEnable(int motorZ, boolean enable) {
         if (motors[motorZ].lastKnownEnable.updateValue(enable)) {
-            hub.lynxCommand(); // LynxSetMotorChannelEnableCommand
+            // 끊긴 스레드: 실제 send()가 잠금에서 InterruptedException → handleException(다시 끊음)으로 끝난다. 펌웨어에 가지 않으므로
+            // NACK도 TargetPositionNotSetException도 없고, updateValue가 둔 값은 남는다.
+            if (!hub.lynxCommand()) return; // LynxSetMotorChannelEnableCommand
             Channel c = channels[motorZ];
             if (enable && c.mode == DcMotor.RunMode.RUN_TO_POSITION && !c.targetPositionSet) {
                 // 펌웨어 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED. 실제 LynxDcMotorController처럼 lastKnownEnable은 updateValue가
@@ -366,7 +368,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         int motorZ = motor - API_MOTOR_FIRST;
         Boolean result = motors[motorZ].lastKnownEnable.getValue();
         if (result != null) return result;
-        hub.lynxCommand(); // LynxGetMotorChannelEnableCommand
+        if (!hub.lynxCommand()) return true; // LynxGetMotorChannelEnableCommand. 끊김: 실제 자리값 true(캐시하지 않음)
         result = channels[motorZ].enabled;
         motors[motorZ].lastKnownEnable.setValue(result);
         return result;
@@ -430,14 +432,16 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             Double prevPower = m.lastKnownPower.getNonTimedValue();
             if (prevPower == null) prevPower = internalGetMotorPower(motorZ);
             Channel c = channels[motorZ];
+            // 끊긴 스레드: 실제 try 블록의 send()에서 끝난다. 모드를 기억하지 않고(lastKnownMode) power도 다시 보내지 않는다.
+            // 앞의 prevPower 읽기·STOP_AND_RESET_ENCODER의 power 0은 try 밖이라 실제처럼 그대로 시도한다.
             if (mode == DcMotor.RunMode.STOP_AND_RESET_ENCODER) {
                 internalSetMotorPower(motorZ, 0);
-                hub.lynxCommand(); // LynxResetMotorEncoderCommand
+                if (!hub.lynxCommand()) return; // LynxResetMotorEncoderCommand
                 c.encoderOffset = c.rawPosition();
                 c.encoderResets++;
             } else {
                 DcMotor.ZeroPowerBehavior zeroPowerBehavior = internalGetZeroPowerBehavior(motorZ);
-                hub.lynxCommand(); // LynxSetMotorChannelModeCommand
+                if (!hub.lynxCommand()) return; // LynxSetMotorChannelModeCommand
                 c.mode = mode;
                 c.zeroPowerBehavior = zeroPowerBehavior;
             }
@@ -459,7 +463,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         if (result != null) return result;
         if (m.lastKnownMode.getNonTimedValue() == DcMotor.RunMode.STOP_AND_RESET_ENCODER)
             return DcMotor.RunMode.STOP_AND_RESET_ENCODER;
-        hub.lynxCommand(); // LynxGetMotorChannelModeCommand
+        // 끊김: 실제 자리값 RUN_WITHOUT_ENCODER(캐시하지 않음)
+        if (!hub.lynxCommand()) return DcMotor.RunMode.RUN_WITHOUT_ENCODER; // LynxGetMotorChannelModeCommand
         result = channels[motorZ].mode;
         m.lastKnownMode.setValue(result);
         return result;
@@ -469,7 +474,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     private DcMotor.RunMode internalGetMotorChannelMode(int motorZ) {
         DcMotor.RunMode result = motors[motorZ].lastKnownMode.getValue();
         if (result != null && result != DcMotor.RunMode.STOP_AND_RESET_ENCODER) return result;
-        hub.lynxCommand(); // LynxGetMotorChannelModeCommand
+        if (!hub.lynxCommand()) return DcMotor.RunMode.RUN_WITHOUT_ENCODER; // LynxGetMotorChannelModeCommand. 끊김: 실제 자리값
         return channels[motorZ].mode;
     }
 
@@ -486,7 +491,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     private DcMotor.ZeroPowerBehavior internalGetZeroPowerBehavior(int motorZ) {
         DcMotor.ZeroPowerBehavior result = motors[motorZ].lastKnownZeroPowerBehavior.getValue();
         if (result != null) return result;
-        hub.lynxCommand(); // LynxGetMotorChannelModeCommand
+        // 끊김: 실제 자리값 BRAKE(캐시하지 않음)
+        if (!hub.lynxCommand()) return DcMotor.ZeroPowerBehavior.BRAKE; // LynxGetMotorChannelModeCommand
         result = channels[motorZ].zeroPowerBehavior;
         motors[motorZ].lastKnownZeroPowerBehavior.setValue(result);
         return result;
@@ -495,7 +501,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     private void internalSetZeroPowerBehavior(int motorZ, DcMotor.ZeroPowerBehavior behavior) {
         if (motors[motorZ].lastKnownZeroPowerBehavior.updateValue(behavior)) {
             DcMotor.RunMode runMode = internalGetMotorChannelMode(motorZ);
-            hub.lynxCommand(); // LynxSetMotorChannelModeCommand
+            if (!hub.lynxCommand()) return; // LynxSetMotorChannelModeCommand. 끊김: 버린다(updateValue가 둔 값은 남는다)
             Channel c = channels[motorZ];
             c.mode = runMode;
             c.zeroPowerBehavior = behavior;
@@ -516,8 +522,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 case RUN_TO_POSITION:
                 case RUN_USING_ENCODER: {
                     power = Math.signum(power) * Range.scale(Math.abs(power), 0, API_POWER_LAST, 0, getDefaultMaxMotorSpeed(motorZ));
-                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
-                    hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
+                    // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+                    if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorTargetVelocityCommand
                     c.targetVelocity = (int) power;
                     c.publish();
                     internalSetMotorEnable(motorZ, true);
@@ -525,8 +531,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
                 }
                 case RUN_WITHOUT_ENCODER: {
                     power = Range.scale(power, API_POWER_FIRST, API_POWER_LAST, -HUB_POWER_LAST, HUB_POWER_LAST);
-                    if (hub.cancelledForSafety((int) power != 0)) break; // STOP 뒤: 보내지 않고 켜지도 않는다
-                    hub.lynxCommand(); // LynxSetMotorConstantPowerCommand
+                    // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+                    if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorConstantPowerCommand
                     c.constantPower = (int) power;
                     c.publish();
                     internalSetMotorEnable(motorZ, true);
@@ -548,14 +554,14 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         switch (mode) {
             case RUN_TO_POSITION:
             case RUN_USING_ENCODER: {
-                hub.lynxCommand(); // LynxGetMotorTargetVelocityCommand
+                if (!hub.lynxCommand()) return 0.0; // LynxGetMotorTargetVelocityCommand. 끊김: 실제 자리값 0(캐시하지 않음)
                 int iVelocity = c.targetVelocity;
                 result = Math.signum(iVelocity) * Range.scale(Math.abs(iVelocity), 0, getDefaultMaxMotorSpeed(motorZ), 0, API_POWER_LAST);
                 break;
             }
             case RUN_WITHOUT_ENCODER:
             default: {
-                hub.lynxCommand(); // LynxGetMotorConstantPowerCommand
+                if (!hub.lynxCommand()) return 0.0; // LynxGetMotorConstantPowerCommand. 끊김: 실제 자리값 0(캐시하지 않음)
                 result = Range.scale(c.constantPower, -HUB_POWER_LAST, HUB_POWER_LAST, API_POWER_FIRST, API_POWER_LAST);
             }
         }
@@ -572,7 +578,9 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         }
         // RUN_TO_POSITION이 아닌 모터에 isBusy를 물으면 NAK 로그가 쌓이므로 묻지 않는다
         if (internalGetMotorChannelMode(motorZ) != DcMotor.RunMode.RUN_TO_POSITION) return false;
-        hub.lynxCommand(); // LynxIsMotorAtTargetCommand
+        // 끊김: 실제 자리값 false("lacking data better to unstick otherwise-infinite typical wait loops"). bulk 캐시의 가짜
+        // 값은 반대로 busy true다(SimHub.Snapshot.placeholder).
+        if (!hub.lynxCommand()) return false; // LynxIsMotorAtTargetCommand
         return !channels[motorZ].isAtTarget();
     }
 
@@ -607,8 +615,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized void setMotorTargetPosition(int motor, int position, int tolerance) {
         validateMotor(motor);
-        if (hub.cancelledForSafety(true)) return; // STOP 뒤의 목표 위치는 보내지 않는다
-        hub.lynxCommand(); // LynxSetMotorTargetPositionCommand(목표 위치를 캐시하지 않으므로 부를 때마다 보낸다)
+        // 목표 위치를 캐시하지 않으므로 부를 때마다 보낸다. 끊김·STOP 뒤(위험한 명령)는 보내지 않는다
+        if (!hub.lynxCommand(true)) return; // LynxSetMotorTargetPositionCommand
         Channel c = channels[motor - API_MOTOR_FIRST];
         c.targetPosition = position;
         c.targetTolerance = tolerance;
@@ -618,7 +626,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized int getMotorTargetPosition(int motor) {
         validateMotor(motor);
-        hub.lynxCommand(); // LynxGetMotorTargetPositionCommand
+        if (!hub.lynxCommand()) return 0; // LynxGetMotorTargetPositionCommand. 끊김: 실제 자리값 0
         return channels[motor - API_MOTOR_FIRST].targetPosition;
     }
 
@@ -628,7 +636,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         if (hub.isBulkCaching()) {
             return hub.recordBulkCachingCommandIntent("getMotorEncoderPosition:" + motorZ, "").motorPositions[motorZ];
         }
-        hub.lynxCommand(); // LynxGetMotorEncoderPositionCommand
+        if (!hub.lynxCommand()) return 0; // LynxGetMotorEncoderPositionCommand. 끊김: 실제 자리값 0
         return channels[motorZ].encoderPosition();
     }
 
@@ -643,8 +651,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         validateMotor(motor);
         int motorZ = motor - API_MOTOR_FIRST;
         int iTicksPerSecond = Range.clip((int) Math.round(ticksPerSecond), -HUB_VELOCITY_LAST, HUB_VELOCITY_LAST);
-        if (hub.cancelledForSafety(iTicksPerSecond != 0)) return; // STOP 뒤: 보내지 않고 켜지도 않는다
-        hub.lynxCommand(); // LynxSetMotorTargetVelocityCommand
+        // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+        if (!hub.lynxCommand(iTicksPerSecond != 0)) return; // LynxSetMotorTargetVelocityCommand
         Channel c = channels[motorZ];
         c.targetVelocity = iTicksPerSecond;
         c.publish();
@@ -677,7 +685,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         if (hub.isBulkCaching()) {
             return hub.recordBulkCachingCommandIntent("getBulkInputData", "motorVelocity" + motorZ).motorVelocities[motorZ];
         }
-        hub.bulkReadCommand(); // 캐시가 꺼져 있어도 속도는 LynxGetBulkInputDataCommand로 읽는다
+        // 캐시가 꺼져 있어도 속도는 LynxGetBulkInputDataCommand로 읽는다. 끊김: 실제 자리값 0
+        if (!hub.bulkReadCommand()) return 0;
         return channels[motorZ].encoderVelocity();
     }
 
@@ -710,8 +719,10 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         }
         // 실제 InternalMotorControlAlgorithm.fromExternal의 switch처럼 알고리즘이 null이면 보내기 전에 던진다(허브 값은 그대로)
         if (pidfCoefficients.algorithm == null) throw new NullPointerException();
-        // 실제처럼 계수는 LastKnown으로 기억하지 않는다: 같은 값이어도 부를 때마다 보낸다
-        hub.lynxCommand(); // LynxSetMotorPIDFControlLoopCoefficientsCommand
+        // 실제처럼 계수는 LastKnown으로 기억하지 않는다: 같은 값이어도 부를 때마다 보낸다. 끊김: 실제 handleException이
+        // InterruptedException에 true(지원함)를 돌려주므로 던지지 않고 버린다. 처음 부를 때 위에서 읽은 원래 계수는 자리값
+        // (new PIDFCoefficients(), 0·PIDF)으로 남는다(실제와 같다).
+        if (!hub.lynxCommand()) return true; // LynxSetMotorPIDFControlLoopCoefficientsCommand
         Channel c = channels[motorZ];
         c.storePidf(mode, pidfCoefficients);
         c.publish();
@@ -720,7 +731,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized PIDCoefficients getPIDCoefficients(int motor, DcMotor.RunMode mode) {
         validateMotor(motor);
-        hub.lynxCommand(); // LynxGetMotorPIDControlLoopCoefficientsCommand
+        // 끊김: 실제 자리값 new PIDCoefficients()(0, 0, 0)
+        if (!hub.lynxCommand()) return new PIDCoefficients(); // LynxGetMotorPIDControlLoopCoefficientsCommand
         Channel c = channels[motor - API_MOTOR_FIRST];
         // F가 0이 아니면 허브가 PARAM2로 NACK하고 SDK가 PIDF 명령으로 다시 묻는다(F는 버린다)
         PIDFCoefficients pidf = c.pidf[Channel.pidIndex(mode)][3] != 0 ? getPIDFCoefficients(motor, mode) : c.readPidf(mode);
@@ -729,13 +741,14 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public synchronized PIDFCoefficients getPIDFCoefficients(int motor, DcMotor.RunMode mode) {
         validateMotor(motor);
-        hub.lynxCommand(); // LynxGetMotorPIDFControlLoopCoefficientsCommand
+        // 끊김: 실제 자리값 new PIDFCoefficients()(0, 0, 0, 0, 알고리즘 PIDF)
+        if (!hub.lynxCommand()) return new PIDFCoefficients(); // LynxGetMotorPIDFControlLoopCoefficientsCommand
         return channels[motor - API_MOTOR_FIRST].readPidf(mode);
     }
 
     @Override public double getMotorCurrent(int motor, CurrentUnit unit) {
         validateMotor(motor);
-        hub.lynxCommand(); // LynxGetADCCommand(motorCurrent)
+        if (!hub.lynxCommand()) return 0.0; // LynxGetADCCommand(motorCurrent). 끊김: 실제 자리값 0.0
         return unit.convert(channels[motor - API_MOTOR_FIRST].currentMilliamps(), CurrentUnit.MILLIAMPS);
     }
 
@@ -744,7 +757,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         int motorZ = motor - API_MOTOR_FIRST;
         Double cached = motors[motorZ].lastKnownCurrentAlert.getValue();
         if (cached != null) return unit.convert(cached, CurrentUnit.MILLIAMPS);
-        hub.lynxCommand(); // LynxGetMotorChannelCurrentAlertLevelCommand
+        // 끊김: 실제 자리값 0.0(캐시하지 않음)
+        if (!hub.lynxCommand()) return 0.0; // LynxGetMotorChannelCurrentAlertLevelCommand
         double limit = channels[motorZ].currentAlertMilliamps;
         motors[motorZ].lastKnownCurrentAlert.setValue(limit);
         return unit.convert(limit, CurrentUnit.MILLIAMPS);
@@ -752,7 +766,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
 
     @Override public void setMotorCurrentAlert(int motor, double current, CurrentUnit unit) {
         validateMotor(motor);
-        hub.lynxCommand(); // LynxSetMotorChannelCurrentAlertLevelCommand
+        if (!hub.lynxCommand()) return; // LynxSetMotorChannelCurrentAlertLevelCommand. 끊김: 버린다
         channels[motor - API_MOTOR_FIRST].currentAlertMilliamps = Math.round(unit.toMilliAmps(current));
     }
 
@@ -762,7 +776,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         if (hub.isBulkCaching()) {
             return hub.recordBulkCachingCommandIntent("getBulkInputData", "motorOverCurrent" + motor).motorOverCurrent[motorZ];
         }
-        hub.bulkReadCommand(); // LynxGetBulkInputDataCommand
+        if (!hub.bulkReadCommand()) return false; // LynxGetBulkInputDataCommand. 끊김: 실제 자리값 false
         return channels[motorZ].isOverCurrent();
     }
 
