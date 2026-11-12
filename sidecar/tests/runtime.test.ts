@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TICK_NANOS,
   SIDECAR_PROTOCOL_VERSION,
+  type DeviceValues,
   type DsEvent,
   type ErrorMessage,
   type GamepadState,
@@ -18,6 +19,7 @@ import {
   type TelemetryMessage
 } from '../../src/shared/sidecarProtocol'
 import { MAX_LINE_CHARS } from '../../src/main/sidecar/protocol'
+import { ensureFtcSamples, FetchError } from '../../scripts/fetch-ftc-sdk.mjs'
 import {
   compileJavaTests,
   runJavaTests,
@@ -194,6 +196,31 @@ function finishedReason(run: RunResult): string | undefined {
 
 function errors(run: RunResult): ErrorMessage[] {
   return run.messages.filter((m): m is ErrorMessage => m.type === 'error')
+}
+
+/** Control Hub 하나에 장치 줄(구성 XML 태그)을 붙인 구성 파일 */
+function writeConfig(devices: string[]): string {
+  const configXml = join(mkdtempSync(join(tmpdir(), 'sandbot-runtime-')), 'robot.xml')
+  writeFileSync(
+    configXml,
+    [
+      '<Robot type="FirstInspires-FTC" name="Test Bot">',
+      '    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">',
+      '        <LynxModule name="Control Hub" port="173">',
+      ...devices.map((device) => `            ${device}`),
+      '        </LynxModule>',
+      '    </LynxUsbDevice>',
+      '</Robot>',
+      ''
+    ].join('\n')
+  )
+  return configXml
+}
+
+type Tick = Extract<SidecarMessage, { type: 'tick' }>
+
+function ticks(run: RunResult): Tick[] {
+  return run.messages.flatMap((m) => (m.type === 'tick' ? [m] : []))
 }
 
 function states(run: RunResult): string[] {
@@ -570,20 +597,7 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   it(
     'STOP을 받으면 OpMode에 알리기 전에 허브가 fail safe로 가고, 그 뒤의 0이 아닌 power는 보내지 않는다',
     async () => {
-      const configXml = join(mkdtempSync(join(tmpdir(), 'sandbot-runtime-')), 'robot.xml')
-      writeFileSync(
-        configXml,
-        [
-          '<Robot type="FirstInspires-FTC" name="Test Bot">',
-          '    <LynxUsbDevice name="Control Hub Portal" serialNumber="(embedded)" parentModuleAddress="173">',
-          '        <LynxModule name="Control Hub" port="173">',
-          '            <goBILDA5202SeriesMotor name="drive" port="0" />',
-          '        </LynxModule>',
-          '    </LynxUsbDevice>',
-          '</Robot>',
-          ''
-        ].join('\n')
-      )
+      const configXml = writeConfig(['<goBILDA5202SeriesMotor name="drive" port="0" />'])
       const run = await runSidecar(b, {
         opMode: 'StopFailSafe',
         events: { 2: ['start'], 40: ['stop'] },
@@ -601,6 +615,96 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
       expect(stopping.length).toBeGreaterThan(10)
       expect(stopping.every((t) => power(t) === 0)).toBe(true)
       expect(finishedReason(run)).toBe('stopped')
+    },
+    TIMEOUT
+  )
+
+  // 허브 fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않는다(펌웨어 추론, SimDcMotorController의
+  // Channel.targetPositionSet). 그래서 STOP 뒤의 setPower(0)이 모터를 다시 켜도 TargetPositionNotSetException이 나지 않는다
+  // (실제 로봇과 같다).
+  const STOP_TICK = 40
+  for (const opMode of ['StopRunToPosition', 'StopRunToPositionIterative']) {
+    it(
+      `${opMode}: RUN_TO_POSITION 모터에 STOP 뒤 setPower(0)을 해도 fail safe가 목표 위치를 지켜 오류 없이 끝난다`,
+      async () => {
+        const script: Script = {
+          opMode,
+          events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+          request: { configXml: writeConfig(['<goBILDA5202SeriesMotor name="drive" port="0" />']) }
+        }
+        const run = await runSidecar(b, script)
+        expect(errors(run), run.stderr).toEqual([])
+        expect(finishedReason(run)).toBe('stopped')
+        const all = ticks(run)
+        const drive = (t: Tick): DeviceValues => t.outputs.drive ?? {}
+        // START 뒤 RUN_TO_POSITION으로 돈다(goBILDA FORWARD는 허브 목표가 반대 부호)
+        const running = all.filter((t) => t.phase === 'running' && t.tick < STOP_TICK)
+        expect(
+          running.some((t) => drive(t).enabled === true && Number(drive(t).power) > 0.49)
+        ).toBe(true)
+        expect(running.every((t) => drive(t).mode === 'RUN_TO_POSITION')).toBe(true)
+        // STOP 뒤: power는 0이고 목표 위치·모드는 fail safe 뒤에도 그대로다
+        const after = all.filter((t) => t.tick > STOP_TICK)
+        expect(after.length).toBeGreaterThan(0)
+        for (const t of after) {
+          expect(drive(t)).toMatchObject({
+            power: 0,
+            targetPosition: -1000,
+            mode: 'RUN_TO_POSITION'
+          })
+        }
+        // STOP 뒤 하드웨어를 써도 같은 입력이면 바이트 단위로 같은 메시지
+        const again = await runSidecar(b, script)
+        expect(normalized(again)).toEqual(normalized(run))
+      },
+      TIMEOUT
+    )
+  }
+
+  it(
+    '고치지 않은 SDK 샘플 RobotAutoDriveByEncoder_Linear를 첫 encoderDrive 중에 STOP해도 오류 없이 끝난다',
+    async (ctx) => {
+      let samples: { dir: string; files: string[] }
+      try {
+        samples = await ensureFtcSamples({ log: () => {} })
+      } catch (error) {
+        // 받지 못하면(오프라인) 건너뛴다. 해시가 다른 것은 실패다(compat.test.ts와 같다)
+        if (error instanceof FetchError && !/SHA-256/.test((error as Error).message)) {
+          ctx.skip()
+          return
+        }
+        throw error
+      }
+      const sample = 'RobotAutoDriveByEncoder_Linear'
+      const run = await runSidecar(b, {
+        opMode: sample,
+        // 첫 encoderDrive(48 in, 시간 제한 5 s)는 엔코더 입력이 없어 STOP 때까지 돈다
+        events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+        request: {
+          sourceRoots: [samples.dir],
+          opModeSource: join(samples.dir, `${sample}.java`),
+          opModeClass: `org.firstinspires.ftc.robotcontroller.external.samples.${sample}`,
+          configXml: writeConfig([
+            '<TetrixMotor name="left_drive" port="0" />',
+            '<TetrixMotor name="right_drive" port="1" />'
+          ])
+        }
+      })
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      const all = ticks(run)
+      const running = all.filter((t) => t.phase === 'running' && t.tick < STOP_TICK)
+      for (const name of ['left_drive', 'right_drive']) {
+        expect(
+          running.some(
+            (t) =>
+              t.outputs[name]?.mode === 'RUN_TO_POSITION' && Number(t.outputs[name]?.power) > 0.59
+          )
+        ).toBe(true)
+        for (const t of all.filter((t) => t.tick > STOP_TICK)) {
+          expect(t.outputs[name]?.power).toBe(0)
+        }
+      }
     },
     TIMEOUT
   )

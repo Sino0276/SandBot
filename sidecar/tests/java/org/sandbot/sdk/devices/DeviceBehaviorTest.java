@@ -222,9 +222,23 @@ public final class DeviceBehaviorTest {
     public static void testRunToPosition() {
         Bot bot = new Bot(null, MOTORS, null);
         DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
-        // 목표 위치 없이 RUN_TO_POSITION으로 켜면 펌웨어가 거부한다(실제 TargetPositionNotSetException)
+        // 목표 위치 없이 RUN_TO_POSITION으로 켜면 펌웨어가 거부한다(실제 TargetPositionNotSetException). 꺼 둔 모터로 시작해
+        // 거부된 켜기가 허브 상태를 바꾸지 않는 것을 본다.
+        gobilda.setMotorDisable();
         Check.throwsType(TargetPositionNotSetException.class, () -> gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION),
                 "RUN_TO_POSITION before a target");
+        Check.equal(false, bot.out("gobilda", "enabled"), "the hub refused to enable");
+        // 실제 LynxDcMotorController는 NACK 뒤 lastKnownEnable을 되돌리지 않는다(updateValue가 둔 true 그대로). 그래서 신선한
+        // 동안(500 ms) 다시 켜기를 보내지 않아 던지지 않고, 목표 위치를 준 뒤에도 모터는 꺼진 채다. 신선도가 지나면 다시 보낸다.
+        gobilda.setPower(0.3);
+        Check.equal(false, bot.out("gobilda", "enabled"), "no enable resent while the NACKed cache value is fresh");
+        gobilda.setTargetPosition(50);
+        gobilda.setPower(0.4);
+        Check.equal(false, bot.out("gobilda", "enabled"), "still off: the SDK believes the motor is enabled");
+        CLOCK.nanos += ms(501);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "enable is resent once the cache is stale");
+        SandbotHardware.afterStop(bot.map);
 
         Bot bot2 = new Bot(null, MOTORS, null);
         DcMotorEx motor = bot2.get(DcMotorEx.class, "gobilda");
@@ -248,6 +262,44 @@ public final class DeviceBehaviorTest {
         SandbotHardware.afterStop(bot2.map);
         Check.equal(false, bot2.out("gobilda", "enabled"), "fail safe disables motors");
         Check.equal(0.0, bot2.out("gobilda", "power"), "fail safe stops motors");
+    }
+
+    public static void testFailSafeKeepsTargetPosition() {
+        // 허브 fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않는다(펌웨어 추론, SimDcMotorController의
+        // Channel.targetPositionSet). RUN_TO_POSITION으로 돌던 LinearOpMode가 STOP 뒤 루프 다음에 setPower(0)을 해도 실제
+        // 로봇처럼 TargetPositionNotSetException이 나지 않는다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        gobilda.setTargetPosition(100);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "running before STOP");
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(false, bot.out("gobilda", "enabled"), "STOP fail safe disables the motor");
+        Check.equal(0.0, bot.out("gobilda", "power"), "STOP fail safe stops the motor");
+        Check.equal("RUN_TO_POSITION", bot.out("gobilda", "mode"), "fail safe keeps the mode");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "fail safe keeps the target position");
+        // 끊김이 없는 스레드: 목표 속도 0과 켜기는 위험하지 않아 보낸다(실제 isDangerous false)
+        gobilda.setPower(0);
+        Check.equal(0.0, bot.out("gobilda", "power"), "zero power after STOP");
+        Check.equal(true, bot.out("gobilda", "enabled"), "re-enabling with the kept target does not throw");
+        // 위험한 명령은 여전히 취소된다
+        gobilda.setPower(0.8);
+        gobilda.setTargetPosition(300);
+        Check.equal(0.0, bot.out("gobilda", "power"), "nonzero power after STOP is still cancelled");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "a new target after STOP is still cancelled");
+        Check.equal(100, gobilda.getTargetPosition(), "the hub still has the old target");
+
+        // 다음 OpMode(afterStop → beforeInit): 목표 위치는 허브에 남아 새 목표 없이 RUN_TO_POSITION으로 켜도 던지지 않는다
+        SandbotHardware.afterStop(bot.map);
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal("RUN_WITHOUT_ENCODER", bot.out("gobilda", "mode"), "the next OpMode starts without encoders");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "the target survives to the next OpMode");
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "RUN_TO_POSITION enables with the kept target");
+        Check.near(0.5, num(bot.out("gobilda", "power")), 1e-3, "the motor runs to the kept target");
+        SandbotHardware.afterStop(bot.map);
     }
 
     public static void testEncoderOffsetGivesRawRunToPositionTarget() {

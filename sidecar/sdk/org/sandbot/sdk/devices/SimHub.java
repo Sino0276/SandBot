@@ -247,8 +247,10 @@ public final class SimHub {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * 실제 LynxModule.failSafe: LynxFailSafeCommand(허브가 모든 모터를 멈추고 서보 PWM을 끈다) 뒤
-     * 컨트롤러의 LastKnown을 잊는다(forgetLastKnown).
+     * 실제 LynxModule.failSafe: LynxFailSafeCommand(허브가 모든 모터를 멈추고 끄며 서보 PWM을 끈다) 뒤 컨트롤러의 LastKnown을
+     * 잊는다(forgetLastKnown). 펌웨어는 모터 모드·목표 위치를 지우지 않으므로(추론,
+     * {@link SimDcMotorController.Channel#targetPositionSet}) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도
+     * TargetPositionNotSetException이 나지 않는다.
      */
     public void failSafe() {
         lynxCommand();

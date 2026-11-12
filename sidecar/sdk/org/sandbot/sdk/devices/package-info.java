@@ -7,7 +7,9 @@
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
  * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
  * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
- * preventDangerousHardwareAccess), {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
+ * preventDangerousHardwareAccess. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
+ * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다),
+ * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
  * <h2>시뮬레이터 장치(SimDevice)</h2>
  * 구성 이름마다 하나({@code Sim.devices()}, 구성에 넣은 순서). 출력은 가짜 SDK가 허브에 보낸 명령의 결과(허브 펌웨어가 보는 값)이고,
@@ -28,7 +30,8 @@
  *         돌려줄 값, RUN_TO_POSITION이면 |power|; 표시용), motorType(구성 태그), mode(RUN_WITHOUT_ENCODER·RUN_USING_ENCODER·RUN_TO_POSITION·STOP_AND_RESET_ENCODER),
  *         power(−1..1: 엔코더 없음이면 정전력 값, 엔코더 모드면 목표 속도 ÷ 형식의 최대 틱/s, 꺼져 있거나 리셋이면 0),
  *         velocity(엔코더 모드의 목표 속도 틱/s, 아니면 null), enabled, zeroPower(BRAKE·FLOAT),
- *         targetPosition(허브 틱, 받은 적 없으면 null), targetTolerance(틱, 기본 5),
+ *         targetPosition(허브 틱, 받은 적 없으면 null. 한 번 받으면 fail safe·OpMode 사이에도 남는다: 실제 허브는 전원을 끌 때까지(추론),
+ *         SandBot은 실행 하나 동안), targetTolerance(틱, 기본 5),
  *         encoderOffset(마지막 STOP_AND_RESET_ENCODER 때의 원시 position, 정수, 처음 0, 늘 보냄, OpMode 사이에도 그대로:
  *         팀 코드의 엔코더 = position − encoderOffset, RUN_TO_POSITION의 원시 목표 = targetPosition + encoderOffset),
  *         encoderResets(허브에 보낸 STOP_AND_RESET_ENCODER 횟수, 정수, 처음 0, 리셋마다 1씩, 늘 보냄, OpMode 사이에도 그대로:

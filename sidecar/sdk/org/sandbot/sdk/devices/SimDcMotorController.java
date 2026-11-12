@@ -80,9 +80,21 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         boolean enabled = false;
         int targetPosition = 0;
         int targetTolerance = DEFAULT_TARGET_POSITION_TOLERANCE;
-        /** 펌웨어 규칙: RUN_TO_POSITION에서 켜려면 목표 위치를 먼저 받아야 한다(fail safe로 초기화) */
+        /**
+         * 허브 펌웨어가 목표 위치(LynxSetMotorTargetPositionCommand)를 받은 적이 있는가. 펌웨어 규칙: RUN_TO_POSITION에서 모터를
+         * 켜려면(LynxSetMotorChannelEnableCommand) 목표 위치를 먼저 받아야 하고, 아니면 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED라
+         * SDK가 TargetPositionNotSetException을 던진다.
+         *
+         * <p>한 번 받으면 허브 전원이 꺼질 때까지 남는다: fail safe(LynxFailSafeCommand)는 모터를 멈추고 끌 뿐 모드·목표 위치를
+         * 지우지 않는다. 펌웨어 명세가 공개되지 않아 추론한 규칙이고 근거는 이렇다. SDK 10.1.1까지 initializeHardware는 OpMode를
+         * INIT할 때마다 floatHardware()(setPower 0 → 켜기)를 runWithoutEncoders()보다 먼저 불렀다. fail safe가 목표 위치를
+         * 지웠다면 RUN_TO_POSITION 오토 뒤 TeleOp을 INIT한 모든 팀이 이 예외를 봤을 것이다. 그런데 보고된 것은 목표 위치를 한 번도
+         * 주지 않은 경우뿐이고(FtcRobotController 이슈 #913·#1345), 10.2가 순서를 runWithoutEncoders → floatHardware로 바꿔 고쳤다.
+         *
+         * <p>한계: SandBot은 실행마다 사이드카(허브)를 새로 만들므로 수명은 실행 하나다(실제는 허브 전원을 끄기 전까지 다음 OpMode에도
+         * 남는다). 출력 targetPosition은 이것이 false인 동안 null이다.
+         */
         boolean targetPositionSet = false;
-        boolean targetPositionEverSet = false;
         /**
          * 마지막 STOP_AND_RESET_ENCODER 때의 원시 엔코더 틱(허브가 엔코더를 0으로 되돌린 것을 원시 값에서 빼서 흉내 낸다).
          * 처음 0이고 OpMode 사이(resetDeviceConfigurationForOpMode)에도 그대로다(실제 허브도 리셋하지 않으면 계속 센다).
@@ -200,7 +212,7 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             device.output("velocity", mode == DcMotor.RunMode.RUN_WITHOUT_ENCODER ? null : (Object) targetVelocity);
             device.output("enabled", enabled);
             device.output("zeroPower", zeroPowerBehavior.name());
-            device.output("targetPosition", targetPositionEverSet ? (Object) targetPosition : null);
+            device.output("targetPosition", targetPositionSet ? (Object) targetPosition : null);
             device.output("targetTolerance", targetTolerance);
             // 시뮬레이터가 RUN_TO_POSITION의 원시 목표(targetPosition + encoderOffset)를 만들 수 있게 늘 보낸다
             device.output("encoderOffset", encoderOffset);
@@ -256,7 +268,12 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         }
     }
 
-    /** 구성 읽기 때 실제 하드웨어 초기화(LynxController.hook → initializeHardware)와 같은 일을 한다 */
+    /**
+     * 구성 읽기 때와 OpMode마다(resetDeviceConfigurationForOpMode) 실제 하드웨어 초기화(LynxController.hook →
+     * initializeHardware)와 같은 일을 한다. 순서는 SDK 12.0 그대로 runWithoutEncoders → floatHardware다(10.1.1까지는
+     * floatHardware가 먼저라, 목표 위치를 받은 적 없는 RUN_TO_POSITION 모터가 INIT에서 TargetPositionNotSetException을 냈다:
+     * {@link Channel#targetPositionSet}).
+     */
     void initializeHardware() {
         runWithoutEncoders();
         floatHardware();
@@ -273,13 +290,16 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         }
     }
 
-    /** LynxFailSafeCommand: 허브가 모든 모터를 멈추고 끈다 */
+    /**
+     * LynxFailSafeCommand: 허브가 모든 모터를 멈추고(정전력·목표 속도 0) 끈다. 모드·zero power·목표 위치·허용 오차·PIDF는
+     * 그대로다(목표 위치를 지우지 않는 근거는 {@link Channel#targetPositionSet}). 그래서 STOP 뒤 RUN_TO_POSITION 모터에
+     * setPower(0)을 해도 다시 켜기가 거부되지 않는다(실제 로봇과 같다).
+     */
     void hubFailSafe() {
         for (Channel c : channels) {
             c.constantPower = 0;
             c.targetVelocity = 0;
             c.enabled = false;
-            c.targetPositionSet = false;
             c.publish();
         }
     }
@@ -332,8 +352,8 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
             hub.lynxCommand(); // LynxSetMotorChannelEnableCommand
             Channel c = channels[motorZ];
             if (enable && c.mode == DcMotor.RunMode.RUN_TO_POSITION && !c.targetPositionSet) {
-                // 펌웨어 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED
-                motors[motorZ].lastKnownEnable.invalidate();
+                // 펌웨어 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED. 실제 LynxDcMotorController처럼 lastKnownEnable은 updateValue가
+                // 둔 true 그대로다(되돌리지 않는다): 신선한 동안(500 ms) 다시 켜기는 보내지 않아 던지지 않고, 모터는 꺼진 채다.
                 throw new TargetPositionNotSetException();
             }
             c.enabled = enable;
@@ -593,7 +613,6 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         c.targetPosition = position;
         c.targetTolerance = tolerance;
         c.targetPositionSet = true;
-        c.targetPositionEverSet = true;
         c.publish();
     }
 
