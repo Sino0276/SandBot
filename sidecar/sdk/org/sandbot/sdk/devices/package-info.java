@@ -122,6 +122,14 @@
  *       보내지 않고 UnsupportedOperationException(첫 번째면 원래 계수 읽기 1개). LynxModule의 전압·전류·온도·펌웨어 읽기, LED 패턴,
  *       충전·디버그, 팀이 부른 failSafe는 하나씩이고 getImuType은 실제처럼 먼저 묻는 getRevProductNumber 하나다(그 뒤의 I2C 칩
  *       찾기는 세지 않는다).</li>
+ *   <li>CLOCK_READ(LastKnown이 답함): LastKnown 캐시가 허브 대신 답할 때마다(같은 값 쓰기를 건너뜀, 신선한 값 읽기) 실제
+ *       LastKnown.isValid가 신선도를 보려고 읽는 ElapsedTime 한 번(SimLastKnown). 캐시가 답하지 못해 허브로 가는 경로는 따로
+ *       청구하지 않는다(허브 명령 비용이 SDK 안의 일을 포함한다고 본다). 실제 DcMotorImpl.setPower·getPower는 먼저 getMode()를
+ *       읽고 디지털 채널 호출은 먼저 핀 모드를 읽으므로, 예: 처음 setPower = 명령 3개 + 적중 1(컨트롤러가 다시 읽는 모드), 같은 power
+ *       다시 = 적중 2(모드·power), 다른 power = 명령 1개 + 적중 3(모드 둘·enable), getPower = 적중 2, 같은 서보 위치 = 적중 1,
+ *       디지털 출력 쓰기 = 명령 1개 + 적중 1(핀 모드). 그래서 캐시로만 답하는 루프(STOP을 무시하고 같은 power만 쓰는 루프 등)도
+ *       가상 시간이 흘러 틱 경계의 START·STOP이 적용되고, 500 ms마다 신선도가 지나 다시 보내며, STOP 뒤에는 stuckInStop으로
+ *       끝난다(실제는 OpModeStuckCodeMonitor가 멈춘다). bulk 캐시 읽기 자체는 LastKnown이 아니라 0이다(디지털 입력은 핀 모드 적중 1).</li>
  *   <li>BULK_READ: LynxGetBulkInputDataCommand. BulkCachingMode(LynxModule)를 따른다: OFF는 엔코더·디지털·아날로그·busy 읽기마다
  *       명령 하나(속도·과전류는 OFF에서도 bulk read), AUTO는 캐시가 없거나 같은 명령(태그 안에서 명령·포트가 같음)을 다시 읽을 때
  *       bulk read(캐시를 비우면 모든 태그의 기록도 지운다), MANUAL은 clearBulkCache() 뒤 첫 읽기, getBulkData()는 늘.
@@ -138,7 +146,8 @@
  * 자리값을 돌려준다(LastKnown에 넣지 않는다. 보내기 전에 한 LastKnown.updateValue는 남는다). STOP은 LinearOpMode 스레드를
  * 끊으므로 팀이 끊김을 지우지 않는 한 STOP 뒤의 허브 명령이 모두 이렇다. 끊김을 지워도 위험한 명령은 STOP 뒤 계속 취소되고
  * (실제 LynxModule.sendCommand의 CANCELLED_FOR_SAFETY), 그 취소도 실제처럼 먼저 잡은 잠금 한 번으로 CLOCK_READ를 청구한다(그래서
- * 끊김을 지우고 STOP을 무시한 채 위험한 명령만 부르는 루프도 stuckInStop으로 끝난다).
+ * 끊김을 지우고 STOP을 무시한 채 위험한 명령만 부르는 루프도 stuckInStop으로 끝난다). LastKnown 캐시는 잠금을 잡지 않으므로 끊긴
+ * 스레드에서도 답하고 CLOCK_READ를 청구한다(끊김을 지우고 안전한 같은 값만 쓰고 읽는 루프도 stuckInStop으로 끝난다).
  * SandBot은 팀 코드가 도는 동안(beforeInit ~ afterStop) 끊긴 스레드의 LYNX_COMMAND·BULK_READ·I2C_TRANSACTION 대신 잠금 시도
  * 한 번으로 CLOCK_READ만 청구한다(SimHub.acquireNetworkLock, STOP을 무시하고 하드웨어만 부르는 루프도 가상 시간이 흘러
  * stuckInStop이 된다). 끊김 표시는 그대로 둔다. Lynx 컨트롤러(모터·서보·디지털·아날로그·배터리)의 자리값 예: 엔코더·목표 위치·

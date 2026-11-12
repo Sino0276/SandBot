@@ -18,6 +18,9 @@ import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.sandbot.sim.HubKind;
+import org.sandbot.sim.HubTiming;
+import org.sandbot.sim.SimCost;
 import org.sandbot.testing.Check;
 
 import static org.sandbot.sdk.devices.SimTestSupport.CLOCK;
@@ -30,9 +33,14 @@ import static org.sandbot.sdk.devices.SimTestSupport.robotXml;
 /**
  * 허브 비용: 호출마다 실제 SDK가 보내는 Lynx 명령·bulk read·I2C 트랜잭션 수 × HubTiming 기본값.
  * Control Hub(부모 모듈)는 명령 1.5 ms·bulk 2.0 ms·I2C 2.5 ms, Expansion Hub는 2.5·3.0·3.5 ms.
+ * LastKnown 캐시가 답할 때마다(실제 LastKnown.isValid가 ElapsedTime을 읽는 자리) CLOCK_READ 하나를 더한다(HIT). 실제
+ * DcMotorImpl.setPower·getPower는 먼저 getMode()를 읽으므로 모드 캐시가 신선하면 그것도 하나다.
  */
 public final class HubCostTest {
     private HubCostTest() {}
+
+    /** LastKnown 캐시가 한 번 답한 비용(시계 읽기 하나) */
+    static final long HIT = HubTiming.defaults().baseNanos(SimCost.CLOCK_READ, HubKind.CONTROL);
 
     static final String CONTROL =
             "            <goBILDA5202SeriesMotor name=\"m0\" port=\"0\" />\n"
@@ -70,16 +78,41 @@ public final class HubCostTest {
     public static void testMotorCommandsUseLastKnown() {
         Bot bot = new Bot();
         DcMotorEx m0 = bot.get(DcMotorEx.class, "m0");
-        // 처음: 모드 묻기(LastKnown 없음) + power + enable
-        Check.equal(ms(3 * 1.5), elapsed(() -> m0.setPower(0.5)), "first setPower");
-        Check.equal(0L, elapsed(() -> m0.setPower(0.5)), "same power again sends nothing");
-        Check.equal(ms(1.5), elapsed(() -> m0.setPower(0.25)), "new power is one command");
-        Check.equal(0L, elapsed(() -> m0.getPower()), "getPower from LastKnown");
+        // 처음: 모드 묻기(LastKnown 없음, DcMotorImpl.setPower의 getMode) + power + enable. 컨트롤러가 다시 읽는 모드는 캐시가 답한다
+        Check.equal(ms(3 * 1.5) + HIT, elapsed(() -> m0.setPower(0.5)), "first setPower");
+        Check.equal(2 * HIT, elapsed(() -> m0.setPower(0.5)), "same power again sends nothing: mode and power from LastKnown");
+        Check.equal(ms(1.5) + 3 * HIT, elapsed(() -> m0.setPower(0.25)), "new power is one command (mode twice and enable from LastKnown)");
+        Check.equal(2 * HIT, elapsed(() -> m0.getPower()), "getPower: mode and power from LastKnown");
         // 500 ms가 지나면 LastKnown이 무효가 되어 모드·power·enable을 다시 보낸다
         CLOCK.nanos += ms(600);
-        Check.equal(ms(3 * 1.5), elapsed(() -> m0.setPower(0.25)), "stale LastKnown resends");
+        Check.equal(ms(3 * 1.5) + HIT, elapsed(() -> m0.setPower(0.25)), "stale LastKnown resends");
         Check.equal(ms(1.5), elapsed(() -> m0.setTargetPosition(100)), "target position is always sent");
         Check.equal(ms(1.5), elapsed(() -> m0.setTargetPosition(100)), "target position is not cached");
+        bot.stop();
+    }
+
+    public static void testLastKnownHitsAdvanceTheClock() {
+        // 같은 값만 쓰는 루프도 캐시가 답할 때마다 시계 읽기 하나만큼 시간이 흘러, 실제처럼 신선도(500 ms)가 지나면 다시 보낸다
+        // (전에는 캐시가 비용 없이 답해 가상 시간이 멈췄고 STOP도 적용되지 않았다)
+        Bot bot = new Bot();
+        DcMotorEx m0 = bot.get(DcMotorEx.class, "m0");
+        long before = SimTestSupport.now();
+        m0.setPower(0.5);
+        // 처음 setPower의 모드 묻기(1.5 ms) 바로 뒤에 기억한 모드 캐시가 가장 먼저 낡는다
+        long modeCachedAt = before + ms(1.5);
+        Check.equal(1000 * 2 * HIT, elapsed(() -> {
+            for (int i = 0; i < 1000; i++) m0.setPower(0.5);
+        }), "1000 same-power writes: mode and power from LastKnown each time");
+        int calls = 0;
+        long cost;
+        do {
+            cost = elapsed(() -> m0.setPower(0.5));
+            calls++;
+        } while (cost < ms(1.5) && calls < 1_000_000);
+        Check.equal(ms(3 * 1.5) + HIT, cost, "after 500 ms of cache answers the stale LastKnown resends mode, power and enable");
+        long staleAfter = SimTestSupport.now() - cost - modeCachedAt;
+        Check.isTrue(staleAfter > ms(500) && staleAfter <= ms(500) + 2 * HIT,
+                "resent as soon as the mode cache was older than 500 ms: " + staleAfter);
         bot.stop();
     }
 
@@ -110,8 +143,8 @@ public final class HubCostTest {
     public static void testExpansionHubCostsMore() {
         Bot bot = new Bot();
         DcMotorEx e0 = bot.get(DcMotorEx.class, "e0");
-        Check.equal(ms(3 * 2.5), elapsed(() -> e0.setPower(0.5)), "first setPower on expansion");
-        Check.equal(ms(2.5), elapsed(() -> e0.setPower(-0.5)), "new power on expansion");
+        Check.equal(ms(3 * 2.5) + HIT, elapsed(() -> e0.setPower(0.5)), "first setPower on expansion");
+        Check.equal(ms(2.5) + 3 * HIT, elapsed(() -> e0.setPower(-0.5)), "new power on expansion");
         Check.equal(ms(2.5), elapsed(() -> e0.getCurrentPosition()), "encoder read on expansion (OFF)");
         Check.equal(ms(3.0), elapsed(() -> e0.getVelocity()), "velocity is a bulk read on expansion");
         bot.expansion.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
@@ -128,7 +161,7 @@ public final class HubCostTest {
         Check.equal(ms(1.5), elapsed(() -> m0.getCurrentPosition()), "encoder again: one command");
         Check.equal(ms(1.5), elapsed(() -> m1.getCurrentPosition()), "other encoder: one command");
         Check.equal(ms(2.0), elapsed(() -> m0.getVelocity()), "velocity: LynxGetBulkInputDataCommand");
-        Check.equal(ms(1.5), elapsed(() -> bot.get(TouchSensor.class, "touch").isPressed()), "digital: one command");
+        Check.equal(ms(1.5) + HIT, elapsed(() -> bot.get(TouchSensor.class, "touch").isPressed()), "digital: one command (pin mode from LastKnown)");
         Check.equal(ms(1.5), elapsed(() -> bot.get(AnalogInput.class, "analog").getVoltage()), "analog: one command");
         Check.equal(ms(1.5), elapsed(() -> bot.get(VoltageSensor.class, "Control Hub").getVoltage()), "battery: one command");
         bot.stop();
@@ -143,7 +176,7 @@ public final class HubCostTest {
         Check.equal(0L, elapsed(() -> bot.control.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO)), "setting the mode is free");
         Check.equal(ms(2.0), elapsed(() -> m0.getCurrentPosition()), "first read: bulk read");
         Check.equal(0L, elapsed(() -> m1.getCurrentPosition()), "other encoder from the cache");
-        Check.equal(0L, elapsed(() -> touch.isPressed()), "digital from the cache");
+        Check.equal(HIT, elapsed(() -> touch.isPressed()), "digital from the cache (pin mode from LastKnown)");
         Check.equal(0L, elapsed(() -> analog.getVoltage()), "analog from the cache");
         Check.equal(0L, elapsed(() -> m0.getVelocity()), "velocity (own tag) from the cache");
         Check.equal(0L, elapsed(() -> m0.isBusy()), "busy from the cache");
@@ -199,19 +232,20 @@ public final class HubCostTest {
         Servo servo = bot.get(Servo.class, "servo");
         // 펄스 + PWM 켜기
         Check.equal(ms(2 * 1.5), elapsed(() -> servo.setPosition(0.5)), "first position: pulse + enable");
-        Check.equal(0L, elapsed(() -> servo.setPosition(0.5)), "same position again");
-        Check.equal(ms(1.5), elapsed(() -> servo.setPosition(0.7)), "new position");
-        Check.equal(0L, elapsed(() -> servo.getPosition()), "position from LastKnown");
+        Check.equal(HIT, elapsed(() -> servo.setPosition(0.5)), "same position again: LastKnown answers");
+        Check.equal(ms(1.5) + HIT, elapsed(() -> servo.setPosition(0.7)), "new position (PWM enable from LastKnown)");
+        Check.equal(HIT, elapsed(() -> servo.getPosition()), "position from LastKnown");
         bot.stop();
     }
 
     public static void testDigitalOutputCosts() {
         Bot bot = new Bot();
         DigitalChannel digital = bot.get(DigitalChannel.class, "digital");
-        Check.equal(ms(1.5), elapsed(() -> digital.setMode(DigitalChannel.Mode.OUTPUT)), "direction command");
-        Check.equal(ms(1.5), elapsed(() -> digital.setState(true)), "output command");
-        Check.equal(ms(1.5), elapsed(() -> digital.setState(true)), "output is always sent (real controller)");
-        Check.equal(0L, elapsed(() -> digital.getState()), "output state from LastKnown");
+        // 디지털 채널 호출은 먼저 핀 모드를 LastKnown에서 읽는다(실제 LynxDigitalChannelController)
+        Check.equal(ms(1.5) + HIT, elapsed(() -> digital.setMode(DigitalChannel.Mode.OUTPUT)), "direction command");
+        Check.equal(ms(1.5) + HIT, elapsed(() -> digital.setState(true)), "output command");
+        Check.equal(ms(1.5) + HIT, elapsed(() -> digital.setState(true)), "output is always sent (real controller)");
+        Check.equal(HIT, elapsed(() -> digital.getState()), "output state from LastKnown");
         bot.stop();
     }
 

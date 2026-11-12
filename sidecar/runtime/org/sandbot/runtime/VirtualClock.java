@@ -34,7 +34,10 @@ final class VirtualClock implements SimClock {
     private final Violation violation;
     private Boundary boundary;
 
-    /** 실행 시작부터의 가상 나노초. 다른 스레드(로그·감시)는 {@link #peekNanos}로만 읽는다. */
+    /**
+     * 실행 시작부터의 가상 나노초. 다른 스레드(로그·감시)는 {@link #peekNanos}로만 읽는다. 감시는 이 값이 바뀌지 않으면 멈춘 것으로
+     * 본다(비용 없는 nanoTime·currentTimeMillis만 부르는 루프나 비용이 0인 청구만 하는 루프는 틱 경계에 닿지 못한다).
+     */
     private volatile long now;
     /** 다음에 처리할 경계 번호 */
     private long nextTick;
@@ -42,8 +45,7 @@ final class VirtualClock implements SimClock {
     private boolean inBoundary;
     private volatile Thread owner;
 
-    // 감시(Watchdog)용
-    private volatile long activity;
+    // 감시(Watchdog)용: 진행은 now(가상 시간)가 바뀌었는가로 본다(비용 없는 시계 읽기는 진행이 아니다)
     private volatile boolean waitingHost;
 
     // 다른 스레드가 시계를 썼다(처음 한 번 정함)
@@ -98,10 +100,6 @@ final class VirtualClock implements SimClock {
 
     long nextTick() {
         return nextTick;
-    }
-
-    long activity() {
-        return activity;
     }
 
     boolean waitingHost() {
@@ -202,7 +200,6 @@ final class VirtualClock implements SimClock {
     private void check() {
         Thread t = Thread.currentThread();
         if (t != owner) foreign(t);
-        activity++;
         String fatal = fatalMessage;
         if (fatal != null && !finishing) throw new SimThreadError(fatal, true);
     }
