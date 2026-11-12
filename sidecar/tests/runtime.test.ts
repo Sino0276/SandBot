@@ -765,24 +765,34 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     TIMEOUT
   )
 
-  it(
-    'STOP을 무시하고 하드웨어만 부르는 루프는 잠금 시도마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다',
-    async () => {
-      const run = await runSidecar(b, {
-        opMode: 'StopIgnoredHardwareLoop',
-        events: { 2: ['start'], 50: ['stop'] },
-        request: {
-          configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']),
-          stallMillis: 1000
+  // 읽기 루프는 끊긴 스레드의 명령을 버리면서도 잠금 시도 비용을 청구하는지 지킨다(버리기 전에도 명령을 보내 시간이 흘렀다).
+  // power 루프의 0이 아닌 쓰기는 버리기 전에는 STOP 뒤의 위험한 명령이라 비용 없이 취소되었다. 그래서 가상 시간이 멈춘 채
+  // 하드웨어를 계속 불러 stall도 stuckInStop도 아니었다(호스트가 STOP 5초 뒤 JVM을 끝낼 때까지 돌았다, 여기서는 시간 제한).
+  for (const opMode of ['StopIgnoredHardwareLoop', 'StopIgnoredPowerLoop']) {
+    it(
+      `${opMode}: STOP을 무시하고 하드웨어만 부르는 루프는 잠금 시도마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다`,
+      async () => {
+        const run = await runSidecar(b, {
+          opMode,
+          events: { 2: ['start'], 50: ['stop'] },
+          request: {
+            configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']),
+            stallMillis: 1000
+          },
+          // 회귀로 stall이 나면 호스트처럼 끝내 바로 실패하게(답을 기다리다 시간 제한에 걸리지 않게)
+          shutdownWhen: (m) => m.type === 'error' && m.kind === 'stall'
+        })
+        expect(errors(run).map((e) => e.kind)).toEqual(['stuckInStop'])
+        const finished = run.messages[run.messages.length - 1] as {
+          tNanos: number
+          reason: string
         }
-      })
-      expect(errors(run).map((e) => e.kind)).toEqual(['stuckInStop'])
-      const finished = run.messages[run.messages.length - 1] as { tNanos: number; reason: string }
-      expect(finished.reason).toBe('stuck')
-      expect(finished.tNanos).toBeGreaterThanOrEqual(50 * DEFAULT_TICK_NANOS + 900_000_000)
-    },
-    TIMEOUT
-  )
+        expect(finished.reason).toBe('stuck')
+        expect(finished.tNanos).toBeGreaterThanOrEqual(50 * DEFAULT_TICK_NANOS + 900_000_000)
+      },
+      TIMEOUT
+    )
+  }
 
   it(
     '고치지 않은 SDK 샘플 RobotAutoDriveByEncoder_Linear를 첫 encoderDrive 중에 STOP해도 오류 없이 끝난다',
