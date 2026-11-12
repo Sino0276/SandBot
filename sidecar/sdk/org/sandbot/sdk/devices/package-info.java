@@ -5,9 +5,10 @@
  * {@link org.sandbot.sdk.devices.SandbotHardware}: {@code create(File)}(구성 XML, null이면 빈 맵; 틀리면
  * {@link org.sandbot.sdk.devices.SandbotConfigException}, 영어 메시지), {@code beforeInit(map)}(실제
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
- * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
+ * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 다음 INIT까지 위험한 명령 —
  * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
- * preventDangerousHardwareAccess. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
+ * preventDangerousHardwareAccess. 상태는 실제처럼 OpModeManagerImpl의 정적 필드 하나이고(fail safe 전에 true, beforeInit이 false,
+ * {@code OpModeManagerImpl.shouldPreventDangerousHardwareAccess()}가 그 값), SimHub의 취소도 그 값을 읽는다. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
  * CLOCK_READ만 청구한다. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
  * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다),
  * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
