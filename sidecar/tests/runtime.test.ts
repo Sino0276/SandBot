@@ -765,6 +765,51 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     TIMEOUT
   )
 
+  // 실제 callActiveOpModeStop은 OpMode가 끝난 뒤(또는 강제로 멈춘 뒤) 끊기지 않은 이벤트 루프 스레드에서 리스너의
+  // onOpModePostStop을 부른다. 그래서 팀이 등록한 리스너의 허브 명령은 STOP이 끊은 LinearOpMode 스레드와 관계없이 허브에 간다
+  // (OpModeRunner가 postStop 앞에서 끊김을 지운다. 지우지 않으면 자리값 0.0·0·RUN_WITHOUT_ENCODER가 나오고 쓰기는 버려진다).
+  for (const [opMode, reason, kinds] of [
+    ['StopPostStopListener', 'stopped', []],
+    ['StopPostStopListenerStuck', 'stuck', ['stuckInStop']]
+  ] as const) {
+    it(
+      `${opMode}: postStop 리스너의 허브 읽기·쓰기는 끊긴 OpMode 스레드의 자리값이 아니다(${reason})`,
+      async () => {
+        const script: Script = {
+          opMode,
+          events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+          inputs: (tick): Record<string, DeviceValues> =>
+            tick === 1 ? { drive: { position: 321 } } : {},
+          request: {
+            configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']),
+            stallMillis: 1000
+          },
+          shutdownWhen: (m) => m.type === 'error' && m.kind === 'stall'
+        }
+        const run = await runSidecar(b, script)
+        expect(errors(run).map((e) => e.kind)).toEqual(kinds)
+        expect(finishedReason(run)).toBe(reason)
+        expect(results(run)).toEqual({
+          listenerInterrupted: 'false',
+          volts: '12.5',
+          position: '321',
+          mode: 'RUN_USING_ENCODER'
+        })
+        // 리스너의 zero power 쓰기가 허브에 갔다(마지막 tick은 postStop·afterStop 뒤다)
+        const all = ticks(run)
+        expect(
+          all
+            .filter((t) => t.tick <= STOP_TICK)
+            .every((t) => t.outputs.drive?.zeroPower === 'FLOAT')
+        ).toBe(true)
+        expect(all[all.length - 1].outputs.drive?.zeroPower).toBe('BRAKE')
+        const again = await runSidecar(b, script)
+        expect(normalized(again)).toEqual(normalized(run))
+      },
+      TIMEOUT
+    )
+  }
+
   // 읽기 루프는 끊긴 스레드의 명령을 버리면서도 잠금 시도 비용을 청구하는지 지킨다(버리기 전에도 명령을 보내 시간이 흘렀다).
   // power 루프의 0이 아닌 쓰기는 버리기 전에는 STOP 뒤의 위험한 명령이라 비용 없이 취소되었다. 그래서 가상 시간이 멈춘 채
   // 하드웨어를 계속 불러 stall도 stuckInStop도 아니었다(호스트가 STOP 5초 뒤 JVM을 끝낼 때까지 돌았다, 여기서는 시간 제한).
