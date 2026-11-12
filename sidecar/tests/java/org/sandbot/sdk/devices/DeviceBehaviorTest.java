@@ -26,7 +26,9 @@ import com.qualcomm.robotcore.hardware.NormalizedRGBA;
 import com.qualcomm.robotcore.hardware.MotorControlAlgorithm;
 import com.qualcomm.robotcore.hardware.PIDCoefficients;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.ServoController;
 import com.qualcomm.robotcore.hardware.TouchSensor;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
@@ -36,12 +38,16 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
 import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
 import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
+import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Velocity;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.sandbot.sim.HubKind;
+import org.sandbot.sim.HubTiming;
+import org.sandbot.sim.SimCost;
 import org.sandbot.sim.SimDevice;
 import org.sandbot.sim.SimUnsupportedException;
 import org.sandbot.testing.Check;
@@ -51,6 +57,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import static org.sandbot.sdk.devices.SimTestSupport.CLOCK;
 import static org.sandbot.sdk.devices.SimTestSupport.create;
@@ -187,7 +194,9 @@ public final class DeviceBehaviorTest {
         long before = SimTestSupport.now();
         tetrix.setPower(0.8);
         servo.setPosition(0.9);
-        tetrix.setTargetPosition(100);
+        // 실제 send()는 LynxModule.sendCommand의 안전 검사 전에 네트워크 잠금을 잡는다: 취소된 명령은 허브 명령 비용이 아니라
+        // 잠금 한 번(CLOCK_READ)이다
+        attemptsRun(1, () -> tetrix.setTargetPosition(100), "a cancelled target position");
         tetrix.setVelocity(300);
         Check.equal(0.0, bot.out("tetrix", "power"), "power after STOP is cancelled");
         Check.equal(false, bot.out("servo", "pwm"), "servo PWM stays off after STOP");
@@ -222,9 +231,23 @@ public final class DeviceBehaviorTest {
     public static void testRunToPosition() {
         Bot bot = new Bot(null, MOTORS, null);
         DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
-        // 목표 위치 없이 RUN_TO_POSITION으로 켜면 펌웨어가 거부한다(실제 TargetPositionNotSetException)
+        // 목표 위치 없이 RUN_TO_POSITION으로 켜면 펌웨어가 거부한다(실제 TargetPositionNotSetException). 꺼 둔 모터로 시작해
+        // 거부된 켜기가 허브 상태를 바꾸지 않는 것을 본다.
+        gobilda.setMotorDisable();
         Check.throwsType(TargetPositionNotSetException.class, () -> gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION),
                 "RUN_TO_POSITION before a target");
+        Check.equal(false, bot.out("gobilda", "enabled"), "the hub refused to enable");
+        // 실제 LynxDcMotorController는 NACK 뒤 lastKnownEnable을 되돌리지 않는다(updateValue가 둔 true 그대로). 그래서 신선한
+        // 동안(500 ms) 다시 켜기를 보내지 않아 던지지 않고, 목표 위치를 준 뒤에도 모터는 꺼진 채다. 신선도가 지나면 다시 보낸다.
+        gobilda.setPower(0.3);
+        Check.equal(false, bot.out("gobilda", "enabled"), "no enable resent while the NACKed cache value is fresh");
+        gobilda.setTargetPosition(50);
+        gobilda.setPower(0.4);
+        Check.equal(false, bot.out("gobilda", "enabled"), "still off: the SDK believes the motor is enabled");
+        CLOCK.nanos += ms(501);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "enable is resent once the cache is stale");
+        SandbotHardware.afterStop(bot.map);
 
         Bot bot2 = new Bot(null, MOTORS, null);
         DcMotorEx motor = bot2.get(DcMotorEx.class, "gobilda");
@@ -248,6 +271,597 @@ public final class DeviceBehaviorTest {
         SandbotHardware.afterStop(bot2.map);
         Check.equal(false, bot2.out("gobilda", "enabled"), "fail safe disables motors");
         Check.equal(0.0, bot2.out("gobilda", "power"), "fail safe stops motors");
+    }
+
+    public static void testFailSafeKeepsTargetPosition() {
+        // 허브 fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않는다(펌웨어 추론, SimDcMotorController의
+        // Channel.targetPositionSet). RUN_TO_POSITION으로 돌던 LinearOpMode가 STOP 뒤 루프 다음에 setPower(0)을 해도 실제
+        // 로봇처럼 TargetPositionNotSetException이 나지 않는다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        gobilda.setTargetPosition(100);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "running before STOP");
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(false, bot.out("gobilda", "enabled"), "STOP fail safe disables the motor");
+        Check.equal(0.0, bot.out("gobilda", "power"), "STOP fail safe stops the motor");
+        Check.equal("RUN_TO_POSITION", bot.out("gobilda", "mode"), "fail safe keeps the mode");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "fail safe keeps the target position");
+        // 끊김이 없는 스레드: 목표 속도 0과 켜기는 위험하지 않아 보낸다(실제 isDangerous false)
+        gobilda.setPower(0);
+        Check.equal(0.0, bot.out("gobilda", "power"), "zero power after STOP");
+        Check.equal(true, bot.out("gobilda", "enabled"), "re-enabling with the kept target does not throw");
+        // 위험한 명령은 여전히 취소된다
+        gobilda.setPower(0.8);
+        gobilda.setTargetPosition(300);
+        Check.equal(0.0, bot.out("gobilda", "power"), "nonzero power after STOP is still cancelled");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "a new target after STOP is still cancelled");
+        Check.equal(100, gobilda.getTargetPosition(), "the hub still has the old target");
+
+        // 다음 OpMode(afterStop → beforeInit): 목표 위치는 허브에 남아 새 목표 없이 RUN_TO_POSITION으로 켜도 던지지 않는다
+        SandbotHardware.afterStop(bot.map);
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal("RUN_WITHOUT_ENCODER", bot.out("gobilda", "mode"), "the next OpMode starts without encoders");
+        Check.equal(-100, bot.out("gobilda", "targetPosition"), "the target survives to the next OpMode");
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        Check.equal(true, bot.out("gobilda", "enabled"), "RUN_TO_POSITION enables with the kept target");
+        Check.near(0.5, num(bot.out("gobilda", "power")), 1e-3, "the motor runs to the kept target");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 끊긴 OpMode 스레드(실제 MessageKeyedLock.acquire의 lockInterruptibly)
+    // ---------------------------------------------------------------------------------------------
+
+    /** 잠금 시도 한 번의 비용(SimHub.acquireNetworkLock) */
+    static final long CLOCK_READ = HubTiming.defaults().baseNanos(SimCost.CLOCK_READ, HubKind.CONTROL);
+
+    /** body가 허브 명령을 하나도 보내지 않고 잠금 시도만 n번 했는지(가상 시간 = n × CLOCK_READ) 보고 결과를 돌려준다 */
+    static <T> T attempts(int n, Supplier<T> body, String message) {
+        Object[] result = new Object[1];
+        long elapsed = SimTestSupport.elapsed(() -> result[0] = body.get());
+        Check.equal((long) n * CLOCK_READ, elapsed, message + ": " + n + " lock attempt(s), nothing sent");
+        @SuppressWarnings("unchecked")
+        T value = (T) result[0];
+        return value;
+    }
+
+    static void attemptsRun(int n, Runnable body, String message) {
+        attempts(n, () -> {
+            body.run();
+            return null;
+        }, message);
+    }
+
+    static Map<String, Object> outputsOf(Bot bot, String... names) {
+        Map<String, Object> all = new LinkedHashMap<>();
+        for (String name : names) all.put(name, new LinkedHashMap<>(bot.device(name).outputs()));
+        return all;
+    }
+
+    public static void testInterruptedThreadDropsHubTransactions() {
+        // STOP을 받은 LinearOpMode의 스레드는 끊긴다. 실제 Lynx 명령은 보내기 전에 MessageKeyedLock.acquire(lockInterruptibly)를
+        // 거치므로 끊긴 스레드에서는 InterruptedException이 나고, 컨트롤러는 handleException(다시 끊음) 뒤 쓰기는 버리고 읽기는
+        // 자리값(LynxUsbUtil.makePlaceholderValue 등)을 돌려준다. 값은 실제 12.0 Lynx 컨트롤러의 catch 다음 줄이다.
+        Bot bot = new Bot(null, MOTORS + "            <Servo name=\"servo\" port=\"0\" />\n" + IO, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        DcMotorEx hex = bot.get(DcMotorEx.class, "hex");
+        Servo servo = bot.get(Servo.class, "servo");
+        DigitalChannel digital = bot.get(DigitalChannel.class, "digital");
+        VoltageSensor battery = bot.get(VoltageSensor.class, "Control Hub");
+        SimHub hub = SimHub.of(bot.get(LynxModule.class, "Control Hub"));
+        SimDcMotorController motors = hub.motors;
+        SimServoController servos = hub.servos;
+        SimDigitalChannelController dio = hub.digital;
+
+        // 실제 값이 자리값과 다르게 준비한다
+        tetrix.setPower(0.5);
+        tetrix.setCurrentAlert(5, CurrentUnit.AMPS);
+        bot.in("tetrix", "position", 100L);
+        bot.in("tetrix", "velocity", 40L);
+        bot.in("tetrix", "current", 6.0);
+        gobilda.setTargetPosition(100);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        hex.setMotorDisable();
+        servo.setPosition(0.3);
+        digital.setMode(DigitalChannel.Mode.OUTPUT);
+        digital.setState(true);
+        bot.in("analog", "voltage", 1.2);
+        bot.in("Control Hub", "voltage", 11.8);
+        Check.isTrue(motors.isMotorOverCurrent(1), "the real hub reports over current");
+        // LastKnown이 모두 신선도(500 ms)를 넘겨 읽기가 허브에 묻게 한다
+        CLOCK.nanos += ms(501);
+        String[] names = {"gobilda", "tetrix", "hex", "servo", "digital", "touch", "led", "analog", "Control Hub"};
+        Map<String, Object> before = outputsOf(bot, names);
+
+        Thread.currentThread().interrupt();
+        try {
+            // 모터 읽기(LynxDcMotorController)
+            Check.equal(0, attempts(1, () -> motors.getMotorCurrentPosition(1), "encoder"), "encoder placeholder 0");
+            Check.equal(0.0, attempts(1, () -> motors.getMotorVelocity(1), "velocity"), "velocity placeholder 0");
+            Check.equal(false, attempts(1, () -> motors.isMotorOverCurrent(1), "over current"), "over current placeholder false");
+            Check.equal(0.0, attempts(1, () -> motors.getMotorCurrent(1, CurrentUnit.AMPS), "current"), "current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> motors.getMotorCurrentAlert(1, CurrentUnit.AMPS), "current alert"),
+                    "current alert placeholder 0.0");
+            Check.equal(0, attempts(1, () -> motors.getMotorTargetPosition(0), "target"), "target placeholder 0");
+            Check.equal(DcMotor.RunMode.RUN_WITHOUT_ENCODER, attempts(1, () -> motors.getMotorMode(0), "mode"),
+                    "mode placeholder RUN_WITHOUT_ENCODER");
+            Check.equal(DcMotor.ZeroPowerBehavior.BRAKE, attempts(1, () -> motors.getMotorZeroPowerBehavior(0), "zero power"),
+                    "zero power placeholder BRAKE");
+            // 모드 읽기(자리값 RUN_WITHOUT_ENCODER) 다음 정전력 읽기
+            Check.equal(0.0, attempts(2, () -> motors.getMotorPower(1), "power"), "power placeholder 0");
+            Check.equal(true, attempts(1, () -> motors.isMotorEnabled(2), "enabled"), "enabled placeholder true");
+            // 모드 자리값이 RUN_WITHOUT_ENCODER라 at-target을 묻지 않는다
+            Check.equal(false, attempts(1, () -> motors.isBusy(0), "busy"), "busy without a cached mode is false");
+            PIDFCoefficients pidf = attempts(1, () -> motors.getPIDFCoefficients(0, DcMotor.RunMode.RUN_USING_ENCODER), "PIDF");
+            Check.equal(Arrays.asList(0.0, 0.0, 0.0, 0.0, MotorControlAlgorithm.PIDF),
+                    Arrays.<Object>asList(pidf.p, pidf.i, pidf.d, pidf.f, pidf.algorithm), "PIDF placeholder new PIDFCoefficients()");
+            PIDCoefficients pid = attempts(1, () -> motors.getPIDCoefficients(0, DcMotor.RunMode.RUN_USING_ENCODER), "PID");
+            Check.equal(Arrays.asList(0.0, 0.0, 0.0), Arrays.asList(pid.p, pid.i, pid.d), "PID placeholder new PIDCoefficients()");
+
+            // 모터 쓰기: 모두 버린다(보내기 전 LastKnown.updateValue는 실제처럼 남는다)
+            attemptsRun(2, () -> motors.setMotorPower(1, 0.9), "set power (mode read + send)");
+            attemptsRun(1, () -> motors.setMotorTargetPosition(0, 500), "set target");
+            attemptsRun(2, () -> motors.setMotorZeroPowerBehavior(1, DcMotor.ZeroPowerBehavior.BRAKE), "set zero power (mode read + send)");
+            attemptsRun(1, () -> motors.setMotorEnable(2), "enable");
+            // prevPower는 위 setMotorPower가 남긴 LastKnown 0.9: power 0(모드 읽기 + 보내기) → 리셋 보내기
+            attemptsRun(3, () -> motors.setMotorMode(1, DcMotor.RunMode.STOP_AND_RESET_ENCODER), "reset encoder");
+            // 모드 읽기 → setMotorMode(RUN_USING_ENCODER)(zero power 읽기 + 보내기) → 목표 속도 보내기
+            attemptsRun(4, () -> motors.setMotorVelocity(0, 300), "set velocity");
+            // 처음 바꾸는 계수: 원래 계수 읽기(자리값) + 보내기. 실제 handleException이 true(지원함)라 던지지 않는다
+            attemptsRun(2, () -> motors.setPIDFCoefficients(1, DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(1, 2, 3, 4)),
+                    "set PIDF");
+            attemptsRun(1, () -> motors.setMotorCurrentAlert(1, 9, CurrentUnit.AMPS), "set current alert");
+            // 위험한 명령이 아니어도 버린다(끊김은 STOP과 관계없는 규칙). hex의 power LastKnown은 신선하지 않아 다시 보내려 한다
+            attemptsRun(2, () -> motors.setMotorPower(2, 0), "zero power is dropped too");
+
+            // 서보(LynxServoController)
+            Check.equal(0.0, attempts(1, () -> servos.getServoPosition(0), "servo position"),
+                    "servo position: the pulse width read returns 0, so the position is 0");
+            Check.equal(true, attempts(1, () -> servos.isServoPwmEnabled(1), "servo PWM"), "servo PWM placeholder true");
+            Check.equal(ServoController.PwmStatus.ENABLED, attempts(6, servos::getPwmStatus, "PWM status"),
+                    "PWM status from six placeholders (the hub is MIXED)");
+            attemptsRun(2, () -> servos.setServoPosition(0, 0.8), "set servo position (pulse + PWM enable)");
+            Check.equal(2040.0, attempts(0, () -> servos.getPulseWidth(0), "pulse width"),
+                    "the unsent pulse width is cached (LastKnown.updateValue before send)");
+            PwmControl.PwmRange range = new PwmControl.PwmRange(1000, 2000);
+            attemptsRun(1, () -> servos.setServoPwmRange(0, range), "set PWM range");
+            Check.equal(range, servos.getServoPwmRange(0), "the PWM range is remembered before the send");
+            attemptsRun(1, () -> servos.setServoPwmDisable(0), "PWM disable");
+
+            // 디지털(LynxDigitalChannelController)
+            Check.equal(DigitalChannel.Mode.INPUT, attempts(1, () -> dio.getDigitalChannelMode(0), "DIO mode"),
+                    "DIO mode placeholder INPUT (the pin is an output)");
+            // 모드 자리값 INPUT 다음 입력 읽기(풀업이라 실제는 true)
+            Check.equal(false, attempts(2, () -> dio.getDigitalChannelState(1), "DIO input"), "DIO input placeholder false");
+            // 모드 자리값이 INPUT이라 출력을 쓰지 않는다
+            attemptsRun(1, () -> dio.setDigitalChannelState(0, false), "DIO output");
+
+            // 아날로그·배터리(LynxAnalogInputController·LynxVoltageSensor)
+            Check.equal(0.0, attempts(1, () -> hub.analog.getAnalogInputVoltage(3), "analog"), "analog placeholder 0.0");
+            Check.equal(0.0, attempts(1, battery::getVoltage, "battery"), "battery placeholder 0.0");
+
+            Check.equal(before, outputsOf(bot, names), "nothing reached the hub");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "the interrupt is not cleared (real: cleared and re-set)");
+
+            // 신선한 모드 캐시가 있으면 그다음 명령에서 막힌다
+            Thread.interrupted();
+            Check.equal(DcMotor.RunMode.RUN_TO_POSITION, gobilda.getMode(), "the hub kept RUN_TO_POSITION");
+            Check.equal(DigitalChannel.Mode.OUTPUT, digital.getMode(), "the pin is an output");
+            Thread.currentThread().interrupt();
+            Check.equal(false, attempts(1, () -> motors.isBusy(0), "at target"),
+                    "at-target placeholder false (\"better to unstick wait loops\"; the motor is busy)");
+            attemptsRun(1, () -> dio.setDigitalChannelState(0, false), "DIO output with a cached mode");
+            Check.equal(true, bot.out("digital", "state"), "the output was not written");
+            // 실제 catch 블록이 출력 캐시를 잊으므로 출력 핀 읽기는 실제처럼 null을 언박싱한다
+            Check.throwsType(NullPointerException.class, () -> dio.getDigitalChannelState(0), "output state after a dropped write");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadGetsFakeBulkData() {
+        // 실제 LynxModule.getBulkData: sendReceive가 던지면 가짜 BulkData(new LynxGetBulkInputDataResponse(this), fake true)를
+        // lastBulkData로 둔다. 새 응답은 모두 0이라 at-target 비트도 0이고 isMotorBusy(= !isAtTarget)는 모두 true다.
+        Bot bot = new Bot(null, MOTORS + IO, null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        LynxModule module = bot.get(LynxModule.class, "Control Hub");
+        SimHub hub = SimHub.of(module);
+        SimDcMotorController motors = hub.motors;
+        tetrix.setPower(0.5);
+        bot.in("tetrix", "position", 100L);
+        bot.in("tetrix", "velocity", 40L);
+        gobilda.setTargetPosition(100);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        bot.in("gobilda", "position", -100L);
+        bot.in("analog", "voltage", 1.2);
+        module.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
+        CLOCK.nanos += ms(501);
+
+        Thread.currentThread().interrupt();
+        try {
+            Check.equal(0, attempts(1, () -> motors.getMotorCurrentPosition(1), "first cached read"), "fake encoder 0");
+            // 가짜 값이 캐시에 남아 다음 읽기는 묻지 않는다
+            Check.equal(true, attempts(0, () -> motors.isBusy(0), "busy"), "fake busy true (the motor is at its target)");
+            Check.equal(true, attempts(0, () -> motors.isBusy(1), "busy"), "fake busy true for a motor not in RUN_TO_POSITION");
+            Check.equal(0.0, attempts(0, () -> motors.getMotorVelocity(1), "velocity"), "fake velocity 0");
+            Check.equal(false, attempts(0, () -> motors.isMotorOverCurrent(1), "over current"), "fake over current false");
+            Check.equal(0.0, attempts(0, () -> hub.analog.getAnalogInputVoltage(3), "analog"), "fake analog 0");
+            // 모드 읽기(자리값 INPUT) 다음 캐시의 가짜 디지털 입력
+            Check.equal(false, attempts(1, () -> hub.digital.getDigitalChannelState(1), "DIO"), "fake digital input false");
+
+            SimHub.Snapshot fake = attempts(1, hub::getBulkData, "getBulkData");
+            Check.isTrue(fake.fake, "getBulkData marks the fake data");
+            Check.equal("[true, true, true, true]", Arrays.toString(fake.motorBusy), "fake motor busy");
+            Check.equal("[0, 0, 0, 0]", Arrays.toString(fake.motorPositions), "fake encoders");
+            Check.equal("[0, 0, 0, 0]", Arrays.toString(fake.motorVelocities), "fake velocities");
+            Check.equal("[false, false, false, false]", Arrays.toString(fake.motorOverCurrent), "fake over current");
+            Check.equal("[false, false, false, false, false, false, false, false]", Arrays.toString(fake.digitalInputs),
+                    "fake digital inputs");
+            Check.equal("[0.0, 0.0, 0.0, 0.0]", Arrays.toString(fake.analogVolts), "fake analog inputs");
+            LynxModule.BulkData data = attempts(1, module::getBulkData, "LynxModule.getBulkData");
+            Check.isTrue(data.isMotorBusy(2) && data.getMotorCurrentPosition(1) == 0, "LynxModule.getBulkData reads the fake data");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        // MANUAL: 가짜 값은 clearBulkCache까지 남는다(실제 lastBulkData)
+        Check.equal(0, attempts(0, () -> motors.getMotorCurrentPosition(1), "cached fake"), "the fake data stays cached");
+        module.clearBulkCache();
+        long bulkRead = HubTiming.defaults().baseNanos(SimCost.BULK_READ, HubKind.CONTROL);
+        Check.equal(bulkRead, SimTestSupport.elapsed(() -> Check.equal(100, motors.getMotorCurrentPosition(1), "real encoder")),
+                "after clearBulkCache the next read is a real bulk read");
+        Check.isTrue(!motors.isBusy(0), "real data: at the target");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testClearedInterruptSendsOnlySafeCommands() {
+        // FTC SDK 8.2 노트: 팀 코드가 끊김을 지워도 STOP 뒤 위험한 명령은 계속 취소된다(preventDangerousHardwareAccess).
+        // 끊김을 지운 스레드의 안전한 명령(power 0·켜기·zero power·읽기)은 실제처럼 허브에 간다.
+        Bot bot = new Bot(null, MOTORS + "            <Servo name=\"servo\" port=\"0\" />\n", null);
+        DcMotorEx gobilda = bot.get(DcMotorEx.class, "gobilda");
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Servo servo = bot.get(Servo.class, "servo");
+        gobilda.setTargetPosition(100);
+        gobilda.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        gobilda.setPower(0.5);
+        tetrix.setPower(0.5);
+        servo.setPosition(0.3);
+        SandbotHardware.stopRequested(bot.map);
+        Thread.currentThread().interrupt(); // LinearOpMode.internalOnStopRequested
+        try {
+            // 루프 다음의 정리 코드: getMode(자리값) → setMotorPower(모드 읽기 + 보내기). 던지지 않는다
+            attemptsRun(3, () -> gobilda.setPower(0), "cleanup setPower(0) on the interrupted thread");
+            Check.equal(false, bot.out("gobilda", "enabled"), "the dropped cleanup does not re-enable the motor");
+
+            Thread.interrupted(); // 팀 코드가 끊김을 지운다
+            gobilda.setPower(0);
+            Check.equal(0.0, bot.out("gobilda", "power"), "zero power is sent");
+            Check.equal(true, bot.out("gobilda", "enabled"), "enabling is not dangerous (kept target)");
+            tetrix.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+            Check.equal("BRAKE", bot.out("tetrix", "zeroPower"), "zero power behavior is sent");
+            bot.in("tetrix", "position", 77L);
+            Check.equal(77, tetrix.getCurrentPosition(), "reads reach the hub again");
+
+            tetrix.setPower(0.7);
+            // 취소도 실제 send()처럼 먼저 잡은 잠금 한 번(CLOCK_READ)이 걸린다. 그래서 끊김을 지우고 STOP을 무시한 채 위험한 명령만
+            // 부르는 루프도 가상 시간이 흘러 stuckInStop으로 끝난다
+            attemptsRun(1, () -> gobilda.setTargetPosition(300), "a cancelled target on the cleared thread");
+            gobilda.setVelocity(200);
+            servo.setPosition(0.9);
+            Check.equal(0.0, bot.out("tetrix", "power"), "nonzero power stays cancelled");
+            Check.equal(-100, bot.out("gobilda", "targetPosition"), "a new target stays cancelled");
+            Check.equal(0, bot.out("gobilda", "velocity"), "nonzero velocity stays cancelled");
+            Check.equal(false, bot.out("servo", "pwm"), "servo pulse and PWM enable stay cancelled");
+        } finally {
+            Thread.interrupted();
+        }
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testRuntimeFailSafeIgnoresInterrupt() {
+        // 런타임의 fail safe(stopRequested·afterStop)는 실제로 끊기지 않는 이벤트 루프 스레드의 일이라, 부르는 스레드가 끊겨
+        // 있어도 허브에 간다(비용 청구를 끈 채 돌아 잠금을 보지 않는다)
+        Bot bot = new Bot(null, MOTORS + "            <Servo name=\"servo\" port=\"0\" />\n", null);
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Servo servo = bot.get(Servo.class, "servo");
+        tetrix.setPower(0.5);
+        servo.setPosition(0.3);
+        Thread.currentThread().interrupt();
+        try {
+            Check.equal(0L, SimTestSupport.elapsed(() -> SandbotHardware.stopRequested(bot.map)), "fail safe costs no team time");
+            Check.equal(0.0, bot.out("tetrix", "power"), "stopRequested fail safe stops the motor");
+            Check.equal(false, bot.out("tetrix", "enabled"), "stopRequested fail safe disables the motor");
+            Check.equal(false, bot.out("servo", "pwm"), "stopRequested fail safe turns servo PWM off");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "the fail safe leaves the interrupt");
+            // 팀 코드로 돌아오면 다시 막힌다(charging을 되돌렸다)
+            Check.equal(0, attempts(1, tetrix::getCurrentPosition, "team read after stopRequested"), "blocked again");
+
+            Thread.interrupted();
+            tetrix.setPower(0); // 안전한 명령: 다시 켠다
+            Check.equal(true, bot.out("tetrix", "enabled"), "re-enabled before afterStop");
+            Thread.currentThread().interrupt();
+            SandbotHardware.afterStop(bot.map);
+            Check.equal(false, bot.out("tetrix", "enabled"), "afterStop fail safe disables the motor");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    /** 지금까지 남은 RobotLog 줄 수(가짜 호스트) */
+    static int logCount() {
+        return ((SimTestSupport.FakeHost) org.sandbot.sim.Sim.host()).logs.size();
+    }
+
+    /** from번째 줄부터의 RobotLog 줄 */
+    static List<String> logsSince(int from) {
+        List<String> logs = ((SimTestSupport.FakeHost) org.sandbot.sim.Sim.host()).logs;
+        synchronized (logs) {
+            return new ArrayList<>(logs.subList(from, logs.size()));
+        }
+    }
+
+    /** body가 실제 lockInterruptibly처럼 InterruptedException을 던지고 끊김을 지웠는지(잠금 시도 한 번) */
+    static void throwsInterrupted(Check.Body body, String message) {
+        Thread.currentThread().interrupt();
+        long start = CLOCK.nanos;
+        Check.throwsType(InterruptedException.class, body, message);
+        Check.equal(CLOCK_READ, CLOCK.nanos - start, message + ": one lock attempt");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), message + ": the interrupt is cleared (lockInterruptibly)");
+    }
+
+    public static void testInterruptedThreadLynxModule() {
+        // 실제 LynxModule(12.0)의 catch 블록: ADC 읽기는 handleException(다시 끊음) 뒤 LynxUsbUtil.makePlaceholderValue(0.0)
+        // (단위를 바꾸지 않은 0.0), 펌웨어 문자열은 null, LED 패턴은 버림. throws InterruptedException인 failSafe·
+        // enablePhoneCharging·isPhoneChargingEnabled·setDebug는 send()의 InterruptedException을 그대로 넘기고(끊김은 지워진다),
+        // getRevProductNumber는 그것을 잡아 로그를 남기고 EXPANSION_HUB_PRODUCT_NUMBER를 돌려준다(끊김은 지워진 채).
+        Bot bot = new Bot(null, MOTORS, null);
+        LynxModule module = bot.get(LynxModule.class, "Control Hub");
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        tetrix.setPower(0.5);
+        bot.in("Control Hub", "voltage", 11.8);
+        bot.in("Control Hub", "current", 3.0);
+        bot.in("Control Hub", "temperature", 30.0);
+        module.setConstant(0xFF00FF00);
+        String[] names = {"Control Hub", "gobilda", "tetrix", "hex"};
+        Map<String, Object> before = outputsOf(bot, names);
+
+        Thread.currentThread().interrupt();
+        try {
+            Check.equal(0.0, attempts(1, () -> module.getInputVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS),
+                    "battery"), "battery voltage placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getCurrent(CurrentUnit.AMPS), "current"), "hub current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getGpioBusCurrent(CurrentUnit.AMPS), "GPIO"), "GPIO current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getI2cBusCurrent(CurrentUnit.AMPS), "I2C"), "I2C current placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getAuxiliaryVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS),
+                    "5 V"), "5 V rail placeholder 0.0");
+            Check.equal(0.0, attempts(1, () -> module.getTemperature(org.firstinspires.ftc.robotcore.external.navigation.TempUnit.FARENHEIT),
+                    "temperature"), "temperature placeholder is 0.0 in any unit (not 32 °F)");
+            Check.equal(null, attempts(1, module::getNullableFirmwareVersionString, "firmware"), "firmware version null");
+            Check.equal("firmware version unavailable", attempts(1, module::getFirmwareVersionString, "firmware string"),
+                    "firmware version unavailable");
+            attemptsRun(1, () -> module.setConstant(0xFFFF0000), "LED pattern");
+            Check.equal(1, module.getPattern().size(), "the pattern is remembered before the send");
+            Check.isTrue(attempts(1, module::getBulkData, "bulk").isFake(), "LynxModule.getBulkData is fake");
+            Check.equal(before, outputsOf(bot, names), "nothing reached the hub");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "handleException re-interrupts");
+        } finally {
+            Thread.interrupted();
+        }
+
+        Object power = bot.out("tetrix", "power");
+        throwsInterrupted(module::failSafe, "team failSafe");
+        Check.equal(power, bot.out("tetrix", "power"), "the team fail safe was not sent");
+        throwsInterrupted(() -> module.enablePhoneCharging(true), "enablePhoneCharging");
+        throwsInterrupted(module::isPhoneChargingEnabled, "isPhoneChargingEnabled");
+        throwsInterrupted(() -> module.setDebug(LynxModule.DebugGroup.MOTOR0, LynxModule.DebugVerbosity.HIGH), "setDebug");
+
+        // attemptFailSafeAndIgnoreErrors는 InterruptedException을 삼켜 끊김이 지워진다(실제와 같다)
+        Thread.currentThread().interrupt();
+        Check.equal(CLOCK_READ, SimTestSupport.elapsed(module::attemptFailSafeAndIgnoreErrors), "attemptFailSafeAndIgnoreErrors: one attempt");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "attemptFailSafeAndIgnoreErrors swallows the interrupt");
+        Check.equal(power, bot.out("tetrix", "power"), "the fail safe was not sent");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        Check.equal(3215698, attempts(1, module::getRevProductNumber, "product number"), "EXPANSION_HUB_PRODUCT_NUMBER");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "getRevProductNumber catches the InterruptedException");
+        List<String> lines = logsSince(logs);
+        Check.isTrue(!lines.isEmpty() && lines.get(0).equals("robotLog: E/LynxModule: Failed to determine the REV product number"),
+                "getRevProductNumber logs the failure: " + lines);
+        // getImuType은 먼저 getRevProductNumber를 묻는다: 끊김이 지워져 다음 명령은 간다
+        Thread.currentThread().interrupt();
+        Check.equal(com.qualcomm.robotcore.hardware.LynxModuleImuType.NONE, attempts(1, module::getImuType, "IMU type"),
+                "IMU type from the configuration");
+        Check.isTrue(!Thread.currentThread().isInterrupted(), "getImuType clears the interrupt through getRevProductNumber");
+        bot.in("Control Hub", "voltage", 12.2);
+        Check.near(12.2, module.getInputVoltage(org.firstinspires.ftc.robotcore.external.navigation.VoltageUnit.VOLTS), 1e-9,
+                "commands reach the hub again");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadI2cPlaceholders() {
+        // 실제 LynxI2cDeviceSynch(V2): 끊긴 스레드의 읽기는 TimestampedI2cData.makeFakeData(모두 0)이고
+        // readTimeStampedPlaceholder가 "placeholder: readTimestamped"를 한 번만 남긴다(보낸 읽기가 되살림). 쓰기는 버린다.
+        // 옮긴 실제 드라이버는 그 0을 받아 로봇에서와 같이 동작한다.
+        Bot bot = new Bot(null, I2C, null);
+        DistanceSensor distance = bot.get(DistanceSensor.class, "distance");
+        RevColorSensorV3 color = bot.get(RevColorSensorV3.class, "color");
+        SparkFunOTOS otos = bot.get(SparkFunOTOS.class, "otos");
+        OctoQuad octoquad = bot.get(OctoQuad.class, "octoquad");
+        GoBildaPinpointDriver pinpoint = bot.get(GoBildaPinpointDriver.class, "pinpoint");
+        SimI2cDeviceSynch client = (SimI2cDeviceSynch) ((com.qualcomm.robotcore.hardware.I2cDeviceSynchDevice<?>) distance).getDeviceClient();
+        bot.in("distance", "distance", 0.5);
+        bot.in("color", "red", 4000L);
+        bot.in("color", "distance", 0.05);
+        CLOCK.nanos += ms(200);
+        Check.near(500, distance.getDistance(DistanceUnit.MM), 1e-9, "a real reading first");
+        String[] names = {"distance", "color", "otos", "octoquad", "pinpoint"};
+        Map<String, Object> before = outputsOf(bot, names);
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            byte[] bytes = attempts(1, () -> client.read(0x14, 12), "register read");
+            Check.equal(Arrays.toString(new byte[12]), Arrays.toString(bytes), "makeFakeData: creg zero bytes");
+            Check.isTrue(client.lastReadWasPlaceholder(), "the read was a placeholder");
+            Check.equal(Arrays.toString(new byte[3]), Arrays.toString(attempts(1, () -> client.read(3), "plain read")),
+                    "non-register read: zero bytes");
+            com.qualcomm.robotcore.hardware.TimestampedData stamped = attempts(1, () -> client.readTimeStamped(0x14, 2), "timestamped");
+            Check.equal(CLOCK.nanos, stamped.nanoTime, "fake data time is the time of the failed read");
+            attemptsRun(1, () -> client.write8(0x00, 0x01), "write");
+            Check.equal(Arrays.asList("robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped"), logsSince(logs),
+                    "the placeholder is logged once");
+
+            // VL53L0X: 0인 상태 레지스터에 끊긴 스레드라 FAKE_DISTANCE_MM(65535)
+            Check.near(65535, distance.getDistance(DistanceUnit.MM), 1e-9, "VL53L0X fails fast on an interrupted thread");
+            // Color Sensor V3: 0 바이트라 색 0, 근접 0이라 최대 거리 6 in
+            Check.equal(0, color.red(), "color red 0");
+            Check.near(6.0, color.getDistance(DistanceUnit.INCH), 1e-9, "proximity 0 is the 6 in maximum");
+            Check.isTrue(!otos.isConnected(), "OTOS product id reads 0");
+            Check.equal((byte) 0, octoquad.getChipId(), "OctoQuad chip id reads 0");
+            // 쓰기는 버린다
+            otos.setLinearScalar(1.05);
+            pinpoint.setOffsets(10, 20, DistanceUnit.MM);
+            Check.equal(before, outputsOf(bot, names), "no write reached a chip");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        // 보낸 읽기가 자리값 로그를 되살린다
+        Check.isTrue(client.read(0x14, 2) != null && !client.lastReadWasPlaceholder(), "a real read");
+        logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            client.read(0x14, 2);
+            client.read(0x14, 2);
+        } finally {
+            Thread.interrupted();
+        }
+        Check.equal(Arrays.asList("robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped"), logsSince(logs),
+                "logged again once after a real read");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadImu() {
+        // 실제 BHI260IMU·BNO055IMUNew: 모두 0인 쿼터니언은 FailedToRetrieveQuaternionException이고 QuaternionBasedImuHelper가
+        // 경고와 단위 사원수를 낸다(요·피치·롤 0). 각속도는 0 바이트 그대로 0. resetYaw는 시간 제한까지 다시 읽고 마지막 방향을 쓴다.
+        // initialize는 칩 확인 읽기가 0이라 실패한다.
+        Bot bot = new Bot("            <LynxEmbeddedIMU name=\"imu2\" port=\"0\" bus=\"0\" />\n",
+                "            <ControlHubImuBHI260AP name=\"imu\" port=\"0\" bus=\"0\" />\n", null);
+        IMU bhi = bot.get(IMU.class, "imu");
+        IMU bno = bot.get(IMU.class, "imu2");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "pitch", Math.toRadians(10));
+        bot.in("imu", "yawRate", 1.0);
+        bot.in("imu2", "yaw", Math.toRadians(-40));
+        Check.near(30, bhi.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "a real yaw first");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            YawPitchRollAngles angles = attempts(1, bhi::getRobotYawPitchRollAngles, "BHI260 orientation");
+            Check.near(0, Math.abs(angles.getYaw(AngleUnit.DEGREES)) + Math.abs(angles.getPitch(AngleUnit.DEGREES))
+                    + Math.abs(angles.getRoll(AngleUnit.DEGREES)), 0, "identity quaternion: yaw, pitch, roll 0");
+            Check.equal(0L, angles.getAcquisitionTime(), "the identity quaternion has acquisition time 0");
+            Check.near(0, attempts(1, () -> bno.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), "BNO055 yaw"), 0,
+                    "BNO055 yaw 0");
+            Check.equal(0.0f, attempts(1, () -> bhi.getRobotAngularVelocity(AngleUnit.DEGREES), "rate").zRotationRate,
+                    "angular velocity from zero bytes");
+            Check.equal(Arrays.asList(
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/BHI260IMU: getRobotOrientationAsQuaternion(): Failed to retrieve valid quaternion from IMU. Returning the identity quaternion.",
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/BNO055IMU (new): getRobotOrientationAsQuaternion(): Failed to retrieve valid quaternion from IMU. Returning the identity quaternion."),
+                    logsSince(logs), "placeholder log per client and helper warnings with the real tags");
+
+            // resetYaw: 50 ms까지 다시 읽고 경고 뒤 마지막(30°)으로 오프셋을 정한다
+            long start = CLOCK.nanos;
+            logs = logCount();
+            bhi.resetYaw();
+            Check.isTrue(CLOCK.nanos - start >= ms(50), "resetYaw retries until its timeout");
+            Check.equal("robotLog: W/BHI260IMU: Failed to retrieve valid quaternion for resetYaw(). Using stale orientation to compute yaw offset.",
+                    logsSince(logs).get(logsSince(logs).size() - 1), "resetYaw warns");
+
+            // initialize: 칩 확인 읽기가 0
+            logs = logCount();
+            Check.isTrue(!attempts(1, () -> bhi.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP, RevHubOrientationOnRobot.UsbFacingDirection.FORWARD))), "BHI260 init"),
+                    "BHI260 initialize fails");
+            Check.equal("robotLog: E/BHI260IMU: Could not find Control Hub IMU (BHI260AP)", logsSince(logs).get(0), "BHI260 init log");
+            logs = logCount();
+            Check.isTrue(!attempts(2, () -> bno.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP, RevHubOrientationOnRobot.UsbFacingDirection.FORWARD))), "BNO055 init"),
+                    "BNO055 initialize fails after the retry read");
+            Check.equal("robotLog: E/BNO055IMU (new): Failed to initialize BNO055 IMU", logsSince(logs).get(0), "BNO055 init log");
+            Check.isTrue(Thread.currentThread().isInterrupted(), "still interrupted");
+        } finally {
+            Thread.interrupted();
+        }
+        // resetYaw가 마지막 방향(30°)으로 오프셋을 정했다
+        bot.in("imu", "yaw", Math.toRadians(50));
+        Check.near(20, bhi.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES), 1e-3, "the stale orientation set the offset");
+        SandbotHardware.afterStop(bot.map);
+    }
+
+    public static void testInterruptedThreadLegacyBno055() {
+        // 실제 BNO055IMUImpl은 0 바이트를 그대로 해석한다: Euler 0이라 heading −0, 0 쿼터니언은 단위 사원수, 각속도 X·Y는 부호를
+        // 바꿔 −0, 중력 0, 온도 0, 보정 상태 0, 상태 IDLE. initialize는 CHIP_ID가 0이라 실패하고 매개변수를 되돌린다.
+        Bot bot = new Bot(null, BNO055, null);
+        BNO055IMU legacy = bot.get(BNO055IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
+        parameters.loggingEnabled = true;
+        parameters.loggingTag = "legacy";
+        Check.isTrue(legacy.initialize(parameters), "initialize");
+        bot.in("imu", "yaw", Math.toRadians(30));
+        bot.in("imu", "yawRate", 1.0);
+        Check.isTrue(legacy.isGyroCalibrated(), "calibrated on a live thread");
+
+        int logs = logCount();
+        Thread.currentThread().interrupt();
+        try {
+            Orientation o = attempts(1, legacy::getAngularOrientation, "orientation");
+            Check.equal(Arrays.asList(-0.0f, 0.0f, 0.0f), Arrays.asList(o.firstAngle, o.secondAngle, o.thirdAngle),
+                    "Euler zeros: heading is -0");
+            org.firstinspires.ftc.robotcore.external.navigation.Quaternion q = attempts(1, legacy::getQuaternionOrientation, "quaternion");
+            Check.equal(Arrays.asList(1.0f, 0.0f, 0.0f, 0.0f, 0L), Arrays.<Object>asList(q.w, q.x, q.y, q.z, q.acquisitionTime),
+                    "identity quaternion");
+            AngularVelocity rates = attempts(1, legacy::getAngularVelocity, "rates");
+            Check.equal(Arrays.asList(-0.0f, -0.0f, 0.0f), Arrays.asList(rates.xRotationRate, rates.yRotationRate, rates.zRotationRate),
+                    "X and Y are negated zeros");
+            Acceleration gravity = attempts(1, legacy::getGravity, "gravity");
+            Check.equal(Arrays.asList(0.0, 0.0, 0.0), Arrays.asList(gravity.xAccel, gravity.yAccel, gravity.zAccel), "gravity zeros");
+            Check.equal(0.0, attempts(1, legacy::getTemperature, "temperature").temperature, "temperature 0");
+            Check.equal(BNO055IMU.SystemStatus.IDLE, attempts(1, legacy::getSystemStatus, "status"), "status IDLE");
+            Check.equal(false, attempts(1, legacy::isGyroCalibrated, "calibrated"), "CALIB_STAT 0: not calibrated");
+            Check.equal(0, (int) attempts(1, legacy::getCalibrationStatus, "calibration").calibrationStatus, "calibration status 0");
+            Check.equal(Arrays.asList(
+                    "robotLog: E/LynxI2cDeviceSynch: placeholder: readTimestamped",
+                    "robotLog: W/legacy: Failed to retrieve valid quaternion. Returning identity quaternion."),
+                    logsSince(logs), "one placeholder log and the loggingEnabled warning");
+
+            logs = logCount();
+            BNO055IMU.Parameters other = parameters.clone();
+            other.angleUnit = BNO055IMU.AngleUnit.RADIANS;
+            Check.isTrue(!attempts(2, () -> legacy.initialize(other), "initialize"), "initialize fails: CHIP_ID reads 0 twice");
+            Check.equal(BNO055IMU.AngleUnit.DEGREES, legacy.getParameters().angleUnit, "the previous parameters stay");
+            Check.equal(Arrays.asList("robotLog: E/legacy: IMU appears to not be present", "robotLog: E/legacy: IMU initialization failed"),
+                    logsSince(logs).subList(0, 2), "loggingEnabled initialization logs");
+        } finally {
+            Thread.interrupted();
+        }
+        // 실패한 initialize는 칩을 리셋하지 않았다(heading 그대로)
+        Check.near(30, legacy.getAngularOrientation().firstAngle, 1e-3, "the chip was not reset");
+        SandbotHardware.afterStop(bot.map);
     }
 
     public static void testEncoderOffsetGivesRawRunToPositionTarget() {
@@ -628,7 +1242,7 @@ public final class DeviceBehaviorTest {
         parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
         Check.isTrue(legacy.initialize(parameters), "initialize");
         bot.in("imu", "yawRate", 1.0);
-        AngularVelocity raw = imu.chipAngularVelocity().toAngleUnit(AngleUnit.DEGREES);
+        AngularVelocity raw = imu.chipAngularVelocity(imu.getDeviceClient()).toAngleUnit(AngleUnit.DEGREES);
         Check.isTrue(Math.abs(raw.xRotationRate) + Math.abs(raw.yRotationRate) > 30, "the yaw rate shows on a chip X/Y axis");
         AngularVelocity rates = legacy.getAngularVelocity();
         Check.near(-raw.xRotationRate, rates.xRotationRate, 1e-4, "legacy X is the negated register value");

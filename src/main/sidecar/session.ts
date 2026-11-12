@@ -816,6 +816,10 @@ export class SidecarSession {
         break
       case 'telemetry':
         this.observe(message.tNanos)
+        // STOP 뒤(stopping)에 온 프레임은 버리고 STOP 전 마지막 프레임을 남긴다. 실제 DS는 곧
+        // DefaultOpMode의 "Robot is stopped"로 바꾸고, 끊긴 OpMode 스레드의 하드웨어 읽기는 자리값이라
+        // (사이드카 package-info "끊긴 스레드") 마지막 화면이 0으로 남으면 위치를 잃은 것처럼 보인다.
+        if (this.phase === 'stopping' || this.phase === 'finished') break
         this.telemetry = message
         this.telemetryThrottle.request()
         break

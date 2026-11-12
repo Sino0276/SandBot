@@ -340,6 +340,10 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         // 실제 SDK는 OpMode가 끝나면 정지 처리를 한다(requestOpModeStop → stopActiveOpMode → internalStop).
         // LinearOpMode가 waitForStart 없이 끝났을 때의 경고도 여기서 나온다.
         if (opMode != null && opModeReady && !stopApplied) applyStop(false);
+        // 정지 처리(LinearOpMode.internalOnStopRequested)가 OpMode 스레드를 끊었다. 실제 수명 알림 postStop·장치 정리는 끊기지 않은
+        // 이벤트 루프 스레드가 하므로 여기서 지운다: 리스너의 허브 명령이 끊긴 스레드처럼 버려지지 않고(SimHub.acquireNetworkLock)
+        // 장치 정리(afterStop)에도 남지 않게
+        Thread.interrupted();
         // OpModeManagerImpl.callActiveOpModeStop: 끝난 뒤 리스너(Dashboard가 먼저)와 장치에 알린다
         if (dashboard != null && opMode != null && opModeReady) {
             try {
@@ -350,8 +354,6 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         }
         notifyPostStop();
         endPhase();
-        // 정지 처리의 끼어들기가 장치 정리(afterStop)에 남지 않게
-        Thread.interrupted();
         finish(reason);
     }
 
@@ -420,6 +422,9 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
     void finish(String reason) {
         if (!session.beginFinish()) Main.parkForever();
         clock.setFinishing();
+        // 장치 정리·마지막 tick은 실제로 이벤트 루프 스레드의 일이라 OpMode 스레드의 끊김과 관계없다(afterStop은 비용 청구를 끈 채
+        // 돌아 끊김을 보지 않지만, 어느 경로로 와도 남지 않게 지운다)
+        Thread.interrupted();
         if (hardwareMap != null) {
             try {
                 hooks.afterStop(hardwareMap);
@@ -578,7 +583,9 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
                         + " ms (virtual time) after STOP was requested",
                 null, StackFrames.of(Thread.currentThread().getStackTrace(), sources, true),
                 Thread.currentThread().getName());
-        // 실제는 멈추지 않는 OpMode를 강제로 멈춘 뒤에도 postStop을 알린다
+        // 실제는 멈추지 않는 OpMode를 강제로 멈춘 뒤에도 postStop을 알린다. 실제 리스너는 끊기지 않은 이벤트 루프 스레드에서
+        // 돌므로 STOP이 남긴 OpMode 스레드의 끊김을 먼저 지운다(endOpMode와 같다)
+        Thread.interrupted();
         notifyPostStop();
         finish("stuck");
     }

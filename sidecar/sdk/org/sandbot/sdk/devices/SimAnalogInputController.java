@@ -71,7 +71,7 @@ public final class SimAnalogInputController implements AnalogInputController, Ro
         if (hub.isBulkCaching()) {
             return hub.recordBulkCachingCommandIntent("getADC:user" + portZ, "").analogVolts[portZ];
         }
-        hub.lynxCommand(); // LynxGetADCCommand(user port)
+        if (!hub.lynxCommand()) return 0.0; // LynxGetADCCommand(user port). 끊김: 실제 자리값 0.0
         return pinVolts(portZ);
     }
 

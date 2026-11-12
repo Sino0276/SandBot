@@ -680,6 +680,26 @@ describe('SidecarSession 이벤트 묶기', () => {
     expect(of('telemetry').length).toBe(2)
   })
 
+  it('STOP 뒤(stopping)에 온 텔레메트리는 버리고 STOP 전 마지막 프레임을 둔다', () => {
+    const { clock, proc, of } = setup()
+    boot(proc)
+    const frame = (n: number): Record<string, unknown> => ({
+      type: 'telemetry',
+      tNanos: n,
+      frame: { lines: [`n : ${n}`], log: [], format: 'classic' }
+    })
+    proc.line({ type: 'state', tNanos: 0, phase: 'running' })
+    proc.line(frame(1))
+    proc.line(frame(2))
+    proc.line({ type: 'state', tNanos: 3, phase: 'stopping' })
+    proc.line(frame(4))
+    clock.advance(34)
+    expect(of('telemetry').map((event) => event.tNanos)).toEqual([1, 2])
+    proc.line(frame(5))
+    clock.advance(100)
+    expect(of('telemetry').map((event) => event.tNanos)).toEqual([1, 2])
+  })
+
   it('로그는 50 ms 묶음이고, 오류·단계·끝 전에 먼저 보낸다', () => {
     const { clock, proc, events } = setup()
     proc.line({ type: 'hello', protocol: SIDECAR_PROTOCOL_VERSION, runtime: 'x', java: '21' })
