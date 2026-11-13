@@ -702,6 +702,31 @@ public final class DeviceBehaviorTest {
         }
     }
 
+    public static void testStopInsideCacheHitIsNotACommandInFlight() {
+        // setPower의 모드 캐시 적중 둘(DcMotorImpl.getMode, internalSetMotorPower)은 CLOCK_READ지만 허브에 가는 명령이 아니다.
+        // 그 안에서 온 STOP의 fail safe는 진행 중인 명령 뒤가 아니라 먼저라(실제 LastKnown.isValid는 잠금을 잡지 않는다) 다시 놓지
+        // 않는다: 반복 OpMode가 이어서 보낸 power 0·켜기는 실제처럼 허브에 남고, 끊긴 LinearOpMode 스레드는 잠금 시도뿐이라 꺼진 채다.
+        for (int nth = 1; nth <= 2; nth++) {
+            for (boolean linear : new boolean[] {true, false}) {
+                String f = flavor(linear) + " (STOP in cache hit " + nth + ")";
+                Bot bot = new Bot(null, MOTORS, null);
+                DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+                tetrix.setPower(0.5);
+                try {
+                    stopDuringCharge(bot, nth, linear);
+                    elapsedWithStop(() -> tetrix.setPower(0), f);
+                    Check.equal(0.0, bot.out("tetrix", "power"), f + ": power 0");
+                    Check.equal(!linear, bot.out("tetrix", "enabled"),
+                            f + ": the enable sent after the fail safe stays (only an iterative thread sends it)");
+                } finally {
+                    Thread.interrupted();
+                    CLOCK.clearDuringCharge();
+                }
+                SandbotHardware.afterStop(bot.map);
+            }
+        }
+    }
+
     public static void testStopInsideEnableCommand() {
         // LastKnown이 신선도를 넘겨 setPower가 모드 묻기 → power → 켜기를 보내고, STOP은 켜기 명령 안에서 온다
         for (boolean linear : new boolean[] {true, false}) {

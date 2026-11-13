@@ -179,12 +179,13 @@
  * 틱 경계는 비용 청구(Sim.charge) 안에서 처리되므로, STOP을 싣는 경계가 허브 명령의 비용 안(팀 코드가 명령을 보내고 응답을
  * 기다리는 사이)에 떨어지면 fail safe가 컨트롤러가 그 명령의 상태를 쓰기 전에 돈다. 실제(OpModeManagerImpl.callActiveOpModeStop,
  * LynxModule 네트워크 잠금)는 그 명령이 이미 전선 위에 있고 fail safe가 잠금을 기다려 그 뒤에 가므로 fail safe가 마지막이다. 그래서
- * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·끄기·모드·close, 서보 펄스·PWM 켜기)은 시작할 때 허브의 fail safe
- * 수를 읽어 두고, 그사이 fail safe가 있었으면 끝날 때 그 효과(모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기)를 비용 없이 다시 놓는다
+ * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·끄기·모드·close, 서보 펄스·PWM 켜기)은 시작할 때 허브의 명령 비용
+ * 안에서 간 fail safe 수를 읽어 두고, 그사이 그런 fail safe가 있었으면 끝날 때 그 효과(모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기)를 비용 없이 다시 놓는다
  * (SimHub.keepFailSafeLast). 그 호출이 쓴 값 가운데 fail safe가 지우지 않는 것(모드·엔코더 리셋·목표 위치·펄스 폭·PIDF)은 남는다.
  * 명령 시도와 비용은 그대로라 이 경쟁이 없는 실행의 출력은 바뀌지 않는다. 그 호출의 뒤따르는 명령(power 뒤 켜기, 모드 뒤 power
  * 다시 보내기)은 fail safe 뒤의 규칙(끊긴 스레드·위험한 명령)으로 시도하고 청구하며, 보냈더라도 그 효과는 fail safe가 덮는다(실제는
  * 잠금을 잡는 순서에 따라 fail safe 앞에 갈 수도 있다). STOP 뒤의 새 호출은 이 규칙과 관계없다: 끊김을 지운 스레드나 반복 OpMode의
- * power 0·켜기는 실제처럼 허브에 간다.
+ * power 0·켜기는 실제처럼 허브에 간다. 경계가 허브에 가는 명령이 없는 비용(LastKnown 캐시 적중의 CLOCK_READ, 끊긴 스레드의 잠금
+ * 시도) 안에 떨어지면 진행 중인 명령이 없으므로 다시 놓지 않는다: 그 호출이 뒤에 보낸 명령도 fail safe 뒤의 새 명령처럼 남는다.
  */
 package org.sandbot.sdk.devices;
