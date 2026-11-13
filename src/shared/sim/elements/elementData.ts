@@ -34,6 +34,10 @@ export const OUT_OF_FIELD_Z = -0.05
 export const SLOT_GAP = 5e-4
 // 넓은 단계 격자 칸(m) [결정: POLLEN 지름 0.071 m의 두 배 안쪽, 3×3 칸 질의]
 export const BROAD_PHASE_CELL = 0.125
+// 부드러운 법선 행의 감쇠비 ζ(c = 2ζ√(k·m)) [가정: 임계 감쇠 1. 위플 공 판 시험의 감쇠 측정이 없어 튀지 않고 가장 빨리 가라앉는 값]
+export const CONTACT_DAMPING_RATIO = 1
+// 접촉점 하나의 스프링 = 판 강성 × 이 값 [결정: 판 강성은 공을 두 판 사이에 끼운 직렬 접촉 둘이라 접촉 하나는 그 두 배]
+export const CONTACT_STIFFNESS_PER_PLATE = 2
 
 // 시즌의 공 종류(FieldSpec.elements.types에서). 시즌에 경기 요소가 없거나 그 종류가 없으면 null
 export function resolveElementType(
