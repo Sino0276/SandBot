@@ -390,6 +390,33 @@ describe('세계 설명 경고(console.notices.world*)', () => {
   })
 })
 
+// 6a: 경기 요소 경고(세계 설명 빌더)와 시뮬레이터 안내가 ko·en 모두 자리 표시 없이 한 줄이다
+describe('경기 요소 Console 줄(6a)', () => {
+  it('프리로드 경고 넷과 공 안내(종류별 나감·다시 넣기, 눌림·결합 한도·큰 더미)', () => {
+    const lines: [ConsoleNoticeKey, Record<string, string | number>, string][] = [
+      ['worldTooManyPreloads', { max: 4 }, '4'],
+      ['worldPreloadOverlap', { name: 'Hopper A', target: 'Robot' }, 'Hopper A'],
+      ['worldPreloadBelowFloor', { name: 'Low Slot' }, 'Low Slot'],
+      ['worldPreloadNoRoom', {}, ''],
+      ['sim.elementOutOfField.pollen', { kind: 'pollen' }, 'POLLEN'],
+      ['sim.elementOutOfField.nectarRed', { kind: 'nectarRed' }, 'NECTAR'],
+      ['sim.elementReentered.nectarBlue', { kind: 'nectarBlue' }, 'NECTAR'],
+      ['sim.elementCrushed', {}, ''],
+      ['sim.elementCouplingLimit', {}, ''],
+      ['sim.elementIslandLarge', {}, '']
+    ]
+    for (const [key, params, expected] of lines) {
+      const entry = consoleEntry({ type: 'notice', key, params }, null, 'warning')
+      for (const translate of [t, tEn]) {
+        const text = entrySummary(entry, translate)
+        expect(text.length).toBeGreaterThan(10)
+        expect(text).toContain(expected)
+        expect(text).not.toMatch(/\{\{|console\.notices/)
+      }
+    }
+  })
+})
+
 // 5: 몸체 충돌 겹침(simNotice collisionOverlap)의 Console 본문(spec-5 §5.7, K11)
 describe('collisionOverlap 본문', () => {
   const overlap = (

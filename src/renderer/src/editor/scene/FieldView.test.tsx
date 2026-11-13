@@ -7,6 +7,7 @@ import {
   BoxGeometry,
   Color,
   Euler,
+  InstancedMesh,
   LineBasicMaterial,
   LineSegments,
   Matrix4,
@@ -510,6 +511,11 @@ describe('필드 CAD 층(B5)', () => {
       await mount()
       const meshes: Mesh[] = []
       scene().traverse((object) => {
+        // 경기 요소 층(6a ElementsView)은 늘 붙어 있고 이 시즌에는 공이 없다(인스턴스 0)
+        if (object instanceof InstancedMesh && object.name.startsWith('elements.')) {
+          expect(object.count).toBe(0)
+          return
+        }
         if (object instanceof Mesh) meshes.push(object)
       })
       expect(meshes.length).toBe(4)

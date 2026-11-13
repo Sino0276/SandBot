@@ -10,6 +10,7 @@ import { formatLength } from '../../units/units'
 import { setFieldHidden, useSceneVisibilityStore } from '../sceneVisibility'
 import { clusterLines, type ClusterLine } from './clusterLines'
 import FieldCadSection from './FieldCadSection'
+import FieldElementsSection from './FieldElementsSection'
 import {
   displayedField,
   documentSeasonId,
@@ -20,7 +21,8 @@ import {
 
 // Field 인스펙터(spec-4ab §1.9): 하이어라키 Field 줄을 고르면 보인다. 시즌 선택(문서, 실행 취소 한 단계), 축 안내, 벽 안쪽
 // 반폭, HIVE 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 상태를
-// 보이고 고칠 수 없다. 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역이 있다.
+// 보이고 고칠 수 없다. 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역, HIVE 상태 다음에 경기 요소(6a,
+// FieldElementsSection) 구역이 있다.
 
 const HIVE_SIDES: readonly HiveSide[] = ['start', 'tipped']
 const HIVE_KEYS = ['red', 'blue'] as const
@@ -187,6 +189,8 @@ function FieldInspector(): React.JSX.Element {
           <p className="inspector-note">{t('field.inspector.hiveHint')}</p>
         </section>
       )}
+      {/* 움직이는 경기 요소(6a): 공 켜기(개인 실행 설정), 묶음별 공 수, 로봇 프리로드 출처 */}
+      <FieldElementsSection spec={spec} />
       {clusters.length > 0 && (
         <section className="inspector-section" aria-label={t('field.inspector.clusters.title')}>
           <header className="inspector-section-header">

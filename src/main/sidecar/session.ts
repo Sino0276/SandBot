@@ -29,7 +29,18 @@ import {
   type TelemetryMessage,
   type TickMessage
 } from '../../shared/sidecarProtocol'
-import { MAX_WORLD_JOINTS, type SimPose } from '../../shared/sim/worldSpec'
+import {
+  GAME_POSE_STRIDE,
+  isValidGameState,
+  type GameState
+} from '../../shared/sim/elements/gameState'
+import {
+  ELEMENT_KINDS,
+  MAX_WORLD_JOINTS,
+  type SimElementState,
+  type SimPose,
+  type Vec3
+} from '../../shared/sim/worldSpec'
 import type { ProcessExit, SidecarProcess } from './process'
 import { LineSplitter, parseSidecarLine, ProtocolError } from './protocol'
 import { simFilePath } from './simFiles'
@@ -67,7 +78,9 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   configSet에 싣는다(일시 정지 중이면 답을 보낼 때). 사이드카 안내(notice)는 simNotice다.
 // 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·dash(합쳐서, 30 Hz 이하)·dashConfig(최신만,
 //   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 로봇
-//   자세나 관절 값(joints)이 바뀔 때만, 일시 정지·Step 멈춤·끝에는 바로)·simNotice(같은 code·params는 한 번)·finished.
+//   자세나 관절 값(joints)이 바뀔 때만, 일시 정지·Step 멈춤·끝에는 바로)·gameState(경기 요소 표시 상태, 6a: pose와 같은 16 ms
+//   간격과 바로 보내는 때, 세계의 revision이 바뀔 때만, 끝에는 전체 정밀도 상태 final을 실어 한 번 더)·simNotice(같은
+//   code·params는 한 번)·finished.
 //   순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
@@ -132,6 +145,8 @@ const TELEMETRY_INTERVAL_MS = 34
 const MAX_PENDING_CONFIG = 256
 const DEVICES_INTERVAL_MS = 50
 const POSE_INTERVAL_MS = 16
+// 경기 요소 표시 상태(gameState, 6a)의 간격: 로봇 자세와 같은 약 60 Hz(공과 로봇이 같은 박자로 움직여 보이게)
+const GAME_INTERVAL_MS = POSE_INTERVAL_MS
 // 실행 하나에서 보내는 simNotice의 최대 수(세계가 안내를 끝없이 만들지 않게)
 const MAX_SIM_NOTICES = 64
 const LOG_FLUSH_MS = 50
@@ -188,6 +203,49 @@ function poseJoints(pose: SimPose): number[] | undefined | null {
   if (joints === undefined) return undefined
   if (!Array.isArray(joints) || joints.length > MAX_WORLD_JOINTS) return null
   return joints.every((q) => typeof q === 'number' && Number.isFinite(q)) ? [...joints] : null
+}
+
+// 경기 요소 끝 상태(elementSnapshot, 6a)의 모양: 공 수가 표시 상태와 같고, 공마다 아는 종류·유한한 수·boolean이다. 맞으면
+// 새 객체로 복사한다(세계가 같은 객체를 다시 써도 보낸 값이 바뀌지 않게), 아니면 null(끝 상태를 싣지 않는다)
+function elementSnapshot(value: unknown, count: number): SimElementState[] | null {
+  if (!Array.isArray(value) || value.length !== count) return null
+  const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+  const vec = (v: unknown): Vec3 | null => {
+    if (typeof v !== 'object' || v === null) return null
+    const { x, y, z } = v as Record<string, unknown>
+    return finite(x) && finite(y) && finite(z) ? { x, y, z } : null
+  }
+  const out: SimElementState[] = []
+  for (const item of value as unknown[]) {
+    if (typeof item !== 'object' || item === null) return null
+    const s = item as Record<string, unknown>
+    const position = vec(s.position)
+    const velocity = vec(s.velocity)
+    const angularVelocity = vec(s.angularVelocity)
+    const q = s.orientation
+    if (
+      !(ELEMENT_KINDS as readonly unknown[]).includes(s.kind) ||
+      !position ||
+      !velocity ||
+      !angularVelocity ||
+      !Array.isArray(q) ||
+      q.length !== 4 ||
+      !q.every(finite) ||
+      typeof s.asleep !== 'boolean' ||
+      typeof s.out !== 'boolean'
+    )
+      return null
+    out.push({
+      kind: s.kind as SimElementState['kind'],
+      position,
+      orientation: [q[0], q[1], q[2], q[3]],
+      velocity,
+      angularVelocity,
+      asleep: s.asleep,
+      out: s.out
+    })
+  }
+  return out
 }
 
 function inputsRecord(state: InputState): Record<string, DeviceValues> {
@@ -347,6 +405,13 @@ export class SidecarSession {
   private latestPose: ({ tNanos: number } & SimPose) | null = null
   private lastPoseKey = ''
   private readonly poseThrottle: Throttle
+  // 경기 요소(6a): 세계가 낸 마지막 표시 상태(revision이 바뀐 것만, 복사본), 보낸 revision, 공 수(첫 상태로 정하고 실행 동안
+  // 바뀌지 않는다: 다른 수의 상태는 버린다), 끝에 실을 전체 정밀도 상태
+  private latestGame: ({ tNanos: number } & GameState) | null = null
+  private sentGameRevision: number | null = null
+  private gameCount: number | null = null
+  private gameFinal: SimElementState[] | null = null
+  private readonly gameThrottle: Throttle
   private readonly noticeKeys = new Set<string>()
   private worldFailed = false
 
@@ -371,6 +436,7 @@ export class SidecarSession {
     )
     this.devicesThrottle = new Throttle(this.clock, DEVICES_INTERVAL_MS, () => this.sendDevices())
     this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => this.sendPose())
+    this.gameThrottle = new Throttle(this.clock, GAME_INTERVAL_MS, () => this.sendGame())
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve
     })
@@ -488,8 +554,9 @@ export class SidecarSession {
     if (paused) {
       this.cancelReply()
       this.samples = []
-      // 멈춘 자리(둔 틱의 자세)를 바로 보인다
+      // 멈춘 자리(둔 틱의 자세·공)를 바로 보인다
       this.poseThrottle.flush()
+      this.gameThrottle.flush()
     } else {
       this.reanchor()
       this.schedule()
@@ -606,6 +673,7 @@ export class SidecarSession {
       if (tick.loops > this.step.baseLoops || tick.tNanos >= this.step.deadline) {
         this.step = null
         this.poseThrottle.flush()
+        this.gameThrottle.flush()
         this.updateKillTimer()
         this.emitStatus(true)
       } else {
@@ -624,10 +692,13 @@ export class SidecarSession {
   private stepWorld(tNanos: number, outputs: Record<string, DeviceValues>): void {
     let inputs: Record<string, DeviceValues>
     let pose: SimPose | null
+    let game: GameState | null
     let notices: { code: SimNoticeCode; params: Record<string, string> }[]
     try {
       inputs = this.world.step(tNanos, outputs)
       pose = this.world.pose()
+      // 경기 요소가 없는 세계(EMPTY_WORLD, 공을 끈 세계 설명)는 null
+      game = this.world.gameState?.() ?? null
       notices = this.world.drainNotices()
     } catch (error) {
       if (!this.worldFailed) {
@@ -657,7 +728,45 @@ export class SidecarSession {
       }
       this.poseThrottle.request()
     }
+    if (game) this.takeGame(tNanos, game)
     for (const notice of notices) this.simNotice(tNanos, notice.code, notice.params)
+  }
+
+  // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식, 공 수는 실행의 첫 상태와 같음) revision이 바뀐 것만
+  // 둔다. 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고 마지막 좋은 상태를 둔다(pose와
+  // 같은 규칙)
+  private takeGame(tNanos: number, game: GameState): void {
+    if (!isValidGameState(game, this.gameCount ?? undefined)) return
+    if (this.latestGame !== null && this.latestGame.revision === game.revision) return
+    const count = game.poses.length / GAME_POSE_STRIDE
+    this.gameCount ??= count
+    this.latestGame = {
+      tNanos,
+      revision: game.revision,
+      poses: [...game.poses],
+      flags: Array.isArray(game.flags) ? [...game.flags] : new Array<number>(count).fill(0)
+    }
+    this.gameThrottle.request()
+  }
+
+  // 끝(finish): 기다리는 표시 상태를 보내고 세계의 전체 정밀도 상태(6d AUTO → TELEOP 이어 가기)를 마지막 gameState의 final로
+  // 싣는다(pose 다음, phase·finished 전). 경기 요소가 없는 실행(표시 상태를 받은 적 없음)은 아무것도 보내지 않는다. 끝 상태를
+  // 읽지 못하거나 모양이 틀리면 final 없이 끝난다(읽기 예외는 worldError 한 번)
+  private finishGame(): void {
+    if (this.latestGame === null || this.gameCount === null) return
+    let snapshot: unknown = null
+    try {
+      snapshot = this.world.elementSnapshot?.() ?? null
+    } catch (error) {
+      if (!this.worldFailed) {
+        this.worldFailed = true
+        this.simNotice(this.latestGame.tNanos, 'worldError', { detail: errorMessage(error) })
+      }
+    }
+    this.gameFinal = snapshot === null ? null : elementSnapshot(snapshot, this.gameCount)
+    this.gameThrottle.flush()
+    // 기다리던 것이 없었으면(마지막 상태를 이미 보냄) 같은 상태에 final만 실어 한 번 더 보낸다
+    if (this.gameFinal !== null) this.sendGame()
   }
 
   // 끝: 마지막 틱의 출력으로 세계를 한 틱 더 돌린다(머리 주석의 "세계"). 받은 틱이 없으면(컴파일 실패 등) 돌리지 않는다.
@@ -950,6 +1059,7 @@ export class SidecarSession {
     this.dashConfigThrottle.flush()
     this.devicesThrottle.flush()
     this.poseThrottle.flush()
+    this.finishGame()
     this.emitStatus(true)
     this.finishedEmitted = true
     if (this.statusTimer !== null) {
@@ -1065,6 +1175,26 @@ export class SidecarSession {
     if (key === this.lastPoseKey) return
     this.lastPoseKey = key
     this.emit({ type: 'pose', runId: this.runId, ...pose })
+  }
+
+  // 경기 요소 표시 상태(6a): revision이 보낸 것과 같으면 보내지 않는다(끝 상태 final을 실을 때만 같은 상태를 다시 보낸다).
+  // 표식이 모두 0이면 flags 키를 넣지 않는다(이벤트가 짧다)
+  private sendGame(): void {
+    const game = this.latestGame
+    if (!game) return
+    const final = this.gameFinal
+    if (game.revision === this.sentGameRevision && final === null) return
+    this.sentGameRevision = game.revision
+    this.gameFinal = null
+    this.emit({
+      type: 'gameState',
+      runId: this.runId,
+      tNanos: game.tNanos,
+      revision: game.revision,
+      poses: game.poses,
+      ...(game.flags.some((flag) => flag !== 0) ? { flags: game.flags } : {}),
+      ...(final !== null ? { final } : {})
+    })
   }
 
   private addSample(virt: number): void {

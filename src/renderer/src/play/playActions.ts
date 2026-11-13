@@ -65,6 +65,7 @@ import {
   withRunField,
   type WorldSpecResult
 } from './worldSpec'
+import { runElementsOf, withElements } from './worldElements'
 import { withSensorNoise, withSensorWarnings } from './worldSensors'
 import { runCamerasOf, withCameraWarnings } from './worldCameras'
 import { cameraSelfHit } from '../editor/hardware/cameraSelfHit'
@@ -443,7 +444,12 @@ async function runInit(): Promise<void> {
   // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
   // 실행의 시즌·HIVE 상태(문서 시즌과 실행 설정, 세계 설명이 없어도 정한다). 실행 중 문서 시즌이 바뀌어도 그대로다.
-  const runField = runFieldOf(useSceneStore.getState().field, play.settings.hiveState)
+  // 경기 요소(6a)도 INIT 때의 개인 설정으로 정하고 실행 동안 고정한다
+  const runField = runFieldOf(
+    useSceneStore.getState().field,
+    play.settings.hiveState,
+    play.settings.gameElements
+  )
   const world = config ? worldFor(config.robotId, play.settings, runField) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
@@ -451,6 +457,9 @@ async function runInit(): Promise<void> {
   usePlayStore.setState({
     simPose: null,
     ghostPose: null,
+    // 경기 요소 잔상(6a)도 지운다. 끝 상태(lastRunElements)는 둔다(6d 이어 가기가 INIT에서 읽는다)
+    simGame: null,
+    ghostGame: null,
     dash: null,
     dashOverlay: null,
     dashConfig: null,
@@ -480,7 +489,9 @@ async function runInit(): Promise<void> {
         name: body.name,
         colliders: body.colliders.map((entry) => entry.collider)
       })),
-      field: runField
+      field: runField,
+      // 시뮬레이터가 첫 틱에 만들 공(6a, 세계 설명 elements와 같은 공유 elementSpawns, gameState의 공 순서)
+      elements: runElementsOf(world?.spec ?? null)
     })
   })
   const { addConsole } = usePlayStore.getState()
@@ -626,8 +637,11 @@ function worldFor(
     const withCameras = withCameraWarnings(withSensors, objects, formatDistance, (camera) =>
       cameraSelfHit(objects, robotId, camera.objectId, camera.inRobot, camera.model)
     )
-    // 시즌 경고는 센서·웹캠 경고 뒤(필드 쪽 경고를 모아 둔다)
-    return withSensorNoise(withRunField(withCameras, doc, field, i18n.t), settings)
+    // 시즌 경고는 센서·웹캠 경고 뒤(필드 쪽 경고를 모아 둔다). 경기 요소(6a)는 실행의 시즌을 넣은 뒤(시즌에 공이 있을 때만)
+    return withSensorNoise(
+      withElements(withRunField(withCameras, doc, field, i18n.t), objects, robotId, field, i18n.t),
+      settings
+    )
   } catch (error) {
     return {
       spec: null,
@@ -658,7 +672,7 @@ function failedNoticeAction(key: NoticeKey): Parameters<typeof showNotice>[3] {
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
-  usePlayStore.setState({ run: null, simPose: null })
+  usePlayStore.setState({ run: null, simPose: null, simGame: null })
   usePlayStore.getState().addConsole({ type: 'initFailed', notice: key, detail }, null, level)
   replacePlayNotice(level, key, { detail }, failedNoticeAction(key))
 }
@@ -821,6 +835,8 @@ export function handlePlayEvent(event: PlayEvent): void {
       run: null,
       simPose: null,
       ghostPose: null,
+      simGame: null,
+      ghostGame: null,
       dash: null,
       dashOverlay: null,
       dashConfig: null
@@ -834,14 +850,20 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
   // 잔상·Dashboard 오버레이·설정은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다. 설정의 [파일에 반영]은 그
   // 실행의 TeamCode를 가리킨다)
-  usePlayStore.setState({ ghostPose: null, dashOverlay: null, dashConfig: null })
+  usePlayStore.setState({
+    ghostPose: null,
+    ghostGame: null,
+    lastRunElements: null,
+    dashOverlay: null,
+    dashConfig: null
+  })
   if (rootChanged) loggedRegisteredProblem = null
   if (isRunActive(run)) {
     // 아직 도는 실행은 새로 연 씬과 떼어 놓는다: 그 로봇을 시뮬레이터 자세로 그리거나 잠그지 않고, 끝나도 잔상을 남기지
     // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다). Dashboard 오버레이·설정도 더 받지 않는다.
     usePlayStore.setState((state) =>
       state.run?.runId === run.runId
-        ? { run: { ...state.run, robotId: null, detached: true }, simPose: null }
+        ? { run: { ...state.run, robotId: null, detached: true }, simPose: null, simGame: null }
         : {}
     )
     stopPlay()

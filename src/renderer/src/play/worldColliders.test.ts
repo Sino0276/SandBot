@@ -220,6 +220,61 @@ describe('B5 Collider → 세계 설명 충돌체(몸체 틀)', () => {
     expect(collider.friction).toBe(DEFAULT_COLLIDER_FRICTION)
   })
 
+  it('6a Cylinder 끝점은 두 뚜껑 중심 = 중심 ± (높이/2)·방향이고 반지름은 그대로다', () => {
+    const objects = withColliders(robotScene(), 'tube', [
+      {
+        id: 'y',
+        kind: 'cylinder',
+        center: [0.01, 0, 0],
+        radius: 0.02,
+        height: 0.3,
+        direction: 'x',
+        friction: 1
+      }
+    ])
+    const arm = model(objects).bodies.find((body) => body.objectId === 'arm')!
+    expect(arm.source).toBe('colliders')
+    const entry = arm.colliders[0]
+    expect(entry.hullPoints).toBeNull()
+    expect(entry.hull).toBeNull()
+    const collider = entry.collider
+    if (collider.kind !== 'cylinder') throw new Error('cylinder')
+    // 캡슐과 달리 반지름을 빼지 않는다(납작한 뚜껑)
+    expect(collider.a.x).toBeCloseTo(0.15 + 0.01 - 0.15, 12)
+    expect(collider.b.x).toBeCloseTo(0.15 + 0.01 + 0.15, 12)
+    expect(collider.radius).toBe(0.02)
+    expect(collider.friction).toBe(1)
+    // 세계 설명이 받는다(v7 cylinder 검사)
+    const spec = buildWorldSpec(objects, 'R', { batteryVoltage: 12 }, null, null, shapesOf(SHAPES))
+    expect(spec.spec?.joints[1].colliders?.[0]).toMatchObject({ kind: 'cylinder', radius: 0.02 })
+  })
+
+  it('6a Cylinder도 편집 자세 겹침(외접 32각 기둥, 공유 editPoseOverlaps)에 든다', () => {
+    // 섀시 판(로봇 x ∈ [−0.2, 0.2], z ∈ [0, 0.1])에 겹치게 둔 팔 관의 원기둥(로봇 x ∈ [0.1, 0.3], z ∈ [−0.01, 0.09]) → 섀시–팔
+    // 몸체 짝 무시(리프트와 섀시는 부모–자식이라 보내지 않는다)
+    const objects = withColliders(
+      withColliders(robotScene(), 'tube', [
+        {
+          id: 'y',
+          kind: 'cylinder',
+          center: [-0.1, 0, -0.26],
+          radius: 0.05,
+          height: 0.2,
+          direction: 'x'
+        }
+      ]),
+      'base',
+      [{ id: 'b', kind: 'box', center: [0, 0, 0], size: [0.4, 0.4, 0.1] }]
+    )
+    const result = model(objects, { overlaps: editPoseOverlaps })
+    expect(result.pairs.map((pair) => [pair.a, pair.b])).toContainEqual([-1, 1])
+    // 떨어뜨리면 겹치지 않는다
+    const apart = withColliders(objects, 'tube', [
+      { id: 'y', kind: 'cylinder', center: [0, 0, 0.5], radius: 0.05, height: 0.2, direction: 'x' }
+    ])
+    expect(model(apart, { overlaps: editPoseOverlaps }).pairs).toEqual([])
+  })
+
   it('B5 Mesh Collider는 같은 몸체 메시만 모은다(안쪽 관절 하위의 메시는 빠진다), 끈 Collider는 세계 설명에 없다', () => {
     const objects = withColliders(robotScene(), 'lift', [
       { id: 'm', kind: 'mesh', vertexLimit: 16, friction: 1 },

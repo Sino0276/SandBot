@@ -13,7 +13,13 @@ import type {
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import type { CameraModelId } from '../../../shared/sim/cameraData'
-import type { SensorMount, SimCollider } from '../../../shared/sim/worldSpec'
+import { isValidGameState } from '../../../shared/sim/elements/gameState'
+import type {
+  SensorMount,
+  SimCollider,
+  SimElementKind,
+  SimElementState
+} from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { RootOverride, SceneObjects, Transform } from '../scene/model'
@@ -157,6 +163,15 @@ export type PlayRun = {
   // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
   // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
   field: PlayRunField
+  // 실행의 경기 요소(6a, INIT 때 세계 설명 elements로 정함). 경기 요소 없이 실행했으면(설정 끔·시즌에 없음·세계 설명 없음) null
+  elements: PlayRunElements | null
+}
+
+// 실행의 경기 요소(6a): 공 번호 순서(shared elements/spawn.ts elementSpawns: 시즌 배치 → 프리로드)의 종류와 시작 상태(필드
+// 좌표). gameState 이벤트의 공 순서가 이것이고, 첫 gameState가 오기 전(컴파일 중)에는 씬 뷰가 시작 상태를 그린다
+export type PlayRunElements = {
+  kinds: readonly SimElementKind[]
+  spawns: readonly SimElementState[]
 }
 
 // 실행의 웹캠 하나(4d): 붙은 오브젝트·컴포넌트, 몸체(−1 섀시, ≥ 0 세계 설명 관절 순번), 세계 설명 장착·모델 그대로
@@ -212,6 +227,33 @@ export type SimPoseState = {
   blocked: boolean
   // 관절 값(rad 또는 m, run.joints의 순서). 관절이 없는 세계·모양이 맞지 않는 값이면 키가 없다(관절은 편집 자세로 그린다).
   joints?: readonly number[]
+}
+
+// 시뮬레이터가 보낸 지금 경기 요소 표시 상태(6a, gameState 이벤트 그대로: 공마다 1e-4 정수 7칸과 표식, 공 순서는
+// run.elements.kinds). 약 60 Hz로 바뀌므로 run·simPose와 따로 둔다(씬 뷰 ElementsView가 구독해 명령형으로 그린다).
+export type SimGameState = {
+  runId: string
+  tNanos: number
+  revision: number
+  poses: readonly number[]
+  // 공마다 표식(1 잠듦, 2 필드 밖). 이벤트가 생략했으면 모두 0
+  flags: readonly number[]
+}
+
+// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지)
+export type GhostGame = {
+  kinds: readonly SimElementKind[]
+  poses: readonly number[]
+  flags: readonly number[]
+}
+
+// 끝난 실행의 경기 요소 전체 정밀도 끝 상태(gameState final, 6d AUTO → TELEOP 이어 가기의 이음새). 다음 끝 상태가 오거나
+// 프로젝트를 열 때 바뀐다(다음 INIT은 지우지 않는다: 6d가 INIT에서 읽는다)
+export type LastRunElements = {
+  runId: string
+  robotId: string | null
+  tNanos: number
+  states: readonly SimElementState[]
 }
 
 // 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다. joints는 관절 오브젝트 id →
@@ -273,6 +315,10 @@ export type PlayData = {
   dockTab: DockTab
   simPose: SimPoseState | null
   ghostPose: GhostPose | null
+  // 경기 요소(6a): 실행 중 표시 상태, 끝난 실행의 잔상, 마지막 끝 상태
+  simGame: SimGameState | null
+  ghostGame: GhostGame | null
+  lastRunElements: LastRunElements | null
   dash: DashTelemetry | null
   dashOverlay: DashOverlayState | null
   dashConfig: DashConfigState | null
@@ -363,6 +409,26 @@ function endPose(data: PlayData, run: PlayRun): Pick<PlayData, 'simPose' | 'ghos
     ghostPose.joints = joints
   }
   return { simPose: null, ghostPose }
+}
+
+// 씬 뷰가 그리는 지금 실행의 경기 요소 표시 상태(실행 중이고 그 실행의 상태를 받았을 때, 새 씬과 떼어 놓은 실행은 아님).
+// 아니면 null
+export function simGameOf(data: Pick<PlayData, 'run' | 'simGame'>): SimGameState | null {
+  const { run, simGame } = data
+  if (!isRunActive(run) || run.detached || !run.elements || !simGame) return null
+  return simGame.runId === run.runId ? simGame : null
+}
+
+// 실행이 끝날 때 경기 요소: 마지막 표시 상태는 다음 INIT까지 잔상으로 남는다(endPose와 같은 규칙, 두 번째 끝 이벤트는 첫 번째가
+// 남긴 잔상을 그대로 둔다). 떼어 놓은 실행은 잔상을 남기지 않는다
+function endGame(data: PlayData, run: PlayRun): Pick<PlayData, 'simGame' | 'ghostGame'> {
+  const game = data.simGame
+  if (!game || game.runId !== run.runId || !run.elements || run.detached)
+    return { simGame: null, ghostGame: data.ghostGame }
+  return {
+    simGame: null,
+    ghostGame: { kinds: run.elements.kinds, poses: game.poses, flags: game.flags }
+  }
 }
 
 // pose 이벤트의 관절 값: 실행의 관절 수와 같은 길이의 유한 수 목록만 받는다(메인이 확인하지만 렌더러도 모양이 다른 값으로
@@ -469,6 +535,7 @@ export function newRun(options: {
   cameras?: readonly PlayRunCamera[]
   colliders?: readonly PlayRunCollider[]
   field?: PlayRunField
+  elements?: PlayRunElements | null
 }): PlayRun {
   return {
     runId: options.runId,
@@ -497,7 +564,8 @@ export function newRun(options: {
     sensors: options.sensors ?? [],
     cameras: options.cameras ?? [],
     colliders: options.colliders ?? [],
-    field: options.field ?? DEFAULT_RUN_FIELD
+    field: options.field ?? DEFAULT_RUN_FIELD,
+    elements: options.elements ?? null
   }
 }
 
@@ -559,7 +627,7 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       if (PHASE_ORDER.indexOf(event.phase) <= PHASE_ORDER.indexOf(run.phase)) return {}
       return {
         // 호스트는 phase finished를 finished 이벤트보다 먼저 보낸다(session.finish). 먼저 오는 쪽이 잔상을 남긴다.
-        ...(event.phase === 'finished' ? endPose(data, run) : {}),
+        ...(event.phase === 'finished' ? { ...endPose(data, run), ...endGame(data, run) } : {}),
         run: {
           ...run,
           phase: event.phase,
@@ -647,9 +715,35 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         }
       }
     }
-    // 경기 요소 표시 상태(6a): 아직 그리지 않는다(공 표시가 생기면 simGame·ghostGame으로 받는다)
-    case 'gameState':
-      return {}
+    // 경기 요소 표시 상태(6a): 경기 요소로 실행한 것만, 공 수가 실행의 것과 같고 모양이 맞을 때(메인이 확인하지만 렌더러도
+    // 다른 공을 움직이지 않게) 받는다. 끝난 실행·떼어 놓은 실행은 받지 않고, 늦게 온 이전 상태로 되돌아가지 않는다. final(끝
+    // 상태)은 공 수가 같을 때 lastRunElements로 둔다
+    case 'gameState': {
+      const elements = run.elements
+      if (run.phase === 'finished' || run.detached || !elements) return {}
+      if (!isValidGameState(event, elements.kinds.length)) return {}
+      const previous = data.simGame
+      if (previous && previous.runId === run.runId && previous.tNanos > event.tNanos) return {}
+      const simGame: SimGameState = {
+        runId: run.runId,
+        tNanos: event.tNanos,
+        revision: event.revision,
+        poses: event.poses,
+        flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0)
+      }
+      const final = event.final
+      if (Array.isArray(final) && final.length === elements.kinds.length)
+        return {
+          simGame,
+          lastRunElements: {
+            runId: run.runId,
+            robotId: run.robotId,
+            tNanos: event.tNanos,
+            states: final
+          }
+        }
+      return { simGame }
+    }
     case 'libraryProgress': {
       if (run.phase !== 'preparing' || run.libraryReported) return {}
       const { phase, done, total, bytes } = event
@@ -731,6 +825,7 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       const finished = { tNanos: event.tNanos, reason: event.reason, detail: event.detail }
       return {
         ...endPose(data, run),
+        ...endGame(data, run),
         run: {
           ...run,
           phase: 'finished',
@@ -777,6 +872,9 @@ export function initialPlayData(): PlayData {
     dockTab: loadDockTab(),
     simPose: null,
     ghostPose: null,
+    simGame: null,
+    ghostGame: null,
+    lastRunElements: null,
     dash: null,
     dashOverlay: null,
     dashConfig: null
