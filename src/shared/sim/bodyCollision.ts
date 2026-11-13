@@ -257,11 +257,13 @@ export class BodyCollision {
       }
   }
 
-  // 이번 하위 단계의 행(z 공간, 길이 m). blocking: 섀시–정적 법선 행(blocked 판정). upward: §1.6 상한 대상 법선 행 키
+  // 이번 하위 단계의 행(z 공간, 길이 m). blocking: 섀시–정적 법선 행(blocked 판정). upward: §1.6 상한 대상 법선 행 키.
+  // frames: 이번 하위 단계의 접촉 틀(world.ts가 공과 같이 쓰려고 한 번 계산해 넘긴다, 없으면 여기서 계산한다. 같은 값)
   rows(
     art: Articulation,
     h: number,
-    m: number
+    m: number,
+    frames: ContactFrames = art.contactFrames()
   ): {
     rows: ContactRow[]
     blocking: ContactRow[]
@@ -269,7 +271,6 @@ export class BodyCollision {
     notices: BodyCollisionNotice[]
   } {
     const notices: BodyCollisionNotice[] = []
-    const frames = art.contactFrames()
     const origin = arr(frames.origin)
     // 몸체 충돌체를 C로 옮기고 상자·여유를 잰다
     const placed = this.bodies.map((body) => {
