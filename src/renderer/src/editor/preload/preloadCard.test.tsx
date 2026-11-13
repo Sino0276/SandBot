@@ -10,7 +10,7 @@ import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
 import { usePlayStore } from '../../play/playStore'
 import { disposeAllGeometry } from '../../scene/geometryRegistry'
 import type { SceneObjects } from '../../scene/model'
-import type { PreloadSettings } from '../../scene/preload'
+import { canAddPreload, type PreloadSettings } from '../../scene/preload'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
 import { LengthVector } from '../collider/ColliderCard'
@@ -166,6 +166,10 @@ describe('Add Component › Preload Slot', () => {
     })
     // 로봇 밖 오브젝트는 세지 않는다(붙일 수 있고 카드가 쓰지 않는다고 알린다)
     expect(preloadAddBlock(objects, 'loose')).toBeNull()
+    // 계약의 canAddPreload(scene/preload.ts)와 같은 판단이다(이유만 더 알려 준다)
+    for (const scenes of [objects, hopper(), colliderScene()])
+      for (const id of Object.keys(scenes))
+        expect(preloadAddBlock(scenes, id) === null).toBe(canAddPreload(scenes, id))
   })
 
   it('고르면 기본 자리(POLLEN, 중심 0)가 한 단계로 붙고 카드가 Collider 뒤·스크립트 앞에 보인다', () => {
