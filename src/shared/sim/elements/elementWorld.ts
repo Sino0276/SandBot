@@ -245,8 +245,9 @@ export class ElementWorld {
   readonly count: number
   readonly kinds: readonly SimElementKind[]
   private readonly types: readonly FieldElementType[]
-  // 공마다 시즌 종류 값
+  // 공마다 시즌 종류 값과 시즌 공 가운데 가장 큰 반지름(넓은 단계 여유)
   private readonly typeOf: readonly FieldElementType[]
+  private readonly largestRadius: number
   private readonly radius: Float64Array
   private readonly mass: Float64Array
   private readonly inertia: Float64Array
@@ -314,6 +315,7 @@ export class ElementWorld {
     this.count = n
     this.kinds = initial.map((s) => s.kind)
     this.typeOf = initial.map((s) => kindOf(this.types, s.kind))
+    this.largestRadius = this.types.reduce((m, t) => Math.max(m, t.radius), 0)
     this.radius = new Float64Array(n)
     this.mass = new Float64Array(n)
     this.inertia = new Float64Array(n)
@@ -721,6 +723,7 @@ export class ElementWorld {
       const slot = zone.slots.find((s) => this.slotFree(ctx as RobotContext, outline ?? [], s, r))
       if (!slot) continue
       this.pos.set([slot.x, slot.y, slot.z], 3 * e)
+      // [결정: 다시 넣은 공의 방향은 단위 사원수(공은 등방이라 물리에 영향이 없다)]
       this.quat.set([1, 0, 0, 0], 4 * e)
       this.vel.fill(0, 3 * e, 3 * e + 3)
       this.omega.fill(0, 3 * e, 3 * e + 3)
@@ -824,9 +827,7 @@ export class ElementWorld {
     return [this.omega[3 * i], this.omega[3 * i + 1], this.omega[3 * i + 2]]
   }
   private maxRadius(): number {
-    let r = 0
-    for (const t of this.types) r = Math.max(r, t.radius)
-    return r
+    return this.largestRadius
   }
 
   // 공 e와 상대(code: 정적 순번 → 로봇 충돌체 → 공)의 짝 키(처음 쓸 때 한 번 만든다)
@@ -1122,6 +1123,7 @@ export class ElementWorld {
         pointC: null,
         normalC: null,
         otherOmega: this.omegaOf(f),
+        // 마찰은 Unity Average 결합, 반발은 두 공의 공끼리 값 평균[결정], 스프링은 두 접촉 스프링의 직렬
         mu: (te.contact.friction + tf.contact.friction) / 2,
         restitution: (te.contact.restitution.element + tf.contact.restitution.element) / 2,
         stiffness: (ke * kf) / (ke + kf),
@@ -1133,7 +1135,9 @@ export class ElementWorld {
   }
 
   // 굴림·회전 저항(spec-6a §2.1): 앞 하위 단계 이 짝 법선 충격 λ′로 상대 각속도의 접선 성분을 min(μ_rr·r·λ′, |ω_t|/Σ(1/I))만큼,
-  // 법선 성분을 min(μ·r_s·λ′, |ω_n|/Σ(1/I))만큼 줄이는 각충격(공 둘이면 서로 반대로, 다른 몸체는 받지 않음: 명시적 근사)
+  // 법선 성분을 min(μ·r_s·λ′, |ω_n|/Σ(1/I))만큼 줄이는 각충격(공 둘이면 서로 반대로). 로봇 몸체는 반작용을 받지 않는다
+  // [가정: 공 굴림 저항 토크(μ_rr·r·N, 1 N에 약 2 mN·m)는 로봇 동역학에 보이지 않는다. 명시적 근사라 LCP 행을 늘리지 않는다].
+  // 공끼리 짝은 두 공 값의 평균 계수·반지름 [결정]
   private resist(contact: Contact, h: number, uStar: Float64Array): void {
     if (this.lastH <= 0) return
     const lambda = ((this.impulses.get(contact.keys.normal) ?? 0) * h) / this.lastH
@@ -1496,7 +1500,8 @@ function rate6(a: readonly number[], u: ArrayLike<number>, o: number): number {
   )
 }
 
-// 로봇 몸체(섀시 −1, 관절 0…)의 공 짝 충돌체. 섀시 충돌체 칸이 없으면(평면 경로) 외곽 × [0, 높이] 프리즘 하나(DEFAULT_COLLIDER_FRICTION).
+// 로봇 몸체(섀시 −1, 관절 0…)의 공 짝 충돌체. 섀시 충돌체 칸이 없으면(평면 경로) 외곽 × [0, 높이] 프리즘 하나(DEFAULT_COLLIDER_FRICTION)
+// [결정: 평면 경로의 섀시는 5의 섀시 대체 상자처럼 외곽 프리즘이다. INIT은 늘 충돌체 칸을 보내므로 시험·로봇 카드 경로뿐이다].
 // 원기둥은 공이 아닌 짝처럼 외접 32각 기둥 껍질을 두고, 공 짝에 쓸 정확한 끝점·반지름을 함께 둔다
 function robotBodies(spec: WorldSpec): RobotBody[] {
   const entry = (body: number, colliders: readonly SimCollider[]): RobotBody => {

@@ -363,7 +363,9 @@ export class PhysicsWorld {
     const art = this.articulation
     // 움직이는 것이 없으면(동역학 없음) 몸체 충돌도 없다
     this.bodyCollision = bodyCollisionNeeded(spec) && art ? new BodyCollision(spec, field) : null
-    this.elements = spec.elements ? new ElementWorld(spec, field, options.elements) : null
+    // 시즌에 경기 요소가 없으면(parseWorldSpec가 막는다) 공을 만들지 않는다
+    this.elements =
+      spec.elements && field.elements ? new ElementWorld(spec, field, options.elements) : null
     // 관절 모터 장치 → (좌표, 기어모터 값). parseWorldSpec가 한 모터를 한 관절에만 두고 바퀴와 겹치지 않음을 확인한다.
     const jointMotors = new Map<string, { coordinate: number; dc: DcGearMotor }>()
     this.servos = []
