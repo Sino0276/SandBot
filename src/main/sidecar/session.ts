@@ -57,6 +57,10 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   그 틱의 답(tickReply)에 싣는다. 그래서 답을 늦추거나(속도·일시 정지) 답하지 못한 틱(끝)도 적분은 틱 순서대로 한 번씩
 //   결정적으로 하고, 일시 정지 중의 자세는 둔 틱의 것이다. 답 없이 넘긴 틱의 입력은 다음 답에 합쳐 싣는다(세계는 바뀐 키만
 //   주므로). 세계의 예외는 실행을 멈추지 않는다: simNotice worldError를 한 번 보내고 사이드카는 이전 입력을 계속 쓴다.
+//   끝나면(finished·프로세스 종료) 마지막 틱의 출력으로 세계를 한 틱(tickNanos) 더 돌린다(settleWorld). 세계는 [앞 틱, 이 틱]을
+//   앞 틱의 출력으로 적분하므로 마지막 틱의 출력(사이드카 finish의 마지막 tick: STOP fail safe 뒤 출력)은 다음 틱이 와야 입력에
+//   보이는데, 끝난 실행에는 다음 틱이 없다. 그러지 않으면 장치 탭에 enabled=false power=0 옆에 STOP 전 명령으로 잰 입력(모터
+//   전류 등)이 남는다. 답은 보내지 않고, 끝 시각(status·finished의 tNanos)은 사이드카의 것 그대로이며, 자세(잔상)도 그 한 틱 뒤다.
 // FTC Dashboard(라이브러리 L2): 사이드카가 전송 간격(가상)마다 보낸 패킷 묶음(dash)을 텔레메트리처럼 30 Hz 이하로 다시 묶어
 //   보낸다. 묶음 사이도 사이드카와 같은 규칙으로 합친다(cleared는 OR, data는 마지막 cleared 묶음부터 키마다 마지막 값, log는
 //   마지막 cleared 묶음부터의 마지막 null 아닌 것, ops는 마지막 null 아닌 것). 설정 트리(dashConfig)는 마지막 것만 보낸다. Config 탭의 값(PlayCommand config)은 다음 틱 답의
@@ -283,6 +287,8 @@ export class SidecarSession {
   private readonly splitter = new LineSplitter()
   // 이 실행의 모의 저장소(RunRequest.firstFolder). 사이드카가 알린 그 안의 상대 경로를 절대 경로로 바꾼다.
   private readonly firstFolder: string
+  // 틱 길이(RunRequest.tickNanos). 끝난 뒤 세계를 한 틱 더 돌릴 때 쓴다(settleWorld).
+  private readonly tickNanos: number
 
   private phase: PlayPhase = 'preparing'
   private helloSeen = false
@@ -351,6 +357,7 @@ export class SidecarSession {
   ) {
     this.runId = options.runId
     this.firstFolder = request.firstFolder
+    this.tickNanos = request.tickNanos
     this.clock = options.clock ?? systemClock
     this.world = options.world ?? EMPTY_WORLD
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts }
@@ -582,7 +589,7 @@ export class SidecarSession {
     this.stalled = false
     this.lastLoops = tick.loops
     this.outputs = { tNanos: tick.tNanos, outputs: tick.outputs }
-    this.stepWorld(tick)
+    this.stepWorld(tick.tNanos, tick.outputs)
     this.devicesThrottle.request()
     // 답하지 않은 틱이 있는데 새 틱이 오면(사이드카가 답을 기다리지 않은 틱) 앞의 것은 답 없이 넘긴다
     this.cancelReply()
@@ -613,19 +620,19 @@ export class SidecarSession {
     this.schedule()
   }
 
-  // 세계를 이 틱까지 돌리고(틱 순서대로 한 번씩) 입력·자세·안내를 받아 둔다. 세계의 예외로 실행을 멈추지 않는다.
-  private stepWorld(tick: TickMessage): void {
+  // 세계를 tNanos까지 돌리고(틱 순서대로 한 번씩) 입력·자세·안내를 받아 둔다. 세계의 예외로 실행을 멈추지 않는다.
+  private stepWorld(tNanos: number, outputs: Record<string, DeviceValues>): void {
     let inputs: Record<string, DeviceValues>
     let pose: SimPose | null
     let notices: { code: SimNoticeCode; params: Record<string, string> }[]
     try {
-      inputs = this.world.step(tick.tNanos, tick.outputs)
+      inputs = this.world.step(tNanos, outputs)
       pose = this.world.pose()
       notices = this.world.drainNotices()
     } catch (error) {
       if (!this.worldFailed) {
         this.worldFailed = true
-        this.simNotice(tick.tNanos, 'worldError', { detail: errorMessage(error) })
+        this.simNotice(tNanos, 'worldError', { detail: errorMessage(error) })
       }
       return
     }
@@ -640,7 +647,7 @@ export class SidecarSession {
       Number.isFinite(pose.yaw)
     ) {
       this.latestPose = {
-        tNanos: tick.tNanos,
+        tNanos,
         x: pose.x,
         y: pose.y,
         yaw: pose.yaw,
@@ -650,7 +657,17 @@ export class SidecarSession {
       }
       this.poseThrottle.request()
     }
-    for (const notice of notices) this.simNotice(tick.tNanos, notice.code, notice.params)
+    for (const notice of notices) this.simNotice(tNanos, notice.code, notice.params)
+  }
+
+  // 끝: 마지막 틱의 출력으로 세계를 한 틱 더 돌린다(머리 주석의 "세계"). 받은 틱이 없으면(컴파일 실패 등) 돌리지 않는다.
+  // 답(tickReply)은 보내지 않고 latestNanos도 옮기지 않는다(끝 시각은 사이드카의 것). 입력은 devices로, 자세는 pose로
+  // phase·finished보다 먼저 나간다(finish가 그 뒤에 throttle을 비운다).
+  private settleWorld(): void {
+    const last = this.outputs
+    if (last === null) return
+    this.stepWorld(last.tNanos + this.tickNanos, last.outputs)
+    this.devicesThrottle.request()
   }
 
   // 사이드카 안내의 매개변수. rrTuningSaved는 모의 저장소 기준 경로(path)에 절대 경로(file)를 더한다: 렌더러는 모의
@@ -926,6 +943,7 @@ export class SidecarSession {
     this.pending = null
     this.step = null
     this.clearKillTimer()
+    this.settleWorld()
     this.flushLogs()
     this.telemetryThrottle.flush()
     this.dashThrottle.flush()
