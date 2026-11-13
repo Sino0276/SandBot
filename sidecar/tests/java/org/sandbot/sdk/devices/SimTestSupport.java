@@ -29,6 +29,28 @@ final class SimTestSupport {
 
     static final class FakeClock implements SimClock {
         long nanos = 0;
+        private Runnable duringCharge;
+        private int chargesLeft;
+
+        /**
+         * 앞으로 nth번째 charge 안에서(시간을 더한 뒤, 돌아가기 전에) work를 한 번 부른다. 런타임의 VirtualClock이 charge 안에서
+         * 넘은 틱 경계의 일(STOP → fail safe)을 하는 것과 같은 자리다.
+         */
+        void duringCharge(int nth, Runnable work) {
+            if (nth < 1 || work == null) throw new IllegalArgumentException();
+            chargesLeft = nth;
+            duringCharge = work;
+        }
+
+        /** duringCharge의 일이 아직 불리지 않았는가 */
+        boolean duringChargePending() {
+            return duringCharge != null;
+        }
+
+        /** 불리지 않은 duringCharge의 일을 버린다(다음 시험에 남지 않게) */
+        void clearDuringCharge() {
+            duringCharge = null;
+        }
 
         @Override public long nanoTime() {
             return nanos;
@@ -40,6 +62,11 @@ final class SimTestSupport {
 
         @Override public void charge(long n) {
             nanos += n;
+            if (duringCharge != null && --chargesLeft == 0) {
+                Runnable work = duringCharge;
+                duringCharge = null;
+                work.run();
+            }
         }
 
         @Override public void sleep(long n) throws InterruptedException {

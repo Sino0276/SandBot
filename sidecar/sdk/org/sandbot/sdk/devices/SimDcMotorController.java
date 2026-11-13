@@ -330,7 +330,12 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     }
 
     @Override public synchronized void close() {
-        floatHardware();
+        int failSafes = hub.failSafes();
+        try {
+            floatHardware();
+        } finally {
+            hub.keepFailSafeLast(failSafes); // 네 모터의 power 0·켜기 중에 STOP이 와도 fail safe가 마지막
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -348,18 +353,24 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     }
 
     void internalSetMotorEnable(int motorZ, boolean enable) {
-        if (motors[motorZ].lastKnownEnable.updateValue(enable)) {
-            // 끊긴 스레드: 실제 send()가 잠금에서 InterruptedException → handleException(다시 끊음)으로 끝난다. 펌웨어에 가지 않으므로
-            // NACK도 TargetPositionNotSetException도 없고, updateValue가 둔 값은 남는다.
-            if (!hub.lynxCommand()) return; // LynxSetMotorChannelEnableCommand
-            Channel c = channels[motorZ];
-            if (enable && c.mode == DcMotor.RunMode.RUN_TO_POSITION && !c.targetPositionSet) {
-                // 펌웨어 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED. 실제 LynxDcMotorController처럼 lastKnownEnable은 updateValue가
-                // 둔 true 그대로다(되돌리지 않는다): 신선한 동안(500 ms) 다시 켜기는 보내지 않아 던지지 않고, 모터는 꺼진 채다.
-                throw new TargetPositionNotSetException();
+        // 켜기 명령의 비용 안에서 STOP이 와도 fail safe가 마지막이다(SimHub.keepFailSafeLast: 아래에서 쓴 켜짐을 다시 끈다)
+        int failSafes = hub.failSafes();
+        try {
+            if (motors[motorZ].lastKnownEnable.updateValue(enable)) {
+                // 끊긴 스레드: 실제 send()가 잠금에서 InterruptedException → handleException(다시 끊음)으로 끝난다. 펌웨어에 가지 않으므로
+                // NACK도 TargetPositionNotSetException도 없고, updateValue가 둔 값은 남는다.
+                if (!hub.lynxCommand()) return; // LynxSetMotorChannelEnableCommand
+                Channel c = channels[motorZ];
+                if (enable && c.mode == DcMotor.RunMode.RUN_TO_POSITION && !c.targetPositionSet) {
+                    // 펌웨어 NACK MOTOR_NOT_CONFIG_BEFORE_ENABLED. 실제 LynxDcMotorController처럼 lastKnownEnable은 updateValue가
+                    // 둔 true 그대로다(되돌리지 않는다): 신선한 동안(500 ms) 다시 켜기는 보내지 않아 던지지 않고, 모터는 꺼진 채다.
+                    throw new TargetPositionNotSetException();
+                }
+                c.enabled = enable;
+                c.publish();
             }
-            c.enabled = enable;
-            c.publish();
+        } finally {
+            hub.keepFailSafeLast(failSafes);
         }
     }
 
@@ -429,26 +440,33 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
         int motorZ = motor - API_MOTOR_FIRST;
         MotorProperties m = motors[motorZ];
         if (!m.lastKnownMode.isValue(mode)) {
-            Double prevPower = m.lastKnownPower.getNonTimedValue();
-            if (prevPower == null) prevPower = internalGetMotorPower(motorZ);
-            Channel c = channels[motorZ];
-            // 끊긴 스레드: 실제 try 블록의 send()에서 끝난다. 모드를 기억하지 않고(lastKnownMode) power도 다시 보내지 않는다.
-            // 앞의 prevPower 읽기·STOP_AND_RESET_ENCODER의 power 0은 try 밖이라 실제처럼 그대로 시도한다.
-            if (mode == DcMotor.RunMode.STOP_AND_RESET_ENCODER) {
-                internalSetMotorPower(motorZ, 0);
-                if (!hub.lynxCommand()) return; // LynxResetMotorEncoderCommand
-                c.encoderOffset = c.rawPosition();
-                c.encoderResets++;
-            } else {
-                DcMotor.ZeroPowerBehavior zeroPowerBehavior = internalGetZeroPowerBehavior(motorZ);
-                if (!hub.lynxCommand()) return; // LynxSetMotorChannelModeCommand
-                c.mode = mode;
-                c.zeroPowerBehavior = zeroPowerBehavior;
+            // 모드 명령의 비용 안에서 STOP이 오면 모드는 허브에 남지만(fail safe는 모드를 지우지 않는다), 이어서 다시 보내는 power·켜기는
+            // 같은 호출이라 fail safe가 덮는다(SimHub.keepFailSafeLast)
+            int failSafes = hub.failSafes();
+            try {
+                Double prevPower = m.lastKnownPower.getNonTimedValue();
+                if (prevPower == null) prevPower = internalGetMotorPower(motorZ);
+                Channel c = channels[motorZ];
+                // 끊긴 스레드: 실제 try 블록의 send()에서 끝난다. 모드를 기억하지 않고(lastKnownMode) power도 다시 보내지 않는다.
+                // 앞의 prevPower 읽기·STOP_AND_RESET_ENCODER의 power 0은 try 밖이라 실제처럼 그대로 시도한다.
+                if (mode == DcMotor.RunMode.STOP_AND_RESET_ENCODER) {
+                    internalSetMotorPower(motorZ, 0);
+                    if (!hub.lynxCommand()) return; // LynxResetMotorEncoderCommand
+                    c.encoderOffset = c.rawPosition();
+                    c.encoderResets++;
+                } else {
+                    DcMotor.ZeroPowerBehavior zeroPowerBehavior = internalGetZeroPowerBehavior(motorZ);
+                    if (!hub.lynxCommand()) return; // LynxSetMotorChannelModeCommand
+                    c.mode = mode;
+                    c.zeroPowerBehavior = zeroPowerBehavior;
+                }
+                c.commandedMode = mode;
+                c.publish();
+                m.lastKnownMode.setValue(mode);
+                internalSetMotorPower(motorZ, prevPower, true);
+            } finally {
+                hub.keepFailSafeLast(failSafes);
             }
-            c.commandedMode = mode;
-            c.publish();
-            m.lastKnownMode.setValue(mode);
-            internalSetMotorPower(motorZ, prevPower, true);
         }
     }
 
@@ -516,32 +534,39 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     private void internalSetMotorPower(int motorZ, double apiPower, boolean forceUpdate) {
         double power = Range.clip(apiPower, API_POWER_FIRST, API_POWER_LAST);
         if (motors[motorZ].lastKnownPower.updateValue(power) || forceUpdate) {
-            DcMotor.RunMode mode = internalGetPublicMotorMode(motorZ);
-            Channel c = channels[motorZ];
-            switch (mode) {
-                case RUN_TO_POSITION:
-                case RUN_USING_ENCODER: {
-                    power = Math.signum(power) * Range.scale(Math.abs(power), 0, API_POWER_LAST, 0, getDefaultMaxMotorSpeed(motorZ));
-                    // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
-                    if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorTargetVelocityCommand
-                    c.targetVelocity = (int) power;
-                    c.publish();
-                    internalSetMotorEnable(motorZ, true);
-                    break;
+            // power·목표 속도 명령의 비용 안에서 STOP이 와도 fail safe가 마지막이다: 실제는 그 명령이 먼저 허브에 갔다. 돌아와서 쓴
+            // 정전력·목표 속도와 뒤따르는 켜기(fail safe가 잊은 켜기라 다시 보낸다)는 SimHub.keepFailSafeLast가 덮는다
+            int failSafes = hub.failSafes();
+            try {
+                DcMotor.RunMode mode = internalGetPublicMotorMode(motorZ);
+                Channel c = channels[motorZ];
+                switch (mode) {
+                    case RUN_TO_POSITION:
+                    case RUN_USING_ENCODER: {
+                        power = Math.signum(power) * Range.scale(Math.abs(power), 0, API_POWER_LAST, 0, getDefaultMaxMotorSpeed(motorZ));
+                        // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+                        if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorTargetVelocityCommand
+                        c.targetVelocity = (int) power;
+                        c.publish();
+                        internalSetMotorEnable(motorZ, true);
+                        break;
+                    }
+                    case RUN_WITHOUT_ENCODER: {
+                        power = Range.scale(power, API_POWER_FIRST, API_POWER_LAST, -HUB_POWER_LAST, HUB_POWER_LAST);
+                        // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+                        if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorConstantPowerCommand
+                        c.constantPower = (int) power;
+                        c.publish();
+                        internalSetMotorEnable(motorZ, true);
+                        break;
+                    }
+                    case STOP_AND_RESET_ENCODER:
+                    default:
+                        // 이 모드에서는 power를 보내지 않는다
+                        break;
                 }
-                case RUN_WITHOUT_ENCODER: {
-                    power = Range.scale(power, API_POWER_FIRST, API_POWER_LAST, -HUB_POWER_LAST, HUB_POWER_LAST);
-                    // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
-                    if (!hub.lynxCommand((int) power != 0)) break; // LynxSetMotorConstantPowerCommand
-                    c.constantPower = (int) power;
-                    c.publish();
-                    internalSetMotorEnable(motorZ, true);
-                    break;
-                }
-                case STOP_AND_RESET_ENCODER:
-                default:
-                    // 이 모드에서는 power를 보내지 않는다
-                    break;
+            } finally {
+                hub.keepFailSafeLast(failSafes);
             }
         }
     }
@@ -641,22 +666,28 @@ public final class SimDcMotorController implements DcMotorControllerEx, RobotCor
     }
 
     @Override public synchronized void setMotorVelocity(int motor, double ticksPerSecond) {
-        switch (getMotorMode(motor)) {
-            case RUN_USING_ENCODER:
-            case RUN_TO_POSITION:
-                break;
-            default:
-                setMotorMode(motor, DcMotor.RunMode.RUN_USING_ENCODER);
+        // 모드 묻기·바꾸기·목표 속도·켜기 중 어느 명령의 비용 안에서 STOP이 와도 fail safe가 마지막이다(SimHub.keepFailSafeLast)
+        int failSafes = hub.failSafes();
+        try {
+            switch (getMotorMode(motor)) {
+                case RUN_USING_ENCODER:
+                case RUN_TO_POSITION:
+                    break;
+                default:
+                    setMotorMode(motor, DcMotor.RunMode.RUN_USING_ENCODER);
+            }
+            validateMotor(motor);
+            int motorZ = motor - API_MOTOR_FIRST;
+            int iTicksPerSecond = Range.clip((int) Math.round(ticksPerSecond), -HUB_VELOCITY_LAST, HUB_VELOCITY_LAST);
+            // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
+            if (!hub.lynxCommand(iTicksPerSecond != 0)) return; // LynxSetMotorTargetVelocityCommand
+            Channel c = channels[motorZ];
+            c.targetVelocity = iTicksPerSecond;
+            c.publish();
+            internalSetMotorEnable(motorZ, true);
+        } finally {
+            hub.keepFailSafeLast(failSafes);
         }
-        validateMotor(motor);
-        int motorZ = motor - API_MOTOR_FIRST;
-        int iTicksPerSecond = Range.clip((int) Math.round(ticksPerSecond), -HUB_VELOCITY_LAST, HUB_VELOCITY_LAST);
-        // 끊김·STOP 뒤의 0이 아닌 값: 실제 send()가 던져 켜기(internalSetMotorEnable)까지 가지 않는다
-        if (!hub.lynxCommand(iTicksPerSecond != 0)) return; // LynxSetMotorTargetVelocityCommand
-        Channel c = channels[motorZ];
-        c.targetVelocity = iTicksPerSecond;
-        c.publish();
-        internalSetMotorEnable(motorZ, true);
     }
 
     @Override public synchronized void setMotorVelocity(int motor, double angularRate, AngleUnit unit) {
