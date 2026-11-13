@@ -15,13 +15,13 @@ function work(index: number, size: number): Float64Array {
 // 정규화(행마다 대각에 이 비율 × A_ii) [결정: articulation.ts solveBoxLcp의 LCP_REGULARIZATION과 같은 크기. 공 행의 A는 순응·공
 // 질량으로 거의 늘 양정치라 근접점 반복 없이 정칙화한 해를 쓴다: 충격 차이는 1e-9배라 보이지 않는다. 특이한 방향(같은 방향의 로봇
 // 행)에서는 정칙화가 나눔을 정하고, 속도(w) 차이는 1e-9 × A_ii·λ 아래다]
-const DENSE_LCP_REGULARIZATION = 1e-9
+export const DENSE_LCP_REGULARIZATION = 1e-9
 // 상보성·경계 판정의 상대 허용 오차(solveBoxLcp와 같은 1e-12)와 반복 상한, 블록 전환을 그만두고 Murty 규칙만 쓰는 반복
 const DENSE_LCP_TOLERANCE = 1e-12
 const DENSE_LCP_MAX_ITERATIONS = 2000
 // 비대각이 이 비율 × √(A_ii·A_jj) 아래면 행이 묶이지 않았다고 본다 [결정: 수직인 법선·접선의 내적 반올림(1e-16)보다 크고 풀이에
 // 보이는 결합보다 훨씬 작다]
-const DENSE_LCP_DECOUPLED = 1e-12
+export const DENSE_LCP_DECOUPLED = 1e-12
 const DENSE_LCP_MURTY_AFTER = 200
 const DENSE_LCP_TRIES = 3
 

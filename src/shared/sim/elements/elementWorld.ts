@@ -43,6 +43,7 @@ import {
   type BallContact,
   type V3
 } from './ballContact'
+import { DENSE_LCP_DECOUPLED, DENSE_LCP_REGULARIZATION } from '../denseLcp'
 import { BallGrid } from './broadPhase'
 import {
   AIR_DENSITY,
@@ -181,7 +182,8 @@ type Contact = {
   body: number
   // 로봇 몸체가 움직이는지(j 행이 있음)
   dynamic: boolean
-  token: string
+  // 짝 토큰과 행 키(짝마다 한 번 만든 같은 문자열)
+  keys: PairKeys
   normal: V3
   point: V3
   separation: number
@@ -196,6 +198,10 @@ type Contact = {
   mass: number
   core: number
 }
+
+// 짝 하나의 토큰(e<번호>/<상대>)과 행 키(gn·gt1·gt2 + '.' + 토큰). 짝 번호마다 한 번 만들어 다시 쓴다: 하위 단계마다 새로 이어
+// 붙인 문자열을 Map 키로 쓰면 매번 펴고 해시해야 한다(성능)
+type PairKeys = { token: string; normal: string; t1: string; t2: string }
 
 // 행 하나(필드 축 공 부분, 로봇 z 공간 j)
 type BallRow = {
@@ -266,6 +272,10 @@ export class ElementWorld {
     box: boolean
   }[]
   private readonly robotBodies: RobotBody[]
+  // 로봇 몸체마다 첫 충돌체의 짝 번호 오프셋과 전체 충돌체 수(짝 번호: 정적 → 로봇 충돌체 → 공)
+  private readonly robotShapeOffset: number[]
+  private readonly robotShapeCount: number
+  private readonly pairKeys = new Map<number, PairKeys>()
   private readonly start: Pose2
   private readonly footprint: readonly { x: number; y: number }[]
   private readonly height: number
@@ -343,6 +353,13 @@ export class ElementWorld {
     this.footprint = spec.robot.footprint
     this.height = spec.robot.height
     this.robotBodies = robotBodies(spec)
+    let offset = 0
+    this.robotShapeOffset = this.robotBodies.map((body) => {
+      const start = offset
+      offset += body.shapes.length
+      return start
+    })
+    this.robotShapeCount = offset
     this.grid = new BallGrid(n)
     this.display = this.quantized(0)
   }
@@ -498,7 +515,22 @@ export class ElementWorld {
     const robotV = art ? art.v : null
     const previous = (key: string): number =>
       this.lastH > 0 ? ((this.impulses.get(key) ?? 0) * h) / this.lastH : 0
+    // 섬이 던지면 그 섬만 멈춘다(위치 그대로, 속도 0). 다른 섬·로봇은 그대로 간다
+    const fail = (island: Island, error: unknown): void => {
+      for (const e of island.balls) for (let i = 0; i < 6; i++) u[6 * e + i] = 0
+      for (const r of island.rows) impulses.set(p.rows[r].key, 0)
+      this.notify('worldError', {
+        detail: `element island e${island.root}: ${error instanceof Error ? error.message : String(error)}`
+      })
+    }
     for (const island of p.islands) {
+      try {
+        ElementWorld.islandHook?.(island.root)
+      } catch (error) {
+        fail(island, error)
+        continue
+      }
+      if (this.solveSingleContact(p, island, u, robotV, impulses)) continue
       // 공 하나뿐인 섬(가장 흔함)은 찾기 표 없이 slot 0
       const single = island.balls.length === 1 ? island.balls[0] : -1
       const slot = single >= 0 ? null : new Map<number, number>()
@@ -533,7 +565,6 @@ export class ElementWorld {
       const uIsland: number[] = []
       for (const e of island.balls) for (let k = 0; k < 6; k++) uIsland.push(u[6 * e + k])
       try {
-        ElementWorld.islandHook?.(island.root)
         const solved = solveIsland(
           rows,
           {
@@ -552,12 +583,7 @@ export class ElementWorld {
           for (let i = 0; i < 6; i++) u[6 * e + i] = solved[6 * k + i]
         })
       } catch (error) {
-        // 그 섬만 멈춘다(위치 그대로, 속도 0). 다른 섬·로봇은 그대로 간다
-        for (const e of island.balls) for (let i = 0; i < 6; i++) u[6 * e + i] = 0
-        for (const r of island.rows) impulses.set(p.rows[r].key, 0)
-        this.notify('worldError', {
-          detail: `element island e${island.root}: ${error instanceof Error ? error.message : String(error)}`
-        })
+        fail(island, error)
       }
       if (rows.length > ISLAND_DENSE_ROWS) this.notify('elementIslandLarge', {})
     }
@@ -577,6 +603,97 @@ export class ElementWorld {
     }
     this.sleepStep(p, h)
     this.outOfField(tEnd)
+  }
+
+  // 공 하나·접촉 하나(법선 + 접선 0–2)의 섬(바닥에서 쉬거나 구르는 공, 가장 흔함)을 할당 없이 푼다. 법선 n과 접선 t1 ⟂ t2 ⟂ n이라
+  // 공 질량이 대각이면 A가 대각이고(비대각이 denseLcp.ts DENSE_LCP_DECOUPLED 아래인지 확인한다), 그러면 엇갈림 두 회차를 거친
+  // 일반 풀이(islands.ts solveIsland)의 해는 행마다 자른 값 λₙ = clamp(−bₙ/(Aₙₙ(1 + ε))), λₜ = clamp(−bₜ/(Aₜₜ(1 + ε)),
+  // ±μ·max(0, λₙ))와 같다(같은 순서의 같은 연산). 해당하지 않으면 거짓(일반 풀이로)
+  private solveSingleContact(
+    p: Pending,
+    island: Island,
+    u: Float64Array,
+    robotV: readonly number[] | null,
+    impulses: Map<string, number>
+  ): boolean {
+    if (island.balls.length !== 1 || island.rows.length === 0 || island.rows.length > 3)
+      return false
+    const e = island.balls[0]
+    const rows = island.rows.map((r) => p.rows[r])
+    const first = rows[0]
+    if (first.friction || first.parts.length !== 1) return false
+    for (let k = 1; k < rows.length; k++)
+      if (
+        rows[k].contact !== first.contact ||
+        rows[k].friction?.normal !== first.key ||
+        rows[k].parts.length !== 1
+      )
+        return false
+    const im = 1 / this.mass[e]
+    const ii = 1 / this.inertia[e]
+    const o = 6 * e
+    const diagonal: number[] = []
+    const b: number[] = []
+    for (const row of rows) {
+      const a = row.parts[0].a
+      diagonal.push(
+        im * (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) +
+          ii * (a[3] * a[3] + a[4] * a[4] + a[5] * a[5]) +
+          row.compliance
+      )
+      let fixed = 0
+      if (row.j && robotV) for (let c = 0; c < row.j.length; c++) fixed += row.j[c] * robotV[c]
+      // islands.ts rate()와 같은 결합 순서(정적 몫 + (a·u))
+      b.push(
+        fixed +
+          (a[0] * u[o] +
+            a[1] * u[o + 1] +
+            a[2] * u[o + 2] +
+            a[3] * u[o + 3] +
+            a[4] * u[o + 4] +
+            a[5] * u[o + 5]) -
+          row.target
+      )
+    }
+    for (let k = 0; k < rows.length; k++)
+      for (let l = k + 1; l < rows.length; l++) {
+        const a = rows[k].parts[0].a
+        const c = rows[l].parts[0].a
+        const off =
+          im * (a[0] * c[0] + a[1] * c[1] + a[2] * c[2]) +
+          ii * (a[3] * c[3] + a[4] * c[4] + a[5] * c[5])
+        if (!(Math.abs(off) <= DENSE_LCP_DECOUPLED * Math.sqrt(diagonal[k] * diagonal[l])))
+          return false
+      }
+    const lambda: number[] = []
+    rows.forEach((row, k) => {
+      let lo = row.lo
+      let hi = row.hi
+      if (row.friction) {
+        const bound = row.friction.mu * Math.max(0, lambda[0])
+        if (!(bound > 0)) {
+          lambda.push(0)
+          return
+        }
+        lo = -bound
+        hi = bound
+      }
+      const value = -b[k] / (diagonal[k] * (1 + DENSE_LCP_REGULARIZATION))
+      lambda.push(value <= lo ? lo : value >= hi ? hi : value)
+    })
+    if (!lambda.every((x) => Number.isFinite(x))) return false
+    rows.forEach((row, k) => {
+      impulses.set(row.key, lambda[k])
+      if (lambda[k] === 0) return
+      const a = row.parts[0].a
+      const linear = im * lambda[k]
+      const angular = ii * lambda[k]
+      for (let i = 0; i < 3; i++) {
+        u[o + i] += linear * a[i]
+        u[o + 3 + i] += angular * a[3 + i]
+      }
+    })
+    return true
   }
 
   // ---- 틱 경계 ----
@@ -710,6 +827,18 @@ export class ElementWorld {
     let r = 0
     for (const t of this.types) r = Math.max(r, t.radius)
     return r
+  }
+
+  // 공 e와 상대(code: 정적 순번 → 로봇 충돌체 → 공)의 짝 키(처음 쓸 때 한 번 만든다)
+  private keysFor(e: number, code: number, token: () => string): PairKeys {
+    const id = e * (this.statics.length + this.robotShapeCount + this.count) + code
+    let keys = this.pairKeys.get(id)
+    if (!keys) {
+      const t = token()
+      keys = { token: t, normal: `gn.${t}`, t1: `gt1.${t}`, t2: `gt2.${t}` }
+      this.pairKeys.set(id, keys)
+    }
+    return keys
   }
 
   private wake(e: number): void {
@@ -897,7 +1026,11 @@ export class ElementWorld {
         f: -1,
         body: body.body,
         dynamic,
-        token: `e${e}/${body.token}k${k}`,
+        keys: this.keysFor(
+          e,
+          this.statics.length + this.robotShapeOffset[b] + k,
+          () => `e${e}/${body.token}k${k}`
+        ),
         normal: apply(ctx.rotation, found.normal),
         point: add(apply(ctx.rotation, found.point), ctx.origin),
         separation: found.separation,
@@ -920,7 +1053,8 @@ export class ElementWorld {
     const c = this.centerOf(e)
     const band = norm(this.velocityOf(e)) * h + COLLISION_MARGIN
     const t = this.typeOf[e]
-    for (const st of this.statics) {
+    for (let index = 0; index < this.statics.length; index++) {
+      const st = this.statics[index]
       let found: BallContact | null
       if (st.shape.kind === 'floor') found = sphereFloor(c, r, band)
       else {
@@ -941,7 +1075,7 @@ export class ElementWorld {
         f: -1,
         body: -2,
         dynamic: false,
-        token: `e${e}/${st.shape.token}`,
+        keys: this.keysFor(e, index, () => `e${e}/${st.shape.token}`),
         normal: found.normal,
         point: found.point,
         separation: found.separation,
@@ -981,7 +1115,7 @@ export class ElementWorld {
         f,
         body: -2,
         dynamic: false,
-        token: `e${e}/e${f}`,
+        keys: this.keysFor(e, this.statics.length + this.robotShapeCount + f, () => `e${e}/e${f}`),
         normal: found.normal,
         point: found.point,
         separation: found.separation,
@@ -1002,7 +1136,7 @@ export class ElementWorld {
   // 법선 성분을 min(μ·r_s·λ′, |ω_n|/Σ(1/I))만큼 줄이는 각충격(공 둘이면 서로 반대로, 다른 몸체는 받지 않음: 명시적 근사)
   private resist(contact: Contact, h: number, uStar: Float64Array): void {
     if (this.lastH <= 0) return
-    const lambda = ((this.impulses.get(`gn.${contact.token}`) ?? 0) * h) / this.lastH
+    const lambda = ((this.impulses.get(contact.keys.normal) ?? 0) * h) / this.lastH
     if (!(lambda > 0)) return
     const e = contact.e
     const f = contact.f
@@ -1106,12 +1240,12 @@ export class ElementWorld {
       restitution: contact.restitution,
       bounceSpeed: V_BOUNCE,
       dampingRatio: CONTACT_DAMPING_RATIO,
-      impact: this.arrivals.get(contact.token)
+      impact: this.arrivals.get(contact.keys.token)
     })
-    if (made.arrival !== undefined) this.nextArrivals.set(contact.token, made.arrival)
+    if (made.arrival !== undefined) this.nextArrivals.set(contact.keys.token, made.arrival)
     if (made.crushed) this.notify('elementCrushed', {})
     const compliance = made.compliance
-    const normalKey = `gn.${contact.token}`
+    const normalKey = contact.keys.normal
     const rows: BallRow[] = [
       {
         key: normalKey,
@@ -1134,16 +1268,16 @@ export class ElementWorld {
           ctx.rotation,
           arr(robot.pointVelocity(ctx.frames, contact.body, vec(contact.pointC as V3)))
         )
-      const t1 = frictionTangent(n, sub(pe, other), this.tangents.get(contact.token) ?? null)
-      this.nextTangents.set(contact.token, t1)
+      const t1 = frictionTangent(n, sub(pe, other), this.tangents.get(contact.keys.token) ?? null)
+      this.nextTangents.set(contact.keys.token, t1)
       const t2 = cross(n, t1)
       const tangentCompliance = TANGENT_COMPLIANCE_RATIO / contact.mass
-      for (const [name, d] of [
-        ['gt1', t1],
-        ['gt2', t2]
+      for (const [key, d] of [
+        [contact.keys.t1, t1],
+        [contact.keys.t2, t2]
       ] as const)
         rows.push({
-          key: `${name}.${contact.token}`,
+          key,
           contact: index,
           parts: partsFor(d, false),
           j: robotRow(d),
@@ -1161,7 +1295,7 @@ export class ElementWorld {
         (row.j === null || row.j.every((x) => Number.isFinite(x)))
     )
     if (!finite) {
-      this.notify('worldError', { detail: `element ${contact.token}` })
+      this.notify('worldError', { detail: `element ${contact.keys.token}` })
       return null
     }
     return rows

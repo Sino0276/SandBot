@@ -66,7 +66,8 @@ const box = (center: { x: number; y: number; z: number }, half: typeof center): 
   friction: 0.4
 })
 
-// Articulation과 ElementWorld만으로 하위 단계를 돈다(world.ts와 같은 순서: 접촉 틀 → 공 행 → art.step → 공 마무리)
+// Articulation과 ElementWorld만으로 하위 단계를 돈다(world.ts와 같은 순서: 접촉 틀 → 공 행 → art.step → 공 마무리). each는 공
+// 마무리 뒤(공·로봇 자세가 같은 하위 단계 끝)에 부른다
 function stepRig(
   art: Articulation,
   ew: ElementWorld,
@@ -78,8 +79,8 @@ function stepRig(
     const frames = art.contactFrames()
     const made = ew.prepare(art, frames, h)
     art.step(h, zeroDrive, { rows: made.rows, damping: [], elements: made.coupled })
-    each?.(made.rows)
     ew.finish(art, h, false, (k + 1) * 1e6)
+    each?.(made.rows)
   }
 }
 
@@ -409,6 +410,44 @@ describe('로봇–공 결합(6a)', () => {
     expect(final).toBeLessThan(steady * 1.01)
     // 공은 앞으로 쏘였다
     expect(run.last()[0].velocity.x).toBeGreaterThan(3)
+  })
+
+  it('공을 밀던 관절이 한계에 닿으면 한계 충격 풀이에도 공 블록이 들어가 공이 판에 파고들지 않는다', () => {
+    // 위 한계 0.03 m의 직선 판이 1 m/s로 공(판에 붙어 있음)을 밀다 한계에 박힌다. 공은 판 앞에서 떨어져 나간다
+    const pusher: SimJointSpec = {
+      parent: -1,
+      type: 'prismatic',
+      origin: { position: ZERO, rotation: ZERO },
+      axis: { x: 1, y: 0, z: 0 },
+      limits: { lower: -0.1, upper: 0.03 },
+      body: { mass: 0.5, centerOfMass: ZERO, inertia: [0.01, 0.01, 0.01, 0, 0, 0] },
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' },
+      switches: [],
+      colliders: [box({ x: 0, y: 0, z: 0.3 }, { x: 0.05, y: 0.1, z: 0.3 })]
+    }
+    const spec = rig([pusher])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = 1
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0.05 + r, y: 0, z: 0.3 }, { velocity: { x: 1, y: 0, z: 0 } })],
+      air: false,
+      sleep: false
+    })
+    let deepest = Infinity
+    let coupledAtLimit = false
+    stepRig(art, ew, 60, (rows) => {
+      if (rows.length > 0 && art.z[0] >= 0.03 - 1e-12) coupledAtLimit = true
+      const s = ew.snapshot()[0]
+      deepest = Math.min(deepest, s.position.x - r - (0.05 + art.z[0]))
+    })
+    expect(coupledAtLimit).toBe(true)
+    expect(art.z[0]).toBeCloseTo(0.03, 12)
+    expect(art.v[0]).toBe(0)
+    expect(deepest).toBeGreaterThan(-1e-3)
+    // 공은 판보다 빠르게 앞으로 간다(판은 멈췄다)
+    expect(ew.snapshot()[0].velocity.x).toBeGreaterThan(0.5)
   })
 
   it('섬 하나가 던지면 그 섬만 멈추고(속도 0) 다른 섬과 로봇은 그대로 간다', () => {
