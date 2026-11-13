@@ -682,9 +682,10 @@ public final class DeviceBehaviorTest {
             SimDcMotorController motors = SimHub.of(bot.get(LynxModule.class, "Control Hub")).motors;
             tetrix.setPower(0.5);
             try {
-                stopDuringCharge(bot, 1, linear);
-                Check.equal(ms(1.5) + (linear ? CLOCK_READ : ms(1.5)), elapsedWithStop(() -> tetrix.setPower(0.25), f),
-                        f + ": the same commands as without the race");
+                // DcMotorImpl.getMode·internalSetMotorPower의 모드 캐시 적중 둘(CLOCK_READ씩) 다음 power 명령 안에서 STOP
+                stopDuringCharge(bot, 3, linear);
+                Check.equal(2 * CLOCK_READ + ms(1.5) + (linear ? CLOCK_READ : ms(1.5)),
+                        elapsedWithStop(() -> tetrix.setPower(0.25), f), f + ": the same commands as without the race");
                 Check.equal(0.0, bot.out("tetrix", "power"), f + ": the fail safe stops the motor last");
                 Check.equal(0.0, bot.out("tetrix", "apiPower"), f + ": apiPower after the fail safe");
                 Check.equal(false, bot.out("tetrix", "enabled"), f + ": the fail safe disables the motor last");
@@ -710,8 +711,9 @@ public final class DeviceBehaviorTest {
             tetrix.setPower(0.5);
             CLOCK.nanos += ms(501);
             try {
-                stopDuringCharge(bot, 3, linear);
-                Check.equal(ms(3 * 1.5), elapsedWithStop(() -> tetrix.setPower(0.25), f),
+                // 신선도가 지난 모드 묻기 → 안쪽 모드 캐시 적중(CLOCK_READ) → power → 켜기 명령 안에서 STOP
+                stopDuringCharge(bot, 4, linear);
+                Check.equal(ms(3 * 1.5) + CLOCK_READ, elapsedWithStop(() -> tetrix.setPower(0.25), f),
                         f + ": mode read, power and enable as without the race");
                 Check.equal(false, bot.out("tetrix", "enabled"), f + ": the enable in flight does not outlast the fail safe");
                 Check.equal(0.0, bot.out("tetrix", "power"), f + ": the motor is stopped");
@@ -732,9 +734,10 @@ public final class DeviceBehaviorTest {
             tetrix.setVelocity(200);
             Check.equal(200, bot.out("tetrix", "velocity"), f + ": running at the target velocity");
             try {
-                stopDuringCharge(bot, 1, linear);
-                Check.equal(ms(1.5) + (linear ? CLOCK_READ : ms(1.5)), elapsedWithStop(() -> tetrix.setVelocity(300), f),
-                        f + ": velocity, then the enable the fail safe forgot");
+                // 모드 캐시 적중(CLOCK_READ) 다음 목표 속도 명령 안에서 STOP
+                stopDuringCharge(bot, 2, linear);
+                Check.equal(CLOCK_READ + ms(1.5) + (linear ? CLOCK_READ : ms(1.5)),
+                        elapsedWithStop(() -> tetrix.setVelocity(300), f), f + ": velocity, then the enable the fail safe forgot");
                 Check.equal(0, bot.out("tetrix", "velocity"), f + ": the target velocity in flight does not outlast the fail safe");
                 Check.equal(0.0, bot.out("tetrix", "power"), f + ": the motor is stopped");
                 Check.equal(false, bot.out("tetrix", "enabled"), f + ": the motor is disabled");
@@ -757,9 +760,10 @@ public final class DeviceBehaviorTest {
             tetrix.setPower(0);
             Check.equal(true, bot.out("tetrix", "enabled"), f + ": enabled at zero power");
             try {
-                // zero power 묻기(1) → 모드 명령(2) 안에서 STOP → 목표 속도 0(끊긴 스레드는 잠금 시도) → 켜기
+                // zero power 묻기(1) → 모드 명령(2) 안에서 STOP → 진행 중인 모드 명령이 둔 모드 캐시 적중(CLOCK_READ)
+                // → 목표 속도 0(끊긴 스레드는 잠금 시도) → 켜기
                 stopDuringCharge(bot, 2, linear);
-                Check.equal(ms(2 * 1.5) + (linear ? CLOCK_READ : ms(2 * 1.5)),
+                Check.equal(ms(2 * 1.5) + CLOCK_READ + (linear ? CLOCK_READ : ms(2 * 1.5)),
                         elapsedWithStop(() -> tetrix.setMode(DcMotor.RunMode.RUN_USING_ENCODER), f),
                         f + ": the same commands as without the race");
                 Check.equal("RUN_USING_ENCODER", bot.out("tetrix", "mode"), f + ": the mode in flight reached the hub");
