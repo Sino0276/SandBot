@@ -17,6 +17,8 @@ import TextField from '../TextField'
 import UsageSection from '../usages/UsageSection'
 import { usePlayStore } from '../../play/playStore'
 import IssueList from './IssueList'
+import { documentSeasonId } from '../field/fieldDisplay'
+import { robotPreloadSource } from '../preload/preloadCardModel'
 import { drivetrainSummary } from './wheelCardModel'
 
 type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
@@ -154,6 +156,35 @@ function Drivetrain({ robotId }: { robotId: string }): React.JSX.Element {
   )
 }
 
+// 프리로드 출처(6a, 시뮬레이터 설정): 팀이 둔 Preload Slot 수, 자동 자리의 면, 자동 자리 없음, 시즌에 없음. 세계 설명 빌더와 같은
+// 규칙(robotPreloads)이라 INIT이 쓰는 자리와 같다. 문서 시즌으로 계산한다
+export function PreloadSourceLine({ robotId }: { robotId: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const objects = useSceneStore((state) => state.objects)
+  const season = useSceneStore((state) => documentSeasonId(state.field))
+  const { source, count, preloads } = useMemo(
+    () => robotPreloadSource(objects, robotId, season),
+    [objects, robotId, season]
+  )
+  const face = preloads.face
+  const text =
+    source === 'slots'
+      ? count > 0
+        ? t('preload.source.slots', { count })
+        : t('preload.source.slotsNone')
+      : source === 'auto'
+        ? t('preload.source.auto', { count, face: t(`preload.faces.${face ?? 'front'}`) })
+        : source === 'noRoom'
+          ? t('preload.source.noRoom')
+          : t('preload.source.season')
+  return (
+    <div className="hw-files" data-preload-source={source}>
+      <span className="hw-row-label">{t('preload.source.title')}</span>
+      <span className="hw-static">{text}</span>
+    </div>
+  )
+}
+
 // 로봇 하나의 생성 설정(하드웨어 클래스 이름, DS 구성 이름, Expansion Hub)과 생성 파일·문제 목록
 function RobotHardwareSection({ robot }: { robot: SceneObject }): React.JSX.Element {
   const { t } = useTranslation()
@@ -245,6 +276,7 @@ function RobotHardwareSection({ robot }: { robot: SceneObject }): React.JSX.Elem
         </>
       )}
       <Drivetrain robotId={robot.id} />
+      <PreloadSourceLine robotId={robot.id} />
       {/* 장치가 없는 로봇도 보인다(마지막 장치를 지운 뒤에도 TeamCode가 쓰는 없는 형식이 보이게) */}
       <UsageSection target={{ kind: 'robot', robotId: robot.id }} />
       {issues.length > 0 && (

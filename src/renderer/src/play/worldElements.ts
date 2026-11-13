@@ -172,6 +172,9 @@ function computePreloads(
   }
   const frames = joints ?? jointBodyFrames(objects, robotId)
   const result = empty('slots')
+  // 한도는 켠 자리를 하이어라키 순서로 센다(앞의 MAX_PRELOADS개가 후보이고, 그 가운데 바닥 아래·좌표 한도 밖은 빠진다: 뒤의
+  // 자리가 대신 들어오지 않아 편집 중 다른 자리를 고쳐도 어느 자리가 쓰이는지가 하이어라키 순서로만 정해진다)
+  let candidates = 0
   for (const id of ids) {
     const object = objects[id]
     const preload = object.preload!
@@ -179,11 +182,12 @@ function computePreloads(
       result.exclusions.set(id, 'disabled')
       continue
     }
-    if (result.slots.length === MAX_PRELOADS) {
+    if (candidates === MAX_PRELOADS) {
       result.tooMany = true
       result.exclusions.set(id, 'tooMany')
       continue
     }
+    candidates++
     const matrix = robotObjectMatrix(objects, robotId, id)
     if (!matrix) {
       result.exclusions.set(id, 'orphan')

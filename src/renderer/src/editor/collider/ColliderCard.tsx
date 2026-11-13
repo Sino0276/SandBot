@@ -48,8 +48,8 @@ import { useCollisionModel } from './useCollisionModel'
 
 const AXES = ['x', 'y', 'z'] as const
 
-// 세 축 길이 칸(Center·Size)
-function LengthVector({
+// 세 축 길이 칸(Center·Size, Preload Slot 카드도 쓴다)
+export function LengthVector({
   label,
   title,
   values,

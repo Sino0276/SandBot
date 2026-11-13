@@ -2273,7 +2273,8 @@ const en: Messages = {
         'Only {{max}} per robot are used, so this slot is not (the first ones in hierarchy order are used).',
       belowFloor: 'The ball is below the floor, so this slot is not used.',
       outOfRange:
-        'The position relative to its body exceeds the simulator coordinate limit (10 m), so this slot is not used.'
+        'The position relative to its body exceeds the simulator coordinate limit (10 m), so this slot is not used.',
+      orphan: 'Not found under the robot, so this slot is not used.'
     },
     overlap:
       'Overlaps {{target}} in the edit pose. The ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',

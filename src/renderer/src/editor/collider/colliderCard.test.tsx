@@ -144,7 +144,9 @@ describe('B11 Add Component', () => {
       '#boxCollider',
       '#capsuleCollider',
       '#meshCollider',
-      '#cylinderCollider'
+      '#cylinderCollider',
+      // 6a Preload Slot(editor/preload/preloadCard.test.tsx)
+      '#preload'
     ])
     // Cylinder는 Unity에 없는 임시 편차라 항목 도움말이 알린다
     const cylinder = elements(group.props.children as ReactNode).find(
