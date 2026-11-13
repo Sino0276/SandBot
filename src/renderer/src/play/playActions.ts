@@ -451,6 +451,9 @@ async function runInit(): Promise<void> {
   usePlayStore.setState({
     simPose: null,
     ghostPose: null,
+    // 경기 요소 잔상(6a)도 지운다. 끝 상태(lastRunElements)는 둔다(6d 이어 가기가 INIT에서 읽는다)
+    simGame: null,
+    ghostGame: null,
     dash: null,
     dashOverlay: null,
     dashConfig: null,
@@ -658,7 +661,7 @@ function failedNoticeAction(key: NoticeKey): Parameters<typeof showNotice>[3] {
 function failRun(runId: string, level: 'warning' | 'error', key: NoticeKey, detail: string): void {
   const run = usePlayStore.getState().run
   if (!run || run.runId !== runId) return
-  usePlayStore.setState({ run: null, simPose: null })
+  usePlayStore.setState({ run: null, simPose: null, simGame: null })
   usePlayStore.getState().addConsole({ type: 'initFailed', notice: key, detail }, null, level)
   replacePlayNotice(level, key, { detail }, failedNoticeAction(key))
 }
@@ -821,6 +824,8 @@ export function handlePlayEvent(event: PlayEvent): void {
       run: null,
       simPose: null,
       ghostPose: null,
+      simGame: null,
+      ghostGame: null,
       dash: null,
       dashOverlay: null,
       dashConfig: null
@@ -834,14 +839,20 @@ function onProjectChanged(root: string | null, rootChanged: boolean): void {
   if (run && run.phase === 'finished' && run.root !== root) usePlayStore.setState({ run: null })
   // 잔상·Dashboard 오버레이·설정은 프로젝트를 열 때 지운다(다른 씬이거나 다시 읽은 씬이다. 설정의 [파일에 반영]은 그
   // 실행의 TeamCode를 가리킨다)
-  usePlayStore.setState({ ghostPose: null, dashOverlay: null, dashConfig: null })
+  usePlayStore.setState({
+    ghostPose: null,
+    ghostGame: null,
+    lastRunElements: null,
+    dashOverlay: null,
+    dashConfig: null
+  })
   if (rootChanged) loggedRegisteredProblem = null
   if (isRunActive(run)) {
     // 아직 도는 실행은 새로 연 씬과 떼어 놓는다: 그 로봇을 시뮬레이터 자세로 그리거나 잠그지 않고, 끝나도 잔상을 남기지
     // 않는다(같은 프로젝트를 다시 열면 오브젝트 id가 같다). Dashboard 오버레이·설정도 더 받지 않는다.
     usePlayStore.setState((state) =>
       state.run?.runId === run.runId
-        ? { run: { ...state.run, robotId: null, detached: true }, simPose: null }
+        ? { run: { ...state.run, robotId: null, detached: true }, simPose: null, simGame: null }
         : {}
     )
     stopPlay()

@@ -3,6 +3,7 @@ import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { OpModeInfo, PlayDiagnostic, PlayEvent } from '../../../shared/play'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { JointSettings, SceneObjects } from '../scene/model'
+import type { SimElementState } from '../../../shared/sim/worldSpec'
 import i18next from 'i18next'
 import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
@@ -21,6 +22,7 @@ import {
   newRun,
   runningRobotId,
   showsRegisteredConsent,
+  simGameOf,
   simJointValue,
   simPoseOf,
   withEntries,
@@ -61,6 +63,9 @@ function data(patch: Partial<PlayData> = {}): PlayData {
     dockTab: 'console',
     simPose: null,
     ghostPose: null,
+    simGame: null,
+    ghostGame: null,
+    lastRunElements: null,
     dash: null,
     dashOverlay: null,
     dashConfig: null,
@@ -676,7 +681,7 @@ describe('경기 요소 안내(6a)', () => {
     expect(entryHeadline(crushed, instance.t)).toBe(ko.console.notices.sim.elementCrushed)
   })
 
-  it('gameState 이벤트는 아직 상태를 바꾸지 않는다', () => {
+  it('경기 요소 없이 실행한 것(run.elements null)은 gameState를 받지 않는다', () => {
     const state = data()
     expect(
       applyPlayEvent(state, {
@@ -687,6 +692,145 @@ describe('경기 요소 안내(6a)', () => {
         poses: [0, 0, 0, 10000, 0, 0, 0]
       })
     ).toEqual({})
+  })
+})
+
+// 6a: 경기 요소 표시 상태(simGame), 끝난 실행의 잔상(ghostGame), 끝 상태(lastRunElements)
+describe('경기 요소 gameState(6a)', () => {
+  const ball = (x: number): SimElementState => ({
+    kind: 'pollen',
+    position: { x, y: 0, z: 0.03555 },
+    orientation: [1, 0, 0, 0],
+    velocity: { x: 0, y: 0, z: 0 },
+    angularVelocity: { x: 0, y: 0, z: 0 },
+    asleep: false,
+    out: false
+  })
+  const elements = { kinds: ['pollen', 'pollen'] as const, spawns: [ball(0), ball(1)] }
+  const running = (): PlayData =>
+    data({
+      run: {
+        ...newRun({
+          runId: 'r1',
+          root: '/p',
+          opMode: TELEOP,
+          robotId: 'bot',
+          configPath: null,
+          speed: 1,
+          paused: false,
+          elements
+        }),
+        phase: 'running'
+      }
+    })
+  const game = (
+    tNanos: number,
+    x: number,
+    patch: Partial<Extract<PlayEvent, { type: 'gameState' }>> = {}
+  ): PlayEvent => ({
+    type: 'gameState',
+    runId: 'r1',
+    tNanos,
+    revision: tNanos + 1,
+    poses: [x, 0, 356, 10000, 0, 0, 0, 10000, 0, 356, 10000, 0, 0, 0],
+    ...patch
+  })
+
+  it('newRun은 elements를 받고, 없으면 null', () => {
+    expect(data().run?.elements).toBeNull()
+    expect(running().run?.elements).toBe(elements)
+  })
+
+  it('받은 상태를 simGame에 두고(표식이 없으면 모두 0), simGameOf는 지금 실행의 것만', () => {
+    const next = apply(running(), game(0, 0), game(5, 50, { flags: [1, 0] }))
+    expect(next.simGame).toEqual({
+      runId: 'r1',
+      tNanos: 5,
+      revision: 6,
+      poses: [50, 0, 356, 10000, 0, 0, 0, 10000, 0, 356, 10000, 0, 0, 0],
+      flags: [1, 0]
+    })
+    expect(apply(running(), game(0, 0)).simGame?.flags).toEqual([0, 0])
+    expect(simGameOf(next)).toBe(next.simGame)
+    // 떼어 놓은 실행·다른 실행의 상태는 그리지 않는다
+    expect(simGameOf({ ...next, run: { ...next.run!, detached: true } })).toBeNull()
+    expect(simGameOf({ ...next, simGame: { ...next.simGame!, runId: 'old' } })).toBeNull()
+  })
+
+  it('공 수·모양이 틀리거나, 늦게 온 이전 상태, 끝난·떼어 놓은 실행의 상태는 받지 않는다', () => {
+    const state = apply(running(), game(10, 100))
+    // 공 하나뿐
+    expect(applyPlayEvent(state, game(20, 0, { poses: [0, 0, 0, 1, 0, 0, 0] }))).toEqual({})
+    // 정수가 아님
+    expect(
+      applyPlayEvent(state, game(20, 0, { poses: [0.5, ...state.simGame!.poses.slice(1)] }))
+    ).toEqual({})
+    // 표식 범위
+    expect(applyPlayEvent(state, game(20, 0, { flags: [0, 8] }))).toEqual({})
+    expect(applyPlayEvent(state, game(5, 0))).toEqual({})
+    const finished = { ...state, run: { ...state.run!, phase: 'finished' as const } }
+    expect(applyPlayEvent(finished, game(20, 0))).toEqual({})
+    const detached = { ...state, run: { ...state.run!, detached: true } }
+    expect(applyPlayEvent(detached, game(20, 0))).toEqual({})
+    // 다른 실행
+    expect(applyPlayEvent(state, game(20, 0, { runId: 'r2' }))).toEqual({})
+  })
+
+  it('final은 공 수가 같을 때 lastRunElements로 두고, 끝나면 마지막 상태가 잔상으로 남는다', () => {
+    const final = [ball(0.01), ball(1)]
+    const ended = apply(
+      running(),
+      game(10, 100),
+      game(15, 150, { final }),
+      { type: 'phase', runId: 'r1', phase: 'finished' },
+      {
+        type: 'finished',
+        runId: 'r1',
+        tNanos: 15,
+        reason: 'returned',
+        detail: '',
+        preselectTeleOp: ''
+      }
+    )
+    expect(ended.lastRunElements).toEqual({
+      runId: 'r1',
+      robotId: 'bot',
+      tNanos: 15,
+      states: final
+    })
+    expect(ended.simGame).toBeNull()
+    expect(ended.ghostGame).toEqual({
+      kinds: ['pollen', 'pollen'],
+      poses: [150, 0, 356, 10000, 0, 0, 0, 10000, 0, 356, 10000, 0, 0, 0],
+      flags: [0, 0]
+    })
+    // 공 수가 다른 final은 받지 않는다(상태는 받는다)
+    const short = apply(running(), game(10, 100, { final: [ball(0)] }))
+    expect(short.lastRunElements).toBeNull()
+    expect(short.simGame?.tNanos).toBe(10)
+  })
+
+  it('finished만 와도 잔상을 남기고, 상태를 받지 못한 실행·떼어 놓은 실행은 이전 잔상을 그대로 둔다', () => {
+    const before = { kinds: ['pollen'] as const, poses: [1, 2, 3, 10000, 0, 0, 0], flags: [0] }
+    const finishedEvent: PlayEvent = {
+      type: 'finished',
+      runId: 'r1',
+      tNanos: 15,
+      reason: 'returned',
+      detail: '',
+      preselectTeleOp: ''
+    }
+    const ended = apply(running(), game(10, 100), finishedEvent)
+    expect(ended.ghostGame?.poses[0]).toBe(100)
+    const noState = apply({ ...running(), ghostGame: before }, finishedEvent)
+    expect(noState.ghostGame).toBe(before)
+    const detached = apply(running(), game(10, 100))
+    const off = apply(
+      { ...detached, ghostGame: before, run: { ...detached.run!, detached: true } },
+      finishedEvent
+    )
+    expect(off.ghostGame).toBe(before)
+    expect(off.simGame).toBeNull()
   })
 })
 

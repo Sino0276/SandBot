@@ -14,8 +14,14 @@ import {
   testMotorParams,
   worldV4Defaults
 } from '../../shared/sim/testkit'
+import { quantizeElements, type GameState } from '../../shared/sim/elements/gameState'
 import { PhysicsWorld } from '../../shared/sim/world'
-import { MAX_WORLD_JOINTS, WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
+import {
+  MAX_WORLD_JOINTS,
+  WORLD_SPEC_VERSION,
+  type SimElementState,
+  type WorldSpec
+} from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
 import { MAX_LAG_MS, SidecarSession, type SessionOptions } from './session'
@@ -1178,6 +1184,282 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       .filter((e) => e.type === 'log' || e.type === 'simNotice')
       .map((e) => e.type)
     expect(kinds.slice(0, 2)).toEqual(['log', 'simNotice'])
+  })
+})
+
+// 경기 요소 표시 상태(6a, spec-6a §5): pose와 같은 16 ms 간격·바로 보내는 때, revision이 바뀔 때만, 끝에 final
+describe('SidecarSession 경기 요소 gameState', () => {
+  const ball = (x: number, asleep = false): SimElementState => ({
+    kind: 'pollen',
+    position: { x, y: 0, z: 0.03555 },
+    orientation: [1, 0, 0, 0],
+    velocity: { x: 0, y: 0, z: 0 },
+    angularVelocity: { x: 0, y: 0, z: 0 },
+    asleep,
+    out: false
+  })
+  // 공 둘: 하나는 틱마다 x가 1 mm씩 움직이고(revision이 는다), 다른 하나는 잠들어 있다. stillAfter 뒤에는 움직이지 않는다
+  function ballWorld(
+    options: {
+      stillAfter?: number
+      bad?: (tNanos: number) => GameState | null
+      snapshot?: () => unknown
+    } = {}
+  ): { world: SimWorld; snapshots: number[] } {
+    let last = 0
+    let revision = 0
+    let lastKey = ''
+    const snapshots: number[] = []
+    const states = (): SimElementState[] => {
+      const moving = Math.min(last, options.stillAfter ?? Infinity)
+      return [ball(moving / 1e9), ball(1, true)]
+    }
+    return {
+      snapshots,
+      world: {
+        step: (tNanos) => {
+          last = tNanos
+          return {}
+        },
+        pose: () => ({ x: last / 1e9, y: 0, yaw: 0, blocked: false }),
+        drainNotices: () => [],
+        gameState: () => {
+          const bad = options.bad?.(last)
+          if (bad !== undefined && bad !== null) return bad
+          const q = quantizeElements(states())
+          const key = JSON.stringify(q)
+          if (key !== lastKey) {
+            lastKey = key
+            revision++
+          }
+          return { revision, ...q }
+        },
+        elementSnapshot: () => {
+          snapshots.push(last)
+          // 시험은 모양이 틀린 값도 돌려준다(호스트가 확인한다)
+          return (options.snapshot ? options.snapshot() : states()) as SimElementState[] | null
+        }
+      }
+    }
+  }
+
+  it('16 ms에 한 번 마지막 상태, revision이 같으면 다시 보내지 않고, 모두 0인 표식만 생략하지 않는다', () => {
+    const { world } = ballWorld({ stillAfter: 20 * MS })
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 5; k++) proc.line(tick(k))
+    // t = 0은 바로(throttle 첫 요청)
+    expect(of('gameState')).toEqual([
+      {
+        type: 'gameState',
+        runId: 'run-1',
+        tNanos: 0,
+        revision: 1,
+        poses: [0, 0, 356, 10000, 0, 0, 0, 10000, 0, 356, 10000, 0, 0, 0],
+        flags: [0, 1]
+      }
+    ])
+    clock.advance(16)
+    expect(of('gameState').map((e) => [e.tNanos / MS, e.revision])).toEqual([
+      [0, 1],
+      [20, 5]
+    ])
+    expect(of('gameState')[1].poses[0]).toBe(200)
+    // 20 ms 뒤로는 움직이지 않는다: revision이 그대로라 보내지 않는다
+    for (let k = 5; k < 10; k++) {
+      proc.line(tick(k))
+      clock.advance(20)
+    }
+    expect(of('gameState')).toHaveLength(2)
+  })
+
+  it('표식이 모두 0이면 flags 키가 없다', () => {
+    const awake: SimWorld = {
+      step: () => ({}),
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => ({ revision: 3, ...quantizeElements([ball(0.5)]) })
+    }
+    const { proc, of } = setup({ speed: 'max', world: awake })
+    boot(proc)
+    proc.line(tick(0))
+    expect(of('gameState')).toHaveLength(1)
+    expect(Object.hasOwn(of('gameState')[0], 'flags')).toBe(false)
+    expect(of('gameState')[0].poses).toEqual([5000, 0, 356, 10000, 0, 0, 0])
+  })
+
+  it('모양이 틀린 상태(정수 아님·길이·공 수가 바뀜·표식 범위)는 버리고 마지막 좋은 상태를 둔다', () => {
+    const badStates: GameState[] = [
+      { revision: 10, poses: [0.5, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0], flags: [0, 0] },
+      { revision: 11, poses: [0, 0, 0, 1, 0, 0], flags: [0] },
+      // 공 수가 실행의 첫 상태와 다르다
+      { revision: 12, poses: [0, 0, 0, 1, 0, 0, 0], flags: [0] },
+      { revision: 13, poses: Array.from({ length: 14 }, () => 0), flags: [0, 4] },
+      { revision: -1, poses: Array.from({ length: 14 }, () => 0), flags: [0, 0] }
+    ]
+    const { world } = ballWorld({
+      bad: (t) => (t >= 5 * MS && t <= 25 * MS ? badStates[t / (5 * MS) - 1] : null)
+    })
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    for (let k = 1; k <= 5; k++) {
+      proc.line(tick(k))
+      clock.advance(20)
+    }
+    expect(of('gameState').map((e) => e.revision)).toEqual([1])
+    proc.line(tick(6))
+    clock.advance(20)
+    expect(of('gameState').map((e) => [e.tNanos / MS, e.poses[0]])).toEqual([
+      [0, 0],
+      [30, 300]
+    ])
+  })
+
+  it('일시 정지·Step 멈춤에 바로, 끝에는 pose 다음·phase 전에 final(전체 정밀도)을 실어 보낸다', () => {
+    const { world, snapshots } = ballWorld()
+    const { clock, proc, session, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line(tick(1))
+    expect(of('gameState').map((e) => e.tNanos / MS)).toEqual([0])
+    session.command({ type: 'pause', paused: true })
+    expect(of('gameState').map((e) => e.tNanos / MS)).toEqual([0, 5])
+    clock.advance(100)
+    proc.line(tick(2, { loops: 2 }))
+    session.command({ type: 'step' })
+    proc.line(tick(3, { loops: 2 }))
+    proc.line(tick(4, { loops: 5 }))
+    expect(of('gameState').at(-1)?.tNanos).toBe(20 * MS)
+    session.command({ type: 'pause', paused: false })
+    proc.line({ type: 'finished', tNanos: 20 * MS, reason: 'returned' })
+    // 끝: 마지막 틱 출력으로 한 틱 더(settleWorld, 25 ms) 돌린 상태와 그 세계의 전체 정밀도 상태
+    expect(snapshots).toEqual([25 * MS])
+    const final = of('gameState').at(-1)!
+    expect(final.tNanos).toBe(25 * MS)
+    expect(final.final).toEqual([ball(0.025), ball(1, true)])
+    const order = events
+      .filter((e) => ['pose', 'gameState', 'phase', 'finished'].includes(e.type))
+      .slice(-4)
+      .map((e) => e.type)
+    expect(order).toEqual(['pose', 'gameState', 'phase', 'finished'])
+    // final은 한 번만
+    expect(of('gameState').filter((e) => e.final !== undefined)).toHaveLength(1)
+  })
+
+  it('끝 상태가 이미 보낸 상태와 같아도 final만 실어 한 번 더 보낸다', () => {
+    const { world } = ballWorld({ stillAfter: 0 })
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    clock.advance(50)
+    proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(of('gameState').map((e) => [e.revision, e.final !== undefined])).toEqual([
+      [1, false],
+      [1, true]
+    ])
+  })
+
+  it('끝 상태의 모양이 틀리면 final 없이 끝나고, 읽기 예외는 worldError 한 번', () => {
+    for (const snapshot of [
+      () => [ball(0)],
+      () => [ball(0), { ...ball(1), kind: 'rock' }],
+      () => [ball(0), { ...ball(1), position: { x: Number.NaN, y: 0, z: 0 } }],
+      () => 'x'
+    ]) {
+      const { world } = ballWorld({ snapshot })
+      const { clock, proc, of } = setup({ speed: 'max', world })
+      boot(proc)
+      proc.line(tick(0))
+      clock.advance(50)
+      proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+      expect(of('gameState').some((e) => e.final !== undefined)).toBe(false)
+    }
+    const { world } = ballWorld({
+      snapshot: () => {
+        throw new Error('snap')
+      }
+    })
+    const { proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(of('simNotice')).toEqual([
+      expect.objectContaining({ code: 'worldError', params: { detail: 'Error: snap' } })
+    ])
+    expect(of('finished')).toHaveLength(1)
+  })
+
+  it('경기 요소가 없는 세계(gameState 없음·null)는 gameState를 보내지 않는다', () => {
+    const none: SimWorld = {
+      step: () => ({}),
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => null,
+      elementSnapshot: () => null
+    }
+    for (const world of [none, { ...none, gameState: undefined }]) {
+      const { proc, of } = setup({ speed: 'max', world })
+      boot(proc)
+      proc.line(tick(0))
+      proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+      expect(of('gameState')).toEqual([])
+    }
+    // 실제 PhysicsWorld도 경기 요소 칸이 없으면 보내지 않는다
+    const physics = new PhysicsWorld({
+      version: WORLD_SPEC_VERSION,
+      ...worldV4Defaults(),
+      robot: {
+        start: { x: 0, y: 0, yaw: 0 },
+        footprint: [
+          { x: 0.2, y: 0.2 },
+          { x: -0.2, y: 0.2 },
+          { x: -0.2, y: -0.2 }
+        ],
+        height: TEST_ROBOT_HEIGHT,
+        body: testChassis()
+      },
+      batteryVoltage: 12,
+      hubs: [],
+      motors: [],
+      wheels: [],
+      deadWheels: [],
+      pinpoints: [],
+      otos: [],
+      imus: [],
+      joints: []
+    })
+    const { proc, of } = setup({ speed: 'max', world: physics })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(of('gameState')).toEqual([])
+  })
+
+  it('세계가 같은 배열을 다시 써도 보낸 이벤트의 값은 바뀌지 않는다', () => {
+    const poses = [0, 0, 356, 10000, 0, 0, 0]
+    const flags = [0]
+    let revision = 0
+    const world: SimWorld = {
+      step: () => ({}),
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => {
+        revision++
+        poses[0] = revision
+        flags[0] = revision % 2
+        return { revision, poses, flags }
+      }
+    }
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0))
+    clock.advance(20)
+    proc.line(tick(1))
+    expect(of('gameState').map((e) => [e.poses[0], e.flags ?? null])).toEqual([
+      [1, [1]],
+      [2, null]
+    ])
   })
 })
 
