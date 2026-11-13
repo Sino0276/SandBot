@@ -407,14 +407,10 @@ describe('runElementsOf와 첫 틱(통합)', () => {
     expect(
       elementSpawns(BIOBUZZ, parsed.elements, parsed.robot.start, restBodyFrames(parsed.joints))
     ).toEqual(run.spawns)
-    // 시뮬레이터의 첫 틱 공(물리 구현이 들어오면 elementSnapshot이 이 시작 상태와 같아야 한다)
+    // 시뮬레이터의 첫 틱 공: elementSnapshot이 이 시작 상태와 바이트로 같다(t = 0은 상태만 만든다)
     const world = new PhysicsWorld(parsed)
     world.step(0, {})
-    const snapshot = world.elementSnapshot()
-    if (snapshot !== null) {
-      expect(snapshot.map((s) => s.kind)).toEqual(run.kinds)
-      snapshot.forEach((s, i) => close(s.position, run.spawns[i].position, 9))
-    }
+    expect(world.elementSnapshot()).toEqual(run.spawns)
   })
 
   it('경기 요소가 없는 세계 설명은 null', () => {

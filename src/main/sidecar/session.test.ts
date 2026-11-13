@@ -14,7 +14,12 @@ import {
   testMotorParams,
   worldV4Defaults
 } from '../../shared/sim/testkit'
-import { quantizeElements, type GameState } from '../../shared/sim/elements/gameState'
+import { ball as elementBall, ballWorldSpec } from '../../shared/sim/elements/elementTestkit'
+import {
+  GAME_POSE_STRIDE,
+  quantizeElements,
+  type GameState
+} from '../../shared/sim/elements/gameState'
 import { PhysicsWorld } from '../../shared/sim/world'
 import {
   MAX_WORLD_JOINTS,
@@ -1388,6 +1393,40 @@ describe('SidecarSession 경기 요소 gameState', () => {
       expect.objectContaining({ code: 'worldError', params: { detail: 'Error: snap' } })
     ])
     expect(of('finished')).toHaveLength(1)
+  })
+
+  // 합치기(6a A·B): 시험 세계가 아니라 실제 PhysicsWorld의 gameState·elementSnapshot을 호스트가 그대로 나른다
+  it('실제 PhysicsWorld: 잠든 GARDEN 공은 그대로, 떨어지는 공은 revision이 늘며 가고, final은 세계의 끝 상태다', () => {
+    const spec = ballWorldSpec({ elements: { groups: ['garden'], preloads: [] } })
+    const garden = new PhysicsWorld(spec).elementSnapshot()!
+    expect(garden).toHaveLength(8)
+    expect(garden.every((s) => s.asleep)).toBe(true)
+    // 로봇(시작 (−1.5, 1.5))과 GARDEN에서 떨어진 바닥 위 0.3 m에서 놓는다
+    const drop = elementBall('pollen', { x: -1, y: 0.5, z: 0.3 })
+    const initial = [...garden, drop]
+    const world = new PhysicsWorld(spec, { elements: { initial } })
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 300; k++) {
+      proc.line(tick(k))
+      clock.advance(5)
+    }
+    const sent = of('gameState')
+    expect(sent[0]).toMatchObject({ tNanos: 0, ...quantizeElements(initial) })
+    expect(sent.length).toBeGreaterThan(10)
+    sent.slice(1).forEach((e, i) => expect(e.revision).toBeGreaterThan(sent[i].revision))
+    // 잠든 GARDEN 공은 움직이지 않는다(정수 그대로)
+    const gardenPoses = quantizeElements(garden).poses
+    for (const e of sent) expect(e.poses.slice(0, 8 * GAME_POSE_STRIDE)).toEqual(gardenPoses)
+    // 떨어지는 공의 z(1e-4 m)는 처음 0.3 m에서 바닥 근처로 내려온다
+    const z = (e: (typeof sent)[number]): number => e.poses[8 * GAME_POSE_STRIDE + 2]
+    expect(z(sent[0])).toBe(3000)
+    expect(Math.min(...sent.map(z))).toBeLessThan(400)
+    proc.line({ type: 'finished', tNanos: 299 * 5 * MS, reason: 'returned' })
+    const last = of('gameState').at(-1)!
+    expect(last.final).toEqual(world.elementSnapshot())
+    expect(last.poses).toEqual(quantizeElements(last.final!).poses)
+    expect(last.final![8].position.z).toBeCloseTo(0.03555, 3)
   })
 
   it('경기 요소가 없는 세계(gameState 없음·null)는 gameState를 보내지 않는다', () => {
