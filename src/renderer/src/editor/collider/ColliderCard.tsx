@@ -11,6 +11,7 @@ import {
   MAX_VERTEX_LIMIT,
   MIN_BOX_SIZE,
   MIN_CAPSULE_RADIUS,
+  MIN_CYLINDER_HEIGHT,
   MIN_VERTEX_LIMIT,
   type ColliderDirection,
   type ColliderSettings
@@ -40,7 +41,7 @@ import {
 } from './colliderCardModel'
 import { useCollisionModel } from './useCollisionModel'
 
-// Collider 카드(Unity Box·Capsule·Mesh Collider, spec-5 §6.2). 하드웨어 컴포넌트 카드와 같은 모양이고 시뮬레이터 설정이라 생성
+// Collider 카드(Unity Box·Capsule·Mesh Collider, spec-5 §6.2, 6a의 Cylinder Collider는 Unity에 없어 카드에 그 사실을 적는다). 하드웨어 컴포넌트 카드와 같은 모양이고 시뮬레이터 설정이라 생성
 // 코드·구성 XML과 관계없다. 머리줄은 Unity처럼 확인란(Collider.enabled)·제목·[제거], 칸은 Unity 순서(Material 자리의 마찰이
 // Center 앞)다. 칸 하나를 확정할 때마다 setColliders 한 번(실행 취소 한 단계). 끈 카드는 칸을 흐리게 보이되 편집은 된다(Unity와
 // 같음). 길이는 표시 단위로 보이고 단위를 붙인 입력도 받으며, 받지 않는 값은 지우지 않고 틀렸다고 보인다.
@@ -196,6 +197,8 @@ function ColliderCard({
 
   const state = view.state
   const entry = state?.entry ?? null
+  const heightHint =
+    collider.kind === 'cylinder' ? t('collider.cylinderHeightHint') : t('collider.heightHint')
 
   return (
     <li
@@ -273,7 +276,7 @@ function ColliderCard({
             }}
           />
         )}
-        {collider.kind === 'capsule' && (
+        {(collider.kind === 'capsule' || collider.kind === 'cylinder') && (
           <>
             <div className="hw-row">
               <span className="hw-row-label">{`${t('collider.radius')} (${symbol})`}</span>
@@ -289,14 +292,19 @@ function ColliderCard({
                 }
               />
             </div>
-            <div className="hw-row" title={t('collider.heightHint')}>
+            <div className="hw-row" title={heightHint}>
               <span className="hw-row-label">{`${t('collider.height')} (${symbol})`}</span>
               <NumberField
                 ariaLabel={t('collider.height')}
                 value={toDisplayLength(collider.height, lengthUnit)}
                 digits={LENGTH_DIGITS[lengthUnit]}
-                parse={lengthParser(lengthUnit, 0, 2 * MAX_COLLIDER_EXTENT)}
-                title={t('collider.heightHint')}
+                // 원기둥은 납작한 뚜껑까지 MIN_CYLINDER_HEIGHT 이상(캡슐은 0이면 구)
+                parse={lengthParser(
+                  lengthUnit,
+                  collider.kind === 'cylinder' ? MIN_CYLINDER_HEIGHT : 0,
+                  2 * MAX_COLLIDER_EXTENT
+                )}
+                title={heightHint}
                 invalidTitle={t('collider.invalid.length')}
                 onCommit={(value) =>
                   update({ ...collider, height: fromDisplayLength(value, lengthUnit) })
@@ -352,6 +360,12 @@ function ColliderCard({
           {t('collider.cadAxes', { up: cad.upAxis, forward: cad.forwardAxis })}
         </p>
       )}
+      {/* Unity에 없는 Collider(임시 편차)라 무엇과 어떻게 부딪히는지 적는다 */}
+      {collider.kind === 'cylinder' && (
+        <p className="inspector-note" data-collider="cylinderHint">
+          {t('collider.cylinderHint')}
+        </p>
+      )}
       {collider.kind === 'mesh' && state && (
         <p className="hw-derived">
           {state.status === 'ok' && entry
@@ -366,7 +380,7 @@ function ColliderCard({
         </p>
       )}
       <ul className="hw-issues">
-        {/* 몸체 틀에서 세계 설명 좌표 한도를 넘어 시뮬레이터에 넣지 않음(Box·Capsule, Mesh는 결과 줄이 알린다) */}
+        {/* 몸체 틀에서 세계 설명 좌표 한도를 넘어 시뮬레이터에 넣지 않음(Box·Capsule·Cylinder, Mesh는 결과 줄이 알린다) */}
         {collider.kind !== 'mesh' && state?.status === 'outOfRange' && (
           <li className="hw-issue is-warning">{t('collider.outOfRange')}</li>
         )}

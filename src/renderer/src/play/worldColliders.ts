@@ -63,11 +63,11 @@ export type WorldColliderEntry = {
   colliderId: string | null
   // 몸체 틀
   collider: SimCollider
-  // convex의 정규 껍질 꼭짓점 수(box·capsule null)
+  // convex의 정규 껍질 꼭짓점 수(box·capsule·cylinder null)
   hullPoints: number | null
   // 껍질 오차(m, 약, 상자·캡슐 0)
   error: number
-  // convex의 정규 껍질(canonicalHull(V), 몸체 틀, 기즈모 윤곽). box·capsule은 null
+  // convex의 정규 껍질(canonicalHull(V), 몸체 틀, 기즈모 윤곽). box·capsule·cylinder는 null
   hull: Hull | null
 }
 

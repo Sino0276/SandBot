@@ -677,6 +677,9 @@ const en: Messages = {
       sensorNoise: 'Sensor noise',
       sensorNoiseHint:
         'Adds noise to distance sensor values (a fixed per-device offset of ±10 mm and per-measurement noise, datasheet spread) and to webcam tag corners (σ 0.3 px). Color sensors get no noise. The same seed gives the same values.',
+      gameElements: 'Game elements (balls)',
+      gameElementsHint:
+        'Simulates the POLLEN and NECTAR balls (the season start layout and robot preloads). Turn it off to run without balls. Not used when the season has no game elements. Same value as the box in the Field inspector.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -2142,6 +2145,9 @@ const en: Messages = {
     radius: 'Radius',
     height: 'Height',
     heightHint: 'The full height including the hemispheres. Below twice the radius it is a sphere.',
+    cylinderHeightHint: 'The full height up to the flat caps (1 mm or more).',
+    cylinderHint:
+      'Unity has no Cylinder Collider (a temporary SandBot deviation). Use it for round surfaces the balls touch, such as rollers and flywheels. Balls hit the exact cylinder; walls, structures, the floor and other bodies hit a circumscribed 32-sided prism.',
     direction: 'Direction',
     directions: {
       x: 'X-Axis',
@@ -2237,6 +2243,57 @@ const en: Messages = {
     // Collision targets (Console collisionOverlap and start overlaps): walls and structures use the field.* names
     target: {
       floor: 'Floor'
+    }
+  },
+  // Preload slot (Preload Slot, 6a, editor/preload/). The card title is not translated, like a Unity component
+  preload: {
+    title: 'Preload Slot',
+    addOption: 'Preload Slot',
+    addExists: 'This object already has a Preload Slot.',
+    addLimit: 'A robot can have up to {{max}} Preload Slots.',
+    addNotAllowed:
+      'Not allowed on a robot or CAD root. Create an empty group (Create Empty) under it and add it there.',
+    enabled: 'When off, this slot is not used (it does not switch to automatic placement).',
+    element: 'Element',
+    elementHint: 'The BIOBUZZ preload is POLLEN.',
+    kinds: {
+      pollen: 'POLLEN'
+    },
+    center: 'Center',
+    centerHint:
+      "The ball centre, in this object's local coordinates (relative to the pivot, along this object's own axes).",
+    help: 'Where the robot carries one POLLEN at the start (a simulator setting, unrelated to generated code). Up to {{max}} per robot. With none, the balls go on the tile in front of the robot (then back, left, right if blocked).',
+    slot: 'Slot {{index}}/{{max}}',
+    bodyChassis: 'Carried by the robot body (chassis).',
+    bodyJoint: 'Carried by the body of joint {{name}} and moves with it.',
+    orphan: 'A Preload Slot outside a robot is not used by the simulator.',
+    excluded: {
+      disabled: 'Off, so not used.',
+      tooMany:
+        'Only {{max}} per robot are used, so this slot is not (the first ones in hierarchy order are used).',
+      belowFloor: 'The ball is below the floor, so this slot is not used.',
+      outOfRange:
+        'The position relative to its body exceeds the simulator coordinate limit (10 m), so this slot is not used.'
+    },
+    overlap:
+      'Overlaps {{target}} in the edit pose. The ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',
+    season: 'This season has no game elements, so it is not used.',
+    off: 'Game elements are off, so it is not used (Preferences › Simulation, Field inspector).',
+    runningHint: 'From the next INIT. The running balls started from the slots at INIT.',
+    autoName: 'automatic slot',
+    faces: {
+      front: 'front',
+      back: 'back',
+      left: 'left',
+      right: 'right'
+    },
+    source: {
+      title: 'Preloads',
+      slots: '{{count}} Preload Slots',
+      slotsNone: 'Has Preload Slots but none are used',
+      auto: 'Automatic: {{count}} on the tile at the robot {{face}}',
+      noRoom: 'No automatic slots (front, back, left and right are all blocked)',
+      season: 'None in this season'
     }
   },
   // Season field (spec-4ab). Season data keys are the keys (src/shared/sim/seasons/). The season name BIOBUZZ is not translated.
@@ -2336,6 +2393,25 @@ const en: Messages = {
           'Field elements are hidden or isolation is on, so the CAD is not drawn and the simple floor, walls and tape are shown.',
         simpleSeasonNote:
           'This season uses nominal simple shapes that differ from the CAD (wall half-width etc.). Compare them with [Show simple shapes].'
+      },
+      elements: {
+        title: 'Game elements',
+        enabled: 'Enable balls',
+        hint: 'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT. Same value as the box in Preferences › Simulation.',
+        none: 'This season has no moving game elements.',
+        groups: {
+          garden: 'GARDEN POLLEN',
+          flower: 'FLOWER POLLEN',
+          hiveCell: 'HIVE CELL NECTAR',
+          humanPlayer: 'Human player NECTAR'
+        },
+        count: '{{count}}',
+        deferred: 'Not yet (stage {{stage}})',
+        preloads: 'Robot preloads',
+        robotLine: '{{robot}}: {{source}}',
+        running: 'Running: {{count}} balls',
+        runningOff: 'Running: started without balls',
+        off: 'Off, so the next run has no balls.'
       },
       // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
       clusters: {

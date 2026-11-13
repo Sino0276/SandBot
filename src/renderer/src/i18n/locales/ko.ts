@@ -690,6 +690,10 @@ const ko = {
       sensorNoise: '센서 잡음',
       sensorNoiseHint:
         '거리 센서 값(장치마다 고정 오프셋 ±10 mm와 측정마다 잡음, 데이터시트 산포)과 웹캠 태그 꼭짓점(σ 0.3 px)에 잡음을 더합니다. 컬러 센서에는 더하지 않습니다. 시드가 같으면 같은 값이 나옵니다.',
+      // 6a: 움직이는 경기 요소(공). Field 인스펙터 '경기 요소' 구역과 같은 값
+      gameElements: '경기 요소(공)',
+      gameElementsHint:
+        'POLLEN·NECTAR 공을 시뮬레이션합니다(시즌 시작 배치와 로봇 프리로드). 끄면 공 없이 실행합니다. 시즌에 경기 요소가 없으면 쓰지 않습니다. Field 인스펙터의 같은 칸과 같은 값입니다.',
       nextRun: '바꾼 값은 다음 INIT부터 씁니다. 실행 속도는 툴바에서 바꿉니다.'
     }
   },
@@ -2133,6 +2137,10 @@ const ko = {
     radius: '반지름 (Radius)',
     height: '높이 (Height)',
     heightHint: '반구를 포함한 전체 높이입니다. 반지름의 두 배보다 작으면 구입니다.',
+    // 6a: Cylinder Collider(Unity에 없음)
+    cylinderHeightHint: '납작한 뚜껑까지의 전체 높이입니다(1 mm 이상).',
+    cylinderHint:
+      'Unity에는 Cylinder Collider가 없습니다(SandBot 임시 편차). 롤러·플라이휠처럼 공이 닿는 둥근 면에 씁니다. 공과는 정확한 원기둥으로, 벽·구조물·바닥·다른 몸체와는 외접 32각 기둥으로 부딪힙니다.',
     direction: '방향 (Direction)',
     directions: {
       x: 'X축',
@@ -2225,6 +2233,56 @@ const ko = {
     // 충돌 대상(Console collisionOverlap·시작 겹침): 벽·구조물은 field.* 이름을 쓴다
     target: {
       floor: '바닥'
+    }
+  },
+  // 프리로드 자리(Preload Slot, 6a, editor/preload/). 카드 제목은 Unity 컴포넌트처럼 번역하지 않는다
+  preload: {
+    title: 'Preload Slot',
+    addOption: '프리로드 자리 (Preload Slot)',
+    addExists: '이 오브젝트에는 이미 Preload Slot이 있습니다.',
+    addLimit: '로봇마다 Preload Slot은 {{max}}개까지입니다.',
+    addNotAllowed:
+      '로봇·CAD 루트에는 둘 수 없습니다. 하위에 빈 그룹(Create Empty)을 만들어 붙이세요.',
+    enabled: '끄면 이 자리는 쓰지 않습니다(자동 배치로 바뀌지 않습니다).',
+    element: '경기 요소 (Element)',
+    elementHint: 'BIOBUZZ 프리로드는 POLLEN입니다.',
+    kinds: {
+      pollen: 'POLLEN'
+    },
+    center: '중심 (Center)',
+    centerHint: '공 중심입니다. 이 오브젝트의 로컬 좌표(피벗 기준, 이 오브젝트 자신의 축)입니다.',
+    help: '로봇이 싣고 시작하는 POLLEN 하나의 자리입니다(시뮬레이터 설정, 생성 코드와 무관). 로봇마다 {{max}}개까지 두고, 하나도 없으면 로봇 앞 타일에 자동으로 둡니다(막혔으면 뒤 → 왼쪽 → 오른쪽).',
+    slot: '자리 {{index}}/{{max}}',
+    bodyChassis: '로봇 몸체(섀시)에 실립니다.',
+    bodyJoint: '관절 {{name}}의 몸체에 실려 함께 움직입니다.',
+    orphan: '로봇 밖 Preload Slot은 시뮬레이터가 쓰지 않습니다.',
+    excluded: {
+      disabled: '꺼져 있어 쓰지 않습니다.',
+      tooMany:
+        '로봇마다 {{max}}개까지만 써서 이 자리는 쓰지 않습니다(하이어라키 순서로 앞의 것을 씁니다).',
+      belowFloor: '공이 바닥 아래에 있어 이 자리는 쓰지 않습니다.',
+      outOfRange: '몸체 기준 위치가 시뮬레이터 좌표 한도(10 m)를 넘어 이 자리는 쓰지 않습니다.'
+    },
+    overlap:
+      '편집 자세에서 {{target}}와(과) 겹칩니다. 시작하면 공이 밀려납니다. 호퍼 안을 비우도록 Collider를 나누세요.',
+    season: '이 시즌에는 경기 요소가 없어 쓰지 않습니다.',
+    off: '경기 요소가 꺼져 있어 쓰지 않습니다(환경 설정 › 시뮬레이션, Field 인스펙터).',
+    runningHint: '다음 INIT부터. 실행 중인 공은 INIT 때의 자리에서 시작했습니다.',
+    autoName: '자동 자리',
+    faces: {
+      front: '앞',
+      back: '뒤',
+      left: '왼쪽',
+      right: '오른쪽'
+    },
+    // 로봇 카드·Field 인스펙터의 프리로드 출처(play/worldElements.ts robotPreloads)
+    source: {
+      title: '프리로드',
+      slots: 'Preload Slot {{count}}개',
+      slotsNone: 'Preload Slot이 있지만 쓰는 자리가 없음',
+      auto: '자동: 로봇 {{face}} 타일에 {{count}}개',
+      noRoom: '자동 자리 없음(앞·뒤·왼쪽·오른쪽이 모두 막힘)',
+      season: '이 시즌에는 없음'
     }
   },
   // 시즌 필드(spec-4ab). 시즌 데이터의 key가 키다(src/shared/sim/seasons/). 시즌 이름 BIOBUZZ는 번역하지 않는다.
@@ -2323,6 +2381,26 @@ const ko = {
           '필드 요소를 숨기거나 고립 보기 중이라 CAD를 그리지 않고 단순 바닥·벽·테이프를 보입니다.',
         simpleSeasonNote:
           '이 시즌은 CAD와 다른 공칭 단순 형상(벽 반폭 등)을 씁니다. [단순 형상도 보기]로 비교하세요.'
+      },
+      // 움직이는 경기 요소(6a, editor/field/FieldElementsSection.tsx)
+      elements: {
+        title: '경기 요소',
+        enabled: '공 켜기',
+        hint: '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다. 환경 설정 › 시뮬레이션의 같은 칸과 같은 값입니다.',
+        none: '이 시즌에는 움직이는 경기 요소가 없습니다.',
+        groups: {
+          garden: 'GARDEN POLLEN',
+          flower: 'FLOWER POLLEN',
+          hiveCell: 'HIVE CELL NECTAR',
+          humanPlayer: '사람 선수 NECTAR'
+        },
+        count: '{{count}}개',
+        deferred: '아직 없음({{stage}} 단계)',
+        preloads: '로봇 프리로드',
+        robotLine: '{{robot}}: {{source}}',
+        running: '실행 중: 공 {{count}}개',
+        runningOff: '실행 중: 공 없이 실행함',
+        off: '꺼져 있어 다음 실행에 공이 없습니다.'
       },
       // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
       clusters: {

@@ -37,11 +37,12 @@ const SCRIPT_OPTION = '#script'
 const WHEEL_OPTION = '#wheel'
 const JOINT_OPTION = '#joint'
 const MASS_OPTION = '#mass'
-// 충돌체(spec-5 §6.1): Box·Capsule·Mesh Collider
+// 충돌체(spec-5 §6.1): Box·Capsule·Mesh Collider와 Cylinder Collider(6a, Unity에 없음: 임시 편차, 도움말이 알린다)
 const COLLIDER_OPTIONS = {
   '#boxCollider': 'box',
   '#capsuleCollider': 'capsule',
-  '#meshCollider': 'mesh'
+  '#meshCollider': 'mesh',
+  '#cylinderCollider': 'cylinder'
 } as const satisfies Record<string, ColliderKind>
 const isColliderOption = (value: string): value is keyof typeof COLLIDER_OPTIONS =>
   Object.hasOwn(COLLIDER_OPTIONS, value)
@@ -200,9 +201,11 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               value={option}
               disabled={!canHaveColliders(object) || !canAddCollider(object)}
               title={
-                canAddCollider(object)
-                  ? undefined
-                  : t('collider.tooMany', { max: MAX_OBJECT_COLLIDERS })
+                !canAddCollider(object)
+                  ? t('collider.tooMany', { max: MAX_OBJECT_COLLIDERS })
+                  : COLLIDER_OPTIONS[option] === 'cylinder'
+                    ? t('collider.cylinderHint')
+                    : undefined
               }
             >
               {t(`collider.addOptions.${COLLIDER_OPTIONS[option]}`)}
