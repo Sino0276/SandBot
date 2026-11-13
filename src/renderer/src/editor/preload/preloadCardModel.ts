@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import type { FieldSpec, SeasonId } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveElementType } from '../../../../shared/sim/elements/elementData'
 import type { Frame3 } from '../../../../shared/sim/sensorFrame'
@@ -95,4 +96,24 @@ export function robotPreloadSource(
 ): { source: PreloadSource; count: number; preloads: RobotPreloads } {
   const preloads = robotPreloads(objects, robotId, resolveSeason(season))
   return { source: preloads.source, count: preloads.slots.length, preloads }
+}
+
+// 프리로드 출처 한 줄의 글자(로봇 카드·Field 인스펙터 공용)
+export function preloadSourceText(
+  t: TFunction,
+  { source, count, preloads }: ReturnType<typeof robotPreloadSource>
+): string {
+  switch (source) {
+    case 'slots':
+      return count > 0 ? t('preload.source.slots', { count }) : t('preload.source.slotsNone')
+    case 'auto':
+      return t('preload.source.auto', {
+        count,
+        face: t(`preload.faces.${preloads.face ?? 'front'}`)
+      })
+    case 'noRoom':
+      return t('preload.source.noRoom')
+    case 'season':
+      return t('preload.source.season')
+  }
 }

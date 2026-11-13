@@ -27,7 +27,7 @@ function parseVoltage(text: string): number | null {
   return Number.isFinite(value) ? clampBatteryVoltage(value) : null
 }
 
-// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지, 센서 잡음, HIVE 상태. 개인 설정(localStorage)이고
+// 환경 설정 > 시뮬레이션: Hub 타이밍 오차·시드, 배터리 전압, Autonomous 30초 자동 정지, 센서 잡음, 경기 요소(6a), HIVE 상태. 개인 설정(localStorage)이고
 // 다음 INIT부터 쓴다(HIVE 상태는 실행 중이 아니면 씬 뷰가 바로 따른다).
 function SimulationPreferences(): React.JSX.Element {
   const { t } = useTranslation()
@@ -111,6 +111,16 @@ function SimulationPreferences(): React.JSX.Element {
         {t('preferences.simulation.sensorNoise')}
       </label>
       <p className="inspector-note">{t('preferences.simulation.sensorNoiseHint')}</p>
+      {/* 경기 요소(6a, 기본 켬): Field 인스펙터 '경기 요소' 구역의 같은 칸과 같은 값 */}
+      <label className="preferences-check" title={t('preferences.simulation.gameElementsHint')}>
+        <input
+          type="checkbox"
+          checked={settings.gameElements}
+          onChange={(event) => updateSettings({ gameElements: event.target.checked })}
+        />
+        {t('preferences.simulation.gameElements')}
+      </label>
+      <p className="inspector-note">{t('preferences.simulation.gameElementsHint')}</p>
       <p className="inspector-note">{t('preferences.simulation.nextRun')}</p>
       {/* HIVE 상태(spec-4ab §2.3): Field 인스펙터의 같은 칸과 같은 값(개인 실행 설정, 프로젝트·실행 취소와 무관) */}
       <section className="preferences-subsection" aria-labelledby="preferences-hive">

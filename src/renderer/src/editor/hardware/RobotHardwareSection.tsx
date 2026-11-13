@@ -18,7 +18,7 @@ import UsageSection from '../usages/UsageSection'
 import { usePlayStore } from '../../play/playStore'
 import IssueList from './IssueList'
 import { documentSeasonId } from '../field/fieldDisplay'
-import { robotPreloadSource } from '../preload/preloadCardModel'
+import { preloadSourceText, robotPreloadSource } from '../preload/preloadCardModel'
 import { drivetrainSummary } from './wheelCardModel'
 
 type FileState = 'written' | 'unchanged' | 'skipped' | 'modified' | 'missing'
@@ -162,21 +162,12 @@ export function PreloadSourceLine({ robotId }: { robotId: string }): React.JSX.E
   const { t } = useTranslation()
   const objects = useSceneStore((state) => state.objects)
   const season = useSceneStore((state) => documentSeasonId(state.field))
-  const { source, count, preloads } = useMemo(
+  const result = useMemo(
     () => robotPreloadSource(objects, robotId, season),
     [objects, robotId, season]
   )
-  const face = preloads.face
-  const text =
-    source === 'slots'
-      ? count > 0
-        ? t('preload.source.slots', { count })
-        : t('preload.source.slotsNone')
-      : source === 'auto'
-        ? t('preload.source.auto', { count, face: t(`preload.faces.${face ?? 'front'}`) })
-        : source === 'noRoom'
-          ? t('preload.source.noRoom')
-          : t('preload.source.season')
+  const source = result.source
+  const text = preloadSourceText(t, result)
   return (
     <div className="hw-files" data-preload-source={source}>
       <span className="hw-row-label">{t('preload.source.title')}</span>

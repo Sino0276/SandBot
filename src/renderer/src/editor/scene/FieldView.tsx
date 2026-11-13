@@ -41,6 +41,7 @@ import {
   type FieldMaterialSpec,
   type FieldMeshSpec
 } from './fieldViewModel'
+import ElementsView from './ElementsView'
 import StartMarkers from './StartMarkers'
 import { createLabelTexture } from './labelTexture'
 import { createTagTexture } from './tagTexture'
@@ -460,6 +461,8 @@ function FieldView(): React.JSX.Element {
           tippedBlue={shown.hiveTipped[1]}
         />
       )}
+      {/* 움직이는 경기 요소(6a): 시작 배치·프리로드, 실행 중 시뮬레이터 상태, 끝난 실행의 잔상 */}
+      <ElementsView />
       <StartMarkers />
     </>
   )
