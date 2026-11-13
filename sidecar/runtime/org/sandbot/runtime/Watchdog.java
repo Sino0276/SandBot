@@ -3,8 +3,10 @@ package org.sandbot.runtime;
 /**
  * 실제 시간 감시(spec §R-7). 250 ms마다 OpMode 스레드를 본다:
  * <ul>
- *   <li>호스트 답을 기다리지 않는데 stallMillis(실제 밀리초) 동안 가상 시계 호출이 없으면 error stall(그 스레드의 스택)을 한 번
- *       보낸다. 다시 시계를 쓰면 초기화(다시 멈추면 또 알린다). 호스트를 기다리는 동안(일시 정지)은 세지 않는다.
+ *   <li>호스트 답을 기다리지 않는데 stallMillis(실제 밀리초) 동안 가상 시간이 흐르지 않으면 error stall(그 스레드의 스택)을 한 번
+ *       보낸다. 시계를 부르기만 하고 시간을 보내지 않는 루프(비용 없는 시계 읽기, 비용을 0으로 덮어쓴 청구)도 멈춘 것이다: 틱 경계에
+ *       닿지 못해 STOP이 적용되지 않는다. 다시 시간이 흐르면 초기화(다시 멈추면 또 알린다). 호스트를 기다리는 동안(일시 정지)은
+ *       세지 않는다.
  *   <li>다른 스레드가 시계를 써서 OpMode를 멈추라고 했는데(VirtualClock.fatalMessage) OpMode 스레드가 2초(실제) 안에 끝나지 않으면
  *       (시계를 다시 부르지 않는 대기 등) 런타임이 finished exception으로 끝낸다.
  * </ul>
@@ -40,7 +42,7 @@ final class Watchdog extends Thread {
 
     @Override
     public void run() {
-        long lastActivity = -1;
+        long lastProgress = -1;
         long lastChange = System.nanoTime();
         boolean reported = false;
         for (;;) {
@@ -57,9 +59,9 @@ final class Watchdog extends Thread {
                 session.forceFinish("exception");
                 return;
             }
-            long activity = clock.activity();
-            if (clock.waitingHost() || activity != lastActivity) {
-                lastActivity = activity;
+            long progress = clock.peekNanos();
+            if (clock.waitingHost() || progress != lastProgress) {
+                lastProgress = progress;
                 lastChange = now;
                 reported = false;
                 continue;

@@ -165,12 +165,16 @@ public final class VirtualClockTest {
         c.charge(1);
     }
 
-    public static void testWaitingHostAndActivity() {
+    public static void testWaitingHostAndProgress() {
+        // 감시(Watchdog)는 시계 호출 수가 아니라 가상 시간(peekNanos)의 진행을 본다
         VirtualClock c = clock();
-        long before = c.activity();
+        long before = c.peekNanos();
         c.nanoTime();
+        c.currentTimeMillis();
+        c.charge(0);
+        Check.equal(before, c.peekNanos(), "costless clock calls are not progress");
         c.charge(1);
-        Check.isTrue(c.activity() >= before + 2, "clock calls count as activity");
+        Check.equal(before + 1, c.peekNanos(), "a charge is progress");
         c.setWaitingHost(true);
         Check.isTrue(c.waitingHost(), "waiting host");
         c.setWaitingHost(false);

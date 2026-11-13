@@ -353,16 +353,29 @@ public final class DeviceBehaviorTest {
 
     /** body가 허브 명령을 하나도 보내지 않고 잠금 시도만 n번 했는지(가상 시간 = n × CLOCK_READ) 보고 결과를 돌려준다 */
     static <T> T attempts(int n, Supplier<T> body, String message) {
+        return attempts(n, 0, body, message);
+    }
+
+    /**
+     * attempts에 LastKnown 캐시가 답한 수(hits)를 더한 것. 캐시가 답할 때마다 실제 LastKnown이 읽는 시계 한 번(CLOCK_READ)을
+     * 청구하므로(SimLastKnown) 가상 시간 = (n + hits) × CLOCK_READ다. 캐시는 잠금을 잡지 않으므로 끊긴 스레드에서도 답한다.
+     */
+    static <T> T attempts(int n, int hits, Supplier<T> body, String message) {
         Object[] result = new Object[1];
         long elapsed = SimTestSupport.elapsed(() -> result[0] = body.get());
-        Check.equal((long) n * CLOCK_READ, elapsed, message + ": " + n + " lock attempt(s), nothing sent");
+        Check.equal((long) (n + hits) * CLOCK_READ, elapsed,
+                message + ": " + n + " lock attempt(s) and " + hits + " LastKnown answer(s), nothing sent");
         @SuppressWarnings("unchecked")
         T value = (T) result[0];
         return value;
     }
 
     static void attemptsRun(int n, Runnable body, String message) {
-        attempts(n, () -> {
+        attemptsRun(n, 0, body, message);
+    }
+
+    static void attemptsRun(int n, int hits, Runnable body, String message) {
+        attempts(n, hits, () -> {
             body.run();
             return null;
         }, message);
@@ -459,7 +472,7 @@ public final class DeviceBehaviorTest {
             Check.equal(ServoController.PwmStatus.ENABLED, attempts(6, servos::getPwmStatus, "PWM status"),
                     "PWM status from six placeholders (the hub is MIXED)");
             attemptsRun(2, () -> servos.setServoPosition(0, 0.8), "set servo position (pulse + PWM enable)");
-            Check.equal(2040.0, attempts(0, () -> servos.getPulseWidth(0), "pulse width"),
+            Check.equal(2040.0, attempts(0, 1, () -> servos.getPulseWidth(0), "pulse width"),
                     "the unsent pulse width is cached (LastKnown.updateValue before send)");
             PwmControl.PwmRange range = new PwmControl.PwmRange(1000, 2000);
             attemptsRun(1, () -> servos.setServoPwmRange(0, range), "set PWM range");
@@ -486,9 +499,10 @@ public final class DeviceBehaviorTest {
             Check.equal(DcMotor.RunMode.RUN_TO_POSITION, gobilda.getMode(), "the hub kept RUN_TO_POSITION");
             Check.equal(DigitalChannel.Mode.OUTPUT, digital.getMode(), "the pin is an output");
             Thread.currentThread().interrupt();
-            Check.equal(false, attempts(1, () -> motors.isBusy(0), "at target"),
+            // 신선한 모드 캐시가 답한 뒤(잠금 없음) 목표 도달 읽기의 잠금 시도
+            Check.equal(false, attempts(1, 1, () -> motors.isBusy(0), "at target"),
                     "at-target placeholder false (\"better to unstick wait loops\"; the motor is busy)");
-            attemptsRun(1, () -> dio.setDigitalChannelState(0, false), "DIO output with a cached mode");
+            attemptsRun(1, 1, () -> dio.setDigitalChannelState(0, false), "DIO output with a cached mode");
             Check.equal(true, bot.out("digital", "state"), "the output was not written");
             // 실제 catch 블록이 출력 캐시를 잊으므로 출력 핀 읽기는 실제처럼 null을 언박싱한다
             Check.throwsType(NullPointerException.class, () -> dio.getDigitalChannelState(0), "output state after a dropped write");
