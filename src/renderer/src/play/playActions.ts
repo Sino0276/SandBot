@@ -65,6 +65,7 @@ import {
   withRunField,
   type WorldSpecResult
 } from './worldSpec'
+import { runElementsOf, withElements } from './worldElements'
 import { withSensorNoise, withSensorWarnings } from './worldSensors'
 import { runCamerasOf, withCameraWarnings } from './worldCameras'
 import { cameraSelfHit } from '../editor/hardware/cameraSelfHit'
@@ -443,7 +444,12 @@ async function runInit(): Promise<void> {
   // 시뮬레이터의 세계(구성과 같은 로봇). 저장한 뒤의 씬이라 디스크의 생성 구성과 장치 이름이 같다
   // (생성이 막혔거나 팀이 고친 구성이면 다를 수 있어 알린다).
   // 실행의 시즌·HIVE 상태(문서 시즌과 실행 설정, 세계 설명이 없어도 정한다). 실행 중 문서 시즌이 바뀌어도 그대로다.
-  const runField = runFieldOf(useSceneStore.getState().field, play.settings.hiveState)
+  // 경기 요소(6a)도 INIT 때의 개인 설정으로 정하고 실행 동안 고정한다
+  const runField = runFieldOf(
+    useSceneStore.getState().field,
+    play.settings.hiveState,
+    play.settings.gameElements
+  )
   const world = config ? worldFor(config.robotId, play.settings, runField) : null
   const runId = newRunId()
   if (play.consolePrefs.clearOnPlay) play.clearConsole()
@@ -483,7 +489,9 @@ async function runInit(): Promise<void> {
         name: body.name,
         colliders: body.colliders.map((entry) => entry.collider)
       })),
-      field: runField
+      field: runField,
+      // 시뮬레이터가 첫 틱에 만들 공(6a, 세계 설명 elements와 같은 공유 elementSpawns, gameState의 공 순서)
+      elements: runElementsOf(world?.spec ?? null)
     })
   })
   const { addConsole } = usePlayStore.getState()
@@ -629,8 +637,11 @@ function worldFor(
     const withCameras = withCameraWarnings(withSensors, objects, formatDistance, (camera) =>
       cameraSelfHit(objects, robotId, camera.objectId, camera.inRobot, camera.model)
     )
-    // 시즌 경고는 센서·웹캠 경고 뒤(필드 쪽 경고를 모아 둔다)
-    return withSensorNoise(withRunField(withCameras, doc, field, i18n.t), settings)
+    // 시즌 경고는 센서·웹캠 경고 뒤(필드 쪽 경고를 모아 둔다). 경기 요소(6a)는 실행의 시즌을 넣은 뒤(시즌에 공이 있을 때만)
+    return withSensorNoise(
+      withElements(withRunField(withCameras, doc, field, i18n.t), objects, robotId, field, i18n.t),
+      settings
+    )
   } catch (error) {
     return {
       spec: null,

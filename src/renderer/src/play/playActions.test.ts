@@ -824,10 +824,11 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       expect(lastRequest().world!.field).toEqual(field)
       // 실행 요청의 settings에는 렌더러 전용 hiveState가 없다
       expect(lastRequest().settings).not.toHaveProperty('hiveState')
-      expect(usePlayStore.getState().run!.field).toEqual(field)
+      // 실행의 필드는 경기 요소 설정(6a, 기본 켬)도 적어 둔다
+      expect(usePlayStore.getState().run!.field).toEqual({ ...field, gameElements: true })
       expect(notices()).toEqual([])
       useSceneStore.getState().setFieldSeason('none')
-      expect(usePlayStore.getState().run!.field).toEqual(field)
+      expect(usePlayStore.getState().run!.field).toEqual({ ...field, gameElements: true })
     })
 
     it('세계 설명이 없어도(로봇 구성 없음) 실행의 시즌을 정한다', async () => {
@@ -840,8 +841,49 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       expect(lastRequest().world).toBeNull()
       expect(usePlayStore.getState().run!.field).toEqual({
         season: 'biobuzz',
-        hiveTipped: [true, false]
+        hiveTipped: [true, false],
+        gameElements: true
       })
+      // 로봇 없는 세계에는 공이 없다(6a, EMPTY_WORLD)
+      expect(usePlayStore.getState().run!.elements).toBeNull()
+    })
+
+    // 6a: 경기 요소(공)는 개인 설정 gameElements(기본 켬)와 시즌으로 INIT 때 정한다(withRunField 뒤 withElements)
+    it('6a: BIOBUZZ에 켜 두면 세계 설명 elements(GARDEN + 자동 프리로드)와 run.elements가 같은 공 순서다', async () => {
+      useSceneStore.setState({ objects: withWheel(), field: { season: 'biobuzz' } })
+      await initPlay()
+      const { world } = lastRequest()
+      expect(world!.elements?.groups).toEqual(['garden'])
+      // 바퀴 로봇은 Preload Slot이 없어 자동 자리(앞 타일) 넷
+      expect(world!.elements?.preloads).toHaveLength(4)
+      const run = usePlayStore.getState().run!
+      expect(run.elements?.kinds).toHaveLength(12)
+      expect(run.elements?.spawns.map((s) => s.asleep)).toEqual([
+        ...Array(8).fill(true),
+        ...Array(4).fill(false)
+      ])
+      // 실행 요청의 settings에는 렌더러 전용 gameElements가 없다
+      expect(lastRequest().settings).not.toHaveProperty('gameElements')
+    })
+
+    it('6a: 끄거나 경기 요소가 없는 시즌이면 elements 키가 없고 run.elements는 null', async () => {
+      useSceneStore.setState({ objects: withWheel(), field: { season: 'biobuzz' } })
+      usePlayStore.getState().updateSettings({ gameElements: false })
+      await initPlay()
+      expect(lastRequest().world).not.toHaveProperty('elements')
+      expect(usePlayStore.getState().run).toMatchObject({
+        elements: null,
+        field: { gameElements: false }
+      })
+      handlePlayEvent(
+        event({ type: 'finished', tNanos: 1, reason: 'stopped', detail: '', preselectTeleOp: '' })
+      )
+      usePlayStore.getState().updateSettings({ gameElements: true })
+      useSceneStore.setState({ field: { season: 'none' } })
+      await initPlay()
+      expect(api.playInit).toHaveBeenCalledTimes(2)
+      expect(lastRequest().world).not.toHaveProperty('elements')
+      expect(usePlayStore.getState().run!.elements).toBeNull()
     })
 
     it('B3: 모르는 시즌은 none으로 시뮬레이션하고 Console에 worldUnknownSeason', async () => {

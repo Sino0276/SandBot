@@ -793,11 +793,17 @@ export function buildWorldSpec(
 }
 
 // 실행의 시즌과 HIVE 상태(spec-4ab §2.4): 문서 시즌(모르는 문자열이면 'none')과 개인 실행 설정 hiveState. INIT 때 한 번
-// 정하고(세계 설명이 없어도) PlayRun.field와 세계 설명 field가 같이 쓴다.
-export function runFieldOf(doc: FieldDoc, hiveState: HiveState): PlayRunField {
+// 정하고(세계 설명이 없어도) PlayRun.field와 세계 설명 field가 같이 쓴다. gameElements(6a)는 개인 실행 설정 gameElements를
+// 넘기면 그대로 적는다(play/worldElements.ts withElements가 읽는다, 시즌에 경기 요소가 없으면 켜도 공이 없다)
+export function runFieldOf(
+  doc: FieldDoc,
+  hiveState: HiveState,
+  gameElements?: boolean
+): PlayRunField {
   return {
     season: fieldSeasonId(doc) ?? 'none',
-    hiveTipped: [hiveState.red === 'tipped', hiveState.blue === 'tipped']
+    hiveTipped: [hiveState.red === 'tipped', hiveState.blue === 'tipped'],
+    ...(gameElements === undefined ? {} : { gameElements })
   }
 }
 
