@@ -5,6 +5,7 @@ import {
   MAX_OBJECT_COLLIDERS,
   defaultBox,
   defaultCapsule,
+  defaultCylinder,
   defaultMesh,
   type ColliderBounds,
   type ColliderDirection,
@@ -126,16 +127,16 @@ export function newCollider(
   const colliderId = createId()
   if (kind === 'mesh') return defaultMesh(colliderId)
   const { bounds } = colliderFitBounds(objects, id, joints)
-  return kind === 'box'
-    ? defaultBox(colliderId, bounds)
-    : defaultCapsule(colliderId, bounds, robotUpAxis(objects, id))
+  if (kind === 'box') return defaultBox(colliderId, bounds)
+  if (kind === 'cylinder') return defaultCylinder(colliderId, bounds, robotUpAxis(objects, id))
+  return defaultCapsule(colliderId, bounds, robotUpAxis(objects, id))
 }
 
-// [하위에 맞추기](Box·Capsule): 기본값 규칙으로 크기·중심을 다시 맞춘다(id·켬·마찰은 그대로). 하위 형상이 없으면 null
+// [하위에 맞추기](Box·Capsule·Cylinder): 기본값 규칙으로 크기·중심을 다시 맞춘다(id·켬·마찰은 그대로). 하위 형상이 없으면 null
 export function fitCollider(
   objects: SceneObjects,
   id: string,
-  collider: Extract<ColliderSettings, { kind: 'box' | 'capsule' }>,
+  collider: Extract<ColliderSettings, { kind: 'box' | 'capsule' | 'cylinder' }>,
   joints: JointBodyFrames | null
 ): ColliderSettings | null {
   const { bounds } = colliderFitBounds(objects, id, joints)
@@ -148,10 +149,13 @@ export function fitCollider(
     const { center, size } = defaultBox(collider.id, bounds)
     return { id: collider.id, kind: 'box', ...tail, center, size }
   }
-  const fitted = defaultCapsule(collider.id, bounds, collider.direction)
+  const fitted =
+    collider.kind === 'cylinder'
+      ? defaultCylinder(collider.id, bounds, collider.direction)
+      : defaultCapsule(collider.id, bounds, collider.direction)
   return {
     id: collider.id,
-    kind: 'capsule',
+    kind: fitted.kind,
     ...tail,
     center: fitted.center,
     radius: fitted.radius,

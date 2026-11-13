@@ -82,7 +82,7 @@ function traceWith(
   nullable: (text: string) => string
 ): { ticks: Tick[]; hash: string } {
   // 4ab 계약: 넷째까지는 driveTestkit robotSpec()으로 세계 설명 v4 + 'none' 시즌이다(해시는 v3 코드로 잰 값 그대로)
-  expect(s.spec.version).toBe(6)
+  expect(s.spec.version).toBe(7)
   expect(s.spec.field).toEqual({ season, hiveTipped: [false, false] })
   const world = new PhysicsWorld(s.spec)
   const ticks: Tick[] = []

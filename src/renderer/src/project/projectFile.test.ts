@@ -85,7 +85,7 @@ describe('프로젝트 파일', () => {
 
   it('CAD 경로는 상대 경로와 절대 경로를 함께 저장한다', () => {
     const data = JSON.parse(serializeProject(objects, FIELD, relativize))
-    expect(data).toMatchObject({ format: 'sandbot-project', version: 13 })
+    expect(data).toMatchObject({ format: 'sandbot-project', version: 14 })
     expect(data.objects[1].cad.file).toEqual({
       relativePath: '../cad/robot.step',
       absolutePath: '/home/team/cad/robot.step'
@@ -987,11 +987,11 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
   const WITH_VISUAL: FieldDoc = { season: 'biobuzz', visual: { ...VISUAL } }
 
   // A1
-  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 13(지금 판)와 키를 골라 쓴 모양이다', () => {
+  it('왕복: 같은 FieldDoc과 fieldVisualFile을 내고, 파일은 version 14(지금 판)와 키를 골라 쓴 모양이다', () => {
     const content = serializeProject(objects, WITH_VISUAL, relativize)
     const data = JSON.parse(content)
-    expect(data.version).toBe(13)
-    expect(PROJECT_VERSION).toBe(13)
+    expect(data.version).toBe(14)
+    expect(PROJECT_VERSION).toBe(14)
     expect(data.field).toEqual({
       season: 'biobuzz',
       visual: {
@@ -1064,7 +1064,7 @@ describe('필드 CAD 보기(v11, spec-4e §2.3)', () => {
     expect('visual' in loaded.field).toBe(false)
     expect(loaded.fieldVisualFile).toBeNull()
     expect(loaded.fieldVisualDropped).toBe(false)
-    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(13)
+    expect(JSON.parse(serializeProject(loaded.objects, loaded.field, relativize)).version).toBe(14)
   })
 
   // A3
@@ -1116,7 +1116,7 @@ describe('프로젝트 설정(v12 settings, 코드 단위)', () => {
   it('왕복: settings를 키를 골라 쓰고 그대로 읽는다', () => {
     const content = serializeProject(objects, FIELD, relativize, { settings: CM_RAD })
     const data = JSON.parse(content)
-    expect(data.version).toBe(13)
+    expect(data.version).toBe(14)
     expect(data.settings).toEqual({ codeUnits: { length: 'cm', angle: 'rad' } })
     const loaded = parseProject(content)
     expect(loaded.settings).toEqual(CM_RAD)
@@ -1208,7 +1208,7 @@ describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
   it('B1 왕복: 종류마다(끈 것 하나) colliders와 collision을 그대로 읽고 바이트 단위로 같게 다시 쓴다', () => {
     const content = serializeProject(withColliders(), FIELD, relativize)
     const data = JSON.parse(content)
-    expect(data.version).toBe(13)
+    expect(data.version).toBe(14)
     expect(data.objects[2].colliders).toEqual(COLLIDERS)
     expect(data.objects[0].collision).toEqual(COLLISION)
     // 키 순서는 정리 순서(id, kind, enabled?, 종류 칸, friction)라 git diff가 안정하다
@@ -1227,7 +1227,7 @@ describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
     expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
   })
 
-  it('B2 v12 파일은 colliders 없이 열리고 다시 쓰면 13, 충돌체 없는 오브젝트는 바이트 같다', () => {
+  it('B2 v12 파일은 colliders 없이 열리고 다시 쓰면 지금 판, 충돌체 없는 오브젝트는 바이트 같다', () => {
     const v13 = serializeProject(objects, FIELD, relativize)
     const v12 = JSON.parse(v13)
     v12.version = 12
@@ -1330,6 +1330,113 @@ describe('충돌체와 자기 충돌(v13, spec-5 §2.3)', () => {
   ])('B3 틀린 collision(%s)은 invalidData(collision)', (_label, index, collision) => {
     expect(() => parseProject(fileWith(index, 'collision', collision))).toThrow(
       `invalidData: objects[${index}].collision`
+    )
+  })
+})
+
+describe('프리로드 자리와 원기둥 충돌체(v14, 6a 계약)', () => {
+  const group = {
+    id: 'hopper',
+    name: 'Hopper',
+    kind: 'group' as const,
+    parentId: 'robot',
+    transform: { position: [0, 0, 0.1], rotation: [0, 0, 0] } as {
+      position: [number, number, number]
+      rotation: [number, number, number]
+    }
+  }
+  const CYLINDER: ColliderSettings = {
+    id: 'c-roller',
+    kind: 'cylinder',
+    center: [0.2, 0, 0.05],
+    radius: 0.024,
+    height: 0.3,
+    direction: 'y',
+    friction: 1
+  }
+  const withPreload = (): SceneObjects => ({
+    ...objects,
+    hopper: { ...group, preload: { kind: 'pollen', center: [0.05, -0.02, 0.0356] } },
+    // 키 순서는 파일을 읽는 순서(colliders → preload)
+    plate: {
+      ...objects.plate,
+      colliders: [structuredClone(CYLINDER)],
+      preload: { kind: 'pollen', enabled: false, center: [0, 0, 0.1] }
+    }
+  })
+  const fileWith = (index: number, key: string, value: unknown, version = 14): string => {
+    const data = JSON.parse(serializeProject(objects, FIELD, relativize))
+    data.version = version
+    data.objects[index][key] = value
+    return JSON.stringify(data)
+  }
+
+  it('왕복: preload(끈 것 하나)·Cylinder를 그대로 읽고 바이트 단위로 같게 다시 쓴다', () => {
+    const content = serializeProject(withPreload(), FIELD, relativize)
+    const data = JSON.parse(content)
+    expect(data.version).toBe(14)
+    expect(PROJECT_VERSION).toBe(14)
+    expect(data.objects[3].preload).toEqual({ kind: 'pollen', center: [0.05, -0.02, 0.0356] })
+    expect(Object.keys(data.objects[2].preload)).toEqual(['kind', 'enabled', 'center'])
+    expect(data.objects[2].colliders).toEqual([CYLINDER])
+    const { objects: loaded } = parseProject(content)
+    expect(loaded).toEqual(withPreload())
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(content)
+  })
+
+  it('v13 파일은 preload 없이 열리고 다시 쓰면 지금 판, 자리 없는 오브젝트는 바이트 같다', () => {
+    const now = serializeProject(objects, FIELD, relativize)
+    const v13 = JSON.parse(now)
+    v13.version = 13
+    const { objects: loaded } = parseProject(JSON.stringify(v13))
+    expect(loaded).toEqual(objects)
+    for (const object of Object.values(loaded)) expect('preload' in object).toBe(false)
+    expect(serializeProject(loaded, FIELD, relativize)).toBe(now)
+  })
+
+  it('범위 밖 center는 자르고(−0 없음), enabled true는 키를 지우고, Cylinder 칸도 자른다', () => {
+    const { objects: loaded } = parseProject(
+      fileWith(2, 'preload', { kind: 'pollen', enabled: true, center: [20, -0, -12] })
+    )
+    expect(loaded.plate.preload).toEqual({ kind: 'pollen', center: [10, 0, -10] })
+    expect(Object.is(loaded.plate.preload!.center[1], -0)).toBe(false)
+    const cylinders = parseProject(
+      fileWith(2, 'colliders', [
+        { id: 'a', kind: 'cylinder', center: [0, 0, 0], radius: 5, height: 0, direction: 'x' }
+      ])
+    ).objects.plate.colliders
+    expect(cylinders).toEqual([
+      { id: 'a', kind: 'cylinder', center: [0, 0, 0], radius: 1, height: 1e-3, direction: 'x' }
+    ])
+  })
+
+  it.each([
+    ['로봇', 0, { kind: 'pollen', center: [0, 0, 0] }],
+    ['CAD 루트', 1, { kind: 'pollen', center: [0, 0, 0] }],
+    ['객체 아님', 2, 'pollen'],
+    ['null', 2, null],
+    ['모르는 종류', 2, { kind: 'nectarRed', center: [0, 0, 0] }],
+    ['center 길이 2', 2, { kind: 'pollen', center: [0, 0] }],
+    ['글자 center', 2, { kind: 'pollen', center: [0, '0', 0] }],
+    ['글자 enabled', 2, { kind: 'pollen', center: [0, 0, 0], enabled: 'false' }]
+  ])('틀린 preload(%s)는 invalidData(preload)', (_label, index, preload) => {
+    expect(() => parseProject(fileWith(index, 'preload', preload))).toThrow(
+      `invalidData: objects[${index}].preload`
+    )
+  })
+
+  it.each([
+    [
+      '방향 w',
+      [{ id: 'a', kind: 'cylinder', center: [0, 0, 0], radius: 1, height: 1, direction: 'w' }]
+    ],
+    [
+      '글자 height',
+      [{ id: 'a', kind: 'cylinder', center: [0, 0, 0], radius: 1, height: '1', direction: 'x' }]
+    ]
+  ])('틀린 Cylinder(%s)는 invalidData(colliders)', (_label, colliders) => {
+    expect(() => parseProject(fileWith(2, 'colliders', colliders))).toThrow(
+      'invalidData: objects[2].colliders'
     )
   })
 })

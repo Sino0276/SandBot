@@ -186,7 +186,13 @@ export type PlayRunSensor = {
   mount: SensorMount
 }
 
-export type PlayRunField = { season: SeasonId; hiveTipped: readonly [boolean, boolean] }
+// gameElements(6a): 실행이 경기 요소(공)를 켰는지(INIT 때의 개인 설정 gameElements, 실행 동안 고정). 없으면 꺼짐(경기 요소
+// 없이 실행한 것)
+export type PlayRunField = {
+  season: SeasonId
+  hiveTipped: readonly [boolean, boolean]
+  gameElements?: boolean
+}
 
 // newRun에 field를 넘기지 않으면 쓰는 값('none' 시즌, HIVE 시작 상태)
 const DEFAULT_RUN_FIELD: PlayRunField = Object.freeze({
@@ -387,6 +393,11 @@ export function simJointValue(
 // 필드 자세 → 최상위 로봇의 transform(바닥 위, 요만)
 export function poseTransform(pose: { x: number; y: number; yaw: number }): Transform {
   return { position: [pose.x, pose.y, 0], rotation: [0, 0, pose.yaw] }
+}
+
+// 경기 요소 안내(simNotice elementOutOfField·elementReentered, 6a)의 params.kind → 문구 갈래
+function elementNoticeKind(kind: string | undefined): 'pollen' | 'nectarRed' | 'nectarBlue' {
+  return kind === 'nectarRed' || kind === 'nectarBlue' ? kind : 'pollen'
 }
 
 // simNotice collisionOverlap의 params(src/shared/play.ts SimNoticeCode 주석)를 Console 본문으로: 몸체 이름은 run.colliders에서
@@ -636,6 +647,9 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         }
       }
     }
+    // 경기 요소 표시 상태(6a): 아직 그리지 않는다(공 표시가 생기면 simGame·ghostGame으로 받는다)
+    case 'gameState':
+      return {}
     case 'libraryProgress': {
       if (run.phase !== 'preparing' || run.libraryReported) return {}
       const { phase, done, total, bytes } = event
@@ -678,10 +692,13 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         ])
       // 번역 키는 console.notices.sim.<code>다(SimNoticeCode가 바뀌면 이 대입이 타입 검사에서 막힌다). 대체 자세 풀이
       // 안내(4d)는 params.solver로 문구를 고른다(spec-4d §1.14)
+      // 경기 요소 안내(6a)는 params.kind로 문구를 고른다(모르는 종류는 POLLEN 문구)
       const key: ConsoleNoticeKey =
         event.code === 'visionSolverSubstituted'
           ? `sim.visionSolverSubstituted.${event.params.solver === 'APRILTAG_BUILTIN' ? 'builtin' : 'sqpnp'}`
-          : `sim.${event.code}`
+          : event.code === 'elementOutOfField' || event.code === 'elementReentered'
+            ? `sim.${event.code}.${elementNoticeKind(event.params.kind)}`
+            : `sim.${event.code}`
       return withEntries(data, [
         consoleEntry({ type: 'notice', key, params: { ...event.params } }, event.tNanos, 'warning')
       ])

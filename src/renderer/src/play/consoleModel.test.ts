@@ -370,7 +370,8 @@ describe('세계 설명 경고(console.notices.world*)', () => {
       'worldTooManyColorSensors',
       'worldTooManyCameras',
       'worldTooManyColliders',
-      'worldTooManyWorldColliders'
+      'worldTooManyWorldColliders',
+      'worldTooManyPreloads'
     ])
     for (const key of keys) {
       const params: Record<string, string | number> =

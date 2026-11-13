@@ -17,6 +17,7 @@ import {
 } from './actuators'
 import { Articulation, type ContactRow, type ContactSet, type DriveForces } from './articulation'
 import { BodyCollision, bodyCollisionNeeded } from './bodyCollision'
+import type { GameState } from './elements/gameState'
 import {
   isBlockingNormal,
   ROLLER_RESISTANCE,
@@ -52,6 +53,7 @@ import type {
   SimDeadWheelSpec,
   SimMotorSpec,
   SimOtosSpec,
+  SimElementState,
   SimPinpointSpec,
   SimPose,
   SimServoParams,
@@ -460,6 +462,18 @@ export class PhysicsWorld {
     }
     if (this.articulation && this.spec.joints.length > 0) pose.joints = this.articulation.q()
     return pose
+  }
+
+  // 경기 요소 표시 상태(6a, spec-6a §5: 공마다 줄인 자세 7칸과 표식, revision은 바뀔 때만 늚). 세계 설명에 경기 요소가 없으면
+  // null. 계약 단계라 아직 늘 null이다(물리 구현이 채운다)
+  gameState(): GameState | null {
+    return null
+  }
+
+  // 경기 요소의 전체 정밀도 상태(6a, 6d AUTO → TELEOP 이어 가기·시험). 세계 설명에 경기 요소가 없으면 null. 계약 단계라 아직
+  // 늘 null이다
+  elementSnapshot(): SimElementState[] | null {
+    return null
   }
 
   // 이번 하위 단계의 바퀴 법선 하중(N, spec.wheels 순서, 시험·표시용)

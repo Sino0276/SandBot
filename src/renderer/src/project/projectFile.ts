@@ -47,6 +47,12 @@ import {
 } from '../scene/joint'
 import { isWheelKind, isWheelRollers, sanitizeWheel } from '../scene/wheel'
 import {
+  canHavePreload,
+  isPreloadKind,
+  sanitizePreload,
+  type PreloadSettings
+} from '../scene/preload'
+import {
   canHaveColliders,
   canHaveRobotCollision,
   COLLIDER_DIRECTIONS,
@@ -80,11 +86,13 @@ export const PROJECT_FORMAT = 'sandbot-project'
 // 13: 오브젝트 충돌체 colliders([{ id, kind, enabled?, center·size | center·radius·height·direction | vertexLimit,
 //     friction? }], 모든 kind, scene/collider.ts)와 로봇 자기 충돌 collision({ forceCollide: [[a, b]…] }, robot에만).
 //     둘 다 시뮬레이터 설정이다(spec-5 §2.3).
+// 14: 프리로드 자리 preload({ kind: 'pollen', enabled?: false, center }, group·assembly·part에만, scene/preload.ts)와 충돌체
+//     kind 'cylinder'(center·radius·height·direction, Capsule과 같은 칸). 둘 다 시뮬레이터 설정이다(spec-6a §3).
 // 이전 버전은 그대로 읽힌다(meshIndexing이 없으면 예전 방식, 5 이하는 바퀴 없음, 6 이하는 질량 설정 없음, 7 이하는 관절 없음,
 // 8 이하는 바퀴 friction 없음 = 0, 9 이하는 field 없음 = BIOBUZZ, 10 이하는 field.visual 없음, 11 이하는 settings 없음 =
-// 코드 단위 'sdk', 12 이하는 colliders·collision 없음).
+// 코드 단위 'sdk', 12 이하는 colliders·collision 없음, 13 이하는 preload·Cylinder 없음).
 // objects 배열의 순서가 형제 순서다.
-export const PROJECT_VERSION = 13
+export const PROJECT_VERSION = 14
 // field를 두기 시작한 버전
 const FIELD_VERSION = 10
 // field.visual(필드 CAD 보기)을 두기 시작한 버전
@@ -442,7 +450,9 @@ function parseColliders(value: unknown, index: number): ColliderSettings[] | nul
       case 'box':
         if (!isVec3(entry.center) || !isVec3(entry.size)) invalid(index, 'colliders')
         return { id, kind, center: [...entry.center], size: [...entry.size], ...tail }
+      // cylinder(v14)는 capsule과 같은 칸이다
       case 'capsule':
+      case 'cylinder':
         if (
           !isVec3(entry.center) ||
           !isFiniteNumber(entry.radius) ||
@@ -468,6 +478,23 @@ function parseColliders(value: unknown, index: number): ColliderSettings[] | nul
   })
   const sanitized = sanitizeColliders(list)
   return sanitized.length > 0 ? sanitized : null
+}
+
+// 프리로드 자리(v14, group·assembly·part에만). 객체가 아니거나, 종류를 모르거나, center가 유한한 수 셋이 아니거나, enabled가
+// boolean이 아니면 파일 오류다. 범위 밖 center는 정리(sanitizePreload)가 자르고 enabled true는 키를 지운다.
+function parsePreload(value: unknown, index: number): PreloadSettings {
+  if (
+    !isRecord(value) ||
+    !isPreloadKind(value.kind) ||
+    !isVec3(value.center) ||
+    (value.enabled !== undefined && typeof value.enabled !== 'boolean')
+  )
+    invalid(index, 'preload')
+  return sanitizePreload({
+    kind: value.kind,
+    center: [value.center[0], value.center[1], value.center[2]],
+    ...(value.enabled === false ? { enabled: false as const } : {})
+  })
 }
 
 // 로봇 자기 충돌 설정(v13, robot에만). 객체가 아니거나, forceCollide가 배열이 아니거나 MAX_FORCE_COLLIDE를 넘거나, 원소가
@@ -551,7 +578,8 @@ function parseObject(
     rigidbody,
     joint,
     colliders,
-    collision
+    collision,
+    preload
   } = value
   if (typeof id !== 'string' || !id) invalid(index, 'id')
   if (typeof name !== 'string') invalid(index, 'name')
@@ -666,6 +694,11 @@ function parseObject(
     if (!canHaveRobotCollision(object)) invalid(index, 'collision')
     const settings = parseCollision(collision, index)
     if (settings) object.collision = settings
+  }
+  // 프리로드 자리는 group·assembly·part에만(scene/preload.ts canHavePreload: 로봇·CAD 루트는 아님)
+  if (preload !== undefined) {
+    if (!canHavePreload(object)) invalid(index, 'preload')
+    object.preload = parsePreload(preload, index)
   }
   return object
 }

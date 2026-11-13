@@ -67,7 +67,8 @@ describe('실행 설정(localStorage)', () => {
       autoStopAutonomous: false,
       batteryVoltage: 13,
       hiveState: { red: 'tipped' as const, blue: 'start' as const },
-      sensorNoise: true
+      sensorNoise: true,
+      gameElements: false
     }
     savePlaySettings(settings, storage)
     expect(loadPlaySettings(storage)).toEqual(settings)
@@ -116,6 +117,18 @@ describe('실행 설정(localStorage)', () => {
       autoStopAutonomous: true,
       batteryVoltage: 12.5
     })
+  })
+
+  // 6a 계약: 경기 요소는 렌더러 전용 설정(기본 켬)이고 실행 요청 설정에는 넣지 않는다(세계 설명 elements로만 간다)
+  it('경기 요소는 기본 켬, 거짓일 때만 끔, 실행 요청 설정에는 없다', () => {
+    expect(DEFAULT_PLAY_SETTINGS.gameElements).toBe(true)
+    expect(parsePlaySettings({}).gameElements).toBe(true)
+    expect(parsePlaySettings(null).gameElements).toBe(true)
+    expect(parsePlaySettings({ gameElements: false }).gameElements).toBe(false)
+    for (const wrong of ['false', 0, null, {}, []])
+      expect(parsePlaySettings({ gameElements: wrong }).gameElements).toBe(true)
+    const off = { ...DEFAULT_PLAY_SETTINGS, gameElements: false }
+    expect(runSettings(off)).not.toHaveProperty('gameElements')
   })
 
   // B7(spec-4c §2): 센서 잡음은 렌더러 전용 설정(기본 끔)이고 실행 요청 설정에는 넣지 않는다(세계 설명 noise로만 간다)

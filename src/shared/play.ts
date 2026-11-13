@@ -11,7 +11,7 @@ import type {
   TelemetryFrame
 } from './sidecarProtocol'
 import type { LibraryProgress, LibraryReason, LibraryReport } from './libraries'
-import type { SimPose, WorldSpec } from './sim/worldSpec'
+import type { SimElementState, SimPose, WorldSpec } from './sim/worldSpec'
 
 // ---- OpMode 목록 ----
 
@@ -335,6 +335,18 @@ export type PlayEvent =
   | { type: 'linkWarnings'; runId: string; warnings: PlayLinkWarning[] }
   // 시뮬레이터의 로봇 자세(필드 좌표, 약 60 Hz와 일시 정지·Step·끝에 바로). 렌더러는 씬 문서를 바꾸지 않고 그린다.
   | ({ type: 'pose'; runId: string; tNanos: number } & SimPose)
+  // 경기 요소(6a, spec-6a §5)의 표시 상태(revision이 바뀔 때, 약 60 Hz와 일시 정지·Step·끝에 바로, pose처럼). poses는 공마다
+  // [x, y, z, qw, qx, qy, qz] × 1e4 정수(src/shared/sim/elements/gameState.ts, 공 순서는 elementSpawns), flags는 공마다 비트
+  // (1 잠듦, 2 필드 밖: 숨김)이고 모두 0이면 생략할 수 있다. final은 실행이 끝날 때 한 번 전체 정밀도 상태(6d 이어 가기)
+  | {
+      type: 'gameState'
+      runId: string
+      tNanos: number
+      revision: number
+      poses: number[]
+      flags?: number[]
+      final?: SimElementState[]
+    }
   // 시뮬레이터 안내(Console 경고 한 줄, 같은 code·params는 실행마다 한 번). code는 렌더러가 번역한다.
   | {
       type: 'simNotice'
@@ -370,6 +382,12 @@ export type PlayEvent =
 //   'structure:<구조물 순번>'·'floor'·'body:<몸체 번호>'
 // - collisionLimit(5): 한 하위 단계의 충돌 행이 한도를 넘어 일부 짝을 뺐다. params 없음
 // - collisionLift(5): 메커니즘이 로봇 무게보다 세게 바닥·벽 윗면을 누른 상태가 0.1 s 이어졌다(로봇이 들리지 않음). params 없음
+// - elementOutOfField(6a): 공이 필드 밖으로 나가 물리에서 뺐다. params.kind(SimElementKind: 'pollen'·'nectarRed'·
+//   'nectarBlue', 렌더러가 문구를 고른다)
+// - elementReentered(6a): 경기 요원이 나간 공을 가까운 LOADING ZONE에 다시 넣었다. params.kind
+// - elementCrushed(6a): 공이 딱딱한 심 깊이까지 눌렸다(그 접촉은 강체로 푼다). params 없음
+// - elementCouplingLimit(6a): 로봇에 닿은 공 행이 결합 한도를 넘어 일부 공을 로봇에 한쪽으로만 풀었다. params 없음
+// - elementIslandLarge(6a): 공 더미가 커서 근사 반복(PGS)으로 풀었다. params 없음
 export type SimNoticeCode =
   | 'sharedEncoderMode'
   | 'worldError'
@@ -378,6 +396,11 @@ export type SimNoticeCode =
   | 'collisionOverlap'
   | 'collisionLimit'
   | 'collisionLift'
+  | 'elementOutOfField'
+  | 'elementReentered'
+  | 'elementCrushed'
+  | 'elementCouplingLimit'
+  | 'elementIslandLarge'
   | SidecarNoticeCode
 
 export type { GamepadState }

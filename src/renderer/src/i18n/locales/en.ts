@@ -986,6 +986,15 @@ const en: Messages = {
         'The number of colliders exceeds the simulator limit ({{max}}), so only the first {{max}} in body order are used.',
       worldJointStartOverlap:
         'Joint body {{name}} overlaps {{targets}} at the start pose. Overlaps are not pushed apart.',
+      // Game element preloads (6a, play/worldElements.ts and playActions worldFor)
+      worldTooManyPreloads:
+        'There are more Preload Slots than the limit ({{max}} per robot); only the first {{max}} in hierarchy order are used.',
+      worldPreloadOverlap:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}}. The ball is pushed out when the run starts.',
+      worldPreloadBelowFloor:
+        'The POLLEN of Preload Slot {{name}} is below the floor, so that slot is not used.',
+      worldPreloadNoRoom:
+        'The front, back, left and right of the robot are all blocked by walls or structures, so the run has no preloaded POLLEN. Add Preload Slots to the robot.',
       worldGenerationStale:
         'Device names may differ from the generated configuration, so the wheels and joints may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
@@ -1032,6 +1041,29 @@ const en: Messages = {
           'Collision contacts exceeded the per-step row limit, so some contacts were dropped (shown once per run). Use fewer or merged Colliders.',
         collisionLift:
           "A mechanism pushes on the floor or a wall top harder than the robot's weight. A real robot would lift; the simulator does not (shown once per run).",
+        // 6a: game elements (balls). Chosen by params.kind (once per kind per run)
+        elementOutOfField: {
+          pollen:
+            'A POLLEN left the field. After 3 seconds the field staff put it back in the nearest LOADING ZONE (shown once per run).',
+          nectarRed:
+            'A red NECTAR left the field. The simulator does not put it back yet (that is the human player, shown once per run).',
+          nectarBlue:
+            'A blue NECTAR left the field. The simulator does not put it back yet (that is the human player, shown once per run).'
+        },
+        elementReentered: {
+          pollen:
+            'The field staff put a POLLEN that left the field back in a LOADING ZONE (shown once per run).',
+          nectarRed:
+            'A red NECTAR that left the field was put back in a LOADING ZONE (shown once per run).',
+          nectarBlue:
+            'A blue NECTAR that left the field was put back in a LOADING ZONE (shown once per run).'
+        },
+        elementCrushed:
+          'A ball was squeezed by more than 30 % of its radius (the assumed hard core). A real ball may deform. Widen the roller gap (shown once per run).',
+        elementCouplingLimit:
+          'Many balls touch the robot, so some balls are only pushed by the robot and do not push it back (shown once per run).',
+        elementIslandLarge:
+          'A large pile of touching balls is solved with an approximate iteration. Forces inside the pile may be slightly off (shown once per run).',
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -2089,12 +2121,15 @@ const en: Messages = {
     addOptions: {
       box: 'Box Collider',
       capsule: 'Capsule Collider',
-      mesh: 'Mesh Collider'
+      mesh: 'Mesh Collider',
+      cylinder: 'Cylinder Collider'
     },
     titles: {
       box: 'Box Collider',
       capsule: 'Capsule Collider',
-      mesh: 'Mesh Collider'
+      mesh: 'Mesh Collider',
+      // 6a: Unity에 없는 Collider(임시 편차). 제목은 Unity 꼴로 번역하지 않는다
+      cylinder: 'Cylinder Collider'
     },
     simulationOnly: 'Simulator',
     remove: 'Remove',

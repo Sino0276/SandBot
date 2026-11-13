@@ -1,4 +1,6 @@
 import type {
+  FieldElementPlacement,
+  FieldElementType,
   FieldHive,
   FieldMaterial,
   FieldRect,
@@ -11,6 +13,7 @@ import type {
 } from './fieldSpec'
 import { deepFreeze } from './fieldSpec'
 import {
+  mirrorElementPlacement,
   mirrorHive,
   mirrorKeepOut,
   mirrorPreset,
@@ -341,14 +344,94 @@ const RED_TAGS: FieldTag[] = [
   tag(37, TAG_X, TAG_Y_OUTER, Math.PI / 2, 'RED AUDIENCE')
 ]
 
+// ---- 움직이는 경기 요소(6a, spec-6a §4) ----
+
+// 공 지름·질량 [확인: CM·EFG·AndyMark 제품 정보(POLLEN Ø 2.8 in = 0.0711 m 24.9 g, NECTAR Ø 3.6 in = 0.0914 m 41.3 g)]
+const POLLEN_RADIUS = 0.03555
+const POLLEN_MASS = 0.0249
+const NECTAR_RADIUS = 0.0457
+const NECTAR_MASS = 0.0413
+// [가정: 위플형 PE 공의 벽 안쪽 반지름 = 0.95·r(구멍은 무시)] 실측 없음. 속 빈 껍질 관성 0.4·m·(r⁵ − rᵢ⁵)/(r³ − rᵢ³)
+// = 0.6344·m·r²(속 찬 구 0.4와 얇은 껍질 2/3 사이)
+const SHELL_INNER_RATIO = 0.95
+function shellInertia(mass: number, radius: number): number {
+  const k = SHELL_INNER_RATIO
+  return ((0.4 * (1 - k ** 5)) / (1 - k ** 3)) * mass * radius * radius
+}
+// 표시 색과 반사율(6c 센서용) [가정: 노랑·빨강·파랑 PE 공의 반사율, 실측 없음]. 표시 색은 [결정: 계산과 무관한 표시 색]
+const POLLEN_MATERIAL: FieldMaterial = { display: '#f2d21b', rgb: [0.65, 0.55, 0.08], nir: 0.7 }
+const NECTAR_RED_MATERIAL: FieldMaterial = { display: '#d32f2f', rgb: [0.5, 0.1, 0.08], nir: 0.6 }
+const NECTAR_BLUE_MATERIAL: FieldMaterial = { display: '#1e63c8', rgb: [0.08, 0.2, 0.5], nir: 0.5 }
+// 접촉 값은 모두 실측 없는 가정이다(spec-6a §4, docs/assumptions.md 6a 표)
+const BALL_CONTACT_COMMON = {
+  // [가정: 0.3·r 넘게 눌리면 딱딱한 심] 위플 공이 그보다 깊게 눌리는 메커니즘은 공을 찌그러뜨린다고 본다
+  coreDepthRatio: 0.3,
+  // [가정: PE 공 표면 μ 0.5] 타일·알루미늄·고무 롤러 사이의 중간값(짝은 평균)
+  friction: 0.5,
+  // [가정: 굴림 저항 0.05] 구멍 난 속 빈 공이 타일 위를 구를 때의 감속(약 0.3 m/s²)
+  rollingResistance: 0.05,
+  // [가정: 회전 저항 접촉 반경 2 mm] 쉬는 공의 접촉 반경 √(2r·mg/k) ≈ 1.7–2.0 mm를 올림
+  spinRadius: 0.002,
+  // [가정: 반발 바닥 0.30·딱딱한 면 0.64·공끼리 0.5·로봇 0.5] 위플 공 낙하 영상 어림(타일 폼은 더 흡수한다)
+  restitution: { floor: 0.3, hard: 0.64, element: 0.5, robot: 0.5 }
+}
+// [가정: C_d 0.5(구멍 난 구), Magnus 기울기 0.5·최대 0.3] 매끈한 구의 문헌값 어림
+const BALL_AIR = { dragCoefficient: 0.5, magnusSlope: 0.5, magnusMax: 0.3 }
+const POLLEN: FieldElementType = {
+  kind: 'pollen',
+  radius: POLLEN_RADIUS,
+  mass: POLLEN_MASS,
+  inertia: shellInertia(POLLEN_MASS, POLLEN_RADIUS),
+  material: POLLEN_MATERIAL,
+  // [가정: 판 강성 3000 N/m] 손가락으로 누른 어림(1 kg에 약 3 mm)
+  contact: { plateStiffness: 3000, ...BALL_CONTACT_COMMON },
+  air: BALL_AIR,
+  // CM 10.8.2: 필드 밖 POLLEN은 경기 요원이 다시 넣는다
+  reentry: true
+}
+const NECTAR_PHYSICS = {
+  radius: NECTAR_RADIUS,
+  mass: NECTAR_MASS,
+  inertia: shellInertia(NECTAR_MASS, NECTAR_RADIUS),
+  // [가정: 판 강성 4500 N/m] POLLEN보다 큰 구멍·지름이지만 벽이 두꺼운 어림
+  contact: { plateStiffness: 4500, ...BALL_CONTACT_COMMON },
+  air: BALL_AIR,
+  // NECTAR는 사람 선수가 넣는다(6d). 6a는 밖에 그대로 둔다
+  reentry: false
+}
+const ELEMENT_TYPES: FieldElementType[] = [
+  POLLEN,
+  { kind: 'nectarRed', ...NECTAR_PHYSICS, material: NECTAR_RED_MATERIAL },
+  { kind: 'nectarBlue', ...NECTAR_PHYSICS, material: NECTAR_BLUE_MATERIAL }
+]
+
+// GARDEN POLLEN 4개(CM 10.3.1 "line starting in the corner closest to the ALLIANCE AREA against the audience or rear
+// wall"): 빨강 GARDEN은 관중석 벽(+X)을 따라 빨강 벽(−Y) 구석에서 시작하는 띠(FAC 3.5, RED_GARDEN)라, 공은 관중석 벽과
+// 빨강 벽에 닿고 서로 닿게 한 줄로 바닥에 놓인다(x = 벽 − r, y = −벽 + r·(1 + 2k)). 중심 x(1.75731)는 GARDEN 띠
+// [1.74206, 1.79286] 안이다. 파랑은 Rz(π)
+const RED_GARDEN_POLLEN: FieldElementPlacement[] = [0, 1, 2, 3].map((k) => ({
+  group: 'garden',
+  kind: 'pollen',
+  position: {
+    x: INNER_HALF - POLLEN_RADIUS,
+    y: -INNER_HALF + POLLEN_RADIUS * (1 + 2 * k),
+    z: POLLEN_RADIUS
+  }
+}))
+
 // ---- 시작(G304) [결정: 프리셋과 스냅, synthesis §2.7·§9.6] ----
 
-// GARDEN POLLEN 자리(CAD X ≥ 67.878 in, Y ≤ −59.214 in, CM 10.3.1)
+// GARDEN POLLEN 자리(CM 10.3.1). CAD 공 자리는 X ≥ 67.878 in(1.72410 m), Y ≤ −59.214 in였지만 CAD 공은 실제(Ø 2.8 in)보다
+// 작아(벽까지 2.707 in) 실제 지름의 공이 벽에 닿으면 X 1.72176까지 온다. 그래서 X 경계는 공 바깥(벽 − 2r)이다(6a: 1.7241이면
+// 빨강 벽 관중석 쪽 프리셋 끝에 붙인 로봇이 첫 공과 2.3 mm 겹쳤다). Y 경계는 공 넷(−1.50846)보다 넓은 CAD 값 그대로다.
 // [가정: GARDEN POLLEN 자리를 시작 프리셋에서 피함] 규칙이 아니다(G304는 GARDEN 접촉을 허용한다)
-const RED_KEEP_OUT: { rect: FieldRect } = { rect: [1.7241, -INNER_HALF, INNER_HALF, -1.50404] }
+const GARDEN_POLLEN_EDGE = INNER_HALF - 2 * POLLEN_RADIUS
+const RED_KEEP_OUT: { rect: FieldRect } = {
+  rect: [GARDEN_POLLEN_EDGE, -INNER_HALF, INNER_HALF, -1.50404]
+}
 
 // 빨강 여섯(yaw는 필드 안쪽을 보는 면). 구간 끝은 이음새(±0.59695·−1.19390), FLOWER 면(±0.51867·0.66967), GARDEN POLLEN
-// 자리(1.72410·−1.50404), 벽(±1.79286)이다
+// 자리(1.72176·−1.50404), 벽(±1.79286)이다
 const RED_PRESETS: FieldStartPreset[] = [
   {
     key: 'redWallScoring',
@@ -368,7 +451,7 @@ const RED_PRESETS: FieldStartPreset[] = [
     key: 'redWallAudience',
     alliance: 'red',
     wall: 'red',
-    along: [0.66967, 1.7241],
+    along: [0.66967, GARDEN_POLLEN_EDGE],
     yaw: Math.PI / 2
   },
   { key: 'audienceWall', alliance: 'red', wall: 'audience', along: [-1.50404, 0], yaw: Math.PI },
@@ -414,5 +497,12 @@ export const BIOBUZZ_FIELD: FieldSpec = deepFreeze<FieldSpec>({
   structures: STRUCTURES,
   aprilTags: { family: 'tag36h11', tags: [...RED_TAGS, ...RED_TAGS.map(mirrorTag)] },
   startKeepOut: [RED_KEEP_OUT, mirrorKeepOut(RED_KEEP_OUT)],
-  startPresets: [...RED_PRESETS, ...RED_PRESETS.map((p, i) => mirrorPreset(p, BLUE_PRESET_KEYS[i]))]
+  startPresets: [
+    ...RED_PRESETS,
+    ...RED_PRESETS.map((p, i) => mirrorPreset(p, BLUE_PRESET_KEYS[i]))
+  ],
+  elements: {
+    types: ELEMENT_TYPES,
+    layout: [...RED_GARDEN_POLLEN, ...RED_GARDEN_POLLEN.map(mirrorElementPlacement)]
+  }
 })

@@ -996,6 +996,15 @@ const ko = {
         '충돌체 수가 시뮬레이터 한도({{max}}개)를 넘어 몸체 순서로 앞의 {{max}}개만 씁니다.',
       worldJointStartOverlap:
         '관절 몸체 {{name}}이(가) 시작 자세에서 {{targets}}와(과) 겹칩니다. 걸친 채로는 밀어내지 않습니다.',
+      // 경기 요소 프리로드(6a, play/worldElements.ts·playActions worldFor)
+      worldTooManyPreloads:
+        'Preload Slot이 로봇마다 한도({{max}}개)를 넘어 하이어라키 순서로 앞의 {{max}}개만 씁니다.',
+      worldPreloadOverlap:
+        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 겹칩니다. 시작하면 공이 밀려납니다.',
+      worldPreloadBelowFloor:
+        'Preload Slot {{name}}의 POLLEN이 바닥 아래에 있어 그 자리는 쓰지 않습니다.',
+      worldPreloadNoRoom:
+        '로봇 앞·뒤·왼쪽·오른쪽이 모두 벽이나 구조물에 막혀 프리로드 POLLEN 없이 실행합니다. 로봇에 Preload Slot을 두세요.',
       worldGenerationStale:
         '장치 이름이 생성 구성과 다를 수 있어 바퀴·관절이 움직이지 않을 수 있습니다.',
       worldInvalid: '시뮬레이터 세계를 만들지 못해 로봇이 움직이지 않습니다 ({{detail}}).',
@@ -1044,6 +1053,26 @@ const ko = {
           '충돌 접촉이 한 계산 단계의 행 한도를 넘어 일부 접촉을 뺐습니다(실행마다 한 번). Collider를 줄이거나 합치면 줄어듭니다.',
         collisionLift:
           '메커니즘이 로봇 무게보다 세게 바닥이나 벽 윗면을 누릅니다. 실제 로봇은 들리지만 시뮬레이터는 들지 않습니다(실행마다 한 번).',
+        // 6a: 경기 요소(공). params.kind로 고른다(실행마다 종류별 한 번)
+        elementOutOfField: {
+          pollen:
+            'POLLEN이 필드 밖으로 나갔습니다. 3초 뒤 경기 요원이 가까운 LOADING ZONE에 다시 넣습니다(실행마다 한 번).',
+          nectarRed:
+            '빨강 NECTAR가 필드 밖으로 나갔습니다. 시뮬레이터는 아직 다시 넣지 않습니다(사람 선수 몫, 실행마다 한 번).',
+          nectarBlue:
+            '파랑 NECTAR가 필드 밖으로 나갔습니다. 시뮬레이터는 아직 다시 넣지 않습니다(사람 선수 몫, 실행마다 한 번).'
+        },
+        elementReentered: {
+          pollen: '경기 요원이 필드 밖 POLLEN을 LOADING ZONE에 다시 넣었습니다(실행마다 한 번).',
+          nectarRed: '필드 밖 빨강 NECTAR를 LOADING ZONE에 다시 넣었습니다(실행마다 한 번).',
+          nectarBlue: '필드 밖 파랑 NECTAR를 LOADING ZONE에 다시 넣었습니다(실행마다 한 번).'
+        },
+        elementCrushed:
+          '공이 지름의 30 %(가정한 딱딱한 심) 넘게 눌렸습니다. 실제 공은 찌그러질 수 있습니다. 롤러 간격을 넓히세요(실행마다 한 번).',
+        elementCouplingLimit:
+          '로봇에 닿은 공이 많아 일부 공은 로봇을 밀지 않고 로봇에 밀리기만 합니다(실행마다 한 번).',
+        elementIslandLarge:
+          '서로 닿은 공 더미가 커서 근사 반복으로 풉니다. 더미 안의 힘이 조금 부정확할 수 있습니다(실행마다 한 번).',
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
@@ -2083,12 +2112,15 @@ const ko = {
     addOptions: {
       box: '상자 충돌체 (Box Collider)',
       capsule: '캡슐 충돌체 (Capsule Collider)',
-      mesh: '메시 충돌체 (Mesh Collider)'
+      mesh: '메시 충돌체 (Mesh Collider)',
+      cylinder: '원기둥 충돌체 (Cylinder Collider)'
     },
     titles: {
       box: 'Box Collider',
       capsule: 'Capsule Collider',
-      mesh: 'Mesh Collider'
+      mesh: 'Mesh Collider',
+      // 6a: Unity에 없는 Collider(임시 편차). 제목은 Unity 꼴로 번역하지 않는다
+      cylinder: 'Cylinder Collider'
     },
     simulationOnly: '시뮬레이터',
     remove: '제거',

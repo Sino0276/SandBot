@@ -1,5 +1,6 @@
 import type { MassSettings, RigidbodySettings } from '../mass/types'
 import type { ColliderSettings, RobotCollisionSettings } from './collider'
+import type { PreloadSettings } from './preload'
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 
 export type Vec3 = [number, number, number]
@@ -119,6 +120,8 @@ export type SceneObject = {
   colliders?: ColliderSettings[]
   // 자기 충돌 설정(robot에만, PROJECT_VERSION 13)
   collision?: RobotCollisionSettings
+  // 프리로드 자리(Preload Slot, group·assembly·part에만, PROJECT_VERSION 14, scene/preload.ts). 시뮬레이터 설정이다
+  preload?: PreloadSettings
 }
 
 // 관절(spec-3b §2). 편집 자세가 q = 0이다. 회전 관절은 rad, 직선 관절은 m.

@@ -62,6 +62,13 @@ import {
   type RobotCollisionSettings
 } from './collider'
 import { canHaveWheel, sameWheel, sanitizeWheel } from './wheel'
+import {
+  canHavePreload,
+  isWellFormedPreload,
+  samePreload,
+  sanitizePreload,
+  type PreloadSettings
+} from './preload'
 
 // CAD를 불러오기 전까지 보여 주는 임시 씬: 18 in 상자 로봇과 앞쪽에 달린 웹캠
 const PLACEHOLDER_SCENE: SceneObjects = {
@@ -97,7 +104,8 @@ export function isPlaceholderScene(objects: SceneObjects): boolean {
       !object.rigidbody &&
       !object.joint &&
       !object.colliders?.length &&
-      !object.collision
+      !object.collision &&
+      !object.preload
   )
 }
 
@@ -249,6 +257,11 @@ type SceneState = {
   // 로봇의 자기 충돌 설정([그래도 충돌] 짝). robot에만, 정리(sanitizeRobotCollision)한 결과가 비거나 null이면 키를 지운다.
   // 바뀐 것이 없으면 그대로 둔다.
   setRobotCollision: (id: string, settings: RobotCollisionSettings | null) => void
+  // 프리로드 자리(Preload Slot, scene/preload.ts)를 붙이거나 바꾸고, null이면 뗀다. set() 한 번이라 실행 취소 한 단계다.
+  // 둘 수 없는 오브젝트(로봇·CAD 루트, canHavePreload)·형식이 틀린 값(isWellFormedPreload)이면 그대로 두고, 범위 밖 수는
+  // 자른다(sanitizePreload). 로봇마다 4개 한도는 Add Component(canAddPreload)와 세계 설명 빌더가 지킨다(하이어라키 편집으로
+  // 넘을 수 있다). 바뀐 것이 없으면 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
+  setPreload: (id: string, settings: PreloadSettings | null) => void
   // 스크립트 연결(인스펙터의 스크립트 카드). 각각 set() 한 번이라 실행 취소 한 단계이고, 바뀐 것이 없으면
   // (없는 오브젝트, 이미 있는 경로, 없는 연결, 연결할 수 없는 경로) 씬을 그대로 둔다(실행 취소에 빈 단계가 생기지 않게).
   // 같은 경로를 이미 연결했으면 더하지 않는다. 경로는 NFC로 바꿔 둔다(프로젝트 파일 읽기와 같은 규칙).
@@ -504,6 +517,18 @@ export const useSceneStore = create<SceneState>()((set, get) => ({
       if (sameRobotCollision(object.collision, collision)) return state
       const next: SceneObject = { ...object, collision }
       if (!collision) delete next.collision
+      return { objects: { ...state.objects, [id]: next } }
+    }),
+  setPreload: (id, settings) =>
+    set((state) => {
+      const object = state.objects[id]
+      // 떼기는 늘 받는다(둘 수 없는 오브젝트에 남은 자리도 뗄 수 있게)
+      if (!object || (settings && (!canHavePreload(object) || !isWellFormedPreload(settings))))
+        return state
+      const preload = settings ? sanitizePreload(settings) : undefined
+      if (samePreload(object.preload, preload)) return state
+      const next: SceneObject = { ...object, preload }
+      if (!preload) delete next.preload
       return { objects: { ...state.objects, [id]: next } }
     }),
   addScriptLink: (objectId, input) =>

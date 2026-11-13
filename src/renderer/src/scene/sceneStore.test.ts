@@ -6,6 +6,7 @@ import { childrenInDocument, worldMatrix, type SceneObjects, type Vec3 } from '.
 import { isPlaceholderScene, useSceneStore } from './sceneStore'
 import { defaultBox, defaultCapsule, defaultMesh } from './collider'
 import { defaultJoint } from './joint'
+import { defaultPreload } from './preload'
 import { defaultWheel } from './wheel'
 
 const BOUNDS: { min: Vec3; max: Vec3 } = { min: [-0.2, 0, -0.1], max: [0.2, 0.3, 0.1] }
@@ -616,6 +617,59 @@ describe('충돌체', () => {
     expect(isPlaceholderScene(state().objects)).toBe(false)
     state().replaceObjects(placeholder)
     state().setRobotCollision('robot', { forceCollide: [['robot', 'x']] })
+    expect(isPlaceholderScene(state().objects)).toBe(false)
+  })
+})
+
+describe('프리로드 자리(6a)', () => {
+  beforeEach(() => {
+    initHistory()
+    state().replaceObjects(objects)
+    clearHistory()
+  })
+
+  it('붙이고 바꾸고 떼며 각 변경은 실행 취소 한 단계, 정리한 값을 둔다', () => {
+    const before = state().objects
+    state().setPreload('G', defaultPreload())
+    expect(state().objects.G.preload).toEqual({ kind: 'pollen', center: [0, 0, 0] })
+    expect(state().objects.P1).toBe(before.P1)
+    state().setPreload('G', { kind: 'pollen', enabled: false, center: [20, -0, 0.1] })
+    expect(state().objects.G.preload).toEqual({
+      kind: 'pollen',
+      enabled: false,
+      center: [10, 0, 0.1]
+    })
+    state().setPreload('G', null)
+    expect('preload' in state().objects.G).toBe(false)
+    expect(undo()).toBe(true)
+    expect(state().objects.G.preload?.enabled).toBe(false)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(true)
+    expect(state().objects).toBe(before)
+  })
+
+  it('로봇·CAD 루트·없는 오브젝트·형식이 틀린 값·같은 값은 씬을 그대로 둔다', () => {
+    const before = state().objects
+    state().setPreload('R', defaultPreload())
+    state().setPreload('C', defaultPreload())
+    state().setPreload('nope', defaultPreload())
+    state().setPreload('G', { kind: 'pollen', center: [Number.NaN, 0, 0] })
+    state().setPreload('G', { kind: 'nectar' as unknown as 'pollen', center: [0, 0, 0] })
+    state().setPreload('G', null)
+    expect(state().objects).toBe(before)
+    state().setPreload('P1', defaultPreload())
+    const set = state().objects
+    state().setPreload('P1', { kind: 'pollen', enabled: undefined, center: [0, 0, 0] })
+    expect(state().objects).toBe(set)
+    expect(undo()).toBe(true)
+    expect(undo()).toBe(false)
+  })
+
+  it('자리를 둔 임시 씬은 임시 씬이 아니다', () => {
+    const placeholder = useSceneStore.getInitialState().objects
+    state().replaceObjects(placeholder)
+    expect(isPlaceholderScene(state().objects)).toBe(true)
+    state().setPreload('webcam', defaultPreload())
     expect(isPlaceholderScene(state().objects)).toBe(false)
   })
 })

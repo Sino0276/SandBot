@@ -199,8 +199,9 @@ export type BodyShape =
       radius: number
     }
 
-// convex → canonicalHull(points), box → boxHull(center, rotation, half), capsule → sphere = |b − a| < MIN_CAPSULE_SEGMENT.
-// 볼록 점이 퇴화면 null(parseWorldSpec가 이미 막는다)
+// convex → canonicalHull(points), box → boxHull(center, rotation, half), capsule → sphere = |b − a| < MIN_CAPSULE_SEGMENT,
+// cylinder(6a) → 외접 32각 기둥(cylinderColliderPoints, prismHull: 공이 아닌 짝의 근사). 볼록 점이 퇴화면 null(parseWorldSpec가
+// 이미 막는다)
 export function bodyShape(collider: SimCollider): BodyShape | null {
   if (collider.kind === 'capsule') {
     const a = arr(collider.a)
@@ -218,7 +219,9 @@ export function bodyShape(collider: SimCollider): BodyShape | null {
   const hull =
     collider.kind === 'box'
       ? boxHull(collider.center, collider.rotation, collider.half)
-      : canonicalHull(collider.points)
+      : collider.kind === 'cylinder'
+        ? prismHull(cylinderColliderPoints(collider.a, collider.b, collider.radius))
+        : canonicalHull(collider.points)
   if (!hull) return null
   let radius = 0
   for (const v of hull.vertices) radius = Math.max(radius, length(arr(v)))
@@ -280,6 +283,54 @@ export function cylinderPrism(
       return vec(add(c, apply(m, [big * x, big * y, z])))
     })
   return [...ring(-height / 2), ...ring(height / 2)]
+}
+
+// ---- 원기둥 충돌체 = 외접 32각 기둥(6a) ----
+
+// 원기둥 충돌체(Cylinder Collider)의 공이 아닌 짝(벽·구조물·바닥·자기 충돌·프리로드 겹침 검사)에 쓰는 다각 기둥의 변 수
+// [가정: 외접 32각 기둥, 반지름 r / cos(π/32) = 1.0048·r] 정확한 원기둥 SAT 대신 지금의 껍질 좁은 단계를 그대로 쓰려고(공과의
+// 짝은 정확한 구–원기둥이다, spec-6a §1). 64점 = MAX_HULL_POINTS
+export const CYLINDER_COLLIDER_SIDES = 32
+// 한 사분면 cos θ_k(θ_k = k·11.25°, k = 0…7)를 제곱근 식으로(새 Math.sin·cos 없이)
+const S2 = Math.SQRT2
+const COS_11_25_EXACT = Math.sqrt(2 + Math.sqrt(2 + S2)) / 2
+const COS_33_75 = Math.sqrt(2 + Math.sqrt(2 - S2)) / 2
+const COS_56_25 = Math.sqrt(2 - Math.sqrt(2 - S2)) / 2
+const COS_78_75 = Math.sqrt(2 - Math.sqrt(2 + S2)) / 2
+const OCTANT_COS = [1, COS_11_25_EXACT, COS_22_5, COS_33_75, COS_45, COS_56_25, COS_67_5, COS_78_75]
+const OCTANT_SIN = [0, COS_78_75, COS_67_5, COS_56_25, COS_45, COS_33_75, COS_22_5, COS_11_25_EXACT]
+// cos(π/32) = √(2 + √(2 + √(2 + √2)))/2: 외접 다각형 반지름 R = r / cos(π/32)(변이 원에 닿는다)
+const COS_5_625 = Math.sqrt(2 + Math.sqrt(2 + Math.sqrt(2 + S2))) / 2
+
+// 원기둥 충돌체(뚜껑 중심 a·b, 반지름 r, 같은 틀)의 외접 32각 기둥 64점: a 쪽 고리 32점 + b 쪽 고리 32점(같은 각 순서). 고리의
+// 기준 축 u는 축 d와 가장 덜 나란한 틀 축(같으면 x → y → z)과 d의 외적이고 v = d × u다(결정적). prismHull이 받는 순서다.
+// |b − a|가 0이면 던진다(parseWorldSpec가 MIN_CYLINDER_SEGMENT로 막는다)
+export function cylinderColliderPoints(a: Vec3, b: Vec3, radius: number): Vec3[] {
+  const pa = arr(a)
+  const pb = arr(b)
+  const d = normalize(sub(pb, pa))
+  if (!d) throw new RangeError('cylinder: zero axis')
+  let k = 0
+  for (let i = 1; i < 3; i++) if (Math.abs(d[i]) < Math.abs(d[k])) k = i
+  const e: V3 = [k === 0 ? 1 : 0, k === 1 ? 1 : 0, k === 2 ? 1 : 0]
+  const u = normalize(cross(d, e)) as V3
+  const v = cross(d, u)
+  const big = radius / COS_5_625
+  const ring = (center: V3): Vec3[] =>
+    Array.from({ length: CYLINDER_COLLIDER_SIDES }, (_, j) => {
+      const q = Math.floor(j / 8)
+      const i = j % 8
+      // 사분면 q만큼 반시계 90°씩 돌린다: (x, y) → (−y, x)
+      let x = OCTANT_COS[i]
+      let y = OCTANT_SIN[i]
+      for (let turn = 0; turn < q; turn++) {
+        const t = x
+        x = -y
+        y = t
+      }
+      return vec(add(center, add(scale(u, big * x), scale(v, big * y))))
+    })
+  return [...ring(pa), ...ring(pb)]
 }
 
 // ---- 껍질 위상(하위 단계마다 만드는 transformHull 사본은 faces·edges 배열을 함께 쓰므로 edges 배열로 기억한다) ----

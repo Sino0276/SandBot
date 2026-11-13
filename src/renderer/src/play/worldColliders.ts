@@ -1,5 +1,6 @@
 import { Matrix4, Vector3 } from 'three'
 import {
+  cylinderColliderPoints,
   EDIT_OVERLAP_TOLERANCE,
   editPoseOverlaps,
   type EditPoseBody
@@ -216,7 +217,8 @@ const inWorld = (p: Vec3): boolean =>
   Math.abs(p.z) <= MAX_COLLIDER_EXTENT
 function withinWorld(collider: SimCollider): boolean {
   if (collider.kind === 'box') return inWorld(collider.center)
-  if (collider.kind === 'capsule') return inWorld(collider.a) && inWorld(collider.b)
+  if (collider.kind === 'capsule' || collider.kind === 'cylinder')
+    return inWorld(collider.a) && inWorld(collider.b)
   return true
 }
 // 모은 점(xyz 수 배열) 가운데 껍질 좌표 한도 밖의 점이 있음(buildHull이 null을 내는 경우 가운데 퇴화가 아닌 것)
@@ -259,9 +261,10 @@ function convexEntry(
   }
 }
 
-// Box·Capsule Collider → 세계 설명 충돌체(몸체 틀, §5.2). toBody: 오브젝트 로컬 → 몸체 틀(위치·회전만이라 회전은 정규 직교)
+// Box·Capsule·Cylinder Collider → 세계 설명 충돌체(몸체 틀, §5.2). toBody: 오브젝트 로컬 → 몸체 틀(위치·회전만이라 회전은 정규
+// 직교). Cylinder(6a)는 두 뚜껑 중심 center ∓ (h/2)·e
 function primitiveEntry(
-  collider: Extract<ColliderSettings, { kind: 'box' | 'capsule' }>,
+  collider: Extract<ColliderSettings, { kind: 'box' | 'capsule' | 'cylinder' }>,
   objectId: string,
   toBody: Matrix4
 ): WorldColliderEntry {
@@ -286,13 +289,16 @@ function primitiveEntry(
     }
   }
   const [ex, ey, ez] = AXES[collider.direction]
-  const half = Math.max(0, collider.height / 2 - collider.radius)
+  const half =
+    collider.kind === 'cylinder'
+      ? collider.height / 2
+      : Math.max(0, collider.height / 2 - collider.radius)
   const [cx, cy, cz] = collider.center
   return {
     objectId,
     colliderId: collider.id,
     collider: {
-      kind: 'capsule',
+      kind: collider.kind,
       a: at([cx - half * ex, cy - half * ey, cz - half * ez]),
       b: at([cx + half * ex, cy + half * ey, cz + half * ez]),
       radius: collider.radius,
@@ -563,6 +569,10 @@ function floorGapOf(entries: readonly WorldColliderEntry[], frame: Matrix4): num
   let min = Infinity
   for (const { collider } of entries) {
     if (collider.kind === 'convex') for (const p of collider.points) min = Math.min(min, z(p))
+    // 원기둥은 시뮬레이터가 바닥 짝에 쓰는 외접 32각 기둥(collision3d.ts cylinderColliderPoints)의 가장 낮은 점
+    else if (collider.kind === 'cylinder')
+      for (const p of cylinderColliderPoints(collider.a, collider.b, collider.radius))
+        min = Math.min(min, z(p))
     else if (collider.kind === 'capsule')
       min = Math.min(min, z(collider.a) - collider.radius, z(collider.b) - collider.radius)
     else {

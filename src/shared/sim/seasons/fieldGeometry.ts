@@ -249,6 +249,38 @@ export function circlePolygonSeparation(
   return distance - radius
 }
 
+// ---- 구와 구조물(6a 경기 요소 데이터 검사) ----
+
+// 구(중심·반지름)와 구조물 형상(carrier 'field'라 필드 좌표)의 분리 거리(음수면 침투 깊이). 상자는 자기 틀의 최근접점,
+// 세운 원기둥은 반지름·축 방향 최근접점이다(정확, 데이터 검사 전용)
+export function sphereShapeSeparation(center: Vec3, radius: number, shape: FieldShape): number {
+  const m = rotationMatrix(shape.rotation)
+  const d = {
+    x: center.x - shape.center.x,
+    y: center.y - shape.center.y,
+    z: center.z - shape.center.z
+  }
+  // 자기 틀 좌표 Rᵀ·d
+  const local = {
+    x: m[0] * d.x + m[3] * d.y + m[6] * d.z,
+    y: m[1] * d.x + m[4] * d.y + m[7] * d.z,
+    z: m[2] * d.x + m[5] * d.y + m[8] * d.z
+  }
+  if (shape.kind === 'box') {
+    const half = [shape.size.x / 2, shape.size.y / 2, shape.size.z / 2]
+    const p = [local.x, local.y, local.z]
+    const outside = p.map((v, k) => Math.max(Math.abs(v) - half[k], 0))
+    const distance = Math.hypot(outside[0], outside[1], outside[2])
+    if (distance > 0) return distance - radius
+    // 중심이 상자 안: 가장 가까운 면까지(음수)
+    return Math.max(...p.map((v, k) => Math.abs(v) - half[k])) - radius
+  }
+  const radial = Math.hypot(local.x, local.y) - shape.radius
+  const axial = Math.abs(local.z) - shape.height / 2
+  if (radial > 0 || axial > 0) return Math.hypot(Math.max(radial, 0), Math.max(axial, 0)) - radius
+  return Math.max(radial, axial) - radius
+}
+
 // ---- 시작 겹침 ----
 
 export type FieldOverlap =

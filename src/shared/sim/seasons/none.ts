@@ -37,5 +37,7 @@ export const NONE_FIELD: FieldSpec = deepFreeze<FieldSpec>({
   structures: [],
   aprilTags: { family: 'tag36h11', tags: [] },
   startKeepOut: [],
-  startPresets: []
+  startPresets: [],
+  // 경기 요소 없음(6a: 공은 시즌 데이터가 있을 때만)
+  elements: null
 })

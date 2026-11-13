@@ -1,4 +1,4 @@
-import type { Vec2, Vec3 } from '../worldSpec'
+import type { SimElementGroup, SimElementKind, Vec2, Vec3 } from '../worldSpec'
 import {
   boxVertices,
   circlePolygonSeparation,
@@ -7,11 +7,13 @@ import {
   polygonSeparation,
   rectPolygon,
   rotationMatrix,
-  solidFootprints
+  solidFootprints,
+  sphereShapeSeparation
 } from './fieldGeometry'
 import { presetRect, START_DEPTH } from './startPose'
 import {
   mirrorCarrier,
+  mirrorElementKind,
   mirrorHive,
   mirrorPreset,
   mirrorRect,
@@ -116,6 +118,54 @@ export type FieldTape = {
 
 export type FieldZone = { key: 'loadingZone' | 'garden'; alliance: Alliance; rect: FieldRect }
 
+// ---- 움직이는 경기 요소(6a, spec-6a §4) ----
+
+// 공 한 종류의 물리 값. 시뮬레이터(elements/)가 resolveSeason으로 읽고 렌더러 값은 받지 않는다. 길이 m, 질량 kg.
+export type FieldElementType = {
+  kind: SimElementKind
+  // 바깥 반지름
+  radius: number
+  mass: number
+  // 등방 관성(kg·m², 중심 기준). 속이 빈 껍질이라 0.4·m·r²보다 크다
+  inertia: number
+  // 표시 색과 반사율(6c 센서가 쓴다)
+  material: FieldMaterial
+  contact: {
+    // 판 둘 사이에 끼운 공의 강성(N/m). 접촉점 하나의 스프링은 그 두 배(직렬 접촉 둘)
+    plateStiffness: number
+    // 이 깊이(반지름 비)를 넘으면 딱딱한 심(강체 행)
+    coreDepthRatio: number
+    // 공 표면의 쿨롱 μ(짝은 두 면의 평균, Unity Friction Combine Average)
+    friction: number
+    // 굴림 저항 계수(무차원, 굴림 감속 ≈ μ_rr·g/(1 + I/mr²))
+    rollingResistance: number
+    // 회전(법선 둘레) 저항의 접촉 반경(m)
+    spinRadius: number
+    // 반발 계수: 바닥(타일), 딱딱한 면(벽·구조물), 다른 공, 로봇
+    restitution: { floor: number; hard: number; element: number; robot: number }
+  }
+  air: {
+    // 항력 계수 C_d(면적 πr²)
+    dragCoefficient: number
+    // Magnus 양력 계수 = min(magnusMax, magnusSlope · r|ω|/|v|)
+    magnusSlope: number
+    magnusMax: number
+  }
+  // 필드 밖으로 나가면 경기 요원이 가까운 LOADING ZONE에 다시 넣는다(CM 10.8.2, POLLEN). false면 밖에 그대로 둔다
+  // (NECTAR는 사람 선수 몫이라 6d)
+  reentry: boolean
+}
+
+// 시작 배치 하나(필드 좌표 공 중심, 쉬는 상태로 생긴다)
+export type FieldElementPlacement = { group: SimElementGroup; kind: SimElementKind; position: Vec3 }
+
+export type FieldElements = {
+  // 종류마다 하나(kind 유일)
+  types: FieldElementType[]
+  // 배열 순서가 공 번호 순서다(묶음으로 거른 뒤 그 순서, elements/spawn.ts elementSpawns)
+  layout: FieldElementPlacement[]
+}
+
 export type FieldSpec = {
   season: SeasonId
   // 벽 라벨(i18n field.walls.<값>). 'none'은 null(라벨 없음)
@@ -152,6 +202,9 @@ export type FieldSpec = {
   // 프리셋만 피하는 곳(GARDEN POLLEN 자리, 규칙 아님 synthesis §9.6). 데이터 시험과 표시만 쓴다
   startKeepOut: { rect: FieldRect }[]
   startPresets: FieldStartPreset[]
+  // 움직이는 경기 요소(6a). 없는 시즌('none')은 null. 다시 넣는 자리는 loadingZone 구역에서 만든다(elements/spawn.ts
+  // reentrySlots)
+  elements: FieldElements | null
 }
 
 // 깊게 얼린 같은 값(시즌 모듈 상수). 시험이 바꾼 판이 필요하면 얕은 복사를 쓴다(spec-4ab §1.3).
@@ -317,6 +370,8 @@ export function checkFieldSpec(spec: FieldSpec): string[] {
       errors.push(`${what}: outside own half`)
   })
 
+  if (spec.elements) checkElements(spec, spec.elements, errors)
+
   // 대칭(Rz(π), 형상으로 비교)
   spec.structures.forEach((s, i) => {
     const mirroredCarrier = mirrorCarrier(s.carrier)
@@ -387,6 +442,88 @@ export function checkFieldSpec(spec: FieldSpec): string[] {
     if (!found) errors.push(`startPresets[${i}]: no Rz(pi) counterpart`)
   })
   return errors
+}
+
+// 경기 요소 배치 허용(m): 벽·서로·바닥에 닿게 놓은 공은 반올림만큼만 겹친다
+const ELEMENT_TOLERANCE = 1e-9
+// 속이 찬 구(0.4·m·r²)와 얇은 껍질(2/3·m·r²) 사이여야 한다
+const SOLID_SPHERE_INERTIA = 0.4
+const THIN_SHELL_INERTIA = 2 / 3
+
+// 경기 요소(6a, spec-6a §4): 종류는 kind 유일·값 범위, 배치는 아는 종류이고 바닥에 놓이고(z = r) 필드 안이며 벽·구조물
+// (carrier field이고 solid ∨ occludes: 공이 부딪히는 것, collision3d.ts staticShapes와 같은 집합)·서로·시작 프리셋 사각형과
+// 겹치지 않고, Rz(π) 짝이 있다(색 있는 종류는 상대 색)
+function checkElements(spec: FieldSpec, elements: FieldElements, errors: string[]): void {
+  const kinds = new Set<string>()
+  elements.types.forEach((t, i) => {
+    const what = `elements.types[${i}]`
+    if (kinds.has(t.kind)) errors.push(`${what}: duplicate kind ${t.kind}`)
+    kinds.add(t.kind)
+    if (!(t.radius > 0 && t.mass > 0)) errors.push(`${what}: size`)
+    const solid = SOLID_SPHERE_INERTIA * t.mass * t.radius * t.radius
+    const shell = THIN_SHELL_INERTIA * t.mass * t.radius * t.radius
+    if (!(t.inertia >= solid && t.inertia <= shell)) errors.push(`${what}: inertia`)
+    const c = t.contact
+    if (!(c.plateStiffness > 0)) errors.push(`${what}: plateStiffness`)
+    if (!(c.coreDepthRatio > 0 && c.coreDepthRatio < 1)) errors.push(`${what}: coreDepthRatio`)
+    if (!(c.friction >= 0 && c.rollingResistance >= 0 && c.spinRadius >= 0))
+      errors.push(`${what}: friction`)
+    const e = c.restitution
+    if (![e.floor, e.hard, e.element, e.robot].every((v) => v >= 0 && v <= 1))
+      errors.push(`${what}: restitution`)
+    const a = t.air
+    if (!(a.dragCoefficient >= 0 && a.magnusSlope >= 0 && a.magnusMax >= 0))
+      errors.push(`${what}: air`)
+    const mirrored = elements.types.find((u) => u.kind === mirrorElementKind(t.kind))
+    if (!mirrored || mirrored.radius !== t.radius || mirrored.mass !== t.mass)
+      errors.push(`${what}: no Rz(pi) counterpart`)
+  })
+
+  const { innerHalf } = spec.perimeter
+  const radiusOf = (kind: string): number | null =>
+    elements.types.find((t) => t.kind === kind)?.radius ?? null
+  elements.layout.forEach((p, j) => {
+    const what = `elements.layout[${j}]`
+    const r = radiusOf(p.kind)
+    if (r === null) {
+      errors.push(`${what}: unknown kind ${p.kind}`)
+      return
+    }
+    const c = p.position
+    if (!(Math.abs(c.z - r) <= ELEMENT_TOLERANCE)) errors.push(`${what}: not resting on floor`)
+    if (
+      !(Math.abs(c.x) + r <= innerHalf + ELEMENT_TOLERANCE) ||
+      !(Math.abs(c.y) + r <= innerHalf + ELEMENT_TOLERANCE)
+    )
+      errors.push(`${what}: outside field`)
+    spec.structures.forEach((s, i) => {
+      if (s.carrier !== 'field' || !(s.solid || s.occludes)) return
+      if (sphereShapeSeparation(c, r, s.shape) < -ELEMENT_TOLERANCE)
+        errors.push(`${what}: structures[${i}]`)
+    })
+    for (let k = j + 1; k < elements.layout.length; k++) {
+      const q = elements.layout[k]
+      const rq = radiusOf(q.kind)
+      if (rq === null) continue
+      const gap = Math.hypot(q.position.x - c.x, q.position.y - c.y, q.position.z - c.z) - r - rq
+      if (gap < -ELEMENT_TOLERANCE) errors.push(`${what}: elements.layout[${k}]`)
+    }
+    spec.startPresets.forEach((preset, i) => {
+      const rect = presetRect(preset, innerHalf)
+      if (circlePolygonSeparation(c, r, rectPolygon(rect)) < -OVERLAP_TOLERANCE)
+        errors.push(`startPresets[${i}]: ${what}`)
+    })
+    const m = mirrorVec3(c)
+    const found = elements.layout.some(
+      (q) =>
+        q.group === p.group &&
+        q.kind === mirrorElementKind(p.kind) &&
+        Math.abs(q.position.x - m.x) <= SYMMETRY_TOLERANCE &&
+        Math.abs(q.position.y - m.y) <= SYMMETRY_TOLERANCE &&
+        Math.abs(q.position.z - m.z) <= SYMMETRY_TOLERANCE
+    )
+    if (!found) errors.push(`${what}: no Rz(pi) counterpart`)
+  })
 }
 
 // SDK 묶음 이름의 Rz(π) 짝(빨강 득점 ↔ 파랑 관중석)

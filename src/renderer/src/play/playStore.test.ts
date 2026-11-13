@@ -640,6 +640,56 @@ describe('B15 simNotice collisionOverlap', () => {
   })
 })
 
+// 6a 계약: 경기 요소 안내는 params.kind로 문구를 고르고, gameState는 아직 상태를 바꾸지 않는다
+describe('경기 요소 안내(6a)', () => {
+  const notice = (
+    code: 'elementOutOfField' | 'elementReentered' | 'elementCrushed',
+    kind?: string
+  ): PlayEvent =>
+    ({
+      type: 'simNotice',
+      runId: 'r1',
+      tNanos: 1,
+      code,
+      params: kind === undefined ? {} : { kind }
+    }) as PlayEvent
+
+  it('나감·다시 넣기는 종류별 문구, 나머지는 기본 경로(ko·en 모두 문구가 있다)', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'ko',
+      resources: { ko: { translation: ko }, en: { translation: en } },
+      interpolation: { escapeValue: false }
+    })
+    for (const kind of ['pollen', 'nectarRed', 'nectarBlue'] as const) {
+      const entry = apply(data(), notice('elementOutOfField', kind)).entries[0]
+      expect(entry).toMatchObject({ type: 'notice', key: `sim.elementOutOfField.${kind}` })
+      expect(entryHeadline(entry, instance.t)).toBe(ko.console.notices.sim.elementOutOfField[kind])
+      expect(en.console.notices.sim.elementReentered[kind]).toBeTruthy()
+    }
+    // 모르는 종류는 POLLEN 문구
+    expect(apply(data(), notice('elementReentered', 'x')).entries[0]).toMatchObject({
+      key: 'sim.elementReentered.pollen'
+    })
+    const crushed = apply(data(), notice('elementCrushed')).entries[0]
+    expect(crushed).toMatchObject({ type: 'notice', key: 'sim.elementCrushed', params: {} })
+    expect(entryHeadline(crushed, instance.t)).toBe(ko.console.notices.sim.elementCrushed)
+  })
+
+  it('gameState 이벤트는 아직 상태를 바꾸지 않는다', () => {
+    const state = data()
+    expect(
+      applyPlayEvent(state, {
+        type: 'gameState',
+        runId: 'r1',
+        tNanos: 0,
+        revision: 1,
+        poses: [0, 0, 0, 10000, 0, 0, 0]
+      })
+    ).toEqual({})
+  })
+})
+
 describe('라이브러리 진행·보고·링크 검사', () => {
   const progress: PlayEvent = {
     type: 'libraryProgress',

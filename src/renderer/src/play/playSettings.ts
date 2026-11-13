@@ -25,7 +25,13 @@ export type HiveSide = 'start' | 'tipped'
 export type HiveState = { red: HiveSide; blue: HiveSide }
 // sensorNoise(spec-4c §1.6): 거리 센서 잡음을 켬(세계 설명 noise, 시드는 Hub 타이밍과 같은 seed 칸). 렌더러 전용이고 메인에는
 // 세계 설명으로만 간다.
-export type RendererPlaySettings = PlaySettings & { hiveState: HiveState; sensorNoise: boolean }
+// gameElements(6a, 사용자 결정 11/13): 움직이는 경기 요소(공)를 켬(기본 켬). 렌더러 전용이고 메인에는 세계 설명 elements로만
+// 간다(끄면 elements 칸을 보내지 않는다). 환경 설정 › 시뮬레이션과 Field 인스펙터에서 바꾼다.
+export type RendererPlaySettings = PlaySettings & {
+  hiveState: HiveState
+  sensorNoise: boolean
+  gameElements: boolean
+}
 
 export const DEFAULT_PLAY_SETTINGS: RendererPlaySettings = {
   speed: 1,
@@ -36,7 +42,9 @@ export const DEFAULT_PLAY_SETTINGS: RendererPlaySettings = {
   // 기본은 시작 상태(EFG:533)
   hiveState: Object.freeze({ red: 'start', blue: 'start' }),
   // 기본은 끔: 끄면 같은 입력에 같은 값(잡음 경로를 부르지 않는다)
-  sensorNoise: false
+  sensorNoise: false,
+  // 기본은 켬(사용자 결정 11/13)
+  gameElements: true
 }
 
 // Hub 타이밍 오차의 상한(±50%). 이보다 크면 결과가 실제 허브와 너무 달라진다.
@@ -122,11 +130,13 @@ export function parsePlaySettings(value: unknown): RendererPlaySettings {
         : DEFAULT_BATTERY_VOLTAGE,
     hiveState: { red: hiveSide(hive.red), blue: hiveSide(hive.blue) },
     // 참일 때만 켬(틀린 값은 끔)
-    sensorNoise: saved.sensorNoise === true
+    sensorNoise: saved.sensorNoise === true,
+    // 거짓일 때만 끔(없거나 틀린 값은 기본 켬)
+    gameElements: saved.gameElements !== false
   }
 }
 
-// 실행 요청(PlayInitRequest.settings)에 싣는 공유 설정 다섯 키(렌더러 전용 hiveState·sensorNoise는 빼고)
+// 실행 요청(PlayInitRequest.settings)에 싣는 공유 설정 다섯 키(렌더러 전용 hiveState·sensorNoise·gameElements는 빼고)
 export function runSettings(settings: PlaySettings): PlaySettings {
   return {
     speed: settings.speed,

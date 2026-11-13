@@ -131,7 +131,13 @@ describe('K5 스냅', () => {
     expect(presetTarget(preset, INNER, SQUARE, { x: 0, y: 0, yaw: 0 })).toBeUndefined()
     // 요 30°로 돌린 로봇은 사각형 밖이라 undefined(구간 가운데로 스냅)
     expect(presetTarget(preset, INNER, SQUARE, { ...pose, yaw: Math.PI / 6 })).toBeUndefined()
-    expect(presetRect(preset, INNER)).toEqual([0.66967, -INNER, 1.7241, -(INNER - START_DEPTH)])
+    // 끝은 GARDEN POLLEN 자리(벽 − 공 지름, 6a)
+    expect(presetRect(preset, INNER)).toEqual([
+      0.66967,
+      -INNER,
+      INNER - 0.0711,
+      -(INNER - START_DEPTH)
+    ])
   })
 })
 
