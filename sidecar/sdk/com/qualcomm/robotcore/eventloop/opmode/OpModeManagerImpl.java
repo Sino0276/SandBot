@@ -28,7 +28,7 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
-// SandBot: 사이드카에는 이벤트 루프의 OpMode 관리자가 없다(런타임이 SandbotOpModeBridge로 OpMode를 돌린다). API 표면은 실제와 같게 두고, 실제 동작이 필요한 ForceStopException(terminateOpModeNow)·DefaultOpMode·정적 도움 함수와 OpMode 수명 알림(registerListener·unregisterListener, getOpModeManagerOfActivity가 주는 관리자 하나)만 실제 코드이며, 나머지 관리자 인스턴스 동작은 생성한 stub처럼 SimUnsupportedException을 던진다.
+// SandBot: 사이드카에는 이벤트 루프의 OpMode 관리자가 없다(런타임이 SandbotOpModeBridge로 OpMode를 돌린다). API 표면은 실제와 같게 두고, 실제 동작이 필요한 ForceStopException(terminateOpModeNow)·DefaultOpMode·정적 도움 함수, STOP 뒤 위험한 하드웨어 막기 상태(preventDangerousHardwareAccess, 실제처럼 LynxModule 명령이 읽는다)와 OpMode 수명 알림(registerListener·unregisterListener, getOpModeManagerOfActivity가 주는 관리자 하나)만 실제 코드이며, 나머지 관리자 인스턴스 동작은 생성한 stub처럼 SimUnsupportedException을 던진다.
 
 package com.qualcomm.robotcore.eventloop.opmode;
 
@@ -83,6 +83,9 @@ public class OpModeManagerImpl implements OpModeServices, OpModeManagerNotifier 
   //-----------------------------------------------------------------------------------------------
 
   protected static int              matchNumber                     = 0;
+  // SandBot: 실제는 callActiveOpModeStop이 허브 fail safe 전에 true로, runActiveOpMode가 다음 INIT(resetHardwareForOpMode·preInit 알림 전)에
+  // false로 둔다. 사이드카에는 그 메서드가 없어 장치 연결(SandbotHardware.stopRequested·beforeInit)이 같은 자리에서
+  // SandbotOpModeBridge.setPreventDangerousHardwareAccess로 쓴다. SimHub의 위험한 명령 취소도 이 값 하나를 읽는다.
   protected static volatile boolean preventDangerousHardwareAccess  = false;
 
   public static boolean shouldPreventDangerousHardwareAccess() {

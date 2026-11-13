@@ -496,10 +496,12 @@ public final class SandbotHardware {
      * INIT 전(실제 OpModeManagerImpl.resetHardwareForOpMode): 허브와 Lynx 컨트롤러를 먼저, 그다음 나머지 장치를
      * resetDeviceConfigurationForOpMode로 되돌린다(BulkCachingMode OFF, 모터 RUN_WITHOUT_ENCODER·FLOAT·0, 서보 PWM 끔·기본 범위,
      * 디지털 입력, 모터·서보 방향 FORWARD·scaleRange 0..1, I2C 장치는 다음 hardwareMap.get에서 다시 초기화). 그 뒤부터 하드웨어 비용을 청구한다.
+     * 먼저 STOP이 켠 위험한 하드웨어 막기를 끈다(실제 runActiveOpMode가 resetHardwareForOpMode·preInit 알림 전에
+     * OpModeManagerImpl.preventDangerousHardwareAccess를 false로 둔다).
      */
     public static void beforeInit(HardwareMap map) {
         SimHub.setCharging(false);
-        SimHub.setPreventDangerousHardwareAccess(false);
+        SandbotOpModeBridge.setPreventDangerousHardwareAccess(false);
         List<HardwareDevice> devices = devicesOf(map);
         List<HardwareDevice> first = new ArrayList<>();
         for (HardwareDevice device : devices) if (device instanceof RobotCoreLynxModule) first.add(device);
@@ -511,15 +513,16 @@ public final class SandbotHardware {
 
     /**
      * STOP을 받았을 때(DS STOP 또는 requestOpModeStop, 실제 OpModeManagerImpl.callActiveOpModeStop의 앞부분 — OpMode에 정지를
-     * 알리기 전): 위험한 하드웨어 명령을 막고(preventDangerousHardwareAccess) 허브마다 fail safe를 보낸다. 그 뒤 OpMode가 끝날 때까지
-     * 팀 코드가 보내는 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기는 허브에 가지 않는다(실제는 CANCELLED_FOR_SAFETY).
-     * 이 일은 이벤트 루프가 하므로 팀 코드의 시간(비용)에 넣지 않는다. 다음 beforeInit이 막은 것을 푼다.
+     * 알리기 전): 위험한 하드웨어 명령을 막고(OpModeManagerImpl.preventDangerousHardwareAccess를 fail safe 전에 true로, 그래서
+     * shouldPreventDangerousHardwareAccess()도 실제처럼 true다) 허브마다 fail safe를 보낸다. 그 뒤 다음 INIT까지(postStop 리스너와
+     * afterStop 동안에도) 팀 코드가 보내는 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기는 허브에 가지 않는다(실제는
+     * CANCELLED_FOR_SAFETY). 이 일은 이벤트 루프가 하므로 팀 코드의 시간(비용)에 넣지 않는다. 다음 beforeInit이 막은 것을 푼다.
      */
     public static void stopRequested(HardwareMap map) {
         boolean charging = SimHub.isCharging();
         SimHub.setCharging(false);
         try {
-            SimHub.setPreventDangerousHardwareAccess(true);
+            SandbotOpModeBridge.setPreventDangerousHardwareAccess(true);
             for (LynxModule module : map.getAll(LynxModule.class)) module.attemptFailSafeAndIgnoreErrors();
         } finally {
             SimHub.setCharging(charging);

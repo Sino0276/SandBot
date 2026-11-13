@@ -11,6 +11,8 @@ import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.hardware.sparkfun.SparkFunOTOS;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
+import com.qualcomm.robotcore.eventloop.opmode.SandbotOpModeBridge;
 import com.qualcomm.robotcore.exception.TargetPositionNotSetException;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.CRServo;
@@ -211,6 +213,37 @@ public final class DeviceBehaviorTest {
         next.get(DcMotor.class, "tetrix").setPower(0.5);
         Check.near(0.5, num(next.out("tetrix", "power")), 1e-4, "commands work again after beforeInit");
         SandbotHardware.afterStop(next.map);
+    }
+
+    public static void testStopFlagIsOpModeManagerState() {
+        // 실제 SDK 12.0: callActiveOpModeStop이 허브 fail safe 전에 OpModeManagerImpl.preventDangerousHardwareAccess를 true로,
+        // runActiveOpMode가 다음 INIT(resetHardwareForOpMode 전)에 false로 둔다. LynxModule.sendCommand는
+        // shouldPreventDangerousHardwareAccess()를 읽는다. SandBot도 그 정적 필드 하나가 상태이고 SimHub가 그것을 읽는다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "INIT (beforeInit) clears the flag");
+        tetrix.setPower(0.5);
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(true, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "STOP sets the flag");
+        Check.equal(0.0, bot.out("tetrix", "power"), "the STOP fail safe ran");
+
+        // 하나의 원천: 관리자의 값을 바꾸면 SimHub의 위험한 명령 취소도 그대로 따른다
+        SandbotOpModeBridge.setPreventDangerousHardwareAccess(false);
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the bridge writes the manager flag");
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "a dangerous command is sent while the manager flag is false");
+        SandbotOpModeBridge.setPreventDangerousHardwareAccess(true);
+        tetrix.setPower(0.8);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "a dangerous command is cancelled while the manager flag is true");
+
+        // OpMode가 끝난 뒤(afterStop)에도 다음 INIT까지 남는다
+        SandbotHardware.afterStop(bot.map);
+        Check.equal(true, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the flag stays set after the OpMode ends");
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the next INIT clears the flag");
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "commands work again after the next INIT");
+        SandbotHardware.afterStop(bot.map);
     }
 
     public static void testStopAndResetEncoder() {

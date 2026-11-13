@@ -6,8 +6,9 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeServices;
 
 /**
- * 사이드카 런타임(org.sandbot.runtime)이 OpModeInternal의 package-private 훅을 부르는 문. 실제 SDK에서는 같은 패키지의
- * OpModeManagerImpl(이벤트 루프 스레드)이 부르던 것들이다. 팀 코드가 쓸 것이 아니다.
+ * 사이드카 런타임(org.sandbot.runtime)과 장치 연결(org.sandbot.sdk.devices.SandbotHardware)이 OpModeInternal·OpModeManagerImpl의
+ * package-private 훅·상태를 쓰는 문. 실제 SDK에서는 같은 패키지의 OpModeManagerImpl(이벤트 루프 스레드)이 하던 일이다. 팀 코드가 쓸
+ * 것이 아니다.
  *
  * <p>사이드카에는 이벤트 루프 스레드가 없다. 런타임이 OpMode 스레드에서 {@link #runOpModeOnThisThread}로 OpMode를 돌리고,
  * 틱 경계(가상 시계 호출 안, 같은 스레드)에서 {@link #start}·{@link #stop}·{@link #newGamepadData}·
@@ -71,6 +72,15 @@ public final class SandbotOpModeBridge {
      */
     public static OpModeManagerImpl manager() {
         return OpModeManagerImpl.sandbotManager();
+    }
+
+    /**
+     * STOP 뒤 위험한 하드웨어 막기({@link OpModeManagerImpl#shouldPreventDangerousHardwareAccess()}가 돌려주는 정적 필드). 실제
+     * callActiveOpModeStop이 허브 fail safe 전에 true로, runActiveOpMode가 다음 INIT(resetHardwareForOpMode 전)에 false로 둔다.
+     * 사이드카에서는 SandbotHardware.stopRequested·beforeInit이 같은 자리에서 부른다.
+     */
+    public static void setPreventDangerousHardwareAccess(boolean value) {
+        OpModeManagerImpl.preventDangerousHardwareAccess = value;
     }
 
     /** 실행할 OpMode를 만들었다(registerListener가 돌려주는 지금 OpMode). null이면 끝났다. */

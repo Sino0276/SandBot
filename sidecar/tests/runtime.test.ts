@@ -810,6 +810,34 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     )
   }
 
+  // 실제 SDK 12.0: callActiveOpModeStop이 허브 fail safe 전에 OpModeManagerImpl.preventDangerousHardwareAccess를 true로 두고
+  // (LynxModule.sendCommand가 shouldPreventDangerousHardwareAccess()를 읽어 위험한 명령을 CANCELLED_FOR_SAFETY로 끝낸다), 다음
+  // INIT(runActiveOpMode, resetHardwareForOpMode 전)에 false로 둔다. 그래서 팀 코드가 읽는 값은 STOP 전 false, STOP 뒤 OpMode
+  // 스레드와 postStop 리스너에서 true다(가짜 SDK가 늘 false를 돌려주지 않는다).
+  it(
+    'StopPreventDangerousAccess: shouldPreventDangerousHardwareAccess는 STOP 전 false, STOP 뒤 OpMode 스레드·postStop 리스너에서 true',
+    async () => {
+      const script: Script = {
+        opMode: 'StopPreventDangerousAccess',
+        events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+        request: { configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']) }
+      }
+      const run = await runSidecar(b, script)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      expect(results(run)).toEqual({
+        init: 'false',
+        running: 'false',
+        afterStop: 'true',
+        listenerPreStart: 'false',
+        listenerPostStop: 'true'
+      })
+      const again = await runSidecar(b, script)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    TIMEOUT
+  )
+
   // 읽기 루프는 끊긴 스레드의 명령을 버리면서도 잠금 시도 비용을 청구하는지 지킨다(버리기 전에도 명령을 보내 시간이 흘렀다).
   // power 루프의 0이 아닌 쓰기는 버리기 전에는 STOP 뒤의 위험한 명령이라 비용 없이 취소되었다. 그래서 가상 시간이 멈춘 채
   // 하드웨어를 계속 불러 stall도 stuckInStop도 아니었다(호스트가 STOP 5초 뒤 JVM을 끝낼 때까지 돌았다, 여기서는 시간 제한).
