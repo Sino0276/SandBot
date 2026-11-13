@@ -8,7 +8,14 @@ import {
   type RunRequest,
   type TickMessage
 } from '../../shared/sidecarProtocol'
-import { MAX_WORLD_JOINTS } from '../../shared/sim/worldSpec'
+import {
+  TEST_ROBOT_HEIGHT,
+  testChassis,
+  testMotorParams,
+  worldV4Defaults
+} from '../../shared/sim/testkit'
+import { PhysicsWorld } from '../../shared/sim/world'
+import { MAX_WORLD_JOINTS, WORLD_SPEC_VERSION, type WorldSpec } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
 import { MAX_LINE_CHARS } from './protocol'
 import { MAX_LAG_MS, SidecarSession, type SessionOptions } from './session'
@@ -1111,7 +1118,8 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       .filter((e) => ['pose', 'phase', 'finished'].includes(e.type))
       .slice(-3)
       .map((e) => (e.type === 'pose' ? `pose ${e.joints?.join()}` : e.type))
-    expect(order).toEqual(['pose 10', 'phase', 'finished'])
+    // 끝 자세는 마지막 틱의 출력으로 한 틱 더 돌린 세계의 것(settleWorld)
+    expect(order).toEqual(['pose 15', 'phase', 'finished'])
   })
 
   it('pose: 일시 정지·Step이 멈출 때·끝날 때(phase·finished 전) 바로 보낸다', () => {
@@ -1139,7 +1147,8 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       .filter((e) => ['pose', 'phase', 'finished'].includes(e.type))
       .slice(-3)
       .map((e) => (e.type === 'pose' ? `pose ${e.tNanos / MS}` : e.type))
-    expect(order).toEqual(['pose 30', 'phase', 'finished'])
+    // 끝 자세는 마지막 틱(30 ms)의 출력으로 한 틱 더 돌린 것(settleWorld)
+    expect(order).toEqual(['pose 35', 'phase', 'finished'])
     expect(of('pose').at(-1)?.blocked).toBe(true)
   })
 
@@ -1169,6 +1178,194 @@ describe('SidecarSession 세계(운동학 시뮬레이터)', () => {
       .filter((e) => e.type === 'log' || e.type === 'simNotice')
       .map((e) => e.type)
     expect(kinds.slice(0, 2)).toEqual(['log', 'simNotice'])
+  })
+})
+
+describe('SidecarSession 끝난 뒤 세계 한 틱(settleWorld)', () => {
+  type Step = [number, Record<string, DeviceValues>]
+  // PhysicsWorld처럼 [앞 틱, 이 틱]을 앞 틱의 출력으로 적분하는 세계: 전류는 앞 틱 출력 m.enabled를 따른다.
+  // throwAfter보다 늦은 시각의 step은 던진다.
+  function lagWorld(throwAfter = Infinity): { world: SimWorld; steps: Step[] } {
+    const steps: Step[] = []
+    let previous: Record<string, DeviceValues> = {}
+    let last = 0
+    return {
+      steps,
+      world: {
+        step: (tNanos, outputs) => {
+          steps.push([tNanos, outputs])
+          if (tNanos > throwAfter) throw new Error(`bad ${tNanos}`)
+          const motor: DeviceValues | undefined = previous.m
+          previous = outputs
+          last = tNanos
+          return { m: { current: motor?.enabled === true ? 9.58 : 0, position: -638 } }
+        },
+        pose: () => ({ x: last / 1e9, y: 0, yaw: 0, blocked: false }),
+        drainNotices: () => []
+      }
+    }
+  }
+  const ON: Record<string, DeviceValues> = { m: { enabled: true, power: 1 } }
+  // STOP fail safe 뒤(허브 fail safe: 모터를 멈추고 끈다)
+  const OFF: Record<string, DeviceValues> = { m: { enabled: false, power: 0 } }
+
+  it('STOP 뒤 끝나면 마지막 틱의 출력으로 한 틱 더 돌려 장치 탭 입력이 마지막 출력을 따른다(답·끝 시각은 그대로)', () => {
+    const { world, steps } = lagWorld()
+    const { clock, proc, session, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0, { outputs: ON }))
+    proc.line(tick(1, { outputs: ON }))
+    session.command({ type: 'stop' })
+    proc.line(tick(2, { phase: 'running', outputs: ON }))
+    expect(proc.replies().at(-1)?.events).toEqual(['stop'])
+    // 사이드카: 경계 10 ms에서 STOP(fail safe) → LinearOpMode가 그 틱 안에 끝남(끊긴 스레드의 setPower(0)은
+    // CLOCK_READ만) → 마지막 tick(15 ms, fail safe 뒤 출력, 답을 기다리지 않음) → finished
+    proc.line({ type: 'state', tNanos: 10 * MS, phase: 'stopping' })
+    proc.line(tick(3, { phase: 'stopping', outputs: OFF }))
+    clock.advance(50)
+    // 마지막 틱만으로는 STOP 전 명령으로 잰 전류가 마지막 출력 옆에 남는다(세계는 앞 틱의 출력으로 적분한다)
+    expect(of('devices').at(-1)).toMatchObject({ outputs: OFF, inputs: { m: { current: 9.58 } } })
+    const replies = proc.replies().length
+    proc.line({ type: 'finished', tNanos: 15 * MS, reason: 'stopped' })
+    expect(steps.map(([t]) => t / MS)).toEqual([0, 5, 10, 15, 20])
+    expect(steps.at(-1)?.[1]).toEqual(OFF)
+    // 끝난 사이드카에 답하지 않는다
+    expect(proc.replies()).toHaveLength(replies)
+    expect(of('devices').at(-1)).toEqual({
+      type: 'devices',
+      runId: 'run-1',
+      tNanos: 15 * MS,
+      outputs: OFF,
+      inputs: { m: { current: 0, position: -638 } }
+    })
+    // 끝 시각은 사이드카의 것, 자세는 한 틱 뒤. 입력·자세는 phase·finished보다 먼저
+    expect(of('finished')[0].tNanos).toBe(15 * MS)
+    expect(of('pose').at(-1)?.tNanos).toBe(20 * MS)
+    const order = events
+      .filter((e) => ['devices', 'pose', 'phase', 'finished'].includes(e.type))
+      .slice(-4)
+      .map((e) => e.type)
+    // devices·pose 사이 순서는 throttle 시각에 달렸다
+    expect(order.slice(0, 2).sort()).toEqual(['devices', 'pose'])
+    expect(order.slice(2)).toEqual(['phase', 'finished'])
+  })
+
+  it('받은 틱이 없으면(컴파일 실패, 틱 전 끝, 틱 전 종료) 세계를 돌리지 않는다', () => {
+    for (const reason of ['compileFailed', 'loadFailed'] as const) {
+      const { world, steps } = lagWorld()
+      const { proc, of } = setup({ world })
+      boot(proc)
+      proc.line({ type: 'finished', tNanos: 0, reason })
+      expect(steps).toEqual([])
+      expect(of('finished').map((e) => e.reason)).toEqual([reason])
+    }
+    const { world, steps } = lagWorld()
+    const { proc, of } = setup({ world })
+    boot(proc)
+    proc.exit(1)
+    expect(steps).toEqual([])
+    expect(of('finished').map((e) => e.reason)).toEqual(['crashed'])
+  })
+
+  it('한 번만: finished 뒤 프로세스가 끝나도 한 번, finished 없이 끝나도(crashed) 마지막 출력으로 한 번', () => {
+    const a = lagWorld()
+    const first = setup({ speed: 'max', world: a.world })
+    boot(first.proc)
+    first.proc.line(tick(0, { outputs: ON }))
+    first.proc.line(tick(1, { outputs: OFF }))
+    first.proc.line({ type: 'finished', tNanos: 5 * MS, reason: 'returned' })
+    first.proc.exit(0)
+    expect(a.steps.map(([t]) => t / MS)).toEqual([0, 5, 10])
+
+    const b = lagWorld()
+    const second = setup({ speed: 'max', world: b.world })
+    boot(second.proc)
+    second.proc.line(tick(0, { outputs: ON }))
+    second.proc.exit(1)
+    expect(b.steps.map(([t]) => t / MS)).toEqual([0, 5])
+    expect(second.of('finished').map((e) => e.reason)).toEqual(['crashed'])
+    // 사이드카가 fail safe를 알리지 못했으므로 마지막 출력(켜짐)과 맞는 값이다
+    expect(second.of('devices').at(-1)).toMatchObject({
+      outputs: ON,
+      inputs: { m: { current: 9.58, position: -638 } }
+    })
+  })
+
+  it('끝에서 세계가 던져도 worldError 한 번이고 끝은 그대로 알린다', () => {
+    const { world } = lagWorld(5 * MS)
+    const { proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    proc.line(tick(0, { outputs: ON }))
+    proc.line(tick(1, { outputs: OFF }))
+    proc.line({ type: 'finished', tNanos: 5 * MS, reason: 'returned' })
+    expect(of('simNotice')).toEqual([
+      {
+        type: 'simNotice',
+        runId: 'run-1',
+        tNanos: 10 * MS,
+        code: 'worldError',
+        params: { detail: 'Error: bad 10000000' }
+      }
+    ])
+    expect(of('finished').map((e) => e.reason)).toEqual(['returned'])
+    expect(of('phase').at(-1)?.phase).toBe('finished')
+  })
+
+  it('실제 PhysicsWorld: fail safe(enabled false)를 실은 마지막 틱으로 끝나면 모터 전류가 0이 된다', () => {
+    // 'none' 시즌, 바퀴·관절 없는 자유 모터 하나(controller.test.ts의 세계와 같은 꼴)
+    const spec: WorldSpec = {
+      version: WORLD_SPEC_VERSION,
+      ...worldV4Defaults(),
+      robot: {
+        start: { x: 0, y: 0, yaw: 0 },
+        footprint: [
+          { x: 0.2, y: 0.2 },
+          { x: -0.2, y: 0.2 },
+          { x: -0.2, y: -0.2 }
+        ],
+        height: TEST_ROBOT_HEIGHT,
+        body: testChassis()
+      },
+      batteryVoltage: 12,
+      hubs: ['Control Hub'],
+      motors: [
+        {
+          device: 'motor',
+          modelTag: 'TetrixMotor',
+          gearbox: 52,
+          directionSign: 1,
+          params: testMotorParams('TetrixMotor', 'default')
+        }
+      ],
+      wheels: [],
+      deadWheels: [],
+      pinpoints: [],
+      otos: [],
+      imus: [],
+      joints: []
+    }
+    const running: Record<string, DeviceValues> = {
+      motor: { mode: 'RUN_WITHOUT_ENCODER', power: 1, enabled: true, zeroPower: 'BRAKE' }
+    }
+    const stopped: Record<string, DeviceValues> = {
+      motor: { mode: 'RUN_WITHOUT_ENCODER', power: 0, enabled: false, zeroPower: 'BRAKE' }
+    }
+    const current = (event: Extract<PlayEvent, { type: 'devices' }> | undefined): unknown =>
+      event?.inputs.motor?.current
+    const { clock, proc, session, of } = setup({ speed: 'max', world: new PhysicsWorld(spec) })
+    boot(proc)
+    for (let k = 0; k < 20; k++) proc.line(tick(k, { phase: 'running', outputs: running }))
+    session.command({ type: 'stop' })
+    proc.line(tick(20, { phase: 'running', outputs: running }))
+    proc.line(tick(21, { phase: 'stopping', outputs: stopped }))
+    clock.advance(50)
+    // 마지막 틱의 입력은 STOP 전 명령(power 1)으로 적분한 것이다
+    expect(of('devices').at(-1)?.outputs).toEqual(stopped)
+    expect(current(of('devices').at(-1))).toBeGreaterThan(0)
+    proc.line({ type: 'finished', tNanos: 21 * 5 * MS, reason: 'stopped' })
+    // 한 틱 더(fail safe 출력, FLOAT): 다이오드가 통하지 않는 속도라 단자 전류가 없다
+    expect(of('devices').at(-1)?.outputs).toEqual(stopped)
+    expect(current(of('devices').at(-1))).toBe(0)
   })
 })
 

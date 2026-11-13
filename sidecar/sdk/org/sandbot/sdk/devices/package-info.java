@@ -5,11 +5,13 @@
  * {@link org.sandbot.sdk.devices.SandbotHardware}: {@code create(File)}(구성 XML, null이면 빈 맵; 틀리면
  * {@link org.sandbot.sdk.devices.SandbotConfigException}, 영어 메시지), {@code beforeInit(map)}(실제
  * OpModeManagerImpl.resetHardwareForOpMode: 허브 → 컨트롤러 → 장치 순으로 resetDeviceConfigurationForOpMode, 그 뒤부터 비용 청구),
- * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 OpMode가 끝날 때까지 위험한 명령 —
+ * {@code stopRequested(map)}(STOP을 받았을 때, OpMode에 알리기 전: 허브마다 fail safe, 그 뒤 다음 INIT까지 위험한 명령 —
  * 0이 아닌 모터 power·속도, 목표 위치, 서보 펄스·PWM 켜기 — 은 보내지 않는다. 실제 OpModeManagerImpl.callActiveOpModeStop과
- * preventDangerousHardwareAccess. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
+ * preventDangerousHardwareAccess. 상태는 실제처럼 OpModeManagerImpl의 정적 필드 하나이고(fail safe 전에 true, beforeInit이 false,
+ * {@code OpModeManagerImpl.shouldPreventDangerousHardwareAccess()}가 그 값), SimHub의 취소도 그 값을 읽는다. 취소된 명령은 허브 명령 비용 대신 실제 send()가 안전 검사 전에 잡은 네트워크 잠금 한 번으로
  * CLOCK_READ만 청구한다. fail safe는 모터를 멈추고 끌 뿐 모드·목표 위치를 지우지 않으므로(펌웨어 추론,
- * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다),
+ * SimDcMotorController.Channel.targetPositionSet) STOP 뒤 RUN_TO_POSITION 모터에 setPower(0)을 해도 던지지 않는다. STOP을 싣는
+ * 틱 경계가 허브 명령의 비용 안에 떨어져도 실제처럼 그 명령이 먼저이고 fail safe가 마지막이다: 아래 "STOP과 진행 중인 명령"),
  * {@code afterStop(map)}(비용 청구를 끄고 허브마다 fail safe: 모터 멈춤·끔, 서보 PWM 끔).
  *
  * <h2>시뮬레이터 장치(SimDevice)</h2>
@@ -122,6 +124,14 @@
  *       보내지 않고 UnsupportedOperationException(첫 번째면 원래 계수 읽기 1개). LynxModule의 전압·전류·온도·펌웨어 읽기, LED 패턴,
  *       충전·디버그, 팀이 부른 failSafe는 하나씩이고 getImuType은 실제처럼 먼저 묻는 getRevProductNumber 하나다(그 뒤의 I2C 칩
  *       찾기는 세지 않는다).</li>
+ *   <li>CLOCK_READ(LastKnown이 답함): LastKnown 캐시가 허브 대신 답할 때마다(같은 값 쓰기를 건너뜀, 신선한 값 읽기) 실제
+ *       LastKnown.isValid가 신선도를 보려고 읽는 ElapsedTime 한 번(SimLastKnown). 캐시가 답하지 못해 허브로 가는 경로는 따로
+ *       청구하지 않는다(허브 명령 비용이 SDK 안의 일을 포함한다고 본다). 실제 DcMotorImpl.setPower·getPower는 먼저 getMode()를
+ *       읽고 디지털 채널 호출은 먼저 핀 모드를 읽으므로, 예: 처음 setPower = 명령 3개 + 적중 1(컨트롤러가 다시 읽는 모드), 같은 power
+ *       다시 = 적중 2(모드·power), 다른 power = 명령 1개 + 적중 3(모드 둘·enable), getPower = 적중 2, 같은 서보 위치 = 적중 1,
+ *       디지털 출력 쓰기 = 명령 1개 + 적중 1(핀 모드). 그래서 캐시로만 답하는 루프(STOP을 무시하고 같은 power만 쓰는 루프 등)도
+ *       가상 시간이 흘러 틱 경계의 START·STOP이 적용되고, 500 ms마다 신선도가 지나 다시 보내며, STOP 뒤에는 stuckInStop으로
+ *       끝난다(실제는 OpModeStuckCodeMonitor가 멈춘다). bulk 캐시 읽기 자체는 LastKnown이 아니라 0이다(디지털 입력은 핀 모드 적중 1).</li>
  *   <li>BULK_READ: LynxGetBulkInputDataCommand. BulkCachingMode(LynxModule)를 따른다: OFF는 엔코더·디지털·아날로그·busy 읽기마다
  *       명령 하나(속도·과전류는 OFF에서도 bulk read), AUTO는 캐시가 없거나 같은 명령(태그 안에서 명령·포트가 같음)을 다시 읽을 때
  *       bulk read(캐시를 비우면 모든 태그의 기록도 지운다), MANUAL은 clearBulkCache() 뒤 첫 읽기, getBulkData()는 늘.
@@ -138,7 +148,8 @@
  * 자리값을 돌려준다(LastKnown에 넣지 않는다. 보내기 전에 한 LastKnown.updateValue는 남는다). STOP은 LinearOpMode 스레드를
  * 끊으므로 팀이 끊김을 지우지 않는 한 STOP 뒤의 허브 명령이 모두 이렇다. 끊김을 지워도 위험한 명령은 STOP 뒤 계속 취소되고
  * (실제 LynxModule.sendCommand의 CANCELLED_FOR_SAFETY), 그 취소도 실제처럼 먼저 잡은 잠금 한 번으로 CLOCK_READ를 청구한다(그래서
- * 끊김을 지우고 STOP을 무시한 채 위험한 명령만 부르는 루프도 stuckInStop으로 끝난다).
+ * 끊김을 지우고 STOP을 무시한 채 위험한 명령만 부르는 루프도 stuckInStop으로 끝난다). LastKnown 캐시는 잠금을 잡지 않으므로 끊긴
+ * 스레드에서도 답하고 CLOCK_READ를 청구한다(끊김을 지우고 안전한 같은 값만 쓰고 읽는 루프도 stuckInStop으로 끝난다).
  * SandBot은 팀 코드가 도는 동안(beforeInit ~ afterStop) 끊긴 스레드의 LYNX_COMMAND·BULK_READ·I2C_TRANSACTION 대신 잠금 시도
  * 한 번으로 CLOCK_READ만 청구한다(SimHub.acquireNetworkLock, STOP을 무시하고 하드웨어만 부르는 루프도 가상 시간이 흘러
  * stuckInStop이 된다). 끊김 표시는 그대로 둔다. Lynx 컨트롤러(모터·서보·디지털·아날로그·배터리)의 자리값 예: 엔코더·목표 위치·
@@ -159,8 +170,22 @@
  * 경고와 단위 사원수(요·피치·롤 0), resetYaw는 시간 제한(50·100 ms)까지 다시 읽고 마지막 방향을 쓰며, 각속도는 0, initialize는
  * 칩 확인 읽기가 0이라 실패한다. 옛 BNO055IMU는 Euler 0(heading −0), 단위 사원수, 각속도 −0·−0·0, 중력·가속도 0, 온도 0, 상태
  * IDLE, 보정 상태 0(isXxxCalibrated false)이고 initialize는 CHIP_ID 0으로 실패해 이전 매개변수를 지킨다. 실제처럼 IMU 인터페이스와
- * 옛 BNO055IMU는 I2C 클라이언트(자리값 로그)가 따로다. 한계: STOP은 틱 경계에서만 와서 실제의 경쟁 창(stopRequested와 끊기
- * 사이, 명령을 보낸 뒤 응답을 기다리는 사이)은 없다. IMU 초기화 도중에 끊기면 남은 트랜잭션은 자리값이고 초기화는 실패로 보며
+ * 옛 BNO055IMU는 I2C 클라이언트(자리값 로그)가 따로다. 한계: STOP은 틱 경계에서만 와서 실제의 stopRequested와 끊기 사이의
+ * 경쟁 창은 없다(한 경계에서 fail safe → stopRequested → 끊기가 한꺼번에). 명령을 보내고 응답을 기다리는 사이에 STOP이 오는 경우는
+ * 아래 "STOP과 진행 중인 명령"이다. IMU 초기화 도중에 끊기면 남은 트랜잭션은 자리값이고 초기화는 실패로 보며
  * 실제의 단계별 기다림·로그는 흉내 내지 않는다. 초기화 실패 로그의 클래스 이름은 SandBot 클래스다(SimImu 등).
+ *
+ * <h3>STOP과 진행 중인 명령</h3>
+ * 틱 경계는 비용 청구(Sim.charge) 안에서 처리되므로, STOP을 싣는 경계가 허브 명령의 비용 안(팀 코드가 명령을 보내고 응답을
+ * 기다리는 사이)에 떨어지면 fail safe가 컨트롤러가 그 명령의 상태를 쓰기 전에 돈다. 실제(OpModeManagerImpl.callActiveOpModeStop,
+ * LynxModule 네트워크 잠금)는 그 명령이 이미 전선 위에 있고 fail safe가 잠금을 기다려 그 뒤에 가므로 fail safe가 마지막이다. 그래서
+ * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·끄기·모드·close, 서보 펄스·PWM 켜기)은 시작할 때 허브의 명령 비용
+ * 안에서 간 fail safe 수를 읽어 두고, 그사이 그런 fail safe가 있었으면 끝날 때 그 효과(모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기)를 비용 없이 다시 놓는다
+ * (SimHub.keepFailSafeLast). 그 호출이 쓴 값 가운데 fail safe가 지우지 않는 것(모드·엔코더 리셋·목표 위치·펄스 폭·PIDF)은 남는다.
+ * 명령 시도와 비용은 그대로라 이 경쟁이 없는 실행의 출력은 바뀌지 않는다. 그 호출의 뒤따르는 명령(power 뒤 켜기, 모드 뒤 power
+ * 다시 보내기)은 fail safe 뒤의 규칙(끊긴 스레드·위험한 명령)으로 시도하고 청구하며, 보냈더라도 그 효과는 fail safe가 덮는다(실제는
+ * 잠금을 잡는 순서에 따라 fail safe 앞에 갈 수도 있다). STOP 뒤의 새 호출은 이 규칙과 관계없다: 끊김을 지운 스레드나 반복 OpMode의
+ * power 0·켜기는 실제처럼 허브에 간다. 경계가 허브에 가는 명령이 없는 비용(LastKnown 캐시 적중의 CLOCK_READ, 끊긴 스레드의 잠금
+ * 시도) 안에 떨어지면 진행 중인 명령이 없으므로 다시 놓지 않는다: 그 호출이 뒤에 보낸 명령도 fail safe 뒤의 새 명령처럼 남는다.
  */
 package org.sandbot.sdk.devices;

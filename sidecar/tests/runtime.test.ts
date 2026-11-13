@@ -451,6 +451,28 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
   )
 
   it(
+    '시계를 불러도 가상 시간이 흐르지 않는 루프(clockRead 0)도 error stall: 감시는 시계 호출이 아니라 가상 시간의 진행을 본다',
+    async () => {
+      const run = await runSidecar(b, {
+        opMode: 'CostlessClockSpin',
+        events: { 2: ['start'] },
+        request: { stallMillis: 500, timing: { clockRead: 0 } },
+        shutdownWhen: (m) => m.type === 'error' && m.kind === 'stall'
+      })
+      const stall = errors(run).find((e) => e.kind === 'stall')
+      expect(stall).toBeDefined()
+      expect(stall!.thread).toBe('OpModeThread')
+      expect(stall!.stack.some((f) => f.method === 'spin' && f.source !== null)).toBe(true)
+      // stall의 시각은 멈춘 가상 시각이다: 마지막 틱 경계와 다음 경계 사이(그 뒤로 틱이 오지 않았다)
+      const last = ticks(run)[ticks(run).length - 1]
+      expect(stall!.tNanos).toBeGreaterThanOrEqual(last.tNanos)
+      expect(stall!.tNanos).toBeLessThan(last.tNanos + DEFAULT_TICK_NANOS)
+      expect(finishedReason(run)).toBe('shutdown')
+    },
+    TIMEOUT
+  )
+
+  it(
     '다른 스레드가 가상 시계를 쓰면 error thread 뒤 finished exception',
     async () => {
       const run = await runSidecar(b, { opMode: 'OtherThreadSleep' })
@@ -694,6 +716,55 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     TIMEOUT
   )
 
+  // STOP을 싣는 틱 경계가 허브 명령의 비용 안(명령을 보내고 응답을 기다리는 사이)에 떨어져도 실제처럼 그 명령이 먼저 허브에 가고
+  // fail safe가 마지막이다(SimHub.keepFailSafeLast). 고치기 전에는 fail safe 뒤에 돌아온 setPower가 정전력을 다시 쓰고(LinearOpMode),
+  // 끊기지 않는 반복 OpMode는 fail safe가 잊은 켜기까지 다시 보내 모터가 다시 돌았다.
+  for (const [opMode, guard] of [
+    ['StopDuringSetPower', {}],
+    ['StopDuringSetPowerIterative', { raceCalls: '1' }]
+  ] as const) {
+    it(
+      `${opMode}: STOP이 setPower의 허브 명령 비용 안에 떨어져도 STOP 뒤 모터는 멈추고 꺼진 채다`,
+      async () => {
+        const script: Script = {
+          opMode,
+          events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+          request: { configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']) }
+        }
+        const run = await runSidecar(b, script)
+        expect(errors(run), run.stderr).toEqual([])
+        expect(finishedReason(run)).toBe('stopped')
+        // 반복 OpMode: 정전력 명령 + 켜기(3.0 ms)인 setPower가 꼭 하나 — 경계가 정말 그 명령 안에 떨어졌다
+        expect(results(run)).toEqual(guard)
+        const all = ticks(run)
+        const drive = (t: Tick): DeviceValues => t.outputs.drive ?? {}
+        // STOP 전에는 0이 아닌 power로 켜져 돈다
+        expect(
+          all.some(
+            (t) =>
+              t.phase === 'running' &&
+              t.tick < STOP_TICK &&
+              drive(t).enabled === true &&
+              Math.abs(Number(drive(t).power)) > 0.2
+          )
+        ).toBe(true)
+        // STOP 뒤(afterStop 전 OpMode가 50 ms 자는 동안 포함): fail safe가 마지막이다
+        const after = all.filter((t) => t.tick > STOP_TICK)
+        expect(after.length).toBeGreaterThanOrEqual(5)
+        for (const t of after) {
+          expect(drive(t), `tick ${t.tick}`).toMatchObject({
+            power: 0,
+            apiPower: 0,
+            enabled: false
+          })
+        }
+        const again = await runSidecar(b, script)
+        expect(normalized(again)).toEqual(normalized(run))
+      },
+      TIMEOUT
+    )
+  }
+
   // Lynx 컨트롤러 밖의 허브 트랜잭션(LynxModule ADC, I2C 장치)도 같다: 실제 LynxI2cDeviceSynch는 모두 0인 가짜 데이터를 주고
   // "placeholder: readTimestamped"를 한 번 남기며, 옮긴 실제 드라이버가 그 0을 해석한다.
   it(
@@ -810,20 +881,54 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
     )
   }
 
+  // 실제 SDK 12.0: callActiveOpModeStop이 허브 fail safe 전에 OpModeManagerImpl.preventDangerousHardwareAccess를 true로 두고
+  // (LynxModule.sendCommand가 shouldPreventDangerousHardwareAccess()를 읽어 위험한 명령을 CANCELLED_FOR_SAFETY로 끝낸다), 다음
+  // INIT(runActiveOpMode, resetHardwareForOpMode 전)에 false로 둔다. 그래서 팀 코드가 읽는 값은 STOP 전 false, STOP 뒤 OpMode
+  // 스레드와 postStop 리스너에서 true다(가짜 SDK가 늘 false를 돌려주지 않는다).
+  it(
+    'StopPreventDangerousAccess: shouldPreventDangerousHardwareAccess는 STOP 전 false, STOP 뒤 OpMode 스레드·postStop 리스너에서 true',
+    async () => {
+      const script: Script = {
+        opMode: 'StopPreventDangerousAccess',
+        events: { 2: ['start'], [STOP_TICK]: ['stop'] },
+        request: { configXml: writeConfig(['<TetrixMotor name="drive" port="0" />']) }
+      }
+      const run = await runSidecar(b, script)
+      expect(errors(run), run.stderr).toEqual([])
+      expect(finishedReason(run)).toBe('stopped')
+      expect(results(run)).toEqual({
+        init: 'false',
+        running: 'false',
+        afterStop: 'true',
+        listenerPreStart: 'false',
+        listenerPostStop: 'true'
+      })
+      const again = await runSidecar(b, script)
+      expect(normalized(again)).toEqual(normalized(run))
+    },
+    TIMEOUT
+  )
+
   // 읽기 루프는 끊긴 스레드의 명령을 버리면서도 잠금 시도 비용을 청구하는지 지킨다(버리기 전에도 명령을 보내 시간이 흘렀다).
   // power 루프의 0이 아닌 쓰기는 버리기 전에는 STOP 뒤의 위험한 명령이라 비용 없이 취소되었다. 그래서 가상 시간이 멈춘 채
   // 하드웨어를 계속 불러 stall도 stuckInStop도 아니었다(호스트가 STOP 5초 뒤 JVM을 끝낼 때까지 돌았다, 여기서는 시간 제한).
   // 끊김을 지운 power 루프는 잠금은 잡히지만 위험한 명령이라 취소된다. 실제 send()가 그 안전 검사 전에 잡은 잠금 한 번도
   // CLOCK_READ로 청구해야 같은 까닭으로 멈추지 않는다.
+  // 같은 값만 쓰는 루프(CachedPowerLoop: INIT부터 START·STOP 무시, StopClearedInterruptCachedLoop: STOP 뒤 끊김을 지우고 power 0
+  // 쓰기·읽기)는 LastKnown이 답해 허브에 아무것도 보내지 않는다. 전에는 캐시의 시계 읽기가 비용 없이 감시의 활동으로만 세어져 가상
+  // 시간이 멈춘 채 stall도 아니었다(CachedPowerLoop는 STOP이 적용되지도 않았다). 실제 LastKnown처럼 캐시가 답할 때마다 시계 읽기
+  // 한 번(CLOCK_READ)을 청구해야 START·STOP이 적용되고 stuckInStop으로 끝난다.
   for (const opMode of [
     'StopIgnoredHardwareLoop',
     'StopIgnoredPowerLoop',
-    'StopClearedInterruptPowerLoop'
+    'StopClearedInterruptPowerLoop',
+    'CachedPowerLoop',
+    'StopClearedInterruptCachedLoop'
   ]) {
     it(
-      `${opMode}: STOP을 무시하고 하드웨어만 부르는 루프는 잠금 시도마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다`,
+      `${opMode}: STOP을 무시하고 하드웨어만 부르는 루프는 하드웨어 호출마다 가상 시간이 흘러 stall이 아니라 stuckInStop으로 끝난다`,
       async () => {
-        const run = await runSidecar(b, {
+        const script: Script = {
           opMode,
           events: { 2: ['start'], 50: ['stop'] },
           request: {
@@ -832,14 +937,20 @@ describe.skipIf(build === null)('사이드카 런타임', () => {
           },
           // 회귀로 stall이 나면 호스트처럼 끝내 바로 실패하게(답을 기다리다 시간 제한에 걸리지 않게)
           shutdownWhen: (m) => m.type === 'error' && m.kind === 'stall'
-        })
+        }
+        const run = await runSidecar(b, script)
         expect(errors(run).map((e) => e.kind)).toEqual(['stuckInStop'])
+        // START·STOP이 모두 틱 경계에서 적용되었다
+        expect(states(run)).toEqual(['init', 'running', 'stopping'])
         const finished = run.messages[run.messages.length - 1] as {
           tNanos: number
           reason: string
         }
         expect(finished.reason).toBe('stuck')
         expect(finished.tNanos).toBeGreaterThanOrEqual(50 * DEFAULT_TICK_NANOS + 900_000_000)
+        // 결정적이다(같은 입력 → 바이트 그대로)
+        const again = await runSidecar(b, script)
+        expect(normalized(again)).toEqual(normalized(run))
       },
       TIMEOUT
     )

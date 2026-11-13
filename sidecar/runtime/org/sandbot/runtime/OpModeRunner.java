@@ -710,12 +710,13 @@ final class OpModeRunner implements VirtualClock.Boundary, SimHost, OpModeServic
         return "";
     }
 
-    /** 감시: OpMode 스레드가 stallMillis 동안 시계를 쓰지 않았다 */
+    /** 감시: OpMode 스레드가 stallMillis(실제) 동안 가상 시간을 보내지 않았다 */
     @Override
     public void reportStall(Thread thread, long stallMillis) {
         protocol.error(clock.peekNanos(), "stall",
-                "The OpMode thread has not used the simulator clock or hardware for " + stallMillis
-                        + " ms of real time (an infinite loop that never calls the SDK?)",
+                "The OpMode thread has not advanced the simulator clock for " + stallMillis
+                        + " ms of real time (an infinite loop that never calls the SDK, or only calls that take no"
+                        + " simulated time?)",
                 null, StackFrames.of(thread.getStackTrace(), sources, false), thread.getName());
     }
 

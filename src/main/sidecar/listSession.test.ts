@@ -102,7 +102,7 @@ describe('runListSidecar', () => {
       [
         'exception',
         'stall',
-        'An @OpModeRegistrar method has not used the simulator clock for 2000 ms'
+        'An @OpModeRegistrar method has not advanced the simulator clock for 2000 ms'
       ],
       ['exception', 'thread', 'Thread "Worker" used the simulator clock or hardware'],
       ['terminated', 'internal', ''],

@@ -11,6 +11,8 @@ import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.hardware.sparkfun.SparkFunOTOS;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
+import com.qualcomm.robotcore.eventloop.opmode.SandbotOpModeBridge;
 import com.qualcomm.robotcore.exception.TargetPositionNotSetException;
 import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.CRServo;
@@ -213,6 +215,37 @@ public final class DeviceBehaviorTest {
         SandbotHardware.afterStop(next.map);
     }
 
+    public static void testStopFlagIsOpModeManagerState() {
+        // 실제 SDK 12.0: callActiveOpModeStop이 허브 fail safe 전에 OpModeManagerImpl.preventDangerousHardwareAccess를 true로,
+        // runActiveOpMode가 다음 INIT(resetHardwareForOpMode 전)에 false로 둔다. LynxModule.sendCommand는
+        // shouldPreventDangerousHardwareAccess()를 읽는다. SandBot도 그 정적 필드 하나가 상태이고 SimHub가 그것을 읽는다.
+        Bot bot = new Bot(null, MOTORS, null);
+        DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "INIT (beforeInit) clears the flag");
+        tetrix.setPower(0.5);
+        SandbotHardware.stopRequested(bot.map);
+        Check.equal(true, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "STOP sets the flag");
+        Check.equal(0.0, bot.out("tetrix", "power"), "the STOP fail safe ran");
+
+        // 하나의 원천: 관리자의 값을 바꾸면 SimHub의 위험한 명령 취소도 그대로 따른다
+        SandbotOpModeBridge.setPreventDangerousHardwareAccess(false);
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the bridge writes the manager flag");
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "a dangerous command is sent while the manager flag is false");
+        SandbotOpModeBridge.setPreventDangerousHardwareAccess(true);
+        tetrix.setPower(0.8);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "a dangerous command is cancelled while the manager flag is true");
+
+        // OpMode가 끝난 뒤(afterStop)에도 다음 INIT까지 남는다
+        SandbotHardware.afterStop(bot.map);
+        Check.equal(true, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the flag stays set after the OpMode ends");
+        SandbotHardware.beforeInit(bot.map);
+        Check.equal(false, OpModeManagerImpl.shouldPreventDangerousHardwareAccess(), "the next INIT clears the flag");
+        tetrix.setPower(0.5);
+        Check.near(0.5, num(bot.out("tetrix", "power")), 1e-4, "commands work again after the next INIT");
+        SandbotHardware.afterStop(bot.map);
+    }
+
     public static void testStopAndResetEncoder() {
         Bot bot = new Bot(null, MOTORS, null);
         DcMotor tetrix = bot.get(DcMotor.class, "tetrix");
@@ -320,16 +353,29 @@ public final class DeviceBehaviorTest {
 
     /** body가 허브 명령을 하나도 보내지 않고 잠금 시도만 n번 했는지(가상 시간 = n × CLOCK_READ) 보고 결과를 돌려준다 */
     static <T> T attempts(int n, Supplier<T> body, String message) {
+        return attempts(n, 0, body, message);
+    }
+
+    /**
+     * attempts에 LastKnown 캐시가 답한 수(hits)를 더한 것. 캐시가 답할 때마다 실제 LastKnown이 읽는 시계 한 번(CLOCK_READ)을
+     * 청구하므로(SimLastKnown) 가상 시간 = (n + hits) × CLOCK_READ다. 캐시는 잠금을 잡지 않으므로 끊긴 스레드에서도 답한다.
+     */
+    static <T> T attempts(int n, int hits, Supplier<T> body, String message) {
         Object[] result = new Object[1];
         long elapsed = SimTestSupport.elapsed(() -> result[0] = body.get());
-        Check.equal((long) n * CLOCK_READ, elapsed, message + ": " + n + " lock attempt(s), nothing sent");
+        Check.equal((long) (n + hits) * CLOCK_READ, elapsed,
+                message + ": " + n + " lock attempt(s) and " + hits + " LastKnown answer(s), nothing sent");
         @SuppressWarnings("unchecked")
         T value = (T) result[0];
         return value;
     }
 
     static void attemptsRun(int n, Runnable body, String message) {
-        attempts(n, () -> {
+        attemptsRun(n, 0, body, message);
+    }
+
+    static void attemptsRun(int n, int hits, Runnable body, String message) {
+        attempts(n, hits, () -> {
             body.run();
             return null;
         }, message);
@@ -426,7 +472,7 @@ public final class DeviceBehaviorTest {
             Check.equal(ServoController.PwmStatus.ENABLED, attempts(6, servos::getPwmStatus, "PWM status"),
                     "PWM status from six placeholders (the hub is MIXED)");
             attemptsRun(2, () -> servos.setServoPosition(0, 0.8), "set servo position (pulse + PWM enable)");
-            Check.equal(2040.0, attempts(0, () -> servos.getPulseWidth(0), "pulse width"),
+            Check.equal(2040.0, attempts(0, 1, () -> servos.getPulseWidth(0), "pulse width"),
                     "the unsent pulse width is cached (LastKnown.updateValue before send)");
             PwmControl.PwmRange range = new PwmControl.PwmRange(1000, 2000);
             attemptsRun(1, () -> servos.setServoPwmRange(0, range), "set PWM range");
@@ -453,9 +499,10 @@ public final class DeviceBehaviorTest {
             Check.equal(DcMotor.RunMode.RUN_TO_POSITION, gobilda.getMode(), "the hub kept RUN_TO_POSITION");
             Check.equal(DigitalChannel.Mode.OUTPUT, digital.getMode(), "the pin is an output");
             Thread.currentThread().interrupt();
-            Check.equal(false, attempts(1, () -> motors.isBusy(0), "at target"),
+            // 신선한 모드 캐시가 답한 뒤(잠금 없음) 목표 도달 읽기의 잠금 시도
+            Check.equal(false, attempts(1, 1, () -> motors.isBusy(0), "at target"),
                     "at-target placeholder false (\"better to unstick wait loops\"; the motor is busy)");
-            attemptsRun(1, () -> dio.setDigitalChannelState(0, false), "DIO output with a cached mode");
+            attemptsRun(1, 1, () -> dio.setDigitalChannelState(0, false), "DIO output with a cached mode");
             Check.equal(true, bot.out("digital", "state"), "the output was not written");
             // 실제 catch 블록이 출력 캐시를 잊으므로 출력 핀 읽기는 실제처럼 null을 언박싱한다
             Check.throwsType(NullPointerException.class, () -> dio.getDigitalChannelState(0), "output state after a dropped write");
@@ -593,6 +640,209 @@ public final class DeviceBehaviorTest {
             Check.equal(false, bot.out("tetrix", "enabled"), "afterStop fail safe disables the motor");
         } finally {
             Thread.interrupted();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // STOP과 진행 중인 명령(STOP을 싣는 틱 경계가 허브 명령의 비용 안에 떨어질 때)
+    // ---------------------------------------------------------------------------------------------
+
+    static final String SERVO = "            <Servo name=\"servo\" port=\"0\" />\n";
+
+    /**
+     * 런타임의 STOP(OpModeRunner.applyStop)을 앞으로 nth번째 charge 안에서 한다: 허브 fail safe(SandbotHardware.stopRequested),
+     * 그다음 LinearOpMode면 OpMode 스레드를 끊는다(internalOnStopRequested). 반복 OpMode의 스레드는 끊기지 않는다.
+     */
+    static void stopDuringCharge(Bot bot, int nth, boolean linear) {
+        CLOCK.duringCharge(nth, () -> {
+            SandbotHardware.stopRequested(bot.map);
+            if (linear) Thread.currentThread().interrupt();
+        });
+    }
+
+    /** body가 흘린 가상 시간. STOP이 정말 그 안에서 왔는지도 본다. */
+    static long elapsedWithStop(Runnable body, String message) {
+        long elapsed = SimTestSupport.elapsed(body);
+        Check.isTrue(!CLOCK.duringChargePending(), message + ": STOP came inside the call");
+        return elapsed;
+    }
+
+    static String flavor(boolean linear) {
+        return linear ? "LinearOpMode" : "iterative OpMode";
+    }
+
+    public static void testStopInsidePowerCommand() {
+        // 실제는 진행 중인 명령이 이미 전선 위에 있고 fail safe는 그 뒤에 간다(OpModeManagerImpl.callActiveOpModeStop,
+        // MessageKeyedLock). 그래서 fail safe가 마지막이다: 모터는 멈추고 꺼지며 LastKnown은 잊혀 있다. 명령 시도와 비용은 그대로다:
+        // power 명령, 그 뒤 fail safe가 잊은 켜기(끊긴 LinearOpMode 스레드는 잠금 시도, 반복 OpMode 스레드는 위험하지 않아 보낸다).
+        for (boolean linear : new boolean[] {true, false}) {
+            String f = flavor(linear);
+            Bot bot = new Bot(null, MOTORS, null);
+            DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+            SimDcMotorController motors = SimHub.of(bot.get(LynxModule.class, "Control Hub")).motors;
+            tetrix.setPower(0.5);
+            try {
+                // DcMotorImpl.getMode·internalSetMotorPower의 모드 캐시 적중 둘(CLOCK_READ씩) 다음 power 명령 안에서 STOP
+                stopDuringCharge(bot, 3, linear);
+                Check.equal(2 * CLOCK_READ + ms(1.5) + (linear ? CLOCK_READ : ms(1.5)),
+                        elapsedWithStop(() -> tetrix.setPower(0.25), f), f + ": the same commands as without the race");
+                Check.equal(0.0, bot.out("tetrix", "power"), f + ": the fail safe stops the motor last");
+                Check.equal(0.0, bot.out("tetrix", "apiPower"), f + ": apiPower after the fail safe");
+                Check.equal(false, bot.out("tetrix", "enabled"), f + ": the fail safe disables the motor last");
+                Thread.interrupted();
+                // fail safe가 마지막이라 켜짐의 LastKnown도 잊혀 있어 허브에 묻는다
+                Check.equal(ms(1.5), SimTestSupport.elapsed(
+                        () -> Check.equal(false, motors.isMotorEnabled(1), f + ": the hub motor is disabled")),
+                        f + ": lastKnownEnable is forgotten");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(bot.map);
+        }
+    }
+
+    public static void testStopInsideCacheHitIsNotACommandInFlight() {
+        // setPower의 모드 캐시 적중 둘(DcMotorImpl.getMode, internalSetMotorPower)은 CLOCK_READ지만 허브에 가는 명령이 아니다.
+        // 그 안에서 온 STOP의 fail safe는 진행 중인 명령 뒤가 아니라 먼저라(실제 LastKnown.isValid는 잠금을 잡지 않는다) 다시 놓지
+        // 않는다: 반복 OpMode가 이어서 보낸 power 0·켜기는 실제처럼 허브에 남고, 끊긴 LinearOpMode 스레드는 잠금 시도뿐이라 꺼진 채다.
+        for (int nth = 1; nth <= 2; nth++) {
+            for (boolean linear : new boolean[] {true, false}) {
+                String f = flavor(linear) + " (STOP in cache hit " + nth + ")";
+                Bot bot = new Bot(null, MOTORS, null);
+                DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+                tetrix.setPower(0.5);
+                try {
+                    stopDuringCharge(bot, nth, linear);
+                    elapsedWithStop(() -> tetrix.setPower(0), f);
+                    Check.equal(0.0, bot.out("tetrix", "power"), f + ": power 0");
+                    Check.equal(!linear, bot.out("tetrix", "enabled"),
+                            f + ": the enable sent after the fail safe stays (only an iterative thread sends it)");
+                } finally {
+                    Thread.interrupted();
+                    CLOCK.clearDuringCharge();
+                }
+                SandbotHardware.afterStop(bot.map);
+            }
+        }
+    }
+
+    public static void testStopInsideEnableCommand() {
+        // LastKnown이 신선도를 넘겨 setPower가 모드 묻기 → power → 켜기를 보내고, STOP은 켜기 명령 안에서 온다
+        for (boolean linear : new boolean[] {true, false}) {
+            String f = flavor(linear);
+            Bot bot = new Bot(null, MOTORS, null);
+            DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+            tetrix.setPower(0.5);
+            CLOCK.nanos += ms(501);
+            try {
+                // 신선도가 지난 모드 묻기 → 안쪽 모드 캐시 적중(CLOCK_READ) → power → 켜기 명령 안에서 STOP
+                stopDuringCharge(bot, 4, linear);
+                Check.equal(ms(3 * 1.5) + CLOCK_READ, elapsedWithStop(() -> tetrix.setPower(0.25), f),
+                        f + ": mode read, power and enable as without the race");
+                Check.equal(false, bot.out("tetrix", "enabled"), f + ": the enable in flight does not outlast the fail safe");
+                Check.equal(0.0, bot.out("tetrix", "power"), f + ": the motor is stopped");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(bot.map);
+        }
+    }
+
+    public static void testStopInsideVelocityCommand() {
+        for (boolean linear : new boolean[] {true, false}) {
+            String f = flavor(linear);
+            Bot bot = new Bot(null, MOTORS, null);
+            DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+            tetrix.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            tetrix.setVelocity(200);
+            Check.equal(200, bot.out("tetrix", "velocity"), f + ": running at the target velocity");
+            try {
+                // 모드 캐시 적중(CLOCK_READ) 다음 목표 속도 명령 안에서 STOP
+                stopDuringCharge(bot, 2, linear);
+                Check.equal(CLOCK_READ + ms(1.5) + (linear ? CLOCK_READ : ms(1.5)),
+                        elapsedWithStop(() -> tetrix.setVelocity(300), f), f + ": velocity, then the enable the fail safe forgot");
+                Check.equal(0, bot.out("tetrix", "velocity"), f + ": the target velocity in flight does not outlast the fail safe");
+                Check.equal(0.0, bot.out("tetrix", "power"), f + ": the motor is stopped");
+                Check.equal(false, bot.out("tetrix", "enabled"), f + ": the motor is disabled");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(bot.map);
+        }
+    }
+
+    public static void testStopInsideModeCommandKeepsTheMode() {
+        // fail safe는 모드를 지우지 않으므로 진행 중이던 모드 명령은 허브에 남는다. setMotorMode가 이어서 다시 보내는 power 0·켜기는
+        // 같은 호출이라 fail safe가 덮는다(반복 OpMode 스레드는 그 명령을 보내도 모터가 다시 켜지지 않는다).
+        for (boolean linear : new boolean[] {true, false}) {
+            String f = flavor(linear);
+            Bot bot = new Bot(null, MOTORS, null);
+            DcMotorEx tetrix = bot.get(DcMotorEx.class, "tetrix");
+            SimDcMotorController motors = SimHub.of(bot.get(LynxModule.class, "Control Hub")).motors;
+            tetrix.setPower(0);
+            Check.equal(true, bot.out("tetrix", "enabled"), f + ": enabled at zero power");
+            try {
+                // zero power 묻기(1) → 모드 명령(2) 안에서 STOP → 진행 중인 모드 명령이 둔 모드 캐시 적중(CLOCK_READ)
+                // → 목표 속도 0(끊긴 스레드는 잠금 시도) → 켜기
+                stopDuringCharge(bot, 2, linear);
+                Check.equal(ms(2 * 1.5) + CLOCK_READ + (linear ? CLOCK_READ : ms(2 * 1.5)),
+                        elapsedWithStop(() -> tetrix.setMode(DcMotor.RunMode.RUN_USING_ENCODER), f),
+                        f + ": the same commands as without the race");
+                Check.equal("RUN_USING_ENCODER", bot.out("tetrix", "mode"), f + ": the mode in flight reached the hub");
+                Check.equal(0.0, bot.out("tetrix", "power"), f + ": the motor is stopped");
+                Check.equal(false, bot.out("tetrix", "enabled"), f + ": the power re-sent by setMode does not re-enable the motor");
+                Thread.interrupted();
+                Check.equal(ms(1.5), SimTestSupport.elapsed(() -> Check.equal(DcMotor.RunMode.RUN_USING_ENCODER,
+                        motors.getMotorMode(1), f + ": the hub kept the new mode")), f + ": lastKnownMode is forgotten");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(bot.map);
+        }
+    }
+
+    public static void testStopInsideServoCommands() {
+        for (boolean linear : new boolean[] {true, false}) {
+            String f = flavor(linear);
+            // PWM 켜기 명령 안에서 STOP: 켜기가 먼저 허브에 갔고 fail safe가 PWM을 끈다
+            Bot bot = new Bot(null, SERVO, null);
+            Servo servo = bot.get(Servo.class, "servo");
+            SimServoController servos = SimHub.of(bot.get(LynxModule.class, "Control Hub")).servos;
+            servo.setPosition(0.3);
+            servos.setServoPwmDisable(0);
+            try {
+                stopDuringCharge(bot, 1, linear);
+                Check.equal(ms(1.5), elapsedWithStop(() -> servos.setServoPwmEnable(0), f), f + ": one PWM enable");
+                Check.equal(false, bot.out("servo", "pwm"), f + ": the PWM enable in flight does not outlast the fail safe");
+                Check.equal(null, bot.out("servo", "position"), f + ": no position while PWM is off");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(bot.map);
+
+            // 펄스 폭 명령 안에서 STOP: fail safe는 PWM만 끄므로 펄스 폭은 허브에 남고, 뒤따르는 PWM 켜기는 STOP 뒤의 규칙으로
+            // 보내지 않는다(끊김 또는 위험한 명령, 잠금 시도 한 번)
+            Bot next = new Bot(null, SERVO, null);
+            Servo servo2 = next.get(Servo.class, "servo");
+            SimServoController servos2 = SimHub.of(next.get(LynxModule.class, "Control Hub")).servos;
+            servo2.setPosition(0.3);
+            try {
+                stopDuringCharge(next, 1, linear);
+                Check.equal(ms(1.5) + CLOCK_READ, elapsedWithStop(() -> servo2.setPosition(0.6), f),
+                        f + ": the pulse, then a cancelled PWM enable");
+                Check.equal(false, next.out("servo", "pwm"), f + ": PWM stays off");
+                Thread.interrupted();
+                Check.equal(1680.0, servos2.getPulseWidth(0), f + ": the pulse width in flight reached the hub");
+            } finally {
+                Thread.interrupted();
+                CLOCK.clearDuringCharge();
+            }
+            SandbotHardware.afterStop(next.map);
         }
     }
 

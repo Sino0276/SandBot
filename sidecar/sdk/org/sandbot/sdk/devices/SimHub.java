@@ -1,6 +1,7 @@
 package org.sandbot.sdk.devices;
 
 import com.qualcomm.hardware.lynx.LynxModule;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManagerImpl;
 import com.qualcomm.robotcore.hardware.Blinker;
 import com.qualcomm.robotcore.hardware.LynxModuleImuType;
 
@@ -30,6 +31,11 @@ import java.util.Map;
  *   <li>끊긴 스레드: 팀 코드가 도는 동안 끊긴(interrupt) 스레드의 명령은 보내지 않는다({@link #acquireNetworkLock}). 비용
  *       메서드({@link #lynxCommand}·{@link #bulkReadCommand}·{@link #i2cTransaction})가 false를 돌려주면 컨트롤러는 실제
  *       try 블록을 건너뛰는 자리에서 실제 자리값으로 돌아간다(쓰기는 버리고, 읽기는 자리값이며 LastKnown에 넣지 않는다).</li>
+ *   <li>STOP과 진행 중인 명령: 틱 경계는 비용 청구({@link Sim#charge}) 안에서 처리되므로 STOP의 fail safe가 명령의 비용 안에서,
+ *       즉 컨트롤러가 그 명령의 상태를 쓰기 전에 돈다. 실제는 그 명령이 이미 전선 위에 있고 fail safe는 네트워크 잠금을 기다려 그
+ *       뒤에 가므로 fail safe가 마지막이다. 그래서 fail safe가 덮는 출력(모터 정전력·목표 속도·켜기, 서보 PWM 켜기)을 쓰는 컨트롤러
+ *       호출은 시작할 때 {@link #failSafes()}(이 허브의 명령 비용 안에서 간 fail safe 수)를 읽어 두고 끝날 때
+ *       {@link #keepFailSafeLast}로 넘긴다. 명령 시도와 비용은 그대로다.</li>
  * </ul>
  */
 public final class SimHub {
@@ -44,12 +50,6 @@ public final class SimHub {
     /** 비용 청구 여부(beforeInit ~ afterStop) */
     private static volatile boolean charging = false;
 
-    /**
-     * STOP을 받은 뒤인가(실제 OpModeManagerImpl.preventDangerousHardwareAccess). 그동안 위험한 명령은 보내지 않는다
-     * ({@link #lynxCommand(boolean)}). beforeInit이 끈다.
-     */
-    private static volatile boolean preventDangerousHardwareAccess = false;
-
     final String name;
     final int address;
     final boolean parent;
@@ -62,6 +62,17 @@ public final class SimHub {
     SimServoController servos;
     SimDigitalChannelController digital;
     SimAnalogInputController analog;
+
+    /**
+     * 이 허브의 Lynx 명령 비용 안(명령을 보내고 응답을 기다리는 사이)에서 간 fail safe(LynxFailSafeCommand) 수. OpMode 스레드만
+     * 쓴다(런타임의 fail safe도 그 스레드의 틱 경계에서 돈다). {@link #keepFailSafeLast}가 컨트롤러 호출 사이에 진행 중이던 명령
+     * 뒤로 fail safe가 갔는지 알아보는 데 쓴다. LastKnown 캐시 적중의 CLOCK_READ나 끊긴 스레드의 잠금 시도처럼 허브에 가는 명령이
+     * 없는 비용 안에서 온 fail safe는 세지 않는다: 실제로 그때는 진행 중인 명령이 없어 fail safe가 그 호출의 뒤따르는 명령보다 먼저다.
+     */
+    private int failSafes = 0;
+
+    /** 지금 Lynx 명령 비용을 청구하는 허브(그 비용 안의 틱 경계에서 온 fail safe만 {@link #failSafes}에 센다). OpMode 스레드만. */
+    private static SimHub commandInFlight;
 
     // BulkCachingMode 상태(실제 LynxModule.bulkCachingMode·bulkCachingHistory·lastBulkData)
     private LynxModule.BulkCachingMode bulkCachingMode = LynxModule.BulkCachingMode.OFF;
@@ -94,10 +105,6 @@ public final class SimHub {
 
     static boolean isCharging() {
         return charging;
-    }
-
-    static void setPreventDangerousHardwareAccess(boolean value) {
-        preventDangerousHardwareAccess = value;
     }
 
     public String name() {
@@ -153,7 +160,8 @@ public final class SimHub {
      * Lynx 명령 하나. 보냈으면 true(그때만 LYNX_COMMAND 비용을 청구한다). 실제 순서 그대로 먼저 네트워크 잠금
      * ({@link #acquireNetworkLock}: 끊긴 스레드면 false), 다음 LynxModule.sendCommand의 안전 검사다: dangerous(실제
      * LynxMessage.isDangerous가 true: 0이 아닌 모터 power·목표 속도, 목표 위치, 서보 펄스 폭, 서보 PWM 켜기)이고 STOP을 받은
-     * 뒤면 보내지 않고 false다. 실제는 CANCELLED_FOR_SAFETY NACK으로 끝내고 컨트롤러의 예외 처리가 그것을 조용히 버린다.
+     * 뒤면(실제처럼 {@link OpModeManagerImpl#shouldPreventDangerousHardwareAccess()}, SandbotHardware.stopRequested가 켜고 다음
+     * beforeInit이 끈다) 보내지 않고 false다. 실제는 CANCELLED_FOR_SAFETY NACK으로 끝내고 컨트롤러의 예외 처리가 그것을 조용히 버린다.
      *
      * <p>취소된 명령도 실제 send·sendReceive가 sendCommand 전에 잡은 네트워크 잠금 한 번의 비용으로 CLOCK_READ를 청구한다(끊긴
      * 스레드의 잠금 시도와 같은 값). 그래서 팀 코드가 끊김을 지운 뒤(8.2 규칙: 위험한 명령은 계속 취소된다) STOP을 무시하고 위험한
@@ -162,11 +170,19 @@ public final class SimHub {
      */
     public boolean lynxCommand(boolean dangerous) {
         if (!acquireNetworkLock()) return false;
-        if (dangerous && preventDangerousHardwareAccess) {
+        if (dangerous && OpModeManagerImpl.shouldPreventDangerousHardwareAccess()) {
             if (charging) Sim.charge(SimCost.CLOCK_READ); // SandBot: 잡은 잠금 한 번(실제 send()의 acquireNetworkLock)
             return false;
         }
-        if (charging) Sim.charge(SimCost.LYNX_COMMAND, kind);
+        if (charging) {
+            SimHub outer = commandInFlight;
+            commandInFlight = this;
+            try {
+                Sim.charge(SimCost.LYNX_COMMAND, kind);
+            } finally {
+                commandInFlight = outer;
+            }
+        }
         return true;
     }
 
@@ -317,10 +333,37 @@ public final class SimHub {
      */
     public boolean failSafe() {
         if (!lynxCommand()) return false; // LynxFailSafeCommand
+        if (commandInFlight == this) failSafes++; // 이 허브의 명령이 전선 위에 있을 때만(keepFailSafeLast)
+        applyFailSafe();
+        return true;
+    }
+
+    /** fail safe가 허브와 컨트롤러에 남기는 것: 모터 정지·끄기, 서보 PWM 끄기, LastKnown 잊기 */
+    private void applyFailSafe() {
         if (motors != null) motors.hubFailSafe();
         if (servos != null) servos.hubFailSafe();
         forgetLastKnown();
-        return true;
+    }
+
+    /** 지금까지 이 허브의 명령 비용 안에서 간 fail safe 수({@link #keepFailSafeLast}에 넘긴다) */
+    int failSafes() {
+        return failSafes;
+    }
+
+    /**
+     * fail safe가 덮는 출력을 쓰는 컨트롤러 호출(모터 power·속도·켜기·모드, 서보 펄스·PWM 켜기)이 끝날 때 부른다. since는 그 호출을
+     * 시작할 때 읽은 {@link #failSafes()}다. 그사이 이 허브의 명령 비용 안에서 fail safe가 있었으면 — STOP을 싣는 틱 경계가 그 호출의
+     * 허브 명령 비용 안에 떨어졌다 — fail safe의 효과({@link #applyFailSafe})를 다시 놓는다. 실제(OpModeManagerImpl.callActiveOpModeStop, LynxModule
+     * 네트워크 잠금)는 진행 중이던 명령이 먼저 허브에 가고 fail safe가 그 뒤라 fail safe가 마지막이다. SandBot은 fail safe를 그 명령의
+     * 비용 안에서 하므로, 돌아온 호출이 쓴 정전력·목표 속도·켜기(뒤따르는 켜기 포함)와 LastKnown을 여기서 fail safe가 남긴 것으로
+     * 되돌린다. fail safe가 지우지 않는 값(모드·엔코더 리셋·목표 위치·펄스 폭·PIDF)은 그 호출이 쓴 그대로다.
+     *
+     * <p>비용을 청구하지 않고 시계를 부르지 않는다(finally 안에서 부른다). 명령 시도와 비용은 그대로라 경쟁이 없는 실행은 바뀌지 않는다.
+     * 경계가 명령이 없는 비용(LastKnown 캐시 적중의 CLOCK_READ, 끊긴 스레드의 잠금 시도) 안에 떨어지면 세지 않으므로 다시 놓지 않는다:
+     * 진행 중인 명령이 없으니 fail safe가 먼저이고 그 호출이 뒤에 보낸 명령(반복 OpMode의 power 0·켜기)은 실제처럼 허브에 남는다.
+     */
+    void keepFailSafeLast(int since) {
+        if (failSafes != since) applyFailSafe();
     }
 
     void forgetLastKnown() {

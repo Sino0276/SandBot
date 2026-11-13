@@ -147,7 +147,7 @@ final class ListRunner implements SimHost, Watchdog.Stall {
     @Override
     public void reportStall(Thread thread, long stallMillis) {
         protocol.error(clock.peekNanos(), "stall",
-                "An @OpModeRegistrar method has not used the simulator clock for " + stallMillis
+                "An @OpModeRegistrar method has not advanced the simulator clock for " + stallMillis
                         + " ms of real time (an infinite loop?)",
                 null, StackFrames.of(thread.getStackTrace(), sources, false), thread.getName());
     }

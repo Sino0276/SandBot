@@ -223,15 +223,21 @@ public final class SimServoController implements ServoControllerEx, RobotCoreLyn
     }
 
     private void internalSetPwmEnable(int servoZ, boolean enable) {
-        if (lastKnownEnabled[servoZ].updateValue(enable)) {
-            if (!enable) {
-                lastKnownCommandedPosition[servoZ].invalidate();
-                lastKnownPulseWidthMicroseconds[servoZ].invalidate();
+        // PWM 켜기 명령의 비용 안에서 STOP이 와도 fail safe가 마지막이다(SimHub.keepFailSafeLast: 아래에서 켠 PWM을 다시 끈다)
+        int failSafes = hub.failSafes();
+        try {
+            if (lastKnownEnabled[servoZ].updateValue(enable)) {
+                if (!enable) {
+                    lastKnownCommandedPosition[servoZ].invalidate();
+                    lastKnownPulseWidthMicroseconds[servoZ].invalidate();
+                }
+                // 끊김·STOP 뒤의 켜기(위험한 명령)는 보내지 않는다. LastKnown과 위의 무효화는 실제처럼 send() 앞이라 이미 바뀌었다
+                if (!hub.lynxCommand(enable)) return; // LynxSetServoEnableCommand
+                channels[servoZ].enabled = enable;
+                channels[servoZ].publish();
             }
-            // 끊김·STOP 뒤의 켜기(위험한 명령)는 보내지 않는다. LastKnown과 위의 무효화는 실제처럼 send() 앞이라 이미 바뀌었다
-            if (!hub.lynxCommand(enable)) return; // LynxSetServoEnableCommand
-            channels[servoZ].enabled = enable;
-            channels[servoZ].publish();
+        } finally {
+            hub.keepFailSafeLast(failSafes);
         }
     }
 
@@ -307,14 +313,21 @@ public final class SimServoController implements ServoControllerEx, RobotCoreLyn
 
     /** position: 출력에 보일 위치(0..1, 펄스 폭과 함께 허브에 갔을 때만 남긴다) */
     private void internalSetPulseWidth(int servoZ, int usWidth, double position) {
-        lastKnownPulseWidthMicroseconds[servoZ].updateValue(usWidth);
-        // 끊김·STOP 뒤(위험한 명령)의 펄스 폭은 보내지 않는다. 실제처럼 그 뒤 PWM 켜기는 부른다(그것도 같은 까닭으로 보내지 않음)
-        if (hub.lynxCommand(true)) { // LynxSetServoPulseWidthCommand
-            channels[servoZ].pulseWidth = usWidth;
-            channels[servoZ].commandedPosition = position;
-            channels[servoZ].publish();
+        // 펄스 폭 명령의 비용 안에서 STOP이 오면 펄스 폭은 허브에 남고(fail safe는 PWM만 끈다) 뒤따르는 PWM 켜기는 fail safe가
+        // 덮는다(SimHub.keepFailSafeLast)
+        int failSafes = hub.failSafes();
+        try {
+            lastKnownPulseWidthMicroseconds[servoZ].updateValue(usWidth);
+            // 끊김·STOP 뒤(위험한 명령)의 펄스 폭은 보내지 않는다. 실제처럼 그 뒤 PWM 켜기는 부른다(그것도 같은 까닭으로 보내지 않음)
+            if (hub.lynxCommand(true)) { // LynxSetServoPulseWidthCommand
+                channels[servoZ].pulseWidth = usWidth;
+                channels[servoZ].commandedPosition = position;
+                channels[servoZ].publish();
+            }
+            internalSetPwmEnable(servoZ, true);
+        } finally {
+            hub.keepFailSafeLast(failSafes);
         }
-        internalSetPwmEnable(servoZ, true);
     }
 
     private int internalGetPulseWidth(int servoZ) {
