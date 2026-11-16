@@ -144,9 +144,9 @@ const TELEMETRY_INTERVAL_MS = 34
 // 다음 틱 답을 기다리는 Config 탭의 값 바꾸기 수(일시 정지 중에 계속 바꿔도 끝없이 쌓이지 않게, 넘으면 버린다)
 const MAX_PENDING_CONFIG = 256
 const DEVICES_INTERVAL_MS = 50
+// 로봇 자세(pose)와 경기 요소 표시 상태(gameState, 6a)의 간격(약 60 Hz). 둘은 같은 throttle 하나로 같은 틱의 값을 함께 보낸다:
+// 따로 두면 공이 쉬다 움직이기 시작할 때 gameState만 새 박자로 나가 실려 가는 공이 로봇과 다른 틱으로 그려졌다(6a 리뷰)
 const POSE_INTERVAL_MS = 16
-// 경기 요소 표시 상태(gameState, 6a)의 간격: 로봇 자세와 같은 약 60 Hz(공과 로봇이 같은 박자로 움직여 보이게)
-const GAME_INTERVAL_MS = POSE_INTERVAL_MS
 // 실행 하나에서 보내는 simNotice의 최대 수(세계가 안내를 끝없이 만들지 않게)
 const MAX_SIM_NOTICES = 64
 const LOG_FLUSH_MS = 50
@@ -404,6 +404,7 @@ export class SidecarSession {
   private readonly inputState: InputState = new Map()
   private latestPose: ({ tNanos: number } & SimPose) | null = null
   private lastPoseKey = ''
+  // 자세와 경기 요소 표시 상태를 함께 보낸다(POSE_INTERVAL_MS)
   private readonly poseThrottle: Throttle
   // 경기 요소(6a): 세계가 낸 마지막 표시 상태(revision이 바뀐 것만, 복사본), 보낸 revision, 공 수(첫 상태로 정하고 실행 동안
   // 바뀌지 않는다: 다른 수의 상태는 버린다), 끝에 실을 전체 정밀도 상태
@@ -411,7 +412,6 @@ export class SidecarSession {
   private sentGameRevision: number | null = null
   private gameCount: number | null = null
   private gameFinal: SimElementState[] | null = null
-  private readonly gameThrottle: Throttle
   private readonly noticeKeys = new Set<string>()
   private worldFailed = false
 
@@ -435,8 +435,10 @@ export class SidecarSession {
       this.sendDashConfig()
     )
     this.devicesThrottle = new Throttle(this.clock, DEVICES_INTERVAL_MS, () => this.sendDevices())
-    this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => this.sendPose())
-    this.gameThrottle = new Throttle(this.clock, GAME_INTERVAL_MS, () => this.sendGame())
+    this.poseThrottle = new Throttle(this.clock, POSE_INTERVAL_MS, () => {
+      this.sendPose()
+      this.sendGame()
+    })
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve
     })
@@ -556,7 +558,6 @@ export class SidecarSession {
       this.samples = []
       // 멈춘 자리(둔 틱의 자세·공)를 바로 보인다
       this.poseThrottle.flush()
-      this.gameThrottle.flush()
     } else {
       this.reanchor()
       this.schedule()
@@ -673,7 +674,6 @@ export class SidecarSession {
       if (tick.loops > this.step.baseLoops || tick.tNanos >= this.step.deadline) {
         this.step = null
         this.poseThrottle.flush()
-        this.gameThrottle.flush()
         this.updateKillTimer()
         this.emitStatus(true)
       } else {
@@ -710,6 +710,8 @@ export class SidecarSession {
     mergeInputs(this.pendingInputs, inputs)
     mergeInputs(this.inputState, inputs)
     const joints = pose ? poseJoints(pose) : null
+    // 공은 자세와 같은 throttle이다(바뀌지 않은 revision은 sendGame이 거른다). 자세가 틀린 틱에도 공은 보낸다
+    let display = game !== null && this.takeGame(tNanos, game)
     if (
       pose &&
       joints !== null &&
@@ -726,18 +728,18 @@ export class SidecarSession {
         // 관절이 없는 세계는 키를 넣지 않는다(이벤트 모양이 관절 전과 같다)
         ...(joints === undefined ? {} : { joints })
       }
-      this.poseThrottle.request()
+      display = true
     }
-    if (game) this.takeGame(tNanos, game)
+    if (display) this.poseThrottle.request()
     for (const notice of notices) this.simNotice(tNanos, notice.code, notice.params)
   }
 
   // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식, 공 수는 실행의 첫 상태와 같음) revision이 바뀐 것만
-  // 둔다. 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고 마지막 좋은 상태를 둔다(pose와
-  // 같은 규칙)
-  private takeGame(tNanos: number, game: GameState): void {
-    if (!isValidGameState(game, this.gameCount ?? undefined)) return
-    if (this.latestGame !== null && this.latestGame.revision === game.revision) return
+  // 둔다(둔 때 true). 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고 마지막 좋은 상태를
+  // 둔다(pose와 같은 규칙)
+  private takeGame(tNanos: number, game: GameState): boolean {
+    if (!isValidGameState(game, this.gameCount ?? undefined)) return false
+    if (this.latestGame !== null && this.latestGame.revision === game.revision) return false
     const count = game.poses.length / GAME_POSE_STRIDE
     this.gameCount ??= count
     this.latestGame = {
@@ -746,12 +748,12 @@ export class SidecarSession {
       poses: [...game.poses],
       flags: Array.isArray(game.flags) ? [...game.flags] : new Array<number>(count).fill(0)
     }
-    this.gameThrottle.request()
+    return true
   }
 
-  // 끝(finish): 기다리는 표시 상태를 보내고 세계의 전체 정밀도 상태(6d AUTO → TELEOP 이어 가기)를 마지막 gameState의 final로
-  // 싣는다(pose 다음, phase·finished 전). 경기 요소가 없는 실행(표시 상태를 받은 적 없음)은 아무것도 보내지 않는다. 끝 상태를
-  // 읽지 못하거나 모양이 틀리면 final 없이 끝난다(읽기 예외는 worldError 한 번)
+  // 끝(finish): 세계의 전체 정밀도 상태(6d AUTO → TELEOP 이어 가기)를 마지막 gameState에 실을 final로 읽어 둔다(그다음 throttle을
+  // 비우면 pose 다음에 final을 실은 gameState가 나간다, phase·finished 전). 경기 요소가 없는 실행(표시 상태를 받은 적 없음)은
+  // 아무것도 하지 않는다. 끝 상태를 읽지 못하거나 모양이 틀리면 final 없이 끝난다(읽기 예외는 worldError 한 번)
   private finishGame(): void {
     if (this.latestGame === null || this.gameCount === null) return
     let snapshot: unknown = null
@@ -764,9 +766,6 @@ export class SidecarSession {
       }
     }
     this.gameFinal = snapshot === null ? null : elementSnapshot(snapshot, this.gameCount)
-    this.gameThrottle.flush()
-    // 기다리던 것이 없었으면(마지막 상태를 이미 보냄) 같은 상태에 final만 실어 한 번 더 보낸다
-    if (this.gameFinal !== null) this.sendGame()
   }
 
   // 끝: 마지막 틱의 출력으로 세계를 한 틱 더 돌린다(머리 주석의 "세계"). 받은 틱이 없으면(컴파일 실패 등) 돌리지 않는다.
@@ -1058,8 +1057,10 @@ export class SidecarSession {
     this.dashThrottle.flush()
     this.dashConfigThrottle.flush()
     this.devicesThrottle.flush()
-    this.poseThrottle.flush()
     this.finishGame()
+    this.poseThrottle.flush()
+    // 기다리던 것이 없었으면(마지막 상태를 이미 보냄) 같은 상태에 final만 실어 한 번 더 보낸다
+    if (this.gameFinal !== null) this.sendGame()
     this.emitStatus(true)
     this.finishedEmitted = true
     if (this.statusTimer !== null) {

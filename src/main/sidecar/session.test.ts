@@ -1278,6 +1278,47 @@ describe('SidecarSession 경기 요소 gameState', () => {
     expect(of('gameState')).toHaveLength(2)
   })
 
+  it('공이 쉬다 움직이기 시작해도 gameState는 pose와 같은 박자·같은 틱으로 나간다(실려 가는 공이 로봇과 어긋나지 않는다)', () => {
+    // 로봇과 공이 53 ms까지 서 있다가 함께 1 m/s로 간다(공은 로봇 앞 10 cm에 실려 간다)
+    const t0 = 53 * MS
+    let last = 0
+    let revision = 0
+    let lastKey = ''
+    const moved = (): number => Math.max(0, last - t0) / 1e9
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => ({ x: moved(), y: 0, yaw: 0, blocked: false }),
+      drainNotices: () => [],
+      gameState: () => {
+        const q = quantizeElements([ball(moved() + 0.1)])
+        const key = JSON.stringify(q)
+        if (key !== lastKey) {
+          lastKey = key
+          revision++
+        }
+        return { revision, ...q }
+      }
+    }
+    const { clock, proc, events } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 40; k++) {
+      proc.line(tick(k))
+      clock.advance(5)
+    }
+    const shown = events.filter((e) => e.type === 'pose' || e.type === 'gameState')
+    const games = shown.filter((e) => e.type === 'gameState')
+    expect(games.length).toBeGreaterThan(5)
+    // 움직이는 동안 gameState마다 바로 앞에 같은 틱의 pose가 있다(같은 throttle이 함께 보낸다)
+    for (const game of games.slice(1)) {
+      const before = shown[shown.indexOf(game) - 1]
+      expect(before.type).toBe('pose')
+      expect(before.tNanos).toBe(game.tNanos)
+    }
+  })
+
   it('표식이 모두 0이면 flags 키가 없다', () => {
     const awake: SimWorld = {
       step: () => ({}),
