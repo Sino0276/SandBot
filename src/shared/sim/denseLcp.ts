@@ -12,6 +12,34 @@ function work(index: number, size: number): Float64Array {
   return made
 }
 
+// 마지막 콜레스키 분해(자유 행 부분 행렬 (A + εD)_FF = LLᵀ). L의 p행은 자유 행 0..p의 부분 행렬 값만으로 정해지므로, 다음 분해의
+// 앞 k행이 같은 값이면 그 L 행을 그대로 다시 쓴다(같은 값에 같은 연산이라 비트로 같다: 결과는 다시 쓰지 않은 풀이와 바이트까지
+// 같다). 한 풀이 안에서는 행렬이 그대로라 자유 행 번호가 앞에서부터 같은 동안이 다시 쓸 수 있는 앞부분이다(Murty 단계는 가장 큰
+// 첨자 하나만 바꾼다). 풀이가 바뀌면(엇갈림 2회차처럼 같은 행렬을 다시 푸는 호출) 저장한 부분 행렬 값과 지금 값을 Object.is로
+// 비교해 같은 앞부분만 쓴다(성능, 6a P6 쐐기)
+const factor = {
+  // 행 간격(자유 행 수의 상한, 커지면 다시 만들고 비운다)
+  stride: 0,
+  // values[p·stride + q](q ≤ p): L을 만든 정칙화 부분 행렬 값, chol: 같은 자리의 L
+  values: new Float64Array(0),
+  chol: new Float64Array(0),
+  // 자유 행 번호(owner 풀이의 행 번호)와 맞는 L 행 수
+  rows: new Int32Array(0),
+  length: 0,
+  owner: 0
+}
+// 풀이 번호(factor.owner와 비교: 같은 풀이면 행렬이 같다)
+let solveCount = 0
+function factorCapacity(size: number): void {
+  if (factor.stride >= size) return
+  const stride = Math.max(size, 2 * factor.stride, 64)
+  factor.stride = stride
+  factor.values = new Float64Array(stride * stride)
+  factor.chol = new Float64Array(stride * stride)
+  factor.rows = new Int32Array(stride)
+  factor.length = 0
+}
+
 // 정규화(행마다 대각에 이 비율 × A_ii) [결정: articulation.ts solveBoxLcp의 LCP_REGULARIZATION과 같은 크기. 공 행의 A는 순응·공
 // 질량으로 거의 늘 양정치라 근접점 반복 없이 정칙화한 해를 쓴다: 충격 차이는 1e-9배라 보이지 않는다. 특이한 방향(같은 방향의 로봇
 // 행)에서는 정칙화가 나눔을 정하고, 속도(w) 차이는 1e-9 × A_ii·λ 아래다]
@@ -84,50 +112,88 @@ export function solveDenseLcp(
   const tolW = DENSE_LCP_TOLERANCE * bScale
   const tolL = DENSE_LCP_TOLERANCE * lScale
   const free = work(0, m)
-  const chol = work(1, m * m)
   const rhs = work(2, m)
   const bad = work(3, m)
+  const bounded = work(4, m)
+  factorCapacity(m)
+  const call = ++solveCount
+  const stride = factor.stride
+  const values = factor.values
+  const chol = factor.chol
+  const rows = factor.rows
   let best = m + 1
   let tries = DENSE_LCP_TRIES
   for (let iteration = 0; ; iteration++) {
     if (iteration >= DENSE_LCP_MAX_ITERATIONS)
       throw new Error('dense LCP: constraint solve did not converge')
     let f = 0
+    let g = 0
     for (let i = 0; i < m; i++) {
       if (state[i] === 1) free[f++] = i
-      else lambda[i] = state[i] === 0 ? lo[i] : hi[i]
+      else {
+        lambda[i] = state[i] === 0 ? lo[i] : hi[i]
+        bounded[g++] = i
+      }
     }
     if (f > 0) {
-      // (A + εD)_FF·λ_F = −(b_F + A_FB·λ_B), 콜레스키(LLᵀ, 양정치)
+      // (A + εD)_FF·λ_F = −(b_F + A_FB·λ_B), 콜레스키(LLᵀ, 양정치). A_FB·λ_B는 경계 행 오름차순(자유 행을 건너뛰고 모든 행을 도는
+      // 것과 같은 순서의 같은 합)
       for (let p = 0; p < f; p++) {
         const i = free[p]
         let s = -b[i]
-        for (let j = 0; j < m; j++) if (state[j] !== 1) s -= a[i * m + j] * lambda[j]
+        for (let t = 0; t < g; t++) {
+          const j = bounded[t]
+          s -= a[i * m + j] * lambda[j]
+        }
         rhs[p] = s
+      }
+      // 다시 쓸 수 있는 L 앞부분(factor 주석)
+      let reuse = 0
+      const limit = Math.min(f, factor.length)
+      if (factor.owner === call) while (reuse < limit && rows[reuse] === free[reuse]) reuse++
+      else {
+        for (; reuse < limit; reuse++) {
+          const i = free[reuse]
+          let same = true
+          for (let q = 0; q <= reuse && same; q++) {
+            const j = free[q]
+            const value = a[i * m + j] + (reuse === q ? DENSE_LCP_REGULARIZATION * a[i * m + i] : 0)
+            same = Object.is(value, values[reuse * stride + q])
+          }
+          if (!same) break
+          rows[reuse] = i
+        }
+        factor.owner = call
+      }
+      factor.length = reuse
+      for (let p = reuse; p < f; p++) {
+        const i = free[p]
+        rows[p] = i
         for (let q = 0; q <= p; q++) {
           const j = free[q]
-          chol[p * f + q] = a[i * m + j] + (p === q ? DENSE_LCP_REGULARIZATION * a[i * m + i] : 0)
+          const value = a[i * m + j] + (p === q ? DENSE_LCP_REGULARIZATION * a[i * m + i] : 0)
+          values[p * stride + q] = value
+          chol[p * stride + q] = value
         }
-      }
-      for (let p = 0; p < f; p++) {
         for (let q = 0; q <= p; q++) {
-          let s = chol[p * f + q]
-          for (let k = 0; k < q; k++) s -= chol[p * f + k] * chol[q * f + k]
+          let s = chol[p * stride + q]
+          for (let k = 0; k < q; k++) s -= chol[p * stride + k] * chol[q * stride + k]
           if (p === q) {
             if (!(s > 0)) throw new Error('dense LCP: matrix not positive definite')
-            chol[p * f + p] = Math.sqrt(s)
-          } else chol[p * f + q] = s / chol[q * f + q]
+            chol[p * stride + p] = Math.sqrt(s)
+          } else chol[p * stride + q] = s / chol[q * stride + q]
         }
+        factor.length = p + 1
       }
       for (let p = 0; p < f; p++) {
         let s = rhs[p]
-        for (let k = 0; k < p; k++) s -= chol[p * f + k] * rhs[k]
-        rhs[p] = s / chol[p * f + p]
+        for (let k = 0; k < p; k++) s -= chol[p * stride + k] * rhs[k]
+        rhs[p] = s / chol[p * stride + p]
       }
       for (let p = f - 1; p >= 0; p--) {
         let s = rhs[p]
-        for (let k = p + 1; k < f; k++) s -= chol[k * f + p] * rhs[k]
-        rhs[p] = s / chol[p * f + p]
+        for (let k = p + 1; k < f; k++) s -= chol[k * stride + p] * rhs[k]
+        rhs[p] = s / chol[p * stride + p]
       }
       for (let p = 0; p < f; p++) lambda[free[p]] = rhs[p]
     }

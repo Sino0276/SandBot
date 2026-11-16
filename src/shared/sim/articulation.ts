@@ -490,6 +490,103 @@ function elementBlock(
   return sum
 }
 
+// constrainedCoupled의 A_kl = j_k·y_l + Σ_{같은 공} a_kᵀW a_l + δ_kl·γ_k(y_l = M̂⁻¹j_lᵀ, 행 우선 n×n)를 out에 쓴다. out의 앞 n²
+// 칸은 +0이어야 한다. nonzero[k]: j_k의 0이 아닌 열(오름차순, j_k[c] !== 0인 c < 좌표 수), y[l]: j_l이 모두 0이면 null.
+// 칸마다 연산은 모든 짝을 도는 식 그대로다: value = (y_l이 있으면 j_k·y_l, 아니면 0) → += elementBlock(coupled일 때) → 대각이면
+// += 순응. 0인 항은 건너뛴다: j·y는 0이 아닌 열만 오름차순으로 더하는 같은 합이고(0인 열은 그 식도 건너뛴다), j나 y가 없는 짝의
+// 값은 +0이며, 공을 함께 쓰지 않는 짝의 elementBlock은 +0이다. 칸 값은 +0에서 더해 온 합이라 −0이 아니므로 +0을 더하지 않아도
+// 비트가 같다. 대칭이라 위 삼각(k ≤ l)만 계산하고 대칭 칸에도 같은 값을 적는다(6a 성능, P6 쐐기: 로봇 섬 행의 절반은 j가 0인 공끼리·
+// 정적 행이고, 공 부분은 같은 공을 가리키는 짝에만 있다)
+export function writeCoupledMatrix(
+  rows: readonly Row[],
+  y: readonly (readonly number[] | null)[],
+  nonzero: readonly (readonly number[])[],
+  coupled: CoupledElements | undefined,
+  out: Float64Array
+): void {
+  const n = rows.length
+  const withY: number[] = []
+  for (let l = 0; l < n; l++) if (y[l]) withY.push(l)
+  let from = 0
+  for (let k = 0; k < n; k++) {
+    while (from < withY.length && withY[from] < k) from++
+    const jk = rows[k].j
+    const columns = nonzero[k]
+    if (columns.length === 0) continue
+    for (let w = from; w < withY.length; w++) {
+      const l = withY[w]
+      const col = y[l] as readonly number[]
+      let sum = 0
+      for (let t = 0; t < columns.length; t++) {
+        const c = columns[t]
+        sum += jk[c] * col[c]
+      }
+      out[k * n + l] = sum
+      out[l * n + k] = sum
+    }
+  }
+  if (coupled) addElementBlocks(rows, coupled, out)
+  for (let k = 0; k < n; k++) out[k * n + k] += rows[k].compliance ?? 0
+}
+
+// 칸 A_kl(k ≤ l, 행 우선 n×n, 대칭 칸 A_lk도 같은 값으로)에 elementBlock을 더한다(writeCoupledMatrix). 공을 함께 쓰지 않는 짝의
+// elementBlock은 +0이라 행 k마다 그 행의 공을 가리키는 뒤 행(공마다 오름차순 목록을 합친 것, 겹침 없음)만 본다. 공 번호가 표
+// 밖이면(만든 쪽의 잘못) 모든 짝에 더한다(전과 같은 값). 행이 수십 개인 로봇 섬에서 모든 짝의 부분을 훑지 않게(6a 성능, P6 쐐기)
+function addElementBlocks(rows: readonly Row[], coupled: CoupledElements, a: Float64Array): void {
+  const n = rows.length
+  const byElement: number[][] = Array.from({ length: coupled.count }, () => [])
+  let unknown = false
+  for (let k = 0; k < n; k++) {
+    const parts = rows[k].elements
+    if (parts === undefined) continue
+    for (const part of parts) {
+      const list = Number.isInteger(part.element) ? byElement[part.element] : undefined
+      if (!list) unknown = true
+      else if (list[list.length - 1] !== k) list.push(k)
+    }
+  }
+  const add = (k: number, l: number): void => {
+    const value = a[k * n + l] + elementBlock(rows[k].elements, rows[l].elements, coupled)
+    a[k * n + l] = value
+    a[l * n + k] = value
+  }
+  if (unknown) {
+    for (let k = 0; k < n; k++) for (let l = k; l < n; l++) add(k, l)
+    return
+  }
+  // 목록 안 자리(행 k가 공 e 목록의 몇째인지는 앞에서부터 센다: 행을 오름차순으로 돌므로 자리도 늘기만 한다)
+  const at = new Int32Array(coupled.count)
+  for (let k = 0; k < n; k++) {
+    const parts = rows[k].elements
+    if (parts === undefined || parts.length === 0) continue
+    if (parts.length === 1) {
+      const e = parts[0].element
+      const list = byElement[e]
+      while (list[at[e]] < k) at[e]++
+      for (let i = at[e]; i < list.length; i++) add(k, list[i])
+      continue
+    }
+    // 공이 둘 이상인 행: 그 공들의 목록에서 k 이상인 행을 오름차순으로 겹치지 않게 모은다
+    const seen: number[] = []
+    for (const part of parts) {
+      const e = part.element
+      const list = byElement[e]
+      while (list[at[e]] < k) at[e]++
+      for (let i = at[e]; i < list.length; i++) seen.push(list[i])
+    }
+    seen.sort((x, y) => x - y)
+    for (let i = 0; i < seen.length; i++) if (i === 0 || seen[i] !== seen[i - 1]) add(k, seen[i])
+  }
+}
+
+// 두 배열의 길이와 값이 모두 같은지(Object.is: −0과 +0, NaN도 가른다)
+function sameValues(a: readonly number[], b: readonly number[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false
+  return true
+}
+
 // 행의 공 부분 속도 Σ a·u(u는 공마다 6개)
 function elementRate(parts: readonly ElementPart[] | undefined, u: readonly number[]): number {
   if (parts === undefined) return 0
@@ -580,6 +677,21 @@ export class Articulation {
   private filteredAccel: number[]
   // 마지막 step에 로봇 섬으로 묶인 공의 속도 u⁺(6a, 공마다 [v; ω] 6개, ContactSet.elements 순서). 없으면 null
   private elementU: number[] | null = null
+  // constrainedCoupled의 행 열 M̂⁻¹jᵀ와 j의 0이 아닌 열(같은 M̂ 분해 동안 j 배열마다 한 번). 엇갈림 2회차·한계를 더해 다시 푸는
+  // 풀이는 같은 분해와 같은 j 배열(ContactRow.j, 마찰 상자 행)을 다시 쓰므로 같은 ldlSolve를 되풀이하지 않는다(같은 입력의 같은
+  // 연산이라 값이 같다. 6a 성능, P6 쐐기). 분해가 바뀌면 비운다
+  private columns: {
+    factor: { l: number[][]; d: number[] } | null
+    map: Map<readonly number[], { y: number[] | null; nonzero: number[] }>
+  } = { factor: null, map: new Map() }
+  // coupledMatrix가 A를 쓰는 버퍼(커지기만 한다)와 마지막으로 만든 행렬의 입력(같으면 그대로 다시 쓴다)
+  private matrixBuffer = new Float64Array(0)
+  private lastMatrix: {
+    factor: { l: number[][]; d: number[] }
+    coupled: CoupledElements | undefined
+    rows: { j: readonly number[]; elements?: readonly ElementPart[]; compliance?: number }[]
+    a: Float64Array
+  } | null = null
 
   constructor(joints: readonly SimJointSpec[], options: ArticulationOptions = {}) {
     this.joints = joints
@@ -1290,6 +1402,66 @@ export class Articulation {
     return { v, lambda, u: null }
   }
 
+  // constrainedCoupled의 A = J·M̂⁻¹·Jᵀ + Σ aᵀW a + γ(행 우선 n×n)와 행 열 y = M̂⁻¹jᵀ. 같은 분해·같은 공 묶음에서 행마다 j(값)·공
+  // 부분(같은 배열)·순응이 앞 풀이와 같으면 앞 행렬을 그대로 쓴다(마찰 상자 엇갈림 2회차는 상자만 바뀐 같은 행을 다시 푼다. A는
+  // j·공 부분·순응만으로 정해지므로 같은 값이다). y는 같은 분해 동안 j 배열마다 한 번 푼다(columns). 6a 성능, P6 쐐기
+  private coupledMatrix(
+    factor: { l: number[][]; d: number[] },
+    rows: readonly Row[],
+    coupled: CoupledElements | undefined,
+    m: number
+  ): { a: Float64Array; y: (number[] | null)[] } {
+    const n = rows.length
+    if (this.columns.factor !== factor) this.columns = { factor, map: new Map() }
+    const columns = this.columns.map
+    const cached = rows.map((row) => {
+      let found = columns.get(row.j)
+      if (!found) {
+        const nonzero: number[] = []
+        for (let c = 0; c < m; c++) if (row.j[c] !== 0) nonzero.push(c)
+        found = { y: row.j.some((x) => x !== 0) ? ldlSolve(factor, row.j) : null, nonzero }
+        columns.set(row.j, found)
+      }
+      return found
+    })
+    const y = cached.map((c) => c.y)
+    const last = this.lastMatrix
+    if (
+      last !== null &&
+      last.factor === factor &&
+      last.coupled === coupled &&
+      last.rows.length === n &&
+      rows.every((row, k) => {
+        const before = last.rows[k]
+        return (
+          row.elements === before.elements &&
+          Object.is(row.compliance, before.compliance) &&
+          sameValues(row.j, before.j)
+        )
+      })
+    )
+      return { a: last.a, y }
+    // 버퍼를 다시 쓴다(하위 단계마다 수십 KB를 새로 만들지 않게). 앞 n² 칸은 +0으로(writeCoupledMatrix)
+    if (this.matrixBuffer.length < n * n)
+      this.matrixBuffer = new Float64Array(Math.max(n * n, 2 * this.matrixBuffer.length))
+    else this.matrixBuffer.fill(0, 0, n * n)
+    const a = this.matrixBuffer
+    writeCoupledMatrix(
+      rows,
+      y,
+      cached.map((c) => c.nonzero),
+      coupled,
+      a
+    )
+    this.lastMatrix = {
+      factor,
+      coupled,
+      rows: rows.map((row) => ({ j: row.j, elements: row.elements, compliance: row.compliance })),
+      a
+    }
+    return { a, y }
+  }
+
   // 공 행이 있는 풀이(6a, spec-6a §2.5): KKT [[M̂, 0], [0, M_E]]·[v; u] = [p; p_E] + [Jᵀ; J_Eᵀ]λ에서 M_E가 대각이라 공을 Schur
   // 보수로 접는다. A_kl = j_kᵀM̂⁻¹j_l + Σ_{같은 공} a_kᵀW a_l + δ_kl·γ_k, b_k = j_k·v* + Σ a_k·u* − 목표,
   // v⁺ = v* + Σ M̂⁻¹j_k·λ_k, u⁺ = u* + W·Σ a_k·λ_k. 로봇 열이 0인 행(공끼리)은 M̂⁻¹을 풀지 않는다. 좌표 하나 행의 속도 맞추기는
@@ -1309,18 +1481,7 @@ export class Articulation {
       return sum
     }
     const n = rows.length
-    const y = rows.map((row) => (row.j.some((x) => x !== 0) ? ldlSolve(factor, row.j) : null))
-    // 대칭이라 반만 계산한다
-    const a = new Float64Array(n * n)
-    for (let k = 0; k < n; k++)
-      for (let l = k; l < n; l++) {
-        const col = y[l]
-        let value = col ? dot(rows[k].j, col) : 0
-        if (coupled) value += elementBlock(rows[k].elements, rows[l].elements, coupled)
-        if (k === l) value += rows[k].compliance ?? 0
-        a[k * n + l] = value
-        a[l * n + k] = value
-      }
+    const { a, y } = this.coupledMatrix(factor, rows, coupled, m)
     const b = new Float64Array(n)
     const start = new Uint8Array(n)
     rows.forEach((row, k) => {
@@ -1338,10 +1499,17 @@ export class Articulation {
       rows.map((r) => r.hi),
       start
     )
-    const lambda = Array.from(solved.lambda)
+    // 타입 배열을 배열로(같은 값, Array.from보다 빠르다)와 다음 하위 단계의 시작 상태(키 → 상태, 같은 삽입 순서)
     const names: LcpState[] = ['lower', 'free', 'upper']
-    const states = Array.from(solved.states, (state) => names[state])
-    this.lcpStates = new Map(rows.map((r, k) => [r.key, states[k]]))
+    const lambda = new Array<number>(n)
+    const states = new Array<LcpState>(n)
+    const nextStates = new Map<string, LcpState>()
+    for (let k = 0; k < n; k++) {
+      lambda[k] = solved.lambda[k]
+      states[k] = names[solved.states[k]]
+      nextStates.set(rows[k].key, states[k])
+    }
+    this.lcpStates = nextStates
     const v = vStar.slice()
     rows.forEach((row, k) => {
       if (lambda[k] === 0) return
