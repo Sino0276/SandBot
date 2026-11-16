@@ -198,9 +198,11 @@ export type NormalRowInput = {
   restitution: number
   // 반발하는 접근 속도 문턱(m/s)
   bounceSpeed: number
-  // 끼임: 이 행의 공(공끼리 짝이면 두 공 모두)이 서로 반대쪽을 향한 두 접촉에 닿아 있다(elementWorld.ts pinchedBalls). 그러면
-  // 반발 두 단계를 쓰지 않고 부드러운 법선·심만 쓴다
+  // 끼임: 이 행의 법선이 같은 공의 다른 접촉 법선과 서로 반대쪽이다(공끼리 짝이면 두 공 모두에서, elementWorld.ts
+  // pinchedContacts). 그러면 반발 두 단계를 쓰지 않고 이력 스프링(pinchedSpringRow)·심만 쓴다
   pinched?: boolean
+  // 이력 스프링의 이번 눌림 주기 최대 깊이(m): 앞 하위 단계 행이 낸 peak. 있으면 끼임이 풀려도 떨어질 때까지 이력 스프링이다
+  peak?: number
 }
 
 export type NormalRow = {
@@ -211,6 +213,8 @@ export type NormalRow = {
   bounced: boolean
   // 이 하위 단계에 표면까지 와서 멈추게 한 접근 속도(다음 하위 단계가 반발에 쓴다), 아니면 undefined
   arrival?: number
+  // 이력 스프링 행이면 다음 하위 단계에 넘길 최대 깊이(떨어졌으면 undefined)
+  peak?: number
 }
 
 // 법선 행의 목표와 순응(spec-6a §2.3).
@@ -222,13 +226,15 @@ export type NormalRow = {
 // - 침투 δ > 0: ODE ERP·CFM 꼴의 암시 스프링–감쇠(목표 = (h·k/(h·k + c))·δ/h, γ = 1/(h·(h·k + c)), 정지 상태 힘 = k·δ).
 // - 떨어짐(분리 ≥ 0): 예측 목표 −분리/h에 같은 γ.
 // - 심(δ ≥ coreDepth): 강체(γ = 0, 목표 0, 밀어내지 않음).
-// - 끼인 공(pinched)은 반발 두 단계를 쓰지 않는다[결정: 6a 리뷰. 로봇과 벽 사이에 끼인 공의 두 행이 모두 강체 반발 목표(로봇 쪽
+// - 끼인 행(pinched)은 반발 두 단계를 쓰지 않는다[결정: 6a 리뷰. 로봇과 벽 사이에 끼인 공의 두 행이 모두 강체 반발 목표(로봇 쪽
 //   e·1.5 m/s, 벽 쪽 e·공 속도)를 가지면 LCP가 두 목표를 함께 맞추려고 13.6 kg 로봇을 1 ms에 거꾸로 밀었다(공 25 g이 트램펄린이
-//   됨, 들어온 15 J에서 약 11 J가 돌아감). 끼인 공이 돌려줄 수 있는 에너지는 공 자신의 변형(심까지 약 0.7 J)뿐이라 부드러운 법선과
-//   심이 그것을 낸다. 한쪽이 자유로운 공의 반발(바닥·벽에 튐, 로봇이 쳐 냄)은 그대로다].
+//   됨, 들어온 15 J에서 약 11 J가 돌아감). 끼인 공이 돌려줄 수 있는 에너지는 공 자신의 변형(심까지 약 0.7 J)뿐이라 이력 스프링
+//   (pinchedSpringRow)과 심이 그것을 낸다. 한쪽이 자유로운 행의 반발(바닥·벽에 튐, 로봇이 쳐 냄)은 그대로다]. 이력 스프링 주기
+//   (peak)에 들어간 행은 끼임이 풀려도 떨어질 때까지 이력 스프링이다(중간에 탄성선으로 바꾸면 힘이 뛰어 에너지가 생긴다).
 export function normalRow(input: NormalRowInput): NormalRow {
   const { separation, approach, h, coreDepth, restitution: e } = input
-  if (!input.pinched) {
+  const hysteresis = input.pinched === true || input.peak !== undefined
+  if (!hysteresis) {
     if (input.impact !== undefined && input.impact < -input.bounceSpeed)
       return {
         target: e * -input.impact - ((1 + e) * Math.max(separation, 0)) / h,
@@ -250,9 +256,52 @@ export function normalRow(input: NormalRowInput): NormalRow {
     }
   }
   const depth = -separation
-  if (depth >= coreDepth) return { target: 0, compliance: 0, crushed: true, bounced: false }
-  return springRow(input)
+  if (depth >= coreDepth) {
+    const row: NormalRow = { target: 0, compliance: 0, crushed: true, bounced: false }
+    if (hysteresis) row.peak = Math.max(input.peak ?? 0, depth)
+    return row
+  }
+  return hysteresis ? pinchedSpringRow(input) : springRow(input)
 }
+
+// 끼인 공의 이력 스프링(Walton–Braun 선형 이력 모델[가정: 끼인 공의 되돌림 에너지 비 = e²]): 눌릴 때(깊이가 이번 주기 최대
+// peak 이상) 탄성선 F = k·δ(springRow)이고, 풀릴 때(δ < peak) 더 가파른 선 F = k_U·(δ − δ₀), k_U = k/e², δ₀ = peak·(1 − e²)
+// (peak에서 두 선의 힘이 같다)라 한 주기에 변형 에너지의 e²만 돌려준다. 그래서 무거운 몸체가 공을 면에 눌렀다 놓아도 몸체 질량과
+// 관계없이 공의 반발 계수 e 안팎으로 되튄다[결정: 6a 리뷰. 감쇠 c = 2ζ√(k·m)은 공 질량 기준이라 13.6 kg 판에는 유효 감쇠비가
+// 약 0.03이어서 판이 0.89배로 되튀었다(변형 에너지의 79 %)]. 감쇠 c는 탄성선 그대로(k로 낸 값)다. δ < δ₀이면 힘이 없고 δ₀까지
+// 예측 목표다. 떨어지면(δ ≤ 0) 주기가 끝나 peak를 버린다
+export function pinchedSpringRow(
+  input: Pick<
+    NormalRowInput,
+    'separation' | 'h' | 'stiffness' | 'mass' | 'dampingRatio' | 'restitution' | 'peak'
+  >
+): NormalRow {
+  const depth = -input.separation
+  const peak = input.peak
+  if (depth <= 0 || peak === undefined || depth >= peak) {
+    const row = springRow(input)
+    if (depth > 0) row.peak = depth
+    return row
+  }
+  const { h, stiffness: k, mass } = input
+  const ratio = Math.min(1, Math.max(MIN_PINCH_RETURN, input.restitution * input.restitution))
+  const unload = k / ratio
+  const rest = peak * (1 - ratio)
+  const c = 2 * input.dampingRatio * Math.sqrt(k * mass)
+  const compliance = 1 / (h * (h * unload + c))
+  if (depth > rest)
+    return {
+      target: (unload * (depth - rest)) / (h * unload + c),
+      compliance,
+      crushed: false,
+      bounced: false,
+      peak
+    }
+  return { target: -(rest - depth) / h, compliance, crushed: false, bounced: false, peak }
+}
+
+// 이력 스프링의 되돌림 에너지 비 e²의 하한[결정: e = 0이면 k_U가 무한대다. 0.01은 e = 0.1, 쓰는 반발 계수(0.3 이상)보다 작다]
+export const MIN_PINCH_RETURN = 0.01
 
 // 부드러운 법선(심·반발 없는 스프링–감쇠) 행: 침투 δ > 0이면 목표 (h·k/(h·k + c))·δ/h, 떨어져 있으면 예측 목표 −분리/h, 둘 다
 // 순응 γ = 1/(h·(h·k + c)). normalRow의 심 아래 경우이고, 로봇·넣은 공을 정해진 속도로 보는 한쪽 행(elementWorld.ts

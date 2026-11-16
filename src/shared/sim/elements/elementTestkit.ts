@@ -15,6 +15,7 @@ import {
   type WorldSpec
 } from '../worldSpec'
 import type { ElementWorldOptions } from './elementWorld'
+import { elementSpawns, restBodyFrames } from './spawn'
 
 // 경기 요소(6a) 시험의 세계·공 도구(시험 전용, 제품 코드는 쓰지 않는다).
 
@@ -139,9 +140,12 @@ export const speed = (v: Vec3): number => Math.hypot(v.x, v.y, v.z)
 // P6 쐐기: 실제 앱 E2E(6a)의 손 씬을 세계 설명으로 옮긴 것. 18 in 상자 섀시 메카넘이 빨강 GARDEN 앞(1.2, −1.55)에서 관중석
 // 벽(+X)을 보고, 앞 아래에 원기둥 인테이크 롤러(CR 서보, μ 1), 위에 15° 경사 바구니(바닥판·옆벽·뒤판)의 프리로드 넷과 그 앞을
 // 막는 게이트(위치 서보), 모터 플라이휠과 후드가 있다. 인테이크를 켜고 앞 0.3으로 몰면 GARDEN 공 넷이 섀시 앞면·롤러·벽·바닥·
-// 이웃 공 사이에 끼여(공마다 짝 4–6개, 15–18행) 바구니 프리로드(24행)와 합친 로봇 섬 행이 MAX_COUPLED_ROWS를 넘는다
+// 이웃 공 사이에 끼여(공마다 짝 4–6개, 15–18행) 바구니 프리로드(24행)와 합친 로봇 섬 행이 E2E에서는 84행이다. 시작 상태
+// initial은 시즌 배치·프리로드(elementSpawns, 공 0–11) 뒤에 빨강 GARDEN 넷 바로 앞(로봇 쪽)에 한 줄을 더 둔다(공 12–15): 두 줄이
+// 함께 끼여 로봇 섬 행이 MAX_COUPLED_ROWS(96)를 넘는다
 export function intakeWedge(): {
   spec: WorldSpec
+  initial: SimElementState[]
   out: (k: number) => Record<string, DeviceValues>
 } {
   const deg = Math.PI / 180
@@ -376,5 +380,12 @@ export function intakeWedge(): {
     intake: roller(k >= 20),
     gate
   })
-  return { spec, out }
+  const field = resolveSeason('biobuzz')
+  const spawns = elementSpawns(field, spec.elements, start, restBodyFrames(spec.joints))
+  // 빨강 GARDEN 넷(공 0–3, 관중석 벽 +X에 붙은 한 줄) 앞 지름 + 1 mm에 잠든 공 한 줄
+  const front = spawns.slice(0, 4).map((s) => ({
+    ...s,
+    position: { ...s.position, x: s.position.x - 2 * r - 0.001 }
+  }))
+  return { spec, initial: [...spawns, ...front], out }
 }

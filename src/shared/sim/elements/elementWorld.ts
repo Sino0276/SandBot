@@ -7,7 +7,7 @@ import type {
   ElementPart,
   LcpState
 } from '../articulation'
-import { COLLISION_MARGIN, frictionTangent } from '../bodyCollision'
+import { COLLISION_MARGIN, frictionTangent, OVERLAP_NOTICE_DEPTH } from '../bodyCollision'
 import {
   bodyShape,
   placeShape,
@@ -294,6 +294,14 @@ export class ElementWorld {
   // 앞 하위 단계에 표면까지 와서 멈춘 짝의 접근 속도(두 단계 반발, ballContact.ts normalRow)
   private arrivals = new Map<string, number>()
   private nextArrivals = new Map<string, number>()
+  // 끼인 행의 이력 스프링 최대 깊이(짝 토큰 → m, ballContact.ts pinchedSpringRow). 이번 하위 단계에 나온 짝만 다음으로 넘긴다
+  private peaks = new Map<string, number>()
+  private nextPeaks = new Map<string, number>()
+  // 시작 겹침(실행의 첫 하위 단계)에서 이미 심 이상 눌린 짝의 깊이(짝 토큰 → m). 그 짝의 심 행은 elementCrushed를 내지 않는다:
+  // 시작 겹침은 INIT 경고(worldPreloadEmbedded)가 맡는다(5 collisionOverlap과 같은 규칙). 그보다 OVERLAP_NOTICE_DEPTH 넘게
+  // 깊어지면 메커니즘이 누른 것이라 알리고, 심 아래로 풀리면 지운다(그 뒤의 눌림은 진짜 눌림이다)
+  private readonly startCrush = new Map<string, number>()
+  private started = false
   // 이번 하위 단계의 깨어 있는 공 가운데 가장 빠른 속력(m/s, 넓은 단계 여유)
   private maxSpeed = 0
   private pending: Pending | null = null
@@ -381,6 +389,8 @@ export class ElementWorld {
     const n = this.count
     if (n === 0) return { rows: [], coupled: undefined }
     const ctx = this.robotContext(art, frames)
+    const first = !this.started
+    this.started = true
     const live = (i: number): boolean => this.out[i] === 0
     this.grid.build(n, this.pos, live)
     let maxSpeed = 0
@@ -414,6 +424,7 @@ export class ElementWorld {
         }
       }
     })
+    if (first) for (const found of robotContacts) this.recordStartCrush(found)
     // 2. 깨어 있는 공에 닿은 잠든 공을 깨운다(퍼짐)
     for (let q = 0; q < queue.length; q++) {
       const e = queue[q]
@@ -433,6 +444,8 @@ export class ElementWorld {
       this.nextTangents = new Map()
       this.arrivals = new Map()
       this.nextArrivals = new Map()
+      this.peaks = new Map()
+      this.nextPeaks = new Map()
       return { rows: [], coupled: undefined }
     }
     // 3. 자유 예측(깨어 있는 공)
@@ -452,14 +465,15 @@ export class ElementWorld {
       }
       contacts.push(...own)
     }
+    if (first) this.recordStartCrush(contacts)
     if (failed.includes(1)) {
       contacts = contacts.filter((c) => !failed[c.e] && (c.f < 0 || !failed[c.f]))
       for (let e = 0; e < n; e++) if (failed[e]) uStar.fill(0, 6 * e, 6 * e + 6)
     }
     // 5. 굴림·회전 저항(앞 하위 단계 법선 충격, 상한 있는 각충격)
     for (const contact of contacts) this.resist(contact, h, uStar)
-    // 6. 행(끼인 공은 반발 두 단계 없이)
-    const pinched = this.pinchedBalls(contacts)
+    // 6. 행(끼인 행은 반발 두 단계 없이 이력 스프링)
+    const pinched = this.pinchedContacts(contacts)
     const rows: BallRow[] = []
     const m = art ? art.coordinates.length : 0
     contacts.forEach((contact, index) => {
@@ -482,6 +496,8 @@ export class ElementWorld {
     this.nextTangents = new Map()
     this.arrivals = this.nextArrivals
     this.nextArrivals = new Map()
+    this.peaks = this.nextPeaks
+    this.nextPeaks = new Map()
     const zeros = new Array<number>(m).fill(0)
     const coupledIndex = new Map<number, number>()
     plan.coupled.forEach((e, k) => coupledIndex.set(e, k))
@@ -532,6 +548,7 @@ export class ElementWorld {
     this.pending = null
     this.nextTangents = new Map()
     this.nextArrivals = new Map()
+    this.nextPeaks = new Map()
     for (let e = 0; e < this.count; e++) {
       if (this.out[e] || this.asleep[e]) continue
       this.vel.fill(0, 3 * e, 3 * e + 3)
@@ -827,6 +844,12 @@ export class ElementWorld {
 
   private notify(code: SimNoticeCode, params: Record<string, string>): void {
     this.notices.push({ code, params })
+  }
+
+  // 첫 하위 단계의 접촉 가운데 이미 심 이상 눌린 짝의 깊이를 적는다(startCrush)
+  private recordStartCrush(contacts: readonly Contact[]): void {
+    for (const c of contacts)
+      if (-c.separation >= c.core) this.startCrush.set(c.keys.token, -c.separation)
   }
 
   // 공 e의 접촉 만들기가 던졌다(prepare의 공 단위 실패 가두기)
@@ -1227,10 +1250,11 @@ export class ElementWorld {
     change(along, Math.abs(wn), contact.mu * spinRadius * lambda)
   }
 
-  // 끼인 공(spec-6a §2.3 반발의 예외, ballContact.ts normalRow): 이번 하위 단계 접촉 가운데 공 쪽 법선 둘의 내적이
-  // PINCH_NORMAL_DOT보다 작은 짝이 있는 공(로봇과 벽 사이, 롤러와 후드 사이, 공을 바닥에 누르는 팔 아래). 공끼리 짝은 두 공 모두에
-  // 센다(f 쪽 법선은 −n)
-  private pinchedBalls(contacts: readonly Contact[]): Uint8Array {
+  // 끼인 행(spec-6a §2.3 반발의 예외, ballContact.ts normalRow): 접촉마다, 그 법선(공 쪽으로)이 같은 공의 다른 접촉 법선과의
+  // 내적이 PINCH_NORMAL_DOT보다 작으면(서로 반대쪽: 로봇과 벽 사이, 롤러와 후드 사이, 공을 바닥에 누르는 팔 아래) 그 공 쪽에서
+  // 끼였다. 공끼리 짝은 두 공 모두 끼였을 때만 끼인 행이다(f 쪽 법선은 −n, 한 공이라도 튀어 나갈 수 있으면 반발한다). 행마다
+  // 본다[결정: 6a 리뷰. 공마다 보면 y로 붙은 이웃이나 위에 얹힌 공 때문에 그 축과 직각으로 로봇이 쳐 내는 행까지 반발을 잃었다]
+  private pinchedContacts(contacts: readonly Contact[]): Uint8Array {
     const n = this.count
     const start = new Int32Array(n + 1)
     for (const c of contacts) {
@@ -1239,20 +1263,28 @@ export class ElementWorld {
     }
     for (let i = 0; i < n; i++) start[i + 1] += start[i]
     const next = start.slice(0, n)
-    const normals = new Float64Array(3 * start[n])
-    const put = (ball: number, normal: V3, sign: number): void => {
-      const o = 3 * next[ball]++
+    const total = start[n]
+    const normals = new Float64Array(3 * total)
+    // 칸마다 접촉 번호와 쪽(0: e, 1: f)
+    const owner = new Int32Array(total)
+    const side = new Uint8Array(total)
+    const put = (ball: number, normal: V3, sign: number, k: number, f: number): void => {
+      const slot = next[ball]++
+      const o = 3 * slot
       normals[o] = sign * normal[0]
       normals[o + 1] = sign * normal[1]
       normals[o + 2] = sign * normal[2]
+      owner[slot] = k
+      side[slot] = f
     }
-    for (const c of contacts) {
-      put(c.e, c.normal, 1)
-      if (c.f >= 0) put(c.f, c.normal, -1)
-    }
-    const pinched = new Uint8Array(n)
+    contacts.forEach((c, k) => {
+      put(c.e, c.normal, 1, k, 0)
+      if (c.f >= 0) put(c.f, c.normal, -1, k, 1)
+    })
+    // 쪽마다 끼였는지(비트 1: e 쪽, 2: f 쪽)
+    const blocked = new Uint8Array(contacts.length)
     for (let i = 0; i < n; i++)
-      for (let a = start[i]; a < start[i + 1] && !pinched[i]; a++)
+      for (let a = start[i]; a < start[i + 1]; a++)
         for (let b = a + 1; b < start[i + 1]; b++)
           if (
             normals[3 * a] * normals[3 * b] +
@@ -1260,14 +1292,18 @@ export class ElementWorld {
               normals[3 * a + 2] * normals[3 * b + 2] <
             PINCH_NORMAL_DOT
           ) {
-            pinched[i] = 1
-            break
+            blocked[owner[a]] |= side[a] === 0 ? 1 : 2
+            blocked[owner[b]] |= side[b] === 0 ? 1 : 2
           }
+    const pinched = new Uint8Array(contacts.length)
+    contacts.forEach((c, k) => {
+      if (blocked[k] & 1 && (c.f < 0 || blocked[k] & 2)) pinched[k] = 1
+    })
     return pinched
   }
 
-  // 접촉 하나의 행: 법선(부드러운 법선·반발·심) → 접선 둘(마찰 상자, 접선 순응). 비유한 값이면 빼고 알린다. 반발 두 단계는 이
-  // 행의 공 가운데 하나라도 끼이지 않았을 때만이다(그 공이 튀어 나갈 수 있다)
+  // 접촉 하나의 행: 법선(부드러운 법선·반발·심) → 접선 둘(마찰 상자, 접선 순응). 비유한 값이면 빼고 알린다. 반발 두 단계는 끼인
+  // 행(pinchedContacts)이 아닐 때만이다(그 쪽 공이 튀어 나갈 수 있다)
   private contactRows(
     ctx: RobotContext,
     contact: Contact,
@@ -1335,10 +1371,17 @@ export class ElementWorld {
       bounceSpeed: V_BOUNCE,
       dampingRatio: CONTACT_DAMPING_RATIO,
       impact: this.arrivals.get(contact.keys.token),
-      pinched: pinched[e] === 1 && (f < 0 || pinched[f] === 1)
+      pinched: pinched[index] === 1,
+      peak: this.peaks.get(contact.keys.token)
     })
     if (made.arrival !== undefined) this.nextArrivals.set(contact.keys.token, made.arrival)
-    if (made.crushed) this.notify('elementCrushed', {})
+    if (made.peak !== undefined) this.nextPeaks.set(contact.keys.token, made.peak)
+    const depth = -contact.separation
+    if (made.crushed) {
+      const start = this.startCrush.get(contact.keys.token)
+      if (start === undefined || depth > start + OVERLAP_NOTICE_DEPTH)
+        this.notify('elementCrushed', {})
+    } else if (depth < contact.core) this.startCrush.delete(contact.keys.token)
     const compliance = made.compliance
     const normalKey = contact.keys.normal
     const rows: BallRow[] = [
@@ -1404,8 +1447,10 @@ export class ElementWorld {
   // 섬 나누기(spec-6a §2.6·§2.7): 움직이는 로봇에 닿은 공과 공끼리 이어진 공은 로봇 섬(art.step이 Schur 보수로 함께 푼다). 그
   // 행이 MAX_COUPLED_ROWS를 넘으면 로봇에 직접 닿은 공 먼저, 그다음 깊은 짝(분리 오름차순), 그다음 번호 순으로 한도에 들어가는
   // 공을 넣는다(들어가지 않는 공은 건너뛰고 뒤의 더 싼 공을 계속 본다[결정: 6a 리뷰. 첫 공에서 멈추면 남은 행으로 담을 수 있는
-  // 바구니 프리로드가 한쪽 섬이 되었다]). 나머지는 로봇·넣은 공을 정해진 속도로 보는 한쪽 섬이 된다(elementCouplingLimit,
-  // softenOneWay). 나머지 공은 공끼리 이어진 섬(뿌리 = 가장 작은 번호)이다
+  // 바구니 프리로드가 한쪽 섬이 되었다]). 넣는 공은 로봇에 직접 닿았거나 이미 넣은 공에 닿은 공뿐이다(넣은 공이 늘면 차례를 다시
+  // 돈다)[결정: 6a 리뷰 2. 건너뛴 공 너머의 공을 넣으면 그 공은 로봇 풀이에 바닥 행만 들고 들어가고, 건너뛴 공의 한쪽 섬은 그
+  // 공을 정해진 속도로 봐서 사슬로 미는 힘이 이어지지 않았다]. 나머지는 로봇·넣은 공을 정해진 속도로 보는 한쪽 섬이 된다
+  // (elementCouplingLimit, softenOneWay). 나머지 공은 공끼리 이어진 섬(뿌리 = 가장 작은 번호)이다
   private islands(
     contacts: readonly Contact[],
     rows: readonly BallRow[],
@@ -1438,20 +1483,33 @@ export class ElementWorld {
         .slice()
         .sort((x, y) => robotTouch[y] - robotTouch[x] || depth[x] - depth[y] || x - y)
       admitted = new Set()
+      // 공마다 접촉 번호(번호 순)
+      const byBall: number[][] = Array.from({ length: n }, () => [])
+      contacts.forEach((c, k) => {
+        byBall[c.e].push(k)
+        if (c.f >= 0) byBall[c.f].push(k)
+      })
       let used = 0
-      for (const e of order) {
-        let cost = 0
-        contacts.forEach((c, k) => {
-          if (
-            c.f < 0
-              ? c.e === e
-              : (c.e === e && admitted.has(c.f)) || (c.f === e && admitted.has(c.e))
-          )
-            cost += rowCount[k]
-        })
-        if (used + cost > MAX_COUPLED_ROWS) continue
-        admitted.add(e)
-        used += cost
+      for (let grew = true; grew;) {
+        grew = false
+        for (const e of order) {
+          if (admitted.has(e)) continue
+          // 이 공의 로봇·정적 행과 넣은 공과의 행. 로봇에 닿았거나 넣은 공에 닿아야 넣는다
+          let linked = robotTouch[e] === 1
+          let cost = 0
+          for (const k of byBall[e]) {
+            const c = contacts[k]
+            if (c.f < 0) cost += rowCount[k]
+            else if (admitted.has(c.e === e ? c.f : c.e)) {
+              cost += rowCount[k]
+              linked = true
+            }
+          }
+          if (!linked || used + cost > MAX_COUPLED_ROWS) continue
+          admitted.add(e)
+          used += cost
+          grew = true
+        }
       }
       this.notify('elementCouplingLimit', {})
     }

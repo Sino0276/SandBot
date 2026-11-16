@@ -948,7 +948,7 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     // 프리로드 넷은 바구니(섀시 윗면 위)에 남았다
     for (const k of [8, 9, 10, 11]) expect(last[k].position.z).toBeGreaterThan(0.2)
     expect(ticks.some((t) => t.notices.some((n) => n.code === 'elementOutOfField'))).toBe(false)
-    expect(hash).toBe('498ffc81d0957f76fe99d0ac4a2988c80ed5e1a438a4b424fdaefbacc2dd3c23')
+    expect(hash).toBe('de051c2dcccb92cbe9d9b7426d3669f689a03ed3921fe63f09bf9ba08ef64dfd')
   }, 60_000)
 
   it('바퀴·관절 없음', () => {

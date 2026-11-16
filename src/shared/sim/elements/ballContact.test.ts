@@ -152,4 +152,44 @@ describe('부드러운 법선 행(6a)', () => {
     // 문턱보다 느리면 부드러운 행
     expect(normalRow({ ...base, separation: 0, approach: -0.2 }).compliance).toBeGreaterThan(0)
   })
+  it('끼인 행은 반발 두 단계 없이 이력 스프링: 눌릴 때 탄성선(peak를 적음), 풀릴 때 k/e² 선(peak에서 힘이 같음), 떨어지면 주기 끝', () => {
+    const k = 6000
+    const c = 2 * Math.sqrt(k * 0.0249)
+    const h = 0.001
+    // 빠르게 다가와도 튀지 않는다
+    const loading = normalRow({ ...base, separation: -2e-3, approach: -1, pinched: true })
+    expect(loading).toMatchObject({ bounced: false, crushed: false, peak: 2e-3 })
+    expect(loading.target).toBeCloseTo((k * 2e-3) / (h * k + c), 15)
+    // 더 깊어지면 peak가 따라간다
+    expect(normalRow({ ...base, separation: -3e-3, pinched: true, peak: 2e-3 }).peak).toBe(3e-3)
+    // 풀릴 때: k_U = k/e², δ₀ = peak(1 − e²). 정지 상태 힘 = k_U(δ − δ₀)
+    const e2 = base.restitution ** 2
+    const unload = k / e2
+    const rest = 3e-3 * (1 - e2)
+    const back = normalRow({ ...base, separation: -2.9e-3, pinched: true, peak: 3e-3 })
+    expect(back.peak).toBe(3e-3)
+    expect(back.target / back.compliance).toBeCloseTo(h * unload * (2.9e-3 - rest), 12)
+    // peak 바로 아래에서 두 선의 힘이 같다(이어진다)
+    const top = normalRow({ ...base, separation: -(3e-3 - 1e-12), pinched: true, peak: 3e-3 })
+    expect(top.target / top.compliance).toBeCloseTo(h * k * 3e-3, 9)
+    // δ₀ 아래는 힘이 없고 δ₀까지 예측 목표
+    const slack = normalRow({ ...base, separation: -1e-4, pinched: true, peak: 3e-3 })
+    expect(slack.target).toBeCloseTo(-(rest - 1e-4) / h, 12)
+    // 떨어지면 주기가 끝난다(peak 없음, 보통 예측 목표)
+    const apart = normalRow({ ...base, separation: 1e-4, pinched: true, peak: 3e-3 })
+    expect(apart.peak).toBeUndefined()
+    expect(apart.target).toBeCloseTo(-0.1, 12)
+    // 끼임이 풀려도 주기 안이면 이력 스프링(빠르게 다가와도 튀지 않는다)
+    expect(normalRow({ ...base, separation: -2.9e-3, approach: -1, peak: 3e-3 })).toMatchObject({
+      bounced: false,
+      peak: 3e-3
+    })
+    // 심은 그대로 강체이고 peak를 적는다
+    expect(normalRow({ ...base, separation: -0.3 * R - 1e-6, pinched: true })).toMatchObject({
+      target: 0,
+      compliance: 0,
+      crushed: true,
+      peak: 0.3 * R + 1e-6
+    })
+  })
 })

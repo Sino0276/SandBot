@@ -207,8 +207,8 @@ describe('6a 성능', () => {
     expect(median).toBeLessThan(2)
   })
 
-  it('P6: 인테이크를 켜고 GARDEN 공 넷을 관중석 벽에 밀어 끼우면서 프리로드 넷을 실으면(결합 한도를 넘는 쐐기) 하위 단계 중앙값 1.5 ms·p99 4 ms(목표)', () => {
-    const { spec, out } = intakeWedge()
+  it('P6: 인테이크를 켜고 GARDEN 공 두 줄(넷 + 그 앞 넷)을 관중석 벽에 밀어 끼우면서 프리로드 넷을 실으면(결합 한도를 넘는 쐐기) 하위 단계 중앙값 1.5 ms·p99 4 ms(목표)', () => {
+    const { spec, initial, out } = intakeWedge()
     // 공 쪽 알림은 ElementWorld가 결합 한도를 넘은 하위 단계마다 내고 PhysicsWorld가 실행마다 하나로 줄이므로, 하위 단계마다
     // 비우는 drainNotices를 엿봐 틱마다 한도를 넘은 하위 단계 수를 센다(계산은 바꾸지 않는다)
     let limited = 0
@@ -224,10 +224,10 @@ describe('6a 성능', () => {
     const ticks = 500
     const best = new Array<number>(ticks).fill(Infinity)
     let wedgeTicks: boolean[] = []
-    let world = new PhysicsWorld(spec)
+    let world = new PhysicsWorld(spec, { elements: { initial } })
     const codes = new Set<string>()
     for (let run = 0; run < 3; run++) {
-      world = new PhysicsWorld(spec)
+      world = new PhysicsWorld(spec, { elements: { initial } })
       const over: boolean[] = []
       for (let k = 0; k < ticks; k++) {
         limited = 0
@@ -241,13 +241,14 @@ describe('6a 성능', () => {
       else expect(over).toEqual(wedgeTicks)
     }
     expect([...codes]).not.toContain('worldError')
-    // 쐐기에 닿았다: 결합 한도를 넘은 틱이 0.5 s 넘게 이어지고, 빨강 GARDEN 넷(공 0–3)이 관중석 벽(+X)과 섀시 앞면 사이에 있다
+    // 쐐기에 닿았다: 결합 한도를 넘은 틱이 0.5 s 넘게 이어지고, 빨강 GARDEN 넷(공 0–3)과 그 앞 한 줄(공 12–15)이 관중석 벽(+X)과
+    // 섀시 앞면 사이에 있다
     expect([...codes]).toContain('elementCouplingLimit')
     const wedge = best.filter((_, k) => wedgeTicks[k])
     expect(wedge.length).toBeGreaterThan(100)
     const front = world.pose().x + HALF
     const snapshot = world.elementSnapshot()!
-    for (const k of [0, 1, 2, 3]) {
+    for (const k of [0, 1, 2, 3, 12, 13, 14, 15]) {
       expect(snapshot[k].position.x).toBeGreaterThan(front)
       expect(snapshot[k].position.x).toBeLessThan(ih)
     }

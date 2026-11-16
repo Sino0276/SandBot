@@ -687,6 +687,55 @@ describe('로봇–공 결합: 끼임·한쪽 섬·실패 가두기(6a 리뷰)',
     expect(shallow.position.z - r - top).toBeGreaterThan(-1e-3)
     // 깊은 공은 심 행(목표 0)이 밀어내지 않아 처음 깊이 그대로다
     expect(top + r - deep.position.z).toBeGreaterThan(core)
+    // 시작 겹침은 INIT 경고(worldPreloadEmbedded)가 맡는다: 심 행이 '롤러 간격을 넓히세요' 알림(elementCrushed)을 다시 내지 않는다
+    // (6a 리뷰 2: 첫 하위 단계에 냈고, 실행마다 한 번이라 뒤의 진짜 눌림 알림도 막았다)
+    expect(run.notices.map((n) => n.code)).not.toContain('elementCrushed')
+  })
+
+  it('시작부터 심 이상 박힌 공이 있어도 실행 중 메커니즘이 심까지 누른 공은 elementCrushed로 알린다', () => {
+    const core = POLLEN.contact.coreDepthRatio * r
+    // 고정 기저 섀시 상자 윗면(z 0.2)에 1.4·심 박힌 공과, 무거운 판이 1.5 m/s로 면에 눌러 심까지 짜는 공(pinchRig와 같은 기하)
+    const face = 0.1 + 2 * r
+    const pusher: SimJointSpec = {
+      parent: -1,
+      type: 'prismatic',
+      origin: { position: ZERO, rotation: ZERO },
+      axis: { x: 1, y: 0, z: 0 },
+      limits: null,
+      body: { mass: 13.6, centerOfMass: ZERO, inertia: [0.1, 0.1, 0.1, 0, 0, 0] },
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' },
+      switches: [],
+      colliders: [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })]
+    }
+    const spec = rig(
+      [pusher],
+      [
+        box({ x: face + 0.1, y: 0, z: 0.1 }, { x: 0.1, y: 0.1, z: 0.1 }),
+        box({ x: 1, y: 0, z: 0.1 }, { x: 0.2, y: 0.2, z: 0.1 })
+      ]
+    )
+    const crushedAt = (embedded: boolean, push: number): number => {
+      const art = new Articulation(spec.joints, { gravity: GRAVITY })
+      art.v[0] = push
+      art.z[0] = -0.05
+      const initial = [ball('pollen', { x: face - r, y: 0, z: r })]
+      if (embedded) initial.push(ball('pollen', { x: 1, y: 0, z: 0.2 + r - 1.4 * core }))
+      const ew = new ElementWorld(spec, WIDE, { initial, air: false, sleep: false })
+      let at = -1
+      for (let k = 0; k < 300 && at < 0; k++) {
+        stepRig(art, ew, 1)
+        if (ew.drainNotices().some((n) => n.code === 'elementCrushed')) at = k
+      }
+      return at
+    }
+    // 박힌 공만이면(판이 공에 닿지 않음) 알림이 없다
+    expect(crushedAt(true, 0)).toBe(-1)
+    // 판이 짜는 공은 박힌 공이 있어도 같은 하위 단계에 알린다(첫 하위 단계가 아니라 판이 심까지 누른 때)
+    const alone = crushedAt(false, 1.5)
+    expect(alone).toBeGreaterThan(10)
+    expect(crushedAt(true, 1.5)).toBe(alone)
   })
 
   it('결합 한도를 넘어 한쪽으로 푼 공이 벽과 로봇 사이에 끼여도 튀어 나가지 않는다', () => {
@@ -832,5 +881,125 @@ describe('로봇–공 결합: 끼임·한쪽 섬·실패 가두기(6a 리뷰)',
       code: 'worldError',
       params: { detail: 'element e0: pair boom' }
     })
+  })
+})
+
+// 6a 리뷰 2: 끼임은 행마다(그 행의 법선과 반대쪽 접촉이 있을 때만), 끼인 행은 이력 스프링이라 무거운 몸체도 공의 반발 계수 안팎으로
+// 되튄다
+describe('로봇–공 결합: 행마다 끼임·이력 스프링(6a 리뷰 2)', () => {
+  // 마찰 없는 x 직선 관절 판(관절 원점 0, 판 앞면 x = 0)
+  const plate = (
+    M: number,
+    colliders: SimCollider[],
+    axis = { x: 1, y: 0, z: 0 }
+  ): SimJointSpec => ({
+    parent: -1,
+    type: 'prismatic',
+    origin: { position: ZERO, rotation: ZERO },
+    axis,
+    limits: null,
+    body: { mass: M, centerOfMass: ZERO, inertia: [0.1, 0.1, 0.1, 0, 0, 0] },
+    friction: { coulomb: 0, viscous: 0 },
+    spring: null,
+    drive: { kind: 'none' },
+    switches: [],
+    colliders
+  })
+  const e = POLLEN.contact.restitution.robot
+
+  it('y로 붙어 놓인 공 셋을 무거운 판이 x로 치면 가운데 공도 (1 + e)배로 튀어 나간다(이웃 때문에 끼이지 않는다)', () => {
+    for (const gap of [0, 0.0005]) {
+      const spec = rig([
+        plate(13.6, [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.3, z: 0.1 })])
+      ])
+      const art = new Articulation(spec.joints, { gravity: GRAVITY })
+      art.v[0] = 1
+      const initial = [-1, 0, 1].map((j) =>
+        ball('pollen', { x: 0.01 + r, y: j * (2 * r + gap), z: r })
+      )
+      const ew = new ElementWorld(spec, WIDE, { initial, air: false, sleep: false })
+      const peak = [0, 0, 0]
+      stepRig(art, ew, 30, () => {
+        ew.snapshot().forEach((s, i) => (peak[i] = Math.max(peak[i], s.velocity.x)))
+      })
+      // 공마다 끼임을 보면 가운데 공은 ±y 이웃 때문에 판 행의 반발을 잃어 판 속도(1.08배)로만 밀렸다
+      for (const p of peak) expect(p / (1 + e)).toBeCloseTo(1, 1)
+    }
+  })
+
+  it('다른 공이 얹힌 아래 공도 판이 옆에서 치면 (1 + e)배로 튀어 나간다', () => {
+    const spec = rig([
+      plate(13.6, [box({ x: -0.05, y: 0, z: 0.02 }, { x: 0.05, y: 0.3, z: 0.02 })])
+    ])
+    const art = new Articulation(spec.joints, { gravity: GRAVITY })
+    art.v[0] = 1
+    const initial = [
+      ball('pollen', { x: 0.01 + r, y: 0, z: r }),
+      ball('pollen', { x: 0.01 + r, y: 0, z: 3 * r })
+    ]
+    const ew = new ElementWorld(spec, WIDE, { initial, air: false, sleep: false })
+    let bottom = 0
+    stepRig(art, ew, 20, () => {
+      bottom = Math.max(bottom, ew.snapshot()[0].velocity.x)
+    })
+    // 공마다 끼임을 보면 바닥(+z)과 위 공(−z)이 반대쪽이라 1.09배였다
+    expect(bottom / (1 + e)).toBeCloseTo(1, 1)
+  })
+
+  // 무거운 판(13.6 kg, 중력 없음)이 v0로 미끄러져 고정 면(고정 기저 섀시 상자)에 붙은 공을 누른다. 판 행·면 행 모두 로봇 반발
+  // e = 0.5인 끼인 행이다
+  function coast(v0: number): { final: number; ball: SimElementState } {
+    const M = 13.6
+    const face = 0.1 + 2 * r
+    const spec = rig(
+      [plate(M, [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })])],
+      [box({ x: face + 0.1, y: 0, z: 0.1 }, { x: 0.1, y: 0.1, z: 0.1 })]
+    )
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = v0
+    art.z[0] = 0.1 - 0.002
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: face - r, y: 0, z: r })],
+      air: false,
+      sleep: false
+    })
+    stepRig(art, ew, 600)
+    return { final: art.v[0] / v0, ball: ew.snapshot()[0] }
+  }
+
+  it('무거운 판이 면에 붙은 공을 심보다 얕게 누르면 판은 공의 반발 계수 안팎으로 되튄다(질량과 관계없이 변형 에너지의 e²)', () => {
+    for (const v0 of [0.05, 0.15, 0.25, 0.3]) {
+      const { final } = coast(v0)
+      // 공 질량 기준 임계 감쇠만이면 무거운 판의 유효 감쇠비가 약 0.03이라 −0.89배였다(변형 에너지의 79 %)
+      expect(final).toBeLessThan(-0.6 * e)
+      expect(final).toBeGreaterThan(-e - 0.02)
+    }
+  })
+
+  it('판이 공을 바닥에 내리누르면 판 행(e 0.5)과 바닥 행(e 0.3)의 되돌림 에너지 평균 안팎으로 되튄다', () => {
+    const v0 = 0.3
+    const spec = rig([
+      {
+        ...plate(13.6, [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })], {
+          x: 0,
+          y: 0,
+          z: -1
+        }),
+        origin: { position: { x: 0, y: 0, z: 2 * r + 0.001 }, rotation: ZERO }
+      }
+    ])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = v0
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0, y: 0, z: r })],
+      air: false,
+      sleep: false
+    })
+    stepRig(art, ew, 600)
+    const floor = POLLEN.contact.restitution.floor
+    const returned = Math.sqrt((e * e + floor * floor) / 2)
+    // 공 질량 기준 임계 감쇠만이면 −0.89배였다
+    expect(art.v[0] / v0).toBeLessThan(-0.6 * returned)
+    expect(art.v[0] / v0).toBeGreaterThan(-returned - 0.02)
   })
 })
