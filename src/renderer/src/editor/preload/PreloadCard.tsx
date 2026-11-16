@@ -14,7 +14,15 @@ import { useUnitStore } from '../../units/unitStore'
 import { LengthVector } from '../collider/ColliderCard'
 import { useCollisionModel } from '../collider/useCollisionModel'
 import { documentSeasonId, runLocksField } from '../field/fieldDisplay'
+import type { PreloadOutcome } from '../../play/worldElements'
 import { preloadCardView } from './preloadCardModel'
+
+// 겹침 결과 → 카드 문구(Console은 worldElements.ts PRELOAD_OVERLAP_NOTICE)
+const PRELOAD_OVERLAP_TEXT = {
+  pushedOut: 'preload.overlap',
+  embedded: 'preload.embedded',
+  squeezed: 'preload.squeezed'
+} as const satisfies Record<PreloadOutcome, string>
 
 // Preload Slot 카드(6a, spec-6a §3, Unity의 빈 GameObject에 붙인 생성 지점 컴포넌트). 시뮬레이터 설정이라 생성 코드·구성 XML과
 // 관계없다. 머리줄은 Collider 카드처럼 확인란(켬)·제목(번역하지 않음)·시뮬레이터 배지·[제거]이고, 칸은 경기 요소(지금은 POLLEN만,
@@ -132,9 +140,7 @@ function PreloadCard({ object }: { object: SceneObject }): React.JSX.Element | n
         )}
         {view.status === 'used' && view.overlap !== null && (
           <li className="hw-issue is-warning" data-preload="overlap">
-            {t(view.overlap.embedded ? 'preload.embedded' : 'preload.overlap', {
-              target: view.overlap.target
-            })}
+            {t(PRELOAD_OVERLAP_TEXT[view.overlap.outcome], { target: view.overlap.target })}
           </li>
         )}
         {view.status !== 'orphan' && view.status !== 'season' && !gameElements && (

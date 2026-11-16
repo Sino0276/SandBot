@@ -10,6 +10,7 @@ import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
 import { usePlayStore } from '../../play/playStore'
 import { disposeAllGeometry } from '../../scene/geometryRegistry'
 import type { SceneObjects } from '../../scene/model'
+import type { BoxColliderSettings } from '../../scene/collider'
 import { canAddPreload, type PreloadSettings } from '../../scene/preload'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useUnitStore } from '../../units/unitStore'
@@ -247,6 +248,26 @@ describe('Preload Slot 카드', () => {
     expect(cardHtml('base')).toContain(t('preload.embedded', { target: 'Robot' }))
     expect(cardHtml('base')).not.toContain(t('preload.overlap', { target: 'Robot' }))
     expect(cardHtml('plate')).not.toContain('data-preload="overlap"')
+  })
+
+  it('마주 본 두 판과 심보다 얕게 겹친 자리는 빠져나갈 자리가 없어 눌린 채 남는다고 알린다(6a 리뷰 2)', () => {
+    const plate = (id: string, y: number): BoxColliderSettings => ({
+      id,
+      kind: 'box',
+      center: [0, y, 0],
+      size: [0.1, 0.01, 0.1]
+    })
+    const face = POLLEN_R - 0.008
+    const base = hopper()
+    scene({
+      ...base,
+      hopper: {
+        ...base.hopper,
+        colliders: [plate('a', face + 0.005), plate('b', -face - 0.005)]
+      }
+    })
+    expect(cardHtml('hopper')).toContain(t('preload.squeezed', { target: 'Robot' }))
+    expect(cardHtml('hopper')).not.toContain(t('preload.overlap', { target: 'Robot' }))
   })
 
   it('핸들 드래그 중 드래그 전 문서의 충돌 모델로 카드를 그려도 자리 기억은 그 문서의 몸체 틀이다(INIT 자리 = 그린 자리)', () => {

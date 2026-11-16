@@ -80,12 +80,28 @@ describe('경고 키(6a)', () => {
       'worldTooManyPreloads',
       'worldPreloadOverlap',
       'worldPreloadEmbedded',
+      'worldPreloadSqueezed',
       'worldPreloadBelowFloor',
       'worldPreloadNoRoom'
     ] as const) {
       expect(ko.console.notices[key].length).toBeGreaterThan(0)
       expect(en.console.notices[key].length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('겹침 문구(6a 리뷰 2)', () => {
+  it('심 문턱은 충돌체와 반지름의 30 %, 공끼리 두 공을 합쳐 60 %라고 말한다(공끼리 0.3–0.6·r 겹침을 30 %보다 얕다고 했다)', () => {
+    for (const messages of [ko, en])
+      for (const text of [
+        messages.console.notices.worldPreloadOverlap,
+        messages.console.notices.worldPreloadEmbedded,
+        messages.preload.overlap,
+        messages.preload.embedded
+      ]) {
+        expect(text).toContain('30 %')
+        expect(text).toContain('60 %')
+      }
   })
 })
 
@@ -381,7 +397,7 @@ describe('withElements(INIT)', () => {
     )
     // 자동 자리(z = r)가 상자(z 0–0.2) 안: 모두 심보다 깊다
     expect([...wide.values()]).toEqual(
-      Array.from({ length: 4 }, () => ({ target: 'Robot', embedded: true }))
+      Array.from({ length: 4 }, () => ({ target: 'Robot', outcome: 'embedded' }))
     )
   })
 })
@@ -424,5 +440,146 @@ describe('runElementsOf와 첫 틱(통합)', () => {
   it('경기 요소가 없는 세계 설명은 null', () => {
     expect(runElementsOf(null)).toBeNull()
     expect(runElementsOf(buildWorldSpec(hopperScene(), 'R', SETTINGS).spec)).toBeNull()
+  })
+})
+
+// 6a 리뷰 2: 겹친 대상을 모두 보고(뒤의 더 깊은 대상, 반대쪽 겹침, 깊이 겹친 앞 자리 공), 결과가 시뮬레이터와 같다
+describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
+  const core = resolveElementType(BIOBUZZ, 'pollen')!.contact.coreDepthRatio * POLLEN_R
+  const r = POLLEN_R
+  type Box = { id: string; center: Vec3; size: Vec3 }
+  // 빨강 쪽 빈 타일의 바퀴 없는 로봇(고정 기저), 섀시 그룹 hopper(로봇 좌표 높이 z)에 Box Collider들과 Preload Slot들
+  function scene(z: number, boxes: Box[], slots: Vec3[]): SceneObjects {
+    const objects: SceneObjects = {
+      R: object('R', 'robot', null, [-0.9, -0.9, 0]),
+      hopper: object('hopper', 'group', 'R', [0, 0, z], [0, 0, 0], {
+        name: 'Hopper',
+        colliders: boxes.map((b) => ({ id: b.id, kind: 'box', center: b.center, size: b.size }))
+      })
+    }
+    slots.forEach((center, i) => {
+      objects[`s${i}`] = object(`s${i}`, 'group', 'hopper', [0, 0, 0], [0, 0, 0], {
+        name: `Slot ${i}`,
+        ...preload(center)
+      })
+    })
+    return objects
+  }
+  // 경고와 2 s 실행 뒤 자리 공의 로봇 좌표 중심(공 0–7은 GARDEN)
+  function run(objects: SceneObjects): { warnings: WorldWarning[]; balls: Vec3[] } {
+    const doc = { season: 'biobuzz' }
+    const built = withRunField(
+      buildWorldSpec(objects, 'R', SETTINGS, null, null, () => ({ kind: 'none' })),
+      doc,
+      runFieldOf(doc, { red: 'start', blue: 'start' }),
+      keyT
+    )
+    const result = withElements(built, objects, 'R', ON, keyT)
+    const world = new PhysicsWorld(result.spec!)
+    for (let k = 0; k <= 400; k++) world.step(k * 5_000_000, {})
+    const balls = world
+      .elementSnapshot()!
+      .slice(8)
+      .map((b): Vec3 => [b.position.x + 0.9, b.position.y + 0.9, b.position.z])
+    return {
+      warnings: result.warnings.filter((w) => w.key.startsWith('worldPreload')),
+      balls
+    }
+  }
+  // 옆판(y 방향으로 두께 1 cm, 바닥부터 높이 0.2 m): 안쪽 면이 y = face
+  const side = (id: string, face: number, z: number): Box => ({
+    id,
+    center: [0, face + Math.sign(face) * 0.005, 0.1 - z],
+    size: [0.2, 0.01, 0.2]
+  })
+  // 먼 곳의 상자(섀시 몸체에 Collider가 있어 외곽 대체 상자가 공을 삼키지 않게)
+  const far: Box = { id: 'far', center: [-0.5, 0, 0], size: [0.02, 0.02, 0.02] }
+
+  it('앞에 적은 옆면과 3 mm, 뒤에 적은 바닥판과 15 mm(심 이상) 겹치면 embedded: 바닥판에 박힌 채 남는다', () => {
+    const objects = scene(
+      0.2,
+      [
+        { id: 'wall', center: [r - 0.003 + 0.005, 0, 0], size: [0.01, 0.2, 0.2] },
+        { id: 'floor', center: [-0.05, 0, -r + 0.015 - 0.02], size: [0.2, 0.2, 0.04] }
+      ],
+      [[0, 0, 0]]
+    )
+    const { warnings, balls } = run(objects)
+    // 첫 대상(옆면)만 보면 '밀려납니다'(worldPreloadOverlap)였다
+    expect(warnings).toEqual([
+      { key: 'worldPreloadEmbedded', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    expect(0.2 - r + 0.015 - (balls[0][2] - r)).toBeGreaterThan(core)
+  })
+
+  it('마주 본 두 옆판과 8 mm씩(심보다 얕다) 겹치면 squeezed: 빠져나가지 못하고 눌린 채 남는다', () => {
+    const objects = scene(r, [side('a', r - 0.008, r), side('b', -(r - 0.008), r)], [[0, 0, 0]])
+    const { warnings, balls } = run(objects)
+    expect(warnings).toEqual([
+      { key: 'worldPreloadSqueezed', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    expect(r - 0.008 - (balls[0][1] - r)).toBeGreaterThan(0.005)
+    expect(balls[0][1] + r - -(r - 0.008)).toBeGreaterThan(0.005)
+  })
+
+  it('한쪽 옆판과만 3 mm 겹치면 pushedOut: 밀려난다', () => {
+    const objects = scene(r, [side('a', r - 0.003, r), far], [[0, 0, 0]])
+    const { warnings, balls } = run(objects)
+    expect(warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    expect(balls[0][1] + r).toBeLessThan(r - 0.003 + 1e-3)
+  })
+
+  it('앞 자리 공과 0.45·r(두 공의 심 합 0.6·r보다 얕다) 겹치면 pushedOut, 0.7·r이면 옆판과 얕게 먼저 겹쳐도 embedded', () => {
+    const shallow = scene(
+      r,
+      [far],
+      [
+        [0, 0, 0],
+        [2 * r - 0.45 * r, 0, 0]
+      ]
+    )
+    const pushed = run(shallow)
+    expect(pushed.warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 1', target: 'Slot 0' } }
+    ])
+    const [a, b] = pushed.balls
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) - 2 * r).toBeGreaterThan(-1e-3)
+    // Slot 1은 +y 옆판(충돌체, 대상 순서 앞)과 3 mm, Slot 0과 0.7·r 겹친다(첫 대상만 보면 '밀려납니다'였다)
+    const y1 = 2 * r - 0.7 * r
+    const deep = scene(
+      r,
+      [side('a', y1 + r - 0.003, r)],
+      [
+        [0, 0, 0],
+        [0, y1, 0]
+      ]
+    )
+    const embedded = run(deep)
+    expect(embedded.warnings).toContainEqual({
+      key: 'worldPreloadEmbedded',
+      params: { name: 'Slot 1', target: 'Slot 0' }
+    })
+    const [c, d] = embedded.balls
+    expect(Math.hypot(c[0] - d[0], c[1] - d[1], c[2] - d[2]) - 2 * r).toBeLessThan(-2 * core)
+  })
+
+  it('뒤판에 붙은 자리가 앞 자리 공과 얕게 겹치면 앞 공이 비켜 pushedOut이다(앞 공도 움직인다)', () => {
+    // Slot 1은 −y 옆판 바로 앞(닿기만), Slot 0은 그 +y 쪽에 5 mm 겹침
+    const objects = scene(
+      r,
+      [side('back', -(r + 0.0005), r)],
+      [
+        [0, 2 * r - 0.005, 0],
+        [0, 0, 0]
+      ]
+    )
+    const { warnings, balls } = run(objects)
+    expect(warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 1', target: 'Slot 0' } }
+    ])
+    const [a, b] = balls
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) - 2 * r).toBeGreaterThan(-1e-3)
   })
 })

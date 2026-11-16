@@ -1004,9 +1004,11 @@ const ko = {
       worldTooManyPreloads:
         'Preload Slot이 로봇마다 한도({{max}}개)를 넘어 하이어라키 순서로 앞의 {{max}}개만 씁니다.',
       worldPreloadOverlap:
-        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 겹칩니다. 겹침이 반지름의 30 %(가정한 딱딱한 심)보다 얕아 시작하면 공이 밀려납니다.',
+        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 겹칩니다. 겹침이 가정한 딱딱한 심(반지름의 30 %, 공끼리는 두 공을 합쳐 60 %)보다 얕고 빠져나갈 자리가 있어 시작하면 공이 밀려납니다.',
       worldPreloadEmbedded:
-        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 반지름의 30 %(가정한 딱딱한 심)보다 깊이 겹쳐 시작해도 밀려나지 않고 그 안에 박힌 채 남습니다. 자리를 옮기거나 Collider를 나누세요.',
+        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 가정한 딱딱한 심(반지름의 30 %, 공끼리는 두 공을 합쳐 60 %)보다 깊이 겹쳐 시작해도 밀려나지 않고 그 안에 박힌 채 남습니다. 자리를 옮기거나 Collider를 나누세요.',
+      worldPreloadSqueezed:
+        'Preload Slot {{name}}의 POLLEN이 {{target}}와(과) 겹치고 반대쪽에도 겹쳐 빠져나갈 자리가 없어 시작해도 밀려나지 않고 눌린 채 남습니다. 자리를 옮기거나 공이 들어갈 틈을 넓히세요.',
       worldPreloadBelowFloor:
         'Preload Slot {{name}}의 POLLEN이 바닥 아래에 있어 그 자리는 쓰지 않습니다.',
       worldPreloadNoRoom:
@@ -2267,9 +2269,11 @@ const ko = {
       orphan: '로봇 하위에서 자리를 찾지 못해 쓰지 않습니다.'
     },
     overlap:
-      '편집 자세에서 {{target}}와(과) 겹칩니다. 겹침이 반지름의 30 %(딱딱한 심)보다 얕아 시작하면 공이 밀려납니다. 호퍼 안을 비우도록 Collider를 나누세요.',
+      '편집 자세에서 {{target}}와(과) 겹칩니다. 겹침이 딱딱한 심(반지름의 30 %, 공끼리는 두 공을 합쳐 60 %)보다 얕고 빠져나갈 자리가 있어 시작하면 공이 밀려납니다. 호퍼 안을 비우도록 Collider를 나누세요.',
     embedded:
-      '편집 자세에서 {{target}}와(과) 반지름의 30 %(딱딱한 심)보다 깊이 겹쳐 시작해도 밀려나지 않고 그 안에 박힌 채 남습니다. 자리를 옮기거나 호퍼 안을 비우도록 Collider를 나누세요.',
+      '편집 자세에서 {{target}}와(과) 딱딱한 심(반지름의 30 %, 공끼리는 두 공을 합쳐 60 %)보다 깊이 겹쳐 시작해도 밀려나지 않고 그 안에 박힌 채 남습니다. 자리를 옮기거나 호퍼 안을 비우도록 Collider를 나누세요.',
+    squeezed:
+      '편집 자세에서 {{target}}와(과) 겹치고 반대쪽에도 겹쳐 빠져나갈 자리가 없어 시작해도 밀려나지 않고 눌린 채 남습니다. 자리를 옮기거나 공이 들어갈 틈을 넓히세요.',
     season: '이 시즌에는 경기 요소가 없어 쓰지 않습니다.',
     off: '경기 요소가 꺼져 있어 쓰지 않습니다(환경 설정 › 시뮬레이션, Field 인스펙터).',
     runningHint: '다음 INIT부터. 실행 중인 공은 INIT 때의 자리에서 시작했습니다.',

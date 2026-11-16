@@ -993,9 +993,11 @@ const en: Messages = {
       worldTooManyPreloads:
         'There are more Preload Slots than the limit ({{max}} per robot); only the first {{max}} in hierarchy order are used.',
       worldPreloadOverlap:
-        'The POLLEN of Preload Slot {{name}} overlaps {{target}} by less than 30 % of its radius (the assumed hard core), so the ball is pushed out when the run starts.',
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}}. The overlap is shallower than the assumed hard core (30 % of the radius, 60 % for two balls together) and there is room to move, so the ball is pushed out when the run starts.',
       worldPreloadEmbedded:
-        'The POLLEN of Preload Slot {{name}} overlaps {{target}} by more than 30 % of its radius (the assumed hard core), so it is not pushed out when the run starts and stays embedded. Move the slot or split the Colliders.',
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} more deeply than the assumed hard core (30 % of the radius, 60 % for two balls together), so it is not pushed out when the run starts and stays embedded. Move the slot or split the Colliders.',
+      worldPreloadSqueezed:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} and also something on the other side, so it has no room to move out. It is not pushed out when the run starts and stays squeezed. Move the slot or widen the gap for the ball.',
       worldPreloadBelowFloor:
         'The POLLEN of Preload Slot {{name}} is below the floor, so that slot is not used.',
       worldPreloadNoRoom:
@@ -2279,9 +2281,11 @@ const en: Messages = {
       orphan: 'Not found under the robot, so this slot is not used.'
     },
     overlap:
-      'Overlaps {{target}} in the edit pose by less than 30 % of the radius (the hard core), so the ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',
+      'Overlaps {{target}} in the edit pose. The overlap is shallower than the hard core (30 % of the radius, 60 % for two balls together) and there is room to move, so the ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',
     embedded:
-      'Overlaps {{target}} in the edit pose by more than 30 % of the radius (the hard core), so the ball is not pushed out at the start and stays embedded. Move the slot or split the Colliders so the hopper is empty inside.',
+      'Overlaps {{target}} in the edit pose more deeply than the hard core (30 % of the radius, 60 % for two balls together), so the ball is not pushed out at the start and stays embedded. Move the slot or split the Colliders so the hopper is empty inside.',
+    squeezed:
+      'Overlaps {{target}} in the edit pose and also something on the other side, so the ball has no room to move out. It is not pushed out at the start and stays squeezed. Move the slot or widen the gap for the ball.',
     season: 'This season has no game elements, so it is not used.',
     off: 'Game elements are off, so it is not used (Preferences › Simulation, Field inspector).',
     runningHint: 'From the next INIT. The running balls started from the slots at INIT.',

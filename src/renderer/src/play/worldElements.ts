@@ -4,8 +4,16 @@ import {
   bodyShape,
   EDIT_OVERLAP_TOLERANCE,
   placeShape,
-  shapeSeparation
+  shapeBounds,
+  type PlacedShape
 } from '../../../shared/sim/collision3d'
+import {
+  sphereCapsule,
+  sphereCylinder,
+  sphereHull,
+  type BallContact,
+  type V3
+} from '../../../shared/sim/elements/ballContact'
 import { resolveElementType } from '../../../shared/sim/elements/elementData'
 import {
   autoPreloadSlots,
@@ -85,8 +93,12 @@ export type RobotPreloads = {
   coreDepth: number
 }
 
-// 자리 하나의 편집 자세 겹침: 대상 이름과, 겹친 깊이가 심 이상이라 시작해도 밀려나지 않고 박힌 채 남는지
-export type PreloadOverlap = { target: string; embedded: boolean }
+// 자리 하나의 편집 자세 겹침이 시작할 때 어떻게 되는지: pushedOut(시뮬레이터가 밀어낸다), embedded(어느 대상과 심 이상 겹쳐 심
+// 행이 밀어내지 않는다), squeezed(겹침은 모두 심보다 얕지만 반대쪽에도 겹쳐 빠져나갈 자리가 없다: 양쪽 스프링에 눌린 채 남는다)
+export type PreloadOutcome = 'pushedOut' | 'embedded' | 'squeezed'
+
+// 자리 하나의 편집 자세 겹침: 대상 이름(Console·카드에 하나)과 결과
+export type PreloadOverlap = { target: string; outcome: PreloadOutcome }
 
 // 6a에 생기는 배치 묶음(spec-6a §4: GARDEN만. FLOWER·CELL은 6b, 사람 선수는 6d)
 export const RUN_ELEMENT_GROUPS: readonly SimElementGroup[] = ELEMENT_GROUPS
@@ -216,10 +228,74 @@ function computePreloads(objects: SceneObjects, robotId: string, field: FieldSpe
   return result
 }
 
-// 자리 하나의 겹침 대상(편집 자세, 분리 < −EDIT_OVERLAP_TOLERANCE): 그 로봇의 충돌 몸체(이름) 또는 앞 자리(오브젝트 이름).
-// 첫 대상만(Console 한 줄). 없으면 null. bodies는 충돌 모델(play/worldColliders.ts, 몸체 틀 충돌체), frame은 몸체 번호 → 로봇
-// 좌표 몸체 틀이다. 겹친 깊이가 심(충돌체와는 coreDepth, 앞 자리 공과는 두 공의 심 합 2·coreDepth: elementWorld.ts의 공끼리 심과
-// 같다) 이상이면 embedded다: 시뮬레이터는 심보다 얕은 겹침만 부드러운 법선으로 밀어낸다
+// 빠져나갈 자리를 찾는 위치 풀이의 회차 수(Gauss–Seidel 투영) [결정: 자리 넷·충돌체 수십에서 ms 아래. 서로 마주 본 면 사이처럼
+// 자리가 없으면 끝까지 겹침이 남고, 좁은 쐐기처럼 오래 걸리면 squeezed로 본다]
+const PRELOAD_RELAX_SWEEPS = 50
+
+// 몸체 틀 충돌체를 로봇 좌표에 놓은 것(공 짝은 시뮬레이터 elementWorld.ts와 같은 좁은 단계: 원기둥은 정확한 구–원기둥)
+type PlacedTarget = {
+  name: string
+  shape: PlacedShape
+  cylinder: { a: V3; b: V3; r: number } | null
+  min: V3
+  max: V3
+}
+
+const v3 = (p: Vec3): V3 => [p.x, p.y, p.z]
+
+function placeTargets(
+  bodies: readonly WorldColliderBody[],
+  frame: (body: number) => Frame3
+): PlacedTarget[] {
+  return bodies.flatMap((body) =>
+    body.colliders.flatMap((entry): PlacedTarget[] => {
+      const shape = bodyShape(entry.collider)
+      if (!shape) return []
+      const f = frame(body.body)
+      const placed = placeShape(shape, f)
+      const bounds = shapeBounds(placed)
+      const c = entry.collider
+      const at = (p: Vec3): V3 => {
+        const r = f.rotation
+        return [
+          r[0] * p.x + r[1] * p.y + r[2] * p.z + f.origin.x,
+          r[3] * p.x + r[4] * p.y + r[5] * p.z + f.origin.y,
+          r[6] * p.x + r[7] * p.y + r[8] * p.z + f.origin.z
+        ]
+      }
+      return [
+        {
+          name: body.name,
+          shape: placed,
+          cylinder: c.kind === 'cylinder' ? { a: at(c.a), b: at(c.b), r: c.radius } : null,
+          min: bounds.min,
+          max: bounds.max
+        }
+      ]
+    })
+  )
+}
+
+// 공(중심 c, 반지름 r)과 충돌체의 접촉(법선은 충돌체 → 공), 경계 상자에서 band보다 멀면 null
+function targetContact(c: V3, r: number, target: PlacedTarget, band: number): BallContact | null {
+  for (let i = 0; i < 3; i++)
+    if (c[i] + r + band < target.min[i] || c[i] - r - band > target.max[i]) return null
+  if (target.cylinder)
+    return sphereCylinder(c, r, target.cylinder.a, target.cylinder.b, target.cylinder.r, band)
+  if (target.shape.kind === 'hull') return sphereHull(c, r, target.shape.hull, band)
+  return sphereCapsule(c, r, target.shape, band)
+}
+
+// 자리마다 편집 자세 겹침의 결과(시뮬레이터 규칙, 겹침 = 분리 < −EDIT_OVERLAP_TOLERANCE). 대상은 그 로봇의 충돌 몸체(이름)와 앞
+// 자리(오브젝트 이름)다(두 자리의 겹침은 뒤 자리에 한 번). bodies는 충돌 모델(play/worldColliders.ts, 몸체 틀 충돌체), frame은
+// 몸체 번호 → 로봇 좌표 몸체 틀이다. 겹친 대상을 모두 본다[결정: 6a 리뷰 2. 첫 대상만 보면 뒤의 더 깊은 대상이나 반대쪽 겹침을
+// 놓쳐 박힌 채 남을 공을 '밀려난다'고 알렸다]:
+// - embedded: 어느 대상과 심 이상(충돌체와는 coreDepth, 다른 자리 공과는 두 공의 심 합 2·coreDepth: elementWorld.ts 공끼리 심과
+//   같다) 겹친다. 시뮬레이터의 심 행은 목표 0이라 밀어내지 않는다. 대상은 심에 대해 가장 깊은 것(같으면 앞의 것)이다.
+// - 아니면 시뮬레이터처럼 겹침이 공을 밀어내는지를 짧은 위치 풀이로 본다: 박히지 않은 자리 공을 모두 움직여(박힌 자리·충돌체는
+//   고정, 바닥 z = r 아래로 가지 않음, 마찰·중력 없음) 겹친 대상에서 법선으로 겹친 만큼 빼내기를 PRELOAD_RELAX_SWEEPS회 되풀이한다.
+//   그 자리의 겹침이 모두 EDIT_OVERLAP_TOLERANCE 안으로 풀리면 pushedOut(대상은 처음 겹친 앞의 것), 남으면 squeezed(대상은 끝에
+//   가장 깊이 남은 것)다. 서로 마주 본 두 면 사이처럼 빠져나갈 자리가 없으면 양쪽 스프링이 맞서 공이 그대로 남는다
 export function preloadOverlaps(
   preloads: RobotPreloads,
   bodies: readonly WorldColliderBody[],
@@ -228,32 +304,108 @@ export function preloadOverlaps(
   const out = new Map<number, PreloadOverlap>()
   const r = preloads.radius
   const core = preloads.coreDepth
-  const placed = bodies.flatMap((body) =>
-    body.colliders.flatMap((entry) => {
-      const shape = bodyShape(entry.collider)
-      return shape ? [{ name: body.name, shape: placeShape(shape, frame(body.body)) }] : []
-    })
-  )
-  preloads.slots.forEach((slot, i) => {
-    const p = slot.inRobot
-    const ball = { kind: 'capsule' as const, a: p, b: p, r, sphere: true }
-    for (const target of placed) {
-      const separation = shapeSeparation(ball, target.shape)
-      if (separation < -EDIT_OVERLAP_TOLERANCE) {
-        out.set(i, { target: target.name, embedded: -separation >= core })
-        return
-      }
+  const slots = preloads.slots
+  if (slots.length === 0) return out
+  const targets = placeTargets(bodies, frame)
+  const start = slots.map((slot) => v3(slot.inRobot))
+  const gapOf = (p: V3, q: V3): number => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) - 2 * r
+  // 1. 처음 자리의 겹침(대상 순서: 충돌체 → 앞 자리)
+  // slot: 앞 자리 공이면 그 순번
+  type Hit = { name: string; depth: number; core: number; slot?: number }
+  const hits = slots.map((_, i): Hit[] => {
+    const found: Hit[] = []
+    for (const target of targets) {
+      const contact = targetContact(start[i], r, target, 0)
+      if (contact && contact.separation < -EDIT_OVERLAP_TOLERANCE)
+        found.push({ name: target.name, depth: -contact.separation, core })
     }
     for (let j = 0; j < i; j++) {
-      const q = preloads.slots[j].inRobot
-      const gap = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z) - 2 * r
-      if (gap < -EDIT_OVERLAP_TOLERANCE) {
-        out.set(i, { target: preloads.slots[j].name, embedded: -gap >= 2 * core })
-        return
-      }
+      const gap = gapOf(start[i], start[j])
+      if (gap < -EDIT_OVERLAP_TOLERANCE)
+        found.push({ name: slots[j].name, depth: -gap, core: 2 * core, slot: j })
+    }
+    return found
+  })
+  // 2. 심 이상 겹친 자리(박힘, 위치 풀이에서 고정). 공끼리 짝은 뒤 자리에만 적고 앞 자리 공도 고정한다(두 공 사이 심 행이 둘
+  // 다 붙든다)
+  const fixed = new Uint8Array(slots.length)
+  hits.forEach((found, i) => {
+    let deepest: Hit | null = null
+    for (const hit of found) {
+      if (hit.depth < hit.core) continue
+      if (hit.slot !== undefined) fixed[hit.slot] = 1
+      if (!deepest || hit.depth / hit.core > deepest.depth / deepest.core) deepest = hit
+    }
+    if (deepest) {
+      fixed[i] = 1
+      out.set(i, { target: deepest.name, outcome: 'embedded' })
     }
   })
-  return out
+  if (hits.every((found, i) => found.length === 0 || fixed[i])) return sorted(out)
+  // 3. 빠져나갈 자리를 찾는 위치 풀이(박히지 않은 자리 공만 움직인다)
+  const p = start.map((q): V3 => [q[0], q[1], q[2]])
+  const residual = (i: number): { name: string; depth: number } | null => {
+    let worst: { name: string; depth: number } | null = null
+    for (const target of targets) {
+      const contact = targetContact(p[i], r, target, 0)
+      if (contact && contact.separation < -EDIT_OVERLAP_TOLERANCE)
+        if (!worst || -contact.separation > worst.depth)
+          worst = { name: target.name, depth: -contact.separation }
+    }
+    for (let j = 0; j < slots.length; j++) {
+      if (j === i) continue
+      const gap = gapOf(p[i], p[j])
+      if (gap < -EDIT_OVERLAP_TOLERANCE && (!worst || -gap > worst.depth))
+        worst = { name: slots[j].name, depth: -gap }
+    }
+    if (p[i][2] - r < -EDIT_OVERLAP_TOLERANCE && (!worst || r - p[i][2] > worst.depth))
+      worst = { name: '', depth: r - p[i][2] }
+    return worst
+  }
+  for (let sweep = 0; sweep < PRELOAD_RELAX_SWEEPS; sweep++) {
+    let moved = false
+    for (let i = 0; i < slots.length; i++) {
+      if (fixed[i]) continue
+      const c = p[i]
+      for (const target of targets) {
+        const contact = targetContact(c, r, target, 0)
+        if (!contact || contact.separation >= 0) continue
+        for (let k = 0; k < 3; k++) c[k] -= contact.normal[k] * contact.separation
+        moved = true
+      }
+      for (let j = 0; j < slots.length; j++) {
+        if (j === i) continue
+        const d = [c[0] - p[j][0], c[1] - p[j][1], c[2] - p[j][2]]
+        const length = Math.hypot(d[0], d[1], d[2])
+        const gap = length - 2 * r
+        if (gap >= 0 || length === 0) continue
+        const share = fixed[j] ? 1 : 0.5
+        for (let k = 0; k < 3; k++) {
+          const push = (d[k] / length) * -gap * share
+          c[k] += push
+          if (!fixed[j]) p[j][k] -= push
+        }
+        moved = true
+      }
+      if (c[2] < r) {
+        c[2] = r
+        moved = true
+      }
+    }
+    if (!moved) break
+  }
+  hits.forEach((found, i) => {
+    if (found.length === 0 || fixed[i]) return
+    const left = residual(i)
+    if (!left) out.set(i, { target: found[0].name, outcome: 'pushedOut' })
+    else out.set(i, { target: left.name || found[0].name, outcome: 'squeezed' })
+  })
+  return sorted(out)
+}
+
+// 자리 순서로 다시 넣은 지도(Console 경고 순서)
+function sorted(map: Map<number, PreloadOverlap>): Map<number, PreloadOverlap> {
+  return new Map([...map].sort((x, y) => x[0] - y[0]))
 }
 
 // 세계 설명의 프리로드(자리 순서)
@@ -278,11 +430,19 @@ export function runElementsOf(spec: WorldSpec | null): PlayRunElements | null {
   return { kinds: spawns.map((s) => s.kind), spawns }
 }
 
+// 겹침 결과 → Console 경고 키(카드 문구는 preload.<결과>: PreloadCard)
+export const PRELOAD_OVERLAP_NOTICE = {
+  pushedOut: 'worldPreloadOverlap',
+  embedded: 'worldPreloadEmbedded',
+  squeezed: 'worldPreloadSqueezed'
+} as const
+
 // INIT(playActions.worldFor): 실행의 경기 요소를 세계 설명에 넣고 경고를 더한다(withRunField 뒤, 실행의 시즌으로). 개인 설정
 // gameElements가 꺼졌거나(field.gameElements), 시즌에 경기 요소가 없거나, 세계 설명이 없으면 그대로 둔다(elements 키 없음).
 // 경고 순서: 한도(worldTooManyPreloads) → 자리마다 바닥 아래(worldPreloadBelowFloor) → 겹침 → 자동 배치 실패
-// (worldPreloadNoRoom). 겹침은 경고만이다(실행은 막지 않는다): 심보다 얕으면 시뮬레이터가 시작할 때 밀어내고
-// (worldPreloadOverlap), 심 이상이면 심 행이 밀어내지 않아 공이 그 자리에 박힌 채 남는다(worldPreloadEmbedded)
+// (worldPreloadNoRoom). 겹침은 경고만이다(실행은 막지 않는다, preloadOverlaps의 결과): 시뮬레이터가 시작할 때 밀어내면
+// worldPreloadOverlap, 어느 대상과 심 이상 겹쳐 심 행이 밀어내지 않으면 worldPreloadEmbedded, 겹침이 얕아도 반대쪽에도 겹쳐 빠져나갈
+// 자리가 없으면 worldPreloadSqueezed
 export function withElements(
   result: WorldSpecResult,
   objects: SceneObjects,
@@ -302,9 +462,9 @@ export function withElements(
     if (preloads.exclusions.get(id) === 'belowFloor')
       warnings.push({ key: 'worldPreloadBelowFloor', params: { name: objects[id].name } })
   const frames = restBodyFrames(spec.joints)
-  for (const [i, { target, embedded }] of preloadOverlaps(preloads, result.colliders, frames))
+  for (const [i, { target, outcome }] of preloadOverlaps(preloads, result.colliders, frames))
     warnings.push({
-      key: embedded ? 'worldPreloadEmbedded' : 'worldPreloadOverlap',
+      key: PRELOAD_OVERLAP_NOTICE[outcome],
       params: { name: preloads.slots[i].name || t('preload.autoName'), target }
     })
   if (preloads.source === 'noRoom') warnings.push({ key: 'worldPreloadNoRoom', params: {} })
