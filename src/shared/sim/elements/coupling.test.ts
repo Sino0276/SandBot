@@ -665,6 +665,30 @@ describe('로봇–공 결합: 끼임·한쪽 섬·실패 가두기(6a 리뷰)',
     expect(slowest).toBeGreaterThan(-bound)
   }, 60_000)
 
+  it('프리로드가 섀시 충돌체와 심보다 얕게 겹치면 시작하면 밀려나고 심 이상이면 박힌 채 남는다(worldPreloadOverlap·worldPreloadEmbedded 문구의 규칙)', () => {
+    const core = POLLEN.contact.coreDepthRatio * r
+    const top = 0.2
+    const spec = ballWorldSpec({
+      robot: {
+        ...ballWorldSpec().robot,
+        colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+      },
+      elements: {
+        groups: [],
+        preloads: [
+          { kind: 'pollen', body: -1, position: { x: -0.1, y: 0, z: top + r - 0.5 * core } },
+          { kind: 'pollen', body: -1, position: { x: 0.1, y: 0, z: top + r - 1.4 * core } }
+        ]
+      }
+    })
+    const run = new BallRunner(spec, { field: ballField() }).run(1)
+    const [shallow, deep] = run.last()
+    // 얕은 공은 섀시 윗면에 얹힌 쉬는 공(침하 mg/k만)이다
+    expect(shallow.position.z - r - top).toBeGreaterThan(-1e-3)
+    // 깊은 공은 심 행(목표 0)이 밀어내지 않아 처음 깊이 그대로다
+    expect(top + r - deep.position.z).toBeGreaterThan(core)
+  })
+
   it('결합 한도를 넘어 한쪽으로 푼 공이 벽과 로봇 사이에 끼여도 튀어 나가지 않는다', () => {
     // 관중석 벽에 붙인 공 20개(4 × 5)를 전출력 메카넘이 민다: 로봇 섬 행이 한도를 넘는다
     const ih = resolveSeason('biobuzz').perimeter.innerHalf

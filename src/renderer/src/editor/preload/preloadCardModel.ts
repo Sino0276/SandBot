@@ -8,6 +8,7 @@ import {
   preloadOverlaps,
   robotPreloads,
   type PreloadExclusion,
+  type PreloadOverlap,
   type PreloadSource,
   type RobotPreloads
 } from '../../play/worldElements'
@@ -43,7 +44,7 @@ export function bodyFrameOf(joints: JointBodyFrames): (body: number) => Frame3 {
 // 카드 하나의 상태:
 // - orphan: 로봇 밖(시뮬레이터가 쓰지 않음)
 // - season: 문서 시즌에 경기 요소가 없음('none'·모르는 시즌)
-// - used: 세계 설명에 들어감(index는 자리 순서 1부터, body는 섀시 또는 관절 이름, overlap은 편집 자세 겹침 대상)
+// - used: 세계 설명에 들어감(index는 자리 순서 1부터, body는 섀시 또는 관절 이름, overlap은 편집 자세 겹침 대상과 심 이상인지)
 // - excluded: 빠짐(exclusion 이유)
 export type PreloadCardView =
   | { status: 'orphan' }
@@ -53,7 +54,7 @@ export type PreloadCardView =
       robotId: string
       index: number
       body: { kind: 'chassis' } | { kind: 'joint'; name: string }
-      overlap: string | null
+      overlap: PreloadOverlap | null
     }
   | { status: 'excluded'; robotId: string; exclusion: PreloadExclusion }
 
@@ -66,7 +67,8 @@ export function preloadCardView(
   const robotId = findRobotId(objects, objectId)
   if (robotId === null || robotId === objectId) return { status: 'orphan' }
   if (!field.elements || !resolveElementType(field, 'pollen')) return { status: 'season' }
-  const preloads = robotPreloads(objects, robotId, field, collision?.joints)
+  // 자리는 이 문서로만 정한다(collision은 핸들 드래그 중 드래그 전 문서의 것일 수 있다: 겹침 줄에만 쓴다)
+  const preloads = robotPreloads(objects, robotId, field)
   const index = preloads.slots.findIndex((slot) => slot.objectId === objectId)
   if (index < 0)
     return {

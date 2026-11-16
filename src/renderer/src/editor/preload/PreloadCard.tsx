@@ -132,7 +132,9 @@ function PreloadCard({ object }: { object: SceneObject }): React.JSX.Element | n
         )}
         {view.status === 'used' && view.overlap !== null && (
           <li className="hw-issue is-warning" data-preload="overlap">
-            {t('preload.overlap', { target: view.overlap })}
+            {t(view.overlap.embedded ? 'preload.embedded' : 'preload.overlap', {
+              target: view.overlap.target
+            })}
           </li>
         )}
         {view.status !== 'orphan' && view.status !== 'season' && !gameElements && (

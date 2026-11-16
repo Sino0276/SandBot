@@ -396,6 +396,7 @@ describe('경기 요소 Console 줄(6a)', () => {
     const lines: [ConsoleNoticeKey, Record<string, string | number>, string][] = [
       ['worldTooManyPreloads', { max: 4 }, '4'],
       ['worldPreloadOverlap', { name: 'Hopper A', target: 'Robot' }, 'Hopper A'],
+      ['worldPreloadEmbedded', { name: 'Hopper A', target: 'Robot' }, 'Hopper A'],
       ['worldPreloadBelowFloor', { name: 'Low Slot' }, 'Low Slot'],
       ['worldPreloadNoRoom', {}, ''],
       ['sim.elementOutOfField.pollen', { kind: 'pollen' }, 'POLLEN'],

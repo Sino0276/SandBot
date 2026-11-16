@@ -79,6 +79,7 @@ describe('경고 키(6a)', () => {
     for (const key of [
       'worldTooManyPreloads',
       'worldPreloadOverlap',
+      'worldPreloadEmbedded',
       'worldPreloadBelowFloor',
       'worldPreloadNoRoom'
     ] as const) {
@@ -291,8 +292,11 @@ describe('withElements(INIT)', () => {
         ...preload([0, 0, 0])
       })
     }
-    // slotB를 slotA에 겹치게
-    objects.slotB = { ...objects.slotB, transform: { position: [0, 0.01, 0], rotation: [0, 0, 0] } }
+    // slotB를 slotA에 5 mm 겹치게(두 공의 심 합 2 × 0.3·r보다 얕다: 밀려난다)
+    objects.slotB = {
+      ...objects.slotB,
+      transform: { position: [0, 0.04 - (2 * POLLEN_R - 0.005), 0], rotation: [0, 0, 0] }
+    }
     const shapes: ColliderShapeLookup = (id) =>
       id === 'base' ? box(0.05, 0.05, 0.05) : { kind: 'none' }
     const result = withElements(build(objects, shapes), objects, 'R', ON, keyT)
@@ -302,7 +306,8 @@ describe('withElements(INIT)', () => {
     expect(preloadWarnings).toEqual([
       { key: 'worldTooManyPreloads', params: { max: MAX_PRELOADS } },
       { key: 'worldPreloadOverlap', params: { name: 'Slot B', target: 'Slot A' } },
-      { key: 'worldPreloadOverlap', params: { name: 'In Base', target: 'R' } }
+      // 섀시 상자 한가운데(심보다 깊다): 시작해도 밀려나지 않고 박힌 채 남는다고 알린다
+      { key: 'worldPreloadEmbedded', params: { name: 'In Base', target: 'R' } }
     ])
     // low는 한도 뒤라 바닥 아래 경고가 없다. 한도 안이면 경고한다
     const few: SceneObjects = { R: objects.R, low: objects.low }
@@ -374,7 +379,10 @@ describe('withElements(INIT)', () => {
       ],
       frames
     )
-    expect([...wide.values()]).toEqual(['Robot', 'Robot', 'Robot', 'Robot'])
+    // 자동 자리(z = r)가 상자(z 0–0.2) 안: 모두 심보다 깊다
+    expect([...wide.values()]).toEqual(
+      Array.from({ length: 4 }, () => ({ target: 'Robot', embedded: true }))
+    )
   })
 })
 

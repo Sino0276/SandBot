@@ -993,7 +993,9 @@ const en: Messages = {
       worldTooManyPreloads:
         'There are more Preload Slots than the limit ({{max}} per robot); only the first {{max}} in hierarchy order are used.',
       worldPreloadOverlap:
-        'The POLLEN of Preload Slot {{name}} overlaps {{target}}. The ball is pushed out when the run starts.',
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} by less than 30 % of its radius (the assumed hard core), so the ball is pushed out when the run starts.',
+      worldPreloadEmbedded:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} by more than 30 % of its radius (the assumed hard core), so it is not pushed out when the run starts and stays embedded. Move the slot or split the Colliders.',
       worldPreloadBelowFloor:
         'The POLLEN of Preload Slot {{name}} is below the floor, so that slot is not used.',
       worldPreloadNoRoom:
@@ -2277,7 +2279,9 @@ const en: Messages = {
       orphan: 'Not found under the robot, so this slot is not used.'
     },
     overlap:
-      'Overlaps {{target}} in the edit pose. The ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',
+      'Overlaps {{target}} in the edit pose by less than 30 % of the radius (the hard core), so the ball will be pushed out at the start. Split the Colliders so the hopper is empty inside.',
+    embedded:
+      'Overlaps {{target}} in the edit pose by more than 30 % of the radius (the hard core), so the ball is not pushed out at the start and stays embedded. Move the slot or split the Colliders so the hopper is empty inside.',
     season: 'This season has no game elements, so it is not used.',
     off: 'Game elements are off, so it is not used (Preferences › Simulation, Field inspector).',
     runningHint: 'From the next INIT. The running balls started from the slots at INIT.',

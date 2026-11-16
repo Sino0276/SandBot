@@ -15,6 +15,8 @@ import type { SceneObject, SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { useSceneVisibilityStore } from '../sceneVisibility'
+import { colliderScene } from '../collider/colliderTestkit'
+import { preloadGizmoItems } from '../preload/preloadGizmoModel'
 import ElementsView from './ElementsView'
 import {
   editElementLayers,
@@ -320,5 +322,29 @@ describe('elementsViewModel', () => {
     const layers = editElementLayers(scene(), null, BIOBUZZ)
     expect(layers.solid).toHaveLength(8)
     expect(layers.preview).toEqual([])
+  })
+
+  it('editElementLayers: 관절 하위 팀 자리 공은 관절 미리보기 슬라이더를 따라 Preload Slot 기즈모와 같은 자리다', () => {
+    const base = colliderScene()
+    // 리프트(직선 z) 아래 판에 둔 Preload Slot
+    const objects: SceneObjects = {
+      ...base,
+      R: { ...base.R, transform: { position: [-0.9, -0.9, 0], rotation: [0, 0, 0] } },
+      plate: { ...base.plate, preload: { kind: 'pollen', center: [0, 0, 0.05] } }
+    }
+    const preview = { values: { lift: 0.3 } }
+    const gizmo = preloadGizmoItems({
+      objects,
+      selectedIds: ['plate'],
+      field: BIOBUZZ,
+      play: { run: null, simPose: null },
+      preview,
+      visibility: useSceneVisibilityStore.getInitialState()
+    })
+    const lifted = editElementLayers(objects, 'R', BIOBUZZ, preview).solid.at(-1)!
+    for (let i = 0; i < 3; i++) expect(lifted.position[i]).toBeCloseTo(gizmo[0].center[i], 12)
+    // 미리보기 없으면 문서 자세(리프트가 0.3 m 아래)
+    const rest = editElementLayers(objects, 'R', BIOBUZZ).solid.at(-1)!
+    expect(lifted.position[2] - rest.position[2]).toBeCloseTo(0.3, 12)
   })
 })

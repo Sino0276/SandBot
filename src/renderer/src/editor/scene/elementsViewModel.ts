@@ -13,6 +13,8 @@ import { ELEMENT_KINDS, type SimElementKind } from '../../../../shared/sim/world
 import type { GhostGame, PlayRunElements, SimGameState } from '../../play/playStore'
 import { RUN_ELEMENT_GROUPS, robotPreloads, robotStartPose } from '../../play/worldElements'
 import { worldMatrix, type SceneObjects } from '../../scene/model'
+import type { JointPreviewState } from '../joint/jointPreviewStore'
+import { sensorDisplayOverride } from './sensorGizmoModel'
 
 // 씬 뷰 경기 요소(6a, spec-6a §5)의 순수 모델: 그릴 공 목록(종류, 필드 좌표 중심, 단위 사원수). ElementsView가 층마다 종류별
 // InstancedMesh에 쓴다. 층:
@@ -53,13 +55,18 @@ export function ballLook(
 }
 
 const IDENTITY: [number, number, number, number] = [1, 0, 0, 0]
+const NO_PREVIEW: JointPreviewState = { values: {} }
+// 편집 중에는 실행 자세가 없다(실행이 필드를 잠그면 ElementsView는 실행의 공을 그린다)
+const NO_RUN = { run: null, simPose: null } as const
 
-// 편집 중 공: 시즌 시작 배치(6a에 생기는 묶음)와 대상 로봇 프리로드(팀 자리는 그 오브젝트의 문서 자세, 자동 자리는 로봇 시작 자세로
-// 옮긴 필드 좌표). 시즌에 경기 요소가 없으면 빈 층
+// 편집 중 공: 시즌 시작 배치(6a에 생기는 묶음)와 대상 로봇 프리로드(팀 자리는 그 오브젝트의 표시 자세: 관절 미리보기 슬라이더를
+// 따른다(Preload Slot 기즈모·Collider 기즈모와 같은 sensorDisplayOverride, 6a 리뷰), 자동 자리는 로봇 시작 자세로 옮긴 필드
+// 좌표). 시즌에 경기 요소가 없으면 빈 층
 export function editElementLayers(
   objects: SceneObjects,
   targetRobotId: string | null,
-  field: FieldSpec
+  field: FieldSpec,
+  jointPreview: JointPreviewState = NO_PREVIEW
 ): Pick<ElementLayers, 'solid' | 'preview'> {
   if (!field.elements) return { solid: [], preview: [] }
   // 배치는 로봇 자세와 관계없다(프리로드 없이 시작 자세는 쓰지 않는다)
@@ -76,10 +83,11 @@ export function editElementLayers(
   const start = targetRobotId === null ? null : robotStartPose(objects, targetRobotId)
   if (targetRobotId !== null && start) {
     const preloads = robotPreloads(objects, targetRobotId, field)
+    const override = sensorDisplayOverride(objects, targetRobotId, NO_RUN, jointPreview)
     for (const slot of preloads.slots) {
       if (slot.objectId !== null) {
         const center = objects[slot.objectId].preload!.center
-        const p = new Vector3(...center).applyMatrix4(worldMatrix(objects, slot.objectId))
+        const p = new Vector3(...center).applyMatrix4(worldMatrix(objects, slot.objectId, override))
         solid.push({ kind: 'pollen', position: [p.x, p.y, p.z], orientation: IDENTITY })
       } else {
         const c = Math.cos(start.yaw)

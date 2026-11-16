@@ -24,6 +24,9 @@ import HardwareComponentsSection from '../hardware/HardwareComponentsSection'
 import { PreloadSourceLine } from '../hardware/RobotHardwareSection'
 import PreloadCard from './PreloadCard'
 import { preloadAddBlock, preloadCardView } from './preloadCardModel'
+import { robotPreloads } from '../../play/worldElements'
+import { beginChange, endChange } from '../history'
+import { collisionModelEntry } from '../collider/useCollisionModel'
 
 // Preload Slot 카드·Add Component 항목·로봇 카드 출처 줄(6a, spec-6a §3). DOM이 없어 요소 나무를 함수로 불러 처리기를 직접
 // 부르고(colliderCard.test.tsx와 같은 방법), 글자는 renderToStaticMarkup으로 본다.
@@ -240,8 +243,34 @@ describe('Preload Slot 카드', () => {
       `${t('preload.slot', { index: 3, max: 4 })} · ${t('preload.bodyChassis')}`
     )
     expect(cardHtml('plate')).toContain(t('preload.bodyJoint', { name: 'Lift' }))
-    expect(cardHtml('base')).toContain(t('preload.overlap', { target: 'Robot' }))
-    expect(cardHtml('plate')).not.toContain(ko.preload.overlap.slice(0, 10))
+    // 판 한가운데라 심(반지름의 30 %)보다 깊다: 시작해도 밀려나지 않는다고 알린다(밀려난다고 하지 않는다)
+    expect(cardHtml('base')).toContain(t('preload.embedded', { target: 'Robot' }))
+    expect(cardHtml('base')).not.toContain(t('preload.overlap', { target: 'Robot' }))
+    expect(cardHtml('plate')).not.toContain('data-preload="overlap"')
+  })
+
+  it('핸들 드래그 중 드래그 전 문서의 충돌 모델로 카드를 그려도 자리 기억은 그 문서의 몸체 틀이다(INIT 자리 = 그린 자리)', () => {
+    const field = resolveSeason('biobuzz')
+    const base = colliderScene()
+    // 관절(lift)과 Preload Slot이 같은 오브젝트
+    const before: SceneObjects = {
+      ...base,
+      lift: { ...base.lift, preload: { kind: 'pollen', center: [0, 0, 0] } }
+    }
+    const model = collisionModelEntry(before, 1, 'R')
+    preloadCardView(before, 'lift', field, model)
+    beginChange()
+    // 드래그한 마지막 프레임 문서: 열린 변경 동안 충돌 모델은 드래그 전 것을 돌려준다
+    const dragged: SceneObjects = {
+      ...before,
+      lift: { ...before.lift, transform: { position: [0.2, 0, 0.1], rotation: [0, 0, 0] } }
+    }
+    preloadCardView(dragged, 'lift', field, collisionModelEntry(dragged, 1, 'R'))
+    endChange()
+    // INIT(withElements)와 같은 호출 = 기억 없이 새로 계산한 것(얕은 복사 시즌은 기억하지 않는다)
+    expect(robotPreloads(dragged, 'R', field).slots[0].position).toEqual(
+      robotPreloads(dragged, 'R', { ...field }).slots[0].position
+    )
   })
 
   it('로봇 밖·시즌에 없음·한도 뒤·바닥 아래·개인 설정 끔을 알린다', () => {

@@ -19,6 +19,7 @@ import { simGameOf, usePlayStore, type PlayState } from '../../play/playStore'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { documentSeasonId, lockedRunField, runLocksField } from '../field/fieldDisplay'
+import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { startTargetRobotId } from '../field/startPresetModel'
 import { fieldElementsHidden, useSceneVisibilityStore } from '../sceneVisibility'
 import { useDeferredDispose, type Disposable } from './deferredDispose'
@@ -34,7 +35,8 @@ import {
 
 // 씬 뷰 경기 요소(6a, spec-6a §5): 공을 층(solid·preview·ghost) × 종류(POLLEN·NECTAR 빨강·파랑)의 InstancedMesh로 그린다.
 // - 편집 중(실행이 필드를 잠그지 않음): 개인 설정 gameElements가 켜졌고 문서 시즌에 경기 요소가 있으면 시작 배치(불투명)와 대상
-//   로봇(활성 오브젝트의 로봇, 시작 표시와 같은 규칙)의 프리로드(팀 자리 불투명, 자동 자리 반투명)
+//   로봇(활성 오브젝트의 로봇, 시작 표시와 같은 규칙)의 프리로드(팀 자리 불투명, 자동 자리 반투명). 팀 자리는 관절 미리보기
+//   슬라이더를 따른다(Preload Slot 기즈모와 같은 자리)
 // - 실행 중: 그 실행의 공(run.elements)을 시뮬레이터 표시 상태(simGame)로 그린다. 60 Hz로 바뀌므로 React로 다시 그리지 않고
 //   스토어 구독에서 인스턴스 행렬만 바꾸고 invalidate한다(로봇 자세 poseDisplay와 같은 방식)
 // - 끝난 실행의 잔상(ghostGame, 반투명 renderOrder 5 = 로봇 잔상과 같은 겹)
@@ -128,6 +130,8 @@ function ElementsView(): React.JSX.Element {
   )
   const ghost = usePlayStore((state) => state.ghostGame)
   const hidden = useSceneVisibilityStore(fieldElementsHidden)
+  // 관절 미리보기 값(보기 상태, 슬라이더를 끌 때만 바뀐다)
+  const previewValues = useJointPreviewStore((state) => state.values)
   const invalidate = useThree((state) => state.invalidate)
 
   const field = resolveSeason(lockedField?.season ?? season)
@@ -168,9 +172,9 @@ function ElementsView(): React.JSX.Element {
   const edit = useMemo(
     () =>
       !locked && gameElements
-        ? editElementLayers(objects, targetRobotId, field)
+        ? editElementLayers(objects, targetRobotId, field, { values: previewValues })
         : { solid: [], preview: [] },
-    [locked, gameElements, objects, targetRobotId, field]
+    [locked, gameElements, objects, targetRobotId, field, previewValues]
   )
   const ghostBalls = useMemo(() => ghostElementBalls(ghost), [ghost])
 

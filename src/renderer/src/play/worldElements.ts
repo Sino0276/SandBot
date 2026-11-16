@@ -33,7 +33,7 @@ import { wrapAngle } from '../scene/wheel'
 import { plain } from './plain'
 import type { PlayRunElements, PlayRunField } from './playStore'
 import type { WorldColliderBody } from './worldColliders'
-import { jointBodyFrames, type JointBodyFrames } from './worldJoints'
+import { jointBodyFrames } from './worldJoints'
 import { robotOutline, type WorldSpecResult } from './worldSpec'
 
 // 세계 설명의 경기 요소(6a, spec-6a §3·§4): 실행에 생길 시즌 배치 묶음과 로봇의 프리로드 POLLEN. 순수 함수다.
@@ -80,7 +80,13 @@ export type RobotPreloads = {
   tooMany: boolean
   // POLLEN 반지름(m, 시즌에 없으면 0)
   radius: number
+  // POLLEN 딱딱한 심 깊이(m, 시즌 contact.coreDepthRatio × 반지름, 시즌에 없으면 0): 이보다 깊이 겹친 자리의 공은 시작해도
+  // 밀려나지 않는다(시뮬레이터 ballContact.ts normalRow의 심 행은 목표 0이라 밀어내지 않는다)
+  coreDepth: number
 }
+
+// 자리 하나의 편집 자세 겹침: 대상 이름과, 겹친 깊이가 심 이상이라 시작해도 밀려나지 않고 박힌 채 남는지
+export type PreloadOverlap = { target: string; embedded: boolean }
 
 // 6a에 생기는 배치 묶음(spec-6a §4: GARDEN만. FLOWER·CELL은 6b, 사람 선수는 6d)
 export const RUN_ELEMENT_GROUPS: readonly SimElementGroup[] = ELEMENT_GROUPS
@@ -108,15 +114,17 @@ export function robotStartPose(objects: SceneObjects, robotId: string): Pose2 | 
   return { x, y, yaw: wrapAngle(robot.transform.rotation[2]) }
 }
 
-// 문서·로봇·시즌마다 한 번(씬 문서는 불변이다). 인스펙터 카드·로봇 카드·씬 뷰가 같은 결과를 쓴다
+// 문서·로봇·시즌마다 한 번(씬 문서는 불변이다). 인스펙터 카드·로봇 카드·씬 뷰·INIT이 같은 결과를 쓴다. 결과는 그 문서만으로
+// 정해진다(몸체 나누기도 그 문서로 계산한다)[결정: 6a 리뷰. 부르는 쪽이 몸체 나누기를 넘기던 때는 핸들 드래그 중 카드가 드래그 전
+// 문서의 관절 틀을 넘겨 드래그 뒤 문서의 기억이 틀린 몸체 틀 위치를 가졌고, INIT이 그 값을 세계 설명에 실어 공이 그린 자리에서
+// 드래그한 만큼 떨어져 생겼다]
 const memo = new WeakMap<SceneObjects, Map<string, RobotPreloads>>()
 
-// 로봇의 프리로드 자리(위 머리 주석의 규칙). joints는 몸체 나누기(같은 문서, 없으면 계산한다)
+// 로봇의 프리로드 자리(위 머리 주석의 규칙)
 export function robotPreloads(
   objects: SceneObjects,
   robotId: string,
-  field: FieldSpec,
-  joints?: JointBodyFrames
+  field: FieldSpec
 ): RobotPreloads {
   let byKey = memo.get(objects)
   if (!byKey) memo.set(objects, (byKey = new Map()))
@@ -125,17 +133,12 @@ export function robotPreloads(
   // 시험이 바꾼 시즌 판(얕은 복사)은 기억하지 않는다(같은 시즌 이름의 다른 값)
   const frozen = field === resolveSeason(field.season)
   if (cached && frozen) return cached
-  const result = computePreloads(objects, robotId, field, joints)
+  const result = computePreloads(objects, robotId, field)
   if (frozen) byKey.set(key, result)
   return result
 }
 
-function computePreloads(
-  objects: SceneObjects,
-  robotId: string,
-  field: FieldSpec,
-  joints: JointBodyFrames | undefined
-): RobotPreloads {
+function computePreloads(objects: SceneObjects, robotId: string, field: FieldSpec): RobotPreloads {
   const type = resolveElementType(field, 'pollen')
   const empty = (source: PreloadSource): RobotPreloads => ({
     source,
@@ -143,7 +146,8 @@ function computePreloads(
     slots: [],
     exclusions: new Map(),
     tooMany: false,
-    radius: type?.radius ?? 0
+    radius: type?.radius ?? 0,
+    coreDepth: type ? type.contact.coreDepthRatio * type.radius : 0
   })
   if (!type || !field.elements) return empty('season')
   const start = robotStartPose(objects, robotId)
@@ -170,7 +174,7 @@ function computePreloads(
       }))
     }
   }
-  const frames = joints ?? jointBodyFrames(objects, robotId)
+  const frames = jointBodyFrames(objects, robotId)
   const result = empty('slots')
   // 한도는 켠 자리를 하이어라키 순서로 센다(앞의 MAX_PRELOADS개가 후보이고, 그 가운데 바닥 아래·좌표 한도 밖은 빠진다: 뒤의
   // 자리가 대신 들어오지 않아 편집 중 다른 자리를 고쳐도 어느 자리가 쓰이는지가 하이어라키 순서로만 정해진다)
@@ -214,14 +218,16 @@ function computePreloads(
 
 // 자리 하나의 겹침 대상(편집 자세, 분리 < −EDIT_OVERLAP_TOLERANCE): 그 로봇의 충돌 몸체(이름) 또는 앞 자리(오브젝트 이름).
 // 첫 대상만(Console 한 줄). 없으면 null. bodies는 충돌 모델(play/worldColliders.ts, 몸체 틀 충돌체), frame은 몸체 번호 → 로봇
-// 좌표 몸체 틀이다
+// 좌표 몸체 틀이다. 겹친 깊이가 심(충돌체와는 coreDepth, 앞 자리 공과는 두 공의 심 합 2·coreDepth: elementWorld.ts의 공끼리 심과
+// 같다) 이상이면 embedded다: 시뮬레이터는 심보다 얕은 겹침만 부드러운 법선으로 밀어낸다
 export function preloadOverlaps(
   preloads: RobotPreloads,
   bodies: readonly WorldColliderBody[],
   frame: (body: number) => Frame3
-): Map<number, string> {
-  const out = new Map<number, string>()
+): Map<number, PreloadOverlap> {
+  const out = new Map<number, PreloadOverlap>()
   const r = preloads.radius
+  const core = preloads.coreDepth
   const placed = bodies.flatMap((body) =>
     body.colliders.flatMap((entry) => {
       const shape = bodyShape(entry.collider)
@@ -231,16 +237,18 @@ export function preloadOverlaps(
   preloads.slots.forEach((slot, i) => {
     const p = slot.inRobot
     const ball = { kind: 'capsule' as const, a: p, b: p, r, sphere: true }
-    for (const target of placed)
-      if (shapeSeparation(ball, target.shape) < -EDIT_OVERLAP_TOLERANCE) {
-        out.set(i, target.name)
+    for (const target of placed) {
+      const separation = shapeSeparation(ball, target.shape)
+      if (separation < -EDIT_OVERLAP_TOLERANCE) {
+        out.set(i, { target: target.name, embedded: -separation >= core })
         return
       }
+    }
     for (let j = 0; j < i; j++) {
       const q = preloads.slots[j].inRobot
       const gap = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z) - 2 * r
       if (gap < -EDIT_OVERLAP_TOLERANCE) {
-        out.set(i, preloads.slots[j].name)
+        out.set(i, { target: preloads.slots[j].name, embedded: -gap >= 2 * core })
         return
       }
     }
@@ -272,8 +280,9 @@ export function runElementsOf(spec: WorldSpec | null): PlayRunElements | null {
 
 // INIT(playActions.worldFor): 실행의 경기 요소를 세계 설명에 넣고 경고를 더한다(withRunField 뒤, 실행의 시즌으로). 개인 설정
 // gameElements가 꺼졌거나(field.gameElements), 시즌에 경기 요소가 없거나, 세계 설명이 없으면 그대로 둔다(elements 키 없음).
-// 경고 순서: 한도(worldTooManyPreloads) → 자리마다 바닥 아래(worldPreloadBelowFloor) → 겹침(worldPreloadOverlap) → 자동 배치
-// 실패(worldPreloadNoRoom). 겹침은 경고만이다(시뮬레이터가 밀어낸다)
+// 경고 순서: 한도(worldTooManyPreloads) → 자리마다 바닥 아래(worldPreloadBelowFloor) → 겹침 → 자동 배치 실패
+// (worldPreloadNoRoom). 겹침은 경고만이다(실행은 막지 않는다): 심보다 얕으면 시뮬레이터가 시작할 때 밀어내고
+// (worldPreloadOverlap), 심 이상이면 심 행이 밀어내지 않아 공이 그 자리에 박힌 채 남는다(worldPreloadEmbedded)
 export function withElements(
   result: WorldSpecResult,
   objects: SceneObjects,
@@ -293,9 +302,9 @@ export function withElements(
     if (preloads.exclusions.get(id) === 'belowFloor')
       warnings.push({ key: 'worldPreloadBelowFloor', params: { name: objects[id].name } })
   const frames = restBodyFrames(spec.joints)
-  for (const [i, target] of preloadOverlaps(preloads, result.colliders, frames))
+  for (const [i, { target, embedded }] of preloadOverlaps(preloads, result.colliders, frames))
     warnings.push({
-      key: 'worldPreloadOverlap',
+      key: embedded ? 'worldPreloadEmbedded' : 'worldPreloadOverlap',
       params: { name: preloads.slots[i].name || t('preload.autoName'), target }
     })
   if (preloads.source === 'noRoom') warnings.push({ key: 'worldPreloadNoRoom', params: {} })
