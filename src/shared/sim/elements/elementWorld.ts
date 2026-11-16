@@ -40,6 +40,7 @@ import {
   sphereFloor,
   sphereHull,
   sphereSphere,
+  springRow,
   type BallContact,
   type V3
 } from './ballContact'
@@ -52,6 +53,7 @@ import {
   ISLAND_DENSE_ROWS,
   MAX_COUPLED_ROWS,
   OUT_OF_FIELD_Z,
+  PINCH_NORMAL_DOT,
   REENTRY_DELAY_NANOS,
   SLEEP_SPEED,
   SLEEP_TIME,
@@ -385,6 +387,10 @@ export class ElementWorld {
     for (let i = 0; i < n; i++)
       if (live(i) && !this.asleep[i]) maxSpeed = Math.max(maxSpeed, norm(this.velocityOf(i)))
     this.maxSpeed = maxSpeed
+    // 한 공의 접촉을 만들다 던지면(공 쪽 버그) 그 공만 이 하위 단계에 멈춘다(속도 0, 위치 그대로, 그 공의 짝은 모두 뺀다). 다른
+    // 공·로봇은 그대로 간다(spec-6a §2.7의 섬 단위 실패 가두기를 접촉 만들기까지 넓힌 것[결정: 6a 리뷰. 멀리 있는 공 하나의 버그가
+    // 로봇을 멈추지 않게])
+    const failed = new Uint8Array(n)
     // 1. 로봇 짝(잠든 공 포함, 몸체·충돌체 순서). 움직이는 로봇 몸체에 닿은 잠든 공은 깨운다
     const robotContacts: Contact[][] = Array.from({ length: n }, () => [])
     const queue: number[] = []
@@ -392,7 +398,14 @@ export class ElementWorld {
     this.robotBodies.forEach((body, b) => {
       const candidates = this.robotCandidates(ctx, body, h)
       for (const e of candidates) {
-        const found = this.robotPairs(ctx, body, b, e, h)
+        if (failed[e]) continue
+        let found: Contact[]
+        try {
+          found = this.robotPairs(ctx, body, b, e, h)
+        } catch (error) {
+          this.failBall(e, error, failed)
+          continue
+        }
         if (found.length === 0) continue
         robotContacts[e].push(...found)
         if (this.asleep[e] && found.some((c) => c.dynamic)) {
@@ -426,26 +439,45 @@ export class ElementWorld {
     const uStar = new Float64Array(6 * n)
     for (let i = 0; i < n; i++) if (live(i) && !this.asleep[i]) this.predict(i, h, uStar)
     // 4. 접촉(공 오름차순: 로봇 → 정적 → 뒤 번호 공)
-    const contacts: Contact[] = []
+    let contacts: Contact[] = []
     for (let e = 0; e < n; e++) {
-      if (!live(e) || this.asleep[e]) continue
-      contacts.push(...robotContacts[e])
-      this.staticPairs(e, h, contacts)
-      this.ballPairs(e, h, contacts)
+      if (!live(e) || this.asleep[e] || failed[e]) continue
+      const own = robotContacts[e].slice()
+      try {
+        this.staticPairs(e, h, own)
+        this.ballPairs(e, h, own)
+      } catch (error) {
+        this.failBall(e, error, failed)
+        continue
+      }
+      contacts.push(...own)
+    }
+    if (failed.includes(1)) {
+      contacts = contacts.filter((c) => !failed[c.e] && (c.f < 0 || !failed[c.f]))
+      for (let e = 0; e < n; e++) if (failed[e]) uStar.fill(0, 6 * e, 6 * e + 6)
     }
     // 5. 굴림·회전 저항(앞 하위 단계 법선 충격, 상한 있는 각충격)
     for (const contact of contacts) this.resist(contact, h, uStar)
-    // 6. 행
+    // 6. 행(끼인 공은 반발 두 단계 없이)
+    const pinched = this.pinchedBalls(contacts)
     const rows: BallRow[] = []
     const m = art ? art.coordinates.length : 0
     contacts.forEach((contact, index) => {
-      const made = this.contactRows(ctx, contact, index, h, uStar)
+      let made: BallRow[] | null
+      try {
+        made = this.contactRows(ctx, contact, index, h, uStar, pinched)
+      } catch (error) {
+        // 비유한 값처럼 그 짝만 뺀다
+        this.notify('worldError', { detail: `element ${contact.keys.token}: ${errorText(error)}` })
+        made = null
+      }
       if (made) rows.push(...made)
     })
     // 7. 섬
     const robotTouch = new Uint8Array(n)
     for (const c of contacts) if (c.dynamic) robotTouch[c.e] = 1
     const plan = this.islands(contacts, rows, robotTouch)
+    this.softenOneWay(plan, contacts, rows, h)
     this.tangents = this.nextTangents
     this.nextTangents = new Map()
     this.arrivals = this.nextArrivals
@@ -494,6 +526,19 @@ export class ElementWorld {
     return { rows: contactRows, coupled }
   }
 
+  // prepare가 던졌을 때(world.ts): 이 하위 단계에 필드 안의 깨어 있는 공을 모두 멈춘다(속도 0, 위치 그대로: 로봇 풀이가 실패한
+  // 하위 단계와 같은 규칙). 다음 하위 단계에서 다시 푼다
+  failSubstep(): void {
+    this.pending = null
+    this.nextTangents = new Map()
+    this.nextArrivals = new Map()
+    for (let e = 0; e < this.count; e++) {
+      if (this.out[e] || this.asleep[e]) continue
+      this.vel.fill(0, 3 * e, 3 * e + 3)
+      this.omega.fill(0, 3 * e, 3 * e + 3)
+    }
+  }
+
   // art.step 뒤(실패했으면 failed): 로봇 섬 공의 u⁺를 읽고 남은 섬을 풀어 적분·잠들기·필드 밖. tEnd: 이 하위 단계 끝 시각(ns)
   finish(art: Articulation | null, h: number, failed: boolean, tEnd: number): void {
     const p = this.pending
@@ -521,9 +566,7 @@ export class ElementWorld {
     const fail = (island: Island, error: unknown): void => {
       for (const e of island.balls) for (let i = 0; i < 6; i++) u[6 * e + i] = 0
       for (const r of island.rows) impulses.set(p.rows[r].key, 0)
-      this.notify('worldError', {
-        detail: `element island e${island.root}: ${error instanceof Error ? error.message : String(error)}`
-      })
+      this.notify('worldError', { detail: `element island e${island.root}: ${errorText(error)}` })
     }
     for (const island of p.islands) {
       try {
@@ -784,6 +827,12 @@ export class ElementWorld {
 
   private notify(code: SimNoticeCode, params: Record<string, string>): void {
     this.notices.push({ code, params })
+  }
+
+  // 공 e의 접촉 만들기가 던졌다(prepare의 공 단위 실패 가두기)
+  private failBall(e: number, error: unknown, failed: Uint8Array): void {
+    failed[e] = 1
+    this.notify('worldError', { detail: `element e${e}: ${errorText(error)}` })
   }
 
   private stateOf(i: number): SimElementState {
@@ -1178,13 +1227,54 @@ export class ElementWorld {
     change(along, Math.abs(wn), contact.mu * spinRadius * lambda)
   }
 
-  // 접촉 하나의 행: 법선(부드러운 법선·반발·심) → 접선 둘(마찰 상자, 접선 순응). 비유한 값이면 빼고 알린다
+  // 끼인 공(spec-6a §2.3 반발의 예외, ballContact.ts normalRow): 이번 하위 단계 접촉 가운데 공 쪽 법선 둘의 내적이
+  // PINCH_NORMAL_DOT보다 작은 짝이 있는 공(로봇과 벽 사이, 롤러와 후드 사이, 공을 바닥에 누르는 팔 아래). 공끼리 짝은 두 공 모두에
+  // 센다(f 쪽 법선은 −n)
+  private pinchedBalls(contacts: readonly Contact[]): Uint8Array {
+    const n = this.count
+    const start = new Int32Array(n + 1)
+    for (const c of contacts) {
+      start[c.e + 1]++
+      if (c.f >= 0) start[c.f + 1]++
+    }
+    for (let i = 0; i < n; i++) start[i + 1] += start[i]
+    const next = start.slice(0, n)
+    const normals = new Float64Array(3 * start[n])
+    const put = (ball: number, normal: V3, sign: number): void => {
+      const o = 3 * next[ball]++
+      normals[o] = sign * normal[0]
+      normals[o + 1] = sign * normal[1]
+      normals[o + 2] = sign * normal[2]
+    }
+    for (const c of contacts) {
+      put(c.e, c.normal, 1)
+      if (c.f >= 0) put(c.f, c.normal, -1)
+    }
+    const pinched = new Uint8Array(n)
+    for (let i = 0; i < n; i++)
+      for (let a = start[i]; a < start[i + 1] && !pinched[i]; a++)
+        for (let b = a + 1; b < start[i + 1]; b++)
+          if (
+            normals[3 * a] * normals[3 * b] +
+              normals[3 * a + 1] * normals[3 * b + 1] +
+              normals[3 * a + 2] * normals[3 * b + 2] <
+            PINCH_NORMAL_DOT
+          ) {
+            pinched[i] = 1
+            break
+          }
+    return pinched
+  }
+
+  // 접촉 하나의 행: 법선(부드러운 법선·반발·심) → 접선 둘(마찰 상자, 접선 순응). 비유한 값이면 빼고 알린다. 반발 두 단계는 이
+  // 행의 공 가운데 하나라도 끼이지 않았을 때만이다(그 공이 튀어 나갈 수 있다)
   private contactRows(
     ctx: RobotContext,
     contact: Contact,
     index: number,
     h: number,
-    uStar: Float64Array
+    uStar: Float64Array,
+    pinched: Uint8Array
   ): BallRow[] | null {
     const { e, f, normal: n } = contact
     const art = ctx.art
@@ -1244,7 +1334,8 @@ export class ElementWorld {
       restitution: contact.restitution,
       bounceSpeed: V_BOUNCE,
       dampingRatio: CONTACT_DAMPING_RATIO,
-      impact: this.arrivals.get(contact.keys.token)
+      impact: this.arrivals.get(contact.keys.token),
+      pinched: pinched[e] === 1 && (f < 0 || pinched[f] === 1)
     })
     if (made.arrival !== undefined) this.nextArrivals.set(contact.keys.token, made.arrival)
     if (made.crushed) this.notify('elementCrushed', {})
@@ -1311,14 +1402,15 @@ export class ElementWorld {
   }
 
   // 섬 나누기(spec-6a §2.6·§2.7): 움직이는 로봇에 닿은 공과 공끼리 이어진 공은 로봇 섬(art.step이 Schur 보수로 함께 푼다). 그
-  // 행이 MAX_COUPLED_ROWS를 넘으면 로봇에 직접 닿은 공 먼저, 그다음 깊은 짝(분리 오름차순), 그다음 번호 순으로 넘기 전까지만
-  // 넣고 나머지는 로봇·넣은 공을 정해진 속도로 보는 한쪽 섬이 된다(elementCouplingLimit). 나머지 공은 공끼리 이어진 섬(뿌리 =
-  // 가장 작은 번호)이다
+  // 행이 MAX_COUPLED_ROWS를 넘으면 로봇에 직접 닿은 공 먼저, 그다음 깊은 짝(분리 오름차순), 그다음 번호 순으로 한도에 들어가는
+  // 공을 넣는다(들어가지 않는 공은 건너뛰고 뒤의 더 싼 공을 계속 본다[결정: 6a 리뷰. 첫 공에서 멈추면 남은 행으로 담을 수 있는
+  // 바구니 프리로드가 한쪽 섬이 되었다]). 나머지는 로봇·넣은 공을 정해진 속도로 보는 한쪽 섬이 된다(elementCouplingLimit,
+  // softenOneWay). 나머지 공은 공끼리 이어진 섬(뿌리 = 가장 작은 번호)이다
   private islands(
     contacts: readonly Contact[],
     rows: readonly BallRow[],
     robotTouch: Uint8Array
-  ): { coupled: number[]; robotRows: number[]; islands: Island[] } {
+  ): { coupled: number[]; robotRows: number[]; islands: Island[]; limited: boolean } {
     const n = this.count
     const awake = (i: number): boolean => !this.out[i] && !this.asleep[i]
     const all = new UnionFind(n)
@@ -1335,7 +1427,8 @@ export class ElementWorld {
       0
     )
     let admitted = new Set(candidates)
-    if (total > MAX_COUPLED_ROWS) {
+    const limited = total > MAX_COUPLED_ROWS
+    if (limited) {
       const depth = new Float64Array(n).fill(Infinity)
       for (const c of contacts) {
         depth[c.e] = Math.min(depth[c.e], c.separation)
@@ -1356,7 +1449,7 @@ export class ElementWorld {
           )
             cost += rowCount[k]
         })
-        if (used + cost > MAX_COUPLED_ROWS) break
+        if (used + cost > MAX_COUPLED_ROWS) continue
         admitted.add(e)
         used += cost
       }
@@ -1387,7 +1480,40 @@ export class ElementWorld {
       else (byRoot.get(rest.find(free.ball)) as Island).rows.push(r)
     })
     islands.sort((x, y) => x.root - y.root)
-    return { coupled, robotRows, islands }
+    return { coupled, robotRows, islands, limited }
+  }
+
+  // 한쪽 행(spec-6a §2.7의 결합 한도로 로봇 섬에서 빠진 공): 그 공의 섬은 로봇(풀이 뒤 속도)·로봇 섬에 넣은 공(풀린 속도)을 정해진
+  // 속도로 본다. 그런 몸체와 잇는 법선 행이 강체(심·반발·도착)이면 반대쪽 강체 행(벽 쪽 심 등)과 함께 풀 수 없는 문제가 되어
+  // 정칙화한 LCP가 큰 충격(8.6e4 N·s)을 내 공이 수백 m/s로 날았다[결정: 6a 리뷰]. 정해진 속도의 몸체는 공에 밀려나지 않으므로 그
+  // 행은 늘 부드러운 법선(springRow: 침투만큼 스프링 힘, 심·반발 없음)이다. 공은 정해진 몸체에 밀리고 끼이면 눌릴 뿐 튀어 나가지
+  // 않는다(로봇은 그 공을 느끼지 못한다: 결합 한도의 한계 그대로)
+  private softenOneWay(
+    plan: { coupled: readonly number[]; islands: readonly Island[]; limited: boolean },
+    contacts: readonly Contact[],
+    rows: BallRow[],
+    h: number
+  ): void {
+    // 한도 안이면 로봇에 닿은 공과 그 공끼리 이어진 공은 모두 로봇 섬이라 한쪽 행이 없다
+    if (!plan.limited) return
+    const admitted = new Set(plan.coupled)
+    for (const island of plan.islands)
+      for (const r of island.rows) {
+        const row = rows[r]
+        if (row.friction || row.compliance > 0) continue
+        if (row.j === null && !row.parts.some((part) => admitted.has(part.ball))) continue
+        const contact = contacts[row.contact]
+        const soft = springRow({
+          separation: contact.separation,
+          h,
+          stiffness: contact.stiffness,
+          mass: contact.mass,
+          dampingRatio: CONTACT_DAMPING_RATIO
+        })
+        row.target = soft.target
+        row.compliance = soft.compliance
+        this.nextArrivals.delete(contact.keys.token)
+      }
   }
 
   // 잠들기(spec-6a §2.6): 공마다 |v|·|ω|r가 SLEEP_SPEED 아래인 시간을 세고, 움직이는 로봇에 닿지 않은 섬(공끼리 이어진 묶음)의
@@ -1487,6 +1613,9 @@ export class ElementWorld {
     return true
   }
 }
+
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
 
 // 6-벡터 a와 u(offset부터 6개)의 내적
 function rate6(a: readonly number[], u: ArrayLike<number>, o: number): number {

@@ -8,9 +8,11 @@ import type { SimElementKind } from '../worldSpec'
 // 세계 설명 한도(worldSpec.ts가 정하고 여기서 다시 내보낸다: 메인 검증과 같은 값 한곳)
 export { ELEMENT_GROUPS, ELEMENT_KINDS, MAX_PRELOADS, MAX_WORLD_ELEMENTS } from '../worldSpec'
 
-// 로봇 섬(로봇에 닿은 공을 로봇 LCP에 묶는 Schur 보수)의 공 행 한도. 넘는 공은 v*의 로봇에 한쪽으로 풀고 elementCouplingLimit
-// [결정: 결합 8개 하위 단계 1.5 ms 예산, spec-6a §2.7]
-export const MAX_COUPLED_ROWS = 48
+// 로봇 섬(로봇에 닿은 공을 로봇 LCP에 묶는 Schur 보수)의 공 행 한도. 넘는 공은 로봇(풀이 뒤 속도)에 한쪽으로 풀고
+// elementCouplingLimit [결정: 결합 8개 하위 단계 1.5 ms 예산(spec-6a §2.7). 바닥에서 로봇에 닿은 공 하나는 로봇·바닥 짝 둘로
+// 6행(법선 + 접선 둘)이고 붙은 공끼리 짝이 공마다 하나 꼴로 3행씩 더해져 8개면 72행이다(두 줄로 놓인 8개 P4는 66행). 6a 리뷰 전의
+// 48(= 8 × 6)은 공끼리 짝을 세지 않아 붙어 있는 8개를 담지 못했다]
+export const MAX_COUPLED_ROWS = 72
 // 공끼리 섬의 조밀 LCP 행 한도. 넘으면 고정 횟수 PGS로 풀고 elementIslandLarge [결정: 조밀 풀이 비용 O(n³)]
 export const ISLAND_DENSE_ROWS = 60
 // 큰 섬의 PGS 반복 수(고정, 행 순서) [결정]
@@ -36,6 +38,10 @@ export const SLOT_GAP = 5e-4
 export const BROAD_PHASE_CELL = 0.125
 // 부드러운 법선 행의 감쇠비 ζ(c = 2ζ√(k·m)) [가정: 임계 감쇠 1. 위플 공 판 시험의 감쇠 측정이 없어 튀지 않고 가장 빨리 가라앉는 값]
 export const CONTACT_DAMPING_RATIO = 1
+// 끼임: 한 공의 두 접촉 법선(공 쪽으로)의 내적이 이보다 작으면(서로 반대쪽, 약 90.6° 넘게 벌어짐) 그 공은 끼여 있고 반발 두
+// 단계를 쓰지 않는다(ballContact.ts normalRow) [결정: 바닥과 벽처럼 직각인 두 면은 끼임이 아니다. 0보다 조금 아래라 껍질 GJK
+// 법선의 반올림이 직각 짝을 끼임으로 만들지 않는다]
+export const PINCH_NORMAL_DOT = -0.01
 // 접촉점 하나의 스프링 = 판 강성 × 이 값 [결정: 판 강성은 공을 두 판 사이에 끼운 직렬 접촉 둘이라 접촉 하나는 그 두 배]
 export const CONTACT_STIFFNESS_PER_PLATE = 2
 

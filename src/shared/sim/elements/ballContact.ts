@@ -198,6 +198,9 @@ export type NormalRowInput = {
   restitution: number
   // 반발하는 접근 속도 문턱(m/s)
   bounceSpeed: number
+  // 끼임: 이 행의 공(공끼리 짝이면 두 공 모두)이 서로 반대쪽을 향한 두 접촉에 닿아 있다(elementWorld.ts pinchedBalls). 그러면
+  // 반발 두 단계를 쓰지 않고 부드러운 법선·심만 쓴다
+  pinched?: boolean
 }
 
 export type NormalRow = {
@@ -219,29 +222,46 @@ export type NormalRow = {
 // - 침투 δ > 0: ODE ERP·CFM 꼴의 암시 스프링–감쇠(목표 = (h·k/(h·k + c))·δ/h, γ = 1/(h·(h·k + c)), 정지 상태 힘 = k·δ).
 // - 떨어짐(분리 ≥ 0): 예측 목표 −분리/h에 같은 γ.
 // - 심(δ ≥ coreDepth): 강체(γ = 0, 목표 0, 밀어내지 않음).
+// - 끼인 공(pinched)은 반발 두 단계를 쓰지 않는다[결정: 6a 리뷰. 로봇과 벽 사이에 끼인 공의 두 행이 모두 강체 반발 목표(로봇 쪽
+//   e·1.5 m/s, 벽 쪽 e·공 속도)를 가지면 LCP가 두 목표를 함께 맞추려고 13.6 kg 로봇을 1 ms에 거꾸로 밀었다(공 25 g이 트램펄린이
+//   됨, 들어온 15 J에서 약 11 J가 돌아감). 끼인 공이 돌려줄 수 있는 에너지는 공 자신의 변형(심까지 약 0.7 J)뿐이라 부드러운 법선과
+//   심이 그것을 낸다. 한쪽이 자유로운 공의 반발(바닥·벽에 튐, 로봇이 쳐 냄)은 그대로다].
 export function normalRow(input: NormalRowInput): NormalRow {
-  const { separation, approach, h, stiffness: k, mass, coreDepth, restitution: e } = input
-  if (input.impact !== undefined && input.impact < -input.bounceSpeed)
-    return {
-      target: e * -input.impact - ((1 + e) * Math.max(separation, 0)) / h,
-      compliance: 0,
-      crushed: false,
-      bounced: true
-    }
-  if (approach < -input.bounceSpeed) {
-    if (separation <= 0)
-      return { target: e * -approach, compliance: 0, crushed: false, bounced: true }
-    if (-approach * h > separation)
+  const { separation, approach, h, coreDepth, restitution: e } = input
+  if (!input.pinched) {
+    if (input.impact !== undefined && input.impact < -input.bounceSpeed)
       return {
-        target: -separation / h,
+        target: e * -input.impact - ((1 + e) * Math.max(separation, 0)) / h,
         compliance: 0,
         crushed: false,
-        bounced: false,
-        arrival: approach
+        bounced: true
       }
+    if (approach < -input.bounceSpeed) {
+      if (separation <= 0)
+        return { target: e * -approach, compliance: 0, crushed: false, bounced: true }
+      if (-approach * h > separation)
+        return {
+          target: -separation / h,
+          compliance: 0,
+          crushed: false,
+          bounced: false,
+          arrival: approach
+        }
+    }
   }
   const depth = -separation
   if (depth >= coreDepth) return { target: 0, compliance: 0, crushed: true, bounced: false }
+  return springRow(input)
+}
+
+// 부드러운 법선(심·반발 없는 스프링–감쇠) 행: 침투 δ > 0이면 목표 (h·k/(h·k + c))·δ/h, 떨어져 있으면 예측 목표 −분리/h, 둘 다
+// 순응 γ = 1/(h·(h·k + c)). normalRow의 심 아래 경우이고, 로봇·넣은 공을 정해진 속도로 보는 한쪽 행(elementWorld.ts
+// softenOneWay)도 쓴다
+export function springRow(
+  input: Pick<NormalRowInput, 'separation' | 'h' | 'stiffness' | 'mass' | 'dampingRatio'>
+): NormalRow {
+  const { separation, h, stiffness: k, mass } = input
+  const depth = -separation
   const c = 2 * input.dampingRatio * Math.sqrt(k * mass)
   const compliance = 1 / (h * (h * k + c))
   if (depth > 0)

@@ -47,7 +47,7 @@ function measure(
   out: (k: number) => Record<string, DeviceValues>,
   ticks: number,
   sleep = true
-): { median: number; p99: number; world: PhysicsWorld } {
+): { median: number; p99: number; world: PhysicsWorld; notices: string[] } {
   const world = new PhysicsWorld(spec, {
     ...(initial ? { elements: { initial, sleep } } : { elements: { sleep } })
   })
@@ -57,9 +57,15 @@ function measure(
     world.step(k * TICK, out(k))
     if (k > 0) times.push((performance.now() - start) / 5)
   }
-  expect(world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([])
+  const notices = world.drainNotices()
+  expect(notices.filter((n) => n.code === 'worldError')).toEqual([])
   times.sort((a, b) => a - b)
-  return { median: quantile(times, 0.5), p99: quantile(times, 0.99), world }
+  return {
+    median: quantile(times, 0.5),
+    p99: quantile(times, 0.99),
+    world,
+    notices: notices.map((n) => n.code)
+  }
 }
 
 // 바닥 격자의 공(필드 왼쪽 위 사분면, 로봇 경로 밖)
@@ -148,7 +154,7 @@ describe('6a 성능', () => {
     expect(median).toBeLessThan(3.5)
   })
 
-  it('P4: 섀시 앞에 결합된 공 8(두 줄)을 밀면 하위 단계 중앙값 1.5 ms·p99 4 ms(목표)', () => {
+  it('P4: 섀시 앞에 결합된 공 8(두 줄, 66행)을 밀면 하위 단계 중앙값 1.5 ms·p99 4 ms(목표)', () => {
     const spec = robot()
     const front = -0.6 + HALF
     const initial: SimElementState[] = []
@@ -161,7 +167,15 @@ describe('6a 성능', () => {
             z: r
           })
         )
-    const { median, p99 } = measure(spec, initial, () => outputs(mecanum(0.2, 0, 0)), 300, false)
+    const { median, p99, notices } = measure(
+      spec,
+      initial,
+      () => outputs(mecanum(0.2, 0, 0)),
+      300,
+      false
+    )
+    // 8개가 모두 로봇 섬에 들어간다(한도를 넘어 한쪽으로 푼 공이 없다: 6a 리뷰 전의 한도 48은 6개만 담았다)
+    expect(notices).not.toContain('elementCouplingLimit')
     console.info(
       `6a 성능 P4: 결합 공 8 하위 단계 중앙값 ${median.toFixed(4)} ms, p99 ${p99.toFixed(4)} ms(목표 1.5·4)`
     )

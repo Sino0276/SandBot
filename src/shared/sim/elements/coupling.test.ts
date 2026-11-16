@@ -8,7 +8,9 @@ import { GRAVITY } from '../physics'
 import { resolveSeason } from '../seasons/seasons'
 import { testMotorParams } from '../testkit'
 import type { SimCollider, SimElementState, SimJointSpec, WorldSpec } from '../worldSpec'
-import { CONTACT_STIFFNESS_PER_PLATE } from './elementData'
+import { BodyCollision } from '../bodyCollision'
+import { PhysicsWorld } from '../world'
+import { CONTACT_STIFFNESS_PER_PLATE, MAX_COUPLED_ROWS } from './elementData'
 import {
   ball,
   ballField,
@@ -518,7 +520,7 @@ describe('로봇–공 결합(6a)', () => {
   })
 
   it('로봇에 닿은 공 행이 한도를 넘으면 넘는 공은 한쪽으로 풀고 알린다', () => {
-    // 미는 판 앞에 바닥 공 20개(두 줄, 서로 닿음): 공마다 로봇·바닥·공 짝이라 로봇 섬 행이 48을 넘는다
+    // 미는 판 앞에 바닥 공 20개(두 줄, 서로 닿음): 공마다 로봇·바닥·공 짝이라 로봇 섬 행이 MAX_COUPLED_ROWS를 넘는다
     const pusher: SimJointSpec = {
       parent: -1,
       type: 'prismatic',
@@ -546,9 +548,265 @@ describe('로봇–공 결합(6a)', () => {
     stepRig(art, ew, 200, (rows) => {
       maxCoupled = Math.max(maxCoupled, rows.length)
     })
-    expect(maxCoupled).toBeLessThanOrEqual(48)
+    expect(maxCoupled).toBeLessThanOrEqual(MAX_COUPLED_ROWS)
     expect(ew.drainNotices().some((n) => n.code === 'elementCouplingLimit')).toBe(true)
     // 모든 공이 판 앞으로 밀렸다(한쪽으로 푼 공도 판을 지나가지 않는다)
     for (const s of ew.snapshot()) expect(s.position.x - r).toBeGreaterThan(0.2 + art.z[0] - 1e-3)
+  })
+})
+
+// 6a 리뷰 수정: 끼인 공의 반발, 결합 한도로 한쪽에 푼 공, 공·로봇 실패 가두기
+describe('로봇–공 결합: 끼임·한쪽 섬·실패 가두기(6a 리뷰)', () => {
+  // 공 하나가 심까지 눌릴 때 접촉 둘(양쪽)에 담기는 탄성 에너지(J): 끼인 공이 무거운 몸체에 돌려줄 수 있는 에너지의 위
+  const elasticCapacity = 2 * 0.5 * K * (POLLEN.contact.coreDepthRatio * r) ** 2
+
+  // 무거운(13.6 kg) 직선 관절 판이 고정 기저 섀시 충돌체(움직이지 않는 면)에 붙은 공을 1.5 m/s로 민다
+  function pinchRig(): { art: Articulation; ew: ElementWorld; M: number } {
+    const M = 13.6
+    const pusher: SimJointSpec = {
+      parent: -1,
+      type: 'prismatic',
+      origin: { position: ZERO, rotation: ZERO },
+      axis: { x: 1, y: 0, z: 0 },
+      limits: null,
+      body: { mass: M, centerOfMass: ZERO, inertia: [0.1, 0.1, 0.1, 0, 0, 0] },
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' },
+      switches: [],
+      colliders: [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })]
+    }
+    const face = 0.1 + 2 * r
+    const spec = rig([pusher], [box({ x: face + 0.1, y: 0, z: 0.1 }, { x: 0.1, y: 0.1, z: 0.1 })])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = 1.5
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: face - r, y: 0, z: r })],
+      air: false,
+      sleep: false
+    })
+    return { art, ew, M }
+  }
+
+  it('면에 붙은 공을 무거운 판이 밀면 공은 끼여 반발하지 않고 판은 공 변형 에너지보다 세게 되밀리지 않는다', () => {
+    const { art, ew, M } = pinchRig()
+    let slowest = Infinity
+    stepRig(art, ew, 400, () => {
+      slowest = Math.min(slowest, art.v[0])
+    })
+    // 반발 두 단계가 끼인 공의 양쪽에 강체 목표를 두면 판이 1 ms에 −1 m/s로 되튀었다(공 25 g이 트램펄린)
+    expect(slowest).toBeGreaterThan(-Math.sqrt((2 * elasticCapacity) / M))
+    // 공은 판과 면 사이에 남는다(튀어 나가지 않는다)
+    expect(speed(ew.snapshot()[0].velocity)).toBeLessThan(2)
+  })
+
+  it('바닥의 자유로운 공을 판이 치면 반발로 튀어 나간다(바닥과 판은 직각이라 끼임이 아니다)', () => {
+    const M = 13.6
+    const pusher: SimJointSpec = {
+      parent: -1,
+      type: 'prismatic',
+      origin: { position: ZERO, rotation: ZERO },
+      axis: { x: 1, y: 0, z: 0 },
+      limits: null,
+      body: { mass: M, centerOfMass: ZERO, inertia: [0.1, 0.1, 0.1, 0, 0, 0] },
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' },
+      switches: [],
+      colliders: [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })]
+    }
+    const spec = rig([pusher])
+    const art = new Articulation(spec.joints, { gravity: GRAVITY })
+    art.v[0] = 1
+    // 판 앞 1 cm, 바닥에서 쉬는 공
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0.01 + r, y: 0, z: r })],
+      air: false,
+      sleep: false
+    })
+    // 튀어 나간 직후의 공 속도(그 뒤에는 바닥 마찰로 준다)
+    let kicked = 0
+    stepRig(art, ew, 30, () => {
+      kicked = Math.max(kicked, ew.snapshot()[0].velocity.x)
+    })
+    // 판 속도 v의 (1 + e)배 안팎(판이 공보다 훨씬 무겁다)
+    const e = POLLEN.contact.restitution.robot
+    expect(kicked / ((1 + e) * art.v[0])).toBeCloseTo(1, 1)
+  })
+
+  it('BIOBUZZ 관중석 벽에 붙은 GARDEN 공으로 전출력 메카넘이 달려들어도 공 변형 에너지보다 세게 되밀리지 않는다', () => {
+    const start = { x: 0.9, y: -1.55, yaw: 0 }
+    const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+    const spec: WorldSpec = {
+      ...base,
+      robot: {
+        ...base.robot,
+        start,
+        colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+      },
+      elements: { groups: ['garden'], preloads: [] }
+    }
+    const world = new PhysicsWorld(spec)
+    let previous = world.pose().x
+    let fastest = 0
+    let slowest = Infinity
+    for (let k = 0; k < 400; k++) {
+      world.step(k * 5_000_000, outputs(mecanum(1, 0, 0)))
+      world.drainNotices()
+      const x = world.pose().x
+      const v = (x - previous) / 0.005
+      previous = x
+      fastest = Math.max(fastest, v)
+      if (fastest > 0.5) slowest = Math.min(slowest, v)
+    }
+    expect(fastest).toBeGreaterThan(1.4)
+    // 앞에 닿은 공 넷이 심까지 눌려 담은 에너지를 모두 돌려줘도 넘지 않는 되밀림(고친 전에는 −1.31 m/s)
+    const bound = Math.sqrt((2 * 4 * elasticCapacity) / spec.robot.body.mass)
+    expect(slowest).toBeGreaterThan(-bound)
+  }, 60_000)
+
+  it('결합 한도를 넘어 한쪽으로 푼 공이 벽과 로봇 사이에 끼여도 튀어 나가지 않는다', () => {
+    // 관중석 벽에 붙인 공 20개(4 × 5)를 전출력 메카넘이 민다: 로봇 섬 행이 한도를 넘는다
+    const ih = resolveSeason('biobuzz').perimeter.innerHalf
+    const start = { x: 0.9, y: 0, yaw: 0 }
+    const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+    const spec: WorldSpec = {
+      ...base,
+      robot: {
+        ...base.robot,
+        start,
+        colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+      },
+      elements: { groups: [], preloads: [] }
+    }
+    const initial: SimElementState[] = []
+    for (let i = 0; i < 4; i++)
+      for (let j = 0; j < 5; j++)
+        initial.push(
+          ball('pollen', { x: ih - r - i * (2 * r + 0.001), y: (j - 2) * (2 * r + 0.001), z: r })
+        )
+    const run = new BallRunner(spec, { elements: { initial } }).run(3, () =>
+      outputs(mecanum(1, 0, 0))
+    )
+    expect(run.notices.some((n) => n.code === 'elementCouplingLimit')).toBe(true)
+    let fastest = 0
+    let highest = 0
+    for (const tick of run.snapshots)
+      for (const s of tick) {
+        fastest = Math.max(fastest, speed(s.velocity))
+        highest = Math.max(highest, s.position.z)
+      }
+    // 한쪽 섬이 정해진 속도의 몸체와 벽 사이에 강체 행을 두면 풀 수 없는 LCP가 되어 수백 m/s로 날았다
+    expect(fastest).toBeLessThan(10)
+    expect(highest).toBeLessThan(0.3)
+    expect(run.notices.some((n) => n.code === 'elementOutOfField')).toBe(false)
+  }, 60_000)
+
+  it('몸체 충돌 행이 던져도 로봇에 닿지 않은 공은 그대로 날아간다(로봇만 그 하위 단계에 멈춤)', () => {
+    const start = { x: -0.6, y: -0.9, yaw: 0 }
+    const spec: WorldSpec = {
+      ...robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } }),
+      elements: { groups: [], preloads: [] }
+    }
+    spec.robot = {
+      ...spec.robot,
+      colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+    }
+    const thrown = ball('pollen', { x: 0.8, y: 0.8, z: 0.6 }, { velocity: { x: 0.5, y: 0, z: 1 } })
+    const flight = (fault: boolean): SimElementState => {
+      const original = BodyCollision.prototype.rows
+      let calls = 0
+      vi.spyOn(BodyCollision.prototype, 'rows').mockImplementation(function (
+        this: BodyCollision,
+        ...args
+      ) {
+        calls++
+        if (fault && calls > 50 && calls <= 250) throw new Error('hull boom')
+        return original.apply(this, args)
+      })
+      const run = new BallRunner(spec, {
+        elements: { initial: [thrown], air: false, sleep: false }
+      }).run(0.3)
+      vi.restoreAllMocks()
+      if (fault)
+        expect(run.notices).toContainEqual({ code: 'worldError', params: { detail: 'hull boom' } })
+      return run.last()[0]
+    }
+    expect(flight(true)).toEqual(flight(false))
+  })
+
+  it('공 접촉 만들기 전체가 던지면 공은 그 하위 단계에 멈추고 로봇은 공 행 없이 그대로 간다', () => {
+    const start = { x: -0.6, y: -0.9, yaw: 0 }
+    const spec: WorldSpec = {
+      ...robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } }),
+      elements: { groups: [], preloads: [] }
+    }
+    // 로봇에서 먼 공 하나(로봇 짝이 없어 로봇 길은 공과 관계없다)
+    const initial = [ball('pollen', { x: 1.2, y: 1.2, z: r })]
+    const run = (fault: boolean): BallRunner => {
+      const original = ElementWorld.prototype.prepare
+      let calls = 0
+      vi.spyOn(ElementWorld.prototype, 'prepare').mockImplementation(function (
+        this: ElementWorld,
+        ...args
+      ) {
+        calls++
+        if (fault && calls > 10 && calls <= 100) throw new Error('prepare boom')
+        return original.apply(this, args)
+      })
+      const out = new BallRunner(spec, {
+        elements: { initial, air: false, sleep: false }
+      }).run(0.5, () => outputs(mecanum(0.5, 0, 0)))
+      vi.restoreAllMocks()
+      return out
+    }
+    const healthy = run(false)
+    const faulty = run(true)
+    // 고친 전에는 공 접촉 만들기가 던진 하위 단계마다 로봇 속도도 0이 되어 로봇이 덜 갔다
+    expect(faulty.world.pose()).toEqual(healthy.world.pose())
+    expect(faulty.notices).toContainEqual({
+      code: 'worldError',
+      params: { detail: 'prepare boom' }
+    })
+  })
+
+  it('공 하나의 접촉 만들기가 던지면 그 공만 멈추고 로봇·다른 공은 그대로 간다', () => {
+    const start = { x: -0.6, y: -0.9, yaw: 0 }
+    const spec: WorldSpec = {
+      ...robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } }),
+      elements: { groups: [], preloads: [] }
+    }
+    const initial = [
+      ball('pollen', { x: 1.2, y: 1.2, z: r }),
+      ball('pollen', { x: 0.5, y: 0.8, z: r }, { velocity: { x: 0.5, y: 0, z: 0 } })
+    ]
+    const run = (fault: boolean): BallRunner => {
+      const proto = ElementWorld.prototype as unknown as {
+        staticPairs: (e: number, ...rest: unknown[]) => void
+      }
+      const original = proto.staticPairs
+      vi.spyOn(proto, 'staticPairs').mockImplementation(function (this: unknown, e, ...rest) {
+        if (fault && e === 0) throw new Error('pair boom')
+        return original.call(this, e, ...rest)
+      })
+      const out = new BallRunner(spec, {
+        elements: { initial, air: false, sleep: false }
+      }).run(0.5, () => outputs(mecanum(0.5, 0, 0)))
+      vi.restoreAllMocks()
+      return out
+    }
+    const healthy = run(false)
+    const faulty = run(true)
+    // 로봇은 공 0의 버그와 관계없이 같은 길을 간다(고친 전에는 로봇이 시작 자리에 멈췄다)
+    expect(faulty.world.pose()).toEqual(healthy.world.pose())
+    expect(faulty.world.pose().x).toBeGreaterThan(start.x + 0.1)
+    // 공 0은 멈추고(위치 그대로, 속도 0) 공 1은 그대로
+    expect(faulty.last()[0].position).toEqual(initial[0].position)
+    expect(faulty.last()[0].velocity).toEqual({ x: 0, y: 0, z: 0 })
+    expect(faulty.last()[1]).toEqual(healthy.last()[1])
+    expect(faulty.notices).toContainEqual({
+      code: 'worldError',
+      params: { detail: 'element e0: pair boom' }
+    })
   })
 })

@@ -559,12 +559,13 @@ export class PhysicsWorld {
     }
   }
 
-  // 동역학이 없는 로봇의 하위 단계: 공만(로봇은 시작 자세의 정적 섀시)
+  // 동역학이 없는 로봇의 하위 단계: 공만(로봇은 시작 자세의 정적 섀시). 공 접촉 만들기가 던지면 공을 이 하위 단계에 멈춘다
   private elementSubstep(elements: ElementWorld, h: number, tEnd: number): void {
     try {
       elements.prepare(null, null, h)
     } catch (error) {
       this.notify('worldError', { detail: error instanceof Error ? error.message : String(error) })
+      elements.failSubstep()
     }
     elements.finish(null, h, false, tEnd)
     this.drainElements(elements)
@@ -606,12 +607,15 @@ export class PhysicsWorld {
       blocking = contacts.rows.filter(isBlockingNormal)
     }
     const elements = this.elements
+    const collision = this.bodyCollision
+    let frames: ContactFrames | null = null
+    // 로봇 쪽 실패(접촉 틀·몸체 충돌 행·art.step이 던짐)
+    let failure: { error: unknown } | null = null
     try {
-      // 몸체 충돌 행은 art.step과 같은 try 안에서 만든다(껍질·NaN 버그로 던져도 아래 복구를 쓴다, C-M10). 바퀴·벽 행 뒤에 붙이고,
-      // blocked는 섀시–정적 법선 행만 센다(관절 몸체·자기 충돌 행은 세지 않는다, spec-5 §1.1)
-      const collision = this.bodyCollision
+      // 몸체 충돌 행이 던지면(껍질·NaN 버그, C-M10) art.step이 던진 것과 같은 복구를 쓴다. 바퀴·벽 행 뒤에 붙이고, blocked는
+      // 섀시–정적 법선 행만 센다(관절 몸체·자기 충돌 행은 세지 않는다, spec-5 §1.1)
       // 접촉 틀은 몸체 충돌과 공이 같이 쓴다(한 번만 계산한다. 순수 함수라 따로 부른 것과 같은 값이다)
-      const frames: ContactFrames | null = collision || elements ? art.contactFrames() : null
+      frames = collision || elements ? art.contactFrames() : null
       if (collision) {
         const made = collision.rows(art, h, art.coordinates.length, frames as ContactFrames)
         for (const notice of made.notices) this.notify(notice.code, notice.params)
@@ -621,24 +625,45 @@ export class PhysicsWorld {
             : { rows: made.rows, damping: [] }
         blocking = [...blocking, ...made.blocking]
       }
-      // 공 행(6a)은 몸체 충돌 행 뒤, blocked 거르기 뒤에 붙인다(공은 blocked를 켜지 않는다)
-      if (elements) {
-        const made = elements.prepare(art, frames, h)
-        if (made.rows.length > 0)
-          contacts = contacts
-            ? {
-                rows: [...contacts.rows, ...made.rows],
-                damping: contacts.damping,
-                elements: made.coupled
-              }
-            : { rows: made.rows, damping: [], elements: made.coupled }
-      }
-      art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
-      if (collision) for (const n of collision.afterStep(art, h)) this.notify(n.code, n.params)
     } catch (error) {
+      failure = { error }
+    }
+    // 공 행(6a)은 몸체 충돌 행 뒤, blocked 거르기 뒤에 붙인다(공은 blocked를 켜지 않는다). 공과 로봇은 실패를 서로 가둔다[결정: 6a
+    // 리뷰]: 몸체 충돌 행이 던져도(접촉 틀은 있음) 공은 접촉을 만들어 아래 복구에서 로봇 섬 밖의 섬을 풀고, 공 접촉 만들기가
+    // 던지면(elementWorld.ts가 공 단위로 못 가둔 것) 공만 이 하위 단계에 멈추고 로봇은 공 행 없이 간다. 접촉 틀이 없으면(틀 계산이
+    // 던짐) 공도 멈춘다
+    if (elements) {
+      if (failure && !frames) elements.failSubstep()
+      else
+        try {
+          const made = elements.prepare(art, frames, h)
+          if (made.rows.length > 0)
+            contacts = contacts
+              ? {
+                  rows: [...contacts.rows, ...made.rows],
+                  damping: contacts.damping,
+                  elements: made.coupled
+                }
+              : { rows: made.rows, damping: [], elements: made.coupled }
+        } catch (error) {
+          this.notify('worldError', {
+            detail: error instanceof Error ? error.message : String(error)
+          })
+          elements.failSubstep()
+        }
+    }
+    if (!failure)
+      try {
+        art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
+        if (collision) for (const n of collision.afterStep(art, h)) this.notify(n.code, n.params)
+      } catch (error) {
+        failure = { error }
+      }
+    if (failure) {
       // 수치가 터지면(Articulation은 상태를 바꾸기 전에 던진다) 이 하위 단계는 모든 속도를 0으로 두고 위치는 그대로 둔다.
       // 다음 하위 단계에서 다시 푼다(같은 detail은 실행마다 한 번 알린다). 로봇 섬에 묶인 공도 속도 0이고, 다른 공 섬은 그대로
       // 푼다(spec-6a §2.7)
+      const error = failure.error
       art.v.fill(0)
       this.notify('worldError', { detail: error instanceof Error ? error.message : String(error) })
       if (elements) {
