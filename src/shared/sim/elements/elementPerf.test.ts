@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../../sidecarProtocol'
 import { HALF, mecanum, outputs, robotSpec, TICK } from '../driveTestkit'
 import { resolveSeason } from '../seasons/seasons'
 import { PhysicsWorld } from '../world'
 import type { SimCollider, SimElementState, WorldSpec } from '../worldSpec'
-import { ball } from './elementTestkit'
+import { ball, intakeWedge } from './elementTestkit'
+import { ElementWorld } from './elementWorld'
 import { elementSpawns } from './spawn'
 
 // 6a 성능(spec-6a §2.7, plan.md 검증 표): 하위 단계 시간(5 ms 틱 ÷ 5)의 중앙값·p99를 로그로 남기고 CI 상한은 목표의 5배다(CI
 // 기계가 느릴 수 있다, collisionPerf.test.ts와 같은 방식). 목표: P1 잠든 공 56 = 기준 + 0.02 ms, P2 바닥에서 깬 56 = 0.3 ms,
-// P3 프리로드 4를 들고 주행 = 0.7 ms, P4 결합 8 = 1.5 ms(p99 4 ms), P5 구석 12 더미 = 0.4 ms.
+// P3 프리로드 4를 들고 주행 = 0.7 ms, P4 결합 8 = 1.5 ms(p99 4 ms), P5 구석 12 더미 = 0.4 ms, P6 쐐기(결합 한도를 넘음) =
+// P4와 같은 1.5 ms(p99 4 ms).
 
 const BIOBUZZ = resolveSeason('biobuzz')
 const POLLEN = BIOBUZZ.elements!.types.find((t) => t.kind === 'pollen')!
@@ -86,6 +88,10 @@ const drive = (k: number): Record<string, DeviceValues> =>
   outputs(k < 200 ? mecanum(0.3, 0, 0) : mecanum(0, 0, 0.3))
 
 describe('6a 성능', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('P1: 잠든 공 56(GARDEN 8 + 바닥 48)은 공 없는 같은 세계보다 하위 단계 0.02 ms(목표) 안으로만 늘린다', () => {
     const spec = robot()
     const garden = elementSpawns(BIOBUZZ, spec.elements, spec.robot.start)
@@ -200,4 +206,60 @@ describe('6a 성능', () => {
     )
     expect(median).toBeLessThan(2)
   })
+
+  it('P6: 인테이크를 켜고 GARDEN 공 넷을 관중석 벽에 밀어 끼우면서 프리로드 넷을 실으면(결합 한도를 넘는 쐐기) 하위 단계 중앙값 1.5 ms·p99 4 ms(목표)', () => {
+    const { spec, out } = intakeWedge()
+    // 공 쪽 알림은 ElementWorld가 결합 한도를 넘은 하위 단계마다 내고 PhysicsWorld가 실행마다 하나로 줄이므로, 하위 단계마다
+    // 비우는 drainNotices를 엿봐 틱마다 한도를 넘은 하위 단계 수를 센다(계산은 바꾸지 않는다)
+    let limited = 0
+    const drain = ElementWorld.prototype.drainNotices
+    vi.spyOn(ElementWorld.prototype, 'drainNotices').mockImplementation(function (
+      this: ElementWorld
+    ) {
+      const notices = drain.call(this)
+      for (const notice of notices) if (notice.code === 'elementCouplingLimit') limited++
+      return notices
+    })
+    // 같은 실행을 세 번 돌려 틱마다 가장 짧은 시간을 쓴다(결정적이라 같은 틱이 같은 일을 한다: 기계 잡음·GC를 뺀다)
+    const ticks = 500
+    const best = new Array<number>(ticks).fill(Infinity)
+    let wedgeTicks: boolean[] = []
+    let world = new PhysicsWorld(spec)
+    const codes = new Set<string>()
+    for (let run = 0; run < 3; run++) {
+      world = new PhysicsWorld(spec)
+      const over: boolean[] = []
+      for (let k = 0; k < ticks; k++) {
+        limited = 0
+        const start = performance.now()
+        world.step(k * TICK, out(k))
+        best[k] = Math.min(best[k], (performance.now() - start) / 5)
+        over.push(limited > 0)
+        for (const notice of world.drainNotices()) codes.add(notice.code)
+      }
+      if (run === 0) wedgeTicks = over
+      else expect(over).toEqual(wedgeTicks)
+    }
+    expect([...codes]).not.toContain('worldError')
+    // 쐐기에 닿았다: 결합 한도를 넘은 틱이 0.5 s 넘게 이어지고, 빨강 GARDEN 넷(공 0–3)이 관중석 벽(+X)과 섀시 앞면 사이에 있다
+    expect([...codes]).toContain('elementCouplingLimit')
+    const wedge = best.filter((_, k) => wedgeTicks[k])
+    expect(wedge.length).toBeGreaterThan(100)
+    const front = world.pose().x + HALF
+    const snapshot = world.elementSnapshot()!
+    for (const k of [0, 1, 2, 3]) {
+      expect(snapshot[k].position.x).toBeGreaterThan(front)
+      expect(snapshot[k].position.x).toBeLessThan(ih)
+    }
+    // 프리로드 넷은 바구니에 남았다
+    for (const k of [8, 9, 10, 11]) expect(snapshot[k].position.z).toBeGreaterThan(0.2)
+    wedge.sort((a, b) => a - b)
+    const median = quantile(wedge, 0.5)
+    const p99 = quantile(wedge, 0.99)
+    console.info(
+      `6a 성능 P6: 쐐기(결합 한도 넘음, 틱 ${wedge.length}개, 세 번 잰 틱마다 최솟값) 하위 단계 중앙값 ${median.toFixed(4)} ms, p99 ${p99.toFixed(4)} ms, 최악 ${wedge[wedge.length - 1].toFixed(3)} ms(목표 1.5·4)`
+    )
+    expect(median).toBeLessThan(7.5)
+    expect(p99).toBeLessThan(20)
+  }, 120_000)
 })
