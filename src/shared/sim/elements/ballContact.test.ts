@@ -10,6 +10,7 @@ import {
   sphereSphere,
   type V3
 } from './ballContact'
+import { PINCH_RECOVERY_SPEED } from './elementData'
 
 // 공의 좁은 단계와 법선 행 값(6a, spec-6a §2.2–§2.3)
 
@@ -156,22 +157,30 @@ describe('부드러운 법선 행(6a)', () => {
     const k = 6000
     const c = 2 * Math.sqrt(k * 0.0249)
     const h = 0.001
-    // 빠르게 다가와도 튀지 않는다
-    const loading = normalRow({ ...base, separation: -2e-3, approach: -1, pinched: true })
+    // 빠르게 다가와도 튀지 않는다. 앞 하위 단계보다 깊어지면(눌림을 봤다) 주기를 시작한다
+    const loading = normalRow({
+      ...base,
+      separation: -2e-3,
+      approach: -1,
+      pinched: true,
+      previous: 1e-3
+    })
     expect(loading).toMatchObject({ bounced: false, crushed: false, peak: 2e-3 })
     expect(loading.target).toBeCloseTo((k * 2e-3) / (h * k + c), 15)
     // 더 깊어지면 peak가 따라간다
     expect(normalRow({ ...base, separation: -3e-3, pinched: true, peak: 2e-3 }).peak).toBe(3e-3)
-    // 풀릴 때: k_U = k/e², δ₀ = peak(1 − e²). 정지 상태 힘 = k_U(δ − δ₀)
+    // 풀릴 때: peak는 하위 단계마다 PINCH_RECOVERY_SPEED·h만큼 줄어(모양을 되찾음) p이고, k_U = k/e², δ₀ = p(1 − e²).
+    // 정지 상태 힘 = k_U(δ − δ₀)
     const e2 = base.restitution ** 2
     const unload = k / e2
-    const rest = 3e-3 * (1 - e2)
+    const p = 3e-3 - PINCH_RECOVERY_SPEED * h
+    const rest = p * (1 - e2)
     const back = normalRow({ ...base, separation: -2.9e-3, pinched: true, peak: 3e-3 })
-    expect(back.peak).toBe(3e-3)
+    expect(back.peak).toBeCloseTo(p, 15)
     expect(back.target / back.compliance).toBeCloseTo(h * unload * (2.9e-3 - rest), 12)
     // peak 바로 아래에서 두 선의 힘이 같다(이어진다)
-    const top = normalRow({ ...base, separation: -(3e-3 - 1e-12), pinched: true, peak: 3e-3 })
-    expect(top.target / top.compliance).toBeCloseTo(h * k * 3e-3, 9)
+    const top = normalRow({ ...base, separation: -(p - 1e-12), pinched: true, peak: 3e-3 })
+    expect(top.target / top.compliance).toBeCloseTo(h * k * p, 9)
     // δ₀ 아래는 힘이 없고 δ₀까지 예측 목표
     const slack = normalRow({ ...base, separation: -1e-4, pinched: true, peak: 3e-3 })
     expect(slack.target).toBeCloseTo(-(rest - 1e-4) / h, 12)
@@ -180,16 +189,37 @@ describe('부드러운 법선 행(6a)', () => {
     expect(apart.peak).toBeUndefined()
     expect(apart.target).toBeCloseTo(-0.1, 12)
     // 끼임이 풀려도 주기 안이면 이력 스프링(빠르게 다가와도 튀지 않는다)
-    expect(normalRow({ ...base, separation: -2.9e-3, approach: -1, peak: 3e-3 })).toMatchObject({
-      bounced: false,
-      peak: 3e-3
-    })
-    // 심은 그대로 강체이고 peak를 적는다
-    expect(normalRow({ ...base, separation: -0.3 * R - 1e-6, pinched: true })).toMatchObject({
+    const freed = normalRow({ ...base, separation: -2.9e-3, approach: -1, peak: 3e-3 })
+    expect(freed).toMatchObject({ bounced: false })
+    expect(freed.peak).toBeCloseTo(p, 15)
+    // peak는 지금 깊이 아래로 줄지 않는다: 깊이에 닿으면 탄성선이고 주기는 떨어질 때까지 이어진다
+    const met = normalRow({ ...base, separation: -2.9999e-3, peak: 3e-3 })
+    expect(met.peak).toBe(2.9999e-3)
+    expect(met.target / met.compliance).toBeCloseTo(h * k * 2.9999e-3, 12)
+    // 심은 그대로 강체이고 눌리는 중이면 peak를 적는다
+    expect(
+      normalRow({ ...base, separation: -0.3 * R - 1e-6, pinched: true, previous: 0.3 * R })
+    ).toMatchObject({
       target: 0,
       compliance: 0,
       crushed: true,
       peak: 0.3 * R + 1e-6
     })
+  })
+  it('처음 나온 짝(시작 겹침, 잠에서 깬 공)이나 깊어지지 않는 짝은 끼여도 이력 주기를 시작하지 않는다(탄성선)', () => {
+    const k = 6000
+    const h = 0.001
+    for (const previous of [undefined, 2e-3, 2.5e-3]) {
+      const row = normalRow({ ...base, separation: -2e-3, pinched: true, previous })
+      expect(row.peak).toBeUndefined()
+      expect(row.bounced).toBe(false)
+      expect(row.target / row.compliance).toBeCloseTo(h * k * 2e-3, 12)
+    }
+    // 심도 같다(강체, peak 없음)
+    expect(normalRow({ ...base, separation: -0.3 * R - 1e-6, pinched: true }).peak).toBeUndefined()
+    // 떨어져 있다가(분리 > 0) 닿으며 깊어지면 시작한다
+    expect(normalRow({ ...base, separation: -1e-4, pinched: true, previous: -2e-4 }).peak).toBe(
+      1e-4
+    )
   })
 })

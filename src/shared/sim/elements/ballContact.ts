@@ -6,6 +6,7 @@ import {
 } from '../collision3d'
 import type { Hull } from '../hull'
 import type { Vec3 } from '../worldSpec'
+import { PINCH_RECOVERY_SPEED } from './elementData'
 
 // 공(구)의 좁은 단계와 접촉 행 값(6a, spec-6a §2.2–§2.4). 순수·결정적이다.
 //
@@ -201,8 +202,11 @@ export type NormalRowInput = {
   // 끼임: 이 행의 법선이 같은 공의 다른 접촉 법선과 서로 반대쪽이다(공끼리 짝이면 두 공 모두에서, elementWorld.ts
   // pinchedContacts). 그러면 반발 두 단계를 쓰지 않고 이력 스프링(pinchedSpringRow)·심만 쓴다
   pinched?: boolean
-  // 이력 스프링의 이번 눌림 주기 최대 깊이(m): 앞 하위 단계 행이 낸 peak. 있으면 끼임이 풀려도 떨어질 때까지 이력 스프링이다
+  // 이력 스프링의 이번 눌림 주기 최대 깊이(m): 앞 하위 단계 행이 낸 peak. 하위 단계마다 PINCH_RECOVERY_SPEED·h만큼, 지금
+  // 깊이까지만 줄어들고(모양을 되찾음) 떨어질 때 주기를 마친다
   peak?: number
+  // 앞 하위 단계의 이 짝의 깊이(m, −분리), 그때 짝이 없었으면 undefined. 눌림 주기는 깊어지는 것을 본 때만 시작한다
+  previous?: number
 }
 
 export type NormalRow = {
@@ -230,10 +234,18 @@ export type NormalRow = {
 //   e·1.5 m/s, 벽 쪽 e·공 속도)를 가지면 LCP가 두 목표를 함께 맞추려고 13.6 kg 로봇을 1 ms에 거꾸로 밀었다(공 25 g이 트램펄린이
 //   됨, 들어온 15 J에서 약 11 J가 돌아감). 끼인 공이 돌려줄 수 있는 에너지는 공 자신의 변형(심까지 약 0.7 J)뿐이라 이력 스프링
 //   (pinchedSpringRow)과 심이 그것을 낸다. 한쪽이 자유로운 행의 반발(바닥·벽에 튐, 로봇이 쳐 냄)은 그대로다]. 이력 스프링 주기
-//   (peak)에 들어간 행은 끼임이 풀려도 떨어질 때까지 이력 스프링이다(중간에 탄성선으로 바꾸면 힘이 뛰어 에너지가 생긴다).
+//   (peak)에 들어간 행은 끼임이 풀려도 떨어질 때까지 이력 스프링이다(중간에 탄성선으로 바꾸면 힘이 뛰어 눌린 깊이만큼 튀어
+//   오른다). 하위 단계마다 peak를 PINCH_RECOVERY_SPEED·h만큼, 지금 깊이까지만 줄여 공이 모양을 천천히 되찾게 한다(풀림 선의 쉼
+//   깊이 peak·(1 − e²)가 줄어 peak가 깊이에 닿으면 탄성선이다)[가정: elementData.ts PINCH_RECOVERY_SPEED. 6a 최종 확인: 줄이지
+//   않으면 바닥에 눌렸다 놓인 공이나 쐐기에 걸친 공처럼 떨어지지 않는 행이 쉼 깊이에 박힌 채 남았다].
 export function normalRow(input: NormalRowInput): NormalRow {
   const { separation, approach, h, coreDepth, restitution: e } = input
-  const hysteresis = input.pinched === true || input.peak !== undefined
+  const pinched = input.pinched === true
+  const peak =
+    input.peak === undefined
+      ? undefined
+      : Math.max(input.peak - PINCH_RECOVERY_SPEED * h, -separation)
+  const hysteresis = pinched || peak !== undefined
   if (!hysteresis) {
     if (input.impact !== undefined && input.impact < -input.bounceSpeed)
       return {
@@ -258,10 +270,17 @@ export function normalRow(input: NormalRowInput): NormalRow {
   const depth = -separation
   if (depth >= coreDepth) {
     const row: NormalRow = { target: 0, compliance: 0, crushed: true, bounced: false }
-    if (hysteresis) row.peak = Math.max(input.peak ?? 0, depth)
+    if (hysteresis && loading(depth, peak, input.previous)) row.peak = Math.max(peak ?? 0, depth)
     return row
   }
-  return hysteresis ? pinchedSpringRow(input) : springRow(input)
+  return hysteresis ? pinchedSpringRow({ ...input, peak }) : springRow(input)
+}
+
+// 눌림 주기를 이어 가거나 새로 시작하는지: 이미 주기 안이거나, 앞 하위 단계에 이 짝이 있었고 지금 더 깊다(눌리는 것을 봤다)
+// [결정: 6a 최종 확인. 시작 겹침(첫 하위 단계)이나 잠에서 깬 공처럼 이미 겹친 채 처음 나온 짝은 눌린 이력이 아니다. 그 겹침을
+// peak로 적으면 벌어진 두 면(쐐기) 사이 프리로드가 쉼 깊이 peak·(1 − e²)에 박힌 채 남아 INIT 겹침 결과('밀려납니다')와 달랐다]
+function loading(depth: number, peak: number | undefined, previous: number | undefined): boolean {
+  return peak !== undefined || (previous !== undefined && depth > previous)
 }
 
 // 끼인 공의 이력 스프링(Walton–Braun 선형 이력 모델[가정: 끼인 공의 되돌림 에너지 비 = e²]): 눌릴 때(깊이가 이번 주기 최대
@@ -269,18 +288,19 @@ export function normalRow(input: NormalRowInput): NormalRow {
 // (peak에서 두 선의 힘이 같다)라 한 주기에 변형 에너지의 e²만 돌려준다. 그래서 무거운 몸체가 공을 면에 눌렀다 놓아도 몸체 질량과
 // 관계없이 공의 반발 계수 e 안팎으로 되튄다[결정: 6a 리뷰. 감쇠 c = 2ζ√(k·m)은 공 질량 기준이라 13.6 kg 판에는 유효 감쇠비가
 // 약 0.03이어서 판이 0.89배로 되튀었다(변형 에너지의 79 %)]. 감쇠 c는 탄성선 그대로(k로 낸 값)다. δ < δ₀이면 힘이 없고 δ₀까지
-// 예측 목표다. 떨어지면(δ ≤ 0) 주기가 끝나 peak를 버린다
+// 예측 목표다. 떨어지면(δ ≤ 0) 주기가 끝나 peak를 버린다. 주기 밖의 행은 깊어지는 것을 볼 때(loading) 주기를 시작한다(그 전에는
+// 탄성선)
 export function pinchedSpringRow(
   input: Pick<
     NormalRowInput,
-    'separation' | 'h' | 'stiffness' | 'mass' | 'dampingRatio' | 'restitution' | 'peak'
+    'separation' | 'h' | 'stiffness' | 'mass' | 'dampingRatio' | 'restitution' | 'peak' | 'previous'
   >
 ): NormalRow {
   const depth = -input.separation
   const peak = input.peak
   if (depth <= 0 || peak === undefined || depth >= peak) {
     const row = springRow(input)
-    if (depth > 0) row.peak = depth
+    if (depth > 0 && loading(depth, peak, input.previous)) row.peak = depth
     return row
   }
   const { h, stiffness: k, mass } = input

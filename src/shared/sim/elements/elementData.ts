@@ -44,6 +44,12 @@ export const CONTACT_DAMPING_RATIO = 1
 // 있고 반발 두 단계 대신 이력 스프링을 쓴다(elementWorld.ts pinchedContacts, ballContact.ts normalRow) [결정: 바닥과 벽처럼 직각인 두 면은 끼임이 아니다. 0보다 조금 아래라 껍질 GJK
 // 법선의 반올림이 직각 짝을 끼임으로 만들지 않는다]
 export const PINCH_NORMAL_DOT = -0.01
+// 이력 스프링(ballContact.ts pinchedSpringRow)이 눌린 모양을 되찾는 빠르기(m/s): 하위 단계마다 이번 주기 최대 깊이 peak를
+// 이만큼, 지금 깊이까지만 줄인다(풀림 선의 쉼 깊이 peak·(1 − e²)가 줄어 공이 탄성 평형으로 돌아온다, ballContact.ts normalRow)
+// [가정: 눌린 공이 모양을 되찾는 빠르기, 실측 없음. 6a 최종 확인: 줄이지 않으면 바닥에 눌렸다 놓인 공·쐐기에 걸친 공처럼 떨어지지
+// 않는 행이 쉼 깊이(심까지 눌렸으면 약 9 mm)에 박힌 채 남았다. 무거운 몸체가 누른 공이 풀리는 빠르기(0.05 m/s로 민 13.6 kg 판에서
+// 행마다 약 10 mm/s)보다 느려야 이력 손실이 남는다. 되찾는 동안은 잠들지 않는다(elementWorld.ts sleepStep)]
+export const PINCH_RECOVERY_SPEED = 0.002
 // 접촉점 하나의 스프링 = 판 강성 × 이 값 [결정: 판 강성은 공을 두 판 사이에 끼운 직렬 접촉 둘이라 접촉 하나는 그 두 배]
 export const CONTACT_STIFFNESS_PER_PLATE = 2
 

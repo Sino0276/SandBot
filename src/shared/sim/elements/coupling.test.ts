@@ -1002,4 +1002,45 @@ describe('로봇–공 결합: 행마다 끼임·이력 스프링(6a 리뷰 2)',
     expect(art.v[0] / v0).toBeLessThan(-0.6 * returned)
     expect(art.v[0] / v0).toBeGreaterThan(-returned - 0.02)
   })
+
+  // 6a 최종 확인: 끼임이 풀린 행은 이력 주기를 마친다. 전에는 떨어질 때(δ ≤ 0)까지 이력 스프링이라, 바닥에 눌렸다 놓인 공이
+  // 바닥과 떨어지지 않아 풀림 선의 쉼 깊이 peak·(1 − e²)에 박힌 채 잠들었다(실제 앱 E2E: 롤러가 놓은 GARDEN 공이 1.5 mm 가라앉음)
+  it('판이 바닥에 누른 공을 놓으면 공은 바닥에 박혀 남지 않고 쉬는 깊이 mg/k로 돌아온다(튀어 오르지 않는다)', () => {
+    const spec = rig([
+      {
+        ...plate(13.6, [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })], {
+          x: 0,
+          y: 0,
+          z: -1
+        }),
+        origin: { position: { x: 0, y: 0, z: 2 * r + 0.001 }, rotation: ZERO }
+      }
+    ])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = 0.3
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0, y: 0, z: r })],
+      air: false
+    })
+    let deepest = 0
+    let highest = -Infinity
+    let released = false
+    // 심 가까이(약 8.7 mm) 눌린 바닥 행은 PINCH_RECOVERY_SPEED로 약 4.4 s에 되찾고 0.5 s 뒤 잠든다
+    stepRig(art, ew, 6000, () => {
+      const z = ew.snapshot()[0].position.z
+      deepest = Math.max(deepest, r - z)
+      // 판이 공에서 떨어진 뒤(판 아랫면 z = 2r + 0.001 − q)
+      if (2 * r + 0.001 - art.z[0] > 2 * r + 0.01) released = true
+      if (released) highest = Math.max(highest, z)
+    })
+    expect(released).toBe(true)
+    // 판이 공을 꽤 눌렀다(이력 주기에 들어감)
+    expect(deepest).toBeGreaterThan(1e-3)
+    const rest = (m * GRAVITY) / K
+    const final = ew.snapshot()[0]
+    expect(r - final.position.z).toBeCloseTo(rest, 5)
+    expect(final.asleep).toBe(true)
+    // 되찾는 동안 바닥에서 뜨지 않는다(탄성선으로 한 번에 바꾸면 눌린 깊이만큼 튀어 올랐다)
+    expect(highest).toBeLessThan(r)
+  })
 })

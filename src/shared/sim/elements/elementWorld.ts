@@ -232,6 +232,8 @@ type Pending = {
   islands: Island[]
   // 움직이는 로봇에 닿은 공(잠들지 않는다)
   robotTouch: Uint8Array
+  // 이력 스프링 풀림 선에서 모양을 되찾는 중인 행이 있는 공(잠들기 시간을 세지 않는다)
+  recovering: Uint8Array
 }
 
 const kindOf = (types: readonly FieldElementType[], kind: SimElementKind): FieldElementType => {
@@ -297,6 +299,11 @@ export class ElementWorld {
   // 끼인 행의 이력 스프링 최대 깊이(짝 토큰 → m, ballContact.ts pinchedSpringRow). 이번 하위 단계에 나온 짝만 다음으로 넘긴다
   private peaks = new Map<string, number>()
   private nextPeaks = new Map<string, number>()
+  // 짝마다 앞 하위 단계의 깊이(짝 토큰 → m, −분리): 이력 스프링 주기는 깊어지는 것을 본 때만 시작한다(ballContact.ts normalRow)
+  private depths = new Map<string, number>()
+  private nextDepths = new Map<string, number>()
+  // 이번 하위 단계에 이력 스프링 풀림 선에서 모양을 되찾는 중인 행이 있는 공(Pending.recovering)
+  private recovering = new Uint8Array(0)
   // 시작 겹침(실행의 첫 하위 단계)에서 이미 심 이상 눌린 짝의 깊이(짝 토큰 → m). 그 짝의 심 행은 elementCrushed를 내지 않는다:
   // 시작 겹침은 INIT 경고(worldPreloadEmbedded)가 맡는다(5 collisionOverlap과 같은 규칙). 그보다 OVERLAP_NOTICE_DEPTH 넘게
   // 깊어지면 메커니즘이 누른 것이라 알리고, 심 아래로 풀리면 지운다(그 뒤의 눌림은 진짜 눌림이다)
@@ -446,6 +453,8 @@ export class ElementWorld {
       this.nextArrivals = new Map()
       this.peaks = new Map()
       this.nextPeaks = new Map()
+      this.depths = new Map()
+      this.nextDepths = new Map()
       return { rows: [], coupled: undefined }
     }
     // 3. 자유 예측(깨어 있는 공)
@@ -474,6 +483,7 @@ export class ElementWorld {
     for (const contact of contacts) this.resist(contact, h, uStar)
     // 6. 행(끼인 행은 반발 두 단계 없이 이력 스프링)
     const pinched = this.pinchedContacts(contacts)
+    this.recovering = new Uint8Array(n)
     const rows: BallRow[] = []
     const m = art ? art.coordinates.length : 0
     contacts.forEach((contact, index) => {
@@ -498,6 +508,8 @@ export class ElementWorld {
     this.nextArrivals = new Map()
     this.peaks = this.nextPeaks
     this.nextPeaks = new Map()
+    this.depths = this.nextDepths
+    this.nextDepths = new Map()
     const zeros = new Array<number>(m).fill(0)
     const coupledIndex = new Map<number, number>()
     plan.coupled.forEach((e, k) => coupledIndex.set(e, k))
@@ -537,7 +549,8 @@ export class ElementWorld {
       coupled: plan.coupled,
       robotRows: plan.robotRows,
       islands: plan.islands,
-      robotTouch
+      robotTouch,
+      recovering: this.recovering
     }
     return { rows: contactRows, coupled }
   }
@@ -1372,11 +1385,18 @@ export class ElementWorld {
       dampingRatio: CONTACT_DAMPING_RATIO,
       impact: this.arrivals.get(contact.keys.token),
       pinched: pinched[index] === 1,
-      peak: this.peaks.get(contact.keys.token)
+      peak: this.peaks.get(contact.keys.token),
+      previous: this.depths.get(contact.keys.token)
     })
     if (made.arrival !== undefined) this.nextArrivals.set(contact.keys.token, made.arrival)
     if (made.peak !== undefined) this.nextPeaks.set(contact.keys.token, made.peak)
     const depth = -contact.separation
+    this.nextDepths.set(contact.keys.token, depth)
+    // 풀림 선(peak > 깊이)에서 모양을 되찾는 중이면 그 공은 잠들지 않는다(되찾기는 잠들기 문턱보다 느릴 수 있다)
+    if (made.peak !== undefined && made.peak > depth && !made.crushed) {
+      this.recovering[e] = 1
+      if (f >= 0) this.recovering[f] = 1
+    }
     if (made.crushed) {
       const start = this.startCrush.get(contact.keys.token)
       if (start === undefined || depth > start + OVERLAP_NOTICE_DEPTH)
@@ -1575,7 +1595,8 @@ export class ElementWorld {
   }
 
   // 잠들기(spec-6a §2.6): 공마다 |v|·|ω|r가 SLEEP_SPEED 아래인 시간을 세고, 움직이는 로봇에 닿지 않은 섬(공끼리 이어진 묶음)의
-  // 모든 공이 SLEEP_TIME 이상이면 함께 잠든다(속도 정확히 0)
+  // 모든 공이 SLEEP_TIME 이상이면 함께 잠든다(속도 정확히 0). 이력 스프링 풀림 선에서 모양을 되찾는 중인 공은 세지 않는다
+  // [결정: 6a 최종 확인. 되찾기(PINCH_RECOVERY_SPEED)가 잠들기 문턱보다 느려 가라앉은 채 잠들었다]
   private sleepStep(p: Pending, h: number): void {
     const n = this.count
     const awake = (i: number): boolean => !this.out[i] && !this.asleep[i]
@@ -1583,7 +1604,8 @@ export class ElementWorld {
       if (!awake(e)) continue
       const slow =
         norm(this.velocityOf(e)) < SLEEP_SPEED &&
-        norm(this.omegaOf(e)) * this.radius[e] < SLEEP_SPEED
+        norm(this.omegaOf(e)) * this.radius[e] < SLEEP_SPEED &&
+        p.recovering[e] === 0
       this.sleepTimer[e] = slow ? this.sleepTimer[e] + h : 0
     }
     if (!this.sleepEnabled) return

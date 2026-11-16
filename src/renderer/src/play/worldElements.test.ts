@@ -546,11 +546,13 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     ])
     const [a, b] = pushed.balls
     expect(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) - 2 * r).toBeGreaterThan(-1e-3)
-    // Slot 1은 +y 옆판(충돌체, 대상 순서 앞)과 3 mm, Slot 0과 0.7·r 겹친다(첫 대상만 보면 '밀려납니다'였다)
+    // Slot 1은 +y 옆판(충돌체, 대상 순서 앞)과 3 mm, Slot 0과 0.7·r 겹친다(첫 대상만 보면 '밀려납니다'였다). Slot 0 뒤(−y)의
+    // 뒤판(0.5 mm 띄움)이 옆판에 밀린 두 공을 받친다: 받치지 않으면 옆판이 탄성으로 민 두 공이 굴러가며 조금씩 벌어져 심 아래로
+    // 풀릴 수 있다(박힌 짝은 움직이지 않을 때 박힌 채 남는다)
     const y1 = 2 * r - 0.7 * r
     const deep = scene(
       r,
-      [side('a', y1 + r - 0.003, r)],
+      [side('a', y1 + r - 0.003, r), side('back', -(r + 0.0005), r)],
       [
         [0, 0, 0],
         [0, y1, 0]
@@ -563,6 +565,28 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     })
     const [c, d] = embedded.balls
     expect(Math.hypot(c[0] - d[0], c[1] - d[1], c[2] - d[2]) - 2 * r).toBeLessThan(-2 * core)
+  })
+
+  // 6a 최종 확인: 시작 겹침은 눌린 이력이 아니다. 전에는 첫 하위 단계의 겹침을 끼인 행 이력 스프링의 최대 깊이로 적어, 풀림 선의
+  // 쉼 깊이(로봇 반발 0.5면 시작 겹침의 0.75배)까지만 밀어냈다(실제 앱 E2E: 플라이휠–후드 쐐기 자리 공이 '밀려납니다'라는 결과와
+  // 달리 시작 겹침의 0.75배로 박힌 채 남음). 바닥에 놓인 자리 위를 천장 판이 3 mm 누르면 공은 판과 바닥 사이에 끼여 두 탄성
+  // 접촉이 3 mm를 나눈다(바닥 쪽이 공 무게만큼 더): 판 쪽 약 1.48 mm, 바닥 쪽 약 1.52 mm(전에는 판 2.39 mm, 바닥 0.61 mm)
+  it('바닥에 놓인 자리를 천장 판이 3 mm 누르면 squeezed: 판과 바닥이 탄성으로 겹침을 나눈다', () => {
+    const objects = scene(
+      r,
+      [{ id: 'ceiling', center: [0, 0, r - 0.003 + 0.005], size: [0.2, 0.2, 0.01] }],
+      [[0, 0, 0]]
+    )
+    const { warnings, balls } = run(objects)
+    expect(warnings).toEqual([
+      { key: 'worldPreloadSqueezed', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    const k = 2 * resolveElementType(BIOBUZZ, 'pollen')!.contact.plateStiffness
+    const weight = (resolveElementType(BIOBUZZ, 'pollen')!.mass * 9.80665) / k
+    const floor = r - balls[0][2]
+    const ceiling = balls[0][2] + r - (2 * r - 0.003)
+    expect(floor + ceiling).toBeCloseTo(0.003, 6)
+    expect(floor - ceiling).toBeCloseTo(weight, 5)
   })
 
   it('뒤판에 붙은 자리가 앞 자리 공과 얕게 겹치면 앞 공이 비켜 pushedOut이다(앞 공도 움직인다)', () => {
