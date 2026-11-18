@@ -1314,6 +1314,51 @@ describe('로봇–공 결합: 심까지 눌린 공의 되찾기(6a 리뷰 3)', 
     }
   })
 
+  it('바닥 공 위에 얹힌 공을 판이 심까지 눌렀다 물러나면 아래 공도 되찾는다(얹힌 공의 무게는 붙들지 않는다)', () => {
+    // 바닥의 공 A 위에 공 C(세로 줄), 13.6 kg 판(중력 없음)이 위에서 0.5 m/s로 누른 뒤 0.2 m/s로 물러난다. C는 A 위에 남는다
+    const spec = rig([
+      heavy(
+        [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })],
+        { x: 0, y: 0, z: -1 },
+        { x: 0, y: 0, z: 4 * r + 0.001 }
+      )
+    ])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = 0.5
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0, y: 0, z: r }), ball('pollen', { x: 0, y: 0, z: 3 * r })],
+      air: false
+    })
+    const depths = (): [number, number] => {
+      const [a, c] = ew.snapshot()
+      return [r - a.position.z, 2 * r - (c.position.z - a.position.z)]
+    }
+    let deepest: [number, number] = [0, 0]
+    let fastest = 0
+    let retract = false
+    // 공끼리 심(21.3 mm)은 1.5 mm/s로 물러난다: 약 14.2 s + 잠들기
+    stepRig(art, ew, 16000, () => {
+      const [floor, pair] = depths()
+      deepest = [Math.max(deepest[0], floor), Math.max(deepest[1], pair)]
+      if (art.v[0] <= 1e-9) retract = true
+      if (retract) art.v[0] = -0.2
+      // 판 아랫면(z = 4r + 0.001 − q)이 위 공에서 1 cm 넘게 떨어진 뒤
+      const [a, c] = ew.snapshot()
+      if (4 * r + 0.001 - art.z[0] - (c.position.z + r) > 0.01)
+        fastest = Math.max(fastest, speed(a.velocity), speed(c.velocity))
+    })
+    // 바닥 행과 공끼리 행이 모두 심까지 눌렸다
+    expect(deepest[0]).toBeGreaterThan(core)
+    expect(deepest[1]).toBeGreaterThan(2 * core)
+    // 고친 전: 바닥 10.67 mm·공끼리 21.37 mm에 박힌 채 1 s 안에 잠들었다. 이제 아래 공은 두 공의 무게, 공끼리 짝(직렬
+    // 스프링 K/2)은 위 공의 무게만큼만 눌린 채 잠든다
+    const [floor, pair] = depths()
+    expect(floor).toBeCloseTo(2 * rest, 5)
+    expect(pair).toBeCloseTo(2 * rest, 5)
+    for (const b of ew.snapshot()) expect(b.asleep).toBe(true)
+    expect(fastest).toBeLessThan(0.05)
+  })
+
   it('전출력·0.6 출력 메카넘이 GARDEN 공 넷을 관중석 벽에 심까지 박고 물러나면 넷 모두 벽 밖으로 돌아와 mg/k로 잠든다', () => {
     const ih = resolveSeason('biobuzz').perimeter.innerHalf
     // 빨강 벽에서 4 mm 띄운 시작(시작 겹침 없음)
