@@ -54,21 +54,34 @@ const DENSE_LCP_MAX_ITERATIONS = 2000
 // Murty 상한에 걸린 조건이 나쁜 무작위 문제 144개(20–99행, 계수가 행 수의 1/2–1/4) 가운데 138개가 152번 안에 끝났고 나머지 여섯은
 // 20000번에도 끝나지 않았다. Murty 상한 안에 끝나는 풀이는 대체 규칙에 닿지 않아 바이트 그대로다]
 const DENSE_LCP_FALLBACK_ITERATIONS = 500
+// 같은 규칙(가장 크게 어긋난 행 하나만 뒤집기)을 일찍도 한 번 쓴다: DENSE_LCP_SINGLE_AFTER번 안에 끝나지 않은 풀이는 그 뒤
+// DENSE_LCP_SINGLE_ITERATIONS번 동안 이 규칙으로 돌고, 그래도 끝나지 않으면 그 상태에서 원래 차례(블록 전환 → Murty → 상한 뒤
+// 대체 규칙)를 이어 간다(끝나는 것은 Murty가 보장한다)[결정: 6a 최종 확인 2. 답에서 행 상태 4–5개만 다른 시작(마찰 상자
+// 엇갈림의 다른 회차 답, articulation.ts constrainedCoupled)에서도 블록 전환과 Murty가 100–750번을 돌았다(104행, 번마다 약
+// 0.2 ms). 이 규칙은 그런 풀이를 몇 번에 끝낸다: E2E 손 씬 로봇이 인테이크를 켜고 출력 0.4로 6 s 미는 실행의 주축 반복이
+// 5446–16667번에서 3221–6407번으로 줄고, 달려들기에서 Murty 상한에 걸리던 풀이(출력 0.7·1)도 상한 전에 끝난다.
+// DENSE_LCP_SINGLE_AFTER번 안에 끝나는 풀이는 이 길에 닿지 않아 연산이 그대로다. 더 일찍(8·16번) 시작하면 E2E 손 씬 오프라인
+// 출력이 바뀌거나 같은 실행이 4만–5만 번으로 늘었다]
+const DENSE_LCP_SINGLE_AFTER = 32
+const DENSE_LCP_SINGLE_ITERATIONS = 96
 // 비대각이 이 비율 × √(A_ii·A_jj) 아래면 행이 묶이지 않았다고 본다 [결정: 수직인 법선·접선의 내적 반올림(1e-16)보다 크고 풀이에
 // 보이는 결합보다 훨씬 작다]
 export const DENSE_LCP_DECOUPLED = 1e-12
 const DENSE_LCP_MURTY_AFTER = 200
 const DENSE_LCP_TRIES = 3
 
-// 시험 훅(제품 코드는 쓰지 않는다): Murty 상한을 넘어 대체 규칙으로 넘어간 풀이 수
-export const DENSE_LCP_COUNTERS = { fallback: 0 }
+// 시험 훅(제품 코드는 쓰지 않는다): Murty 상한을 넘어 대체 규칙으로 넘어간 풀이 수, 같은 규칙을 일찍 쓴(DENSE_LCP_SINGLE_AFTER번
+// 안에 끝나지 않은) 풀이 수, 행이 묶인 풀이들의 주축 반복 수 합
+export const DENSE_LCP_COUNTERS = { fallback: 0, early: 0, iterations: 0 }
 
 // 조밀 상자 LCP: w = (A + εD)·λ + b, lo ≤ λ ≤ hi(λ = lo면 w ≥ 0, hi면 w ≤ 0, 사이면 w = 0). A는 행 우선 m×m. 블록
 // 주축 전환(Júdice–Pires)과 Murty 최소 첨자 규칙(articulation.ts solveBoxLcp와 같은 틀)이고, 정칙화한 행렬이 대칭 양정치라 끝난다.
 // Murty 규칙이 상한(DENSE_LCP_MAX_ITERATIONS) 안에 끝나지 않으면 던지지 않고, 가장 크게 어긋난 행 하나만 뒤집는 규칙으로 이어
-// 간다(DENSE_LCP_FALLBACK_ITERATIONS, 그래도 끝나지 않으면 던진다). 답은 끝난 상태(자유·경계 나눔)로 정해지므로 어느 규칙으로
+// 간다(DENSE_LCP_FALLBACK_ITERATIONS, 그래도 끝나지 않으면 던진다). 같은 규칙을 DENSE_LCP_SINGLE_AFTER번 안에 끝나지 않은
+// 풀이에도 DENSE_LCP_SINGLE_ITERATIONS번 동안 일찍 쓴다. 답은 끝난 상태(자유·경계 나눔)로 정해지므로 어느 규칙으로
 // 닿았든 같은 상태면 같은 λ다. 근접점 반복은 하지 않는다(DENSE_LCP_REGULARIZATION). start: 행마다 0 아래·1 자유·2 위·3 모름.
-// 할당을 줄이려 타입 배열과 작업 배열(호출 사이에 다시 쓴다)만 쓴다
+// 할당을 줄이려 타입 배열과 작업 배열(호출 사이에 다시 쓴다)만 쓴다. iterations: 시작 상태에서 답까지 상태를 바꾼 횟수(시작
+// 상태가 답이면 0, 행이 묶이지 않은 풀이도 0. 부르는 쪽이 시작 상태를 고르는 데 쓴다: articulation.ts constrainedCoupled)
 export function solveDenseLcp(
   m: number,
   a: Float64Array,
@@ -76,10 +89,10 @@ export function solveDenseLcp(
   lo: readonly number[],
   hi: readonly number[],
   start: Uint8Array
-): { lambda: Float64Array; states: Uint8Array } {
+): { lambda: Float64Array; states: Uint8Array; iterations: number } {
   const lambda = new Float64Array(m)
   const state = new Uint8Array(m)
-  if (m === 0) return { lambda, states: state }
+  if (m === 0) return { lambda, states: state, iterations: 0 }
   let bScale = 1
   let lScale = 1
   for (let i = 0; i < m; i++) {
@@ -119,7 +132,7 @@ export function solveDenseLcp(
         state[i] = 1
       }
     }
-    return { lambda, states: state }
+    return { lambda, states: state, iterations: 0 }
   }
   const tolW = DENSE_LCP_TOLERANCE * bScale
   const tolL = DENSE_LCP_TOLERANCE * lScale
@@ -135,9 +148,13 @@ export function solveDenseLcp(
   const rows = factor.rows
   let best = m + 1
   let tries = DENSE_LCP_TRIES
+  let iterations = 0
   for (let iteration = 0; ; iteration++) {
-    // Murty 상한을 넘으면 대체 규칙(아래)
-    const fallback = iteration >= DENSE_LCP_MAX_ITERATIONS
+    // Murty 상한을 넘으면 대체 규칙(아래). 같은 규칙을 DENSE_LCP_SINGLE_AFTER번 뒤에도 잠깐 쓴다
+    const fallback =
+      iteration >= DENSE_LCP_MAX_ITERATIONS ||
+      (iteration >= DENSE_LCP_SINGLE_AFTER &&
+        iteration < DENSE_LCP_SINGLE_AFTER + DENSE_LCP_SINGLE_ITERATIONS)
     if (iteration >= DENSE_LCP_MAX_ITERATIONS + DENSE_LCP_FALLBACK_ITERATIONS)
       throw new Error('dense LCP: constraint solve did not converge')
     let f = 0
@@ -239,9 +256,13 @@ export function solveDenseLcp(
         }
       }
     }
-    if (count === 0) break
+    if (count === 0) {
+      iterations = iteration
+      break
+    }
     if (fallback) {
       if (iteration === DENSE_LCP_MAX_ITERATIONS) DENSE_LCP_COUNTERS.fallback++
+      else if (iteration === DENSE_LCP_SINGLE_AFTER) DENSE_LCP_COUNTERS.early++
       const i = worst >= 0 ? worst : bad[count - 1]
       if (state[i] === 1) state[i] = lambda[i] < lo[i] ? 0 : 2
       else state[i] = 1
@@ -261,5 +282,6 @@ export function solveDenseLcp(
     }
   }
   for (let i = 0; i < m; i++) lambda[i] = Math.min(hi[i], Math.max(lo[i], lambda[i]))
-  return { lambda, states: state }
+  DENSE_LCP_COUNTERS.iterations += iterations
+  return { lambda, states: state, iterations }
 }

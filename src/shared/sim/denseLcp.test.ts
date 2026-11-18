@@ -360,14 +360,45 @@ describe('조밀 상자 LCP: Murty 상한 뒤 대체 규칙(6a 리뷰 3)', () =>
     return made as Problem
   }
 
-  it('Murty 규칙이 2000번 안에 끝나지 않는 문제를 대체 규칙으로 이어 풀고 답은 상자 LCP 조건을 만족한다', () => {
+  // 6a 최종 확인 2: 같은 규칙을 32번 뒤 96번 동안 일찍도 쓴다(DENSE_LCP_SINGLE_AFTER·DENSE_LCP_SINGLE_ITERATIONS). 6a 리뷰 3에서
+  // Murty 상한(2000번)에 걸리던 흐름 1의 문제 여섯은 이제 상한 전에(79–120번) 끝난다
+  it('32번 안에 끝나지 않은 풀이는 가장 크게 어긋난 행 규칙을 일찍 써서, Murty로는 2000번 안에 끝나지 않던 문제를 128번 안에 끝낸다', () => {
     const before = DENSE_LCP_COUNTERS.fallback
-    // 흐름 1의 55–91행 문제 여섯(고친 전: 모두 'did not converge'로 던졌다. 대체 규칙으로 24–124번 더 돈다)
-    const rounds = [9, 26, 33, 34, 40, 42]
-    for (const round of rounds) {
+    for (const round of [9, 26, 33, 34, 40, 42]) {
       const p = illConditioned(1, round)
+      // 일찍 쓰는 규칙이 없는 풀이(다시 쓰기 전 식)는 상한에서 던진다
       expect(() => referenceSolve(p.m, p.a, p.b, p.lo, p.hi, p.start)).toThrow(NOT_CONVERGED)
       const solved = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      expect(solved.iterations).toBeGreaterThan(32)
+      expect(solved.iterations).toBeLessThan(128)
+      expectSolved(p, solved)
+      // 같은 문제를 다시 풀면 같은 답이다(결정적, 앞 분해를 다시 써도)
+      const again = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      expect(again.states).toEqual(solved.states)
+      for (let i = 0; i < p.m; i++) expect(Object.is(again.lambda[i], solved.lambda[i])).toBe(true)
+      // 답에서 다시 시작하면 주축 없이 같은 답이다
+      const warm = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, solved.states)
+      expect(warm.iterations).toBe(0)
+      for (let i = 0; i < p.m; i++) expect(Object.is(warm.lambda[i], solved.lambda[i])).toBe(true)
+    }
+    // 상한 뒤 대체 규칙에는 닿지 않았다
+    expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
+  })
+
+  it('일찍 쓴 규칙으로도 Murty 상한 안에 끝나지 않는 문제를 상한 뒤 대체 규칙으로 이어 풀고 답은 상자 LCP 조건을 만족한다', () => {
+    const before = DENSE_LCP_COUNTERS.fallback
+    // 흐름 3·4·5의 78–99행 문제 다섯(상한 뒤 15–101번 더 돈다)
+    const hard: [number, number][] = [
+      [3, 38],
+      [4, 84],
+      [4, 117],
+      [4, 135],
+      [5, 129]
+    ]
+    for (const [seed, round] of hard) {
+      const p = illConditioned(seed, round)
+      const solved = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      expect(solved.iterations).toBeGreaterThan(2000)
       expectSolved(p, solved)
       // 같은 문제를 다시 풀면 같은 답이다(결정적, 앞 분해를 다시 써도)
       const again = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
@@ -377,21 +408,30 @@ describe('조밀 상자 LCP: Murty 상한 뒤 대체 규칙(6a 리뷰 3)', () =>
       const warm = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, solved.states)
       for (let i = 0; i < p.m; i++) expect(Object.is(warm.lambda[i], solved.lambda[i])).toBe(true)
     }
-    // 풀이마다 한 번씩 대체 규칙으로 넘어갔다(답에서 다시 시작한 풀이는 넘어가지 않는다)
-    expect(DENSE_LCP_COUNTERS.fallback - before).toBe(2 * rounds.length)
+    // 풀이마다 한 번씩 상한 뒤 대체 규칙으로 넘어갔다(답에서 다시 시작한 풀이는 넘어가지 않는다)
+    expect(DENSE_LCP_COUNTERS.fallback - before).toBe(2 * hard.length)
   })
 
-  it('Murty 상한 안에 끝나는 문제는 대체 규칙에 닿지 않는다(다시 쓰기 전 풀이와 비트로 같다)', () => {
+  it('32번 안에 끝나는 문제는 연산이 그대로이고(다시 쓰기 전 풀이와 비트로 같다), 일찍 쓴 규칙을 지나 끝난 문제도 답이 같다', () => {
     const before = DENSE_LCP_COUNTERS.fallback
     let solved = 0
-    for (const round of [0, 1, 2, 3, 4, 5, 6, 7, 8]) if (same(illConditioned(1, round))) solved++
+    let early = 0
+    // 흐름 1의 앞 아홉: 여섯은 5–9번, 셋(2·7·8번째)은 일찍 쓴 규칙을 지나 45–73번에 끝난다
+    for (const round of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+      const out = same(illConditioned(1, round))
+      if (!out) continue
+      solved++
+      const p = illConditioned(1, round)
+      if (solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start).iterations > 32) early++
+    }
     expect(solved).toBe(9)
+    expect(early).toBe(3)
     expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
   })
 
-  it('대체 규칙도 상한 안에 끝나지 않으면 전처럼 던진다', () => {
-    // 흐름 4의 135번째(83행): 가장 크게 어긋난 행 규칙이 돌고 돈다(20000번에도 끝나지 않는다)
-    const p = illConditioned(4, 135)
+  it('상한 뒤 대체 규칙도 끝나지 않으면 전처럼 던진다', () => {
+    // 흐름 5의 33번째(84행): 가장 크게 어긋난 행 규칙이 돌고 돈다
+    const p = illConditioned(5, 33)
     expect(() => solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)).toThrow(NOT_CONVERGED)
   })
 })

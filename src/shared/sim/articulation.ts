@@ -328,6 +328,10 @@ const LCP_MAX_ITERATIONS = 2000
 // 쓰면 562회). P 행렬에서 Murty 규칙은 유한하다. 이 수 안에 끝나는 풀이(3b–4e 시험과 기준 해시의 모든 풀이, 보통 10번 안)는 연산이
 // 그대로다]
 const LCP_MURTY_ONLY_AFTER = 200
+// 조밀 LCP(공 행이 있는 풀이, constrainedCoupled)가 고른 시작 상태에서 이만큼 넘게 돌면 그 엇갈림 회차의 시작 상태를 바꾼다
+// (바로 앞 풀이의 상태 ↔ 앞 하위 단계의 같은 회차 상태)[결정: 6a 최종 확인 2. 시작 상태가 답에 가까운 풀이는 10번 안에 끝나고
+// (쐐기가 이어지는 동안 0–9번), 두 답을 오가는 엇갈림의 2회차는 46–600번이었다]
+const DENSE_RESTART_ITERATIONS = 32
 
 // 행의 끝 상태: 아래 경계, 자유(w = 0), 위 경계
 export type LcpState = 'lower' | 'free' | 'upper'
@@ -669,6 +673,10 @@ export class Articulation {
   private readonly gravity: number
   // 앞 하위 단계 LCP의 행 상태(이름으로 찾기만 한다)
   private lcpStates = new Map<string, LcpState>()
+  // 조밀 LCP(constrainedCoupled)의 시작 상태 고르기: 마찰 상자 엇갈림 회차(0·1)마다 그 회차의 마지막 풀이가 끝난 상태와, 그
+  // 회차를 그 상태에서 시작할지(아니면 바로 앞 풀이의 상태 lcpStates에서)
+  private denseRoundStates: (Map<string, LcpState> | null)[] = [null, null]
+  private denseFromSameRound = [false, false]
   // 앞 하위 단계의 밖에서 준 행 충격(키 → λ)과 그 하위 단계 길이(벽 마찰 엇갈림의 1회차가 쓴다)
   private contactImpulses = new Map<string, number>()
   private lastH = 0
@@ -1226,11 +1234,11 @@ export class Articulation {
         included[2 * i] = q[i] - joint.limits.lower <= reach
         included[2 * i + 1] = joint.limits.upper - q[i] <= reach
       })
-      const pass = (normal: (key: string) => number): Solution => {
+      const pass = (normal: (key: string) => number, round: 0 | 1): Solution => {
         const external = externalRows(contactRows, normal)
         for (;;) {
           const rows = [...friction, ...this.limitRows(q, h, included), ...external]
-          const { v, lambda, u } = this.constrained(factor, vStar, rows, coupled)
+          const { v, lambda, u } = this.constrained(factor, vStar, rows, coupled, round)
           // 빠진 한계가 넘으면 더해 다시 푼다
           const qNext = this.treeQ(v).map((rate, i) => q[i] + h * rate)
           let added = false
@@ -1253,9 +1261,9 @@ export class Articulation {
           return { v, factor, impulses, external, externalLambda, u }
         }
       }
-      const once = pass(previous)
+      const once = pass(previous, 0)
       if (!staggered) return once
-      return pass((key) => once.impulses.get(key) ?? 0)
+      return pass((key) => once.impulses.get(key) ?? 0, 1)
     }
 
     const first = drive(this.z, this.v)
@@ -1360,10 +1368,11 @@ export class Articulation {
     factor: { l: number[][]; d: number[] },
     vStar: number[],
     rows: Row[],
-    coupled?: CoupledElements
+    coupled: CoupledElements | undefined,
+    round: 0 | 1
   ): { v: number[]; lambda: number[]; u: number[] | null } {
     if (coupled !== undefined || rows.some(isElementRow))
-      return this.constrainedCoupled(factor, vStar, rows, coupled)
+      return this.constrainedCoupled(factor, vStar, rows, coupled, round)
     if (rows.length === 0) return { v: vStar, lambda: [], u: null }
     const m = vStar.length
     const dot = (j: readonly number[], x: readonly number[]): number => {
@@ -1466,11 +1475,24 @@ export class Articulation {
   // 보수로 접는다. A_kl = j_kᵀM̂⁻¹j_l + Σ_{같은 공} a_kᵀW a_l + δ_kl·γ_k, b_k = j_k·v* + Σ a_k·u* − 목표,
   // v⁺ = v* + Σ M̂⁻¹j_k·λ_k, u⁺ = u* + W·Σ a_k·λ_k. 로봇 열이 0인 행(공끼리)은 M̂⁻¹을 풀지 않는다. 좌표 하나 행의 속도 맞추기는
   // 공 부분이 없는 행에만 한다(공 행은 목표가 j·v만의 것이 아니다)
+  //
+  // 시작 상태(round: 마찰 상자 엇갈림 회차 0·1): 보통은 바로 앞 풀이가 끝난 상태(lcpStates: 1회차는 앞 하위 단계의 2회차,
+  // 2회차는 이번 1회차)다. 그 시작에서 DENSE_RESTART_ITERATIONS번 넘게 돈 회차는 다음부터 앞 하위 단계의 같은 회차가 끝난
+  // 상태에서 시작하고(없는 키는 lcpStates), 그 시작에서 또 그만큼 돌면 되돌린다[결정: 6a 최종 확인 2. 로봇이 공 넷을 벽에
+  // 누른 채 멈춰 서면 엇갈림의 1회차와 2회차 답이 하위 단계마다 같은 두 상태를 오갔다(행 상태 4–5개 차이: 섀시·롤러의 벽
+  // 마찰, 공끼리 접선. 마찰 상자는 59행이 91 %까지 다름). 답은 앞 하위 단계의 같은 회차와 같은데(차이 0) 1회차의 답에서
+  // 시작한 2회차의 블록 주축이 매번 60–600번을 돌아(104행, 번마다 약 0.2 ms) 미는 동안 내내 실시간의 0.03–0.3배였다(E2E 손 씬
+  // 로봇의 달려들기 144번 가운데 9번, 시작이 겹치지 않은 96번 가운데 6번)]. 시작 상태는 답을 찾는 길만 바꾼다: 정칙화한
+  // 행렬이 양정치라 답 λ는 하나다. 다만 힘이 거의 걸리지 않는 행(판정 허용 오차 안에서 아래·위 경계가 모두 맞는 행: 롤러와 벽
+  // 사이 비틀림 마찰 등)은 끝 상태가 길에 따라 달라, 문턱을 넘은 뒤의 실행은 고친 전과 반올림 너머로 다를 수 있다(같은 입력이면
+  // 같은 출력인 것은 그대로다. 기준 해시 아홉과 E2E 손 씬 오프라인 출력은 그대로다). 문턱 아래로만 푸는 실행은 이 길에 닿지
+  // 않아 연산이 그대로다
   private constrainedCoupled(
     factor: { l: number[][]; d: number[] },
     vStar: number[],
     rows: Row[],
-    coupled: CoupledElements | undefined
+    coupled: CoupledElements | undefined,
+    round: 0 | 1
   ): { v: number[]; lambda: number[]; u: number[] | null } {
     const m = vStar.length
     const u = coupled ? coupled.velocity.slice() : null
@@ -1484,9 +1506,10 @@ export class Articulation {
     const { a, y } = this.coupledMatrix(factor, rows, coupled, m)
     const b = new Float64Array(n)
     const start = new Uint8Array(n)
+    const sameRound = this.denseFromSameRound[round] ? this.denseRoundStates[round] : null
     rows.forEach((row, k) => {
       b[k] = dot(row.j, vStar) + (u ? elementRate(row.elements, u) : 0) - row.target
-      const given = this.lcpStates.get(row.key)
+      const given = sameRound?.get(row.key) ?? this.lcpStates.get(row.key)
       start[k] = given === 'lower' ? 0 : given === 'upper' ? 2 : given === 'free' ? 1 : 3
     })
     // 공 행이 있는 풀이는 denseLcp.ts(근접점 반복 없음, 작업 배열 재사용)로 푼다: 공 수십 행이 든 로봇 섬에서 solveBoxLcp의 근접점
@@ -1510,6 +1533,9 @@ export class Articulation {
       nextStates.set(rows[k].key, states[k])
     }
     this.lcpStates = nextStates
+    this.denseRoundStates[round] = nextStates
+    if (solved.iterations > DENSE_RESTART_ITERATIONS)
+      this.denseFromSameRound[round] = !this.denseFromSameRound[round]
     const v = vStar.slice()
     rows.forEach((row, k) => {
       if (lambda[k] === 0) return

@@ -1445,6 +1445,7 @@ describe('로봇–공 결합: 심까지 눌린 공의 되찾기(6a 리뷰 3)', 
 describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
   it('E2E 손 씬 로봇이 인테이크를 끄고 GARDEN 공에 달려들어도 로봇 섬 풀이가 실패하지 않는다(worldError 없음)', () => {
     const before = DENSE_LCP_COUNTERS.fallback
+    const early = DENSE_LCP_COUNTERS.early
     // 고친 전: 출력 1은 0.460 s, 0.7은 0.535 s, 0.4는 0.975 s의 틱에 실패했다
     for (const [power, seconds] of [
       [1, 0.6],
@@ -1465,7 +1466,31 @@ describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
         expect(speed(s.velocity)).toBeLessThan(3)
       }
     }
-    // 이 실행들이 대체 규칙까지 갔다(삼각 함수 구현이 바뀌어 궤적이 달라지면 0일 수 있다: 그때는 실패하는 출력을 다시 고른다)
-    expect(DENSE_LCP_COUNTERS.fallback).toBeGreaterThan(before)
+    // 이 실행들은 6a 리뷰 3에서 Murty 상한 뒤 대체 규칙까지 갔다. 6a 최종 확인 2부터는 같은 규칙을 일찍(32번 뒤) 쓰고 엇갈림
+    // 회차마다 시작 상태를 골라, 길어지는 풀이가 상한 전에 끝난다(삼각 함수 구현이 바뀌어 궤적이 달라지면 0일 수 있다: 그때는
+    // 풀이가 길어지는 출력을 다시 고른다)
+    expect(DENSE_LCP_COUNTERS.early).toBeGreaterThan(early)
+    expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
+  })
+
+  // 6a 최종 확인 2: 출력 0.4로 달려든 로봇이 공 넷을 벽에 누른 채 멈춰 서면, 마찰 상자 엇갈림의 1회차와 2회차 답이 하위
+  // 단계마다 같은 두 상태(행 상태 4–5개 차이: 섀시·롤러의 벽 마찰, 공끼리 접선)를 오갔다. 답은 앞 하위 단계의 같은 회차와
+  // 같은데 2회차를 1회차의 답에서 시작해 블록 주축이 매번 60–600번을 돌았고(104행, 번마다 약 0.2 ms), 틱마다 150–700 ms가
+  // 걸려 미는 동안 내내 실시간의 0.03–0.07배였다(16bad8e에서도 다른 시작 자리에서 같았다. 이 시작 자리는 Murty 상한에서 던지던
+  // 때 그 하위 단계의 속도 0이 이 오감을 피하게 했고, 대체 규칙으로 던지지 않게 되자 드러났다)
+  it('멈춰 선 채 공을 벽에 누르는 동안 마찰 엇갈림이 두 답을 오가도 풀이가 느려지지 않는다(같은 회차의 앞 답에서 시작)', () => {
+    const { spec, out } = intakeWedge()
+    const idle = out(0)
+    const drive = (k: number): ReturnType<typeof out> => ({
+      ...idle,
+      ...outputs(k < 20 ? {} : mecanum(0.4, 0, 0))
+    })
+    const runner = new BallRunner(spec)
+    runner.run(1.1, drive)
+    const before = DENSE_LCP_COUNTERS.iterations
+    // 0.4 s = 하위 단계 400개(풀이 800번). 고친 전: 주축 반복이 모두 76864번(지금 29번)
+    runner.run(0.4, drive)
+    expect(runner.notices.filter((n) => n.code === 'worldError')).toEqual([])
+    expect(DENSE_LCP_COUNTERS.iterations - before).toBeLessThan(4000)
   })
 })
