@@ -1,7 +1,8 @@
-import type { Vec3 } from '../worldSpec'
+import type { SimElementKind, Vec3 } from '../worldSpec'
 import type {
   Alliance,
   FieldCarrier,
+  FieldElementPlacement,
   FieldHive,
   FieldMaterial,
   FieldRect,
@@ -147,4 +148,16 @@ export function mirrorPreset(p: FieldStartPreset, key: string): FieldStartPreset
     along: [neg(p.along[1]), neg(p.along[0])],
     yaw: wrapPi(p.yaw + Math.PI)
   }
+}
+
+// 공 종류의 Rz(π) 짝: 얼라이언스 색이 있는 NECTAR는 색을 바꾸고, POLLEN은 그대로
+export function mirrorElementKind(kind: SimElementKind): SimElementKind {
+  if (kind === 'nectarRed') return 'nectarBlue'
+  if (kind === 'nectarBlue') return 'nectarRed'
+  return kind
+}
+
+// 시작 배치 하나(6a): 위치는 정확한 부호 반전, 묶음은 그대로, 색 있는 종류는 상대 얼라이언스
+export function mirrorElementPlacement(p: FieldElementPlacement): FieldElementPlacement {
+  return { group: p.group, kind: mirrorElementKind(p.kind), position: mirrorVec3(p.position) }
 }

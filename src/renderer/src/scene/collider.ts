@@ -4,11 +4,12 @@ import {
   MAX_CAPSULE_RADIUS,
   MAX_COLLIDER_FRICTION,
   MIN_BOX_SIZE,
-  MIN_CAPSULE_RADIUS
+  MIN_CAPSULE_RADIUS,
+  MIN_CYLINDER_HEIGHT
 } from '../../../shared/sim/worldSpec'
 import type { SceneObject, Vec3 as Vec3T } from './model'
 
-// 충돌체(Unity Collider, spec-5 §2.1, PROJECT_VERSION 13). 시뮬레이터 설정이라 생성 코드·구성 XML·하드웨어 검증·사용처와
+// 충돌체(Unity Collider, spec-5 §2.1, PROJECT_VERSION 13, Cylinder는 14). 시뮬레이터 설정이라 생성 코드·구성 XML·하드웨어 검증·사용처와
 // 관계없다(바퀴·관절과 같은 원칙). 틀은 그 오브젝트의 로컬 틀(피벗, 자기 축)이고 길이는 m다(표시 단위 변환은 인스펙터에서만).
 // Vec3T는 scene/model.ts의 [x, y, z] 튜플이다(shared의 {x, y, z}와 다르다).
 
@@ -39,7 +40,17 @@ export type MeshColliderSettings = ColliderBase & {
   // 볼록 껍질 꼭짓점 한도(정수)
   vertexLimit: number
 }
-export type ColliderSettings = BoxColliderSettings | CapsuleColliderSettings | MeshColliderSettings
+// 원기둥(6a, PROJECT_VERSION 14). Unity에는 Cylinder Collider가 없다(임시 편차, 사용자 결정 11/13: 롤러·플라이휠을 캡슐보다
+// 정확히). 칸은 Capsule과 같고 height는 납작한 뚜껑까지의 전체 높이다(≥ MIN_CYLINDER_HEIGHT)
+export type CylinderColliderSettings = ColliderBase & {
+  kind: 'cylinder'
+  center: Vec3T
+  radius: number
+  height: number
+  direction: ColliderDirection
+}
+export type ColliderSettings =
+  BoxColliderSettings | CapsuleColliderSettings | MeshColliderSettings | CylinderColliderSettings
 export type ColliderKind = ColliderSettings['kind']
 
 // 로봇의 자기 충돌 설정(robot에만). forceCollide: 편집 자세 겹침으로 무시할 몸체 짝 가운데 그래도 충돌시킬 짝.
@@ -47,7 +58,7 @@ export type ColliderKind = ColliderSettings['kind']
 // 끊긴 id(지운 관절)는 남긴다(실행 취소·되살림, 빌더가 무시).
 export type RobotCollisionSettings = { forceCollide: [string, string][] }
 
-export const COLLIDER_KINDS: readonly ColliderKind[] = ['box', 'capsule', 'mesh']
+export const COLLIDER_KINDS: readonly ColliderKind[] = ['box', 'capsule', 'mesh', 'cylinder']
 export const COLLIDER_DIRECTIONS: readonly ColliderDirection[] = ['x', 'y', 'z']
 
 // 한 오브젝트의 Collider 수 [결정: 몸체 16 한도 아래에서 부품마다 몇 개]
@@ -61,7 +72,8 @@ export {
   MAX_CAPSULE_RADIUS,
   MAX_COLLIDER_FRICTION,
   MIN_BOX_SIZE,
-  MIN_CAPSULE_RADIUS
+  MIN_CAPSULE_RADIUS,
+  MIN_CYLINDER_HEIGHT
 }
 // Mesh Collider 꼭짓점 한도 칸의 하한 [결정: spec-5 §1.2 Vertex Limit 8–64]
 export const MIN_VERTEX_LIMIT = 8
@@ -78,6 +90,9 @@ export const MAX_FORCE_COLLIDE = 136
 const FALLBACK_BOX_SIZE = 0.1
 const FALLBACK_CAPSULE_RADIUS = 0.05
 const FALLBACK_CAPSULE_HEIGHT = 0.2
+// [결정: 6a, 롤러 한 토막 어림]
+const FALLBACK_CYLINDER_RADIUS = 0.05
+const FALLBACK_CYLINDER_HEIGHT = 0.1
 
 // Unity는 어느 GameObject에나 Collider를 붙인다: 모든 kind(robot·CAD 루트·group·assembly·part)
 export function canHaveColliders(object: SceneObject): boolean {
@@ -104,6 +119,7 @@ export function isWellFormedCollider(c: ColliderSettings): boolean {
     case 'box':
       return finiteVec(c.center) && finiteVec(c.size)
     case 'capsule':
+    case 'cylinder':
       return (
         finiteVec(c.center) &&
         Number.isFinite(c.radius) &&
@@ -165,6 +181,15 @@ export function sanitizeCollider(c: ColliderSettings): ColliderSettings {
         kind: 'mesh',
         vertexLimit: clamp(Math.round(c.vertexLimit), MIN_VERTEX_LIMIT, MAX_VERTEX_LIMIT)
       })
+    case 'cylinder':
+      return withTail(c, {
+        ...head,
+        kind: 'cylinder',
+        center: clampVec(c.center, -MAX_COLLIDER_EXTENT, MAX_COLLIDER_EXTENT),
+        radius: clamp(c.radius, MIN_CAPSULE_RADIUS, MAX_CAPSULE_RADIUS),
+        height: clamp(c.height, MIN_CYLINDER_HEIGHT, 2 * MAX_COLLIDER_EXTENT),
+        direction: c.direction
+      })
   }
 }
 
@@ -194,8 +219,9 @@ function sameCollider(a: ColliderSettings, b: ColliderSettings): boolean {
     case 'box':
       return b.kind === 'box' && sameVec(a.center, b.center) && sameVec(a.size, b.size)
     case 'capsule':
+    case 'cylinder':
       return (
-        b.kind === 'capsule' &&
+        b.kind === a.kind &&
         sameVec(a.center, b.center) &&
         a.radius === b.radius &&
         a.height === b.height &&
@@ -303,6 +329,44 @@ export function defaultCapsule(
       direction: upAxis
     }
   return sanitizeCollider(capsule) as CapsuleColliderSettings
+}
+
+// Cylinder(6a, Unity에 없음): Direction = 하위 경계 상자에서 나머지 두 길이가 가장 비슷한 축(같으면 x → y → z: 롤러는 긴 축,
+// 원판은 얇은 축), Height = 그 축 길이, Radius = 나머지 두 길이 중 큰 것의 절반, Center = 중심. 없으면 Radius 0.05, Height 0.1,
+// Direction = upAxis
+export function defaultCylinder(
+  id: string,
+  bounds: ColliderBounds,
+  upAxis: ColliderDirection
+): CylinderColliderSettings {
+  let cylinder: CylinderColliderSettings
+  if (bounds) {
+    const size = boundsSize(bounds)
+    const spread = (k: number): number => {
+      const [a, b] = [0, 1, 2].filter((j) => j !== k).map((j) => size[j])
+      return Math.abs(a - b)
+    }
+    let axis = 0
+    for (let k = 1; k < 3; k++) if (spread(k) < spread(axis)) axis = k
+    const others = [0, 1, 2].filter((k) => k !== axis).map((k) => size[k])
+    cylinder = {
+      id,
+      kind: 'cylinder',
+      center: boundsCenter(bounds),
+      radius: Math.max(...others) / 2,
+      height: size[axis],
+      direction: COLLIDER_DIRECTIONS[axis]
+    }
+  } else
+    cylinder = {
+      id,
+      kind: 'cylinder',
+      center: [0, 0, 0],
+      radius: FALLBACK_CYLINDER_RADIUS,
+      height: FALLBACK_CYLINDER_HEIGHT,
+      direction: upAxis
+    }
+  return sanitizeCollider(cylinder) as CylinderColliderSettings
 }
 
 // Mesh: Vertex Limit 32, 마찰 빈 칸

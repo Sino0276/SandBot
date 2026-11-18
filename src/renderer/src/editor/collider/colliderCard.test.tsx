@@ -131,7 +131,7 @@ describe('B11 Add Component', () => {
   const select = (list: Element[]): Element =>
     list.find((element) => element.props['aria-label'] === t('hardware.add'))!
 
-  it('B11 세 항목이 시뮬레이션 묶음의 질량 뒤에 있고, 8개면 비활성이다', () => {
+  it('B11 네 항목(6a Cylinder 포함)이 시뮬레이션 묶음의 질량 뒤에 있고, 8개면 비활성이다', () => {
     const list = section('base')
     const group = list.find((element) => element.props.label === t('hardware.wheel.addGroup'))!
     const values = elements(group.props.children as ReactNode)
@@ -143,8 +143,18 @@ describe('B11 Add Component', () => {
       '#mass',
       '#boxCollider',
       '#capsuleCollider',
-      '#meshCollider'
+      '#meshCollider',
+      '#cylinderCollider',
+      // 6a Preload Slot(editor/preload/preloadCard.test.tsx)
+      '#preload'
     ])
+    // Cylinder는 Unity에 없는 임시 편차라 항목 도움말이 알린다
+    const cylinder = elements(group.props.children as ReactNode).find(
+      (element) => element.props.value === '#cylinderCollider'
+    )!
+    expect(cylinder.props.title).toBe(t('collider.cylinderHint'))
+    expect(elements(cylinder.props.children as ReactNode).length).toBe(0)
+    expect(cylinder.props.children).toBe(t('collider.addOptions.cylinder'))
     withColliders(
       'base',
       Array.from({ length: 8 }, (_, i) => ({ ...BOX, id: `c${i}` }))
@@ -237,6 +247,24 @@ describe('B11 Add Component', () => {
     expect(fallback).toMatchObject({ direction: 'y', radius: 0.05, height: 0.2, center: [0, 0, 0] })
     // CAD 파트의 위 축(Y-up CAD면 로컬 Y가 로봇 위)
     expect(robotUpAxis(objects, 'part')).toBe('y')
+  })
+
+  it('6a Cylinder 기본: 나머지 두 길이가 가장 비슷한 축이 Direction, 높이 = 그 축 길이, 반지름 = 나머지 큰 쪽 절반', () => {
+    const objects = objectsNow()
+    const joints = jointBodyFrames(objects, 'R')
+    // 리프트 판 0.1 × 0.2 × 0.01: y축(나머지 0.1·0.01이 가장 비슷)
+    const plate = newCollider(objects, 'lift', 'cylinder', joints, () => 'c')
+    expect(plate).toMatchObject({ id: 'c', kind: 'cylinder', direction: 'y' })
+    if (plate.kind !== 'cylinder') throw new Error('cylinder')
+    expect(plate.height).toBeCloseTo(0.2, 7)
+    expect(plate.radius).toBeCloseTo(0.05, 7)
+    // 경계 없는 그룹: 반지름 0.05, 높이 0.1, 로봇 위 축
+    expect(newCollider(objects, 'loose', 'cylinder', joints, () => 'c')).toMatchObject({
+      center: [0, 0, 0],
+      radius: 0.05,
+      height: 0.1,
+      direction: 'z'
+    })
   })
 
   it('B11 관절의 부모 그룹에 붙이면 하위 메시가 다른 몸체라는 경고', () => {
@@ -435,5 +463,62 @@ describe('B12 Collider 카드', () => {
     expect(html).toContain(`title="${t('collider.runningHint')}"`)
     // 칸은 그대로 편집된다
     expect(byLabel(cardTree('plate'), t('collider.center'))!.props.onCommit).toBeTypeOf('function')
+  })
+})
+
+describe('6a Cylinder Collider 카드', () => {
+  const CYLINDER: ColliderSettings = {
+    id: 'y',
+    kind: 'cylinder',
+    center: [0, 0, 0],
+    radius: 0.03,
+    height: 0.08,
+    direction: 'x'
+  }
+
+  it('제목은 번역하지 않고, 반지름·높이·방향 칸과 Unity 편차 안내가 있다', () => {
+    withColliders('plate', [CYLINDER])
+    const html = cardHtml('plate')
+    expect(html).toContain('Cylinder Collider')
+    expect(html).toContain(t('collider.cylinderHint'))
+    const list = cardTree('plate')
+    expect(byLabel(list, t('collider.radius'))).toBeDefined()
+    const height = byLabel(list, t('collider.height'))!
+    expect(height.props.title).toBe(t('collider.cylinderHeightHint'))
+    // 높이 칸은 1 mm 아래를 받지 않는다(캡슐은 0이면 구라 받는다)
+    const parse = height.props.parse as (text: string) => number | null
+    expect(parse('0.5')).toBeNull()
+    expect(parse('1')).toBe(1)
+    expect(byData(list, 'direction')!.props.value).toBe('x')
+    expect(byData(list, 'cylinderHint')).toBeDefined()
+    withColliders('plate', [{ ...CYLINDER, kind: 'capsule' }])
+    expect(
+      (byLabel(cardTree('plate'), t('collider.height'))!.props.parse as (t: string) => unknown)('0')
+    ).toBe(0)
+    expect(cardHtml('plate')).not.toContain(t('collider.cylinderHint'))
+  })
+
+  it('칸을 확정하면 한 단계로 바뀌고 [하위에 맞추기]는 원기둥 규칙으로 맞춘다(id·켬·마찰은 그대로)', () => {
+    withColliders('lift', [{ ...CYLINDER, enabled: false, friction: 0.9 }])
+    const changes = countChanges()
+    ;(byLabel(cardTree('lift'), t('collider.radius'))!.props.onCommit as (v: number) => void)(40)
+    expect(objectsNow().lift.colliders![0]).toMatchObject({ radius: 0.04 })
+    ;(byData(cardTree('lift'), 'direction')!.props.onChange as (event: unknown) => void)({
+      target: { value: 'z' }
+    })
+    expect(objectsNow().lift.colliders![0]).toMatchObject({ direction: 'z' })
+    ;(byData(cardTree('lift'), 'fit')!.props.onClick as () => void)()
+    const fitted = objectsNow().lift.colliders![0]
+    expect(fitted).toMatchObject({
+      id: 'y',
+      kind: 'cylinder',
+      enabled: false,
+      friction: 0.9,
+      direction: 'y'
+    })
+    if (fitted.kind !== 'cylinder') throw new Error('cylinder')
+    expect(fitted.height).toBeCloseTo(0.2, 7)
+    expect(fitted.radius).toBeCloseTo(0.05, 7)
+    expect(changes()).toBe(3)
   })
 })

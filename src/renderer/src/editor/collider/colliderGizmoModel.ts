@@ -143,6 +143,34 @@ export function capsuleSegments(a: Vec3, b: Vec3, r: number): number[] {
   return out
 }
 
+// 원기둥 기즈모(6a, Unity에 없음): 뚜껑 원 둘과 옆선 넷(각 32분할). 기저는 캡슐과 같은 규칙
+export function cylinderSegments(a: Vec3, b: Vec3, r: number): number[] {
+  const out: number[] = []
+  const d = sub(b, a)
+  const length = Math.hypot(d[0], d[1], d[2])
+  if (!(length > 1e-9)) return out
+  const u = norm(d)
+  const abs = [Math.abs(u[0]), Math.abs(u[1]), Math.abs(u[2])]
+  let k = 0
+  for (let i = 1; i < 3; i++) if (abs[i] < abs[k]) k = i
+  const e: V = [0, 0, 0]
+  e[k] = 1
+  const v = norm(cross(u, e))
+  const w = cross(u, v)
+  arc(out, a, v, w, r, 0, 2 * Math.PI, CAPSULE_SEGMENTS)
+  arc(out, b, v, w, r, 0, 2 * Math.PI, CAPSULE_SEGMENTS)
+  for (const side of [v, w, [-v[0], -v[1], -v[2]] as V, [-w[0], -w[1], -w[2]] as V])
+    out.push(
+      a.x + r * side[0],
+      a.y + r * side[1],
+      a.z + r * side[2],
+      b.x + r * side[0],
+      b.y + r * side[1],
+      b.z + r * side[2]
+    )
+  return out
+}
+
 // 충돌체 하나의 몸체 틀 선분(같은 충돌체·정규 껍질 객체면 같은 배열)
 export function colliderSegments(
   collider: SimCollider,
@@ -156,6 +184,8 @@ export function colliderSegments(
     segments = shape ? hullSegments(shape) : []
   } else if (collider.kind === 'box')
     segments = hullSegments(boxHull(collider.center, collider.rotation, collider.half))
+  else if (collider.kind === 'cylinder')
+    segments = cylinderSegments(collider.a, collider.b, collider.radius)
   else segments = capsuleSegments(collider.a, collider.b, collider.radius)
   segmentCache.set(collider, segments)
   return segments

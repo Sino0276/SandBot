@@ -5,9 +5,13 @@ import {
   colliderEnabled,
   colliderFriction,
   defaultBox,
+  COLLIDER_KINDS,
   defaultCapsule,
+  defaultCylinder,
   defaultMesh,
   DEFAULT_COLLIDER_FRICTION,
+  isWellFormedCollider,
+  MIN_CYLINDER_HEIGHT,
   forceCollideKey,
   MAX_OBJECT_COLLIDERS,
   sameColliders,
@@ -17,7 +21,8 @@ import {
   sanitizeRobotCollision,
   type BoxColliderSettings,
   type CapsuleColliderSettings,
-  type ColliderSettings
+  type ColliderSettings,
+  type CylinderColliderSettings
 } from './collider'
 import type { SceneObject } from './model'
 
@@ -223,5 +228,66 @@ describe('자기 충돌 설정', () => {
       expect(canHaveColliders(object(kind))).toBe(true)
     expect(canHaveRobotCollision(object('robot'))).toBe(true)
     expect(canHaveRobotCollision(object('group'))).toBe(false)
+  })
+})
+
+// 6a 계약: Cylinder Collider(Unity에 없음, 임시 편차)
+describe('Cylinder Collider', () => {
+  const cylinder = (change: Partial<CylinderColliderSettings> = {}): CylinderColliderSettings => ({
+    id: 'y',
+    kind: 'cylinder',
+    center: [0, 0, 0],
+    radius: 0.024,
+    height: 0.3,
+    direction: 'y',
+    ...change
+  })
+
+  it('정리: 반지름은 캡슐 한도, 높이는 [1 mm, 20 m], 키 순서는 Capsule과 같다', () => {
+    expect(COLLIDER_KINDS).toContain('cylinder')
+    expect(sanitizeCollider(cylinder({ radius: 2, height: 0, friction: 9 }))).toEqual(
+      cylinder({ radius: 1, height: MIN_CYLINDER_HEIGHT })
+    )
+    expect(sanitizeCollider(cylinder({ center: [11, -0, 0], height: 30 }))).toEqual(
+      cylinder({ center: [10, 0, 0], height: 20 })
+    )
+    expect(Object.keys(sanitizeCollider(cylinder({ enabled: false, friction: 1 })))).toEqual([
+      'id',
+      'kind',
+      'enabled',
+      'center',
+      'radius',
+      'height',
+      'direction',
+      'friction'
+    ])
+    expect(isWellFormedCollider(cylinder())).toBe(true)
+    expect(isWellFormedCollider(cylinder({ height: Number.NaN }))).toBe(false)
+    expect(sameColliders([cylinder()], [cylinder()])).toBe(true)
+    expect(sameColliders([cylinder()], [{ ...cylinder(), kind: 'capsule' }])).toBe(false)
+  })
+
+  it('기본값: 나머지 두 길이가 가장 비슷한 축(롤러는 긴 축, 원판은 얇은 축), 없으면 upAxis', () => {
+    const roller = { min: [-0.15, -0.02, -0.02], max: [0.15, 0.02, 0.02] } as const
+    expect(defaultCylinder('y', { min: [...roller.min], max: [...roller.max] }, 'z')).toEqual({
+      id: 'y',
+      kind: 'cylinder',
+      center: [0, 0, 0],
+      radius: 0.02,
+      height: 0.3,
+      direction: 'x'
+    })
+    const disc = defaultCylinder('d', { min: [0, 0, 0], max: [0.1, 0.1, 0.02] }, 'x')
+    expect(disc.direction).toBe('z')
+    expect(disc.radius).toBeCloseTo(0.05, 15)
+    expect(disc.height).toBeCloseTo(0.02, 15)
+    expect(defaultCylinder('n', null, 'y')).toEqual({
+      id: 'n',
+      kind: 'cylinder',
+      center: [0, 0, 0],
+      radius: 0.05,
+      height: 0.1,
+      direction: 'y'
+    })
   })
 })

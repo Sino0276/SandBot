@@ -677,6 +677,9 @@ const en: Messages = {
       sensorNoise: 'Sensor noise',
       sensorNoiseHint:
         'Adds noise to distance sensor values (a fixed per-device offset of ±10 mm and per-measurement noise, datasheet spread) and to webcam tag corners (σ 0.3 px). Color sensors get no noise. The same seed gives the same values.',
+      gameElements: 'Game elements (balls)',
+      gameElementsHint:
+        'Simulates the POLLEN and NECTAR balls (the season start layout and robot preloads). Turn it off to run without balls. Not used when the season has no game elements. Same value as the box in the Field inspector.',
       nextRun: 'Changes apply from the next INIT. The run speed is set in the toolbar.'
     }
   },
@@ -986,6 +989,19 @@ const en: Messages = {
         'The number of colliders exceeds the simulator limit ({{max}}), so only the first {{max}} in body order are used.',
       worldJointStartOverlap:
         'Joint body {{name}} overlaps {{targets}} at the start pose. Overlaps are not pushed apart.',
+      // Game element preloads (6a, play/worldElements.ts and playActions worldFor)
+      worldTooManyPreloads:
+        'There are more Preload Slots than the limit ({{max}} per robot); only the first {{max}} in hierarchy order are used.',
+      worldPreloadOverlap:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}}. The overlap is shallower than the assumed hard core (30 % of the radius, 60 % for two balls together), so the ball is normally pushed out when the run starts, but friction can hold it squeezed in a wedge between two faces (opening below about 50° with default friction). Move the slot.',
+      worldPreloadEmbedded:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} more deeply than the assumed hard core (30 % of the radius, 60 % for two balls together). When the run starts the ball may stay embedded, or another overlap or gravity may move it inside or throw it out. Move the slot or split the Colliders.',
+      worldPreloadSqueezed:
+        'The POLLEN of Preload Slot {{name}} overlaps {{target}} and also something on the other side, so it has no room to move out. It is not pushed out when the run starts and stays squeezed. Move the slot or widen the gap for the ball.',
+      worldPreloadBelowFloor:
+        'The POLLEN of Preload Slot {{name}} is below the floor, so that slot is not used.',
+      worldPreloadNoRoom:
+        'The front, back, left and right of the robot are all blocked by walls or structures, so the run has no preloaded POLLEN. Add Preload Slots to the robot.',
       worldGenerationStale:
         'Device names may differ from the generated configuration, so the wheels and joints may not move.',
       worldInvalid: 'Could not build the simulator world, so the robot will not move ({{detail}}).',
@@ -1032,6 +1048,29 @@ const en: Messages = {
           'Collision contacts exceeded the per-step row limit, so some contacts were dropped (shown once per run). Use fewer or merged Colliders.',
         collisionLift:
           "A mechanism pushes on the floor or a wall top harder than the robot's weight. A real robot would lift; the simulator does not (shown once per run).",
+        // 6a: game elements (balls). Chosen by params.kind (once per kind per run)
+        elementOutOfField: {
+          pollen:
+            'A POLLEN left the field. After 3 seconds the field staff put it back in the nearest LOADING ZONE (shown once per run).',
+          nectarRed:
+            'A red NECTAR left the field. The simulator does not put it back yet (that is the human player, shown once per run).',
+          nectarBlue:
+            'A blue NECTAR left the field. The simulator does not put it back yet (that is the human player, shown once per run).'
+        },
+        elementReentered: {
+          pollen:
+            'The field staff put a POLLEN that left the field back in a LOADING ZONE (shown once per run).',
+          nectarRed:
+            'A red NECTAR that left the field was put back in a LOADING ZONE (shown once per run).',
+          nectarBlue:
+            'A blue NECTAR that left the field was put back in a LOADING ZONE (shown once per run).'
+        },
+        elementCrushed:
+          'A ball was squeezed by more than 30 % of its radius (the assumed hard core). A real ball may deform. Widen the roller gap (shown once per run).',
+        elementCouplingLimit:
+          'Many balls touch the robot, so some balls are only pushed by the robot and do not push it back (shown once per run).',
+        elementIslandLarge:
+          'A large pile of touching balls is solved with an approximate iteration. Forces inside the pile may be slightly off (shown once per run).',
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -2089,12 +2128,15 @@ const en: Messages = {
     addOptions: {
       box: 'Box Collider',
       capsule: 'Capsule Collider',
-      mesh: 'Mesh Collider'
+      mesh: 'Mesh Collider',
+      cylinder: 'Cylinder Collider'
     },
     titles: {
       box: 'Box Collider',
       capsule: 'Capsule Collider',
-      mesh: 'Mesh Collider'
+      mesh: 'Mesh Collider',
+      // 6a: Unity에 없는 Collider(임시 편차). 제목은 Unity 꼴로 번역하지 않는다
+      cylinder: 'Cylinder Collider'
     },
     simulationOnly: 'Simulator',
     remove: 'Remove',
@@ -2107,6 +2149,9 @@ const en: Messages = {
     radius: 'Radius',
     height: 'Height',
     heightHint: 'The full height including the hemispheres. Below twice the radius it is a sphere.',
+    cylinderHeightHint: 'The full height up to the flat caps (1 mm or more).',
+    cylinderHint:
+      'Unity has no Cylinder Collider (a temporary SandBot deviation). Use it for round surfaces the balls touch, such as rollers and flywheels. Balls hit the exact cylinder; walls, structures, the floor and other bodies hit a circumscribed 32-sided prism.',
     direction: 'Direction',
     directions: {
       x: 'X-Axis',
@@ -2202,6 +2247,62 @@ const en: Messages = {
     // Collision targets (Console collisionOverlap and start overlaps): walls and structures use the field.* names
     target: {
       floor: 'Floor'
+    }
+  },
+  // Preload slot (Preload Slot, 6a, editor/preload/). The card title is not translated, like a Unity component
+  preload: {
+    title: 'Preload Slot',
+    addOption: 'Preload Slot',
+    addExists: 'This object already has a Preload Slot.',
+    addLimit: 'A robot can have up to {{max}} Preload Slots.',
+    addNotAllowed:
+      'Not allowed on a robot or CAD root. Create an empty group (Create Empty) under it and add it there.',
+    enabled: 'When off, this slot is not used (it does not switch to automatic placement).',
+    element: 'Element',
+    elementHint: 'The BIOBUZZ preload is POLLEN.',
+    kinds: {
+      pollen: 'POLLEN'
+    },
+    center: 'Center',
+    centerHint:
+      "The ball centre, in this object's local coordinates (relative to the pivot, along this object's own axes).",
+    help: 'Where the robot carries one POLLEN at the start (a simulator setting, unrelated to generated code). Up to {{max}} per robot. With none, the balls go on the tile in front of the robot (then back, left, right if blocked).',
+    slot: 'Slot {{index}}/{{max}}',
+    bodyChassis: 'Carried by the robot body (chassis).',
+    bodyJoint: 'Carried by the body of joint {{name}} and moves with it.',
+    orphan: 'A Preload Slot outside a robot is not used by the simulator.',
+    excluded: {
+      disabled: 'Off, so not used.',
+      tooMany:
+        'Only {{max}} per robot are used, so this slot is not (the first ones in hierarchy order are used).',
+      belowFloor: 'The ball is below the floor, so this slot is not used.',
+      outOfRange:
+        'The position relative to its body exceeds the simulator coordinate limit (10 m), so this slot is not used.',
+      orphan: 'Not found under the robot, so this slot is not used.'
+    },
+    overlap:
+      'Overlaps {{target}} in the edit pose. The overlap is shallower than the hard core (30 % of the radius, 60 % for two balls together), so the ball is normally pushed out at the start, but friction can hold it squeezed in a wedge between two faces (opening below about 50° with default friction). Move the slot or split the Colliders so the hopper is empty inside.',
+    embedded:
+      'Overlaps {{target}} in the edit pose more deeply than the hard core (30 % of the radius, 60 % for two balls together). At the start the ball may stay embedded, or another overlap or gravity may move it inside or throw it out. Move the slot or split the Colliders so the hopper is empty inside.',
+    squeezed:
+      'Overlaps {{target}} in the edit pose and also something on the other side, so the ball has no room to move out. It is not pushed out at the start and stays squeezed. Move the slot or widen the gap for the ball.',
+    season: 'This season has no game elements, so it is not used.',
+    off: 'Game elements are off, so it is not used (Preferences › Simulation, Field inspector).',
+    runningHint: 'From the next INIT. The running balls started from the slots at INIT.',
+    autoName: 'automatic slot',
+    faces: {
+      front: 'front',
+      back: 'back',
+      left: 'left',
+      right: 'right'
+    },
+    source: {
+      title: 'Preloads',
+      slots: '{{count}} Preload Slots',
+      slotsNone: 'Has Preload Slots but none are used',
+      auto: 'Automatic: {{count}} on the tile at the robot {{face}}',
+      noRoom: 'No automatic slots (front, back, left and right are all blocked)',
+      season: 'None in this season'
     }
   },
   // Season field (spec-4ab). Season data keys are the keys (src/shared/sim/seasons/). The season name BIOBUZZ is not translated.
@@ -2301,6 +2402,25 @@ const en: Messages = {
           'Field elements are hidden or isolation is on, so the CAD is not drawn and the simple floor, walls and tape are shown.',
         simpleSeasonNote:
           'This season uses nominal simple shapes that differ from the CAD (wall half-width etc.). Compare them with [Show simple shapes].'
+      },
+      elements: {
+        title: 'Game elements',
+        enabled: 'Enable balls',
+        hint: 'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT. Same value as the box in Preferences › Simulation.',
+        none: 'This season has no moving game elements.',
+        groups: {
+          garden: 'GARDEN POLLEN',
+          flower: 'FLOWER POLLEN',
+          hiveCell: 'HIVE CELL NECTAR',
+          humanPlayer: 'Human player NECTAR'
+        },
+        count: '{{count}}',
+        deferred: 'Not yet (stage {{stage}})',
+        preloads: 'Robot preloads',
+        robotLine: '{{robot}}: {{source}}',
+        running: 'Running: {{count}} balls',
+        runningOff: 'Running: started without balls',
+        off: 'Off, so the next run has no balls.'
       },
       // AprilTag 묶음 원점(4d, seasons/tagPoses.ts clusterFieldPoses, BIOBUZZ만): SDK 라이브러리에 넣을 값
       clusters: {

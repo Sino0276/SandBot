@@ -3,7 +3,13 @@ import { WALL_HEIGHT, WALL_INNER_HALF } from '../field'
 import type { Vec3 } from '../worldSpec'
 import { BIOBUZZ_STRUCTURE_PAIRS } from './biobuzz'
 import { boxVertices } from './fieldGeometry'
-import { checkFieldSpec, type FieldSpec, type FieldStructure } from './fieldSpec'
+import {
+  checkFieldSpec,
+  type FieldElementPlacement,
+  type FieldElementType,
+  type FieldSpec,
+  type FieldStructure
+} from './fieldSpec'
 import { DEFAULT_PROJECT_SEASON, isSeasonId, resolveSeason, SEASON_IDS } from './seasons'
 import { mirrorPreset, mirrorStructure, mirrorTag, mirrorVec3, neg, wrapPi } from './symmetry'
 
@@ -346,5 +352,135 @@ describe("K4 'none' 값", () => {
     none.floor.seams.forEach((v, i) => expect(v).toBeCloseTo(seams[i], 15))
     expect(none.floor.material.display).toBe('#3b3e45')
     expect(none.perimeter.panel.optics).toBe('polycarbonate')
+  })
+})
+
+describe('6a 경기 요소 데이터', () => {
+  const elements = biobuzz.elements!
+  const typeOf = (kind: string): FieldElementType => elements.types.find((t) => t.kind === kind)!
+
+  it('종류 셋: 지름·질량은 출처 값, 관성은 속 빈 껍질(0.6344·m·r²)', () => {
+    expect(elements.types.map((t) => t.kind)).toEqual(['pollen', 'nectarRed', 'nectarBlue'])
+    const pollen = typeOf('pollen')
+    expect(2 * pollen.radius).toBeCloseTo(0.0711, 12)
+    expect(pollen.mass).toBe(0.0249)
+    expect(pollen.inertia / (pollen.mass * pollen.radius ** 2)).toBeCloseTo(0.63445, 4)
+    expect(pollen.inertia).toBeCloseTo(1.9965e-5, 9)
+    const nectar = typeOf('nectarRed')
+    expect(2 * nectar.radius).toBeCloseTo(0.0914, 12)
+    expect(nectar.mass).toBe(0.0413)
+    expect(nectar.inertia).toBeCloseTo(5.47e-5, 7)
+    // 파랑은 색만 다르다
+    const blue = typeOf('nectarBlue')
+    expect({ ...blue, kind: nectar.kind, material: nectar.material }).toEqual(nectar)
+    expect(blue.material.display).not.toBe(nectar.material.display)
+    // 다시 넣기는 POLLEN만(NECTAR는 사람 선수 몫, 6d)
+    expect(elements.types.map((t) => t.reentry)).toEqual([true, false, false])
+    expect(pollen.contact.plateStiffness).toBe(3000)
+    expect(nectar.contact.plateStiffness).toBe(4500)
+  })
+
+  it('GARDEN POLLEN 4 + 4: 빨강은 관중석 벽·빨강 벽 구석부터 한 줄, 파랑은 Rz(π)', () => {
+    const r = typeOf('pollen').radius
+    const h = biobuzz.perimeter.innerHalf
+    expect(elements.layout).toHaveLength(8)
+    expect(elements.layout.every((p) => p.group === 'garden' && p.kind === 'pollen')).toBe(true)
+    elements.layout.slice(0, 4).forEach((p, k) => {
+      expect(p.position).toEqual({ x: h - r, y: -h + r * (1 + 2 * k), z: r })
+      // 중심은 GARDEN 띠 안
+      const garden = biobuzz.zones.find((z) => z.key === 'garden' && z.alliance === 'red')!
+      expect(p.position.x).toBeGreaterThan(garden.rect[0])
+      expect(p.position.y).toBeLessThan(garden.rect[3])
+    })
+    elements.layout
+      .slice(4)
+      .forEach((p, k) => expect(p.position).toEqual(mirrorVec3(elements.layout[k].position)))
+    // 시작 프리셋은 공 자리(벽 − 2r)를 피한다
+    const keepOut = biobuzz.startKeepOut[0].rect
+    expect(keepOut[0]).toBe(h - 2 * r)
+    expect(biobuzz.startPresets[2].along[1]).toBe(h - 2 * r)
+  })
+
+  it("'none'에는 경기 요소가 없다", () => {
+    expect(resolveSeason('none').elements).toBeNull()
+  })
+
+  describe('일부러 깬 판을 잡는다', () => {
+    const withElements = (change: Partial<NonNullable<FieldSpec['elements']>>): FieldSpec => ({
+      ...biobuzz,
+      elements: { ...elements, ...change }
+    })
+    const moved = (j: number, position: Vec3): FieldElementPlacement[] =>
+      elements.layout.map((p, i) => (i === j ? { ...p, position } : p))
+    const r = typeOf('pollen').radius
+    const h = biobuzz.perimeter.innerHalf
+
+    it('짝 하나를 옮기면 대칭이 깨진다', () => {
+      const p = elements.layout[1].position
+      const errors = checkFieldSpec(withElements({ layout: moved(1, { ...p, y: p.y + 0.001 }) }))
+      expect(errors).toContain('elements.layout[1]: no Rz(pi) counterpart')
+      expect(errors).toContain('elements.layout[5]: no Rz(pi) counterpart')
+    })
+
+    it('바닥에 놓이지 않음·필드 밖·서로 겹침', () => {
+      const p = elements.layout[0].position
+      expect(checkFieldSpec(withElements({ layout: moved(0, { ...p, z: r + 0.01 }) }))).toContain(
+        'elements.layout[0]: not resting on floor'
+      )
+      expect(
+        checkFieldSpec(withElements({ layout: moved(0, { ...p, x: h - r + 0.001 }) }))
+      ).toContain('elements.layout[0]: outside field')
+      const q = elements.layout[1].position
+      expect(checkFieldSpec(withElements({ layout: moved(1, { ...q, y: q.y - 0.01 }) }))).toContain(
+        'elements.layout[0]: elements.layout[1]'
+      )
+    })
+
+    it('구조물에 걸침(빨강 벽 FLOWER <3>)', () => {
+      const flower = biobuzz.structures[11].shape as Extract<
+        FieldStructure['shape'],
+        { kind: 'box' }
+      >
+      const at = { x: flower.center.x, y: flower.center.y + flower.size.y / 2, z: r }
+      expect(checkFieldSpec(withElements({ layout: moved(0, at) }))).toContain(
+        'elements.layout[0]: structures[11]'
+      )
+    })
+
+    it('시작 프리셋 사각형과 겹침(예전 GARDEN 자리 경계 1.7241이면 첫 공과 2.3 mm 겹친다)', () => {
+      const presets = biobuzz.startPresets.map((p, i) =>
+        i === 2 ? { ...p, along: [p.along[0], 1.7241] as [number, number] } : p
+      )
+      expect(checkFieldSpec({ ...biobuzz, startPresets: presets })).toContain(
+        'startPresets[2]: elements.layout[0]'
+      )
+    })
+
+    it('모르는 종류·종류 중복·관성 범위·반발 범위', () => {
+      const pollen = typeOf('pollen')
+      const errors = checkFieldSpec(
+        withElements({
+          types: [
+            { ...pollen, inertia: 0.1 * pollen.mass * pollen.radius ** 2 },
+            {
+              ...pollen,
+              contact: {
+                ...pollen.contact,
+                restitution: { ...pollen.contact.restitution, floor: 1.2 }
+              }
+            }
+          ],
+          layout: [{ ...elements.layout[0], kind: 'nectarRed' }]
+        })
+      )
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          'elements.types[0]: inertia',
+          'elements.types[1]: duplicate kind pollen',
+          'elements.types[1]: restitution',
+          'elements.layout[0]: unknown kind nectarRed'
+        ])
+      )
+    })
   })
 })

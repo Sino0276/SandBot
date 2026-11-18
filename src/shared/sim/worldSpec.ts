@@ -8,13 +8,15 @@ import { isCameraModelId, type CameraModelId } from './cameraData'
 import { symmetricEigen3 } from './drivetrain'
 import { canonicalHull, HULL_MAX_COORD, MAX_HULL_POINTS } from './hull'
 import type { SeasonId } from './seasons/fieldSpec'
-import { isSeasonId } from './seasons/seasons'
+import { isSeasonId, resolveSeason } from './seasons/seasons'
 
 // 4: 시즌 field({ season, hiveTipped }), robot.height, 거리·컬러 센서 목록(4c), 잡음(4c·4d)을 더함(spec-4ab §3)
 // 5: 웹캠 cameras(4d)를 더함(spec-4d §3.1)
 // 6: 3D 충돌 형상 robot.colliders·joints[i].colliders, 자기 충돌 무시 collisionIgnore(spec-5 §2.2). 셋 다 선택 칸이고,
 //    없으면 5와 같은 경로(섀시 평면 프리즘, 관절 몸체는 충돌 없음)다.
-export const WORLD_SPEC_VERSION = 6
+// 7: 움직이는 경기 요소 elements({ groups, preloads }, 6a)와 원기둥 충돌체 kind 'cylinder'. 둘 다 선택이고, elements가 없으면
+//    공 코드가 돌지 않아 6과 같은 결과다(결과 객체에도 키가 없다)
+export const WORLD_SPEC_VERSION = 7
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
@@ -49,6 +51,19 @@ export const FLOOR_FRICTION = 0.4
 export const MIN_BOX_SIZE = 1e-3
 // 상자 회전 행렬 검사 공차(|RᵀR − I| 원소 최대, det > 0) [결정: three Matrix4 곱 사슬의 반올림 ~1e-15보다 넉넉히]
 export const BOX_ROTATION_TOLERANCE = 1e-9
+// 원기둥 충돌체 높이 하한(m, 납작한 뚜껑 포함 전체 길이). 렌더러 scene/collider.ts가 다시 내보낸다 [결정: 상자 크기 하한
+// MIN_BOX_SIZE와 같은 값]. 세계 설명의 끝점 간격은 그 절반 이상이면 받는다(렌더러가 몸체 틀 행렬로 옮긴 끝점의 반올림 여유,
+// 상자 반 크기 ≥ MIN_BOX_SIZE/2와 같은 꼴) [결정]. 반지름 한도는 캡슐과 같다(MIN·MAX_CAPSULE_RADIUS)
+export const MIN_CYLINDER_HEIGHT = 1e-3
+export const MIN_CYLINDER_SEGMENT = MIN_CYLINDER_HEIGHT / 2
+
+// 움직이는 경기 요소(6a). 공 한도 [결정: BIOBUZZ 경기 요소 전체(POLLEN 40 + NECTAR 16 = 56)보다 넉넉히, spec-6a §1],
+// 로봇 하나의 프리로드 수(BIOBUZZ 로봇마다 POLLEN 4개, 사용자 결정 11/13)
+export const MAX_WORLD_ELEMENTS = 64
+export const MAX_PRELOADS = 4
+export const ELEMENT_KINDS = ['pollen', 'nectarRed', 'nectarBlue'] as const
+// 시즌 배치 묶음. 6a는 GARDEN만 생긴다(6b가 'flower'·'hiveCell', 6d가 'humanPlayer'를 더한다)
+export const ELEMENT_GROUPS = ['garden'] as const
 
 export type Vec2 = { x: number; y: number }
 export type Vec3 = { x: number; y: number; z: number }
@@ -160,13 +175,40 @@ export type SimCameraSpec = { device: string; mount: SensorMount; model: CameraM
 // box: 몸체 틀의 중심, 회전 행렬(행 우선 9개, 정규 직교·det > 0), 반 크기(각 ≥ MIN_BOX_SIZE/2). 정확한 상자 위상(boxHull,
 //   양자화 없음)
 // capsule: 선분 a–b와 반지름(|a − b| < MIN_CAPSULE_SEGMENT(collision3d.ts)면 구)
+// cylinder(6a): 납작한 뚜껑의 속이 찬 원기둥. a·b는 두 뚜껑의 중심(|a − b| ≥ MIN_CYLINDER_SEGMENT), 반지름은 캡슐과 같은 한도.
+//   공과의 짝은 정확한 구–원기둥이고, 나머지 짝(벽·구조물·바닥·자기 충돌)은 외접 다각 기둥 껍질로 근사한다(spec-6a §1)
 export type SimCollider =
   | { kind: 'convex'; points: Vec3[]; friction: number }
   | { kind: 'box'; center: Vec3; rotation: number[]; half: Vec3; friction: number }
   | { kind: 'capsule'; a: Vec3; b: Vec3; radius: number; friction: number }
+  | { kind: 'cylinder'; a: Vec3; b: Vec3; radius: number; friction: number }
 
 // 무시할 몸체 짝 [a, b](−1 ≤ a < b < joints.length, −1 = 섀시). 바로 붙은 부모–자식은 적지 않아도 늘 무시한다
 export type SimBodyPair = [number, number]
+
+// ---- 움직이는 경기 요소(6a, spec-6a §1) ----
+
+// 공 종류. 물리 값(반지름·질량·접촉·공기)은 시즌 데이터(seasons/<시즌>.ts FieldSpec.elements.types)에서 오고 렌더러 값을 받지
+// 않는다(시뮬레이터는 렌더러가 보낸 형상을 믿지 않는다)
+export type SimElementKind = (typeof ELEMENT_KINDS)[number]
+// 시즌 배치 묶음(FieldSpec.elements.layout의 group)
+export type SimElementGroup = (typeof ELEMENT_GROUPS)[number]
+// 로봇이 싣고 시작하는 공 하나: 그 몸체 틀(관절 q = 0, −1 = 로봇 좌표, ≥ 0 = 관절 틀)의 공 중심
+export type SimPreloadSpec = { kind: 'pollen'; body: number; position: Vec3 }
+// 공 하나의 상태(필드 좌표, 6d 이어 가기와 elementSnapshot). orientation은 단위 사원수 [w, x, y, z], angularVelocity는 필드
+// 축 rad/s. asleep: 잠듦(속도 정확히 0), out: 필드 밖으로 나가 물리에서 빠짐(표시도 숨김)
+export type SimElementState = {
+  kind: SimElementKind
+  position: Vec3
+  orientation: [number, number, number, number]
+  velocity: Vec3
+  angularVelocity: Vec3
+  asleep: boolean
+  out: boolean
+}
+// 세계 설명의 경기 요소 칸: 생길 배치 묶음(유일, ELEMENT_GROUPS 값)과 프리로드(MAX_PRELOADS개까지, 자리 순서). 6d가
+// initial?: SimElementState[](AUTO 끝 상태로 이어 가기)를 더한다
+export type SimElementsSpec = { groups: SimElementGroup[]; preloads: SimPreloadSpec[] }
 
 export type WorldSpec = {
   version: typeof WORLD_SPEC_VERSION
@@ -214,6 +256,9 @@ export type WorldSpec = {
   cameras: SimCameraSpec[]
   // 자기 충돌에서 무시할 몸체 짝(5, 편집 자세에서 겹친 짝, 렌더러 빌더가 앞 계산). 없으면 바로 붙은 부모–자식만 무시한다
   collisionIgnore?: SimBodyPair[]
+  // 움직이는 경기 요소(6a, v7). 없으면 공이 없다(공 코드가 돌지 않아 6과 같은 연산). 시즌에 경기 요소가 없으면(FieldSpec.
+  // elements null, 'none') 받지 않는다. 공의 물리 값·배치는 시즌 데이터에서 온다(elements/spawn.ts elementSpawns)
+  elements?: SimElementsSpec
 }
 
 // ---- 관절(3b, spec-3b §4, Unity ArticulationBody 하나 = 관절 하나 = 움직이는 몸체 하나) ----
@@ -887,6 +932,16 @@ function collider(value: unknown, what: string): SimCollider {
       shape = { kind: 'capsule', a, b, radius: value.radius, friction: 0 }
       break
     }
+    // v7(6a): 뚜껑 중심 둘이 MIN_CYLINDER_SEGMENT 넘게 떨어져야 축이 정해진다
+    case 'cylinder': {
+      const a = vec3(value.a, `${what}.a`)
+      const b = vec3(value.b, `${what}.b`)
+      if (!inRange(value.radius, MIN_CAPSULE_RADIUS, MAX_CAPSULE_RADIUS)) fail(`${what}.radius`)
+      const length = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
+      if (!(length >= MIN_CYLINDER_SEGMENT)) fail(`${what}.b`)
+      shape = { kind: 'cylinder', a, b, radius: value.radius, friction: 0 }
+      break
+    }
     default:
       fail(`${what}.kind`)
   }
@@ -913,6 +968,46 @@ function bodyPair(value: unknown, what: string, jointCount: number): SimBodyPair
   )
     fail(what)
   return [a, b]
+}
+
+// ---- 경기 요소 검증(6a, spec-6a §1) ----
+
+const isElementGroup = (value: unknown): value is SimElementGroup =>
+  typeof value === 'string' && (ELEMENT_GROUPS as readonly string[]).includes(value)
+
+// 프리로드 하나: 지금은 POLLEN만(BIOBUZZ 프리로드 규칙), body는 −1(로봇 좌표) 또는 관절 순번
+function preload(value: unknown, what: string, jointCount: number): SimPreloadSpec {
+  if (!isRecord(value)) fail(what)
+  if (value.kind !== 'pollen') fail(`${what}.kind`)
+  const preloadBody = value.body
+  if (
+    typeof preloadBody !== 'number' ||
+    !Number.isInteger(preloadBody) ||
+    preloadBody < -1 ||
+    preloadBody >= jointCount
+  )
+    fail(`${what}.body`)
+  return { kind: 'pollen', body: preloadBody, position: vec3(value.position, `${what}.position`) }
+}
+
+// 경기 요소 칸: 묶음은 유일한 아는 값, 시즌에 경기 요소가 있고(FieldSpec.elements), 그 시즌이 프리로드 종류를 알며, 생길 공
+// (고른 묶음의 배치 + 프리로드)이 MAX_WORLD_ELEMENTS 이하다
+function elements(value: unknown, season: SeasonId, jointCount: number): SimElementsSpec {
+  if (!isRecord(value)) fail('elements')
+  const groups = list(value.groups, ELEMENT_GROUPS.length, 'elements.groups', (v, i) =>
+    isElementGroup(v) ? v : fail(`elements.groups[${i}]`)
+  )
+  if (new Set(groups).size !== groups.length) fail('elements.groups: duplicate')
+  const preloads = list(value.preloads, MAX_PRELOADS, 'elements.preloads', (v, i) =>
+    preload(v, `elements.preloads[${i}]`, jointCount)
+  )
+  const data = resolveSeason(season).elements
+  if (data === null) fail('elements: season')
+  for (const p of preloads) if (!data.types.some((t) => t.kind === p.kind)) fail('elements: season')
+  const spawned =
+    data.layout.filter((entry) => groups.includes(entry.group)).length + preloads.length
+  if (spawned > MAX_WORLD_ELEMENTS) fail('elements: too many')
+  return { groups, preloads }
 }
 
 // 거리·컬러 센서·웹캠 장치 이름: 세 목록을 합쳐 유일하고, 모터·데드휠·Pinpoint·OTOS·IMU·관절 서보·리밋 스위치와 겹치지 않는다
@@ -1030,6 +1125,9 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
       spec.collisionIgnore = pairs
     }
     if (colliderCount > MAX_WORLD_COLLIDERS) fail('colliders: too many')
+    // v7(6a): 경기 요소는 충돌 칸 뒤에 읽는다(지금 칸의 오류가 먼저 나온다). 없으면 결과에도 키를 두지 않는다(6과 키·값이 같다)
+    if (value.elements !== undefined)
+      spec.elements = elements(value.elements, spec.field.season, joints.length)
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')
     spec.wheels.forEach((w, i) => {

@@ -6,9 +6,11 @@ import {
   heightOverlaps,
   polygonSeparation,
   rectPolygon,
-  solidFootprints
+  solidFootprints,
+  sphereShapeSeparation
 } from './fieldGeometry'
 import { resolveSeason } from './seasons'
+import type { Vec3 } from '../worldSpec'
 
 // K7(spec-4ab §5): 볼록 껍질과 높이 슬랩 단면
 
@@ -105,5 +107,47 @@ describe('K7 껍질', () => {
     expect(circlePolygonSeparation({ x: 3, y: 0.5 }, 0.5, a)).toBeCloseTo(1.5, 15)
     expect(circlePolygonSeparation({ x: 2, y: 2 }, 0, a)).toBeCloseTo(Math.SQRT2, 15)
     expect(circlePolygonSeparation({ x: 0.5, y: 0.75 }, 0.1, a)).toBeCloseTo(-0.35, 15)
+  })
+})
+
+// 6a: 경기 요소 데이터 검사의 구–구조물 분리
+describe('sphereShapeSeparation', () => {
+  const zero = { x: 0, y: 0, z: 0 }
+  const box = {
+    kind: 'box' as const,
+    center: { x: 1, y: 0, z: 0.5 },
+    rotation: zero,
+    size: { x: 0.2, y: 0.4, z: 1 }
+  }
+  const at = (x: number, y: number, z: number): Vec3 => ({ x, y, z })
+
+  it('상자: 면·모서리 밖은 거리 − r, 안은 가장 가까운 면까지(음수)', () => {
+    expect(sphereShapeSeparation(at(1.2, 0, 0.5), 0.05, box)).toBeCloseTo(0.1 - 0.05, 12)
+    expect(sphereShapeSeparation(at(1.4, 0.5, 0.5), 0.1, box)).toBeCloseTo(
+      Math.hypot(0.3, 0.3) - 0.1,
+      12
+    )
+    expect(sphereShapeSeparation(at(1, 0, 0.5), 0.05, box)).toBeCloseTo(-0.1 - 0.05, 12)
+    // 닿기만 하면 0
+    expect(sphereShapeSeparation(at(1.15, 0, 0.5), 0.05, box)).toBeCloseTo(0, 12)
+  })
+
+  it('돌린 상자는 자기 틀에서 잰다(Rz 90°면 x·y 크기가 바뀐다)', () => {
+    const turned = { ...box, rotation: { x: 0, y: 0, z: Math.PI / 2 } }
+    expect(sphereShapeSeparation(at(1.3, 0, 0.5), 0.05, turned)).toBeCloseTo(0.1 - 0.05, 12)
+  })
+
+  it('세운 원기둥: 옆면·뚜껑·모서리·안', () => {
+    const cylinder = {
+      kind: 'cylinder' as const,
+      center: { x: 0, y: 0, z: 0.5 },
+      rotation: zero,
+      radius: 0.2,
+      height: 1
+    }
+    expect(sphereShapeSeparation(at(0.5, 0, 0.5), 0.1, cylinder)).toBeCloseTo(0.2, 12)
+    expect(sphereShapeSeparation(at(0, 0, 1.3), 0.1, cylinder)).toBeCloseTo(0.2, 12)
+    expect(sphereShapeSeparation(at(0.5, 0, 1.4), 0.1, cylinder)).toBeCloseTo(0.5 - 0.1, 12)
+    expect(sphereShapeSeparation(at(0.1, 0, 0.5), 0.1, cylinder)).toBeCloseTo(-0.1 - 0.1, 12)
   })
 })

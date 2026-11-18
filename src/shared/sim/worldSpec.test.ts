@@ -320,7 +320,7 @@ describe('parseWorldSpec v4', () => {
 
   it("{ version }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
     expect(parseWorldSpec({ version: WORLD_SPEC_VERSION })).toBe('robot')
-    expect(WORLD_SPEC_VERSION).toBe(6)
+    expect(WORLD_SPEC_VERSION).toBe(7)
     expect(parseWorldSpec({ ...valid(), version: 3 })).toBe('version')
   })
 
@@ -503,9 +503,10 @@ describe('parseWorldSpec v5', () => {
     })
   })
 
-  it('버전 5는 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
-    expect(WORLD_SPEC_VERSION).toBe(6)
+  it('버전 5·6은 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
+    expect(WORLD_SPEC_VERSION).toBe(7)
     expect(parseWorldSpec({ ...valid(), version: 5 })).toBe('version')
+    expect(parseWorldSpec({ ...valid(), version: 6 })).toBe('version')
   })
 
   it.each([
@@ -705,5 +706,109 @@ describe('parseWorldSpec v6', () => {
     expect(
       parseWorldSpec({ ...bad, motors: [withJoints().motors[0], withJoints().motors[0]] })
     ).toBe('robot.colliders[0].radius')
+  })
+})
+
+describe('parseWorldSpec v7(6a 계약)', () => {
+  const v = (x: number, y: number, z: number): { x: number; y: number; z: number } => ({ x, y, z })
+  const cylinder = (extra: Record<string, unknown> = {}): SimCollider =>
+    ({
+      kind: 'cylinder',
+      a: v(0.1, -0.15, 0.05),
+      b: v(0.1, 0.15, 0.05),
+      radius: 0.024,
+      friction: 1,
+      ...extra
+    }) as SimCollider
+  const withRobot = (colliders: unknown[]): WorldSpec =>
+    ({ ...withJoints(), robot: { ...withJoints().robot, colliders } }) as WorldSpec
+  const biobuzz = (elements: unknown): WorldSpec =>
+    ({
+      ...withJoints(),
+      field: { season: 'biobuzz', hiveTipped: [false, false] },
+      elements
+    }) as WorldSpec
+  const preload = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    kind: 'pollen',
+    body: -1,
+    position: v(0.3, 0, 0.0356),
+    ...extra
+  })
+  const four = (): Record<string, unknown>[] =>
+    [0, 1, 2]
+      .map((k) => preload({ position: v(0.3, (k - 1) * 0.072, 0.0356) }))
+      .concat([preload({ body: 2, position: v(0, 0, 0.1) })])
+
+  it('경기 요소가 없으면 결과에 키가 없다(6과 키·값이 같다)', () => {
+    const parsed = parseWorldSpec(withJoints()) as WorldSpec
+    expect('elements' in parsed).toBe(false)
+    expect(parsed.version).toBe(7)
+  })
+
+  it('원기둥 충돌체를 그대로 읽는다(다른 키는 버린다)', () => {
+    const spec = withRobot([cylinder()])
+    spec.joints[2].colliders = [cylinder({ a: v(0, 0, 0), b: v(0, 0, 0.0005) })]
+    expect(parseWorldSpec(spec)).toEqual(spec)
+    const extra = parseWorldSpec(withRobot([{ ...cylinder(), junk: 1 }])) as WorldSpec
+    expect(extra.robot.colliders).toEqual([cylinder()])
+  })
+
+  it.each([
+    ['robot.colliders[0].radius', withRobot([cylinder({ radius: 0 })])],
+    ['robot.colliders[0].radius', withRobot([cylinder({ radius: 1.5 })])],
+    ['robot.colliders[0].b', withRobot([cylinder({ b: v(0.1, -0.15, 0.05) })])],
+    ['robot.colliders[0].b', withRobot([cylinder({ b: v(0.1, -0.15, 0.0504) })])],
+    ['robot.colliders[0].a', withRobot([cylinder({ a: v(11, 0, 0) })])],
+    ['robot.colliders[0].friction', withRobot([cylinder({ friction: 3 })])]
+  ])('원기둥 %s가 틀리면 그 이름을 돌려준다', (what, value) => {
+    expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  it('경기 요소(묶음·프리로드)를 그대로 읽는다(다른 키는 버린다)', () => {
+    const spec = biobuzz({ groups: ['garden'], preloads: four() })
+    expect(parseWorldSpec(spec)).toEqual(spec)
+    const extra = parseWorldSpec(
+      biobuzz({ groups: [], preloads: [preload({ junk: 1 })], initial: [] })
+    ) as WorldSpec
+    expect(extra.elements).toEqual({ groups: [], preloads: [preload()] })
+  })
+
+  it.each([
+    ['elements', biobuzz(null)],
+    ['elements', biobuzz([])],
+    ['elements.groups', biobuzz({ groups: 'garden', preloads: [] })],
+    ['elements.groups', biobuzz({ groups: ['garden', 'garden'], preloads: [] })],
+    ['elements.groups[0]', biobuzz({ groups: ['flower'], preloads: [] })],
+    ['elements.preloads', biobuzz({ groups: [], preloads: undefined })],
+    ['elements.preloads', biobuzz({ groups: [], preloads: [...four(), preload()] })],
+    ['elements.preloads[0]', biobuzz({ groups: [], preloads: [1] })],
+    [
+      'elements.preloads[0].kind',
+      biobuzz({ groups: [], preloads: [preload({ kind: 'nectarRed' })] })
+    ],
+    ['elements.preloads[0].body', biobuzz({ groups: [], preloads: [preload({ body: -2 })] })],
+    ['elements.preloads[0].body', biobuzz({ groups: [], preloads: [preload({ body: 3 })] })],
+    ['elements.preloads[0].body', biobuzz({ groups: [], preloads: [preload({ body: 0.5 })] })],
+    [
+      'elements.preloads[0].position',
+      biobuzz({ groups: [], preloads: [preload({ position: v(0, 11, 0) })] })
+    ],
+    [
+      'elements: season',
+      { ...withJoints(), elements: { groups: ['garden'], preloads: [] } } as WorldSpec
+    ]
+  ])('%s가 틀리면 그 이름을 돌려준다', (what, value) => {
+    expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  it('경기 요소는 충돌 칸 뒤, 이름·참조 검사 앞에 읽는다', () => {
+    const bad = { ...biobuzz({ groups: ['flower'], preloads: [] }) }
+    expect(
+      parseWorldSpec({ ...bad, robot: { ...bad.robot, colliders: [cylinder({ radius: 0 })] } })
+    ).toBe('robot.colliders[0].radius')
+    expect(parseWorldSpec({ ...bad, noise: null })).toBe('noise')
+    expect(
+      parseWorldSpec({ ...bad, motors: [withJoints().motors[0], withJoints().motors[0]] })
+    ).toBe('elements.groups[0]')
   })
 })

@@ -18,6 +18,7 @@ import FrameAxes from '../scene/FrameAxes'
 import ImuIndicators from '../scene/ImuIndicators'
 import SensorGizmos from '../scene/SensorGizmos'
 import ColliderGizmos from '../collider/ColliderGizmos'
+import PreloadGizmos from '../preload/PreloadGizmos'
 import CameraGizmos from '../scene/CameraGizmos'
 import { FIELD_VIEW_POSITION } from '../scene/frameHooks'
 import SceneObjectsView from '../scene/SceneObjectsView'
@@ -160,6 +161,8 @@ function ScenePanel(): React.JSX.Element {
         <CameraGizmos />
         {/* 고른 오브젝트(와 상위·하위 관절)의 몸체 충돌 형상(5, Unity 충돌체 기즈모) */}
         <ColliderGizmos />
+        {/* 고른 오브젝트(와 하위)의 Preload Slot 자리(6a, 와이어 구) */}
+        <PreloadGizmos />
         <TransformHandles />
         <EditorCameraControls />
         <FocusController />

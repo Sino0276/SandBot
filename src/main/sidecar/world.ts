@@ -1,7 +1,8 @@
 import type { DeviceValues } from '../../shared/sidecarProtocol'
 import type { SimNoticeCode } from '../../shared/play'
+import type { GameState } from '../../shared/sim/elements/gameState'
 import { PhysicsWorld } from '../../shared/sim/world'
-import type { SimPose, WorldSpec } from '../../shared/sim/worldSpec'
+import type { SimElementState, SimPose, WorldSpec } from '../../shared/sim/worldSpec'
 
 // 사이드카 바깥의 세계(시뮬레이터). 틱이 도착할 때마다 그 틱의 장치 출력을 받아, 그 틱 답(tickReply)에 실을 센서
 // 값(장치 이름 → 값)을 돌려준다. 구현은 src/shared/sim/world.ts의 PhysicsWorld(2단계)이고, 세계가 없으면 EMPTY_WORLD.
@@ -12,6 +13,9 @@ export interface SimWorld {
   pose(): SimPose | null
   // 쌓인 안내를 꺼낸다(호스트가 simNotice 이벤트로 보낸다)
   drainNotices(): { code: SimNoticeCode; params: Record<string, string> }[]
+  // 경기 요소(6a): 표시 상태(호스트가 revision이 바뀔 때 gameState 이벤트로 보낸다)와 끝 상태(6d 이어 가기). 공이 없으면 null
+  gameState?(): GameState | null
+  elementSnapshot?(): SimElementState[] | null
 }
 
 export const EMPTY_WORLD: SimWorld = {

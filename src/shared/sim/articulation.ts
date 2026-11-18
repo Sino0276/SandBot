@@ -1,3 +1,4 @@
+import { solveDenseLcp } from './denseLcp'
 import { GRAVITY } from './physics'
 import type { Pose2, SimBody, SimJointSpec, Vec3 } from './worldSpec'
 import { planarFrame, type Frame3 } from './sensorFrame'
@@ -71,7 +72,21 @@ export type ContactFriction =
   | { normal: string; mu: number }
   | { patch: readonly { normal: string; weight: number }[]; mu: number; cap?: number }
 
+// 경기 요소(6a, spec-6a §2.5) 행의 공 부분: ContactSet.elements의 공 순번과 그 공의 6-벡터 a = [d; (p − x)×d](필드 축, 행
+// 속도에 a·u를 더한다. u = [v; ω]는 그 공의 속도). 공끼리 행은 부분이 둘이다
+export type ElementPart = { element: number; a: readonly number[] }
+
+// 로봇 섬에 묶인 공(6a, Schur 보수): 공마다 W = diag(1/m ×3, 1/I ×3)(등방 관성)와 자유 예측 속도 u* = [v; ω](6개씩, 필드
+// 축). 관절 나무에 넣지 않고 행렬 A·b에 W 블록만 더한다(질량 행렬이 커지지 않는다)
+export type CoupledElements = {
+  count: number
+  invMass: readonly number[]
+  invInertia: readonly number[]
+  velocity: readonly number[]
+}
+
 // 밖에서 주는 구속 행(z 공간). lo·hi는 충격(힘 × h)이다. friction이 있으면 상자를 ±(ContactFriction 상자)로 정한다(lo·hi 무시).
+// elements·compliance(6a): 공 부분과 순응 γ(w = J·v⁺ + Σa·u⁺ + γ·λ − 목표, 부드러운 법선·접선). 둘 다 없으면 5 전과 같은 행이다
 export type ContactRow = {
   key: string
   j: number[]
@@ -79,12 +94,15 @@ export type ContactRow = {
   lo: number
   hi: number
   friction?: ContactFriction
+  elements?: readonly ElementPart[]
+  compliance?: number
 }
 
-// 하위 단계 하나의 밖에서 주는 행과 행 점성 감쇠(힘 = −c·(j·v), c > 0)
+// 하위 단계 하나의 밖에서 주는 행과 행 점성 감쇠(힘 = −c·(j·v), c > 0). elements(6a)는 공 부분이 있는 행이 가리키는 공들
 export type ContactSet = {
   rows: readonly ContactRow[]
   damping: readonly { j: readonly number[]; c: number }[]
+  elements?: CoupledElements
 }
 
 export type ArticulationOptions = {
@@ -310,6 +328,10 @@ const LCP_MAX_ITERATIONS = 2000
 // 쓰면 562회). P 행렬에서 Murty 규칙은 유한하다. 이 수 안에 끝나는 풀이(3b–4e 시험과 기준 해시의 모든 풀이, 보통 10번 안)는 연산이
 // 그대로다]
 const LCP_MURTY_ONLY_AFTER = 200
+// 조밀 LCP(공 행이 있는 풀이, constrainedCoupled)가 고른 시작 상태에서 이만큼 넘게 돌면 그 엇갈림 회차의 시작 상태를 바꾼다
+// (바로 앞 풀이의 상태 ↔ 앞 하위 단계의 같은 회차 상태)[결정: 6a 최종 확인 2. 시작 상태가 답에 가까운 풀이는 10번 안에 끝나고
+// (쐐기가 이어지는 동안 0–9번), 두 답을 오가는 엇갈림의 2회차는 46–600번이었다]
+const DENSE_RESTART_ITERATIONS = 32
 
 // 행의 끝 상태: 아래 경계, 자유(w = 0), 위 경계
 export type LcpState = 'lower' | 'free' | 'upper'
@@ -436,8 +458,175 @@ type Body = {
   jointOrigin: V3
 }
 
-// 구속 행. key는 하위 단계 사이에서 같은 행을 알아보는 이름(LCP를 앞 답에서 시작한다)
-export type Row = { key: string; j: number[]; target: number; lo: number; hi: number }
+// 구속 행. key는 하위 단계 사이에서 같은 행을 알아보는 이름(LCP를 앞 답에서 시작한다). elements·compliance는 6a 공 행(ContactRow)
+export type Row = {
+  key: string
+  j: number[]
+  target: number
+  lo: number
+  hi: number
+  elements?: readonly ElementPart[]
+  compliance?: number
+}
+
+// 6a 공 행인지(공 부분이나 순응이 있음). 아니면 3b–5의 연산 그대로다
+const isElementRow = (row: Row): boolean =>
+  row.elements !== undefined || row.compliance !== undefined
+
+// 두 행의 공 부분 블록 Σ_{같은 공} a_kᵀ W a_l(W = diag(1/m ×3, 1/I ×3))
+function elementBlock(
+  k: readonly ElementPart[] | undefined,
+  l: readonly ElementPart[] | undefined,
+  coupled: CoupledElements
+): number {
+  if (k === undefined || l === undefined) return 0
+  let sum = 0
+  for (const p of k)
+    for (const q of l) {
+      if (p.element !== q.element) continue
+      const im = coupled.invMass[p.element]
+      const ii = coupled.invInertia[p.element]
+      const a = p.a
+      const b = q.a
+      sum += im * (a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
+      sum += ii * (a[3] * b[3] + a[4] * b[4] + a[5] * b[5])
+    }
+  return sum
+}
+
+// constrainedCoupled의 A_kl = j_k·y_l + Σ_{같은 공} a_kᵀW a_l + δ_kl·γ_k(y_l = M̂⁻¹j_lᵀ, 행 우선 n×n)를 out에 쓴다. out의 앞 n²
+// 칸은 +0이어야 한다. nonzero[k]: j_k의 0이 아닌 열(오름차순, j_k[c] !== 0인 c < 좌표 수), y[l]: j_l이 모두 0이면 null.
+// 칸마다 연산은 모든 짝을 도는 식 그대로다: value = (y_l이 있으면 j_k·y_l, 아니면 0) → += elementBlock(coupled일 때) → 대각이면
+// += 순응. 0인 항은 건너뛴다: j·y는 0이 아닌 열만 오름차순으로 더하는 같은 합이고(0인 열은 그 식도 건너뛴다), j나 y가 없는 짝의
+// 값은 +0이며, 공을 함께 쓰지 않는 짝의 elementBlock은 +0이다. 칸 값은 +0에서 더해 온 합이라 −0이 아니므로 +0을 더하지 않아도
+// 비트가 같다. 대칭이라 위 삼각(k ≤ l)만 계산하고 대칭 칸에도 같은 값을 적는다(6a 성능, P6 쐐기: 로봇 섬 행의 절반은 j가 0인 공끼리·
+// 정적 행이고, 공 부분은 같은 공을 가리키는 짝에만 있다)
+export function writeCoupledMatrix(
+  rows: readonly Row[],
+  y: readonly (readonly number[] | null)[],
+  nonzero: readonly (readonly number[])[],
+  coupled: CoupledElements | undefined,
+  out: Float64Array
+): void {
+  const n = rows.length
+  const withY: number[] = []
+  for (let l = 0; l < n; l++) if (y[l]) withY.push(l)
+  let from = 0
+  for (let k = 0; k < n; k++) {
+    while (from < withY.length && withY[from] < k) from++
+    const jk = rows[k].j
+    const columns = nonzero[k]
+    if (columns.length === 0) continue
+    for (let w = from; w < withY.length; w++) {
+      const l = withY[w]
+      const col = y[l] as readonly number[]
+      let sum = 0
+      for (let t = 0; t < columns.length; t++) {
+        const c = columns[t]
+        sum += jk[c] * col[c]
+      }
+      out[k * n + l] = sum
+      out[l * n + k] = sum
+    }
+  }
+  if (coupled) addElementBlocks(rows, coupled, out)
+  for (let k = 0; k < n; k++) out[k * n + k] += rows[k].compliance ?? 0
+}
+
+// 칸 A_kl(k ≤ l, 행 우선 n×n, 대칭 칸 A_lk도 같은 값으로)에 elementBlock을 더한다(writeCoupledMatrix). 공을 함께 쓰지 않는 짝의
+// elementBlock은 +0이라 행 k마다 그 행의 공을 가리키는 뒤 행(공마다 오름차순 목록을 합친 것, 겹침 없음)만 본다. 공 번호가 표
+// 밖이면(만든 쪽의 잘못) 모든 짝에 더한다(전과 같은 값). 행이 수십 개인 로봇 섬에서 모든 짝의 부분을 훑지 않게(6a 성능, P6 쐐기)
+function addElementBlocks(rows: readonly Row[], coupled: CoupledElements, a: Float64Array): void {
+  const n = rows.length
+  const byElement: number[][] = Array.from({ length: coupled.count }, () => [])
+  let unknown = false
+  for (let k = 0; k < n; k++) {
+    const parts = rows[k].elements
+    if (parts === undefined) continue
+    for (const part of parts) {
+      const list = Number.isInteger(part.element) ? byElement[part.element] : undefined
+      if (!list) unknown = true
+      else if (list[list.length - 1] !== k) list.push(k)
+    }
+  }
+  const add = (k: number, l: number): void => {
+    const value = a[k * n + l] + elementBlock(rows[k].elements, rows[l].elements, coupled)
+    a[k * n + l] = value
+    a[l * n + k] = value
+  }
+  if (unknown) {
+    for (let k = 0; k < n; k++) for (let l = k; l < n; l++) add(k, l)
+    return
+  }
+  // 목록 안 자리(행 k가 공 e 목록의 몇째인지는 앞에서부터 센다: 행을 오름차순으로 돌므로 자리도 늘기만 한다)
+  const at = new Int32Array(coupled.count)
+  for (let k = 0; k < n; k++) {
+    const parts = rows[k].elements
+    if (parts === undefined || parts.length === 0) continue
+    if (parts.length === 1) {
+      const e = parts[0].element
+      const list = byElement[e]
+      while (list[at[e]] < k) at[e]++
+      for (let i = at[e]; i < list.length; i++) add(k, list[i])
+      continue
+    }
+    // 공이 둘 이상인 행: 그 공들의 목록에서 k 이상인 행을 오름차순으로 겹치지 않게 모은다
+    const seen: number[] = []
+    for (const part of parts) {
+      const e = part.element
+      const list = byElement[e]
+      while (list[at[e]] < k) at[e]++
+      for (let i = at[e]; i < list.length; i++) seen.push(list[i])
+    }
+    seen.sort((x, y) => x - y)
+    for (let i = 0; i < seen.length; i++) if (i === 0 || seen[i] !== seen[i - 1]) add(k, seen[i])
+  }
+}
+
+// 두 배열의 길이와 값이 모두 같은지(Object.is: −0과 +0, NaN도 가른다)
+function sameValues(a: readonly number[], b: readonly number[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false
+  return true
+}
+
+// 행의 공 부분 속도 Σ a·u(u는 공마다 6개)
+function elementRate(parts: readonly ElementPart[] | undefined, u: readonly number[]): number {
+  if (parts === undefined) return 0
+  let sum = 0
+  for (const p of parts) {
+    const o = 6 * p.element
+    const a = p.a
+    sum +=
+      a[0] * u[o] +
+      a[1] * u[o + 1] +
+      a[2] * u[o + 2] +
+      a[3] * u[o + 3] +
+      a[4] * u[o + 4] +
+      a[5] * u[o + 5]
+  }
+  return sum
+}
+
+// 공 속도에 충격 λ의 몫 u += W·a·λ를 더한다
+function applyElementImpulse(
+  parts: readonly ElementPart[] | undefined,
+  lambda: number,
+  coupled: CoupledElements,
+  u: number[]
+): void {
+  if (parts === undefined || lambda === 0) return
+  for (const p of parts) {
+    const o = 6 * p.element
+    const im = coupled.invMass[p.element] * lambda
+    const ii = coupled.invInertia[p.element] * lambda
+    for (let i = 0; i < 3; i++) {
+      u[o + i] += im * p.a[i]
+      u[o + 3 + i] += ii * p.a[3 + i]
+    }
+  }
+}
 
 // ---- 몸체 충돌(5, spec-5 §4.1)의 접촉 틀 ----
 
@@ -484,12 +673,33 @@ export class Articulation {
   private readonly gravity: number
   // 앞 하위 단계 LCP의 행 상태(이름으로 찾기만 한다)
   private lcpStates = new Map<string, LcpState>()
+  // 조밀 LCP(constrainedCoupled)의 시작 상태 고르기: 마찰 상자 엇갈림 회차(0·1)마다 그 회차의 마지막 풀이가 끝난 상태와, 그
+  // 회차를 그 상태에서 시작할지(아니면 바로 앞 풀이의 상태 lcpStates에서)
+  private denseRoundStates: (Map<string, LcpState> | null)[] = [null, null]
+  private denseFromSameRound = [false, false]
   // 앞 하위 단계의 밖에서 준 행 충격(키 → λ)과 그 하위 단계 길이(벽 마찰 엇갈림의 1회차가 쓴다)
   private contactImpulses = new Map<string, number>()
   private lastH = 0
   // 기저 렌치에 쓰는 좌표 가속(저역 통과)과 그 시간 상수
   private readonly loadFilterTau: number
   private filteredAccel: number[]
+  // 마지막 step에 로봇 섬으로 묶인 공의 속도 u⁺(6a, 공마다 [v; ω] 6개, ContactSet.elements 순서). 없으면 null
+  private elementU: number[] | null = null
+  // constrainedCoupled의 행 열 M̂⁻¹jᵀ와 j의 0이 아닌 열(같은 M̂ 분해 동안 j 배열마다 한 번). 엇갈림 2회차·한계를 더해 다시 푸는
+  // 풀이는 같은 분해와 같은 j 배열(ContactRow.j, 마찰 상자 행)을 다시 쓰므로 같은 ldlSolve를 되풀이하지 않는다(같은 입력의 같은
+  // 연산이라 값이 같다. 6a 성능, P6 쐐기). 분해가 바뀌면 비운다
+  private columns: {
+    factor: { l: number[][]; d: number[] } | null
+    map: Map<readonly number[], { y: number[] | null; nonzero: number[] }>
+  } = { factor: null, map: new Map() }
+  // coupledMatrix가 A를 쓰는 버퍼(커지기만 한다)와 마지막으로 만든 행렬의 입력(같으면 그대로 다시 쓴다)
+  private matrixBuffer = new Float64Array(0)
+  private lastMatrix: {
+    factor: { l: number[][]; d: number[] }
+    coupled: CoupledElements | undefined
+    rows: { j: readonly number[]; elements?: readonly ElementPart[]; compliance?: number }[]
+    a: Float64Array
+  } | null = null
 
   constructor(joints: readonly SimJointSpec[], options: ArticulationOptions = {}) {
     this.joints = joints
@@ -588,6 +798,12 @@ export class Articulation {
   // 앞 하위 단계에서 밖에서 준 행 key의 충격(N·s 또는 N·m·s), 그 행이 없었으면 0
   contactImpulse(key: string): number {
     return this.contactImpulses.get(key) ?? 0
+  }
+
+  // 마지막 step에 로봇 섬으로 묶인 공의 속도 u⁺(6a, 공마다 [v; ω] 필드 축 6개, 그 step의 ContactSet.elements 순서). 그 step에
+  // 묶인 공이 없었으면 null. 사본이다
+  elementVelocities(): Float64Array | null {
+    return this.elementU ? Float64Array.from(this.elementU) : null
   }
 
   // 관절 변위 q = S·z(세계 설명 관절 순번)
@@ -981,6 +1197,8 @@ export class Articulation {
     }
     const momentum = mz.map((row) => row.reduce((sum, x, c) => sum + x * this.v[c], 0))
     const contactRows = contacts?.rows ?? []
+    // 로봇 섬의 공(6a). 없으면 아래 풀이가 3b–5의 연산 그대로다
+    const coupled = contacts?.elements
     // 마찰 행이 있으면 엇갈림 2회(1회차 법선은 앞 하위 단계의 같은 키 힘을 이번 h로 바꾼 것)
     const staggered = contactRows.some((row) => row.friction)
     const previous = (key: string): number =>
@@ -993,6 +1211,8 @@ export class Articulation {
       // 마지막 풀이의 밖에서 준 행(마찰 상자를 정한 것)과 그 충격(한계 충격 풀이가 이어 쓴다)
       external: Row[]
       externalLambda: number[]
+      // 로봇 섬 공의 속도 u⁺(6a, 없으면 null)
+      u: number[] | null
     }
     const solve = (forces: DriveForces): Solution => {
       const mhat = mz.map((row, a) =>
@@ -1014,11 +1234,11 @@ export class Articulation {
         included[2 * i] = q[i] - joint.limits.lower <= reach
         included[2 * i + 1] = joint.limits.upper - q[i] <= reach
       })
-      const pass = (normal: (key: string) => number): Solution => {
+      const pass = (normal: (key: string) => number, round: 0 | 1): Solution => {
         const external = externalRows(contactRows, normal)
         for (;;) {
           const rows = [...friction, ...this.limitRows(q, h, included), ...external]
-          const { v, lambda } = this.constrained(factor, vStar, rows)
+          const { v, lambda, u } = this.constrained(factor, vStar, rows, coupled, round)
           // 빠진 한계가 넘으면 더해 다시 푼다
           const qNext = this.treeQ(v).map((rate, i) => q[i] + h * rate)
           let added = false
@@ -1038,12 +1258,12 @@ export class Articulation {
           const first = rows.length - external.length
           const externalLambda = external.map((_, k) => lambda[first + k])
           external.forEach((row, k) => impulses.set(row.key, externalLambda[k]))
-          return { v, factor, impulses, external, externalLambda }
+          return { v, factor, impulses, external, externalLambda, u }
         }
       }
-      const once = pass(previous)
+      const once = pass(previous, 0)
       if (!staggered) return once
-      return pass((key) => once.impulses.get(key) ?? 0)
+      return pass((key) => once.impulses.get(key) ?? 0, 1)
     }
 
     const first = drive(this.z, this.v)
@@ -1053,10 +1273,12 @@ export class Articulation {
 
     const v = solution.v
     const z = this.z.map((x, c) => x + h * v[c])
-    const impulses = this.clampLimits(z, v, solution.factor, h, solution)
+    const impulses = this.clampLimits(z, v, solution.factor, h, { ...solution, coupled })
     for (let c = 0; c < m; c++)
       if (!Number.isFinite(z[c]) || !Number.isFinite(v[c]))
         throw new Error('joint dynamics diverged')
+    if (solution.u && !solution.u.every((x) => Number.isFinite(x)))
+      throw new Error('joint dynamics diverged: element')
     if (this.offset > 0 && this.loadFilterTau > 0) {
       // 기저 렌치에 쓰는 가속: 이번 하위 단계 가속 (v⁺ − v)/h의 1차 저역 통과(정확한 이산화 α = 1 − e^(−h/τ))
       const alpha = 1 - Math.exp(-h / this.loadFilterTau)
@@ -1068,6 +1290,7 @@ export class Articulation {
     this.v = v
     this.contactImpulses = impulses
     this.lastH = h
+    this.elementU = solution.u
   }
 
   // 마찰 상자 행: 관절 쿨롱(행 S_i)과 구동의 좌표 상자. 같은 방향의 행은 하나로 합친다(상자를 더함).
@@ -1139,13 +1362,18 @@ export class Articulation {
     return rows
   }
 
-  // v⁺ = v* + M̂⁻¹Jᵀλ, λ는 상자 LCP의 해(행 순서)
+  // v⁺ = v* + M̂⁻¹Jᵀλ, λ는 상자 LCP의 해(행 순서). 공 행이나 로봇 섬 공이 있으면(6a) constrainedCoupled가 풀고, 없으면 아래가
+  // 3b–5의 연산 그대로다(기준 해시)
   private constrained(
     factor: { l: number[][]; d: number[] },
     vStar: number[],
-    rows: Row[]
-  ): { v: number[]; lambda: number[] } {
-    if (rows.length === 0) return { v: vStar, lambda: [] }
+    rows: Row[],
+    coupled: CoupledElements | undefined,
+    round: 0 | 1
+  ): { v: number[]; lambda: number[]; u: number[] | null } {
+    if (coupled !== undefined || rows.some(isElementRow))
+      return this.constrainedCoupled(factor, vStar, rows, coupled, round)
+    if (rows.length === 0) return { v: vStar, lambda: [], u: null }
     const m = vStar.length
     const dot = (j: readonly number[], x: readonly number[]): number => {
       let sum = 0
@@ -1180,7 +1408,152 @@ export class Articulation {
       }
       if (only >= 0) v[only] = row.target / row.j[only]
     })
-    return { v, lambda }
+    return { v, lambda, u: null }
+  }
+
+  // constrainedCoupled의 A = J·M̂⁻¹·Jᵀ + Σ aᵀW a + γ(행 우선 n×n)와 행 열 y = M̂⁻¹jᵀ. 같은 분해·같은 공 묶음에서 행마다 j(값)·공
+  // 부분(같은 배열)·순응이 앞 풀이와 같으면 앞 행렬을 그대로 쓴다(마찰 상자 엇갈림 2회차는 상자만 바뀐 같은 행을 다시 푼다. A는
+  // j·공 부분·순응만으로 정해지므로 같은 값이다). y는 같은 분해 동안 j 배열마다 한 번 푼다(columns). 6a 성능, P6 쐐기
+  private coupledMatrix(
+    factor: { l: number[][]; d: number[] },
+    rows: readonly Row[],
+    coupled: CoupledElements | undefined,
+    m: number
+  ): { a: Float64Array; y: (number[] | null)[] } {
+    const n = rows.length
+    if (this.columns.factor !== factor) this.columns = { factor, map: new Map() }
+    const columns = this.columns.map
+    const cached = rows.map((row) => {
+      let found = columns.get(row.j)
+      if (!found) {
+        const nonzero: number[] = []
+        for (let c = 0; c < m; c++) if (row.j[c] !== 0) nonzero.push(c)
+        found = { y: row.j.some((x) => x !== 0) ? ldlSolve(factor, row.j) : null, nonzero }
+        columns.set(row.j, found)
+      }
+      return found
+    })
+    const y = cached.map((c) => c.y)
+    const last = this.lastMatrix
+    if (
+      last !== null &&
+      last.factor === factor &&
+      last.coupled === coupled &&
+      last.rows.length === n &&
+      rows.every((row, k) => {
+        const before = last.rows[k]
+        return (
+          row.elements === before.elements &&
+          Object.is(row.compliance, before.compliance) &&
+          sameValues(row.j, before.j)
+        )
+      })
+    )
+      return { a: last.a, y }
+    // 버퍼를 다시 쓴다(하위 단계마다 수십 KB를 새로 만들지 않게). 앞 n² 칸은 +0으로(writeCoupledMatrix)
+    if (this.matrixBuffer.length < n * n)
+      this.matrixBuffer = new Float64Array(Math.max(n * n, 2 * this.matrixBuffer.length))
+    else this.matrixBuffer.fill(0, 0, n * n)
+    const a = this.matrixBuffer
+    writeCoupledMatrix(
+      rows,
+      y,
+      cached.map((c) => c.nonzero),
+      coupled,
+      a
+    )
+    this.lastMatrix = {
+      factor,
+      coupled,
+      rows: rows.map((row) => ({ j: row.j, elements: row.elements, compliance: row.compliance })),
+      a
+    }
+    return { a, y }
+  }
+
+  // 공 행이 있는 풀이(6a, spec-6a §2.5): KKT [[M̂, 0], [0, M_E]]·[v; u] = [p; p_E] + [Jᵀ; J_Eᵀ]λ에서 M_E가 대각이라 공을 Schur
+  // 보수로 접는다. A_kl = j_kᵀM̂⁻¹j_l + Σ_{같은 공} a_kᵀW a_l + δ_kl·γ_k, b_k = j_k·v* + Σ a_k·u* − 목표,
+  // v⁺ = v* + Σ M̂⁻¹j_k·λ_k, u⁺ = u* + W·Σ a_k·λ_k. 로봇 열이 0인 행(공끼리)은 M̂⁻¹을 풀지 않는다. 좌표 하나 행의 속도 맞추기는
+  // 공 부분이 없는 행에만 한다(공 행은 목표가 j·v만의 것이 아니다)
+  //
+  // 시작 상태(round: 마찰 상자 엇갈림 회차 0·1): 보통은 바로 앞 풀이가 끝난 상태(lcpStates: 1회차는 앞 하위 단계의 2회차,
+  // 2회차는 이번 1회차)다. 그 시작에서 DENSE_RESTART_ITERATIONS번 넘게 돈 회차는 다음부터 앞 하위 단계의 같은 회차가 끝난
+  // 상태에서 시작하고(없는 키는 lcpStates), 그 시작에서 또 그만큼 돌면 되돌린다[결정: 6a 최종 확인 2. 로봇이 공 넷을 벽에
+  // 누른 채 멈춰 서면 엇갈림의 1회차와 2회차 답이 하위 단계마다 같은 두 상태를 오갔다(행 상태 4–5개 차이: 섀시·롤러의 벽
+  // 마찰, 공끼리 접선. 마찰 상자는 59행이 91 %까지 다름). 답은 앞 하위 단계의 같은 회차와 같은데(차이 0) 1회차의 답에서
+  // 시작한 2회차의 블록 주축이 매번 60–600번을 돌아(104행, 번마다 약 0.2 ms) 미는 동안 내내 실시간의 0.03–0.3배였다(E2E 손 씬
+  // 로봇의 달려들기 144번 가운데 9번, 시작이 겹치지 않은 96번 가운데 6번)]. 시작 상태는 답을 찾는 길만 바꾼다: 정칙화한
+  // 행렬이 양정치라 답 λ는 하나다. 다만 힘이 거의 걸리지 않는 행(판정 허용 오차 안에서 아래·위 경계가 모두 맞는 행: 롤러와 벽
+  // 사이 비틀림 마찰 등)은 끝 상태가 길에 따라 달라, 문턱을 넘은 뒤의 실행은 고친 전과 반올림 너머로 다를 수 있다(같은 입력이면
+  // 같은 출력인 것은 그대로다. 기준 해시 아홉과 E2E 손 씬 오프라인 출력은 그대로다). 문턱 아래로만 푸는 실행은 이 길에 닿지
+  // 않아 연산이 그대로다
+  private constrainedCoupled(
+    factor: { l: number[][]; d: number[] },
+    vStar: number[],
+    rows: Row[],
+    coupled: CoupledElements | undefined,
+    round: 0 | 1
+  ): { v: number[]; lambda: number[]; u: number[] | null } {
+    const m = vStar.length
+    const u = coupled ? coupled.velocity.slice() : null
+    if (rows.length === 0) return { v: vStar, lambda: [], u }
+    const dot = (j: readonly number[], x: readonly number[]): number => {
+      let sum = 0
+      for (let c = 0; c < m; c++) if (j[c] !== 0) sum += j[c] * x[c]
+      return sum
+    }
+    const n = rows.length
+    const { a, y } = this.coupledMatrix(factor, rows, coupled, m)
+    const b = new Float64Array(n)
+    const start = new Uint8Array(n)
+    const sameRound = this.denseFromSameRound[round] ? this.denseRoundStates[round] : null
+    rows.forEach((row, k) => {
+      b[k] = dot(row.j, vStar) + (u ? elementRate(row.elements, u) : 0) - row.target
+      const given = sameRound?.get(row.key) ?? this.lcpStates.get(row.key)
+      start[k] = given === 'lower' ? 0 : given === 'upper' ? 2 : given === 'free' ? 1 : 3
+    })
+    // 공 행이 있는 풀이는 denseLcp.ts(근접점 반복 없음, 작업 배열 재사용)로 푼다: 공 수십 행이 든 로봇 섬에서 solveBoxLcp의 근접점
+    // 반복이 하위 단계 시간의 대부분이었다(spec-6a §2.7 성능). 공 행이 없는 풀이는 위 constrained가 solveBoxLcp 그대로다
+    const solved = solveDenseLcp(
+      n,
+      a,
+      b,
+      rows.map((r) => r.lo),
+      rows.map((r) => r.hi),
+      start
+    )
+    // 타입 배열을 배열로(같은 값, Array.from보다 빠르다)와 다음 하위 단계의 시작 상태(키 → 상태, 같은 삽입 순서)
+    const names: LcpState[] = ['lower', 'free', 'upper']
+    const lambda = new Array<number>(n)
+    const states = new Array<LcpState>(n)
+    const nextStates = new Map<string, LcpState>()
+    for (let k = 0; k < n; k++) {
+      lambda[k] = solved.lambda[k]
+      states[k] = names[solved.states[k]]
+      nextStates.set(rows[k].key, states[k])
+    }
+    this.lcpStates = nextStates
+    this.denseRoundStates[round] = nextStates
+    if (solved.iterations > DENSE_RESTART_ITERATIONS)
+      this.denseFromSameRound[round] = !this.denseFromSameRound[round]
+    const v = vStar.slice()
+    rows.forEach((row, k) => {
+      if (lambda[k] === 0) return
+      const col = y[k]
+      if (col) for (let c = 0; c < m; c++) v[c] += col[c] * lambda[k]
+      if (coupled && u) applyElementImpulse(row.elements, lambda[k], coupled, u)
+    })
+    rows.forEach((row, k) => {
+      if (states[k] !== 'free' || row.elements !== undefined || row.compliance !== undefined) return
+      let only = -1
+      for (let c = 0; c < row.j.length; c++) {
+        if (row.j[c] === 0) continue
+        if (only >= 0) return
+        only = c
+      }
+      if (only >= 0) v[only] = row.target / row.j[only]
+    })
+    return { v, lambda, u }
   }
 
   // z 공간 자르기: S 행이 성분 하나(s·z_c)인 한계 관절은 z_c를 [lo, hi]/s 안에 둔다(리깅으로 묶인 관절은 정확한 LCP가 맡는다).
@@ -1212,6 +1585,9 @@ export class Articulation {
       impulses: Map<string, number>
       external: readonly Row[]
       externalLambda: readonly number[]
+      // 6a: 로봇 섬 공과 그 속도 u⁺(이 풀이가 충격 몫을 더한다). 없으면 3b–5 연산 그대로
+      coupled?: CoupledElements
+      u?: number[] | null
     }
   ): Map<string, number> {
     const m = this.coordinates.length
@@ -1272,9 +1648,30 @@ export class Articulation {
     const all = [...rows.map((row) => row.j), ...external.map((row) => row.j)]
     const y = all.map((j) => ldlSolve(factor, j))
     const a = all.map((j) => y.map((col) => dot(j, col)))
+    const b = [
+      ...rows.map((row) => dot(row.j, v)),
+      ...external.map((row) => dot(row.j, v) - row.target)
+    ]
+    // 6a 공 행: 같은 공의 W 블록과 순응 γ, w에 공 속도 a·u⁺와 본 풀이 충격의 γ·λ_본을 더한다(합 λ의 순응 행 w = J·v⁺ + a·u⁺ +
+    // γ·(λ_본 + λ_충격) − 목표). 공 행이 없으면 아무것도 바꾸지 않는다(3b–5 연산 그대로)
+    const elementSet = contacts.coupled
+    const u = contacts.u ?? null
+    if (elementSet && u) {
+      const first = rows.length
+      external.forEach((row, k) => {
+        if (!isElementRow(row)) return
+        const i = first + k
+        b[i] += elementRate(row.elements, u) + (row.compliance ?? 0) * contacts.externalLambda[k]
+        external.forEach((other, l) => {
+          if (other.elements !== undefined)
+            a[i][first + l] += elementBlock(row.elements, other.elements, elementSet)
+        })
+        a[i][i] += row.compliance ?? 0
+      })
+    }
     const { lambda, states } = solveBoxLcp(
       a,
-      [...rows.map((row) => dot(row.j, v)), ...external.map((row) => dot(row.j, v) - row.target)],
+      b,
       [...rows.map(() => 0), ...external.map((row, k) => row.lo - contacts.externalLambda[k])],
       [
         ...rows.map(() => Infinity),
@@ -1304,6 +1701,10 @@ export class Articulation {
       else if (z[c] > high[c]) z[c] = high[c]
     }
     this.placeCoupled(z, coupled, rows, active, held, gap, low, high)
+    if (elementSet && u)
+      external.forEach((row, k) =>
+        applyElementImpulse(row.elements, lambda[rows.length + k], elementSet, u)
+      )
     if (external.length === 0) return contacts.impulses
     const impulses = new Map(contacts.impulses)
     external.forEach((row, k) => {
@@ -1405,6 +1806,9 @@ export function externalRows(rows: readonly ContactRow[], normal: (key: string) 
       if (!(bound > 0)) continue
       out.push({ key: row.key, j: row.j, target: row.target, lo: -bound, hi: bound })
     } else out.push({ key: row.key, j: row.j, target: row.target, lo: row.lo, hi: row.hi })
+    // 6a 공 행의 공 부분·순응을 옮긴다(없으면 키를 두지 않아 5 전과 같은 행 객체)
+    if (row.elements !== undefined) out[out.length - 1].elements = row.elements
+    if (row.compliance !== undefined) out[out.length - 1].compliance = row.compliance
   }
   return out
 }

@@ -54,4 +54,18 @@ describe('SimulationPreferences 처리기', () => {
     )
     expect(notes).toHaveLength(1)
   })
+
+  it('6a: 경기 요소 체크가 updateSettings({ gameElements })를 부르고 도움말이 있다', () => {
+    for (const checked of [true, false]) {
+      state.settings = { ...DEFAULT_PLAY_SETTINGS, gameElements: !checked }
+      state.updateSettings.mockClear()
+      const label = labelWith(SimulationPreferences(), 'preferences.simulation.gameElements')
+      expect(label).toBeDefined()
+      expect(label!.props.title).toBe('preferences.simulation.gameElementsHint')
+      const input = elements(label!.props.children as ReactNode).find((e) => e.type === 'input')!
+      expect(input.props.checked).toBe(!checked)
+      ;(input.props.onChange as (event: unknown) => void)({ target: { checked } })
+      expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith({ gameElements: checked })
+    }
+  })
 })

@@ -3,7 +3,9 @@ import {
   bodyShape,
   collideHulls,
   collideShapes,
+  cylinderColliderPoints,
   cylinderPrism,
+  CYLINDER_COLLIDER_SIDES,
   CYLINDER_SIDES,
   editPoseOverlaps,
   EDIT_OVERLAP_TOLERANCE,
@@ -808,5 +810,72 @@ describe('편집 자세 겹침·시작 겹침', () => {
       friction: 0.1
     })
     expect(boxShape?.kind === 'hull' && boxShape.hull.faces.length).toBe(6)
+  })
+})
+
+// 6a 계약: 원기둥 충돌체의 공이 아닌 짝 근사(외접 32각 기둥)
+describe('원기둥 충돌체 껍질', () => {
+  const r = 0.024
+  const cases: [string, Vec3, Vec3][] = [
+    ['y축', { x: 0.1, y: -0.15, z: 0.05 }, { x: 0.1, y: 0.15, z: 0.05 }],
+    ['기운 축', { x: 0.02, y: 0.01, z: -0.03 }, { x: 0.11, y: -0.07, z: 0.2 }]
+  ]
+
+  it.each(cases)('%s: 64점, 축에서 r / cos(π/32), 참 원기둥을 품고 옆면이 닿는다', (_, a, b) => {
+    const points = cylinderColliderPoints(a, b, r)
+    expect(points).toHaveLength(2 * CYLINDER_COLLIDER_SIDES)
+    const pa = [a.x, a.y, a.z]
+    const d = [b.x - a.x, b.y - a.y, b.z - a.z]
+    const len = Math.hypot(d[0], d[1], d[2])
+    const u = d.map((v) => v / len)
+    const big = r / Math.cos(Math.PI / 32)
+    for (const p of points) {
+      const w = [p.x - pa[0], p.y - pa[1], p.z - pa[2]]
+      const along = w[0] * u[0] + w[1] * u[1] + w[2] * u[2]
+      const radial = Math.hypot(w[0] - along * u[0], w[1] - along * u[1], w[2] - along * u[2])
+      expect(radial).toBeCloseTo(big, 14)
+    }
+    const shape = bodyShape({ kind: 'cylinder', a, b, radius: r, friction: 0.4 })
+    expect(shape?.kind).toBe('hull')
+    const hull = (shape as Extract<typeof shape, { kind: 'hull' }>).hull
+    expect(hull.faces).toHaveLength(CYLINDER_COLLIDER_SIDES + 2)
+    expect(hull.volume).toBeGreaterThan(Math.PI * r * r * len)
+    // 참 원기둥 둘레 점(두 뚜껑, 1° 간격)은 모든 면 안이고, 옆면 하나하나는 원에 닿는다
+    const e =
+      Math.abs(u[0]) <= Math.abs(u[1]) && Math.abs(u[0]) <= Math.abs(u[2]) ? [1, 0, 0] : [0, 0, 1]
+    const v1 = [u[1] * e[2] - u[2] * e[1], u[2] * e[0] - u[0] * e[2], u[0] * e[1] - u[1] * e[0]]
+    const n1 = Math.hypot(v1[0], v1[1], v1[2])
+    const p1 = v1.map((x) => x / n1)
+    const p2 = [
+      u[1] * p1[2] - u[2] * p1[1],
+      u[2] * p1[0] - u[0] * p1[2],
+      u[0] * p1[1] - u[1] * p1[0]
+    ]
+    const samples: number[][] = []
+    for (let deg = 0; deg < 360; deg++) {
+      const c = Math.cos((deg * Math.PI) / 180)
+      const s = Math.sin((deg * Math.PI) / 180)
+      for (const t of [0, len])
+        samples.push([0, 1, 2].map((k) => pa[k] + t * u[k] + r * (c * p1[k] + s * p2[k])))
+    }
+    for (const face of hull.faces) {
+      const n = [face.normal.x, face.normal.y, face.normal.z]
+      const outside = Math.max(
+        ...samples.map((q) => n[0] * q[0] + n[1] * q[1] + n[2] * q[2] - face.offset)
+      )
+      expect(outside).toBeLessThan(1e-12)
+      const side = Math.abs(n[0] * u[0] + n[1] * u[1] + n[2] * u[2]) < 1e-9
+      if (side) {
+        // 닿는 점(면 법선 방향의 원 위 점)과 면의 거리
+        const proj = n.map((x, k) => x - (n[0] * u[0] + n[1] * u[1] + n[2] * u[2]) * u[k])
+        const touch = [0, 1, 2].map((k) => pa[k] + r * proj[k])
+        expect(n[0] * touch[0] + n[1] * touch[1] + n[2] * touch[2] - face.offset).toBeCloseTo(0, 12)
+      }
+    }
+  })
+
+  it('축 길이 0은 던진다(parseWorldSpec가 막는다)', () => {
+    const a = { x: 0, y: 0, z: 0 }
+    expect(() => cylinderColliderPoints(a, a, r)).toThrow(RangeError)
   })
 })

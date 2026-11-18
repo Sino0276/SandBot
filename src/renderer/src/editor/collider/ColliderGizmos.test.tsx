@@ -23,7 +23,9 @@ import { useSceneVisibilityStore } from '../sceneVisibility'
 import ColliderGizmos from './ColliderGizmos'
 import {
   capsuleSegments,
+  cylinderSegments,
   colliderGizmoTargets,
+  colliderSegments,
   CAPSULE_SEGMENTS,
   gizmoBodyNumbers
 } from './colliderGizmoModel'
@@ -164,6 +166,25 @@ describe('B14 대상 규칙', () => {
       const x = Math.min(0.2, Math.max(0, capsule[i]))
       expect(Math.hypot(capsule[i] - x, capsule[i + 1], capsule[i + 2])).toBeCloseTo(0.02, 9)
     }
+  })
+})
+
+describe('6a 원기둥 기즈모', () => {
+  it('뚜껑 원 둘(32분할)과 옆선 넷, 모든 점이 축에서 반지름 거리이고 뚜껑 평면 위, 길이 0이면 없음', () => {
+    const a = { x: 0, y: 0, z: 0 }
+    const b = { x: 0, y: 0.1, z: 0 }
+    const segments = cylinderSegments(a, b, 0.03)
+    expect(segments.length / 6).toBe(2 * CAPSULE_SEGMENTS + 4)
+    for (let i = 0; i < segments.length; i += 3) {
+      expect(Math.hypot(segments[i], segments[i + 2])).toBeCloseTo(0.03, 12)
+      const y = segments[i + 1]
+      expect(Math.abs(y) < 1e-12 || Math.abs(y - 0.1) < 1e-12).toBe(true)
+    }
+    expect(cylinderSegments(a, a, 0.03)).toEqual([])
+    // colliderSegments가 원기둥을 이것으로 그린다(같은 충돌체 객체면 같은 배열)
+    const collider = { kind: 'cylinder' as const, a, b, radius: 0.03, friction: 0.4 }
+    expect(colliderSegments(collider, null)).toEqual(segments)
+    expect(colliderSegments(collider, null)).toBe(colliderSegments(collider, null))
   })
 })
 

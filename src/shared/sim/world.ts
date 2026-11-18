@@ -15,8 +15,16 @@ import {
   type PowerStage,
   type ServoCommand
 } from './actuators'
-import { Articulation, type ContactRow, type ContactSet, type DriveForces } from './articulation'
+import {
+  Articulation,
+  type ContactFrames,
+  type ContactRow,
+  type ContactSet,
+  type DriveForces
+} from './articulation'
 import { BodyCollision, bodyCollisionNeeded } from './bodyCollision'
+import { ElementWorld, type ElementWorldOptions } from './elements/elementWorld'
+import type { GameState } from './elements/gameState'
 import {
   isBlockingNormal,
   ROLLER_RESISTANCE,
@@ -52,6 +60,7 @@ import type {
   SimDeadWheelSpec,
   SimMotorSpec,
   SimOtosSpec,
+  SimElementState,
   SimPinpointSpec,
   SimPose,
   SimServoParams,
@@ -105,6 +114,11 @@ import type {
 // (fieldSensors.ts) 시즌 필드 기본형에 광선을 쏴서 칩 원래 값을 보낸다. 하위 단계에서는 계산하지 않는다(칩 측정 주기 33 ms·
 // 100 ms보다 훨씬 짧은 5 ms 틱이라 충분하다). 관절 하위 센서는 관절 몸체에 붙는다. 센서가 없으면 아무것도 넣지 않아 기존
 // 입력열이 바이트 그대로다. 자기 로봇 형상은 광선을 가리지 않는다(시뮬레이터에 로봇 형상이 없다, 렌더러가 경고한다).
+//
+// 움직이는 경기 요소(6a, spec-6a §1): 세계 설명에 elements가 있을 때만 공(elements/elementWorld.ts)을 만든다. 공은 관절 나무 밖의
+// 6자유도 몸체이고 같은 하위 단계 격자에서 돈다. 로봇에 닿은 공의 행은 몸체 충돌 행 뒤에 붙여(blocked 거르기 뒤: 공은 blocked를
+// 켜지 않는다) art.step이 Schur 보수로 함께 풀고, 나머지 공 섬은 그 뒤에 따로 푼다. 동역학이 없는 로봇이면 공만 하위 단계를 돈다.
+// elements가 없으면 공 코드가 하나도 돌지 않아 6 전의 연산 그대로다(기준 해시 여덟).
 
 export const SUBSTEP_NANOS = 1_000_000
 // 한 번에 이보다 많은 하위 단계로 나누지 않는다(아주 긴 구간은 하위 단계가 1 ms보다 길어진다)
@@ -239,6 +253,8 @@ export type PhysicsWorldOptions = {
   field?: FieldSpec
   // 거리·컬러 센서 모델(시험 전용: 비유한 값 방어 시험 이중). 없으면 rangeSensor.ts·colorSensor.ts
   sensorModels?: SensorModels
+  // 경기 요소(시험 전용: 시작 상태·공기·잠들기 덮어쓰기, 6d 이어 가기의 이음새). 세계 설명에 elements가 있어야 쓴다
+  elements?: ElementWorldOptions
 }
 
 // src/main/sidecar/world.ts의 SimWorld를 구조적으로 구현한다(shared는 main을 가져오지 않는다. 형식 확인은 그 파일의
@@ -268,6 +284,8 @@ export class PhysicsWorld {
   private readonly cameras: FieldCameras | null
   // 몸체 충돌(5: 충돌 형상이 있고 동역학이 있을 때만)
   private readonly bodyCollision: BodyCollision | null
+  // 움직이는 경기 요소(6a: 세계 설명에 elements가 있을 때만)
+  private readonly elements: ElementWorld | null
   // 다음 허브 제어 표본 시각(ns)
   private nextSample = 0
 
@@ -345,6 +363,9 @@ export class PhysicsWorld {
     const art = this.articulation
     // 움직이는 것이 없으면(동역학 없음) 몸체 충돌도 없다
     this.bodyCollision = bodyCollisionNeeded(spec) && art ? new BodyCollision(spec, field) : null
+    // 시즌에 경기 요소가 없으면(parseWorldSpec가 막는다) 공을 만들지 않는다
+    this.elements =
+      spec.elements && field.elements ? new ElementWorld(spec, field, options.elements) : null
     // 관절 모터 장치 → (좌표, 기어모터 값). parseWorldSpec가 한 모터를 한 관절에만 두고 바퀴와 겹치지 않음을 확인한다.
     const jointMotors = new Map<string, { coordinate: number; dc: DcGearMotor }>()
     this.servos = []
@@ -462,6 +483,22 @@ export class PhysicsWorld {
     return pose
   }
 
+  // 경기 요소 표시 상태(6a, spec-6a §5: 공마다 줄인 자세 7칸과 표식, revision은 틱 끝에 줄인 값·표식이 바뀔 때만 늚). 세계
+  // 설명에 경기 요소가 없으면 null
+  gameState(): GameState | null {
+    return this.elements ? this.elements.gameState() : null
+  }
+
+  // 경기 요소의 전체 정밀도 상태(6a, 6d AUTO → TELEOP 이어 가기·시험). 세계 설명에 경기 요소가 없으면 null
+  elementSnapshot(): SimElementState[] | null {
+    return this.elements ? this.elements.snapshot() : null
+  }
+
+  // 경기 요소의 구 층(6c 센서·카메라 이음새). 없으면 null
+  elementTickState(): ReturnType<ElementWorld['tickState']> | null {
+    return this.elements ? this.elements.tickState() : null
+  }
+
   // 이번 하위 단계의 바퀴 법선 하중(N, spec.wheels 순서, 시험·표시용)
   supportLoads(): readonly number[] {
     return this.loads.slice()
@@ -503,15 +540,44 @@ export class PhysicsWorld {
       )
     const { starts, ends, hs } = gridSubsteps(tStart, dtNanos)
     for (let s = 0; s < hs.length; s++) {
-      if (this.articulation) this.substep(this.articulation, starts[s], hs[s], voltage)
+      if (this.articulation) this.substep(this.articulation, starts[s], hs[s], voltage, ends[s])
+      else if (this.elements) this.elementSubstep(this.elements, hs[s], ends[s])
       this.recordEncoders(ends[s])
     }
     if (this.articulation) this.motorCurrents(this.articulation, voltage)
+    const elements = this.elements
+    if (elements) {
+      // 틱 경계: 나간 공 다시 넣기(지금 로봇 자세·충돌체를 피한다)와 표시 상태
+      const art = this.articulation
+      elements.tick(tStart + dtNanos, {
+        pose: this.poseNow,
+        frames: () => (art ? art.contactFrames() : null),
+        floating: art !== null && art.basePose() !== null
+      })
+      elements.updateDisplay()
+      this.drainElements(elements)
+    }
+  }
+
+  // 동역학이 없는 로봇의 하위 단계: 공만(로봇은 시작 자세의 정적 섀시). 공 접촉 만들기가 던지면 공을 이 하위 단계에 멈춘다
+  private elementSubstep(elements: ElementWorld, h: number, tEnd: number): void {
+    try {
+      elements.prepare(null, null, h)
+    } catch (error) {
+      this.notify('worldError', { detail: error instanceof Error ? error.message : String(error) })
+      elements.failSubstep()
+    }
+    elements.finish(null, h, false, tEnd)
+    this.drainElements(elements)
+  }
+
+  private drainElements(elements: ElementWorld): void {
+    for (const notice of elements.drainNotices()) this.notify(notice.code, notice.params)
   }
 
   // 하위 단계 하나: 표본 시각이면 허브 제어기를 돌리고, 전력단·서보 명령·바퀴 하중으로 동역학을 h만큼 푼 뒤 원시 틱과
   // 오도메트리를 센다
-  private substep(art: Articulation, t: number, h: number, voltage: number): void {
+  private substep(art: Articulation, t: number, h: number, voltage: number, tEnd: number): void {
     if (t >= this.nextSample) {
       this.nextSample = (Math.floor(t / HUB_CONTROL_PERIOD_NANOS) + 1) * HUB_CONTROL_PERIOD_NANOS
       for (const motor of this.motors) {
@@ -540,12 +606,18 @@ export class PhysicsWorld {
       contacts = this.contacts(art, from, h)
       blocking = contacts.rows.filter(isBlockingNormal)
     }
+    const elements = this.elements
+    const collision = this.bodyCollision
+    let frames: ContactFrames | null = null
+    // 로봇 쪽 실패(접촉 틀·몸체 충돌 행·art.step이 던짐)
+    let failure: { error: unknown } | null = null
     try {
-      // 몸체 충돌 행은 art.step과 같은 try 안에서 만든다(껍질·NaN 버그로 던져도 아래 복구를 쓴다, C-M10). 바퀴·벽 행 뒤에 붙이고,
-      // blocked는 섀시–정적 법선 행만 센다(관절 몸체·자기 충돌 행은 세지 않는다, spec-5 §1.1)
-      const collision = this.bodyCollision
+      // 몸체 충돌 행이 던지면(껍질·NaN 버그, C-M10) art.step이 던진 것과 같은 복구를 쓴다. 바퀴·벽 행 뒤에 붙이고, blocked는
+      // 섀시–정적 법선 행만 센다(관절 몸체·자기 충돌 행은 세지 않는다, spec-5 §1.1)
+      // 접촉 틀은 몸체 충돌과 공이 같이 쓴다(한 번만 계산한다. 순수 함수라 따로 부른 것과 같은 값이다)
+      frames = collision || elements ? art.contactFrames() : null
       if (collision) {
-        const made = collision.rows(art, h, art.coordinates.length)
+        const made = collision.rows(art, h, art.coordinates.length, frames as ContactFrames)
         for (const notice of made.notices) this.notify(notice.code, notice.params)
         if (made.rows.length > 0)
           contacts = contacts
@@ -553,14 +625,56 @@ export class PhysicsWorld {
             : { rows: made.rows, damping: [] }
         blocking = [...blocking, ...made.blocking]
       }
-      art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
-      if (collision) for (const n of collision.afterStep(art, h)) this.notify(n.code, n.params)
     } catch (error) {
+      failure = { error }
+    }
+    // 공 행(6a)은 몸체 충돌 행 뒤, blocked 거르기 뒤에 붙인다(공은 blocked를 켜지 않는다). 공과 로봇은 실패를 서로 가둔다[결정: 6a
+    // 리뷰]: 몸체 충돌 행이 던져도(접촉 틀은 있음) 공은 접촉을 만들어 아래 복구에서 로봇 섬 밖의 섬을 풀고, 공 접촉 만들기가
+    // 던지면(elementWorld.ts가 공 단위로 못 가둔 것) 공만 이 하위 단계에 멈추고 로봇은 공 행 없이 간다. 접촉 틀이 없으면(틀 계산이
+    // 던짐) 공도 멈춘다
+    if (elements) {
+      if (failure && !frames) elements.failSubstep()
+      else
+        try {
+          const made = elements.prepare(art, frames, h)
+          if (made.rows.length > 0)
+            contacts = contacts
+              ? {
+                  rows: [...contacts.rows, ...made.rows],
+                  damping: contacts.damping,
+                  elements: made.coupled
+                }
+              : { rows: made.rows, damping: [], elements: made.coupled }
+        } catch (error) {
+          this.notify('worldError', {
+            detail: error instanceof Error ? error.message : String(error)
+          })
+          elements.failSubstep()
+        }
+    }
+    if (!failure)
+      try {
+        art.step(h, (z, v) => this.driveForces(z, v, voltage), contacts)
+        if (collision) for (const n of collision.afterStep(art, h)) this.notify(n.code, n.params)
+      } catch (error) {
+        failure = { error }
+      }
+    if (failure) {
       // 수치가 터지면(Articulation은 상태를 바꾸기 전에 던진다) 이 하위 단계는 모든 속도를 0으로 두고 위치는 그대로 둔다.
-      // 다음 하위 단계에서 다시 푼다(같은 detail은 실행마다 한 번 알린다).
+      // 다음 하위 단계에서 다시 푼다(같은 detail은 실행마다 한 번 알린다). 로봇 섬에 묶인 공도 속도 0이고, 다른 공 섬은 그대로
+      // 푼다(spec-6a §2.7)
+      const error = failure.error
       art.v.fill(0)
       this.notify('worldError', { detail: error instanceof Error ? error.message : String(error) })
+      if (elements) {
+        elements.finish(art, h, true, tEnd)
+        this.drainElements(elements)
+      }
       return
+    }
+    if (elements) {
+      elements.finish(art, h, false, tEnd)
+      this.drainElements(elements)
     }
     for (const motor of this.motors) {
       const dm = motor.dyn

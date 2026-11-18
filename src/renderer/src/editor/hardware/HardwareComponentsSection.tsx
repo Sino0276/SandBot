@@ -24,6 +24,9 @@ import { canAddMass } from '../mass/massCardModel'
 import MassEstimateLine from '../mass/MassEstimateLine'
 import ScriptCard from '../scripts/ScriptCard'
 import ColliderCard from '../collider/ColliderCard'
+import PreloadCard from '../preload/PreloadCard'
+import { preloadAddBlock } from '../preload/preloadCardModel'
+import { defaultPreload, MAX_ROBOT_PRELOADS } from '../../scene/preload'
 import { canAddCollider, newCollider } from '../collider/colliderCardModel'
 import { jointBodyFrames } from '../../play/worldJoints'
 import { canHaveColliders, MAX_OBJECT_COLLIDERS, type ColliderKind } from '../../scene/collider'
@@ -37,11 +40,14 @@ const SCRIPT_OPTION = '#script'
 const WHEEL_OPTION = '#wheel'
 const JOINT_OPTION = '#joint'
 const MASS_OPTION = '#mass'
-// 충돌체(spec-5 §6.1): Box·Capsule·Mesh Collider
+// 프리로드 자리(6a, Preload Slot)
+const PRELOAD_OPTION = '#preload'
+// 충돌체(spec-5 §6.1): Box·Capsule·Mesh Collider와 Cylinder Collider(6a, Unity에 없음: 임시 편차, 도움말이 알린다)
 const COLLIDER_OPTIONS = {
   '#boxCollider': 'box',
   '#capsuleCollider': 'capsule',
-  '#meshCollider': 'mesh'
+  '#meshCollider': 'mesh',
+  '#cylinderCollider': 'cylinder'
 } as const satisfies Record<string, ColliderKind>
 const isColliderOption = (value: string): value is keyof typeof COLLIDER_OPTIONS =>
   Object.hasOwn(COLLIDER_OPTIONS, value)
@@ -57,6 +63,7 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
   const setJoint = useSceneStore((state) => state.setJoint)
   const setObjectMass = useSceneStore((state) => state.setObjectMass)
   const setColliders = useSceneStore((state) => state.setColliders)
+  const setPreload = useSceneStore((state) => state.setPreload)
   const issues = useSceneIssues()
 
   const robotId = findRobotId(objects, object.id)
@@ -78,6 +85,8 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
       result[pick] = objectOptions(objects, robotId, pick)
     return result
   }, [objects, robotId, picks])
+
+  const preloadBlock = preloadAddBlock(objects, object.id)
 
   const add = (type: string): void => {
     if (!isComponentType(type)) return
@@ -101,7 +110,8 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
       !object.wheel &&
       !object.joint &&
       !object.mass &&
-      !object.colliders?.length ? (
+      !object.colliders?.length &&
+      !object.preload ? (
         <p className="inspector-note">{t('inspector.componentsEmpty')}</p>
       ) : (
         <ul className="hw-cards">
@@ -123,6 +133,8 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
           {colliders.map((collider) => (
             <ColliderCard key={collider.id} object={object} collider={collider} />
           ))}
+          {/* 카드 순서: … → Collider → Preload Slot → 스크립트(spec-6a §3) */}
+          {object.preload && <PreloadCard object={object} />}
           {scripts.map((link) => (
             <ScriptCard key={link.path} objectId={object.id} link={link} />
           ))}
@@ -148,6 +160,9 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
             if (canAddJoint(object)) setJoint(object.id, newJoint())
           } else if (event.target.value === MASS_OPTION) {
             if (canAddMass(object)) setObjectMass(object.id, {})
+          } else if (event.target.value === PRELOAD_OPTION) {
+            if (preloadAddBlock(objects, object.id) === null)
+              setPreload(object.id, defaultPreload())
           } else if (isColliderOption(event.target.value)) {
             if (canHaveColliders(object) && canAddCollider(object))
               setColliders(object.id, [
@@ -200,14 +215,32 @@ function HardwareComponentsSection({ object }: { object: SceneObject }): React.J
               value={option}
               disabled={!canHaveColliders(object) || !canAddCollider(object)}
               title={
-                canAddCollider(object)
-                  ? undefined
-                  : t('collider.tooMany', { max: MAX_OBJECT_COLLIDERS })
+                !canAddCollider(object)
+                  ? t('collider.tooMany', { max: MAX_OBJECT_COLLIDERS })
+                  : COLLIDER_OPTIONS[option] === 'cylinder'
+                    ? t('collider.cylinderHint')
+                    : undefined
               }
             >
               {t(`collider.addOptions.${COLLIDER_OPTIONS[option]}`)}
             </option>
           ))}
+          {/* Preload Slot(6a): 오브젝트마다 하나, 로봇마다 MAX_ROBOT_PRELOADS개, 로봇·CAD 루트에는 붙이지 않는다 */}
+          <option
+            value={PRELOAD_OPTION}
+            disabled={preloadBlock !== null}
+            title={
+              preloadBlock === 'notAllowed'
+                ? t('preload.addNotAllowed')
+                : preloadBlock === 'exists'
+                  ? t('preload.addExists')
+                  : preloadBlock === 'limit'
+                    ? t('preload.addLimit', { max: MAX_ROBOT_PRELOADS })
+                    : t('preload.help', { max: MAX_ROBOT_PRELOADS })
+            }
+          >
+            {t('preload.addOption')}
+          </option>
         </optgroup>
         <optgroup label={t('scripts.addGroup')}>
           <option value={SCRIPT_OPTION}>{t('scripts.addOption')}</option>
