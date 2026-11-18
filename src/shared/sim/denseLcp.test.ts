@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { DENSE_LCP_DECOUPLED, DENSE_LCP_REGULARIZATION, solveDenseLcp } from './denseLcp'
+import {
+  DENSE_LCP_COUNTERS,
+  DENSE_LCP_DECOUPLED,
+  DENSE_LCP_REGULARIZATION,
+  solveDenseLcp
+} from './denseLcp'
 
 // 조밀 상자 LCP(6a)의 콜레스키 앞부분 다시 쓰기(성능, P6 쐐기)가 결과를 바꾸지 않는지: 다시 쓰기 전의 풀이(아래 referenceSolve,
 // 그 판의 식을 그대로 옮긴 것: 반복마다 자유 행 부분 행렬을 처음부터 분해하고 A_FB·λ_B는 모든 행을 돈다)와 λ·상태가 비트로 같다.
@@ -201,7 +206,28 @@ function problem(next: () => number, m: number, rank: number, diagonal: number):
   }
 }
 
-// 다시 쓰기 전 풀이와 같은 λ·상태(던지면 같은 글자로 던진다). 던졌으면 null
+const NOT_CONVERGED = 'dense LCP: constraint solve did not converge'
+
+// 답이 정칙화한 상자 LCP의 조건을 만족하는지: λ는 상자 안, 아래 경계 행은 w ≥ 0, 위 경계 행은 w ≤ 0, 자유 행은 w = 0
+// (w = (A + εD)·λ + b). 경계 행의 부호는 풀이의 판정(1e-12·|b|)보다 넉넉히, 자유 행은 조건이 나쁜 행렬의 콜레스키 잔차(잰 값
+// 1.3e-9·|b| 아래)보다 넉넉히 본다
+function expectSolved(p: Problem, out: { lambda: Float64Array; states: Uint8Array }): void {
+  const { m, a, b, lo, hi } = p
+  let bScale = 1
+  for (let i = 0; i < m; i++) bScale = Math.max(bScale, Math.abs(b[i]))
+  for (let i = 0; i < m; i++) {
+    expect(out.lambda[i]).toBeGreaterThanOrEqual(lo[i])
+    expect(out.lambda[i]).toBeLessThanOrEqual(hi[i])
+    let w = b[i] + REGULARIZATION * a[i * m + i] * out.lambda[i]
+    for (let j = 0; j < m; j++) w += a[i * m + j] * out.lambda[j]
+    if (out.states[i] === 0) expect(w).toBeGreaterThan(-1e-9 * bScale)
+    else if (out.states[i] === 2) expect(w).toBeLessThan(1e-9 * bScale)
+    else expect(Math.abs(w)).toBeLessThan(1e-7 * bScale)
+  }
+}
+
+// 다시 쓰기 전 풀이와 같은 λ·상태(던지면 같은 글자로 던진다). 던졌으면 null. 다시 쓰기 전 풀이가 Murty 상한에서 던진 문제는
+// 지금 풀이가 대체 규칙으로 풀 수 있다(6a 리뷰 3): 그때는 답이 상자 LCP 조건을 만족하는지 본다
 function same(p: Problem): { lambda: Float64Array; states: Uint8Array } | null {
   let expected: { lambda: Float64Array; states: Uint8Array } | null = null
   let thrown: string | null = null
@@ -209,6 +235,16 @@ function same(p: Problem): { lambda: Float64Array; states: Uint8Array } | null {
     expected = referenceSolve(p.m, p.a, p.b, p.lo, p.hi, p.start)
   } catch (error) {
     thrown = (error as Error).message
+  }
+  if (thrown === NOT_CONVERGED) {
+    let solved: { lambda: Float64Array; states: Uint8Array } | null = null
+    try {
+      solved = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+    } catch (error) {
+      expect((error as Error).message).toBe(NOT_CONVERGED)
+    }
+    if (solved) expectSolved(p, solved)
+    return null
   }
   if (thrown !== null) {
     expect(() => solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)).toThrow(thrown)
@@ -304,5 +340,58 @@ describe('조밀 상자 LCP 콜레스키 다시 쓰기(6a 성능)', () => {
     fixed[2 * m + 3] = 0.25
     fixed[3 * m + 2] = 0.25
     same({ ...p, a: fixed })
+  })
+})
+
+// 6a 리뷰 3: Murty 최소 첨자 규칙은 끝나는 것이 보장되지만 주축 수가 많을 수 있다. 상한(2000)에서 던지면 그 하위 단계의 로봇·
+// 로봇 섬 공 속도가 0이 되었다(E2E 손 씬 로봇이 GARDEN 공으로 달려들 때, coupling.test.ts). 상한 뒤에는 가장 크게 어긋난 행
+// 하나만 뒤집는 규칙으로 이어 간다
+describe('조밀 상자 LCP: Murty 상한 뒤 대체 규칙(6a 리뷰 3)', () => {
+  // 조건이 나쁜 문제(계수가 행 수의 1/2–1/4, 작은 대각)의 흐름. round번째 문제만 돌려준다(앞 문제도 만들어 난수를 같게 쓴다)
+  function illConditioned(seed: number, round: number): Problem {
+    const next = random(seed)
+    let made: Problem | null = null
+    for (let k = 0; k <= round; k++) {
+      const m = 20 + Math.floor(next() * 80)
+      const kind = Math.floor(next() * 3)
+      const rank = kind === 0 ? m : Math.max(1, Math.floor(m / (2 + Math.floor(next() * 3))))
+      made = problem(next, m, rank, kind === 0 ? 1 : kind === 1 ? 1e-3 : 1e-6)
+    }
+    return made as Problem
+  }
+
+  it('Murty 규칙이 2000번 안에 끝나지 않는 문제를 대체 규칙으로 이어 풀고 답은 상자 LCP 조건을 만족한다', () => {
+    const before = DENSE_LCP_COUNTERS.fallback
+    // 흐름 1의 55–91행 문제 여섯(고친 전: 모두 'did not converge'로 던졌다. 대체 규칙으로 24–124번 더 돈다)
+    const rounds = [9, 26, 33, 34, 40, 42]
+    for (const round of rounds) {
+      const p = illConditioned(1, round)
+      expect(() => referenceSolve(p.m, p.a, p.b, p.lo, p.hi, p.start)).toThrow(NOT_CONVERGED)
+      const solved = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      expectSolved(p, solved)
+      // 같은 문제를 다시 풀면 같은 답이다(결정적, 앞 분해를 다시 써도)
+      const again = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      expect(again.states).toEqual(solved.states)
+      for (let i = 0; i < p.m; i++) expect(Object.is(again.lambda[i], solved.lambda[i])).toBe(true)
+      // 답에서 다시 시작하면 주축 없이 같은 답이다
+      const warm = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, solved.states)
+      for (let i = 0; i < p.m; i++) expect(Object.is(warm.lambda[i], solved.lambda[i])).toBe(true)
+    }
+    // 풀이마다 한 번씩 대체 규칙으로 넘어갔다(답에서 다시 시작한 풀이는 넘어가지 않는다)
+    expect(DENSE_LCP_COUNTERS.fallback - before).toBe(2 * rounds.length)
+  })
+
+  it('Murty 상한 안에 끝나는 문제는 대체 규칙에 닿지 않는다(다시 쓰기 전 풀이와 비트로 같다)', () => {
+    const before = DENSE_LCP_COUNTERS.fallback
+    let solved = 0
+    for (const round of [0, 1, 2, 3, 4, 5, 6, 7, 8]) if (same(illConditioned(1, round))) solved++
+    expect(solved).toBe(9)
+    expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
+  })
+
+  it('대체 규칙도 상한 안에 끝나지 않으면 전처럼 던진다', () => {
+    // 흐름 4의 135번째(83행): 가장 크게 어긋난 행 규칙이 돌고 돈다(20000번에도 끝나지 않는다)
+    const p = illConditioned(4, 135)
+    expect(() => solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)).toThrow(NOT_CONVERGED)
   })
 })

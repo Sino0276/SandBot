@@ -44,19 +44,31 @@ function factorCapacity(size: number): void {
 // 질량으로 거의 늘 양정치라 근접점 반복 없이 정칙화한 해를 쓴다: 충격 차이는 1e-9배라 보이지 않는다. 특이한 방향(같은 방향의 로봇
 // 행)에서는 정칙화가 나눔을 정하고, 속도(w) 차이는 1e-9 × A_ii·λ 아래다]
 export const DENSE_LCP_REGULARIZATION = 1e-9
-// 상보성·경계 판정의 상대 허용 오차(solveBoxLcp와 같은 1e-12)와 반복 상한, 블록 전환을 그만두고 Murty 규칙만 쓰는 반복
+// 상보성·경계 판정의 상대 허용 오차(solveBoxLcp와 같은 1e-12)와 Murty 규칙의 반복 상한, 블록 전환을 그만두고 Murty 규칙만 쓰는 반복
 const DENSE_LCP_TOLERANCE = 1e-12
 const DENSE_LCP_MAX_ITERATIONS = 2000
+// Murty 상한을 넘은 뒤 대체 규칙(가장 크게 어긋난 행 하나만 뒤집기)의 반복 상한[결정: 6a 리뷰 3. Murty 최소 첨자 규칙은 끝나는 것이
+// 보장되지만 주축 수가 많을 수 있다: E2E 손 씬 로봇이 GARDEN 공으로 달려들어 공이 섀시·롤러·벽·바닥·이웃 공 사이에 끼이는 하위
+// 단계의 로봇 섬 LCP(85–102행) 열여섯이 2061–8744번이었다(상한에서 던지면 그 하위 단계의 로봇·로봇 섬 공 속도가 0이 된다). 같은
+// 문제를 상한에서 대체 규칙으로 이으면 6–64번에 끝났다. 대체 규칙은 끝나는 것이 보장되지 않아(돌고 돌 수 있다) 상한을 둔다:
+// Murty 상한에 걸린 조건이 나쁜 무작위 문제 144개(20–99행, 계수가 행 수의 1/2–1/4) 가운데 138개가 152번 안에 끝났고 나머지 여섯은
+// 20000번에도 끝나지 않았다. Murty 상한 안에 끝나는 풀이는 대체 규칙에 닿지 않아 바이트 그대로다]
+const DENSE_LCP_FALLBACK_ITERATIONS = 500
 // 비대각이 이 비율 × √(A_ii·A_jj) 아래면 행이 묶이지 않았다고 본다 [결정: 수직인 법선·접선의 내적 반올림(1e-16)보다 크고 풀이에
 // 보이는 결합보다 훨씬 작다]
 export const DENSE_LCP_DECOUPLED = 1e-12
 const DENSE_LCP_MURTY_AFTER = 200
 const DENSE_LCP_TRIES = 3
 
+// 시험 훅(제품 코드는 쓰지 않는다): Murty 상한을 넘어 대체 규칙으로 넘어간 풀이 수
+export const DENSE_LCP_COUNTERS = { fallback: 0 }
+
 // 조밀 상자 LCP: w = (A + εD)·λ + b, lo ≤ λ ≤ hi(λ = lo면 w ≥ 0, hi면 w ≤ 0, 사이면 w = 0). A는 행 우선 m×m. 블록
 // 주축 전환(Júdice–Pires)과 Murty 최소 첨자 규칙(articulation.ts solveBoxLcp와 같은 틀)이고, 정칙화한 행렬이 대칭 양정치라 끝난다.
-// 근접점 반복은 하지 않는다(DENSE_LCP_REGULARIZATION). start: 행마다 0 아래·1 자유·2 위·3 모름. 할당을 줄이려 타입 배열과 작업
-// 배열(호출 사이에 다시 쓴다)만 쓴다
+// Murty 규칙이 상한(DENSE_LCP_MAX_ITERATIONS) 안에 끝나지 않으면 던지지 않고, 가장 크게 어긋난 행 하나만 뒤집는 규칙으로 이어
+// 간다(DENSE_LCP_FALLBACK_ITERATIONS, 그래도 끝나지 않으면 던진다). 답은 끝난 상태(자유·경계 나눔)로 정해지므로 어느 규칙으로
+// 닿았든 같은 상태면 같은 λ다. 근접점 반복은 하지 않는다(DENSE_LCP_REGULARIZATION). start: 행마다 0 아래·1 자유·2 위·3 모름.
+// 할당을 줄이려 타입 배열과 작업 배열(호출 사이에 다시 쓴다)만 쓴다
 export function solveDenseLcp(
   m: number,
   a: Float64Array,
@@ -124,7 +136,9 @@ export function solveDenseLcp(
   let best = m + 1
   let tries = DENSE_LCP_TRIES
   for (let iteration = 0; ; iteration++) {
-    if (iteration >= DENSE_LCP_MAX_ITERATIONS)
+    // Murty 상한을 넘으면 대체 규칙(아래)
+    const fallback = iteration >= DENSE_LCP_MAX_ITERATIONS
+    if (iteration >= DENSE_LCP_MAX_ITERATIONS + DENSE_LCP_FALLBACK_ITERATIONS)
       throw new Error('dense LCP: constraint solve did not converge')
     let f = 0
     let g = 0
@@ -198,16 +212,41 @@ export function solveDenseLcp(
       for (let p = 0; p < f; p++) lambda[free[p]] = rhs[p]
     }
     let count = 0
+    // 대체 규칙: 가장 크게 어긋난 행과 그 크기(w 단위: 자유 행이 상자를 벗어난 만큼은 대각을 곱한다). 같으면 앞 행
+    let worst = -1
+    let worstBy = 0
     for (let i = 0; i < m; i++) {
       if (state[i] === 1) {
-        if (lambda[i] < lo[i] - tolL || lambda[i] > hi[i] + tolL) bad[count++] = i
+        if (lambda[i] < lo[i] - tolL || lambda[i] > hi[i] + tolL) {
+          bad[count++] = i
+          if (fallback) {
+            const by = (lambda[i] < lo[i] ? lo[i] - lambda[i] : lambda[i] - hi[i]) * a[i * m + i]
+            if (by > worstBy) {
+              worst = i
+              worstBy = by
+            }
+          }
+        }
         continue
       }
       let w = b[i] + DENSE_LCP_REGULARIZATION * a[i * m + i] * lambda[i]
       for (let j = 0; j < m; j++) w += a[i * m + j] * lambda[j]
-      if ((state[i] === 0 && w < -tolW) || (state[i] === 2 && w > tolW)) bad[count++] = i
+      if ((state[i] === 0 && w < -tolW) || (state[i] === 2 && w > tolW)) {
+        bad[count++] = i
+        if (fallback && Math.abs(w) > worstBy) {
+          worst = i
+          worstBy = Math.abs(w)
+        }
+      }
     }
     if (count === 0) break
+    if (fallback) {
+      if (iteration === DENSE_LCP_MAX_ITERATIONS) DENSE_LCP_COUNTERS.fallback++
+      const i = worst >= 0 ? worst : bad[count - 1]
+      if (state[i] === 1) state[i] = lambda[i] < lo[i] ? 0 : 2
+      else state[i] = 1
+      continue
+    }
     let from = 0
     if (iteration >= DENSE_LCP_MURTY_AFTER) from = count - 1
     else if (count < best) {

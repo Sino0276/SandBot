@@ -9,6 +9,7 @@ import { resolveSeason } from '../seasons/seasons'
 import { testMotorParams } from '../testkit'
 import type { SimCollider, SimElementState, SimJointSpec, WorldSpec } from '../worldSpec'
 import { BodyCollision } from '../bodyCollision'
+import { DENSE_LCP_COUNTERS } from '../denseLcp'
 import { PhysicsWorld } from '../world'
 import { CONTACT_STIFFNESS_PER_PLATE, MAX_COUPLED_ROWS } from './elementData'
 import {
@@ -16,6 +17,7 @@ import {
   ballField,
   ballWorldSpec,
   BallRunner,
+  intakeWedge,
   speed,
   withElementType
 } from './elementTestkit'
@@ -1389,4 +1391,36 @@ describe('로봇–공 결합: 심까지 눌린 공의 되찾기(6a 리뷰 3)', 
     expect(play([2, 3, 5, 10])).toEqual(even)
     expect(play([5])).toEqual(even)
   }, 120_000)
+})
+
+// 6a 리뷰 3: 실제 앱 E2E 손 씬 로봇(elementTestkit intakeWedge: 롤러·바구니 프리로드 넷)이 인테이크를 끄고 GARDEN 공으로 달려들면,
+// 공이 섀시·롤러·벽·바닥·이웃 공 사이에 끼이는 하위 단계의 로봇 섬 LCP(85–102행)가 Murty 규칙으로는 상한 2000번 안에 끝나지
+// 않았다(끝까지 돌리면 2061–8744번). 그 하위 단계에 worldError('dense LCP: constraint solve did not converge')와 함께 로봇과 로봇
+// 섬 공(바구니 프리로드)의 속도가 모두 0이 되었다. 출력 0.3–1 × 시작 자리 아홉 × 인테이크 켬·끔 144번 가운데 16번이었다
+describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
+  it('E2E 손 씬 로봇이 인테이크를 끄고 GARDEN 공에 달려들어도 로봇 섬 풀이가 실패하지 않는다(worldError 없음)', () => {
+    const before = DENSE_LCP_COUNTERS.fallback
+    // 고친 전: 출력 1은 0.460 s, 0.7은 0.535 s, 0.4는 0.975 s의 틱에 실패했다
+    for (const [power, seconds] of [
+      [1, 0.6],
+      [0.7, 0.7],
+      [0.4, 1.1]
+    ] as const) {
+      const { spec, out } = intakeWedge()
+      // 플라이휠·게이트는 그대로, 인테이크 끔(out(0)), 0.1 s 뒤 앞으로
+      const idle = out(0)
+      const run = new BallRunner(spec).run(seconds, (k) => ({
+        ...idle,
+        ...outputs(k < 20 ? {} : mecanum(power, 0, 0))
+      }))
+      expect(run.notices.filter((n) => n.code === 'worldError')).toEqual([])
+      // 공은 필드 안에 있고 날아가지 않았다
+      for (const s of run.last()) {
+        expect(s.out).toBe(false)
+        expect(speed(s.velocity)).toBeLessThan(3)
+      }
+    }
+    // 이 실행들이 대체 규칙까지 갔다(삼각 함수 구현이 바뀌어 궤적이 달라지면 0일 수 있다: 그때는 실패하는 출력을 다시 고른다)
+    expect(DENSE_LCP_COUNTERS.fallback).toBeGreaterThan(before)
+  })
 })
