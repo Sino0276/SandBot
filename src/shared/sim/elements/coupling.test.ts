@@ -1442,7 +1442,10 @@ describe('로봇–공 결합: 심까지 눌린 공의 되찾기(6a 리뷰 3)', 
 // 공이 섀시·롤러·벽·바닥·이웃 공 사이에 끼이는 하위 단계의 로봇 섬 LCP(85–102행)가 Murty 규칙으로는 상한 2000번 안에 끝나지
 // 않았다(끝까지 돌리면 2061–8744번). 그 하위 단계에 worldError('dense LCP: constraint solve did not converge')와 함께 로봇과 로봇
 // 섬 공(바구니 프리로드)의 속도가 모두 0이 되었다. 출력 0.3–1 × 시작 자리 아홉 × 인테이크 켬·끔 144번 가운데 16번이었다
-describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
+// 6a 최종 확인 2부터는 같은 규칙을 32번 안에 끝나지 않은 풀이에 일찍 쓰고(denseLcp.ts DENSE_LCP_SINGLE_AFTER) 엇갈림 회차마다 시작
+// 상태를 골라(articulation.ts DENSE_RESTART_ITERATIONS), 이 달려들기들은 Murty 상한에 닿지 않는다(같은 144번 모두). 상한 뒤 대체
+// 규칙 자체는 denseLcp.test.ts가 조건이 나쁜 무작위 문제로 본다
+describe('로봇 섬 LCP: 길어지는 주축 전환(6a 리뷰 3·최종 확인 2)', () => {
   it('E2E 손 씬 로봇이 인테이크를 끄고 GARDEN 공에 달려들어도 로봇 섬 풀이가 실패하지 않는다(worldError 없음)', () => {
     const before = DENSE_LCP_COUNTERS.fallback
     const early = DENSE_LCP_COUNTERS.early
@@ -1466,18 +1469,22 @@ describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
         expect(speed(s.velocity)).toBeLessThan(3)
       }
     }
-    // 이 실행들은 6a 리뷰 3에서 Murty 상한 뒤 대체 규칙까지 갔다. 6a 최종 확인 2부터는 같은 규칙을 일찍(32번 뒤) 쓰고 엇갈림
-    // 회차마다 시작 상태를 골라, 길어지는 풀이가 상한 전에 끝난다(삼각 함수 구현이 바뀌어 궤적이 달라지면 0일 수 있다: 그때는
-    // 풀이가 길어지는 출력을 다시 고른다)
-    expect(DENSE_LCP_COUNTERS.early).toBeGreaterThan(early)
+    // 이 실행들은 6a 리뷰 3에서 Murty 상한 뒤 대체 규칙까지 갔다. 6a 최종 확인 2부터는 길어지는 풀이가 상한 전에 끝난다: 어느
+    // 풀이도 Murty 상한에 닿지 않는다(일찍 쓰는 규칙이 없으면 출력 0.7의 0.535 s 틱에서 풀이 하나가 상한에 걸린다: 2057번, 그 틱
+    // 약 140 ms. 지금은 그 풀이가 88번이고 세 실행 모두 한 틱의 주축 반복이 148번까지다)
     expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
+    // 세 실행 모두 일찍 쓰는 규칙을 지났다(3·1·6번. 삼각 함수 구현이 바뀌어 궤적이 달라지면 0일 수 있다: 그때는 풀이가 길어지는
+    // 출력을 다시 고른다)
+    expect(DENSE_LCP_COUNTERS.early).toBeGreaterThan(early)
   })
 
   // 6a 최종 확인 2: 출력 0.4로 달려든 로봇이 공 넷을 벽에 누른 채 멈춰 서면, 마찰 상자 엇갈림의 1회차와 2회차 답이 하위
   // 단계마다 같은 두 상태(행 상태 4–5개 차이: 섀시·롤러의 벽 마찰, 공끼리 접선)를 오갔다. 답은 앞 하위 단계의 같은 회차와
-  // 같은데 2회차를 1회차의 답에서 시작해 블록 주축이 매번 60–600번을 돌았고(104행, 번마다 약 0.2 ms), 틱마다 150–700 ms가
-  // 걸려 미는 동안 내내 실시간의 0.03–0.07배였다(16bad8e에서도 다른 시작 자리에서 같았다. 이 시작 자리는 Murty 상한에서 던지던
-  // 때 그 하위 단계의 속도 0이 이 오감을 피하게 했고, 대체 규칙으로 던지지 않게 되자 드러났다)
+  // 같은데 2회차를 1회차의 답에서 시작해 그 풀이의 주축 반복이 중앙값 108번(열에 여덟은 20–377번, 최대 644번. 104행, 번마다 약
+  // 0.2 ms)이었고, 틱 중앙값이 약 140 ms(최대 약 750 ms)라 미는 동안(1.1–2.5 s) 실시간의 약 0.03배였다(16bad8e에서도 다른 시작
+  // 자리에서 같았다. 이 시작 자리는 Murty 상한에서 던지던 때 그 하위 단계의 속도 0이 이 오감을 피하게 했고, 대체 규칙으로 던지지
+  // 않게 되자 드러났다). 일찍 쓰는 규칙(denseLcp.ts)만으로는 2회차 풀이가 중앙값 49번(최대 69번)으로 줄 뿐 오감은 그대로다
+  // (실시간의 약 0.07배, 아래 0.4 s에 20681번)
   it('멈춰 선 채 공을 벽에 누르는 동안 마찰 엇갈림이 두 답을 오가도 풀이가 느려지지 않는다(같은 회차의 앞 답에서 시작)', () => {
     const { spec, out } = intakeWedge()
     const idle = out(0)
@@ -1488,7 +1495,8 @@ describe('로봇 섬 LCP: Murty 상한 뒤 대체 주축(6a 리뷰 3)', () => {
     const runner = new BallRunner(spec)
     runner.run(1.1, drive)
     const before = DENSE_LCP_COUNTERS.iterations
-    // 0.4 s = 하위 단계 400개(풀이 800번). 고친 전: 주축 반복이 모두 76864번(지금 29번)
+    // 0.4 s = 하위 단계 400개(풀이 800번). 고친 전: 주축 반복이 모두 76864번(같은 회차 시작 없이 일찍 쓰는 규칙만 있으면
+    // 20681번, 지금 29번)
     runner.run(0.4, drive)
     expect(runner.notices.filter((n) => n.code === 'worldError')).toEqual([])
     expect(DENSE_LCP_COUNTERS.iterations - before).toBeLessThan(4000)

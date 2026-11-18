@@ -415,17 +415,22 @@ describe('조밀 상자 LCP: Murty 상한 뒤 대체 규칙(6a 리뷰 3)', () =>
   it('32번 안에 끝나는 문제는 연산이 그대로이고(다시 쓰기 전 풀이와 비트로 같다), 일찍 쓴 규칙을 지나 끝난 문제도 답이 같다', () => {
     const before = DENSE_LCP_COUNTERS.fallback
     let solved = 0
-    let early = 0
-    // 흐름 1의 앞 아홉: 여섯은 5–9번, 셋(2·7·8번째)은 일찍 쓴 규칙을 지나 45–73번에 끝난다
+    const early: number[] = []
+    // 흐름 1의 앞 아홉: 여섯은 5–9번, 셋(2·7·8번째)은 일찍 쓴 규칙을 지나 45·46·73번에 끝난다(그 규칙이 없으면 블록 전환과
+    // Murty로 136·122·418번). same은 다시 쓰기 전 풀이(일찍 쓰는 규칙이 없다)와 λ·상태를 비트로 견준다
     for (const round of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
       const out = same(illConditioned(1, round))
       if (!out) continue
       solved++
       const p = illConditioned(1, round)
-      if (solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start).iterations > 32) early++
+      const { iterations } = solveDenseLcp(p.m, p.a, p.b, p.lo, p.hi, p.start)
+      if (iterations > 32) early.push(iterations)
+      else expect(iterations).toBeLessThan(10)
     }
     expect(solved).toBe(9)
-    expect(early).toBe(3)
+    expect(early.length).toBe(3)
+    // 셋 모두 일찍 쓴 규칙의 창(32–127번째) 안에서 끝났다
+    for (const iterations of early) expect(iterations).toBeLessThan(128)
     expect(DENSE_LCP_COUNTERS.fallback).toBe(before)
   })
 
