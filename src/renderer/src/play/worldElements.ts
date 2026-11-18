@@ -88,13 +88,15 @@ export type RobotPreloads = {
   tooMany: boolean
   // POLLEN 반지름(m, 시즌에 없으면 0)
   radius: number
-  // POLLEN 딱딱한 심 깊이(m, 시즌 contact.coreDepthRatio × 반지름, 시즌에 없으면 0): 이보다 깊이 겹친 자리의 공은 시작해도
-  // 밀려나지 않는다(시뮬레이터 ballContact.ts normalRow의 심 행은 목표 0이라 밀어내지 않는다)
+  // POLLEN 딱딱한 심 깊이(m, 시즌 contact.coreDepthRatio × 반지름, 시즌에 없으면 0): 이보다 깊이 겹친 자리의 공은 시작할 때
+  // 그 겹침이 밀어내지 않는다(시뮬레이터 ballContact.ts normalRow: 시작부터 심 이상 겹친 짝의 심 행은 목표 0이다)
   coreDepth: number
 }
 
-// 자리 하나의 편집 자세 겹침이 시작할 때 어떻게 되는지: pushedOut(시뮬레이터가 밀어낸다), embedded(어느 대상과 심 이상 겹쳐 심
-// 행이 밀어내지 않는다), squeezed(겹침은 모두 심보다 얕지만 반대쪽에도 겹쳐 빠져나갈 자리가 없다: 양쪽 스프링에 눌린 채 남는다)
+// 자리 하나의 편집 자세 겹침이 시작할 때 어떻게 되는지: pushedOut(시뮬레이터가 보통 밀어낸다: 벌어진 두 면 사이에서는 마찰이
+// 붙잡을 수 있다), embedded(어느 대상과 심 이상 겹쳐 심 행이 밀어내지 않는다: 박힌 채 남거나, 다른 겹침·중력에 밀려 풀리며 튀어
+// 나갈 수 있다), squeezed(겹침은 모두 심보다 얕지만 반대쪽에도 겹쳐 빠져나갈 자리가 없다: 양쪽 스프링에 눌린 채 남는다). 문구
+// (console.notices.worldPreload*, preload.*)는 이 범위만 말한다[결정: 6a 리뷰 3. 박힘·밀려남을 더 가르는 장치를 두지 않는다]
 export type PreloadOutcome = 'pushedOut' | 'embedded' | 'squeezed'
 
 // 자리 하나의 편집 자세 겹침: 대상 이름(Console·카드에 하나)과 결과
@@ -229,7 +231,8 @@ function computePreloads(objects: SceneObjects, robotId: string, field: FieldSpe
 }
 
 // 빠져나갈 자리를 찾는 위치 풀이의 회차 수(Gauss–Seidel 투영) [결정: 자리 넷·충돌체 수십에서 ms 아래. 서로 마주 본 면 사이처럼
-// 자리가 없으면 끝까지 겹침이 남고, 좁은 쐐기처럼 오래 걸리면 squeezed로 본다]
+// 자리가 없으면 끝까지 겹침이 남고, 아주 좁은 쐐기(열린 각 약 10° 아래)처럼 오래 걸리면 squeezed로 본다. 그보다 넓은 쐐기는
+// 마찰이 붙잡아도(열린 각 2·atan μ 아래) pushedOut이다: 풀이에 마찰이 없다]
 const PRELOAD_RELAX_SWEEPS = 50
 
 // 몸체 틀 충돌체를 로봇 좌표에 놓은 것(공 짝은 시뮬레이터 elementWorld.ts와 같은 좁은 단계: 원기둥은 정확한 구–원기둥)
@@ -291,11 +294,14 @@ function targetContact(c: V3, r: number, target: PlacedTarget, band: number): Ba
 // 몸체 번호 → 로봇 좌표 몸체 틀이다. 겹친 대상을 모두 본다[결정: 6a 리뷰 2. 첫 대상만 보면 뒤의 더 깊은 대상이나 반대쪽 겹침을
 // 놓쳐 박힌 채 남을 공을 '밀려난다'고 알렸다]:
 // - embedded: 어느 대상과 심 이상(충돌체와는 coreDepth, 다른 자리 공과는 두 공의 심 합 2·coreDepth: elementWorld.ts 공끼리 심과
-//   같다) 겹친다. 시뮬레이터의 심 행은 목표 0이라 밀어내지 않는다. 대상은 심에 대해 가장 깊은 것(같으면 앞의 것)이다.
+//   같다) 겹친다. 시뮬레이터의 심 행은 목표 0이라 밀어내지 않는다(다른 겹침·중력에 밀려 심 아래로 풀리면 그 깊이의 탄성 힘에
+//   튀어 나갈 수 있다: 문구가 둘 다 말한다). 대상은 심에 대해 가장 깊은 것(같으면 앞의 것)이다.
 // - 아니면 시뮬레이터처럼 겹침이 공을 밀어내는지를 짧은 위치 풀이로 본다: 박히지 않은 자리 공을 모두 움직여(박힌 자리·충돌체는
-//   고정, 바닥 z = r 아래로 가지 않음, 마찰·중력 없음) 겹친 대상에서 법선으로 겹친 만큼 빼내기를 PRELOAD_RELAX_SWEEPS회 되풀이한다.
-//   그 자리의 겹침이 모두 EDIT_OVERLAP_TOLERANCE 안으로 풀리면 pushedOut(대상은 처음 겹친 앞의 것), 남으면 squeezed(대상은 끝에
-//   가장 깊이 남은 것)다. 서로 마주 본 두 면 사이처럼 빠져나갈 자리가 없으면 양쪽 스프링이 맞서 공이 그대로 남는다
+//   고정, 심 이상 겹친 두 자리 사이는 풀지 않음, 바닥 z = r 아래로 가지 않음, 마찰·중력 없음) 겹친 대상에서 법선으로 겹친 만큼
+//   빼내기를 PRELOAD_RELAX_SWEEPS회 되풀이한다. 그 자리의 겹침이 모두 EDIT_OVERLAP_TOLERANCE 안으로 풀리면 pushedOut(대상은 처음
+//   겹친 앞의 것), 남으면 squeezed(대상은 끝에 가장 깊이 남은 것)다. 서로 마주 본 두 면 사이처럼 빠져나갈 자리가 없으면 양쪽
+//   스프링이 맞서 공이 그대로 남는다. 마찰이 없는 풀이라, 벌어진 두 면 사이(열린 각이 2·atan μ 아래: 기본 마찰이면 약 48°)에서
+//   마찰이 붙잡는 공도 pushedOut으로 본다(문구가 말한다)
 export function preloadOverlaps(
   preloads: RobotPreloads,
   bodies: readonly WorldColliderBody[],
@@ -326,14 +332,21 @@ export function preloadOverlaps(
     }
     return found
   })
-  // 2. 심 이상 겹친 자리(박힘, 위치 풀이에서 고정). 공끼리 짝은 뒤 자리에만 적고 앞 자리 공도 고정한다(두 공 사이 심 행이 둘
-  // 다 붙든다)
+  // 2. 심 이상 겹친 자리(박힘, 위치 풀이에서 고정). 공끼리 짝은 뒤 자리에만 적는다. 앞 자리 공은 고정하지 않고, 위치 풀이가 그
+  // 짝의 겹침만 풀지 않는다(stuck)[결정: 6a 리뷰 3. 앞 자리도 고정으로 두고 고정 자리의 결과를 건너뛰어, 앞 자리 자신의 얕은
+  // 겹침(옆판에 밀려남, 천장 판에 눌림) 경고가 사라졌다. 두 공 사이 심 행은 서로 다가가는 것만 막아 앞 자리 공은 다른 겹침에
+  // 밀려 움직인다]
   const fixed = new Uint8Array(slots.length)
+  const stuck = new Set<number>()
+  const pairKey = (i: number, j: number): number => i * slots.length + j
   hits.forEach((found, i) => {
     let deepest: Hit | null = null
     for (const hit of found) {
       if (hit.depth < hit.core) continue
-      if (hit.slot !== undefined) fixed[hit.slot] = 1
+      if (hit.slot !== undefined) {
+        stuck.add(pairKey(i, hit.slot))
+        stuck.add(pairKey(hit.slot, i))
+      }
       if (!deepest || hit.depth / hit.core > deepest.depth / deepest.core) deepest = hit
     }
     if (deepest) {
@@ -353,7 +366,7 @@ export function preloadOverlaps(
           worst = { name: target.name, depth: -contact.separation }
     }
     for (let j = 0; j < slots.length; j++) {
-      if (j === i) continue
+      if (j === i || stuck.has(pairKey(i, j))) continue
       const gap = gapOf(p[i], p[j])
       if (gap < -EDIT_OVERLAP_TOLERANCE && (!worst || -gap > worst.depth))
         worst = { name: slots[j].name, depth: -gap }
@@ -374,7 +387,7 @@ export function preloadOverlaps(
         moved = true
       }
       for (let j = 0; j < slots.length; j++) {
-        if (j === i) continue
+        if (j === i || stuck.has(pairKey(i, j))) continue
         const d = [c[0] - p[j][0], c[1] - p[j][1], c[2] - p[j][2]]
         const length = Math.hypot(d[0], d[1], d[2])
         const gap = length - 2 * r
@@ -440,7 +453,7 @@ export const PRELOAD_OVERLAP_NOTICE = {
 // INIT(playActions.worldFor): 실행의 경기 요소를 세계 설명에 넣고 경고를 더한다(withRunField 뒤, 실행의 시즌으로). 개인 설정
 // gameElements가 꺼졌거나(field.gameElements), 시즌에 경기 요소가 없거나, 세계 설명이 없으면 그대로 둔다(elements 키 없음).
 // 경고 순서: 한도(worldTooManyPreloads) → 자리마다 바닥 아래(worldPreloadBelowFloor) → 겹침 → 자동 배치 실패
-// (worldPreloadNoRoom). 겹침은 경고만이다(실행은 막지 않는다, preloadOverlaps의 결과): 시뮬레이터가 시작할 때 밀어내면
+// (worldPreloadNoRoom). 겹침은 경고만이다(실행은 막지 않는다, preloadOverlaps의 결과): 얕은 겹침이 빠져나갈 자리가 있으면
 // worldPreloadOverlap, 어느 대상과 심 이상 겹쳐 심 행이 밀어내지 않으면 worldPreloadEmbedded, 겹침이 얕아도 반대쪽에도 겹쳐 빠져나갈
 // 자리가 없으면 worldPreloadSqueezed
 export function withElements(

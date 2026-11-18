@@ -222,4 +222,73 @@ describe('부드러운 법선 행(6a)', () => {
       1e-4
     )
   })
+  // 6a 리뷰 3: 누르던 몸체가 떠난 뒤에도 심 행(목표 0)이 밀어내지 않아 공이 심 깊이(반지름의 30 %)에 박힌 채 잠들었다
+  it('붙드는 것이 없는 심 행(free)은 강체로 버티지 않고 눌린 모양을 되찾는다: 쉼 깊이를 지금 깊이로 다시 잡고 줄여 간다', () => {
+    const k = 6000
+    const h = 0.001
+    const e2 = base.restitution ** 2
+    const unload = k / e2
+    const depth = 0.3 * R + 1e-3
+    // 붙들린 심 행(기본)은 강체 그대로다
+    expect(normalRow({ ...base, separation: -depth, peak: depth })).toMatchObject({
+      target: 0,
+      compliance: 0,
+      crushed: true
+    })
+    // 풀린 첫 하위 단계: 눌린 최대 깊이(peak = 깊이)의 탄성 힘 k·δ(약 70 N, 공이 튀어 나간다)를 쓰지 않고 쉼 깊이 = 지금 깊이
+    // (힘 0)로 다시 잡는다: peak = 깊이/(1 − e²)
+    const first = normalRow({ ...base, separation: -depth, peak: depth, free: true })
+    expect(first).toMatchObject({ crushed: true, bounced: false, restoring: true })
+    expect(first.target).toBeCloseTo(0, 12)
+    expect(first.compliance).toBeGreaterThan(0)
+    expect(first.peak).toBeCloseTo(depth / (1 - e2), 15)
+    // 다음 하위 단계: peak가 PINCH_RECOVERY_SPEED·h만큼 줄어 쉼 깊이가 그 (1 − e²)배만큼 물러나고, 풀림 선이 그만큼만 민다
+    const next = normalRow({
+      ...base,
+      separation: -depth,
+      peak: first.peak,
+      restoring: true,
+      free: true
+    })
+    const p = (first.peak as number) - PINCH_RECOVERY_SPEED * h
+    expect(next).toMatchObject({ crushed: true, restoring: true })
+    expect(next.peak).toBeCloseTo(p, 15)
+    const force = next.target / next.compliance / h
+    expect(force).toBeCloseTo(unload * PINCH_RECOVERY_SPEED * h * (1 - e2), 9)
+    // 공 무게(0.24 N)보다 작은 힘에서 시작한다(튀어 나가지 않는다)
+    expect(force).toBeLessThan(0.0249 * 9.80665)
+    // 눌린 최대 깊이로 넘겨받은 peak(restoring 아님)나 peak 없는 짝도 풀리면 쉼 깊이를 지금 깊이로 잡는다
+    for (const peak of [undefined, depth, depth + 2e-3])
+      expect(normalRow({ ...base, separation: -depth, peak, free: true }).peak).toBeCloseTo(
+        depth / (1 - e2),
+        15
+      )
+    // 심 아래로 나오면 같은 풀림 선이 이어진다(힘이 뛰지 않는다)
+    const core = 0.3 * R
+    const carried = core / (1 - e2) + 2 * PINCH_RECOVERY_SPEED * h
+    const above = normalRow({
+      ...base,
+      separation: -core,
+      peak: carried,
+      restoring: true,
+      free: true
+    })
+    const below = normalRow({ ...base, separation: -(core - 1e-9), peak: carried, restoring: true })
+    expect(below).toMatchObject({ crushed: false, restoring: true })
+    expect(below.target / below.compliance).toBeCloseTo(above.target / above.compliance, 6)
+    // 되찾는 중에 다시 붙들리면(받침·끼임) 강체이고, 그 peak는 다시 눌린 최대 깊이다(restoring을 버린다)
+    const held = normalRow({
+      ...base,
+      separation: -depth,
+      peak: first.peak,
+      restoring: true,
+      pinched: true
+    })
+    expect(held).toMatchObject({ target: 0, compliance: 0, crushed: true })
+    expect(held.restoring).toBeUndefined()
+    // 되찾기가 끝나면(peak가 깊이에 닿음) 탄성선이고 restoring이 아니다
+    const done = normalRow({ ...base, separation: -1e-4, peak: 1e-4, restoring: true })
+    expect(done.restoring).toBeUndefined()
+    expect(done.target / done.compliance).toBeCloseTo(h * k * 1e-4, 12)
+  })
 })

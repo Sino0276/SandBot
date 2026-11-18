@@ -47,8 +47,11 @@ export const PINCH_NORMAL_DOT = -0.01
 // 이력 스프링(ballContact.ts pinchedSpringRow)이 눌린 모양을 되찾는 빠르기(m/s): 하위 단계마다 이번 주기 최대 깊이 peak를
 // 이만큼, 지금 깊이까지만 줄인다(풀림 선의 쉼 깊이 peak·(1 − e²)가 줄어 공이 탄성 평형으로 돌아온다, ballContact.ts normalRow)
 // [가정: 눌린 공이 모양을 되찾는 빠르기, 실측 없음. 6a 최종 확인: 줄이지 않으면 바닥에 눌렸다 놓인 공·쐐기에 걸친 공처럼 떨어지지
-// 않는 행이 쉼 깊이(심까지 눌렸으면 약 9 mm)에 박힌 채 남았다. 무거운 몸체가 누른 공이 풀리는 빠르기(0.05 m/s로 민 13.6 kg 판에서
-// 행마다 약 10 mm/s)보다 느려야 이력 손실이 남는다. 되찾는 동안은 잠들지 않는다(elementWorld.ts sleepStep)]
+// 않는 행이 쉼 깊이(심 가까이 눌렸으면 약 9 mm)에 박힌 채 남았다. 무거운 몸체가 누른 공이 풀리는 빠르기(0.05 m/s로 민 13.6 kg
+// 판에서 행마다 약 10 mm/s)보다 느려야 이력 손실이 남는다: 0.05 m/s보다 느리게 누르면 누르는 동안 모양을 되찾아 판이 반발 계수
+// 0.5보다 더 되튄다(0.03 m/s 0.53배, 0.01 m/s 0.67배, 0.005 m/s 0.78배). 되찾는 동안은 잠들지 않는다(elementWorld.ts sleepStep)].
+// 심까지 눌린 뒤 풀린 행(ballContact.ts coreRecoveryRow, 6a 리뷰 3)도 같은 빠르기다: 쉼 깊이가 이 값 × (1 − e²)로 물러난다(바닥
+// 1.82 mm/s·벽 1.18 mm/s·로봇과 공끼리 1.5 mm/s: 심 10.7 mm에서 바닥 약 5.9 s·벽 약 9 s, 공끼리 21.3 mm는 약 14 s)
 export const PINCH_RECOVERY_SPEED = 0.002
 // 접촉점 하나의 스프링 = 판 강성 × 이 값 [결정: 판 강성은 공을 두 판 사이에 끼운 직렬 접촉 둘이라 접촉 하나는 그 두 배]
 export const CONTACT_STIFFNESS_PER_PLATE = 2

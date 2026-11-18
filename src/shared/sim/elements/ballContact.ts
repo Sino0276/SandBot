@@ -193,7 +193,7 @@ export type NormalRowInput = {
   stiffness: number
   mass: number
   dampingRatio: number
-  // 딱딱한 심 깊이(m): δ가 이 이상이면 강체 행
+  // 딱딱한 심 깊이(m): δ가 이 이상이면 강체 행(붙드는 것이 없으면 되찾기: free)
   coreDepth: number
   // 반발 계수(이 면 종류)
   restitution: number
@@ -207,6 +207,12 @@ export type NormalRowInput = {
   peak?: number
   // 앞 하위 단계의 이 짝의 깊이(m, −분리), 그때 짝이 없었으면 undefined. 눌림 주기는 깊어지는 것을 본 때만 시작한다
   previous?: number
+  // 심 행(δ ≥ coreDepth)을 붙드는 것이 없다: 이 행의 공을 반대쪽에서 누르는 단단한 것(로봇·정적 형상, 그런 것에 받쳐진 공:
+  // elementWorld.ts heldContacts)이 없고, 실행의 첫 하위 단계부터 심 이상 겹친 짝(startCrush)도 아니다. 그러면 심 행은 강체로
+  // 버티지 않고 눌린 모양을 되찾는다(coreRecoveryRow)
+  free?: boolean
+  // 넘겨받은 peak가 눌린 최대 깊이가 아니라 심에서 되찾기를 시작하며 다시 잡은 값이다(앞 하위 단계 행의 restoring)
+  restoring?: boolean
 }
 
 export type NormalRow = {
@@ -219,6 +225,8 @@ export type NormalRow = {
   arrival?: number
   // 이력 스프링 행이면 다음 하위 단계에 넘길 최대 깊이(떨어졌으면 undefined)
   peak?: number
+  // 그 peak가 심에서 되찾기를 시작하며 다시 잡은 값이고 아직 풀림 선 위다(다음 하위 단계에 넘긴다)
+  restoring?: true
 }
 
 // 법선 행의 목표와 순응(spec-6a §2.3).
@@ -229,7 +237,7 @@ export type NormalRow = {
 //   단계(1 ms) 머문다.
 // - 침투 δ > 0: ODE ERP·CFM 꼴의 암시 스프링–감쇠(목표 = (h·k/(h·k + c))·δ/h, γ = 1/(h·(h·k + c)), 정지 상태 힘 = k·δ).
 // - 떨어짐(분리 ≥ 0): 예측 목표 −분리/h에 같은 γ.
-// - 심(δ ≥ coreDepth): 강체(γ = 0, 목표 0, 밀어내지 않음).
+// - 심(δ ≥ coreDepth): 강체(γ = 0, 목표 0, 밀어내지 않음). 붙드는 것이 없으면(free) 아래의 되찾기다.
 // - 끼인 행(pinched)은 반발 두 단계를 쓰지 않는다[결정: 6a 리뷰. 로봇과 벽 사이에 끼인 공의 두 행이 모두 강체 반발 목표(로봇 쪽
 //   e·1.5 m/s, 벽 쪽 e·공 속도)를 가지면 LCP가 두 목표를 함께 맞추려고 13.6 kg 로봇을 1 ms에 거꾸로 밀었다(공 25 g이 트램펄린이
 //   됨, 들어온 15 J에서 약 11 J가 돌아감). 끼인 공이 돌려줄 수 있는 에너지는 공 자신의 변형(심까지 약 0.7 J)뿐이라 이력 스프링
@@ -238,6 +246,9 @@ export type NormalRow = {
 //   오른다). 하위 단계마다 peak를 PINCH_RECOVERY_SPEED·h만큼, 지금 깊이까지만 줄여 공이 모양을 천천히 되찾게 한다(풀림 선의 쉼
 //   깊이 peak·(1 − e²)가 줄어 peak가 깊이에 닿으면 탄성선이다)[가정: elementData.ts PINCH_RECOVERY_SPEED. 6a 최종 확인: 줄이지
 //   않으면 바닥에 눌렸다 놓인 공이나 쐐기에 걸친 공처럼 떨어지지 않는 행이 쉼 깊이에 박힌 채 남았다].
+// - 붙드는 것이 없는 심 행(free)은 강체로 버티지 않고 눌린 모양을 되찾는다(coreRecoveryRow)[결정: 6a 리뷰 3. 누르던 몸체가 떠난
+//   뒤에도 심 행(목표 0)이 밀어내지 않아 공이 심 깊이에 박힌 채 잠들었다]. 붙들린 심 행(끼인 공을 누르는 로봇이 아직 닿아 있음,
+//   시작부터 심 이상 겹친 짝)은 그대로 강체다(누르고 있는 몸체에 에너지를 돌려주지 않는다).
 export function normalRow(input: NormalRowInput): NormalRow {
   const { separation, approach, h, coreDepth, restitution: e } = input
   const pinched = input.pinched === true
@@ -269,11 +280,35 @@ export function normalRow(input: NormalRowInput): NormalRow {
   }
   const depth = -separation
   if (depth >= coreDepth) {
+    if (input.free === true) return coreRecoveryRow(input, peak)
     const row: NormalRow = { target: 0, compliance: 0, crushed: true, bounced: false }
     if (hysteresis && loading(depth, peak, input.previous)) row.peak = Math.max(peak ?? 0, depth)
     return row
   }
-  return hysteresis ? pinchedSpringRow({ ...input, peak }) : springRow(input)
+  if (!hysteresis) return springRow(input)
+  const row = pinchedSpringRow({ ...input, peak })
+  // 심에서 다시 잡은 peak는 풀림 선 위에 있는 동안(peak > 깊이) 그 표시를 이어 간다
+  if (input.restoring === true && row.peak !== undefined && row.peak > depth) row.restoring = true
+  return row
+}
+
+// 붙드는 것이 없는 심 행의 되찾기(6a 리뷰 3). 심까지 눌린 공은 변형 에너지를 잃었다(심 넘는 충돌은 소성: 심 행이 몸체를 멈추고
+// 돌려주지 않는다). 그래서 풀린 행은 눌린 최대 깊이의 탄성 힘 k·δ(POLLEN 약 64 N: 25 g 공이 약 1.6 m/s로 튀어 나간다)를 쓰지
+// 않고, 이력 스프링의 쉼 깊이 δ₀ = peak·(1 − e²)를 지금 깊이로 다시 잡는다(peak = δ/(1 − e²), 그 순간 힘 0). 그 뒤는 보통의 이력
+// 스프링 되찾기다: peak가 하위 단계마다 PINCH_RECOVERY_SPEED·h만큼 줄어 쉼 깊이가 PINCH_RECOVERY_SPEED·(1 − e²)로 물러나고,
+// 풀림 선 F = k_U·(δ − δ₀)(pinchedSpringRow)이 공을 그 쉼 깊이에 붙여 민다. 심 아래로 나와도 같은 선이라 힘이 뛰지 않고, peak가
+// 깊이에 닿으면 탄성선이다(공은 탄성 평형 mg/k에서 끝난다). 다시 잡은 peak는 restoring으로 표시해 넘긴다: 눌린 최대 깊이로
+// 넘겨받은 peak와 가르지 않으면 무게에 눌려 심 깊이로 되돌아온 행이 쉼 깊이를 매번 다시 잡아 나오지 못한다. 행은 순응이 있는
+// 스프링이라(강체가 아니다) 받치는 것 없는 공들만 민다: 누르는 로봇·정적 형상이 닿아 있으면 free가 아니다(elementWorld.ts
+// heldContacts)[결정: 강체 행으로 PINCH_RECOVERY_SPEED만큼 벌리면(검토한 다른 길) 무게에 눌린 공이 심 경계에서 강체 행과 풀림
+// 선을 오갔다. 풀림 선 하나면 심 위아래가 같은 식이다]
+function coreRecoveryRow(input: NormalRowInput, peak: number | undefined): NormalRow {
+  const depth = -input.separation
+  const carried = input.restoring === true && peak !== undefined && peak > depth
+  // e → 1이면 잃는 것이 없어 쉼 깊이를 깊이에 둘 수 없다(나눗셈 0): 잃는 비의 하한을 둔다(그때는 탄성선에 가까워 튀어 나간다)
+  const loss = Math.max(1 - returnRatio(input.restitution), MIN_PINCH_RETURN)
+  const row = pinchedSpringRow({ ...input, peak: carried ? peak : depth / loss })
+  return { ...row, crushed: true, restoring: true }
 }
 
 // 눌림 주기를 이어 가거나 새로 시작하는지: 이미 주기 안이거나, 앞 하위 단계에 이 짝이 있었고 지금 더 깊다(눌리는 것을 봤다)
@@ -304,7 +339,7 @@ export function pinchedSpringRow(
     return row
   }
   const { h, stiffness: k, mass } = input
-  const ratio = Math.min(1, Math.max(MIN_PINCH_RETURN, input.restitution * input.restitution))
+  const ratio = returnRatio(input.restitution)
   const unload = k / ratio
   const rest = peak * (1 - ratio)
   const c = 2 * input.dampingRatio * Math.sqrt(k * mass)
@@ -322,6 +357,10 @@ export function pinchedSpringRow(
 
 // 이력 스프링의 되돌림 에너지 비 e²의 하한[결정: e = 0이면 k_U가 무한대다. 0.01은 e = 0.1, 쓰는 반발 계수(0.3 이상)보다 작다]
 export const MIN_PINCH_RETURN = 0.01
+
+// 이력 스프링의 되돌림 에너지 비(e²를 [MIN_PINCH_RETURN, 1]로 자른 값)
+const returnRatio = (restitution: number): number =>
+  Math.min(1, Math.max(MIN_PINCH_RETURN, restitution * restitution))
 
 // 부드러운 법선(심·반발 없는 스프링–감쇠) 행: 침투 δ > 0이면 목표 (h·k/(h·k + c))·δ/h, 떨어져 있으면 예측 목표 −분리/h, 둘 다
 // 순응 γ = 1/(h·(h·k + c)). normalRow의 심 아래 경우이고, 로봇·넣은 공을 정해진 속도로 보는 한쪽 행(elementWorld.ts

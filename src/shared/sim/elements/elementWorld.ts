@@ -302,6 +302,9 @@ export class ElementWorld {
   // 짝마다 앞 하위 단계의 깊이(짝 토큰 → m, −분리): 이력 스프링 주기는 깊어지는 것을 본 때만 시작한다(ballContact.ts normalRow)
   private depths = new Map<string, number>()
   private nextDepths = new Map<string, number>()
+  // peak가 심에서 되찾기를 시작하며 다시 잡은 값인 짝(짝 토큰, ballContact.ts coreRecoveryRow). peaks와 같이 넘긴다
+  private restoring = new Set<string>()
+  private nextRestoring = new Set<string>()
   // 이번 하위 단계에 이력 스프링 풀림 선에서 모양을 되찾는 중인 행이 있는 공(Pending.recovering)
   private recovering = new Uint8Array(0)
   // 시작 겹침(실행의 첫 하위 단계)에서 이미 심 이상 눌린 짝의 깊이(짝 토큰 → m). 그 짝의 심 행은 elementCrushed를 내지 않는다:
@@ -455,6 +458,8 @@ export class ElementWorld {
       this.nextPeaks = new Map()
       this.depths = new Map()
       this.nextDepths = new Map()
+      this.restoring = new Set()
+      this.nextRestoring = new Set()
       return { rows: [], coupled: undefined }
     }
     // 3. 자유 예측(깨어 있는 공)
@@ -481,15 +486,15 @@ export class ElementWorld {
     }
     // 5. 굴림·회전 저항(앞 하위 단계 법선 충격, 상한 있는 각충격)
     for (const contact of contacts) this.resist(contact, h, uStar)
-    // 6. 행(끼인 행은 반발 두 단계 없이 이력 스프링)
-    const pinched = this.pinchedContacts(contacts)
+    // 6. 행(끼인 행은 반발 두 단계 없이 이력 스프링, 붙드는 것이 없는 심 행은 되찾기)
+    const { pinched, held } = this.pinchedContacts(contacts)
     this.recovering = new Uint8Array(n)
     const rows: BallRow[] = []
     const m = art ? art.coordinates.length : 0
     contacts.forEach((contact, index) => {
       let made: BallRow[] | null
       try {
-        made = this.contactRows(ctx, contact, index, h, uStar, pinched)
+        made = this.contactRows(ctx, contact, index, h, uStar, pinched, held)
       } catch (error) {
         // 비유한 값처럼 그 짝만 뺀다
         this.notify('worldError', { detail: `element ${contact.keys.token}: ${errorText(error)}` })
@@ -510,6 +515,8 @@ export class ElementWorld {
     this.nextPeaks = new Map()
     this.depths = this.nextDepths
     this.nextDepths = new Map()
+    this.restoring = this.nextRestoring
+    this.nextRestoring = new Set()
     const zeros = new Array<number>(m).fill(0)
     const coupledIndex = new Map<number, number>()
     plan.coupled.forEach((e, k) => coupledIndex.set(e, k))
@@ -556,12 +563,15 @@ export class ElementWorld {
   }
 
   // prepare가 던졌을 때(world.ts): 이 하위 단계에 필드 안의 깨어 있는 공을 모두 멈춘다(속도 0, 위치 그대로: 로봇 풀이가 실패한
-  // 하위 단계와 같은 규칙). 다음 하위 단계에서 다시 푼다
+  // 하위 단계와 같은 규칙). 다음 하위 단계에서 다시 푼다. 던지기 전에 만든 행이 다음 하위 단계로 넘기려고 적어 둔 짝 상태는
+  // 모두 버린다(앞 깊이도: 남기면 다음 하위 단계에 접촉이 없던 짝이 그다음에 '앞 하위 단계에 있었다'로 보인다)
   failSubstep(): void {
     this.pending = null
     this.nextTangents = new Map()
     this.nextArrivals = new Map()
     this.nextPeaks = new Map()
+    this.nextDepths = new Map()
+    this.nextRestoring = new Set()
     for (let e = 0; e < this.count; e++) {
       if (this.out[e] || this.asleep[e]) continue
       this.vel.fill(0, 3 * e, 3 * e + 3)
@@ -1267,7 +1277,14 @@ export class ElementWorld {
   // 내적이 PINCH_NORMAL_DOT보다 작으면(서로 반대쪽: 로봇과 벽 사이, 롤러와 후드 사이, 공을 바닥에 누르는 팔 아래) 그 공 쪽에서
   // 끼였다. 공끼리 짝은 두 공 모두 끼였을 때만 끼인 행이다(f 쪽 법선은 −n, 한 공이라도 튀어 나갈 수 있으면 반발한다). 행마다
   // 본다[결정: 6a 리뷰. 공마다 보면 y로 붙은 이웃이나 위에 얹힌 공 때문에 그 축과 직각으로 로봇이 쳐 내는 행까지 반발을 잃었다]
-  private pinchedContacts(contacts: readonly Contact[]): Uint8Array {
+  //
+  // 붙들림(held, 6a 리뷰 3: 심 행이 되찾아도 되는지, ballContact.ts normalRow free): 끼임과 같은 꼴이지만 반대쪽 접촉이 단단할
+  // 때만 센다. 단단한 접촉은 로봇·정적 형상과의 접촉이거나, 그 너머의 공이 다시 단단한 것에 받쳐진 공끼리 접촉이다(받침을 공
+  // 사슬로 따라가는 가장 작은 고정점: 판 → 공 → 공 → 벽은 모두 붙들리고, 판이 떠나면 벽 쪽 공까지 모두 풀린다). 공끼리 짝은 두 공
+  // 모두 받쳐졌을 때만 붙들린다[결정: 반대쪽에 닿기만 한 자유로운 공(되찾은 뒤 옆에 붙어 쉬는 공, 위에 얹힌 공)까지 세면 그 공이
+  // 닿아 있는 동안 벽 쪽 공이 심에 남는다. 가벼운 공은 되찾기에 밀려도 에너지가 문제 되지 않는다. 로봇은 닿아 있기만 해도 센다:
+  // 멈춰 있는 로봇을 되찾기가 밀면 안 된다]. 심 이상 눌린 접촉이 없으면 계산하지 않는다(held는 모두 0)
+  private pinchedContacts(contacts: readonly Contact[]): { pinched: Uint8Array; held: Uint8Array } {
     const n = this.count
     const start = new Int32Array(n + 1)
     for (const c of contacts) {
@@ -1296,6 +1313,9 @@ export class ElementWorld {
     })
     // 쪽마다 끼였는지(비트 1: e 쪽, 2: f 쪽)
     const blocked = new Uint8Array(contacts.length)
+    const deep = contacts.some((c) => -c.separation >= c.core)
+    // 서로 반대쪽인 칸 짝(붙들림 계산에만 쓴다)
+    const opposed: number[] = []
     for (let i = 0; i < n; i++)
       for (let a = start[i]; a < start[i + 1]; a++)
         for (let b = a + 1; b < start[i + 1]; b++)
@@ -1307,12 +1327,40 @@ export class ElementWorld {
           ) {
             blocked[owner[a]] |= side[a] === 0 ? 1 : 2
             blocked[owner[b]] |= side[b] === 0 ? 1 : 2
+            if (deep) opposed.push(a, b)
           }
     const pinched = new Uint8Array(contacts.length)
     contacts.forEach((c, k) => {
       if (blocked[k] & 1 && (c.f < 0 || blocked[k] & 2)) pinched[k] = 1
     })
-    return pinched
+    const held = new Uint8Array(contacts.length)
+    if (opposed.length > 0) {
+      // 쪽마다 받쳐졌는지(비트 1: e 쪽, 2: f 쪽): 그 공의 반대쪽 접촉 가운데 단단한 것이 있다
+      const backed = new Uint8Array(contacts.length)
+      const bit = (slot: number): number => (side[slot] === 0 ? 1 : 2)
+      // 칸의 접촉이 그 공에게 단단한지: 공끼리가 아니거나, 너머의 공이 이 접촉 쪽으로 받쳐졌다
+      const firm = (slot: number): boolean =>
+        contacts[owner[slot]].f < 0 || (backed[owner[slot]] & (3 - bit(slot))) !== 0
+      for (let changed = true; changed;) {
+        changed = false
+        for (let p = 0; p < opposed.length; p += 2) {
+          const a = opposed[p]
+          const b = opposed[p + 1]
+          if (!(backed[owner[a]] & bit(a)) && firm(b)) {
+            backed[owner[a]] |= bit(a)
+            changed = true
+          }
+          if (!(backed[owner[b]] & bit(b)) && firm(a)) {
+            backed[owner[b]] |= bit(b)
+            changed = true
+          }
+        }
+      }
+      contacts.forEach((c, k) => {
+        if (backed[k] & 1 && (c.f < 0 || backed[k] & 2)) held[k] = 1
+      })
+    }
+    return { pinched, held }
   }
 
   // 접촉 하나의 행: 법선(부드러운 법선·반발·심) → 접선 둘(마찰 상자, 접선 순응). 비유한 값이면 빼고 알린다. 반발 두 단계는 끼인
@@ -1323,7 +1371,8 @@ export class ElementWorld {
     index: number,
     h: number,
     uStar: Float64Array,
-    pinched: Uint8Array
+    pinched: Uint8Array,
+    held: Uint8Array
   ): BallRow[] | null {
     const { e, f, normal: n } = contact
     const art = ctx.art
@@ -1386,14 +1435,19 @@ export class ElementWorld {
       impact: this.arrivals.get(contact.keys.token),
       pinched: pinched[index] === 1,
       peak: this.peaks.get(contact.keys.token),
-      previous: this.depths.get(contact.keys.token)
+      previous: this.depths.get(contact.keys.token),
+      // 시작부터 심 이상 겹친 짝은 붙든다(INIT 경고 worldPreloadEmbedded가 맡는다)
+      free: held[index] === 0 && !this.startCrush.has(contact.keys.token),
+      restoring: this.restoring.has(contact.keys.token)
     })
     if (made.arrival !== undefined) this.nextArrivals.set(contact.keys.token, made.arrival)
     if (made.peak !== undefined) this.nextPeaks.set(contact.keys.token, made.peak)
+    if (made.restoring) this.nextRestoring.add(contact.keys.token)
     const depth = -contact.separation
     this.nextDepths.set(contact.keys.token, depth)
-    // 풀림 선(peak > 깊이)에서 모양을 되찾는 중이면 그 공은 잠들지 않는다(되찾기는 잠들기 문턱보다 느릴 수 있다)
-    if (made.peak !== undefined && made.peak > depth && !made.crushed) {
+    // 풀림 선(peak > 깊이)에서 모양을 되찾는 중이면 그 공은 잠들지 않는다(되찾기는 잠들기 문턱보다 느릴 수 있다). 붙들린 심
+    // 행은 되찾지 않는다
+    if (made.peak !== undefined && made.peak > depth && (!made.crushed || made.restoring)) {
       this.recovering[e] = 1
       if (f >= 0) this.recovering[f] = 1
     }

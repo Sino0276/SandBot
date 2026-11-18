@@ -74,14 +74,14 @@ function stepRig(
   art: Articulation,
   ew: ElementWorld,
   steps: number,
-  each?: (rows: readonly ContactRow[]) => void
+  each?: (rows: readonly ContactRow[]) => void,
+  h = 0.001
 ): void {
-  const h = 0.001
   for (let k = 0; k < steps; k++) {
     const frames = art.contactFrames()
     const made = ew.prepare(art, frames, h)
     art.step(h, zeroDrive, { rows: made.rows, damping: [], elements: made.coupled })
-    ew.finish(art, h, false, (k + 1) * 1e6)
+    ew.finish(art, h, false, (k + 1) * Math.round(h * 1e9))
     each?.(made.rows)
   }
 }
@@ -843,6 +843,67 @@ describe('로봇–공 결합: 끼임·한쪽 섬·실패 가두기(6a 리뷰)',
     })
   })
 
+  it('행을 만든 뒤 섬 나누기가 던진 하위 단계는 다음 하위 단계로 넘길 짝 상태를 남기지 않는다(failSubstep)', () => {
+    // 고정 기저 로봇의 가벼운 판(직선 관절, 중력)이 바닥의 공 위에 얹혀 누른다: 판–공·바닥–공 행이 끼인 채 이력 주기에 있다
+    const lid: SimJointSpec = {
+      parent: -1,
+      type: 'prismatic',
+      origin: { position: { x: 0, y: 0, z: 2 * r + 0.0005 }, rotation: ZERO },
+      axis: { x: 0, y: 0, z: -1 },
+      limits: null,
+      body: { mass: 0.5, centerOfMass: ZERO, inertia: [0.01, 0.01, 0.01, 0, 0, 0] },
+      friction: { coulomb: 0, viscous: 0 },
+      spring: null,
+      drive: { kind: 'none' },
+      switches: [],
+      colliders: [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })]
+    }
+    const spec = rig([lid])
+    const world = new PhysicsWorld(spec, {
+      field: WIDE,
+      elements: { initial: [ball('pollen', { x: 0, y: 0, z: r })], air: false, sleep: false }
+    })
+    // 1 ms 틱 = 하위 단계 하나
+    let k = 0
+    const tick = (): void => {
+      world.step(k++ * 1_000_000, {})
+    }
+    for (let i = 0; i < 300; i++) tick()
+    world.drainNotices()
+    type Carried = Record<
+      'nextTangents' | 'nextArrivals' | 'nextPeaks' | 'nextDepths' | 'nextRestoring' | 'depths',
+      { size: number; has(key: string): boolean }
+    >
+    const state = (world as unknown as { elements: Carried }).elements
+    // 보통 하위 단계 뒤: 앞 깊이에 두 짝이 있다
+    expect(state.depths.has('e0/j0k0')).toBe(true)
+    expect(state.depths.has('e0/fl')).toBe(true)
+    const proto = ElementWorld.prototype as unknown as { islands: (...args: unknown[]) => unknown }
+    vi.spyOn(proto, 'islands').mockImplementationOnce(() => {
+      throw new Error('island boom')
+    })
+    tick()
+    vi.restoreAllMocks()
+    expect(world.drainNotices()).toContainEqual({
+      code: 'worldError',
+      params: { detail: 'island boom' }
+    })
+    // 던지기 전에 만든 행이 적어 둔 것(접선·도착 속도·peak·앞 깊이·되찾기 표시)을 모두 버린다. 고친 전에는 앞 깊이만 남아, 다음
+    // 하위 단계에 접촉이 없던 짝도 그다음에는 '앞 하위 단계에 있었다'로 보였다(시작 겹침이 아닌 것처럼 이력 주기를 연다)
+    for (const name of [
+      'nextTangents',
+      'nextArrivals',
+      'nextPeaks',
+      'nextDepths',
+      'nextRestoring'
+    ] as const)
+      expect([name, state[name].size]).toEqual([name, 0])
+    // 다음 하위 단계는 보통대로 다시 푼다
+    tick()
+    expect(world.drainNotices()).toEqual([])
+    expect(state.depths.has('e0/j0k0')).toBe(true)
+  })
+
   it('공 하나의 접촉 만들기가 던지면 그 공만 멈추고 로봇·다른 공은 그대로 간다', () => {
     const start = { x: -0.6, y: -0.9, yaw: 0 }
     const spec: WorldSpec = {
@@ -977,34 +1038,38 @@ describe('로봇–공 결합: 행마다 끼임·이력 스프링(6a 리뷰 2)',
   })
 
   it('판이 공을 바닥에 내리누르면 판 행(e 0.5)과 바닥 행(e 0.3)의 되돌림 에너지 평균 안팎으로 되튄다', () => {
-    const v0 = 0.3
-    const spec = rig([
-      {
-        ...plate(13.6, [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })], {
-          x: 0,
-          y: 0,
-          z: -1
-        }),
-        origin: { position: { x: 0, y: 0, z: 2 * r + 0.001 }, rotation: ZERO }
-      }
-    ])
-    const art = new Articulation(spec.joints, { gravity: 0 })
-    art.v[0] = v0
-    const ew = new ElementWorld(spec, WIDE, {
-      initial: [ball('pollen', { x: 0, y: 0, z: r })],
-      air: false,
-      sleep: false
-    })
-    stepRig(art, ew, 600)
     const floor = POLLEN.contact.restitution.floor
     const returned = Math.sqrt((e * e + floor * floor) / 2)
-    // 공 질량 기준 임계 감쇠만이면 −0.89배였다
-    expect(art.v[0] / v0).toBeLessThan(-0.6 * returned)
-    expect(art.v[0] / v0).toBeGreaterThan(-returned - 0.02)
+    // 0.1–0.3 m/s에서 −0.40·−0.38·−0.38배(평균 0.41). 0.05 m/s는 −0.431배로 평균 + 0.02에 0.001 차이라 넣지 않는다: 그보다
+    // 느리면 눌리는 동안 이력 스프링이 모양을 되찾아(PINCH_RECOVERY_SPEED) 더 되튄다(0.02 m/s −0.52배, 0.01 m/s −0.65배)
+    for (const v0 of [0.1, 0.2, 0.3]) {
+      const spec = rig([
+        {
+          ...plate(13.6, [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })], {
+            x: 0,
+            y: 0,
+            z: -1
+          }),
+          origin: { position: { x: 0, y: 0, z: 2 * r + 0.001 }, rotation: ZERO }
+        }
+      ])
+      const art = new Articulation(spec.joints, { gravity: 0 })
+      art.v[0] = v0
+      const ew = new ElementWorld(spec, WIDE, {
+        initial: [ball('pollen', { x: 0, y: 0, z: r })],
+        air: false,
+        sleep: false
+      })
+      stepRig(art, ew, 900)
+      // 공 질량 기준 임계 감쇠만이면 −0.89배였다
+      expect(art.v[0] / v0).toBeLessThan(-0.6 * returned)
+      expect(art.v[0] / v0).toBeGreaterThan(-returned - 0.02)
+    }
   })
 
-  // 6a 최종 확인: 끼임이 풀린 행은 이력 주기를 마친다. 전에는 떨어질 때(δ ≤ 0)까지 이력 스프링이라, 바닥에 눌렸다 놓인 공이
-  // 바닥과 떨어지지 않아 풀림 선의 쉼 깊이 peak·(1 − e²)에 박힌 채 잠들었다(실제 앱 E2E: 롤러가 놓은 GARDEN 공이 1.5 mm 가라앉음)
+  // 6a 최종 확인: 이력 스프링이 눌린 모양을 되찾는다(이번 주기 최대 깊이 peak가 PINCH_RECOVERY_SPEED로 줄어든다. 행은 끼임이
+  // 풀려도 떨어질 때(δ ≤ 0)까지 이력 스프링 그대로다). 전에는 peak가 줄지 않아, 바닥에 눌렸다 놓인 공이 바닥과 떨어지지 않으니
+  // 풀림 선의 쉼 깊이 peak·(1 − e²)에 박힌 채 잠들었다(실제 앱 E2E: 롤러가 놓은 GARDEN 공이 1.5 mm 가라앉음)
   it('판이 바닥에 누른 공을 놓으면 공은 바닥에 박혀 남지 않고 쉬는 깊이 mg/k로 돌아온다(튀어 오르지 않는다)', () => {
     const spec = rig([
       {
@@ -1043,4 +1108,285 @@ describe('로봇–공 결합: 행마다 끼임·이력 스프링(6a 리뷰 2)',
     // 되찾는 동안 바닥에서 뜨지 않는다(탄성선으로 한 번에 바꾸면 눌린 깊이만큼 튀어 올랐다)
     expect(highest).toBeLessThan(r)
   })
+})
+
+// 6a 리뷰 3: 심(반지름의 30 %)까지 눌린 공은 누르던 몸체가 떠난 뒤에도 심 행(강체, 목표 0)이 밀어내지 않아 그 깊이에 박힌 채
+// 잠들었다(잔상과 final에도 남음). 붙드는 것(반대쪽의 로봇·정적 형상, 그런 것에 받쳐진 공)이 없는 심 행은 쉼 깊이를 지금 깊이로
+// 다시 잡고 PINCH_RECOVERY_SPEED로 모양을 되찾아 탄성 평형(mg/k)으로 돌아온다. 튀어 나가지 않는다
+describe('로봇–공 결합: 심까지 눌린 공의 되찾기(6a 리뷰 3)', () => {
+  const core = POLLEN.contact.coreDepthRatio * r
+  const rest = (m * GRAVITY) / K
+  const heavy = (
+    colliders: SimCollider[],
+    axis: { x: number; y: number; z: number },
+    origin = ZERO
+  ): SimJointSpec => ({
+    parent: -1,
+    type: 'prismatic',
+    origin: { position: origin, rotation: ZERO },
+    axis,
+    limits: null,
+    body: { mass: 13.6, centerOfMass: ZERO, inertia: [0.1, 0.1, 0.1, 0, 0, 0] },
+    friction: { coulomb: 0, viscous: 0 },
+    spring: null,
+    drive: { kind: 'none' },
+    switches: [],
+    colliders
+  })
+
+  // 13.6 kg 판(중력 없음)이 v0로 내려와 바닥의 공을 누르고, 멈추면 0.2 m/s로 물러난다. recovered: 공이 쉬는 깊이(mg/k + 10 µm
+  // 안)로 돌아온 시각(s)
+  function pressFloor(
+    v0: number,
+    steps: number,
+    h = 0.001
+  ): {
+    deepest: number
+    highest: number
+    fastest: number
+    recovered: number
+    ball: SimElementState
+    notices: string[]
+  } {
+    const spec = rig([
+      heavy(
+        [box({ x: 0, y: 0, z: 0.05 }, { x: 0.1, y: 0.1, z: 0.05 })],
+        { x: 0, y: 0, z: -1 },
+        { x: 0, y: 0, z: 2 * r + 0.001 }
+      )
+    ])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = v0
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: 0, y: 0, z: r })],
+      air: false
+    })
+    let deepest = 0
+    let highest = -Infinity
+    let fastest = 0
+    let retract = false
+    let recovered = -1
+    let k = 0
+    const notices: string[] = []
+    stepRig(
+      art,
+      ew,
+      steps,
+      () => {
+        k++
+        const s = ew.snapshot()[0]
+        deepest = Math.max(deepest, r - s.position.z)
+        if (art.v[0] <= 1e-9) retract = true
+        if (retract) art.v[0] = -0.2
+        // 판이 공에서 떨어진 뒤(판 아랫면 z = 2r + 0.001 − q): 되찾기만으로 움직이는 공
+        if (2 * r + 0.001 - art.z[0] > 2 * r + 0.01) {
+          highest = Math.max(highest, s.position.z)
+          fastest = Math.max(fastest, speed(s.velocity))
+          if (recovered < 0 && r - s.position.z < rest + 1e-5) recovered = k * h
+        }
+        for (const n of ew.drainNotices()) notices.push(n.code)
+      },
+      h
+    )
+    return { deepest, highest, fastest, recovered, ball: ew.snapshot()[0], notices }
+  }
+
+  it('판이 바닥의 공을 심까지 눌렀다 물러나면 공은 박혀 남지 않고 mg/k로 돌아와 잠든다(튀어 오르지 않는다)', () => {
+    for (const v0 of [0.34, 0.4, 0.6, 1.0]) {
+      // 심(10.7 mm)에서 바닥 행의 쉼 깊이가 PINCH_RECOVERY_SPEED·(1 − e²) = 1.82 mm/s로 물러난다: 약 5.9 s + 잠들기 0.5 s
+      const run = pressFloor(v0, 8000)
+      expect(run.deepest).toBeGreaterThan(core)
+      expect(run.notices).toContain('elementCrushed')
+      // 고친 전: 10.68–10.76 mm 가라앉은 채 0.6 s 뒤 잠들었다
+      expect(r - run.ball.position.z).toBeCloseTo(rest, 5)
+      expect(run.ball.asleep).toBe(true)
+      // 바닥에서 뜨지 않고, 되찾는 빠르기는 PINCH_RECOVERY_SPEED 안팎이다(튀어 나가지 않는다)
+      expect(run.highest).toBeLessThan(r)
+      expect(run.fastest).toBeLessThan(0.05)
+    }
+  })
+
+  it('되찾는 빠르기는 하위 단계 길이와 관계없다: h 1 ms와 0.5 ms의 되찾는 시간이 같다(±2 %)', () => {
+    const coarse = pressFloor(0.6, 8000, 0.001)
+    const fine = pressFloor(0.6, 16000, 0.0005)
+    // 심 10.7 mm에서 1.82 mm/s: 약 5.9 s
+    expect(coarse.recovered).toBeGreaterThan(5)
+    expect(coarse.recovered).toBeLessThan(7)
+    expect(Math.abs(fine.recovered / coarse.recovered - 1)).toBeLessThan(0.02)
+    expect(r - fine.ball.position.z).toBeCloseTo(rest, 5)
+  })
+
+  it('판이 누른 채 멈춰 있으면 심 행은 되찾지 않는다: 공은 심에 머물고 판은 밀려나지 않는다', () => {
+    const face = 0.1 + 2 * r
+    const spec = rig(
+      [heavy([box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })], { x: 1, y: 0, z: 0 })],
+      [box({ x: face + 0.1, y: 0, z: 0.1 }, { x: 0.1, y: 0.1, z: 0.1 })]
+    )
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = 0.6
+    art.z[0] = 0.1 - 0.002
+    const ew = new ElementWorld(spec, WIDE, {
+      initial: [ball('pollen', { x: face - r, y: 0, z: r })],
+      air: false,
+      sleep: false
+    })
+    stepRig(art, ew, 200)
+    // 판은 심에서 멈췄다(심 넘는 충돌은 소성: 되튀지 않는다)
+    expect(Math.abs(art.v[0])).toBeLessThan(1e-9)
+    const stopped = art.z[0]
+    const x = ew.snapshot()[0].position.x
+    stepRig(art, ew, 3000)
+    // 3 s 뒤에도 판과 공은 그 자리다(누르는 몸체에 에너지를 주지 않는다)
+    expect(Math.abs(art.v[0])).toBeLessThan(1e-9)
+    expect(art.z[0]).toBeCloseTo(stopped, 9)
+    expect(ew.snapshot()[0].position.x).toBeCloseTo(x, 9)
+    expect(x + r - face).toBeGreaterThan(core - 1e-6)
+  })
+
+  // 공 n개를 한 줄로 벽(+x)에 놓고 13.6 kg 판이 v0로 민 뒤 0.2 m/s로 물러난다. 공 0이 벽 쪽이다
+  function pressRow(
+    n: number,
+    v0: number,
+    steps: number
+  ): {
+    wall: number
+    pairs: number[]
+    deepest: number[]
+    fastest: number
+    balls: SimElementState[]
+  } {
+    const WALL = 10
+    const front = WALL - 2 * r * n - 0.001
+    const spec = rig([
+      heavy(
+        [box({ x: -0.05, y: 0, z: 0.1 }, { x: 0.05, y: 0.1, z: 0.1 })],
+        { x: 1, y: 0, z: 0 },
+        { x: front, y: 0, z: 0 }
+      )
+    ])
+    const art = new Articulation(spec.joints, { gravity: 0 })
+    art.v[0] = v0
+    const initial = Array.from({ length: n }, (_, i) =>
+      ball('pollen', { x: WALL - r - 2 * r * i, y: 0, z: r })
+    )
+    const ew = new ElementWorld(spec, WIDE, { initial, air: false })
+    const overlaps = (s: SimElementState[]): number[] => [
+      s[0].position.x + r - WALL,
+      ...s.slice(1).map((b, i) => 2 * r - (s[i].position.x - b.position.x))
+    ]
+    const deepest = Array.from({ length: n }, () => 0)
+    let fastest = 0
+    let retract = false
+    stepRig(art, ew, steps, () => {
+      const s = ew.snapshot()
+      overlaps(s).forEach((d, i) => (deepest[i] = Math.max(deepest[i], d)))
+      if (art.v[0] <= 1e-9) retract = true
+      if (retract) art.v[0] = -0.2
+      // 판 앞면이 맨 뒤 공에서 1 cm 넘게 떨어진 뒤
+      if (s[n - 1].position.x - r - (front + art.z[0]) > 0.01)
+        for (const b of s) fastest = Math.max(fastest, speed(b.velocity))
+    })
+    const s = ew.snapshot()
+    const [wall, ...pairs] = overlaps(s)
+    return { wall, pairs, deepest, fastest, balls: s }
+  }
+
+  it('판이 공 두 개·세 개의 줄을 벽에 심까지 눌렀다 물러나면 공끼리도 벽에서도 떨어진다(뒤에 받치는 것이 없는 공은 붙들지 않는다)', () => {
+    for (const [n, v0] of [
+      [2, 0.5],
+      [3, 1]
+    ] as const) {
+      // 공끼리 심(두 공 합 21.3 mm)은 1.5 mm/s로 물러난다: 약 14.2 s + 잠들기
+      const run = pressRow(n, v0, 17000)
+      // 벽 행과 공끼리 행이 모두 심까지 눌렸다
+      expect(run.deepest[0]).toBeGreaterThan(core)
+      for (const d of run.deepest.slice(1)) expect(d).toBeGreaterThan(2 * core)
+      // 고친 전: 벽 10.8–11.5 mm, 공끼리 21.35 mm 겹친 채 잠들었다
+      expect(run.wall).toBeLessThan(1e-4)
+      for (const overlap of run.pairs) expect(overlap).toBeLessThan(1e-4)
+      for (const b of run.balls) {
+        expect(b.asleep).toBe(true)
+        expect(r - b.position.z).toBeCloseTo(rest, 5)
+      }
+      expect(run.fastest).toBeLessThan(0.05)
+    }
+  })
+
+  it('전출력·0.6 출력 메카넘이 GARDEN 공 넷을 관중석 벽에 심까지 박고 물러나면 넷 모두 벽 밖으로 돌아와 mg/k로 잠든다', () => {
+    const ih = resolveSeason('biobuzz').perimeter.innerHalf
+    // 빨강 벽에서 4 mm 띄운 시작(시작 겹침 없음)
+    const start = { x: 0.9, y: -1.56, yaw: 0 }
+    const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+    const spec: WorldSpec = {
+      ...base,
+      robot: {
+        ...base.robot,
+        start,
+        colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+      },
+      elements: { groups: ['garden'], preloads: [] }
+    }
+    for (const power of [0.6, 1]) {
+      const world = new PhysicsWorld(spec)
+      const deepest = [0, 0, 0, 0]
+      let fastest = 0
+      // 1.5 s 앞으로, 1.5 s 뒤로(0.4), 멈춤. 벽 행(e 0.64)의 쉼 깊이는 1.18 mm/s로 물러난다: 약 9.6 s + 잠들기
+      for (let k = 0; k <= 3000; k++) {
+        const t = k * 0.005
+        const drive = t < 1.5 ? mecanum(power, 0, 0) : t < 3 ? mecanum(-0.4, 0, 0) : {}
+        world.step(k * 5_000_000, outputs(drive))
+        world.drainNotices()
+        const reds = world.elementSnapshot()!.slice(0, 4)
+        reds.forEach((s, i) => (deepest[i] = Math.max(deepest[i], s.position.x + r - ih)))
+        // 로봇이 물러나 멈춘 뒤: 되찾기만으로 움직이는 공
+        if (t > 3.5) for (const s of reds) fastest = Math.max(fastest, speed(s.velocity))
+      }
+      // 적어도 한 공은 심까지 박혔다(전출력은 넷 모두)
+      expect(Math.max(...deepest)).toBeGreaterThan(core)
+      if (power === 1) for (const d of deepest) expect(d).toBeGreaterThan(core)
+      const reds = world.elementSnapshot()!.slice(0, 4)
+      for (const s of reds) {
+        // 고친 전: 전출력은 넷 모두 10.95–11.28 mm(반지름의 31–32 %) 벽 안에 잠든 채 남았다
+        expect(s.position.x + r - ih).toBeLessThan(1e-4)
+        expect(r - s.position.z).toBeCloseTo(rest, 5)
+        expect(s.asleep).toBe(true)
+      }
+      expect(fastest).toBeLessThan(0.05)
+    }
+  }, 120_000)
+
+  it('되찾는 중인 공 상태는 틱을 달리 나눠도(같은 1 ms 하위 단계 격자) 바이트까지 같고 두 번 돌려도 같다', () => {
+    const start = { x: 0.9, y: -1.56, yaw: 0 }
+    const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+    const spec: WorldSpec = {
+      ...base,
+      robot: {
+        ...base.robot,
+        start,
+        colliders: [box({ x: 0, y: 0, z: 0.1 }, { x: HALF, y: HALF, z: 0.1 })]
+      },
+      elements: { groups: ['garden'], preloads: [] }
+    }
+    const ih = resolveSeason('biobuzz').perimeter.innerHalf
+    // 틱 간격(ms)의 되풀이: 합이 20 ms라 출력이 바뀌는 1.5 s·3 s는 어느 나눔에서도 틱 경계다
+    const play = (pattern: readonly number[]): SimElementState[] => {
+      const world = new PhysicsWorld(spec)
+      let t = 0
+      for (let k = 0; t <= 5000; k++) {
+        const drive = t < 1500 ? mecanum(1, 0, 0) : t < 3000 ? mecanum(-0.4, 0, 0) : {}
+        world.step(t * 1_000_000, outputs(drive))
+        world.drainNotices()
+        t += pattern[k % pattern.length]
+      }
+      return world.elementSnapshot()!
+    }
+    const even = play([5])
+    // 5 s: 벽 행이 심 아래로 나와 되찾는 중이다
+    const embed = even[3].position.x + r - ih
+    expect(embed).toBeGreaterThan(5e-3)
+    expect(embed).toBeLessThan(core)
+    expect(even[3].asleep).toBe(false)
+    expect(play([2, 3, 5, 10])).toEqual(even)
+    expect(play([5])).toEqual(even)
+  }, 120_000)
 })

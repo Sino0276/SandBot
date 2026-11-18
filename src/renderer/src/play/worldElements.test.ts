@@ -105,6 +105,35 @@ describe('겹침 문구(6a 리뷰 2)', () => {
   })
 })
 
+// 6a 리뷰 3: '밀려나지 않고 박힌 채 남습니다'와 '빠져나갈 자리가 있어 밀려납니다'는 늘 맞지는 않았다(박힘 예측의 약 1/3이 다른
+// 겹침·중력에 밀려 풀리며 튀어 나갔고, 밀려남 예측의 약 1/5이 벌어진 두 면 사이에서 마찰에 붙잡혔다). 문구는 맞는 것만 말한다
+describe('겹침 문구(6a 리뷰 3)', () => {
+  it('박힘은 남을 수도 튀어 나갈 수도 있다고, 얕은 겹침은 보통 밀려나지만 마찰에 붙잡힐 수 있다고 말하고 둘 다 자리를 옮기라고 한다', () => {
+    for (const text of [ko.console.notices.worldPreloadEmbedded, ko.preload.embedded]) {
+      expect(text).toContain('남거나')
+      expect(text).toContain('튀어 나갈 수')
+      expect(text).not.toContain('밀려나지 않고')
+      expect(text).toContain('자리를 옮기')
+    }
+    for (const text of [en.console.notices.worldPreloadEmbedded, en.preload.embedded]) {
+      expect(text).toContain('may stay embedded')
+      expect(text).toContain('throw it out')
+      expect(text).not.toContain('is not pushed out')
+      expect(text).toContain('Move the slot')
+    }
+    for (const text of [ko.console.notices.worldPreloadOverlap, ko.preload.overlap]) {
+      expect(text).toContain('보통 밀려나지만')
+      expect(text).toContain('마찰')
+      expect(text).toContain('자리를 옮기')
+    }
+    for (const text of [en.console.notices.worldPreloadOverlap, en.preload.overlap]) {
+      expect(text).toContain('normally pushed out')
+      expect(text).toContain('friction')
+      expect(text).toContain('Move the slot')
+    }
+  })
+})
+
 describe('robotPreloads: Preload Slot 자리', () => {
   it('하이어라키 순서, 몸체(섀시 −1·관절 순번)와 몸체 틀 위치, 편집 자세 로봇 좌표', () => {
     const objects = hopperScene()
@@ -587,6 +616,147 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     const ceiling = balls[0][2] + r - (2 * r - 0.003)
     expect(floor + ceiling).toBeCloseTo(0.003, 6)
     expect(floor - ceiling).toBeCloseTo(weight, 5)
+  })
+
+  // 바닥에 놓인 자리 공 하나 위에 바닥 법선에서 angle(°) 기운 판(바깥 법선이 공 쪽)이 overlap만큼 겹친 씬과 그 2 s 실행: 경고,
+  // 가장 빠른 속력(m/s), 굴러간 거리(m), 끝 상태
+  function tilted(
+    angle: number,
+    overlap: number
+  ): { warnings: WorldWarning[]; fastest: number; travel: number; sink: number; asleep: boolean } {
+    const objects: SceneObjects = {
+      R: object('R', 'robot', null, [-0.9, -0.9, 0]),
+      hopper: object('hopper', 'group', 'R', [0, 0, r], [0, 0, 0], {
+        name: 'Hopper',
+        colliders: [{ id: far.id, kind: 'box', center: [-0.8, 0, 0.5], size: far.size }]
+      }),
+      // Rx(angle): 로컬 +z → (0, −sin, cos) = 판의 바깥 법선(공 쪽). 판 면은 공 중심에서 r − overlap이다
+      tilt: object('tilt', 'group', 'R', [0, 0, r], [(angle * Math.PI) / 180, 0, 0], {
+        name: 'Tilt',
+        colliders: [
+          {
+            id: 'plate',
+            kind: 'box',
+            center: [0, 0, -(r - overlap) - 0.02],
+            size: [0.6, 0.6, 0.04]
+          }
+        ]
+      }),
+      s0: object('s0', 'group', 'hopper', [0, 0, 0], [0, 0, 0], {
+        name: 'Slot 0',
+        ...preload([0, 0, 0])
+      })
+    }
+    const doc = { season: 'biobuzz' }
+    const result = withElements(
+      withRunField(
+        buildWorldSpec(objects, 'R', SETTINGS, null, null, () => ({ kind: 'none' })),
+        doc,
+        runFieldOf(doc, { red: 'start', blue: 'start' }),
+        keyT
+      ),
+      objects,
+      'R',
+      ON,
+      keyT
+    )
+    const world = new PhysicsWorld(result.spec!)
+    let fastest = 0
+    let start: SimVec3 | null = null
+    for (let k = 0; k <= 400; k++) {
+      world.step(k * 5_000_000, {})
+      const b = world.elementSnapshot()![8]
+      start ??= b.position
+      fastest = Math.max(fastest, Math.hypot(b.velocity.x, b.velocity.y, b.velocity.z))
+    }
+    const end = world.elementSnapshot()![8]
+    const from = start as SimVec3
+    return {
+      warnings: result.warnings.filter((w) => w.key.startsWith('worldPreload')),
+      fastest,
+      travel: Math.hypot(end.position.x - from.x, end.position.y - from.y, end.position.z - from.z),
+      sink: r - end.position.z,
+      asleep: end.asleep
+    }
+  }
+
+  // 6a 리뷰 3: 위의 천장 판 시험은 주기 시작 규칙(ballContact.ts loading: 앞 하위 단계보다 깊어질 때만)을 지워도, 그 규칙에 앞
+  // 깊이를 넘기는 배선(elementWorld.ts depths → normalRow previous)을 끊어도 되찾기(PINCH_RECOVERY_SPEED)만으로 통과했다. 벌어진
+  // 쐐기(바닥과 115° 기운 판, 열린 각 65°: 마찰이 붙잡는 각 2·atan μ = 48.5°보다 넓다)에 8 mm 겹쳐 시작한 공은 두 탄성 접촉이
+  // 그대로 밀어내 0.9 m/s로 빠져나가 0.62 m 굴러간다. 시작 겹침을 눌린 최대 깊이로 적으면(규칙이나 배선을 되돌리면) 풀림 선의
+  // 힘이 빨리 꺼져 0.53 m/s, 0.30 m다
+  it('바닥과 115° 기운 판 사이에 8 mm 겹쳐 시작한 공은 탄성선의 힘으로 빠져나간다(시작 겹침은 이력 주기를 열지 않는다)', () => {
+    const run = tilted(115, 0.008)
+    expect(run.warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    expect(run.fastest).toBeGreaterThan(0.75)
+    expect(run.travel).toBeGreaterThan(0.45)
+  })
+
+  // 문구가 말하는 한계(6a 리뷰 3): 위치 풀이에는 마찰이 없어, 열린 각이 2·atan μ(공 0.5와 Collider 0.4의 평균 0.45면 48.5°)보다
+  // 좁은 두 면 사이에서 마찰이 붙잡는 공도 pushedOut으로 알린다
+  it('바닥과 150° 기운 판 사이(열린 각 30°)에 6 mm 겹친 공은 pushedOut으로 알리지만 마찰에 붙잡혀 눌린 채 남는다', () => {
+    const run = tilted(150, 0.006)
+    expect(run.warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 0', target: 'R' } }
+    ])
+    expect(run.travel).toBeLessThan(0.01)
+    expect(run.sink).toBeGreaterThan(2e-3)
+    expect(run.asleep).toBe(true)
+  })
+
+  // 문구가 말하는 한계(6a 리뷰 3): 심 행은 더 깊어지는 것만 막는다. 같은 쪽의 더 얕은 겹침이 공을 심 아래로 밀면 그 깊이의 탄성
+  // 힘에 튀어 나간다
+  it('옆판에 11 mm(심 이상) 겹친 공은 박힌 채 남지만, 같은 쪽에 8 mm 겹친 판이 하나 더 있으면 튀어 나간다(둘 다 embedded)', () => {
+    const deep: Box = { id: 'deep', center: [0, r - 0.011 + 0.05, 0.1 - r], size: [0.2, 0.1, 0.2] }
+    const shallow: Box = {
+      id: 'shallow',
+      center: [0, r - 0.008 + 0.005, 0.1 - r],
+      size: [0.2, 0.01, 0.2]
+    }
+    const warned = [{ key: 'worldPreloadEmbedded', params: { name: 'Slot 0', target: 'R' } }]
+    const stays = run(scene(r, [deep], [[0, 0, 0]]))
+    expect(stays.warnings).toEqual(warned)
+    expect(Math.hypot(stays.balls[0][0], stays.balls[0][1])).toBeLessThan(1e-3)
+    const thrown = run(scene(r, [deep, shallow], [[0, 0, 0]]))
+    expect(thrown.warnings).toEqual(warned)
+    expect(Math.hypot(thrown.balls[0][0], thrown.balls[0][1])).toBeGreaterThan(0.3)
+  })
+
+  // 6a 리뷰 3: 뒤 자리가 앞 자리 공에 심 이상 박히면 앞 자리를 '고정'으로 두고 고정 자리의 결과를 건너뛰어, 앞 자리 자신의
+  // 얕은 겹침 경고(Console과 Preload 카드)가 사라졌다
+  it('뒤 자리가 심 이상 박힌 앞 자리도 자기 겹침의 결과를 받는다(옆판 5 mm는 pushedOut, 천장 판 5 mm는 squeezed)', () => {
+    const y1 = 2 * r - 0.7 * r
+    const pair: Vec3[] = [
+      [0, 0, 0],
+      [0, y1, 0]
+    ]
+    // Slot 0 뒤(−y)의 옆판이 5 mm 겹친다. Slot 1은 반대쪽(+y)에서 Slot 0에 0.7·r 박혔다
+    const pushed = run(scene(r, [side('a', -(r - 0.005), r)], pair))
+    expect(pushed.warnings).toEqual([
+      { key: 'worldPreloadOverlap', params: { name: 'Slot 0', target: 'R' } },
+      { key: 'worldPreloadEmbedded', params: { name: 'Slot 1', target: 'Slot 0' } }
+    ])
+    // Slot 0은 옆판에서 밀려난다
+    expect(pushed.balls[0][1] - r).toBeGreaterThan(-(r - 0.005) - 1e-3)
+    // Slot 0 위만 덮는 좁은 천장 판이 5 mm 누른다(Slot 1에는 닿지 않는다)
+    const ceiling: Box = {
+      id: 'ceiling',
+      center: [0, -0.03, r - 0.005 + 0.005],
+      size: [0.2, 0.08, 0.01]
+    }
+    const squeezed = run(scene(r, [ceiling], pair))
+    expect(squeezed.warnings).toEqual([
+      { key: 'worldPreloadSqueezed', params: { name: 'Slot 0', target: 'R' } },
+      { key: 'worldPreloadEmbedded', params: { name: 'Slot 1', target: 'Slot 0' } }
+    ])
+    // Slot 0은 판과 바닥 사이에 눌린 채다
+    expect(r - squeezed.balls[0][2]).toBeGreaterThan(1e-3)
+    // 앞 자리에 자기 겹침이 없으면 뒤 자리의 박힘 하나뿐이다
+    expect(run(scene(r, [far], pair)).warnings).toEqual([
+      { key: 'worldPreloadEmbedded', params: { name: 'Slot 1', target: 'Slot 0' } }
+    ])
   })
 
   it('뒤판에 붙은 자리가 앞 자리 공과 얕게 겹치면 앞 공이 비켜 pushedOut이다(앞 공도 움직인다)', () => {
