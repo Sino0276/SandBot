@@ -118,6 +118,23 @@ describe('보정표(EFG §12.3, 여섯 줄): 살며시 놓기와 던지기', () 
     expect(tips({ nectar: 0, pollen: 8 }, 0.0975, false)).toBe(false)
   }, 120_000)
 
+  it('잠들기가 천천히 기어 나가는 HIVE를 멈춰 세우지 않는다: 4N+1P 놓기는 잠들기를 켜도 넘어간다(리뷰: 멈춤 바로 옆 −29.87°에서 잠들었다)', () => {
+    // 알짜 토크가 임계를 1.4 % 안으로 넘는 짐: 축 마찰 행이 미끄러지는(포화) 동안 ω가 문턱(SLEEP_SPEED/HIVE_ARM)보다 느려도
+    // 구동되는 중이라 잠들지 않는다
+    const load: CalibrationLoad = { nectar: 4, pollen: 1 }
+    const run = runLoad(load, { seconds: 6 })
+    expect(hiveOf(run).tips).toBe(1)
+    expect(tipNotices(run)).toEqual(['red'])
+    expect(Object.is(hiveOf(run).angle, UPPER)).toBe(true)
+    // 잠들기를 끈 같은 세계와 같은 결과다(잠들기가 결과를 바꾸지 않는다)
+    const awake = new BallRunner(
+      worldSpec(),
+      { field: BIOBUZZ, elements: { initial: loadStates(BIOBUZZ, load), sleep: false } },
+      TICK_1MS
+    ).run(6)
+    expect(hiveOf(awake).tips).toBe(1)
+  }, 30_000)
+
   it('넘어감: 처음 멈춤을 떠난 뒤 반대 멈춤에 닿는 데 걸리는 시간을 잰다(8P 놓기, 1 ms 틱)', () => {
     const runner = new BallRunner(
       worldSpec(),

@@ -2154,7 +2154,18 @@ export class ElementWorld {
     }
     for (let k = 0; k < this.hiveCount; k++) {
       if (!this.hiveIsAwake(k)) continue
-      const slow = Math.abs(this.thetaDot[k]) * HIVE_ARM < SLEEP_SPEED
+      // 알짜 토크가 축 마찰을 겨우 넘어 천천히 기어 나가는 HIVE는 ω가 문턱 아래여도 쉬는 것이 아니다: 멈춤 사이에서 축 마찰 행이
+      // 포화(상자 끝, 미끄러지는 중)면 구동되는 중이라 느리다고 치지 않는다. 마찰 행이 상자 안인 정적 마찰 버팀과 멈춤에 닿아 쉬는
+      // 것은 그대로 느리다 [결정: 6b 리뷰. 구동 판정이 없으면 임계 위 1.4 %의 짐이 −29.87°에서 잠들어 넘어감을 놓쳤다]
+      const hive = this.hives[k]
+      const theta = this.theta[k]
+      const atStop = theta === hive.lower || theta === hive.upper
+      const friction = hive.dynamics ? hive.dynamics.pivotFriction * h : 0
+      const driven =
+        !atStop &&
+        friction > 0 &&
+        Math.abs(this.impulses.get(`ghf.h${k}`) ?? 0) >= friction * (1 - 1e-9)
+      const slow = Math.abs(this.thetaDot[k]) * HIVE_ARM < SLEEP_SPEED && !driven
       this.hiveTimer[k] = slow ? this.hiveTimer[k] + h : 0
     }
     if (!this.sleepEnabled) return
