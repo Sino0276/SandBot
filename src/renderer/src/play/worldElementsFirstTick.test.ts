@@ -184,15 +184,15 @@ function intakeScene(): SceneObjects {
 }
 
 // INIT(playActions.worldFor)과 같은 순서: 빌더(형상 조회 포함) → 실행의 시즌 → 경기 요소
-function build(objects: SceneObjects): WorldSpecResult {
+function build(objects: SceneObjects, field: PlayRunField = FIELD): WorldSpecResult {
   const built = buildWorldSpec(objects, 'R', SETTINGS, null, null, (id) =>
     objectHullPoints(objects, id)
   )
   return withElements(
-    withRunField(built, DEFAULT_FIELD_DOC, FIELD, keyT),
+    withRunField(built, DEFAULT_FIELD_DOC, field, keyT),
     objects,
     'R',
-    FIELD,
+    field,
     keyT
   )
 }
@@ -314,6 +314,74 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       expect(ball.position).toEqual([shown(x), shown(y), shown(z)])
     })
   })
+
+  // 시작 HIVE 상태(개인 실행 설정 hiveState = 시작 상태, 6b): 넘어가지 않은 시작(빨강 −30°·파랑 +30°), 둘 다 넘어간 시작, 빨강만 넘어간
+  // 시작. 렌더러 빌더 → JSON → parseWorldSpec → PhysicsWorld 첫 틱의 공 = 그 상태의 elementSpawns(위로 향한 CELL의 NECTAR만)이고,
+  // HIVE 각은 시작 상태의 멈춤 각 상수 그대로 잠들어 있으며(hiveSnapshot·gameState의 줄인 정수), 렌더러 실행 공 수도 같다
+  for (const hiveTipped of [
+    [false, false],
+    [true, true],
+    [true, false]
+  ] as const) {
+    it(`첫 틱의 공과 HIVE 각 = 시작 상태 ${JSON.stringify(hiveTipped)}의 elementSpawns·멈춤 각`, () => {
+      const field: PlayRunField = { ...FIELD, hiveTipped: [hiveTipped[0], hiveTipped[1]] }
+      const result = build(intakeScene(), field)
+      const spec = reparse(result.spec!)
+      expect(spec.field.hiveTipped).toEqual(hiveTipped)
+      const spawns = elementSpawns(
+        BIOBUZZ,
+        spec.elements,
+        spec.robot.start,
+        restBodyFrames(spec.joints),
+        spec.field.hiveTipped
+      )
+      // 배치 공 수 = 그 상태에서 활성인 배치(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6) + 프리로드 4
+      const layout = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, hiveTipped))
+      expect(layout.map((p) => p.group)).toEqual([
+        ...Array(8).fill('garden'),
+        ...Array(16).fill('flower'),
+        ...Array(6).fill('hiveCell')
+      ])
+      expect(spawns).toHaveLength(layout.length + 4)
+      expect(spawns.map((s) => s.kind).slice(0, layout.length)).toEqual(layout.map((p) => p.kind))
+      // 위로 향한 빨강 CELL의 NECTAR 셋(공 24–26)은 시작이면 +X, 넘어갔으면 −X에 있고 두 상태 모두 빨강 벽(−Y) 쪽 옆벽이다
+      const red = BIOBUZZ.hives[0]
+      for (const k of [24, 25, 26]) {
+        expect(spawns[k].kind).toBe('nectarRed')
+        expect(Math.sign(spawns[k].position.x)).toBe(hiveTipped[0] ? -1 : 1)
+        expect(spawns[k].position.y).toBeLessThan(red.pivot.y)
+      }
+
+      const run = runElementsOf(result.spec)!
+      expect(run.spawns).toEqual(spawns)
+      const world = new PhysicsWorld(spec)
+      world.step(0, {})
+      expect(world.elementSnapshot()).toEqual(spawns)
+      // HIVE 각: 시작 상태의 멈춤 각 상수(비트), 잠들어 있고 넘어간 횟수 0
+      const hives = world.hiveSnapshot()!
+      const expected = BIOBUZZ.hives.map((hive, k) =>
+        hiveTipped[k] ? hive.tippedAngle : hive.startAngle
+      )
+      expect(hives.map((h, i) => Object.is(h.angle, expected[i]))).toEqual([true, true])
+      expect(hives.map((h) => [h.asleep, h.tips, Object.is(h.angularVelocity, 0)])).toEqual([
+        [true, 0, true],
+        [true, 0, true]
+      ])
+      const game = world.gameState()!
+      expect(game.hives).toEqual(expected.map((angle) => Math.round(angle * 1e4)))
+      expect(game.hiveTips).toEqual([0, 0])
+      expect(game.poses).toEqual(quantizeElements(spawns).poses)
+      // 렌더러 실행 공 수와 첫 상태
+      expect(runElementBalls(run, null)).toHaveLength(layout.length + 4)
+      // 몇 틱 돌려도 건드리지 않은 HIVE는 그 각 그대로 잠들어 있다
+      for (let k = 1; k < 40; k++) world.step(k * TICK, {})
+      expect(world.hiveSnapshot()!.map((h, i) => Object.is(h.angle, expected[i]))).toEqual([
+        true,
+        true
+      ])
+      expect(world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([])
+    })
+  }
 
   it('짧게 돌리면 롤러가 빨강 GARDEN 공을 물어 끌고 나오고, 프리로드는 바구니에, 파랑 GARDEN은 잠든 채다', () => {
     const objects = intakeScene()
