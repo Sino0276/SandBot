@@ -43,7 +43,7 @@ export class FieldCameras {
     cameras: readonly SimCameraSpec[],
     noise: WorldSpec['noise']
   ) {
-    // 태그 필드 자세는 HIVE 상태로 한 번 푼다(실행 동안 고정, 4ab)
+    // 태그 필드 자세는 HIVE 시작 상태로 한 번 푼다(4ab). 움직이는 HIVE(6b)는 read의 hiveAngles가 바뀐 carrier의 태그만 다시 푼다
     this.vision = new FieldVision(field, hiveTipped)
     this.cameras = cameras
     this.noise = noise
@@ -51,14 +51,16 @@ export class FieldCameras {
 
   // frames(body): 그 몸체의 필드 틀(−1 섀시, ≥ 0 관절 몸체). 몸체 틀을 쓰는 것은 프레임이 있는 틱의 스트리밍 중인 웹캠뿐이다
   // (관절 몸체 자세는 부르는 쪽이 처음 쓸 때 한 번 푼다). tPrev: 앞 틱 경계 시각(첫 step이면 null), tNanos: 이 틱 경계.
-  // outputs: 이 틱의 사이드카 출력. notify(detail): 비유한 값을 막았을 때
+  // outputs: 이 틱의 사이드카 출력. notify(detail): 비유한 값을 막았을 때. hiveAngles(6b, spec-6b §6): 움직이는 HIVE의 지금
+  // 몸체 각 [빨강, 파랑](없거나 null이면 생성자의 HIVE 상태). 판정하는 프레임(프레임 틱의 스트리밍 중인 AprilTag 웹캠)에서만 부른다
   read(
     frames: (body: number) => Frame3,
     tPrev: number | null,
     tNanos: number,
     outputs: Record<string, DeviceValues>,
     put: CameraPut,
-    notify: (detail: string) => void = () => {}
+    notify: (detail: string) => void = () => {},
+    hiveAngles?: () => readonly [number, number] | null
   ): void {
     // 격자는 모든 웹캠에 하나다(카메라마다 같다)
     const due = frameDue(tPrev, tNanos)
@@ -77,7 +79,8 @@ export class FieldCameras {
           camera.model,
           out.width,
           out.height,
-          out.decimation
+          out.decimation,
+          hiveAngles?.() ?? null
         )
         tags = tagsInput(observed, camera.device, tNanos, this.noise)
         if (!allFinite(tags)) {

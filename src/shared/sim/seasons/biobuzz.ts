@@ -897,9 +897,10 @@ const FLOWER_11_POLLEN = flowerColumn(rotateQuarter(FLOWER_9_AXIS))
 // 위로 향한 CELL의 NECTAR 3개(CM 10.3.1 "placed contacting the back wall of the CELL and in a line against the side closest to the
 // ALLIANCE AREA of corresponding color", EFG §11.1): 빨강 HIVE 몸체 틀에서 Back Skin과 밑판에 닿고 빨강 벽(−Y) 쪽 옆벽부터 서로
 // 닿게 한 줄(x_b = Back Skin + r, z_b = 밑판 + r, y_b = −옆벽 + r·(1 + 2k)). 빨강 시작('start', θ −30°)은 +X CELL이 위다.
-// 넘어간 채 시작('tipped', θ +30°)하면 −X CELL이 위이고 자리는 그 (x, y) → (−x, −y) 상이다 [결정: 6b 작업 지시. HIVE가 자기 축
-// 둘레 Rz(π)에 대칭이라 넘어간 시작 = 시작의 거울. CM 문구(빨강 ALLIANCE AREA 쪽 옆벽)를 그대로 따르면 −y_b 쪽이다(넘어간 시작은
-// CM에 없는 SandBot 설정)]. 빨강 HIVE에는 빨강 NECTAR, 파랑은 mirrorElementPlacement
+// 넘어간 채 시작('tipped', θ +30°)하면 −X CELL이 위이고 자리는 그 (x, y) → (−x, y) 상이다: 두 시작 상태 모두 빨강 NECTAR는 빨강
+// ALLIANCE AREA 쪽(빨강 벽, −y_b) 옆벽에 붙는다 [확인: CM 10.3.1 "in a line against the side closest to the ALLIANCE AREA of
+// corresponding color". 몸체 틀 y_b는 필드 +Y라 HIVE가 넘어가도 −y_b가 빨강 벽 쪽이다. −X CELL 트레이는 +X의 (x, y) → (−x, −y)
+// 상이지만 y로 대칭이라 같은 자리에 닿는다]. 빨강 HIVE에는 빨강 NECTAR, 파랑은 mirrorElementPlacement(파랑 벽 +y_b 쪽)
 const RED_HIVE_NECTAR_START: FieldElementPlacement[] = [0, 1, 2].map((k) => ({
   group: 'hiveCell',
   kind: 'nectarRed',
@@ -914,7 +915,7 @@ const RED_HIVE_NECTAR_START: FieldElementPlacement[] = [0, 1, 2].map((k) => ({
 const RED_HIVE_NECTAR_TIPPED: FieldElementPlacement[] = RED_HIVE_NECTAR_START.map((p) => ({
   group: 'hiveCell',
   kind: 'nectarRed',
-  position: { x: neg(p.position.x), y: neg(p.position.y), z: p.position.z },
+  position: { x: neg(p.position.x), y: p.position.y, z: p.position.z },
   carrier: 'hiveRed',
   when: 'tipped'
 }))

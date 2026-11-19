@@ -11,8 +11,8 @@ import { raycasterFor, type FieldRaycaster } from './fieldRaycast'
 import type { SensorPose } from './sensorFrame'
 import { noiseGaussian } from './sensorNoise'
 import { applyMatrix3 } from './seasons/fieldGeometry'
-import type { FieldSpec } from './seasons/fieldSpec'
-import { tagFieldPose, type FieldPose3 } from './seasons/tagPoses'
+import type { FieldSpec, FieldTag } from './seasons/fieldSpec'
+import { carrierAngle, tagFieldPose, tagFieldPoseAt, type FieldPose3 } from './seasons/tagPoses'
 import { MAX_TAG_DETECTIONS, type DeviceValues } from '../sidecarProtocol'
 import type { Vec3, WorldSpec } from './worldSpec'
 
@@ -162,36 +162,71 @@ function tagPoint(pose: FieldPose3, half: number, u: number, v: number): Vec3 {
   return { x: pose.position.x + p.x, y: pose.position.y + p.y, z: pose.position.z + p.z }
 }
 
+// 태그 하나의 판정 자료(필드 자세 하나에서)
+function tagEntry(tag: FieldTag, pose: FieldPose3): TagEntry {
+  const half = tag.size / 2
+  const r = pose.rotation
+  return {
+    id: tag.id,
+    size: tag.size,
+    center: { ...pose.position },
+    normal: { x: -r[2], y: -r[5], z: -r[8] },
+    corners: OCCLUSION_SAMPLES.slice(0, 4).map(([u, v]) => tagPoint(pose, half, u, v)),
+    outer: OCCLUSION_SAMPLES.slice(0, 4).map(([u, v]) =>
+      tagPoint(pose, half * WHITE_BORDER_SCALE, u, v)
+    ),
+    samples: OCCLUSION_SAMPLES.map(([u, v]) => tagPoint(pose, half, u, v))
+  }
+}
+
+// HIVE carrier의 각 칸 번호(hive 인자 [빨강, 파랑]), carrier field면 −1
+const carrierSlot = (tag: FieldTag): number =>
+  tag.carrier === 'hiveRed' ? 0 : tag.carrier === 'hiveBlue' ? 1 : -1
+
 export class FieldVision {
   // id 오름차순 태그와 그 필드 자세(생성자에서 hiveTipped로 한 번 푼다)
   protected readonly tags: readonly TagEntry[]
   private readonly caster: FieldRaycaster
   // (모델, w, h)마다 참 렌즈 값(배열 순서로 찾는다: Map 순서에 기대지 않게)
   private readonly intrinsics: { model: CameraModelId; w: number; h: number; k: Intrinsics }[] = []
+  // 6b 움직이는 HIVE(spec-6b §6): tags와 같은 순서의 시즌 태그, 생성자의 HIVE 각 [빨강, 파랑](그 carrier의 태그가 없으면 NaN:
+  // 바꿔 풀 태그가 없다), 마지막으로 바꿔 푼 각과 그 판정 자료(같은 각이면 다시 쓴다)
+  private readonly sources: readonly FieldTag[]
+  private readonly startAngles: readonly [number, number]
+  private moved: { angles: readonly [number, number]; tags: readonly TagEntry[] } | null = null
 
   constructor(
     protected readonly field: FieldSpec,
     hiveTipped: readonly [boolean, boolean]
   ) {
     this.caster = raycasterFor(field)
-    this.tags = [...field.aprilTags.tags]
-      .sort((a, b) => a.id - b.id)
-      .map((tag) => {
-        const pose = tagFieldPose(field, tag, hiveTipped)
-        const half = tag.size / 2
-        const r = pose.rotation
-        return {
-          id: tag.id,
-          size: tag.size,
-          center: { ...pose.position },
-          normal: { x: -r[2], y: -r[5], z: -r[8] },
-          corners: OCCLUSION_SAMPLES.slice(0, 4).map(([u, v]) => tagPoint(pose, half, u, v)),
-          outer: OCCLUSION_SAMPLES.slice(0, 4).map(([u, v]) =>
-            tagPoint(pose, half * WHITE_BORDER_SCALE, u, v)
-          ),
-          samples: OCCLUSION_SAMPLES.map(([u, v]) => tagPoint(pose, half, u, v))
-        }
-      })
+    this.sources = [...field.aprilTags.tags].sort((a, b) => a.id - b.id)
+    this.tags = this.sources.map((tag) => tagEntry(tag, tagFieldPose(field, tag, hiveTipped)))
+    const angleOf = (slot: number): number => {
+      const tag = this.sources.find((t) => carrierSlot(t) === slot)
+      return tag ? carrierAngle(field, tag.carrier, hiveTipped) : NaN
+    }
+    this.startAngles = [angleOf(0), angleOf(1)]
+  }
+
+  // 판정에 쓸 태그(6b): hive가 없거나 두 각이 생성자의 각과 ===이면 생성자에서 푼 자료 그대로(계산 없음). 아니면 각이 바뀐
+  // carrier의 태그만 tagFieldPoseAt으로 다시 풀고(나머지는 그대로), 마지막 각과 ===이면 그 결과를 다시 쓴다
+  private tagsAt(hive: readonly [number, number] | null | undefined): readonly TagEntry[] {
+    if (!hive) return this.tags
+    const changed = [0, 1].map(
+      (k) => !Number.isNaN(this.startAngles[k]) && hive[k] !== this.startAngles[k]
+    )
+    if (!changed[0] && !changed[1]) return this.tags
+    const last = this.moved
+    if (last && last.angles[0] === hive[0] && last.angles[1] === hive[1]) return last.tags
+    const tags = this.sources.map((tag, i) => {
+      const slot = carrierSlot(tag)
+      return slot >= 0 && changed[slot]
+        ? tagEntry(tag, tagFieldPoseAt(this.field, tag, hive[slot]))
+        : this.tags[i]
+    })
+    this.moved = { angles: [hive[0], hive[1]], tags }
+    return tags
   }
 
   // 참 렌즈 값(cameraData.trueIntrinsics, (모델, w, h)마다 한 번)
@@ -206,12 +241,14 @@ export class FieldVision {
 
   // 카메라 필드 자세(센서 틀)와 해상도·데시메이션으로 모든 태그를 판정한다(id 오름차순, 보이지 않는 것도 rejection으로).
   // 판정 순서(처음 실패한 것이 rejection): behind → facingAway → outOfFrame → grazing → tooSmall → occluded
+  // hive(6b): 움직이는 HIVE의 지금 몸체 각 [빨강, 파랑](rad). 없거나 null이면 생성자의 HIVE 상태 그대로다
   observe(
     pose: SensorPose,
     model: CameraModelId,
     width: number,
     height: number,
-    decimation: number
+    decimation: number,
+    hive: readonly [number, number] | null = null
   ): TagObservation[] {
     const k = this.lens(model, width, height)
     const o = pose.origin
@@ -239,7 +276,7 @@ export class FieldVision {
     const d = decimation < 1 ? 1 : decimation
     const minSide = Math.max(MIN_SIDE_PX, MIN_SIDE_PER_DECIMATION * d)
     const out: TagObservation[] = []
-    for (const tag of this.tags) {
+    for (const tag of this.tagsAt(hive)) {
       const reject = (
         rejection: TagRejection,
         corners: TagObservation['corners'] = [0, 0, 0, 0, 0, 0, 0, 0],

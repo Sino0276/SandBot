@@ -340,10 +340,11 @@ describe('배치(flower·hiveCell)', () => {
         z: -0.037287 + NECTAR_R
       })
     )
-    // 넘어간 시작: −X CELL의 (x, y) → (−x, −y), 파랑: mirrorElementPlacement
+    // 넘어간 시작: −X CELL의 (x, y) → (−x, y)(두 시작 상태 모두 빨강 벽 −y_b 쪽 옆벽, CM 10.3.1), 파랑: mirrorElementPlacement
     cells.slice(3, 6).forEach((p, k) => {
       const s = cells[k].position
-      expect(p.position).toEqual({ x: -s.x, y: -s.y, z: s.z })
+      expect(p.position).toEqual({ x: -s.x, y: s.y, z: s.z })
+      expect(p.position.y).toBeLessThan(0)
     })
     cells.slice(6).forEach((p, k) => expect(p).toEqual(mirrorElementPlacement(cells[k])))
   })

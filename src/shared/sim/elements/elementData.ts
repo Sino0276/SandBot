@@ -17,12 +17,21 @@ export { ELEMENT_GROUPS, ELEMENT_KINDS, MAX_PRELOADS, MAX_WORLD_ELEMENTS } from 
 export const MAX_COUPLED_ROWS = 96
 // 공끼리 섬의 조밀 LCP 행 한도. 넘으면 고정 횟수 PGS로 풀고 elementIslandLarge [결정: 조밀 풀이 비용 O(n³)]
 export const ISLAND_DENSE_ROWS = 60
+// HIVE(6b)가 든 섬의 조밀 LCP 행 한도. 넘으면 PGS와 elementIslandLarge [결정: 넘어감 기준이 PGS 30회 근사로 흔들리지 않게
+// (spec-6b §2). 보정표의 짐(공 8개, 공끼리·트레이 짝 약 30개)은 100행 안팎이다]
+export const HIVE_ISLAND_DENSE_ROWS = 256
 // 큰 섬의 PGS 반복 수(고정, 행 순서) [결정]
 export const PGS_SWEEPS = 30
 // 잠들기: 속력 |v|와 |ω|·r이 이보다 작은 상태가 SLEEP_TIME 넘게 이어진 섬은 잠든다(속도 정확히 0)
 // [가정: 5 mm/s·0.5 s] 쉬는 공의 반올림 떨림보다 크고 눈에 띄는 굴림보다 작다
 export const SLEEP_SPEED = 5e-3
 export const SLEEP_TIME = 0.5
+// HIVE(6b)의 잠들기 속력 팔(m): |ω|·이 값이 SLEEP_SPEED보다 작아야 잠들기 시간을 센다 [결정: CELL 입구(x_b 0.544982)까지의 팔,
+// 공이 보는 가장 빠른 트레이 점]
+export const HIVE_ARM = 0.545
+// HIVE 몸체 부품(축 조립체)의 표면 마찰 μ(공 짝은 공 μ와 평균) [가정: 구조물 μ 0.4(biobuzz.ts STRUCTURE_FRICTION)와 같다. CELL
+// 트레이 부품은 그 CELL 구조물의 friction(같은 0.4)을 쓴다]
+export const HIVE_PART_FRICTION = 0.4
 // 이 법선 접근 속도(m/s) 아래면 반발하지 않는다(쉬는 공이 튀지 않게) [가정: Box2D·Box3D restitution threshold 1 m/s보다
 // 작은 공 크기 어림]
 export const V_BOUNCE = 0.25

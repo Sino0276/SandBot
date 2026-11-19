@@ -27,11 +27,20 @@ export function tagFieldPose(
   tag: FieldTag,
   hiveTipped: readonly [boolean, boolean]
 ): FieldPose3 {
+  if (tag.carrier === 'field')
+    return { position: { ...tag.position }, rotation: rotationMatrix(tag.rotation) }
+  return tagFieldPoseAt(field, tag, carrierAngle(field, tag.carrier, hiveTipped))
+}
+
+// HIVE 몸체 각 angle(rad)에서 carrier 위 요소의 필드 자세(6b, spec-6b §6: 움직이는 HIVE의 태그). tagFieldPose의 시작·넘어간
+// 각과 같은 문장(rotationMatrix → applyMatrix3 → pivot 더하기 → matMul3)이라 같은 각이면 비트로 같다. carrier 'field'는 각을
+// 보지 않는다
+export function tagFieldPoseAt(field: FieldSpec, tag: FieldTag, angle: number): FieldPose3 {
   const local = rotationMatrix(tag.rotation)
   if (tag.carrier === 'field') return { position: { ...tag.position }, rotation: local }
   const hive = field.hives.find((h) => h.key === tag.carrier)
   if (!hive) throw new Error(`carrier ${tag.carrier}가 시즌 데이터에 없다`)
-  const carrier = rotationMatrix({ x: 0, y: carrierAngle(field, tag.carrier, hiveTipped), z: 0 })
+  const carrier = rotationMatrix({ x: 0, y: angle, z: 0 })
   const p = applyMatrix3(carrier, tag.position)
   return {
     position: { x: hive.pivot.x + p.x, y: hive.pivot.y + p.y, z: hive.pivot.z + p.z },

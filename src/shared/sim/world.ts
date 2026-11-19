@@ -317,7 +317,8 @@ export class PhysicsWorld {
             options.sensorModels
           )
         : null
-    // 웹캠은 HIVE 상태(세계 설명 field.hiveTipped)로 태그 자세를 한 번 푼다(4ab FieldSpec을 같이 쓴다)
+    // 웹캠은 HIVE 시작 상태(세계 설명 field.hiveTipped)로 태그 자세를 한 번 푼다(4ab FieldSpec을 같이 쓴다). 경기 요소가 있는
+    // 세계는 프레임마다 움직이는 HIVE 각을 넘겨 각이 시작과 다른 HIVE의 태그만 다시 푼다(6b, inputs)
     this.cameras =
       spec.cameras.length > 0
         ? new FieldCameras(field, spec.field.hiveTipped, spec.cameras, spec.noise)
@@ -929,7 +930,9 @@ export class PhysicsWorld {
       const frames = this.sensorFrames()
       const notify = (detail: string): void => this.notify('worldError', { detail })
       this.sensors?.read(frames, tNanos, put, notify)
-      this.cameras?.read(frames, tPrev, tNanos, this.outputsPrev, put, notify)
+      this.cameras?.read(frames, tPrev, tNanos, this.outputsPrev, put, notify, () =>
+        this.elements ? this.elements.hiveAngles() : null
+      )
     }
     return state
   }
