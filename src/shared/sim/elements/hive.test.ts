@@ -103,19 +103,20 @@ describe('보정표(EFG §12.3, 여섯 줄): 살며시 놓기와 던지기', () 
       }, 30_000)
 
   it('창: 안 넘어가야 할 짐의 임계 massMoment보다 낮으면 넘어가고, 넘어가야 할 짐의 임계보다 높으면 안 넘어간다', () => {
-    // 시뮬레이터가 잰 임계값(이 massMoment 미만이면 넘어간다): 3N+2P 던지기 0.0857, 7P 던지기 0.0846, 3N+3P 놓기 0.0938, 8P
-    // 놓기 0.0958. 가운데 0.0897은 정해 둔 0.0900과 0.3 % 안이다
+    // 시뮬레이터가 잰 임계값(이 massMoment 미만이면 넘어간다, 잠들기 켬 = 끔: 6b 리뷰 뒤 모든 줄이 같다): 3N+2P 던지기 0.08669(놓기
+    // 0.08310), 7P 던지기 0.08560(놓기 0.08247), 3N+3P 놓기 0.09503(던지기 0.09860), 8P 놓기 0.09706(던지기 0.10122). 모든 줄을
+    // 만족하는 창 [0.08669, 0.09503]의 가운데 0.09086은 정해 둔 0.0900과 1 % 안이다. 아래 경계는 임계에서 2–4 % 떨어뜨려 잡는다
     const tips = (load: CalibrationLoad, massMoment: number, toss: boolean): boolean =>
       hiveOf(runLoad(load, { toss, field: withHiveDynamics(BIOBUZZ, { massMoment }), seconds: 4 }))
         .tips > 0
     expect(tips({ nectar: 3, pollen: 2 }, 0.083, true)).toBe(true)
-    expect(tips({ nectar: 3, pollen: 2 }, 0.0885, true)).toBe(false)
+    expect(tips({ nectar: 3, pollen: 2 }, 0.0895, true)).toBe(false)
     expect(tips({ nectar: 0, pollen: 7 }, 0.082, true)).toBe(true)
-    expect(tips({ nectar: 0, pollen: 7 }, 0.0875, true)).toBe(false)
+    expect(tips({ nectar: 0, pollen: 7 }, 0.0885, true)).toBe(false)
     expect(tips({ nectar: 3, pollen: 3 }, 0.0925, false)).toBe(true)
-    expect(tips({ nectar: 3, pollen: 3 }, 0.0955, false)).toBe(false)
-    expect(tips({ nectar: 0, pollen: 8 }, 0.094, false)).toBe(true)
-    expect(tips({ nectar: 0, pollen: 8 }, 0.0975, false)).toBe(false)
+    expect(tips({ nectar: 3, pollen: 3 }, 0.0975, false)).toBe(false)
+    expect(tips({ nectar: 0, pollen: 8 }, 0.0945, false)).toBe(true)
+    expect(tips({ nectar: 0, pollen: 8 }, 0.0995, false)).toBe(false)
   }, 120_000)
 
   it('잠들기가 천천히 기어 나가는 HIVE를 멈춰 세우지 않는다: 4N+1P 놓기는 잠들기를 켜도 넘어간다(리뷰: 멈춤 바로 옆 −29.87°에서 잠들었다)', () => {
@@ -133,6 +134,14 @@ describe('보정표(EFG §12.3, 여섯 줄): 살며시 놓기와 던지기', () 
       TICK_1MS
     ).run(6)
     expect(hiveOf(awake).tips).toBe(1)
+    // 임계 바로 아래의 짐도 그렇다: 3N+3P 놓기의 임계 0.09503보다 1.1 % 낮은 0.0940은 잠들기 때문에 0.09374 위에서 멈췄었다
+    const field = withHiveDynamics(BIOBUZZ, { massMoment: 0.094 })
+    const near = new BallRunner(
+      worldSpec(),
+      { field, elements: { initial: loadStates(field, { nectar: 3, pollen: 3 }) } },
+      TICK_1MS
+    ).run(8)
+    expect(hiveOf(near).tips).toBe(1)
   }, 30_000)
 
   it('넘어감: 처음 멈춤을 떠난 뒤 반대 멈춤에 닿는 데 걸리는 시간을 잰다(8P 놓기, 1 ms 틱)', () => {
