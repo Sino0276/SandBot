@@ -428,13 +428,15 @@ describe('elementsViewModel', () => {
           return [q.x, q.y, q.z]
         })
       expect(positions(tipped)).toEqual(expected)
-      expect(expected).toHaveLength(10)
+      expect(expected).toHaveLength(
+        BIOBUZZ.elements!.layout.filter((p) => placementActive(p, tipped)).length + 2
+      )
     }
     // 빨강이 넘어간 채 시작하면 빨강 CELL 공의 자리가 바뀌고 파랑은 그대로다
     const start = positions([false, false])
     const redTipped = positions([true, false])
-    expect(redTipped[8]).not.toEqual(start[8])
-    expect(redTipped[9]).toEqual(start[9])
+    expect(redTipped.at(-2)).not.toEqual(start.at(-2))
+    expect(redTipped.at(-1)).toEqual(start.at(-1))
   })
 
   it('editElementLayers: 관절 하위 팀 자리 공은 관절 미리보기 슬라이더를 따라 Preload Slot 기즈모와 같은 자리다', () => {

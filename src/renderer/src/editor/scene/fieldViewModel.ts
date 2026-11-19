@@ -118,7 +118,7 @@ export type FieldGeometrySpec =
   | { kind: 'box'; size: Vec3 }
   // 자기 z가 축(Three.js CylinderGeometry는 y축이라 matrix가 돌린다)
   | { kind: 'cylinder'; radius: number; height: number }
-  // 볼록 기둥(6b 부품): 자기 x·y 평면의 볼록 반시계 다각형을 자기 z로 ±height/2(prismGeometry.ts)
+  // 볼록 기둥(6b 부품): 자기 x·y 평면의 볼록 반시계 다각형을 자기 z로 ±height/2(fieldPartGeometry.ts prismGeometry)
   | { kind: 'prism'; polygon: readonly { x: number; y: number }[]; height: number }
 
 // 'part'(6b): 구조물(structureIndex)이나 HIVE 몸체(structureIndex 없음)의 계산 부품 하나(partIndex = 주인의 parts 순번)

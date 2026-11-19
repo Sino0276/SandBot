@@ -570,7 +570,11 @@ describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
     }
     const model = fieldViewModel(spec, [false, false], false)
     const outline = fieldOutlineMeshes(model, spec)
-    expect(outline.carriers.map((carrier) => carrier.key)).toEqual(['hiveRed'])
+    const blueParts = ofRole(model, 'part').some((mesh) => mesh.carrier === 'hiveBlue')
+    expect(outline.carriers.map((carrier) => carrier.key)).toEqual(
+      blueParts ? ['hiveRed', 'hiveBlue'] : ['hiveRed']
+    )
+    // 빨강 CELL 둘(부품이 있으면 흐린 봉투)
     expect(ofRole(outline, 'structure').filter((mesh) => mesh.carrier === 'hiveRed')).toHaveLength(
       2
     )
@@ -697,7 +701,9 @@ describe('부품 그리기·색·윤곽·companion (6b)', () => {
     expect(keys).not.toContain('structure14')
     expect(keys).toContain('structure14.part0')
     expect(ofRole(outline, 'part').every((mesh) => mesh.outline === undefined)).toBe(true)
-    expect(outline.meshes.filter((mesh) => mesh.outline === 'dim')).toHaveLength(2)
+    expect(outline.meshes.filter((mesh) => mesh.outline === 'dim')).toHaveLength(
+      SPEC.structures.filter((s) => s.parts && (s.solid || s.sensed || s.occludes)).length
+    )
     expect(outline.carriers.map((carrier) => carrier.key)).toEqual(['hiveRed', 'hiveBlue'])
     // 그려진 공 부품이 없는 계산 구조물의 봉투는 끝에 흐리게 둔다
     const robotsOnly: FieldSpec = {

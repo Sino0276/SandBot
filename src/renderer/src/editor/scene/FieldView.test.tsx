@@ -527,7 +527,10 @@ describe('필드 CAD 층(B5)', () => {
     expect(named('hiveBlue.body')!.visible).toBe(false)
     const red = named('hiveRed.body')!.children
     expect(red.length).toBe(biobuzzBodies() / 2)
-    expect(red.every((mesh) => mesh.name.startsWith('structure'))).toBe(true)
+    // CELL(부품이 있으면 트레이 부품)과 축 조립체 부품, 태그는 아니다
+    expect(
+      red.every((mesh) => mesh.name.startsWith('structure') || mesh.name.startsWith('hiveRed.part'))
+    ).toBe(true)
     expect(named('hiveRed')!.rotation.y).toBeCloseTo(Math.PI / 6, 12)
     // 설정을 되돌리면 숨긴다
     await set(() =>

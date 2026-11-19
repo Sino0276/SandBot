@@ -183,9 +183,12 @@ describe("Field 인스펙터 '경기 요소'", () => {
   // BIOBUZZ 배치 데이터 전이라 시험 판(fieldPartsTestkit)에 빨강이 넘어간 채 시작할 때만 생기는 NECTAR 둘을 더 둔다
   it('FLOWER·CELL 공 수는 보이는 HIVE 시작 상태로 생기는 배치를 센다', () => {
     const base = partsSpec()
-    const tippedOnly = base.elements!.layout.filter(
-      (p) => p.group === 'hiveCell' && p.carrier === 'hiveRed' && p.when === 'tipped'
-    )
+    // 시험 판의 빨강 넘어감 배치 하나(BIOBUZZ 배치 데이터가 있어도 하나만)
+    const tippedOnly = base
+      .elements!.layout.filter(
+        (p) => p.group === 'hiveCell' && p.carrier === 'hiveRed' && p.when === 'tipped'
+      )
+      .slice(-1)
     const spec: FieldSpec = {
       ...base,
       elements: {
@@ -203,6 +206,7 @@ describe("Field 인스펙터 '경기 요소'", () => {
     )
     expect(text()).toContain(row('flower', count('flower', [false, false])))
     expect(text()).toContain(row('hiveCell', count('hiveCell', [false, false])))
+    // 빨강 시작·넘어감 배치 수가 같은 짝이라(spec-6b §1.2) 더한 둘만큼 는다
     expect(count('hiveCell', [true, false])).toBe(count('hiveCell', [false, false]) + 2)
     setStore(usePlayStore, {
       settings: { ...DEFAULT_PLAY_SETTINGS, hiveState: { red: 'tipped', blue: 'start' } }

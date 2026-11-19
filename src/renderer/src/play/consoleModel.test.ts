@@ -419,6 +419,26 @@ describe('경기 요소 Console 줄(6a)', () => {
   })
 })
 
+// 6b: HIVE 넘어감(simNotice hiveTip)은 안내(info) 줄이라 경고 토글로 숨지 않고 정보 개수에 든다
+describe('HIVE 넘어감 Console 줄(6b)', () => {
+  it('빨강·파랑 문구(ko·en), info 수준이라 정보 토글을 따른다', () => {
+    const entries = (['red', 'blue'] as const).map((hive) =>
+      consoleEntry(
+        { type: 'notice', key: `sim.hiveTip.${hive}`, params: { hive } },
+        5_000_000,
+        'info'
+      )
+    )
+    for (const [index, hive] of (['red', 'blue'] as const).entries()) {
+      expect(entrySummary(entries[index], t)).toBe(ko.console.notices.sim.hiveTip[hive])
+      expect(entrySummary(entries[index], tEn)).toBe(en.console.notices.sim.hiveTip[hive])
+    }
+    expect(consoleCounts(entries)).toEqual({ info: 2, warning: 0, error: 0 })
+    expect(visibleEntries(entries, { ...ALL, warning: false }, '', t)).toHaveLength(2)
+    expect(visibleEntries(entries, { ...ALL, info: false }, '', t)).toHaveLength(0)
+  })
+})
+
 // 5: 몸체 충돌 겹침(simNotice collisionOverlap)의 Console 본문(spec-5 §5.7, K11)
 describe('collisionOverlap 본문', () => {
   const overlap = (
