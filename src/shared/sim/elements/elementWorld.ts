@@ -11,6 +11,7 @@ import { COLLISION_MARGIN, frictionTangent, OVERLAP_NOTICE_DEPTH } from '../body
 import {
   ballStaticShapes,
   bodyShape,
+  partHull,
   placeShape,
   shapeBounds,
   shapeSeparation,
@@ -659,7 +660,8 @@ export class ElementWorld {
     // 6b. HIVE의 멈춤·축 마찰 행(깨어 있는 HIVE, 모든 접촉 행 뒤)
     for (let k = 0; k < this.hiveCount; k++) if (this.hiveIsAwake(k)) rows.push(...this.hiveRows(k, h))
     // 7. 섬
-    const robotTouch = new Uint8Array(n)
+    // 마디(공 → HIVE) 크기: HIVE 칸은 늘 0(로봇은 HIVE에 닿지 않고, 로봇이 쥔 공을 통해서만 섬에 든다)
+    const robotTouch = new Uint8Array(n + this.hiveCount)
     for (const c of contacts) if (c.dynamic) robotTouch[c.e] = 1
     const plan = this.islands(contacts, rows, robotTouch)
     this.softenOneWay(plan, contacts, rows, h)
@@ -1836,6 +1838,12 @@ export class ElementWorld {
         }
         parts.push({ ball: f, a: af })
       }
+      // 깨어 있는 HIVE의 부품이면 HIVE 몸체 부분(6b): 접촉점 속도 ω ŷ × (p − 피벗)의 d 성분 = ω·(r × d)_y의 부호 반대
+      // (행 속도는 공 − 상대). 잠든 HIVE는 정적 짝이다
+      if (contact.hive >= 0 && this.hiveIsAwake(contact.hive)) {
+        const r = sub(contact.point, this.hives[contact.hive].pivot)
+        parts.push(this.hivePart(contact.hive, -(r[2] * d[0] - r[0] * d[2])))
+      }
       return parts
     }
     const robotRow = (d: V3): number[] | null => {
@@ -1912,7 +1920,12 @@ export class ElementWorld {
       const pe = this.velocityAt(e, contact.point)
       let other: V3 = [0, 0, 0]
       if (f >= 0) other = this.velocityAt(f, contact.point)
-      else if (robot && ctx.frames)
+      else if (contact.hive >= 0) {
+        // HIVE 부품 위 점의 속도 ω ŷ × (p − 피벗) = ω·(r_z, 0, −r_x)(잠든 HIVE는 ω = +0)
+        const r = sub(contact.point, this.hives[contact.hive].pivot)
+        const w = this.thetaDot[contact.hive]
+        other = [w * r[2], 0, -(w * r[0])]
+      } else if (robot && ctx.frames)
         other = apply(
           ctx.rotation,
           arr(robot.pointVelocity(ctx.frames, contact.body, vec(contact.pointC as V3)))
@@ -1968,50 +1981,69 @@ export class ElementWorld {
     robotTouch: Uint8Array
   ): { coupled: number[]; robotRows: number[]; islands: Island[]; limited: boolean } {
     const n = this.count
-    const awake = (i: number): boolean => !this.out[i] && !this.asleep[i]
-    const all = new UnionFind(n)
-    for (const c of contacts) if (c.f >= 0) all.union(c.e, c.f)
-    // 행 수·깊이(공마다)
+    // 마디: 공 0…n−1, 깨어 있는 HIVE n + k(6b, 늘 공 뒤)
+    const nodes = n + this.hiveCount
+    const awake = (i: number): boolean =>
+      i < n ? !this.out[i] && !this.asleep[i] : this.hiveIsAwake(i - n)
+    // 공과 깨어 있는 HIVE 부품의 접촉: 그 HIVE가 상대 마디다(잠든 HIVE는 정적 짝이라 잇지 않는다)
+    const other = (c: Contact): number =>
+      c.f >= 0 ? c.f : c.hive >= 0 && this.hiveIsAwake(c.hive) ? n + c.hive : -1
+    const all = new UnionFind(nodes)
+    for (const c of contacts) {
+      const o = other(c)
+      if (o >= 0) all.union(c.e, o)
+    }
+    // 행 수·깊이(공마다). HIVE의 멈춤·축 마찰 행(접촉 없음)은 HIVE마다 센다
     const rowCount = new Int32Array(contacts.length)
-    for (const row of rows) rowCount[row.contact]++
+    const hiveRowCount = new Int32Array(this.hiveCount)
+    for (const row of rows) {
+      if (row.contact >= 0) rowCount[row.contact]++
+      else hiveRowCount[row.parts[0].ball - n]++
+    }
     const robotRoots = new Set<number>()
     for (let i = 0; i < n; i++) if (robotTouch[i]) robotRoots.add(all.find(i))
     const candidates: number[] = []
-    for (let i = 0; i < n; i++) if (awake(i) && robotRoots.has(all.find(i))) candidates.push(i)
-    const total = contacts.reduce(
+    for (let i = 0; i < nodes; i++) if (awake(i) && robotRoots.has(all.find(i))) candidates.push(i)
+    let total = contacts.reduce(
       (sum, c, k) => sum + (robotRoots.has(all.find(c.e)) ? rowCount[k] : 0),
       0
     )
+    for (let k = 0; k < this.hiveCount; k++)
+      if (awake(n + k) && robotRoots.has(all.find(n + k))) total += hiveRowCount[k]
     let admitted = new Set(candidates)
     const limited = total > MAX_COUPLED_ROWS
     if (limited) {
-      const depth = new Float64Array(n).fill(Infinity)
+      const depth = new Float64Array(nodes).fill(Infinity)
       for (const c of contacts) {
         depth[c.e] = Math.min(depth[c.e], c.separation)
-        if (c.f >= 0) depth[c.f] = Math.min(depth[c.f], c.separation)
+        const o = other(c)
+        if (o >= 0) depth[o] = Math.min(depth[o], c.separation)
       }
       const order = candidates
         .slice()
         .sort((x, y) => robotTouch[y] - robotTouch[x] || depth[x] - depth[y] || x - y)
       admitted = new Set()
-      // 공마다 접촉 번호(번호 순)
-      const byBall: number[][] = Array.from({ length: n }, () => [])
+      // 마디마다 접촉 번호(번호 순)
+      const byBall: number[][] = Array.from({ length: nodes }, () => [])
       contacts.forEach((c, k) => {
         byBall[c.e].push(k)
-        if (c.f >= 0) byBall[c.f].push(k)
+        const o = other(c)
+        if (o >= 0) byBall[o].push(k)
       })
       let used = 0
       for (let grew = true; grew;) {
         grew = false
         for (const e of order) {
           if (admitted.has(e)) continue
-          // 이 공의 로봇·정적 행과 넣은 공과의 행. 로봇에 닿았거나 넣은 공에 닿아야 넣는다
+          // 이 마디의 로봇·정적 행과 넣은 마디와의 행. 로봇에 닿았거나 넣은 마디에 닿아야 넣는다. HIVE는 자기 멈춤·축 마찰 행도
+          // 더한다(6b)
           let linked = robotTouch[e] === 1
-          let cost = 0
+          let cost = e >= n ? hiveRowCount[e - n] : 0
           for (const k of byBall[e]) {
             const c = contacts[k]
-            if (c.f < 0) cost += rowCount[k]
-            else if (admitted.has(c.e === e ? c.f : c.e)) {
+            const o = other(c)
+            if (o < 0) cost += rowCount[k]
+            else if (admitted.has(c.e === e ? o : c.e)) {
               cost += rowCount[k]
               linked = true
             }
@@ -2025,13 +2057,15 @@ export class ElementWorld {
       this.notify('elementCouplingLimit', {})
     }
     const coupled = candidates.filter((e) => admitted.has(e))
-    // 나머지 공의 섬(넣은 공과의 짝은 잇지 않는다)
-    const rest = new UnionFind(n)
-    for (const c of contacts)
-      if (c.f >= 0 && !admitted.has(c.e) && !admitted.has(c.f)) rest.union(c.e, c.f)
+    // 나머지 마디의 섬(넣은 마디와의 짝은 잇지 않는다)
+    const rest = new UnionFind(nodes)
+    for (const c of contacts) {
+      const o = other(c)
+      if (o >= 0 && !admitted.has(c.e) && !admitted.has(o)) rest.union(c.e, o)
+    }
     const byRoot = new Map<number, Island>()
     const islands: Island[] = []
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < nodes; i++) {
       if (!awake(i) || admitted.has(i)) continue
       const root = rest.find(i)
       let island = byRoot.get(root)
@@ -2069,7 +2103,8 @@ export class ElementWorld {
     for (const island of plan.islands)
       for (const r of island.rows) {
         const row = rows[r]
-        if (row.friction || row.compliance > 0) continue
+        // HIVE의 멈춤·축 마찰 행(접촉 없음, 6b)은 몸체의 제약이라 부드럽게 하지 않는다
+        if (row.contact < 0 || row.friction || row.compliance > 0) continue
         if (row.j === null && !row.parts.some((part) => admitted.has(part.ball))) continue
         const contact = contacts[row.contact]
         const soft = springRow({
@@ -2087,7 +2122,9 @@ export class ElementWorld {
 
   // 잠들기(spec-6a §2.6): 공마다 |v|·|ω|r가 SLEEP_SPEED 아래인 시간을 세고, 움직이는 로봇에 닿지 않은 섬(공끼리 이어진 묶음)의
   // 모든 공이 SLEEP_TIME 이상이면 함께 잠든다(속도 정확히 0). 이력 스프링 풀림 선에서 모양을 되찾는 중인 공은 세지 않는다
-  // [결정: 6a 최종 확인. 되찾기(PINCH_RECOVERY_SPEED)가 잠들기 문턱보다 느려 가라앉은 채 잠들었다]
+  // [결정: 6a 최종 확인. 되찾기(PINCH_RECOVERY_SPEED)가 잠들기 문턱보다 느려 가라앉은 채 잠들었다]. 6b: 깨어 있는 HIVE도
+  // |ω|·HIVE_ARM이 SLEEP_SPEED 아래인 시간을 세고, 공과 HIVE는 접촉으로 이어진 묶음 전체가 SLEEP_TIME 넘게 느려야 함께 잠든다
+  // (HIVE의 ω = +0, θ는 지금 값 그대로: 멈춤에 닿아 쉬면 그 멈춤 상수다)
   private sleepStep(p: Pending, h: number): void {
     const n = this.count
     const awake = (i: number): boolean => !this.out[i] && !this.asleep[i]
@@ -2099,20 +2136,36 @@ export class ElementWorld {
         p.recovering[e] === 0
       this.sleepTimer[e] = slow ? this.sleepTimer[e] + h : 0
     }
+    for (let k = 0; k < this.hiveCount; k++) {
+      if (!this.hiveIsAwake(k)) continue
+      const slow = Math.abs(this.thetaDot[k]) * HIVE_ARM < SLEEP_SPEED
+      this.hiveTimer[k] = slow ? this.hiveTimer[k] + h : 0
+    }
     if (!this.sleepEnabled) return
-    const groups = new UnionFind(n)
-    for (const c of p.contacts) if (c.f >= 0) groups.union(c.e, c.f)
-    const blocked = new Uint8Array(n)
+    const groups = new UnionFind(n + this.hiveCount)
+    for (const c of p.contacts) {
+      if (c.f >= 0) groups.union(c.e, c.f)
+      else if (c.hive >= 0 && this.hiveIsAwake(c.hive)) groups.union(c.e, n + c.hive)
+    }
+    const blocked = new Uint8Array(n + this.hiveCount)
     for (let e = 0; e < n; e++) {
       if (!awake(e)) continue
       const root = groups.find(e)
       if (p.robotTouch[e] || this.sleepTimer[e] < SLEEP_TIME) blocked[root] = 1
     }
+    for (let k = 0; k < this.hiveCount; k++)
+      if (this.hiveIsAwake(k) && this.hiveTimer[k] < SLEEP_TIME) blocked[groups.find(n + k)] = 1
     for (let e = 0; e < n; e++) {
       if (!awake(e) || blocked[groups.find(e)]) continue
       this.asleep[e] = 1
       this.vel.fill(0, 3 * e, 3 * e + 3)
       this.omega.fill(0, 3 * e, 3 * e + 3)
+      this.moved = true
+    }
+    for (let k = 0; k < this.hiveCount; k++) {
+      if (!this.hiveIsAwake(k) || blocked[groups.find(n + k)]) continue
+      this.hiveAsleep[k] = 1
+      this.thetaDot[k] = 0
       this.moved = true
     }
   }
@@ -2245,4 +2298,64 @@ function robotBodies(spec: WorldSpec): RobotBody[] {
   } else bodies.push(entry(-1, chassis))
   spec.joints.forEach((j, i) => bodies.push(entry(i, j.colliders ?? [])))
   return bodies
+}
+
+// 시즌 HIVE마다 움직이는 몸체 하나(6b, FieldSpec.hives 순서). 공 부품 = carrier가 이 HIVE인 구조물(CELL 트레이)의 balls 부품(구조물
+// 순서, 부품 순서) 다음 FieldHive.parts의 balls 부품이고, 모두 HIVE 몸체 틀(원점 = 피벗)이다. 상자·볼록 기둥은 정확한 껍질
+// (partHull: 양자화·합치기 없음), 세운 원기둥은 정확한 뚜껑 중심·반지름(sphereCylinder)이다. 마찰은 CELL 구조물의 friction, HIVE
+// 부품은 HIVE_PART_FRICTION이다. 부품 토큰은 h<k>p<j>(j = 이 HIVE의 공 부품 순번). 몸체 틀에서 한 번 만들고 공 접촉마다 공 중심을
+// 몸체 틀로 돌려 쓴다(그래서 HIVE가 돌아도 껍질을 다시 만들지 않는다)
+function hiveBodies(field: FieldSpec): HiveBody[] {
+  return field.hives.map((hive, k) => {
+    const parts: HivePart[] = []
+    const min: V3 = [Infinity, Infinity, Infinity]
+    const max: V3 = [-Infinity, -Infinity, -Infinity]
+    let reach = 0
+    const add = (part: FieldPart, friction: number): void => {
+      if (!part.balls) return
+      const shape = part.shape
+      const token = `h${k}p${parts.length}`
+      let piece: HivePart
+      if (shape.kind === 'cylinder') {
+        // 세운 원기둥(rotation x = y = 0, checkFieldSpec): 축은 몸체 z, 뚜껑 중심은 중심 ± 높이/2
+        const c = arr(shape.center)
+        const half = shape.height / 2
+        const a: V3 = [c[0], c[1], c[2] - half]
+        const b: V3 = [c[0], c[1], c[2] + half]
+        piece = {
+          hull: null,
+          cylinder: { a, b, r: shape.radius },
+          min: [c[0] - shape.radius, c[1] - shape.radius, c[2] - half],
+          max: [c[0] + shape.radius, c[1] + shape.radius, c[2] + half],
+          friction,
+          token
+        }
+        reach = Math.max(reach, norm(a) + shape.radius, norm(b) + shape.radius)
+      } else {
+        const hull = partHull(shape)
+        const bounds = shapeBounds({ kind: 'hull', hull })
+        piece = { hull, cylinder: null, min: bounds.min, max: bounds.max, friction, token }
+        for (const v of hull.vertices) reach = Math.max(reach, Math.hypot(v.x, v.y, v.z))
+      }
+      for (let i = 0; i < 3; i++) {
+        min[i] = Math.min(min[i], piece.min[i])
+        max[i] = Math.max(max[i], piece.max[i])
+      }
+      parts.push(piece)
+    }
+    for (const s of field.structures)
+      if (s.carrier === hive.key) for (const part of s.parts ?? []) add(part, s.friction)
+    for (const part of hive.parts ?? []) add(part, HIVE_PART_FRICTION)
+    return {
+      key: hive.key,
+      pivot: arr(hive.pivot),
+      lower: Math.min(hive.startAngle, hive.tippedAngle),
+      upper: Math.max(hive.startAngle, hive.tippedAngle),
+      dynamics: hive.dynamics ?? null,
+      parts,
+      min,
+      max,
+      reach
+    }
+  })
 }
