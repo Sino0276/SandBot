@@ -50,6 +50,7 @@ const tipNotices = (runner: BallRunner): string[] =>
   runner.notices.filter((n) => n.code === 'hiveTip').map((n) => n.params.hive)
 
 afterEach(() => {
+  ElementWorld.islandHook = null
   vi.restoreAllMocks()
 })
 
@@ -97,6 +98,8 @@ describe('보정표(EFG §12.3, 여섯 줄): 살며시 놓기와 던지기', () 
           expect(Object.is(hive.angle, LOWER)).toBe(true)
         }
         expect(run.notices.filter((n) => n.code === 'worldError')).toEqual([])
+        // HIVE가 든 섬은 조밀 풀이(HIVE_ISLAND_DENSE_ROWS 256)라 PGS 근사로 떨어지지 않는다(8P는 60행을 넘는다)
+        expect(run.notices.filter((n) => n.code === 'elementIslandLarge')).toEqual([])
       }, 30_000)
 
   it('창: 안 넘어가야 할 짐의 임계 massMoment보다 낮으면 넘어가고, 넘어가야 할 짐의 임계보다 높으면 안 넘어간다', () => {
@@ -329,6 +332,52 @@ describe('결정성과 안전', () => {
     }
     // 공이 닿아 HIVE가 깨어 멈춤·축 마찰·접촉 행이 실제로 지났다
     expect(rows).toBeGreaterThan(50)
+  })
+
+  it('섬이 던지면 그 HIVE만 멈추고(각·다른 공 그대로) worldError h<k>로 알린다', () => {
+    const states = [ball('pollen', { x: -1.5, y: 1.5, z: POLLEN_R }, { asleep: true })]
+    const hives = [
+      { angle: 0.05, angularVelocity: 0.4, asleep: false, tips: 0 },
+      { angle: BLUE.startAngle, angularVelocity: 0, asleep: true, tips: 0 }
+    ]
+    // 공은 하나(마디 0)라 HIVE 마디는 1: 던지면 HIVE 섬만 멈춘다
+    ElementWorld.islandHook = (root) => {
+      if (root >= 1) throw new Error('boom')
+    }
+    const runner = new BallRunner(
+      worldSpec(),
+      { field: BIOBUZZ, elements: { initial: states, initialHives: hives } },
+      TICK_1MS
+    ).run(0.3)
+    const hive = hiveOf(runner)
+    // 속도가 0으로 눌려 각이 그대로이고(0.4 rad/s였다) 알림이 있다
+    expect(hive.angle).toBeCloseTo(0.05, 12)
+    expect(hive.angularVelocity).toBe(0)
+    expect(runner.notices.some((n) => n.params.detail === 'element island h0: boom')).toBe(true)
+    // 던지지 않으면 같은 시작에서 쓰러진다
+    ElementWorld.islandHook = null
+    const free = new BallRunner(
+      worldSpec(),
+      { field: BIOBUZZ, elements: { initial: states, initialHives: hives } },
+      TICK_1MS
+    ).run(0.3)
+    expect(hiveOf(free).angle).toBeGreaterThan(0.1)
+  })
+
+  it('prepare 뒤 failSubstep은 깨어 있는 HIVE의 각속도를 0으로 둔다(각은 그대로)', () => {
+    const ew = new ElementWorld(worldSpec(), BIOBUZZ, {
+      initial: [ball('pollen', { x: -1.5, y: 1.5, z: POLLEN_R }, { asleep: true })],
+      initialHives: [
+        { angle: 0.05, angularVelocity: 0.4, asleep: false, tips: 0 },
+        { angle: BLUE.startAngle, angularVelocity: 0, asleep: true, tips: 0 }
+      ]
+    })
+    ew.prepare(null, null, 0.001)
+    ew.failSubstep()
+    const [red, blue] = ew.hiveSnapshot()!
+    expect(red.angle).toBe(0.05)
+    expect(red.angularVelocity).toBe(0)
+    expect(blue.asleep).toBe(true)
   })
 
   it('HIVE의 잠들기 문턱은 |ω|·HIVE_ARM이다(0.545 m, 5 mm/s)', () => {
