@@ -333,6 +333,77 @@ describe('Field 인스펙터(C9)', () => {
     expect(inspector()).toContain('실행이 끝나면 BIOBUZZ')
   })
 
+  // 6b(spec-6b §8): HIVE 칸은 시작 상태이고, 경기 요소를 켠 실행 중에는 HIVE마다 지금 각과 넘어간 횟수, STOP 뒤 다음 INIT까지는
+  // 끝난 각과 횟수(그 실행의 HIVE 끝 상태가 있으면 그것, 없으면 잔상)
+  it('HIVE 시작 상태 칸, 실행 중 지금 각·넘어간 횟수, STOP 뒤 끝난 각', () => {
+    scene(SCENE)
+    expect(inspector()).toContain('HIVE 시작 상태')
+    expect(inspector()).toContain('<option value="start" selected="">넘어가지 않음</option>')
+    expect(inspector()).not.toContain('data-hive-status')
+    const live = run(
+      { season: 'biobuzz', hiveTipped: [false, false], gameElements: true },
+      { elements: { kinds: [], spawns: [] } }
+    )
+    const game = (hives: number[], hiveTips: number[]): object => ({
+      simGame: { runId: 'r', tNanos: 0, revision: 1, poses: [], flags: [], hives, hiveTips }
+    })
+    setStore(usePlayStore, { run: live, ...game([-5236, 5236], [0, 1]) })
+    let html = inspector()
+    expect(count(html, 'data-hive-status="now"')).toBe(2)
+    expect(html).toContain('빨강 HIVE: 지금 -30.0° · 넘어간 횟수 0')
+    expect(html).toContain('파랑 HIVE: 지금 30.0° · 넘어간 횟수 1')
+    // 각은 0.1° 단위로 보인다(−0 없음)
+    setStore(usePlayStore, { run: live, ...game([1, -3], [2, 1]) })
+    html = inspector()
+    expect(html).toContain('빨강 HIVE: 지금 0.0° · 넘어간 횟수 2')
+    expect(html).toContain('파랑 HIVE: 지금 0.0° · 넘어간 횟수 1')
+    // 떼어 놓은 실행은 줄이 없다
+    setStore(usePlayStore, { run: { ...live, detached: true } })
+    expect(inspector()).not.toContain('data-hive-status')
+    // STOP 뒤: 잔상(표시 상태)의 각과 횟수
+    const ended = { ...live, phase: 'finished' as const }
+    setStore(usePlayStore, {
+      run: ended,
+      simGame: null,
+      ghostGame: { kinds: [], poses: [], flags: [], hives: [5236, 5236], hiveTips: [1, 0] }
+    })
+    html = inspector()
+    expect(count(html, 'data-hive-status="end"')).toBe(2)
+    expect(html).toContain('빨강 HIVE: 끝날 때 30.0° · 넘어간 횟수 1')
+    expect(html).toContain('파랑 HIVE: 끝날 때 30.0° · 넘어간 횟수 0')
+    // 그 실행의 HIVE 끝 상태(finalHives → lastRunElements)가 있으면 그것(전체 정밀도)
+    const finalHive = (angle: number, tips: number): object => ({
+      angle,
+      angularVelocity: 0,
+      asleep: true,
+      tips
+    })
+    setStore(usePlayStore, {
+      lastRunElements: {
+        runId: 'r',
+        robotId: 'bot',
+        tNanos: 0,
+        states: [],
+        hives: [finalHive(0.52, 2), finalHive(Math.PI / 6, 0)] as never
+      }
+    })
+    expect(inspector()).toContain('빨강 HIVE: 끝날 때 29.8° · 넘어간 횟수 2')
+    // 다른 실행의 끝 상태(6d 이음새, 다음 INIT에도 남음)는 쓰지 않는다
+    setStore(usePlayStore, {
+      lastRunElements: {
+        runId: 'old',
+        robotId: 'bot',
+        tNanos: 0,
+        states: [],
+        hives: [finalHive(0, 9), finalHive(0, 9)] as never
+      }
+    })
+    expect(inspector()).toContain('빨강 HIVE: 끝날 때 30.0° · 넘어간 횟수 1')
+    // 다음 INIT(잔상 지움)
+    setStore(usePlayStore, { run: live, simGame: null, ghostGame: null })
+    expect(inspector()).not.toContain('data-hive-status')
+  })
+
   it('시즌 선택은 chooseFieldSeason, HIVE 칸은 개인 실행 설정', () => {
     useSceneStore.setState({ objects: SCENE, field: { season: 'biobuzz' } })
     chooseFieldSeason('none')

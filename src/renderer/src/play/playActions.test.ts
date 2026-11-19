@@ -1478,6 +1478,27 @@ describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
     expect(usePlayStore.getState().ghostPose).toBeNull()
   })
 
+  // 6b: HIVE 잔상 각·횟수(ghostGame.hives)와 HIVE 끝 상태(lastRunElements.hives)는 공과 같은 수명이다(INIT은 잔상만, 프로젝트를
+  // 열면 둘 다 지운다)
+  it('HIVE 잔상은 다음 INIT에, HIVE 끝 상태는 프로젝트를 열 때 지운다', async () => {
+    const ghostGame = { kinds: [], poses: [], flags: [], hives: [5236, 5236], hiveTips: [1, 0] }
+    const lastRunElements = {
+      runId: 'old',
+      robotId: 'bot',
+      tNanos: 0,
+      states: [],
+      hives: [{ angle: Math.PI / 6, angularVelocity: 0, asleep: true, tips: 1 }]
+    }
+    usePlayStore.setState({ ghostGame, lastRunElements })
+    await initPlay()
+    expect(usePlayStore.getState().ghostGame).toBeNull()
+    expect(usePlayStore.getState().lastRunElements).toBe(lastRunElements)
+    usePlayStore.setState({ ghostGame })
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().ghostGame).toBeNull()
+    expect(usePlayStore.getState().lastRunElements).toBeNull()
+  })
+
   it('실행 중 같은 프로젝트를 다시 열면 그 실행을 새 씬과 떼어 놓는다(자세·잠금·잔상 없음)', async () => {
     await initPlay()
     handlePlayEvent(event({ type: 'pose', tNanos: 1, x: 0.4, y: 0, yaw: 0, blocked: false }))

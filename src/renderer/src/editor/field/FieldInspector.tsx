@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { SEASON_IDS, isSeasonId, resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { chooseFieldSeason } from '../../field/fieldActions'
 import type { HiveSide } from '../../play/playSettings'
@@ -18,10 +19,12 @@ import {
   seasonName,
   setHiveSide
 } from './fieldDisplay'
+import { hiveLabelKey, hiveStatusKey, hiveStatusOf } from './hiveStatus'
 
 // Field 인스펙터(spec-4ab §1.9): 하이어라키 Field 줄을 고르면 보인다. 시즌 선택(문서, 실행 취소 한 단계), 축 안내, 벽 안쪽
-// 반폭, HIVE 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 상태를
-// 보이고 고칠 수 없다. 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역, HIVE 상태 다음에 경기 요소(6a,
+// 반폭, HIVE 시작 상태(개인 실행 설정), 필드 요소 보이기(보기 상태). 실행이 필드를 잠그면(runLocksField) 실행의 시즌·HIVE 시작
+// 상태를 보이고 고칠 수 없다. 경기 요소를 켠 실행 중에는 HIVE마다 지금 각과 넘어간 횟수, STOP 뒤 다음 INIT까지는 끝난 각과 횟수
+// 줄이 있다(6b, hiveStatus.ts). 시즌 구역 다음에 필드 CAD(보기용, 4e, FieldCadSection) 구역, HIVE 상태 다음에 경기 요소(6a,
 // FieldElementsSection) 구역이 있다.
 
 const HIVE_SIDES: readonly HiveSide[] = ['start', 'tipped']
@@ -62,12 +65,23 @@ function ClusterRow({ line }: { line: ClusterLine }): React.JSX.Element {
   )
 }
 
+// 각(0.1° 정수)을 UI 언어의 소수 한 자리 글자로
+function formatDeciDegrees(value: number, language: string): string {
+  return (value / 10).toLocaleString(language, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  })
+}
+
 function FieldInspector(): React.JSX.Element {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const language = i18n.resolvedLanguage ?? i18n.language
   const doc = useSceneStore((state) => state.field)
   const hasVisual = useSceneStore((state) => state.field.visual !== undefined)
   const run = usePlayStore((state) => state.run)
   const hiveState = usePlayStore((state) => state.settings.hiveState)
+  // HIVE 지금·끝 줄(6b): 보이는 글자(0.1°·횟수)가 바뀔 때만 다시 그린다
+  const hiveStatus = hiveStatusOf(usePlayStore(useShallow(hiveStatusKey)))
   const fieldHidden = useSceneVisibilityStore((state) => state.fieldHidden)
   const lengthUnit = useUnitStore((state) => state.lengthUnit)
   const locked = runLocksField(run)
@@ -186,6 +200,23 @@ function FieldInspector(): React.JSX.Element {
               </select>
             </label>
           ))}
+          {hiveStatus &&
+            spec.hives.map((hive, index) => {
+              const value = hiveStatus.values[index]
+              if (!value) return null
+              const params = {
+                hive: t(hiveLabelKey(hive.key)),
+                angle: formatDeciDegrees(value[0], language),
+                tips: value[1]
+              }
+              return (
+                <p key={hive.key} className="inspector-note" data-hive-status={hiveStatus.phase}>
+                  {hiveStatus.phase === 'now'
+                    ? t('field.inspector.hiveNow', params)
+                    : t('field.inspector.hiveEnd', params)}
+                </p>
+              )
+            })}
           <p className="inspector-note">{t('field.inspector.hiveHint')}</p>
         </section>
       )}

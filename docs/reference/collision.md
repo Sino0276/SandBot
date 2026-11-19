@@ -906,7 +906,7 @@ externalRows:  마찰 행(friction 있음):
 | 끈 Collider·한도로 뺀 것 색        | `#54c84d`                        | `COLLIDER_DISABLED_COLOR`              | (84, 200, 77, 140)/255, `[가정: 표시만]`                       |
 | 앞 패스(깊이 검사 켬) 불투명도     | 0.9                              | `COLLIDER_OUTLINE_OPACITY`             | `[가정: 표시만]`                                               |
 | 가려진 패스(깊이 검사 끔) 불투명도 | 0.2                              | `COLLIDER_OUTLINE_HIDDEN_OPACITY`      | 가려진 선은 흐리게(로봇 하부를 가로지르지 않게)                |
-| 끈 Collider 앞 불투명도            | 0.55(가려진 쪽은 0.55 × 0.2/0.9) | `DISABLED_OPACITY`                     |                                                                |
+| 끈 Collider 앞 불투명도            | 0.55(가려진 쪽은 0.55 × 0.2/0.9) | `COLLIDER_DISABLED_OPACITY`            |                                                                |
 | 활성 오브젝트의 Collider           | 1.0(앞 패스)                     | 코드                                   |                                                                |
 | 섀시 대체 상자                     | 점선                             | `DASH_SIZE` 0.01 m, `GAP_SIZE` 0.006 m |                                                                |
 | 렌더 순서                          | 11                               | `RENDER_ORDER`                         | 클릭되지 않음                                                  |

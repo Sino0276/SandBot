@@ -37,7 +37,8 @@ export function documentField(doc: FieldDoc, hiveState: HiveState): DisplayedFie
   return { season: documentSeasonId(doc), hiveTipped: hiveTippedOf(hiveState) }
 }
 
-// 씬 뷰가 그리는 시즌과 HIVE 상태: 실행이 잠갔으면 실행의 것, 아니면 문서 시즌과 개인 실행 설정
+// 씬 뷰가 그리는 시즌과 HIVE 시작 상태: 실행이 잠갔으면 실행의 것, 아니면 문서 시즌과 개인 실행 설정(경기 요소를 켠 실행 중
+// HIVE의 지금 각은 editor/scene/hiveDisplay.ts가 그 위에 더한다, 6b)
 export function displayedField(
   run: PlayRun | null,
   doc: FieldDoc,
@@ -58,8 +59,8 @@ export function fieldRowLabel(season: string, t: TFunction): string {
   return t('hierarchy.fieldRow', { season: seasonName(season, t) })
 }
 
-// Field 인스펙터의 HIVE 상태 칸: 개인 실행 설정(sandbot:playSettings)을 바꾼다. 문서·실행 취소·dirty와 무관하고, 실행 중이
-// 아니면 씬 뷰가 바로 따르고 시뮬레이터는 다음 INIT부터다(환경 설정 › 시뮬레이션의 같은 칸과 같은 값)
+// Field 인스펙터의 HIVE 시작 상태 칸: 개인 실행 설정(sandbot:playSettings)을 바꾼다. 문서·실행 취소·dirty와 무관하고, 실행
+// 중이 아니면 씬 뷰가 바로 따르고 시뮬레이터는 다음 INIT부터다(환경 설정 › 시뮬레이션의 같은 칸과 같은 값)
 export function setHiveSide(key: keyof HiveState, side: HiveSide): void {
   const play = usePlayStore.getState()
   if (play.settings.hiveState[key] === side) return

@@ -31,6 +31,7 @@ import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { isHiddenInScene, useSceneVisibilityStore } from '../sceneVisibility'
 import { objectWorldBounds } from './bounds'
 import { FIELD_RENDER_ORDER } from './fieldViewModel'
+import { GHOST_MATERIAL } from './ghostMaterial'
 import {
   bindJointDisplay,
   bindPoseDisplay,
@@ -269,16 +270,8 @@ function RootNode({ id }: { id: string }): React.JSX.Element {
 
 // ---- 잔상(끝난 실행의 마지막 자세) ----
 
-// 잔상 재질은 모듈에서 함께 쓰고 해제하지 않는다(StrictMode가 붙였다 떼어도 안전하다). 깊이를 쓰지 않아 뒤의 로봇·필드를
-// 가리지 않는다.
-const GHOST_MATERIAL = new MeshStandardMaterial({
-  color: '#93c5fd',
-  transparent: true,
-  opacity: 0.28,
-  depthWrite: false,
-  metalness: 0,
-  roughness: 0.9
-})
+// 잔상 재질은 모듈에서 함께 쓰고 해제하지 않는다(StrictMode가 붙였다 떼어도 안전하다, ghostMaterial.ts GHOST_MATERIAL은 HIVE
+// 잔상과 같이 쓴다). 깊이를 쓰지 않아 뒤의 로봇·필드를 가리지 않는다.
 const GHOST_LINE_MATERIAL = new LineBasicMaterial({
   color: '#93c5fd',
   transparent: true,
