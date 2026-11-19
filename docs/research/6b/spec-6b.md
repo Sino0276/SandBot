@@ -228,3 +228,10 @@ Balls at rest against the Back Skin and floor (centre x_b = 0.239725 + r, z_b = 
 | 8P      | 0.048989          | tip                            |
 
 Window [0.042020, 0.047978], midpoint 0.044999 → holding torque at the stop = massMoment·g·sin 30° ⇒ **massMoment = 0.0900 kg·m**; half-window 0.00298 kg·m ⇒ pivot friction must be < 0.0292 N·m. The implementation verifies this by simulation (balls settled by the simulator, not the analytic positions) and adjusts `massMoment` to the simulated window midpoint if it differs by more than 1 % — report the final value.
+
+## Implementation notes (written after the 6b merge; the reference document `docs/reference/hive-flower-6b.md` is the up-to-date source)
+
+- Appendix A.2 backstop: the shipped data uses a 12.7 mm bar (rear bar u [−0.06074, −0.04804], diagonal bars at normal distances 0.049307 / 0.062007 from the axis), re-measured from the CAD in `cad-scripts/flower.py`; the 8.9 mm / u [−0.058826, −0.049962] row above is the earlier reading.
+- Appendix A.3: running `cad-scripts/inertia.py` gives CELL 1.0927 kg, HIVE 2.6654 kg, inertia 0.3861 kg·m² (shipped value 0.386), COM height 0.05768 m, M·z_com 0.15373 kg·m. The "expected ≈ 0.35" above was a rough guess.
+- Appendix B: the simulator-measured window is [0.08669, 0.09503] (midpoint 0.09086, 0.95 % from the shipped 0.0900); see the reference document, section 11.
+- §12: `docs/research/6b/cad-measurements.md` was not written; the measurements live in `cad-geometry-notes.txt`, `cad-scripts/` and section 2 of the reference document.
