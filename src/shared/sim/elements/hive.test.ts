@@ -513,8 +513,12 @@ describe('카메라 태그가 HIVE 각을 따른다(spec-6b §6)', () => {
     const fixed = observe(vision, null)
     const moving = observe(vision, [RED.startAngle, BLUE.startAngle])
     expect(same(moving, fixed)).toBe(true)
-    // 한 쪽만 시작 각 상수(다른 쪽은 NaN: 그 carrier에 판정할 것이 없다는 약속)여도 같다
-    expect(same(observe(vision, [RED.startAngle, BLUE.startAngle]), fixed)).toBe(true)
+    // 한 HIVE만 넘어가도 시작 각인 쪽 태그는 그대로(Object.is)다: 빨강 태그 34–37(carrier hiveRed)은 따라가고 파랑 태그는 시작 그대로
+    const redTipped = observe(vision, [RED.tippedAngle, BLUE.startAngle])
+    const byId = (tags: ReturnType<FieldVision['observe']>, id: number): unknown =>
+      tags.find((t) => t.id === id)
+    expect(same(byId(redTipped, 38), byId(fixed, 38))).toBe(true)
+    expect(same(byId(redTipped, 34), byId(fixed, 34))).toBe(false)
   })
 
   it('넘어간 각이면 넘어간 상태로 만든 시야와 Object.is로 같고, 가운데 각은 둘 사이에서 따라간다', () => {
