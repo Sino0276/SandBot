@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { Articulation, bodyPoint, type ContactSet } from './articulation'
-import { BodyCollision, frictionTangent } from './bodyCollision'
+import { BodyCollision, frictionTangent, MAX_COLLISION_ROWS } from './bodyCollision'
 import {
   bodyShape,
   placeShape,
   shapeSeparation,
+  startOverlaps,
   staticShapes,
   type PlacedShape
 } from './collision3d'
@@ -83,8 +84,23 @@ function hull(index: number, height = H18): Vec2[] {
 }
 const separation = (pose: Pose2, index: number, height = H18): number =>
   polygonSeparation(placeFootprint(FOOTPRINT, pose), hull(index, height))
+// 6b: 부품이 있는 구조물(FLOWER 케이지)은 시뮬레이터가 쓰는 로봇 부품 껍질(staticShapes s<i>p<j>)과 섀시 상자의 3D 침투(SAT 최선
+// 분리, 겹친 볼록의 정확한 깊이)로 잰다. 봉투 상자는 케이지보다 크다(부품이 봉투 안이라 케이지가 막아도 봉투에는 걸칠 수 있다)
+const CAGE_PIECES = staticShapes(BIOBUZZ).filter(
+  (s) => s.chassis && s.target.kind === 'structure' && BIOBUZZ.structures[s.target.index].parts
+)
+function cagePenetration(pose: Pose2, index: number | null, height = H18): number {
+  const placed = placeShape(bodyShape(chassisBox(height))!, planarFrame(pose))
+  let worst = 0
+  for (const st of CAGE_PIECES)
+    if (index === null || (st.target as { index: number }).index === index)
+      worst = Math.max(worst, -shapeSeparation(placed, { kind: 'hull', hull: st.hull! }))
+  return worst
+}
 const worstPenetration = (poses: readonly Pose2[], index: number, height = H18): number =>
-  Math.max(0, ...poses.map((p) => -separation(p, index, height)))
+  BIOBUZZ.structures[index].parts
+    ? Math.max(0, ...poses.map((p) => cagePenetration(p, index, height)))
+    : Math.max(0, ...poses.map((p) => -separation(p, index, height)))
 function wallPenetration(poses: readonly Pose2[], inner = INNER): number {
   let worst = 0
   for (const p of poses)
@@ -138,10 +154,12 @@ function recordRows(): string[][] {
   return steps
 }
 
-// 섀시–구조물 법선 행 키(cn.rk0/s<i>.…)
+// 섀시–구조물 법선 행 키(cn.rk0/s<i>.…, 6b 부품 구조물은 cn.rk0/s<i>p<j>.…)
 const chassisStructureKeys = (keys: readonly string[], index?: number): string[] =>
   keys.filter((k) =>
-    index === undefined ? /^cn\.rk0\/s\d/.test(k) : k.startsWith(`cn.rk0/s${index}.`)
+    index === undefined
+      ? /^cn\.rk0\/s\d/.test(k)
+      : new RegExp(`^cn\\.rk0/s${index}(p\\d+)?\\.`).test(k)
   )
 const worldErrors = (r: Runner): number =>
   r.world.drainNotices().filter((n) => n.code === 'worldError').length
@@ -168,7 +186,8 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
     const all = steps.flat()
     expect(all.some((k) => /^[nt][xys]/.test(k))).toBe(false)
     expect(all.some((k) => k.startsWith('cn.rk0/w3.'))).toBe(true)
-    expect(all.some((k) => k.startsWith('cn.rk0/s11.'))).toBe(true)
+    // 6b: FLOWER <3>(s11)은 케이지 부품 행(cn.rk0/s11p<j>.…)
+    expect(all.some((k) => /^cn\.rk0\/s11p\d+\./.test(k))).toBe(true)
     expect(r.poses.slice(-20).every((p) => p.blocked)).toBe(true)
     expect(worldErrors(r)).toBe(0)
   })
@@ -232,8 +251,12 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
   })
 
   it('A16 4ab A17 모서리 대 모서리: 요 45° 섀시 모서리를 FLOWER 모서리에 곧게 몰면 침투가 늘지 않고 |ω| < 0.5 rad/s, 두 번 돌려 바이트가 같다', () => {
-    const flower = hull(FLOWER_MX)
-    const corner = flower.reduce((a, b) => (b.x >= a.x && b.y >= a.y ? b : a))
+    // 6b: FLOWER는 케이지라 봉투 상자의 모서리에는 아무것도 없다. 섀시 높이 안의 케이지 로봇 부품 꼭짓점 가운데 (+x, +y) 쪽으로 가장
+    // 먼 것(가운데 고리 판 윤곽의 꼭짓점)이 그 모서리다
+    const flowerVertices = CAGE_PIECES.filter(
+      (st) => (st.target as { index: number }).index === FLOWER_MX
+    ).flatMap((st) => st.hull!.vertices.filter((v) => v.z <= H18))
+    const corner = flowerVertices.reduce((a, b) => (b.x + b.y > a.x + a.y ? b : a))
     const yaw = Math.PI / 4
     const lead = placeFootprint([FOOTPRINT[1]], { x: 0, y: 0, yaw })[0]
     const start = { x: corner.x + 0.03 - lead.x, y: corner.y - lead.y, yaw }
@@ -255,12 +278,15 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
   })
 
   const SOLIDS = solidFootprints(BIOBUZZ, H18)
+  // 부품 없는 solid 구조물은 4ab처럼 평면 SAT, 부품이 있는 것(6b FLOWER 케이지)은 로봇 부품과의 3D 침투
   const worstAny = (poses: readonly Pose2[]): number => {
     let worst = 0
-    for (const p of poses)
+    for (const p of poses) {
       for (const s of SOLIDS)
-        if (s.kind === 'polygon')
+        if (s.kind === 'polygon' && !BIOBUZZ.structures[s.index].parts)
           worst = Math.max(worst, -polygonSeparation(placeFootprint(FOOTPRINT, p), s.points))
+      worst = Math.max(worst, cagePenetration(p, null))
+    }
     return worst
   }
 
@@ -538,6 +564,77 @@ function fixedSpec(
 ): WorldSpec {
   return robotSpec({ start }, { wheels: [], motors: motors.map(motorSpec), joints, ...change })
 }
+
+// 6b FLOWER 케이지(spec-6b §4·§10): 섀시 상자가 케이지(고리 판·관·압출재·브래킷·백스톱의 로봇 부품)에 닿아도 하위 단계 충돌 행은
+// 한도 28 안이고(collisionLimit 없음) 케이지로 파고들지 않는다. 시작 겹침은 부품이 여럿이어도 구조물 하나로 알린다
+describe('6b FLOWER 케이지와 섀시', () => {
+  // FLOWER 11(빨강 벽, 축 (0.59418, −1.728254), 자기 u = 필드 +Y)의 필드 쪽에서 −Y로
+  const AXIS_11 = { x: 0.59418, y: -1.728254 }
+  type Run = { rows: number; limit: boolean; penetration: number; blocked: boolean; errors: number }
+  function press(start: Pose2, direction: number, power: number, seconds: number): Run {
+    let rows = 0
+    const original = Articulation.prototype.step
+    vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h: number,
+      drive: Parameters<Articulation['step']>[1],
+      contacts?: ContactSet
+    ) {
+      const n = (contacts?.rows ?? []).filter((r) => /^c(n|t1|t2|w)\./.test(r.key)).length
+      rows = Math.max(rows, n)
+      return original.call(this, h, drive, contacts)
+    })
+    const r = new Runner(spec3d(start)).run(seconds, () =>
+      outputs(toward(start.yaw, direction, power))
+    )
+    vi.restoreAllMocks()
+    const notices = r.world.drainNotices()
+    return {
+      rows,
+      limit: notices.some((n) => n.code === 'collisionLimit'),
+      penetration: Math.max(0, ...[start, ...r.poses].map((p) => cagePenetration(p, FLOWER_RED))),
+      blocked: r.poses.some((p) => p.blocked),
+      errors: notices.filter((n) => n.code === 'worldError').length
+    }
+  }
+
+  it('정면·45°·옆으로 미끄러지며 전출력으로 밀어도 충돌 행 ≤ 28, collisionLimit 없음, 침투 < 1e-6 m, blocked', () => {
+    // 섀시 앞면이 케이지 바깥(가운데 고리 u 0.0612)에서 2 cm, 정면(−Y)·비스듬히·케이지를 따라 미끄러짐
+    const front = AXIS_11.y + 0.0612 + 0.02 + HALF
+    for (const [x, direction, yaw] of [
+      [AXIS_11.x, -Math.PI / 2, -Math.PI / 2],
+      [AXIS_11.x + 0.05, -Math.PI / 2 - Math.PI / 6, -Math.PI / 2],
+      [AXIS_11.x - 0.15, -Math.PI / 2 + Math.PI / 4, -Math.PI / 2],
+      [AXIS_11.x + 0.1, -Math.PI / 2 - 0.3, -Math.PI / 4]
+    ]) {
+      const start = { x, y: front + (yaw === -Math.PI / 4 ? 0.12 : 0), yaw }
+      expect(cagePenetration(start, FLOWER_RED)).toBe(0)
+      const r = press(start, direction, 1, 2)
+      expect(r.rows).toBeGreaterThan(0)
+      expect(r.rows).toBeLessThanOrEqual(MAX_COLLISION_ROWS)
+      expect(r.limit).toBe(false)
+      expect(r.penetration).toBeLessThan(1e-6)
+      expect(r.blocked).toBe(true)
+      expect(r.errors).toBe(0)
+    }
+  }, 30_000)
+
+  it('시작 겹침(startOverlaps)은 케이지 부품 여럿에 걸쳐도 그 FLOWER를 한 번 알린다', () => {
+    // 섀시가 케이지에 3 cm 걸친 자세
+    const start = { x: AXIS_11.x, y: AXIS_11.y + 0.0612 - 0.03 + HALF, yaw: -Math.PI / 2 }
+    const spec = spec3d(start)
+    const placed = placeShape(bodyShape(chassisBox())!, planarFrame(start))
+    const touched = CAGE_PIECES.filter(
+      (st) =>
+        (st.target as { index: number }).index === FLOWER_RED &&
+        shapeSeparation(placed, { kind: 'hull', hull: st.hull! }) < -1e-3
+    )
+    expect(touched.length).toBeGreaterThan(1)
+    expect(startOverlaps(spec, BIOBUZZ)).toEqual([
+      { body: -1, targets: [{ kind: 'structure', index: FLOWER_RED }] }
+    ])
+  })
+})
 
 describe('A1 형상 없는 세계', () => {
   it('A1 형상이 없으면 BodyCollision을 쓰지 않고, 고정 기저의 art.step 셋째 인자는 undefined다', () => {
@@ -945,8 +1042,11 @@ describe('A7 꼭짓점 대 꼭짓점(세계)', () => {
     const beta = -Math.atan(1 / Math.SQRT2)
     // 고정 정육면체: R = Ry(β)·Rx(45°)가 (1, 1, 1)/√3을 +z로
     const up = rotationMatrix({ x: Math.PI / 4, y: beta, z: 0 })
+    // FLOWER의 재질·플래그만 빌린다(6b 케이지 부품은 빼야 봉투 shape가 계산에 쓰인다)
+    const { parts: _cage, ...flowerFlags } = BIOBUZZ.structures[FLOWER_RED]
+    expect(_cage).toBeDefined()
     const cube: FieldStructure = {
-      ...BIOBUZZ.structures[FLOWER_RED],
+      ...flowerFlags,
       shape: {
         kind: 'box',
         center: { x: 0.5, y: 0, z: 0.2 },

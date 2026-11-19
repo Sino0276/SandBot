@@ -6,7 +6,8 @@ import { PhysicsWorld } from '../world'
 import type { SimCollider, SimElementState, WorldSpec } from '../worldSpec'
 import { ball, intakeWedge } from './elementTestkit'
 import { ElementWorld } from './elementWorld'
-import { elementSpawns } from './spawn'
+import { loadStates } from './hiveTestkit'
+import { elementSpawns, restBodyFrames } from './spawn'
 
 // 6a 성능(spec-6a §2.7, plan.md 검증 표): 하위 단계 시간(5 ms 틱 ÷ 5)의 중앙값·p99를 로그로 남기고 CI 상한은 목표의 5배다(CI
 // 기계가 느릴 수 있다, collisionPerf.test.ts와 같은 방식). 목표: P1 잠든 공 56 = 기준 + 0.02 ms, P2 바닥에서 깬 56 = 0.3 ms,
@@ -94,7 +95,13 @@ describe('6a 성능', () => {
 
   it('P1: 잠든 공 56(GARDEN 8 + 바닥 48)은 공 없는 같은 세계보다 하위 단계 0.02 ms(목표) 안으로만 늘린다', () => {
     const spec = robot()
-    const garden = elementSpawns(BIOBUZZ, spec.elements, spec.robot.start)
+    const garden = elementSpawns(
+      BIOBUZZ,
+      spec.elements,
+      spec.robot.start,
+      restBodyFrames([]),
+      spec.field.hiveTipped
+    )
     const initial = [...garden, ...floorGrid(48, true)]
     expect(initial).toHaveLength(56)
     // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음)
@@ -115,7 +122,13 @@ describe('6a 성능', () => {
   it('P2: 바닥에서 깬 공 56(잠들기 끔)은 하위 단계 중앙값 0.3 ms(목표)', () => {
     const spec = robot()
     const initial = [
-      ...elementSpawns(BIOBUZZ, spec.elements, spec.robot.start).map((s) => ({
+      ...elementSpawns(
+        BIOBUZZ,
+        spec.elements,
+        spec.robot.start,
+        restBodyFrames([]),
+        spec.field.hiveTipped
+      ).map((s) => ({
         ...s,
         asleep: false
       })),
@@ -263,4 +276,63 @@ describe('6a 성능', () => {
     expect(median).toBeLessThan(7.5)
     expect(p99).toBeLessThan(20)
   }, 120_000)
+})
+
+// 6b 성능(spec-6b §10, 시험이 기록, CI 상한은 목표의 5배): P7 HIVE 섬 넘어감(3N+3P) = 1.0 ms, P8 깨어 있는 FLOWER 공 16(기둥 넷이
+// 케이지 공 부품에 닿음) = 0.6 ms
+describe('6b 성능', () => {
+  it('P7: HIVE 섬 넘어감(3N+3P를 Back Skin에 놓고 CELL이 넘어가는 동안)은 하위 단계 1.0 ms(목표) 안팎', () => {
+    const spec = robot()
+    // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음): HIVE가 깨어 있는 틱만 센다
+    const rounds = [0, 1, 2].map(() => {
+      const world = new PhysicsWorld(spec, {
+        elements: { initial: loadStates(BIOBUZZ, { nectar: 3, pollen: 3 }) }
+      })
+      const times: number[] = []
+      let tips = 0
+      for (let k = 0; k < 800; k++) {
+        const start = performance.now()
+        world.step(k * TICK, outputs(mecanum(0, 0, 0)))
+        const elapsed = (performance.now() - start) / 5
+        const hive = world.hiveSnapshot()![0]
+        if (k > 0 && !hive.asleep) times.push(elapsed)
+        tips = hive.tips
+      }
+      expect(world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([])
+      times.sort((a, b) => a - b)
+      return { median: quantile(times, 0.5), p99: quantile(times, 0.99), ticks: times.length, tips }
+    })
+    const best = rounds.reduce((a, b) => (b.median < a.median ? b : a))
+    // 넘어가는 동안 HIVE가 깨어 있었다(0.5 s 넘게)
+    expect(best.tips).toBe(1)
+    expect(best.ticks).toBeGreaterThan(100)
+    console.info(
+      `6b 성능 P7: HIVE 섬 넘어감 3N+3P(깨어 있는 ${best.ticks}틱) 하위 단계 중앙값 ${best.median.toFixed(4)} ms, p99 ${best.p99.toFixed(4)} ms(목표 1.0)`
+    )
+    expect(best.median).toBeLessThan(5)
+  }, 120_000)
+
+  it('P8: 깨어 있는 FLOWER 공 16(잠들지 않게)은 하위 단계 0.6 ms(목표) 안팎', () => {
+    const spec = robot()
+    const flower = elementSpawns(
+      BIOBUZZ,
+      { groups: ['flower'], preloads: [] },
+      spec.robot.start,
+      restBodyFrames([]),
+      spec.field.hiveTipped
+    ).map((s) => ({ ...s, asleep: false }))
+    expect(flower).toHaveLength(16)
+    // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음)
+    const runs = [0, 1, 2].map(() => measure(spec, flower, drive, 400, false))
+    const best = runs.reduce((a, b) => (b.median < a.median ? b : a))
+    // 공은 케이지 안에 남았고(기둥이 무너져도 관·고리 조각 안) 깨어 있다
+    for (const s of best.world.elementSnapshot()!) {
+      expect(s.out).toBe(false)
+      expect(s.asleep).toBe(false)
+    }
+    console.info(
+      `6b 성능 P8: 깨어 있는 FLOWER 공 16 하위 단계 중앙값 ${best.median.toFixed(4)} ms, p99 ${best.p99.toFixed(4)} ms(목표 0.6)`
+    )
+    expect(best.median).toBeLessThan(3)
+  }, 60_000)
 })

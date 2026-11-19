@@ -1,7 +1,12 @@
 import { Articulation } from './articulation'
 import { boxHull, canonicalHull, prismHull, transformHull, type Hull } from './hull'
-import { rotationMatrix, type FieldOverlap } from './seasons/fieldGeometry'
-import { deepFreeze, type FieldSpec } from './seasons/fieldSpec'
+import {
+  boxVertices,
+  prismVertices,
+  rotationMatrix,
+  type FieldOverlap
+} from './seasons/fieldGeometry'
+import { deepFreeze, type FieldPartShape, type FieldSpec } from './seasons/fieldSpec'
 import { composeFrames, planarFrame, type Frame3 } from './sensorFrame'
 import { SUPPLEMENT_TOLERANCE } from './fieldContact'
 import { WALL_FRICTION } from './wheelData'
@@ -90,7 +95,7 @@ function apply(r: readonly number[], v: V3): V3 {
 // ---- 정적 형상(§3.2) ----
 
 export type StaticShape = {
-  // 키: 'w0'…'w3'(+x, −x, +y, −y), 's<구조물 순번>', 'fl'
+  // 키: 'w0'…'w3'(+x, −x, +y, −y), 's<구조물 순번>', 부품이 있는 구조물은 부품마다 's<구조물 순번>p<부품 순번>'(6b), 'fl'
   token: string
   kind: 'hull' | 'floor'
   // floor는 null
@@ -151,6 +156,22 @@ export function staticShapes(field: FieldSpec): readonly StaticShape[] {
     const chassis = s.solid
     const joints = s.solid || s.occludes
     if (!chassis && !joints) return
+    // 부품이 있으면(6b FLOWER 케이지) 봉투 대신 로봇 부품을 그 자리에 부품 순서로(spec-6b §4). 대상은 그 구조물 그대로다
+    if (s.parts) {
+      s.parts.forEach((part, j) => {
+        if (!part.robots) return
+        shapes.push({
+          token: `s${index}p${j}`,
+          kind: 'hull',
+          hull: partHull(part.shape),
+          friction: s.friction,
+          chassis,
+          joints,
+          target: { kind: 'structure', index }
+        })
+      })
+      return
+    }
     const shape = s.shape
     const hull =
       shape.kind === 'box'
@@ -182,6 +203,224 @@ export function staticShapes(field: FieldSpec): readonly StaticShape[] {
   const frozen = deepFreeze(shapes)
   STATIC_SHAPES.set(field, frozen)
   return frozen
+}
+
+// 시즌 부품 형상(carrier 틀)의 정확한 볼록 껍질(6b): 상자 → boxHull, 볼록 기둥 → prismHull(아래 다각형 + 위 다각형), 세운 원기둥 →
+// 외접 16각 기둥(cylinderPrism, 지금 원기둥 구조물과 같은 근사). 양자화·합치기가 없다(정적 형상 규칙, P-M4)
+export function partHull(shape: FieldPartShape): Hull {
+  if (shape.kind === 'box')
+    return boxHull(shape.center, rotationMatrix(shape.rotation), {
+      x: shape.size.x / 2,
+      y: shape.size.y / 2,
+      z: shape.size.z / 2
+    })
+  if (shape.kind === 'prism') return prismHull(prismVertices(shape))
+  return prismHull(cylinderPrism(shape.center, shape.rotation, shape.radius, shape.height))
+}
+
+// ---- 공의 정적 형상(6a ElementWorld, 6b FLOWER 케이지, spec-6b §4) ----
+
+// 묶음 안의 조각 하나: 볼록 껍질(상자·볼록 기둥) 또는 정확한 세운 원기둥(뚜껑 중심 a·b, 반지름 r: 구–원기둥 sphereCylinder)
+export type BallStaticPiece = {
+  // 's<구조물 순번>p<부품 순번>'
+  token: string
+  hull: Hull | null
+  cylinder: { a: V3; b: V3; r: number } | null
+  // 축 정렬 상자(넓은 단계)
+  min: V3
+  max: V3
+  // 세운(회전이 z 둘레뿐인) 상자·볼록 기둥의 위에서 본 반시계 다각형(필드 좌표, 바깥 법선·변 길이)과 높이: 공 짝을 껍질 좁은 단계
+  // (GJK)에 넘기기 전에 정확한 분리로 거른다(uprightSeparation). 세우지 않은 껍질은 null
+  upright: UprightPrism | null
+}
+
+export type UprightPrism = {
+  // [x0, y0, x1, y1, …] 반시계
+  points: readonly number[]
+  // 변 k(점 k → k + 1)의 바깥 단위 법선 [nx, ny]와 길이
+  normals: readonly number[]
+  lengths: readonly number[]
+  zMin: number
+  zMax: number
+}
+
+// 구(중심 c, 반지름 r)와 세운 볼록 기둥의 정확한 분리(음수면 침투 깊이, seasons/fieldGeometry.ts spherePartSeparation과 같은 식):
+// 평면은 다각형까지(안이면 가장 가까운 변 직선까지 음수), 축은 높이 구간까지. 껍질 좁은 단계를 부르기 전의 거르기라 결과 접촉은
+// 늘 껍질 좁은 단계(sphereHull)가 낸다
+export function uprightSeparation(c: V3, r: number, prism: UprightPrism): number {
+  const { points, normals, lengths } = prism
+  const n = lengths.length
+  let inside = -Infinity
+  for (let k = 0; k < n; k++)
+    inside = Math.max(
+      inside,
+      normals[2 * k] * (c[0] - points[2 * k]) + normals[2 * k + 1] * (c[1] - points[2 * k + 1])
+    )
+  let planar = inside
+  if (inside > 0) {
+    planar = Infinity
+    for (let k = 0; k < n; k++) {
+      const px = points[2 * k]
+      const py = points[2 * k + 1]
+      const qx = points[(2 * k + 2) % (2 * n)]
+      const qy = points[(2 * k + 3) % (2 * n)]
+      const dx = qx - px
+      const dy = qy - py
+      const t = Math.max(
+        0,
+        Math.min(1, ((c[0] - px) * dx + (c[1] - py) * dy) / (lengths[k] * lengths[k]))
+      )
+      planar = Math.min(planar, Math.hypot(c[0] - (px + t * dx), c[1] - (py + t * dy)))
+    }
+  }
+  const axial = Math.max(prism.zMin - c[2], c[2] - prism.zMax)
+  if (planar > 0 || axial > 0) return Math.hypot(Math.max(planar, 0), Math.max(axial, 0)) - r
+  return Math.max(planar, axial) - r
+}
+
+// 세운 상자·볼록 기둥(회전 x = y = 0)의 위에서 본 다각형: 아래 면 꼭짓점(상자는 boxVertices 비트 순서 0, 1, 3, 2가 반시계)
+function uprightPrism(shape: FieldPartShape, bounds: { min: V3; max: V3 }): UprightPrism | null {
+  if (shape.kind === 'cylinder' || shape.rotation.x !== 0 || shape.rotation.y !== 0) return null
+  const ring =
+    shape.kind === 'box'
+      ? [0, 1, 3, 2].map((k) => boxVertices(shape)[k])
+      : prismVertices(shape).slice(0, shape.polygon.length)
+  const points: number[] = []
+  const normals: number[] = []
+  const lengths: number[] = []
+  for (const v of ring) points.push(v.x, v.y)
+  for (let k = 0; k < ring.length; k++) {
+    const p = ring[k]
+    const q = ring[(k + 1) % ring.length]
+    const length = Math.hypot(q.x - p.x, q.y - p.y)
+    normals.push((q.y - p.y) / length, -(q.x - p.x) / length)
+    lengths.push(length)
+  }
+  return { points, normals, lengths, zMin: bounds.min[2], zMax: bounds.max[2] }
+}
+
+export type BallStaticShape =
+  // 벽: 축 정렬 상자(꼭짓점이 경계 그대로라 sphereBox로 정확하다). hull은 staticShapes의 것
+  | {
+      kind: 'box'
+      token: string
+      hull: Hull
+      min: V3
+      max: V3
+      friction: number
+      target: FieldOverlap
+    }
+  // 부품이 없는 구조물: 봉투 껍질(sphereHull)
+  | {
+      kind: 'hull'
+      token: string
+      hull: Hull
+      min: V3
+      max: V3
+      friction: number
+      target: FieldOverlap
+    }
+  // 부품이 있는 구조물(FLOWER 케이지): 공 부품 조각들. min·max는 조각 상자의 합집합(봉투 밖으로 나가는 예외 부품도 덮는다)이라
+  // 묶음 상자를 지나지 못하면 조각을 보지 않는다
+  | {
+      kind: 'group'
+      min: V3
+      max: V3
+      pieces: readonly BallStaticPiece[]
+      friction: number
+      target: FieldOverlap
+    }
+  | { kind: 'floor'; token: string; friction: number; target: { kind: 'floor' } }
+
+const BALL_STATIC_SHAPES = new WeakMap<FieldSpec, readonly BallStaticShape[]>()
+
+// 공이 부딪히는 정적 형상(staticShapes의 집합과 순서: 벽 넷 → carrier field이고 solid ∨ occludes인 구조물 → 바닥). 부품이 있는
+// 구조물은 그 자리에 공 부품 묶음 하나다(로봇 부품은 보지 않는다). 부품이 없는 것은 6a와 같은 껍질·상자다(같은 값, 기준 해시).
+// 얼린 FieldSpec마다 하나, 결과는 깊게 얼린다
+export function ballStaticShapes(field: FieldSpec): readonly BallStaticShape[] {
+  const cached = BALL_STATIC_SHAPES.get(field)
+  if (cached) return cached
+  // 벽·부품 없는 구조물·바닥은 staticShapes의 같은 껍질 객체와 같은 상자 계산(6a ElementWorld와 같은 값)
+  const robots = staticShapes(field)
+  const plain = (shape: StaticShape, kind: 'box' | 'hull'): BallStaticShape => {
+    const hull = shape.hull as Hull
+    const bounds = shapeBounds({ kind: 'hull', hull })
+    return {
+      kind,
+      token: shape.token,
+      hull,
+      min: bounds.min,
+      max: bounds.max,
+      friction: shape.friction,
+      target: shape.target as FieldOverlap
+    }
+  }
+  const out: BallStaticShape[] = []
+  for (const shape of robots) if (shape.target.kind === 'wall') out.push(plain(shape, 'box'))
+  field.structures.forEach((s, index) => {
+    if (s.carrier !== 'field' || !(s.solid || s.occludes)) return
+    if (s.parts) out.push(ballGroup(field, index))
+    else out.push(plain(robots.find((shape) => shape.token === `s${index}`) as StaticShape, 'hull'))
+  })
+  const floor = robots[robots.length - 1]
+  out.push({
+    kind: 'floor',
+    token: floor.token,
+    friction: floor.friction,
+    target: { kind: 'floor' }
+  })
+  const frozen = deepFreeze(out)
+  BALL_STATIC_SHAPES.set(field, frozen)
+  return frozen
+}
+
+function ballGroup(field: FieldSpec, index: number): BallStaticShape {
+  const s = field.structures[index]
+  const pieces: BallStaticPiece[] = []
+  const min: V3 = [Infinity, Infinity, Infinity]
+  const max: V3 = [-Infinity, -Infinity, -Infinity]
+  ;(s.parts ?? []).forEach((part, j) => {
+    if (!part.balls) return
+    const shape = part.shape
+    let piece: BallStaticPiece
+    if (shape.kind === 'cylinder') {
+      // 세운 원기둥(rotation x = y = 0, checkFieldSpec): 축은 z, 뚜껑 중심은 중심 ± 높이/2
+      const c = arr(shape.center)
+      const half = shape.height / 2
+      piece = {
+        token: `s${index}p${j}`,
+        hull: null,
+        cylinder: { a: [c[0], c[1], c[2] - half], b: [c[0], c[1], c[2] + half], r: shape.radius },
+        min: [c[0] - shape.radius, c[1] - shape.radius, c[2] - half],
+        max: [c[0] + shape.radius, c[1] + shape.radius, c[2] + half],
+        upright: null
+      }
+    } else {
+      const hull = partHull(shape)
+      const bounds = shapeBounds({ kind: 'hull', hull })
+      piece = {
+        token: `s${index}p${j}`,
+        hull,
+        cylinder: null,
+        min: bounds.min,
+        max: bounds.max,
+        upright: uprightPrism(shape, bounds)
+      }
+    }
+    for (let k = 0; k < 3; k++) {
+      min[k] = Math.min(min[k], piece.min[k])
+      max[k] = Math.max(max[k], piece.max[k])
+    }
+    pieces.push(piece)
+  })
+  return {
+    kind: 'group',
+    min,
+    max,
+    pieces,
+    friction: s.friction,
+    target: { kind: 'structure', index }
+  }
 }
 
 // ---- 몸체 형상(§3.3) ----
@@ -1769,8 +2008,8 @@ export function editPoseOverlaps(
 export type StartBodyOverlap = { body: number; targets: (FieldOverlap | { kind: 'floor' })[] }
 
 // 세계 설명 시작 자세(관절 q = 0)에서 몸체 형상과 정적 형상(§3.2 규칙)의 분리 < −EDIT_OVERLAP_TOLERANCE인 것.
-// 섀시는 wheels가 있을 때만(바닥 제외), 관절 몸체는 늘. 몸체 순서(섀시, 관절 0…), 대상은 staticShapes 순서. 축 정렬 상자 넓은
-// 단계 먼저. 형상이 없는 세계는 [](bodyCollision.ts bodyCollisionNeeded와 같은 조건)
+// 섀시는 wheels가 있을 때만(바닥 제외), 관절 몸체는 늘. 몸체 순서(섀시, 관절 0…), 대상은 staticShapes 순서(부품이 있는 구조물은
+// 부품 중 하나라도 겹치면 한 번, 6b). 축 정렬 상자 넓은 단계 먼저. 형상이 없는 세계는 [](bodyCollision.ts bodyCollisionNeeded와 같은 조건)
 export function startOverlaps(spec: WorldSpec, field: FieldSpec): StartBodyOverlap[] {
   const needed =
     spec.robot.colliders !== undefined || spec.joints.some((j) => (j.colliders?.length ?? 0) > 0)
@@ -1809,7 +2048,14 @@ export function startOverlaps(spec: WorldSpec, field: FieldSpec): StartBodyOverl
           overlapped = true
         if (overlapped) break
       }
-      if (overlapped) targets.push(s.target)
+      // 부품이 있는 구조물(6b FLOWER 케이지)은 부품이 여럿이어도 대상 하나로 알린다(부품은 그 구조물 자리에 이어져 있다)
+      const last = targets[targets.length - 1]
+      const repeated =
+        last !== undefined &&
+        last.kind === 'structure' &&
+        s.target.kind === 'structure' &&
+        last.index === s.target.index
+      if (overlapped && !repeated) targets.push(s.target)
     }
     if (targets.length > 0) out.push({ body, targets })
   }

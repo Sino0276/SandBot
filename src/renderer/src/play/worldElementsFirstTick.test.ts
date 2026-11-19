@@ -7,6 +7,7 @@ import { DIRECTION, HALF, LX, LY, mecanum, outputs, RADIUS } from '../../../shar
 import { resolveElementType } from '../../../shared/sim/elements/elementData'
 import { quantizeElements, type GameState } from '../../../shared/sim/elements/gameState'
 import { elementSpawns, restBodyFrames } from '../../../shared/sim/elements/spawn'
+import { placementActive } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { PhysicsWorld } from '../../../shared/sim/world'
 import {
@@ -40,6 +41,9 @@ import { buildWorldSpec, withRunField, type WorldSpecResult } from './worldSpec'
 // 같은 꼴의 장면을 렌더러 빌더로 만든 것).
 
 const BIOBUZZ = resolveSeason('biobuzz')
+// 시작 HIVE 상태에서 생기는 배치 공(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6, 6b). 프리로드는 그 뒤 번호
+const LAYOUT = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, [false, false]))
+const N = LAYOUT.length
 const POLLEN_R = resolveElementType(BIOBUZZ, 'pollen')!.radius
 const ROLLER_R = 0.03
 // 롤러 아래 면과 공 윗면의 겹침(공이 섀시 앞면에 닿았을 때)
@@ -180,15 +184,15 @@ function intakeScene(): SceneObjects {
 }
 
 // INIT(playActions.worldFor)과 같은 순서: 빌더(형상 조회 포함) → 실행의 시즌 → 경기 요소
-function build(objects: SceneObjects): WorldSpecResult {
+function build(objects: SceneObjects, field: PlayRunField = FIELD): WorldSpecResult {
   const built = buildWorldSpec(objects, 'R', SETTINGS, null, null, (id) =>
     objectHullPoints(objects, id)
   )
   return withElements(
-    withRunField(built, DEFAULT_FIELD_DOC, FIELD, keyT),
+    withRunField(built, DEFAULT_FIELD_DOC, field, keyT),
     objects,
     'R',
-    FIELD,
+    field,
     keyT
   )
 }
@@ -227,7 +231,7 @@ const gameEvent = (tNanos: number, game: GameState, final?: SimElementState[]): 
 })
 
 describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON → parseWorldSpec → PhysicsWorld', () => {
-  it('첫 틱 공 = 공유 elementSpawns(GARDEN 8 → 바구니 자리 넷), 원기둥 끝점, 렌더러 실행 표시 = 시뮬레이터 상태', () => {
+  it('첫 틱 공 = 공유 elementSpawns(배치(GARDEN·FLOWER·CELL) → 바구니 자리 넷), 원기둥 끝점, 렌더러 실행 표시 = 시뮬레이터 상태', () => {
     const objects = intakeScene()
     const result = build(objects)
     const spec = result.spec!
@@ -246,7 +250,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     // 섀시 충돌체: 섀시 상자 다음 바구니 벽 넷(소속 오브젝트 문서 순서)
     expect(spec.robot.colliders!.map((c) => c.kind)).toEqual(['box', 'box', 'box', 'box', 'box'])
     // 프리로드: 섀시 몸체(−1)의 로봇 좌표 자리, 하이어라키 순서
-    expect(spec.elements!.groups).toEqual(['garden'])
+    expect(spec.elements!.groups).toEqual(['garden', 'flower', 'hiveCell'])
     expect(spec.elements!.preloads.map((p) => [p.kind, p.body])).toEqual(
       Array.from({ length: 4 }, () => ['pollen', -1])
     )
@@ -260,9 +264,13 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       BIOBUZZ,
       parsed.elements,
       parsed.robot.start,
-      restBodyFrames(parsed.joints)
+      restBodyFrames(parsed.joints),
+      parsed.field.hiveTipped
     )
-    expect(spawns.map((s) => s.kind)).toEqual(Array.from({ length: 12 }, () => 'pollen'))
+    expect(spawns.map((s) => s.kind)).toEqual([
+      ...LAYOUT.map((p) => p.kind),
+      ...Array.from({ length: 4 }, () => 'pollen')
+    ])
     // 렌더러의 실행 공(run.elements)이 시뮬레이터가 쓰는 것과 같은 공유 함수 결과다
     const run = runElementsOf(spec)!
     expect(run.spawns).toEqual(spawns)
@@ -271,7 +279,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     world.step(0, {})
     expect(world.elementSnapshot()).toEqual(spawns)
     // 프리로드 필드 좌표 = 시작 자세(요 0) ∘ 자리
-    spawns.slice(8).forEach((s, k) =>
+    spawns.slice(N).forEach((s, k) =>
       close(s.position, {
         x: START[0] - 0.1,
         y: START[1] + (k - 1.5) * SLOT_PITCH,
@@ -299,13 +307,81 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     const next = { ...data, ...applyPlayEvent(data, gameEvent(0, game)) }
     expect(next.simGame?.revision).toBe(game.revision)
     const balls = runElementBalls(run, next.simGame)
-    expect(balls).toHaveLength(12)
+    expect(balls).toHaveLength(N + 4)
     const shown = (v: number): number => Math.round(v * 1e4) / 1e4
     balls.forEach((ball, i) => {
       const { x, y, z } = spawns[i].position
       expect(ball.position).toEqual([shown(x), shown(y), shown(z)])
     })
   })
+
+  // 시작 HIVE 상태(개인 실행 설정 hiveState = 시작 상태, 6b): 넘어가지 않은 시작(빨강 −30°·파랑 +30°), 둘 다 넘어간 시작, 빨강만 넘어간
+  // 시작. 렌더러 빌더 → JSON → parseWorldSpec → PhysicsWorld 첫 틱의 공 = 그 상태의 elementSpawns(위로 향한 CELL의 NECTAR만)이고,
+  // HIVE 각은 시작 상태의 멈춤 각 상수 그대로 잠들어 있으며(hiveSnapshot·gameState의 줄인 정수), 렌더러 실행 공 수도 같다
+  for (const hiveTipped of [
+    [false, false],
+    [true, true],
+    [true, false]
+  ] as const) {
+    it(`첫 틱의 공과 HIVE 각 = 시작 상태 ${JSON.stringify(hiveTipped)}의 elementSpawns·멈춤 각`, () => {
+      const field: PlayRunField = { ...FIELD, hiveTipped: [hiveTipped[0], hiveTipped[1]] }
+      const result = build(intakeScene(), field)
+      const spec = reparse(result.spec!)
+      expect(spec.field.hiveTipped).toEqual(hiveTipped)
+      const spawns = elementSpawns(
+        BIOBUZZ,
+        spec.elements,
+        spec.robot.start,
+        restBodyFrames(spec.joints),
+        spec.field.hiveTipped
+      )
+      // 배치 공 수 = 그 상태에서 활성인 배치(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6) + 프리로드 4
+      const layout = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, hiveTipped))
+      expect(layout.map((p) => p.group)).toEqual([
+        ...Array(8).fill('garden'),
+        ...Array(16).fill('flower'),
+        ...Array(6).fill('hiveCell')
+      ])
+      expect(spawns).toHaveLength(layout.length + 4)
+      expect(spawns.map((s) => s.kind).slice(0, layout.length)).toEqual(layout.map((p) => p.kind))
+      // 위로 향한 빨강 CELL의 NECTAR 셋(공 24–26)은 시작이면 +X, 넘어갔으면 −X에 있고 두 상태 모두 빨강 벽(−Y) 쪽 옆벽이다
+      const red = BIOBUZZ.hives[0]
+      for (const k of [24, 25, 26]) {
+        expect(spawns[k].kind).toBe('nectarRed')
+        expect(Math.sign(spawns[k].position.x)).toBe(hiveTipped[0] ? -1 : 1)
+        expect(spawns[k].position.y).toBeLessThan(red.pivot.y)
+      }
+
+      const run = runElementsOf(result.spec)!
+      expect(run.spawns).toEqual(spawns)
+      const world = new PhysicsWorld(spec)
+      world.step(0, {})
+      expect(world.elementSnapshot()).toEqual(spawns)
+      // HIVE 각: 시작 상태의 멈춤 각 상수(비트), 잠들어 있고 넘어간 횟수 0
+      const hives = world.hiveSnapshot()!
+      const expected = BIOBUZZ.hives.map((hive, k) =>
+        hiveTipped[k] ? hive.tippedAngle : hive.startAngle
+      )
+      expect(hives.map((h, i) => Object.is(h.angle, expected[i]))).toEqual([true, true])
+      expect(hives.map((h) => [h.asleep, h.tips, Object.is(h.angularVelocity, 0)])).toEqual([
+        [true, 0, true],
+        [true, 0, true]
+      ])
+      const game = world.gameState()!
+      expect(game.hives).toEqual(expected.map((angle) => Math.round(angle * 1e4)))
+      expect(game.hiveTips).toEqual([0, 0])
+      expect(game.poses).toEqual(quantizeElements(spawns).poses)
+      // 렌더러 실행 공 수와 첫 상태
+      expect(runElementBalls(run, null)).toHaveLength(layout.length + 4)
+      // 몇 틱 돌려도 건드리지 않은 HIVE는 그 각 그대로 잠들어 있다
+      for (let k = 1; k < 40; k++) world.step(k * TICK, {})
+      expect(world.hiveSnapshot()!.map((h, i) => Object.is(h.angle, expected[i]))).toEqual([
+        true,
+        true
+      ])
+      expect(world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([])
+    })
+  }
 
   it('짧게 돌리면 롤러가 빨강 GARDEN 공을 물어 끌고 나오고, 프리로드는 바구니에, 파랑 GARDEN은 잠든 채다', () => {
     const objects = intakeScene()
@@ -386,7 +462,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       expect(last[k].position).toEqual(spawn[k].position)
     }
     // 프리로드 넷은 바구니(섀시 윗면 위)에 남았다
-    for (const k of [8, 9, 10, 11]) expect(last[k].position.z).toBeGreaterThan(0.2)
+    for (const k of [N, N + 1, N + 2, N + 3]) expect(last[k].position.z).toBeGreaterThan(0.2)
 
     // 렌더러: 마지막 simGame = 시뮬레이터의 마지막 표시 상태, 끝(final + phase finished) → 잔상과 6d 이어 가기 상태
     expect(data.simGame?.poses).toEqual(world.gameState()!.poses)
@@ -395,7 +471,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     apply({ type: 'phase', runId: 'run-1', phase: 'finished' })
     expect(data.simGame).toBeNull()
     const ghost = ghostElementBalls(data.ghostGame)
-    expect(ghost).toHaveLength(12)
+    expect(ghost).toHaveLength(N + 4)
     // 잔상 = 끝 상태를 1e-4 m로 줄인 자리
     const shown = (v: number): number => Math.round(v * 1e4) / 1e4
     ghost.forEach((ball, i) => {

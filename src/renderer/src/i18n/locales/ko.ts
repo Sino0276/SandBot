@@ -667,13 +667,13 @@ const ko = {
     },
     // 시뮬레이션(개인 설정, 다음 INIT부터)
     simulation: {
-      hiveState: 'HIVE 상태',
+      hiveState: 'HIVE 시작 상태',
       hiveRed: '빨강 HIVE',
       hiveBlue: '파랑 HIVE',
-      hiveStart: '시작',
+      hiveStart: '넘어가지 않음',
       hiveTipped: '넘어감',
       hiveHint:
-        '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다. Field 인스펙터의 같은 칸과 같은 값입니다.',
+        '실행을 시작할 때의 HIVE 상태입니다. 개인 실행 설정이라 프로젝트에 저장되지 않고, 다음 INIT부터 적용됩니다. 실행 중에는 CELL에 들어간 공이 HIVE를 넘길 수 있고, 경기 요소(공)를 끄면 HIVE는 이 상태로 고정됩니다. Field 인스펙터의 같은 칸과 같은 값입니다.',
       title: '시뮬레이션',
       jitter: 'Hub 타이밍 오차',
       jitterOff: '끔 (늘 같은 결과)',
@@ -1081,6 +1081,11 @@ const ko = {
           '로봇에 닿은 공이 많아 일부 공은 로봇을 밀지 않고 로봇에 밀리기만 합니다(실행마다 한 번).',
         elementIslandLarge:
           '서로 닿은 공 더미가 커서 근사 반복으로 풉니다. 더미 안의 힘이 조금 부정확할 수 있습니다(실행마다 한 번).',
+        // 6b: HIVE 넘어감(안내, params.hive로 고른다, HIVE마다 실행에 한 번)
+        hiveTip: {
+          red: '빨강 HIVE가 넘어갔습니다(실행마다 한 번 알림).',
+          blue: '파랑 HIVE가 넘어갔습니다(실행마다 한 번 알림).'
+        },
         dashCamera:
           'FTC Dashboard 카메라 스트림(startCameraStream)은 시뮬레이션하지 않습니다. 호출은 아무것도 하지 않습니다.',
         dashImage: 'FTC Dashboard sendImage는 보이지 않습니다. 호출은 아무것도 하지 않습니다.',
@@ -2355,13 +2360,17 @@ const ko = {
       axesNoDiagram:
         'FTC 필드 좌표계 정의를 이 시즌 배치에 적용했습니다(ftc-docs에 이 시즌 그림은 아직 없음).',
       innerHalf: '벽 안쪽 반폭',
-      hiveState: 'HIVE 상태',
+      hiveState: 'HIVE 시작 상태',
       hiveRed: '빨강 HIVE',
       hiveBlue: '파랑 HIVE',
-      hiveStart: '시작',
+      hiveStart: '넘어가지 않음',
       hiveTipped: '넘어감',
       hiveHint:
-        '개인 실행 설정입니다. 프로젝트에 저장되지 않고, 시뮬레이터는 다음 INIT부터 따릅니다.',
+        '실행을 시작할 때의 HIVE 상태입니다. 개인 실행 설정이라 프로젝트에 저장되지 않고, 다음 INIT부터 적용됩니다. 실행 중에는 CELL에 들어간 공이 HIVE를 넘길 수 있고, 경기 요소(공)를 끄면 HIVE는 이 상태로 고정됩니다.',
+      // 실행 중(hiveNow)·STOP 뒤 다음 INIT까지(hiveEnd, 씬 뷰의 HIVE는 시작 상태로 돌아가 있다)의 HIVE(6b): hive는
+      // hiveRed·hiveBlue 글자, angle은 몸체 각(°, 소수 한 자리), tips는 그 실행에서 넘어간 횟수
+      hiveNow: '{{hive}}: 지금 {{angle}}° · 넘어간 횟수 {{tips}}',
+      hiveEnd: '{{hive}}: 끝날 때 {{angle}}° · 넘어간 횟수 {{tips}}',
       showElements: '필드 요소 보이기',
       noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.',
       showElementsCadHint: '끄면 CAD도 숨기고 단순 바닥·벽·테이프를 보입니다.',
@@ -2385,7 +2394,7 @@ const ko = {
         showShapesHint:
           '시뮬레이터가 막거나 보는 데 쓰는 바닥·테이프·벽·구조물을 초록 윤곽선으로 겹쳐 봅니다. 가려진 선은 흐리게 보입니다. 보기 상태라 저장하지 않습니다.',
         hiveTippedNote:
-          'CAD의 HIVE는 시작 상태로 그립니다. 넘어간 HIVE는 단순 CELL·태그로 겹쳐 보입니다.',
+          'CAD의 HIVE는 넘어가지 않은 자세로 그립니다. 넘어간 채 시작하거나 실행 중 넘어간 HIVE는 단순 CELL·태그로 겹쳐 보입니다.',
         hiddenNote:
           '필드 요소를 숨기거나 고립 보기 중이라 CAD를 그리지 않고 단순 바닥·벽·테이프를 보입니다.',
         simpleSeasonNote:

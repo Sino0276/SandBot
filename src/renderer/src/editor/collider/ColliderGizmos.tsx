@@ -14,6 +14,7 @@ import { useEditorStore } from '../editorStore'
 import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import {
   COLLIDER_DISABLED_COLOR,
+  COLLIDER_DISABLED_OPACITY,
   COLLIDER_OUTLINE_COLOR,
   COLLIDER_OUTLINE_HIDDEN_OPACITY,
   COLLIDER_OUTLINE_OPACITY
@@ -38,8 +39,6 @@ import { collisionModelEntry, useCollisionModelRefresh } from './useCollisionMod
 
 // 센서·카메라 기즈모와 같은 겹 규칙
 const RENDER_ORDER = 11
-// 끈 Collider 불투명도(Unity 끈 색의 alpha 140/255 ≈ 0.55) [가정: 표시만]
-const DISABLED_OPACITY = 0.55
 // 대체 상자 점선(m) [가정: 표시만, 명세 §7 dash 0.01 m]
 const DASH_SIZE = 0.01
 const GAP_SIZE = 0.006
@@ -85,8 +84,8 @@ class GizmoMaterials {
         hidden: solid(COLLIDER_OUTLINE_COLOR, hiddenRatio, false)
       },
       disabled: {
-        front: solid(COLLIDER_DISABLED_COLOR, DISABLED_OPACITY, true),
-        hidden: solid(COLLIDER_DISABLED_COLOR, DISABLED_OPACITY * hiddenRatio, false)
+        front: solid(COLLIDER_DISABLED_COLOR, COLLIDER_DISABLED_OPACITY, true),
+        hidden: solid(COLLIDER_DISABLED_COLOR, COLLIDER_DISABLED_OPACITY * hiddenRatio, false)
       },
       fallback: {
         front: dashed(COLLIDER_OUTLINE_OPACITY, true),

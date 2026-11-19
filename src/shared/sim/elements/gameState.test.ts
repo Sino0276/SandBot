@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import type { SimElementState } from '../worldSpec'
+import type { SimElementState, SimHiveState } from '../worldSpec'
 import {
   ELEMENT_FLAG_ASLEEP,
   ELEMENT_FLAG_OUT,
   elementDisplayPose,
   elementFlags,
   GAME_POSE_STRIDE,
+  hiveDisplayAngle,
+  hiveDisplayTips,
   isValidGameState,
-  quantizeElements
+  quantizeElements,
+  quantizeHives,
+  validHiveStates
 } from './gameState'
 
 // 6a 계약: gameState 이벤트 몸통(줄인 자세 7칸 + 표식)
@@ -69,5 +73,84 @@ describe('isValidGameState', () => {
   })
   it('공 수가 실행과 다르면 받지 않는다', () => {
     expect(isValidGameState({ revision: 0, poses }, 3)).toBe(false)
+  })
+})
+
+// 6b 계약(spec-6b §2·§7): 움직이는 HIVE의 각(hives)과 끝 상태(finalHives)
+describe('HIVE 각(6b)', () => {
+  const hive = (change: Partial<SimHiveState> = {}): SimHiveState => ({
+    angle: -Math.PI / 6,
+    angularVelocity: 0,
+    asleep: true,
+    tips: 0,
+    ...change
+  })
+  const { poses, flags } = quantizeElements([ball(), ball()])
+
+  it('각 × 1e4 정수(−0 없음)·넘어간 횟수와 표시 각·횟수, 칸이 없으면 null', () => {
+    const { hives, hiveTips } = quantizeHives([
+      hive(),
+      hive({ angle: -0, tips: 3 }),
+      hive({ angle: Math.PI / 6, tips: 1 })
+    ])
+    expect(hives).toEqual([-5236, 0, 5236])
+    expect(hives.every((v) => Number.isInteger(v) && !Object.is(v, -0))).toBe(true)
+    expect(hiveTips).toEqual([0, 3, 1])
+    expect(hiveDisplayAngle(hives, 0)).toBe(-0.5236)
+    expect(hiveDisplayAngle(hives, 2)).toBe(0.5236)
+    expect(hiveDisplayAngle(undefined, 0)).toBeNull()
+    expect(hiveDisplayAngle([1], 1)).toBeNull()
+    expect(hiveDisplayTips(hiveTips, 1)).toBe(3)
+    expect(hiveDisplayTips(undefined, 0)).toBeNull()
+    expect(hiveDisplayTips([0], 1)).toBeNull()
+  })
+
+  it('hives는 있으면 정수 둘까지, hiveTips는 같은 길이의 0 이상 정수, hiveCount를 주면 그 수(없으면 0)와 같아야 한다', () => {
+    const both = { hives: [-5236, 5236], hiveTips: [0, 2] }
+    expect(isValidGameState({ revision: 0, poses, flags, ...both })).toBe(true)
+    expect(isValidGameState({ revision: 0, poses, hives: [], hiveTips: [] }, 2, 0)).toBe(true)
+    expect(isValidGameState({ revision: 0, poses, hives: [] }, 2, 0)).toBe(true)
+    expect(isValidGameState({ revision: 0, poses }, 2, 0)).toBe(true)
+    expect(isValidGameState({ revision: 0, poses, ...both }, 2, 2)).toBe(true)
+    // 6a 모양(hives 없음)도 그대로 받는다
+    expect(isValidGameState({ revision: 0, poses, flags }, 2)).toBe(true)
+  })
+
+  it.each([
+    ['배열 아님', { revision: 0, poses, hives: 5, hiveTips: [0] }, undefined],
+    ['정수 아님', { revision: 0, poses, hives: [0.5], hiveTips: [0] }, undefined],
+    ['유한하지 않음', { revision: 0, poses, hives: [Infinity], hiveTips: [0] }, undefined],
+    ['셋', { revision: 0, poses, hives: [0, 0, 0], hiveTips: [0, 0, 0] }, undefined],
+    ['수가 다름', { revision: 0, poses, hives: [0], hiveTips: [0] }, 2],
+    ['있어야 함', { revision: 0, poses }, 2],
+    // 넘어간 횟수(6b 계약 리뷰): hives와 함께, 같은 길이, 0 이상 정수
+    ['횟수 없음', { revision: 0, poses, hives: [0, 0] }, undefined],
+    ['횟수만', { revision: 0, poses, hiveTips: [0] }, undefined],
+    ['횟수 길이가 다름', { revision: 0, poses, hives: [0, 0], hiveTips: [0] }, undefined],
+    ['횟수 배열 아님', { revision: 0, poses, hives: [0], hiveTips: 0 }, undefined],
+    ['횟수 음수', { revision: 0, poses, hives: [0], hiveTips: [-1] }, undefined],
+    ['횟수 정수 아님', { revision: 0, poses, hives: [0], hiveTips: [0.5] }, undefined]
+  ])('hives %s는 받지 않는다', (_, value, hiveCount) => {
+    expect(isValidGameState(value, undefined, hiveCount)).toBe(false)
+  })
+
+  it('끝 상태: 수·유한한 각·boolean·0 이상 정수 횟수만, 새 객체(−0 없음)', () => {
+    const states = [hive({ angularVelocity: -0 }), hive({ tips: 2, asleep: false })]
+    const valid = validHiveStates(states, 2)!
+    expect(valid).toEqual([hive({ angularVelocity: 0 }), states[1]])
+    expect(valid[0]).not.toBe(states[0])
+    expect(Object.is(valid[0].angularVelocity, -0)).toBe(false)
+    expect(validHiveStates([], 0)).toEqual([])
+    for (const [value, count] of [
+      [states, 1],
+      ['x', 2],
+      [[hive(), { ...hive(), angle: Number.NaN }], 2],
+      [[hive(), { ...hive(), asleep: 1 }], 2],
+      [[hive(), { ...hive(), tips: -1 }], 2],
+      [[hive(), { ...hive(), tips: 0.5 }], 2],
+      [[hive(), hive(), hive()], 3],
+      [[hive(), null], 2]
+    ] as const)
+      expect(validHiveStates(value, count)).toBeNull()
   })
 })

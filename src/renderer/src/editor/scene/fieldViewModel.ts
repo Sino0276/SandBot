@@ -2,8 +2,13 @@ import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 import type {
   Alliance,
   FieldCarrier,
+  FieldPart,
+  FieldPartKey,
+  FieldPartShape,
   FieldRect,
+  FieldShape,
   FieldSpec,
+  FieldStructure,
   FieldWallName,
   SeasonId
 } from '../../../../shared/sim/seasons/fieldSpec'
@@ -71,6 +76,30 @@ export const START_MARKER_OPACITY = 0.32
 export const START_MARKER_DIMMED_OPACITY = 0.1
 // 판 이음 기둥·이음선 색 [가정: 표시만]
 const SEAM_COLOR = '#4a4a4a'
+// 구조물·HIVE 부품의 표시 색(6b, spec-6b §8) [결정: 표시 색]: FLOWER HIPS 관 초록, 고리(아래·가운데)와 가운데 고리의 NECTAR 턱
+// #202020, 위 고리 #f2c200, 백스톱 #8e44ad, 벽 쪽 압출재·Field Wall Bracket·백스톱 받침·HIVE 축 조립체 #303030. CELL 트레이
+// 부품은 null(주인 구조물의 재질, HIVE CELL 반투명). 모든 부품 이름을 적어 이름을 더하면 타입 검사가 여기를 고치게 한다
+const RING_COLOR = '#202020'
+const HARDWARE_COLOR = '#303030'
+export const FIELD_PART_COLORS: Readonly<Record<FieldPartKey, string | null>> = {
+  flowerRingBottom: RING_COLOR,
+  flowerRingMiddle: RING_COLOR,
+  flowerRingTop: '#f2c200',
+  flowerLip: RING_COLOR,
+  flowerPipe: '#3fae49',
+  flowerUpright: HARDWARE_COLOR,
+  flowerWallBracket: HARDWARE_COLOR,
+  flowerBackstop: '#8e44ad',
+  flowerSpacer: HARDWARE_COLOR,
+  cellFloor: null,
+  cellWall: null,
+  cellRoof: null,
+  cellBackSkin: null,
+  cellRib: null,
+  cellBaseTube: null,
+  cellStandoff: null,
+  hivePivot: HARDWARE_COLOR
+}
 // 시작 표시의 얼라이언스 색(테이프 표시 색과 같은 계열)
 export const ALLIANCE_COLOR: Record<Alliance, string> = { red: '#c62828', blue: '#1565c0' }
 
@@ -89,9 +118,21 @@ export type FieldGeometrySpec =
   | { kind: 'box'; size: Vec3 }
   // 자기 z가 축(Three.js CylinderGeometry는 y축이라 matrix가 돌린다)
   | { kind: 'cylinder'; radius: number; height: number }
+  // 볼록 기둥(6b 부품): 자기 x·y 평면의 볼록 반시계 다각형을 자기 z로 ±height/2(fieldPartGeometry.ts prismGeometry)
+  | { kind: 'prism'; polygon: readonly { x: number; y: number }[]; height: number }
 
+// 'part'(6b): 구조물(structureIndex)이나 HIVE 몸체(structureIndex 없음)의 계산 부품 하나(partIndex = 주인의 parts 순번)
 export type FieldMeshRole =
-  'floor' | 'seam' | 'tape' | 'rail' | 'panel' | 'panelSeam' | 'structure' | 'tag' | 'wallLabel'
+  | 'floor'
+  | 'seam'
+  | 'tape'
+  | 'rail'
+  | 'panel'
+  | 'panelSeam'
+  | 'structure'
+  | 'part'
+  | 'tag'
+  | 'wallLabel'
 
 export type FieldMeshSpec = {
   key: string
@@ -103,10 +144,16 @@ export type FieldMeshSpec = {
   matrix: number[]
   material: FieldMaterialSpec
   renderOrder: number
-  // role 'tag'면 태그 id(텍스처), 'wallLabel'이면 벽 이름(i18n field.walls.<값>), 'structure'면 순번
+  // role 'tag'면 태그 id(텍스처), 'wallLabel'이면 벽 이름(i18n field.walls.<값>), 'structure'면 순번, 'part'면 주인 구조물 순번
+  // (HIVE 몸체 부품은 없음)·부품 순번·이름
   tagId?: number
   wall?: FieldWallName
   structureIndex?: number
+  partIndex?: number
+  partKey?: FieldPartKey
+  // 충돌체 윤곽(fieldOutlineMeshes)에서 흐린 색으로 그린다(6b: 부품이 있는 구조물의 봉투 상자. 공·로봇 3D 충돌은 부품을 쓰고
+  // 4c 광선·4d 가림·평면 경로·시작 판정은 봉투를 쓴다)
+  outline?: 'dim'
 }
 
 // HIVE carrier 그룹: 위치 pivot, 회전 R_y(angle)
@@ -205,6 +252,69 @@ export function wallLabelYaw(normal: { x: number; y: number }): number {
 
 function hiveIndex(key: 'hiveRed' | 'hiveBlue'): 0 | 1 {
   return key === 'hiveRed' ? 0 : 1
+}
+
+// 형상 하나(구조물 shape·부품 shape)의 표시 형상과 carrier 틀 변환(ZYX). 원기둥은 CylinderGeometry의 축(y)을 자기 z로 돌린다
+function shapeMesh(shape: FieldShape | FieldPartShape): {
+  geometry: FieldGeometrySpec
+  matrix: number[]
+} {
+  let matrix = compose(shape.center, shape.rotation)
+  let geometry: FieldGeometrySpec
+  if (shape.kind === 'box') geometry = { kind: 'box', size: shape.size }
+  else if (shape.kind === 'prism')
+    geometry = { kind: 'prism', polygon: shape.polygon, height: shape.height }
+  else {
+    geometry = { kind: 'cylinder', radius: shape.radius, height: shape.height }
+    matrix = matrix.multiply(new Matrix4().makeRotationX(Math.PI / 2))
+  }
+  return { geometry, matrix: elements(matrix) }
+}
+
+// 구조물 하나를 봉투(shape) 그대로 그리는 메시. HIVE CELL은 반투명
+function structureMesh(structure: FieldStructure, index: number): FieldMeshSpec {
+  const cell = structure.key === 'hiveCell'
+  return {
+    key: `structure${index}`,
+    role: 'structure',
+    carrier: structure.carrier,
+    ...shapeMesh(structure.shape),
+    material: cell
+      ? translucent(structure.material.display, HIVE_CELL_OPACITY)
+      : opaque(structure.material.display),
+    renderOrder: cell ? FIELD_RENDER_ORDER.hiveCell : FIELD_RENDER_ORDER.floor,
+    structureIndex: index
+  }
+}
+
+// 공이 닿는 부품만 그린다(6b, spec-6b §8): 로봇 전용 조각(FLOWER 고리의 구멍을 채운 판 등)은 같은 부품의 공 조각과 겹치고
+// 안의 공을 가린다. 같은 물리 부품의 공 조각과 로봇 조각은 같은 이름이다
+export function drawnParts(
+  parts: readonly FieldPart[] | undefined
+): { part: FieldPart; index: number }[] {
+  return (parts ?? []).flatMap((part, index) => (part.balls ? [{ part, index }] : []))
+}
+
+// 부품 하나의 메시. 색은 FIELD_PART_COLORS(null이면 주인의 재질). HIVE CELL 트레이 부품은 CELL처럼 반투명 renderOrder 4
+function partMesh(
+  key: string,
+  part: FieldPart,
+  index: number,
+  carrier: FieldCarrier,
+  owner: { display: string; cell: boolean; structureIndex?: number }
+): FieldMeshSpec {
+  const color = FIELD_PART_COLORS[part.key] ?? owner.display
+  return {
+    key,
+    role: 'part',
+    carrier,
+    ...shapeMesh(part.shape),
+    material: owner.cell ? translucent(color, HIVE_CELL_OPACITY) : opaque(color),
+    renderOrder: owner.cell ? FIELD_RENDER_ORDER.hiveCell : FIELD_RENDER_ORDER.floor,
+    ...(owner.structureIndex !== undefined ? { structureIndex: owner.structureIndex } : {}),
+    partIndex: index,
+    partKey: part.key
+  }
 }
 
 // 시즌 필드 메시 목록. elementsHidden(필드 요소 숨김·고립 보기)이면 구조물·HIVE·태그·벽 라벨을 빼고 바닥·벽·테이프만 남긴다.
@@ -308,33 +418,30 @@ export function fieldViewModel(
         angle: hiveTipped[hiveIndex(hive.key)] ? hive.tippedAngle : hive.startAngle
       })
 
-    // 구조물: 모양 그대로(ZYX). HIVE CELL은 반투명
+    // 구조물: 모양 그대로(ZYX). HIVE CELL은 반투명. 부품이 있는 구조물(6b FLOWER 케이지·CELL 트레이)은 봉투 대신 공이 닿는
+    // 부품을 그린다(봉투 상자가 안의 공을 가리지 않게. 봉투는 4c 광선·4d 가림·평면 경로가 계속 쓰고 윤곽에 흐리게 남는다)
     spec.structures.forEach((structure, index) => {
-      const { shape } = structure
-      const cell = structure.key === 'hiveCell'
-      const material = cell
-        ? translucent(structure.material.display, HIVE_CELL_OPACITY)
-        : opaque(structure.material.display)
-      const renderOrder = cell ? FIELD_RENDER_ORDER.hiveCell : FIELD_RENDER_ORDER.floor
-      let geometry: FieldGeometrySpec
-      let matrix = compose(shape.center, shape.rotation)
-      if (shape.kind === 'box') geometry = { kind: 'box', size: shape.size }
-      else {
-        geometry = { kind: 'cylinder', radius: shape.radius, height: shape.height }
-        // CylinderGeometry의 축(y)을 자기 z로
-        matrix = matrix.multiply(new Matrix4().makeRotationX(Math.PI / 2))
+      if (!structure.parts) {
+        meshes.push(structureMesh(structure, index))
+        return
       }
-      meshes.push({
-        key: `structure${index}`,
-        role: 'structure',
-        carrier: structure.carrier,
-        geometry,
-        matrix: elements(matrix),
-        material,
-        renderOrder,
+      const owner = {
+        display: structure.material.display,
+        cell: structure.key === 'hiveCell',
         structureIndex: index
-      })
+      }
+      for (const { part, index: j } of drawnParts(structure.parts))
+        meshes.push(partMesh(`structure${index}.part${j}`, part, j, structure.carrier, owner))
     })
+    // HIVE 몸체 부품(6b 축 조립체): 그 HIVE carrier 그룹 안
+    for (const hive of spec.hives)
+      for (const { part, index: j } of drawnParts(hive.parts))
+        meshes.push(
+          partMesh(`${hive.key}.part${j}`, part, j, hive.key, {
+            display: HARDWARE_COLOR,
+            cell: false
+          })
+        )
 
     // AprilTag: 흰 고리 포함 1.25·size 정사각형. 평면의 +x = 태그 +x, 평면 +y = 태그 −y(텍스처 위 행 = 태그 −y),
     // 평면 +z(앞면 법선) = 태그 −z. 태그 틀 → 평면 = Rx(π), 앞면 쪽으로 TAG_FRONT_OFFSET 띄운다
@@ -383,14 +490,16 @@ export function fieldViewModel(
 
 // ---- 필드 CAD와 함께 그리는 단순 형상(spec-4e §1.6·§1.8) ----
 
-// CAD와 함께 그리는 단순 형상(companion): 태그(앞면 쪽으로 CAD_TAG_FRONT_OFFSET, 새 사본)·벽 라벨, 그리고 넘어간 HIVE의
-// carrier 구조물(HIVE CELL. CAD의 HIVE는 시작 상태라 넘어간 자리를 보인다). 나머지(바닥·이음선·테이프·벽·구조물·시작 상태
-// CELL)는 CAD가 그리므로 뺀다. 순서는 model.meshes 순서, carriers는 입력 그대로다. hiveTipped는 model을 만들 때 넘긴 값과
-// 같아야 한다(모델에는 넘어감 여부가 각으로만 있다).
-export function fieldCompanionModel(
-  model: FieldViewModel,
-  hiveTipped: readonly [boolean, boolean]
-): FieldViewModel {
+// HIVE 몸체 메시: HIVE carrier 그룹 안의 태그가 아닌 것(CELL 상자·CELL 트레이 부품·축 조립체 부품)
+export function isHiveBody(mesh: FieldMeshSpec): boolean {
+  return mesh.carrier !== 'field' && mesh.role !== 'tag'
+}
+
+// CAD와 함께 그리는 단순 형상(companion): 태그(앞면 쪽으로 CAD_TAG_FRONT_OFFSET, 새 사본)·벽 라벨, 그리고 HIVE 몸체(isHiveBody).
+// CAD의 HIVE는 넘어가지 않은 자세로 고정이라, 씬 뷰(FieldView)가 HIVE 몸체를 그 HIVE의 지금 각이 넘어가지 않은 각에서 벗어났을
+// 때만 보인다(넘어간 채 시작했거나 실행 중 움직임, 6b hiveDisplay.ts). 나머지(바닥·이음선·테이프·벽·고정 구조물)는 CAD가 그리므로
+// 뺀다. 순서는 model.meshes 순서, carriers는 입력 그대로다.
+export function fieldCompanionModel(model: FieldViewModel): FieldViewModel {
   // 태그 평면 +z(앞면 법선)로 더 옮기는 거리
   const lift = new Matrix4().makeTranslation(0, 0, CAD_TAG_FRONT_OFFSET - TAG_FRONT_OFFSET)
   const meshes: FieldMeshSpec[] = []
@@ -400,36 +509,55 @@ export function fieldCompanionModel(
         ...mesh,
         matrix: elements(new Matrix4().fromArray(mesh.matrix).multiply(lift))
       })
-    else if (mesh.role === 'wallLabel') meshes.push(mesh)
-    else if (
-      mesh.role === 'structure' &&
-      mesh.carrier !== 'field' &&
-      hiveTipped[hiveIndex(mesh.carrier)]
-    )
-      meshes.push(mesh)
+    else if (mesh.role === 'wallLabel' || isHiveBody(mesh)) meshes.push(mesh)
   }
   return { carriers: model.carriers, meshes }
 }
 
 // 충돌체 윤곽으로 그릴 단순 형상(spec-4e §1.8, Unity 충돌체 기즈모): fieldViewModel(spec, hiveTipped, false)의 바닥·테이프·
-// 레일·판·판 이음과, 시뮬레이터가 계산에 쓰는 구조물(solid ∨ sensed ∨ occludes). 이음선·태그·벽 라벨·표시 전용 구조물
-// (HIVE CELL)은 뺀다(막거나 가린다고 오해하지 않게). carriers는 남은 메시가 쓰는 것만 둔다(BIOBUZZ에는 남는 HIVE 구조물이
-// 없어 비어 있다). 순서는 model.meshes 순서다.
+// 레일·판·판 이음과, 시뮬레이터가 계산에 쓰는 구조물(solid ∨ sensed ∨ occludes)과 부품(6b: 그려진 부품은 모두 공 접촉에 쓴다.
+// FLOWER 케이지·CELL 트레이·HIVE 축 조립체). 부품이 있는 계산 구조물의 봉투 상자(4c 광선·4d 가림·평면 경로·시작 판정이 쓴다)는
+// 그 첫 부품 바로 앞에 흐린 색(outline 'dim')으로 둔다(그려진 부품이 없으면 끝에). 이음선·태그·벽 라벨·표시 전용 구조물(부품
+// 없는 HIVE CELL 상자)은 뺀다(막거나 가린다고 오해하지 않게). carriers는 남은 메시가 쓰는 것만 둔다. 순서는 model.meshes 순서다.
 const OUTLINE_ROLES: ReadonlySet<FieldMeshRole> = new Set([
   'floor',
   'tape',
   'rail',
   'panel',
-  'panelSeam'
+  'panelSeam',
+  'part'
 ])
 
+const computed = (structure: FieldStructure): boolean =>
+  structure.solid || structure.sensed || structure.occludes
+
 export function fieldOutlineMeshes(model: FieldViewModel, spec: FieldSpec): FieldViewModel {
-  const meshes = model.meshes.filter((mesh) => {
-    if (OUTLINE_ROLES.has(mesh.role)) return true
-    if (mesh.role !== 'structure' || mesh.structureIndex === undefined) return false
-    const structure = spec.structures[mesh.structureIndex]
-    return !!structure && (structure.solid || structure.sensed || structure.occludes)
-  })
+  // 흐리게 남길 봉투: 부품이 있는 계산 구조물(모델에 구조물·부품이 그려졌을 때만, 숨김 모델에는 없다)
+  const drawsStructures = model.meshes.some(
+    (mesh) => mesh.role === 'structure' || mesh.role === 'part'
+  )
+  const envelopes = new Map<number, FieldMeshSpec>()
+  if (drawsStructures)
+    spec.structures.forEach((structure, index) => {
+      if (structure.parts && computed(structure))
+        envelopes.set(index, { ...structureMesh(structure, index), outline: 'dim' })
+    })
+  const meshes: FieldMeshSpec[] = []
+  for (const mesh of model.meshes) {
+    if (mesh.role === 'part' && mesh.structureIndex !== undefined) {
+      const envelope = envelopes.get(mesh.structureIndex)
+      if (envelope) {
+        meshes.push(envelope)
+        envelopes.delete(mesh.structureIndex)
+      }
+    }
+    if (OUTLINE_ROLES.has(mesh.role)) meshes.push(mesh)
+    else if (mesh.role === 'structure' && mesh.structureIndex !== undefined) {
+      const structure = spec.structures[mesh.structureIndex]
+      if (structure && computed(structure)) meshes.push(mesh)
+    }
+  }
+  meshes.push(...envelopes.values())
   const used = new Set(meshes.map((mesh) => mesh.carrier))
   return { carriers: model.carriers.filter((carrier) => used.has(carrier.key)), meshes }
 }

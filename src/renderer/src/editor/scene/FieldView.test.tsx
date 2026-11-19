@@ -22,6 +22,7 @@ import {
 } from 'three'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpModeInfo } from '../../../../shared/play'
+import type { FieldSpec } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { alignmentRotation } from '../../cad/alignment'
 import {
@@ -32,19 +33,37 @@ import {
 import en from '../../i18n/locales/en'
 import ko from '../../i18n/locales/ko'
 import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
-import { newRun, usePlayStore, type PlayRun } from '../../play/playStore'
+import { newRun, usePlayStore, type PlayRun, type SimGameState } from '../../play/playStore'
 import type { FieldVisual } from '../../scene/fieldDoc'
 import type { SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { resetSceneVisibility, useSceneVisibilityStore } from '../sceneVisibility'
 import FieldView from './FieldView'
+import { CELL_PLUS, FLOWER, partsSpec } from './fieldPartsTestkit'
 import {
   CAD_TAG_FRONT_OFFSET,
+  drawnParts,
   FIELD_RENDER_ORDER,
+  fieldCompanionModel,
   fieldOutlineMeshes,
-  fieldViewModel
+  fieldViewModel,
+  isHiveBody
 } from './fieldViewModel'
+import { GHOST_MATERIAL } from './ghostMaterial'
+
+// 시험이 만든 시즌 판(6b: BIOBUZZ 부품 데이터 전에 부품 그리기·HIVE 움직임·잔상을 본다, fieldPartsTestkit). null이면 실제 시즌
+const seasonOverride = vi.hoisted(() => ({ biobuzz: null as FieldSpec | null }))
+vi.mock('../../../../shared/sim/seasons/seasons', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../shared/sim/seasons/seasons')>()
+  return {
+    ...actual,
+    resolveSeason: (id: Parameters<typeof actual.resolveSeason>[0]) =>
+      id === 'biobuzz' && seasonOverride.biobuzz !== null
+        ? seasonOverride.biobuzz
+        : actual.resolveSeason(id)
+  }
+})
 
 // 씬 뷰 시즌 필드(FieldView)를 WebGL 없이 그린다(SceneObjectsView.test.tsx와 같은 가짜 렌더러). C5(실행 중 표시), C8(시작
 // 표시 그리는 조건), C14(언어를 바꾸면 벽 라벨 텍스처를 다시 만듦), StrictMode 정리 → 재실행 뒤에도 텍스처가 남음.
@@ -210,7 +229,29 @@ afterEach(async () => {
   await act(async () => root.unmount())
   await settle()
   clearLoadedFieldVisual()
+  seasonOverride.biobuzz = null
 })
+
+// 그리는 구조물 메시 수(부품이 없는 구조물은 상자 하나, 있으면 공이 닿는 부품, HIVE 몸체 부품): BIOBUZZ 부품 데이터 전후에 맞게
+function structureMeshCount(spec: FieldSpec): number {
+  return (
+    spec.structures.reduce(
+      (sum, structure) => sum + (structure.parts ? drawnParts(structure.parts).length : 1),
+      0
+    ) + spec.hives.reduce((sum, hive) => sum + drawnParts(hive.parts).length, 0)
+  )
+}
+// 구조물·부품 메시(이름이 structure… 또는 hive…part…)
+const structureMeshes = (): Mesh[] => [
+  ...meshesNamed('structure'),
+  ...meshesNamed('hiveRed.part'),
+  ...meshesNamed('hiveBlue.part')
+]
+// 필드 CAD와 함께 그릴 HIVE 몸체 메시 수(BIOBUZZ)
+const biobuzzBodies = (): number =>
+  fieldCompanionModel(
+    fieldViewModel(resolveSeason('biobuzz'), [false, false], false)
+  ).meshes.filter(isHiveBody).length
 
 const set = async (update: () => void): Promise<void> => {
   await act(async () => update())
@@ -220,13 +261,15 @@ describe('FieldView', () => {
   it('BIOBUZZ: 구조물·태그·벽 라벨과 HIVE carrier 그룹, 필드 메시는 클릭되지 않는다', async () => {
     await mount()
     expect(named('seasonField')).toBeDefined()
-    expect(meshesNamed('structure')).toHaveLength(17)
+    expect(structureMeshes()).toHaveLength(structureMeshCount(resolveSeason('biobuzz')))
     expect(meshesNamed('tag')).toHaveLength(16)
     expect(meshesNamed('wallLabel')).toHaveLength(4)
     const hive = resolveSeason('biobuzz').hives[0]
     expect(named('hiveRed')!.rotation.y).toBeCloseTo(hive.startAngle, 12)
-    // 태그는 HIVE carrier 그룹 안
-    expect(named('tag30')!.parent!.name).toBe('hiveRed')
+    // 태그는 HIVE carrier 그룹 안쪽 움직임 그룹(6b) 안. 실행 밖에서는 움직임 그룹이 0
+    expect(named('tag30')!.parent!.name).toBe('hiveRed.motion')
+    expect(named('tag30')!.parent!.parent!.name).toBe('hiveRed')
+    expect(named('hiveRed.motion')!.rotation.y).toBe(0)
     // 클릭되지 않는다
     const hits: THREE.Intersection[] = []
     named('structure0')!.raycast(new THREE.Raycaster(), hits)
@@ -241,13 +284,13 @@ describe('FieldView', () => {
   it('필드 요소 숨김·고립이면 구조물·태그·라벨이 빠지고 바닥·벽·테이프는 남는다', async () => {
     await mount()
     await set(() => useSceneVisibilityStore.setState({ fieldHidden: true }))
-    expect(meshesNamed('structure')).toHaveLength(0)
+    expect(structureMeshes()).toHaveLength(0)
     expect(meshesNamed('tag')).toHaveLength(0)
     expect(meshesNamed('wallLabel')).toHaveLength(0)
     expect(meshesNamed('tape')).toHaveLength(14)
     expect(named('floor')).toBeDefined()
     await set(() => useSceneVisibilityStore.setState({ fieldHidden: false, isolated: ['bot'] }))
-    expect(meshesNamed('structure')).toHaveLength(0)
+    expect(structureMeshes()).toHaveLength(0)
     expect(meshesNamed('rail')).not.toHaveLength(0)
   })
 
@@ -431,7 +474,10 @@ describe('필드 CAD 층(B5)', () => {
     expect(named('seasonField')).toBeDefined()
     expect(meshesNamed('tag')).toHaveLength(16)
     expect(meshesNamed('wallLabel')).toHaveLength(4)
-    expect(meshesNamed('structure')).toHaveLength(0)
+    // HIVE 몸체(CELL)는 늘 올려 두고 넘어가지 않은 자세면 숨긴다(CAD가 그 자리에 그린다, 6b)
+    expect(structureMeshes()).toHaveLength(biobuzzBodies())
+    expect(named('hiveRed.body')!.visible).toBe(false)
+    expect(named('hiveBlue.body')!.visible).toBe(false)
     expect(meshesNamed('tape')).toHaveLength(0)
     expect(meshesNamed('rail')).toHaveLength(0)
     expect(meshesNamed('panel')).toHaveLength(0)
@@ -442,7 +488,7 @@ describe('필드 CAD 층(B5)', () => {
     named('seasonField')!.traverse((object) => {
       if (object instanceof Mesh) geometries.add(object.geometry)
     })
-    expect(geometries.size).toBe(20)
+    expect(geometries.size).toBe(20 + biobuzzBodies())
   })
 
   it('companion 태그 평면은 태그 틀 −z로 CAD_TAG_FRONT_OFFSET(1e-9)', async () => {
@@ -470,17 +516,27 @@ describe('필드 CAD 층(B5)', () => {
     }
   })
 
-  it('빨강 HIVE 넘어감이면 빨강 CELL 2가 더해지고 hiveRed 각 = π/6', async () => {
+  it('빨강 HIVE 넘어감이면 빨강 HIVE 몸체(CELL)만 보이고 hiveRed 각 = π/6', async () => {
     loadCad()
     withCad()
     usePlayStore.setState({
       settings: { ...DEFAULT_PLAY_SETTINGS, hiveState: { red: 'tipped', blue: 'start' } }
     })
     await mount()
-    const cells = meshesNamed('structure')
-    expect(cells).toHaveLength(2)
-    expect(cells.every((mesh) => mesh.parent!.name === 'hiveRed')).toBe(true)
+    expect(named('hiveRed.body')!.visible).toBe(true)
+    expect(named('hiveBlue.body')!.visible).toBe(false)
+    const red = named('hiveRed.body')!.children
+    expect(red.length).toBe(biobuzzBodies() / 2)
+    // CELL(부품이 있으면 트레이 부품)과 축 조립체 부품, 태그는 아니다
+    expect(
+      red.every((mesh) => mesh.name.startsWith('structure') || mesh.name.startsWith('hiveRed.part'))
+    ).toBe(true)
     expect(named('hiveRed')!.rotation.y).toBeCloseTo(Math.PI / 6, 12)
+    // 설정을 되돌리면 숨긴다
+    await set(() =>
+      usePlayStore.getState().updateSettings({ hiveState: { red: 'start', blue: 'start' } })
+    )
+    expect(named('hiveRed.body')!.visible).toBe(false)
   })
 
   it('fieldHidden·고립이면 CAD 그룹 visible false(내려가지 않음), 바닥·벽·테이프는 지금 그대로', async () => {
@@ -494,7 +550,7 @@ describe('필드 CAD 층(B5)', () => {
     expect(named('floor')).toBeDefined()
     expect(meshesNamed('tape')).toHaveLength(14)
     expect(meshesNamed('rail')).not.toHaveLength(0)
-    expect(meshesNamed('structure')).toHaveLength(0)
+    expect(structureMeshes()).toHaveLength(0)
     await set(() => useSceneVisibilityStore.setState({ fieldHidden: false, isolated: ['bot'] }))
     expect(named('fieldCad')).toBe(cad)
     expect(cad.visible).toBe(false)
@@ -537,26 +593,30 @@ describe('필드 CAD 층(B5)', () => {
     withCad()
     await mount()
     expect(named('fieldCad')).toBeUndefined()
-    expect(meshesNamed('structure')).toHaveLength(17)
+    expect(structureMeshes()).toHaveLength(structureMeshCount(resolveSeason('biobuzz')))
     expect(named('floor')).toBeDefined()
   })
 })
 
 describe('충돌체 윤곽(B6)', () => {
-  it('fieldShapesShown이면 메시마다 LineSegments 둘(같은 EdgesGeometry), 56 × 2, HIVE CELL·carrier 없음', async () => {
+  it('fieldShapesShown이면 메시마다 LineSegments 둘(같은 EdgesGeometry), 56(+ 부품) × 2, 표시 전용 HIVE CELL 상자 없음', async () => {
     loadCad()
     withCad()
     useSceneVisibilityStore.setState({ fieldShapesShown: true })
     await mount()
     const spec = resolveSeason('biobuzz')
     const expected = fieldOutlineMeshes(fieldViewModel(spec, [false, false], false), spec)
-    expect(expected.meshes).toHaveLength(56)
+    const n = expected.meshes.length
+    expect(n).toBe(56 + expected.meshes.filter((mesh) => mesh.role === 'part').length)
     const lines = outlines()
-    expect(lines).toHaveLength(2 * 56)
+    expect(lines).toHaveLength(2 * n)
     const front = lines.filter((line) => line.name.endsWith('.front'))
     const hidden = lines.filter((line) => line.name.endsWith('.hidden'))
-    expect(front).toHaveLength(56)
-    expect(hidden).toHaveLength(56)
+    expect(front).toHaveLength(n)
+    expect(hidden).toHaveLength(n)
+    const dim = new Set(
+      expected.meshes.filter((mesh) => mesh.outline === 'dim').map((mesh) => mesh.key)
+    )
     front.forEach((line, index) => {
       const pair = hidden[index]
       expect(pair.name.replace('.hidden', '')).toBe(line.name.replace('.front', ''))
@@ -566,11 +626,15 @@ describe('충돌체 윤곽(B6)', () => {
       const a = line.material as LineBasicMaterial
       const b = pair.material as LineBasicMaterial
       expect(a.depthTest).toBe(true)
-      expect(a.opacity).toBe(0.9)
       expect(b.depthTest).toBe(false)
-      expect(b.opacity).toBe(0.2)
+      // 흐린 윤곽(부품이 있는 구조물의 봉투, 6b)은 끈 Collider 색·불투명도
+      const isDim = dim.has(line.name.slice('outline.'.length, -'.front'.length))
+      expect(a.opacity).toBe(isDim ? 0.55 : 0.9)
+      expect(b.opacity).toBeCloseTo(isDim ? (0.55 * 0.2) / 0.9 : 0.2, 12)
       for (const material of [a, b]) {
-        expect(material.color.getHexString()).toBe(new Color('#91f48b').getHexString())
+        expect(material.color.getHexString()).toBe(
+          new Color(isDim ? '#54c84d' : '#91f48b').getHexString()
+        )
         expect(material.depthWrite).toBe(false)
         expect(material.transparent).toBe(true)
       }
@@ -578,8 +642,11 @@ describe('충돌체 윤곽(B6)', () => {
       line.raycast(new THREE.Raycaster(), hits)
       expect(hits).toEqual([])
     })
-    expect(named('outline.hiveRed')).toBeUndefined()
-    expect(named('outline.hiveBlue')).toBeUndefined()
+    // HIVE carrier 윤곽 그룹은 그 안에 계산 부품(CELL 트레이·축 조립체)이 있을 때만
+    for (const key of ['hiveRed', 'hiveBlue'])
+      expect(named(`outline.${key}`) !== undefined).toBe(
+        expected.carriers.some((carrier) => carrier.key === key)
+      )
     expect(lines.some((line) => line.name.startsWith('outline.seam'))).toBe(false)
     // 끄면 사라진다
     await set(() => useSceneVisibilityStore.setState({ fieldShapesShown: false }))
@@ -721,9 +788,13 @@ describe('실행 중(B9)', () => {
     )
     expect(named('fieldCad')!.visible).toBe(true)
     expect(meshesNamed('tag')).toHaveLength(16)
-    expect(meshesNamed('structure')).toHaveLength(2)
+    expect(named('hiveRed.body')!.visible).toBe(true)
+    expect(named('hiveBlue.body')!.visible).toBe(false)
     expect(named('hiveRed')!.rotation.y).toBeCloseTo(Math.PI / 6, 12)
-    expect(outlines()).toHaveLength(2 * 56)
+    const biobuzz = resolveSeason('biobuzz')
+    expect(outlines()).toHaveLength(
+      2 * fieldOutlineMeshes(fieldViewModel(biobuzz, [true, false], false), biobuzz).meshes.length
+    )
     // 떼어 놓은 실행은 문서 시즌
     await set(() =>
       usePlayStore.setState({
@@ -732,5 +803,195 @@ describe('실행 중(B9)', () => {
     )
     expect(named('seasonField')).toBeUndefined()
     expect(named('fieldCad')!.visible).toBe(true)
+  })
+})
+
+// ---- 6b(spec-6b §8): 부품 그리기, 실행 중 HIVE 움직임, CAD companion HIVE 몸체, HIVE 잔상 ----
+
+// 필드를 잠근 실행(경기 요소 켬이면 HIVE를 묶는다)
+function elementsRun(gameElements = true, patch: Partial<PlayRun> = {}): PlayRun {
+  return run({
+    field: { season: 'biobuzz', hiveTipped: [false, false], gameElements },
+    elements: { kinds: [], spawns: [] },
+    ...patch
+  })
+}
+const hiveGame = (hives: number[], runId = 'r'): SimGameState => ({
+  runId,
+  tNanos: 0,
+  revision: hives[0] + 100000,
+  poses: [],
+  flags: [],
+  hives,
+  hiveTips: hives.map(() => 0)
+})
+const START_ANGLE = (): number => resolveSeason('biobuzz').hives[0].startAngle
+
+describe('부품 그리기(6b)', () => {
+  it('부품이 있는 구조물은 봉투 대신 공 부품(볼록 기둥·원기둥·상자), CELL 트레이·축 조립체는 HIVE 움직임 그룹 안', async () => {
+    seasonOverride.biobuzz = partsSpec()
+    await mount()
+    expect(named(`structure${FLOWER}`)).toBeUndefined()
+    expect(named(`structure${CELL_PLUS}`)).toBeUndefined()
+    const flower = meshesNamed(`structure${FLOWER}.part`)
+    expect(flower.map((mesh) => mesh.name)).toEqual([
+      'structure9.part0',
+      'structure9.part2',
+      'structure9.part3'
+    ])
+    // 볼록 기둥: 사각형 뚜껑 2·2 + 옆 8 삼각형
+    expect(flower[0].geometry.getAttribute('position').count).toBe(3 * (4 + 8))
+    expect(flower[1].geometry).toBeInstanceOf(THREE.CylinderGeometry)
+    expect(flower[2].geometry).toBeInstanceOf(BoxGeometry)
+    expect((flower[1].material as MeshStandardMaterial).color.getHexString()).toBe('3fae49')
+    const cell = named(`structure${CELL_PLUS}.part0`) as Mesh
+    expect(cell.parent!.name).toBe('hiveRed.motion')
+    expect(cell.renderOrder).toBe(FIELD_RENDER_ORDER.hiveCell)
+    expect((cell.material as MeshStandardMaterial).transparent).toBe(true)
+    expect(named('hiveRed.part0')!.parent!.name).toBe('hiveRed.motion')
+    expect(named('hiveBlue.part0')!.parent!.name).toBe('hiveBlue.motion')
+    expect(structureMeshes()).toHaveLength(structureMeshCount(partsSpec()))
+  })
+
+  it('윤곽: FLOWER 봉투는 흐리게, 부품·CELL 트레이는 보통, 원기둥은 원 둘 + 선 넷', async () => {
+    seasonOverride.biobuzz = partsSpec()
+    loadCad()
+    withCad()
+    useSceneVisibilityStore.setState({ fieldShapesShown: true })
+    await mount()
+    const envelope = named(`outline.structure${FLOWER}.front`) as LineSegments
+    expect((envelope.material as LineBasicMaterial).color.getHexString()).toBe('54c84d')
+    const pipe = named(`outline.structure${FLOWER}.part2.front`) as LineSegments
+    expect((pipe.material as LineBasicMaterial).color.getHexString()).toBe('91f48b')
+    expect(pipe.geometry.getAttribute('position').count / 2).toBe(2 * 32 + 4)
+    expect(named(`outline.structure${CELL_PLUS}.part0.front`)!.parent!.name).toBe(
+      'outline.hiveRed.motion'
+    )
+  })
+})
+
+describe('실행 중 HIVE 움직임(6b)', () => {
+  it('경기 요소를 켠 잠근 실행이면 안쪽 움직임 그룹이 시뮬레이터 각을 React 렌더 없이 따르고, 끝나면 0', async () => {
+    await mount()
+    await set(() => usePlayStore.setState({ run: elementsRun(), simGame: hiveGame([-5236, 5236]) }))
+    const motion = named('hiveRed.motion')!
+    const outer = named('hiveRed')!
+    expect(outer.rotation.y).toBeCloseTo(START_ANGLE(), 12)
+    expect(Math.abs(motion.rotation.y)).toBeLessThan(1e-4)
+    // act 밖에서 바꿔도(React 렌더 없이) 구독이 쓴다
+    usePlayStore.setState({ simGame: hiveGame([0, 5236]) })
+    expect(motion.rotation.y).toBeCloseTo(-START_ANGLE(), 12)
+    expect(outer.rotation.y).toBeCloseTo(START_ANGLE(), 12)
+    usePlayStore.setState({ simGame: hiveGame([5236, 5236]) })
+    expect(motion.rotation.y).toBeCloseTo(0.5236 - START_ANGLE(), 12)
+    expect(named('hiveBlue.motion')!.rotation.y).toBeCloseTo(
+      0.5236 - resolveSeason('biobuzz').hives[1].startAngle,
+      12
+    )
+    // 끝나면(잠금이 풀림) 움직임 그룹은 0이고 바깥 그룹은 개인 실행 설정의 시작 상태
+    await set(() =>
+      usePlayStore.setState({ run: { ...elementsRun(), phase: 'finished' }, simGame: null })
+    )
+    expect(named('hiveRed.motion')!.rotation.y).toBe(0)
+    expect(named('hiveRed')!.rotation.y).toBeCloseTo(START_ANGLE(), 12)
+  })
+
+  it('경기 요소를 끈 실행·떼어 놓은 실행은 묶지 않는다(HIVE는 시작 상태로 고정)', async () => {
+    await mount()
+    await set(() =>
+      usePlayStore.setState({ run: elementsRun(false), simGame: hiveGame([5236, 5236]) })
+    )
+    expect(named('hiveRed.motion')!.rotation.y).toBe(0)
+    await set(() =>
+      usePlayStore.setState({
+        run: elementsRun(true, { detached: true }),
+        simGame: hiveGame([5236, 5236])
+      })
+    )
+    expect(named('hiveRed.motion')!.rotation.y).toBe(0)
+  })
+
+  it('StrictMode 정리 → 재실행 뒤에도 묶여 있다', async () => {
+    usePlayStore.setState({ run: elementsRun(), simGame: hiveGame([1000, 5236]) })
+    await mount(true)
+    await settle()
+    const motion = named('hiveRed.motion')!
+    expect(motion.rotation.y).toBeCloseTo(0.1 - START_ANGLE(), 12)
+    usePlayStore.setState({ simGame: hiveGame([2000, 5236]) })
+    expect(motion.rotation.y).toBeCloseTo(0.2 - START_ANGLE(), 12)
+  })
+
+  it('필드 CAD와 함께 그리면 HIVE 몸체는 지금 각이 넘어가지 않은 각에서 벗어날 때만 보이고, 윤곽 그룹도 따라 돈다', async () => {
+    seasonOverride.biobuzz = partsSpec()
+    loadCad()
+    withCad()
+    useSceneVisibilityStore.setState({ fieldShapesShown: true })
+    await mount()
+    await set(() => usePlayStore.setState({ run: elementsRun(), simGame: hiveGame([-5236, 5236]) }))
+    const body = named('hiveRed.body')!
+    expect(body.visible).toBe(false)
+    usePlayStore.setState({ simGame: hiveGame([-4000, 5236]) })
+    expect(body.visible).toBe(true)
+    expect(named('outline.hiveRed.motion')!.rotation.y).toBeCloseTo(-0.4 - START_ANGLE(), 12)
+    usePlayStore.setState({ simGame: hiveGame([-5236, 5236]) })
+    expect(body.visible).toBe(false)
+    await set(() => usePlayStore.setState({ run: null, simGame: null }))
+    expect(named('hiveRed.body')!.visible).toBe(false)
+    expect(named('outline.hiveRed.motion')!.rotation.y).toBe(0)
+  })
+})
+
+describe('HIVE 잔상(6b)', () => {
+  it('끝난 각이 보이는 시작 각과 다른 HIVE만 그 각에 잔상(CELL·태그, 로봇 잔상 재질·renderOrder 5), INIT에 지운다', async () => {
+    await mount()
+    expect(named('hiveRed.ghost')).toBeUndefined()
+    await set(() =>
+      usePlayStore.setState({
+        ghostGame: { kinds: [], poses: [], flags: [], hives: [5236, 5236], hiveTips: [1, 0] }
+      })
+    )
+    const ghost = named('hiveRed.ghost')!
+    expect(ghost.rotation.y).toBeCloseTo(0.5236, 12)
+    expect(ghost.position.toArray()).toEqual(named('hiveRed')!.position.toArray())
+    // 파랑은 넘어가지 않은 채 끝났다(시작 각 π/6과 같은 정수)
+    expect(named('hiveBlue.ghost')).toBeUndefined()
+    const meshes = ghost.children as Mesh[]
+    // 그 carrier의 메시(CELL·태그) 수만큼, 같은 형상
+    expect(meshes.length).toBe(named('hiveRed.motion')!.children.length)
+    for (const mesh of meshes) {
+      expect(mesh.material).toBe(GHOST_MATERIAL)
+      expect(mesh.renderOrder).toBe(FIELD_RENDER_ORDER.ghost)
+      expect(mesh.geometry).toBe((named(mesh.name.slice('ghost.'.length)) as Mesh).geometry)
+      const hits: THREE.Intersection[] = []
+      mesh.raycast(new THREE.Raycaster(), hits)
+      expect(hits).toEqual([])
+    }
+    expect(meshes.some((mesh) => mesh.name === 'ghost.tag30')).toBe(true)
+    // 개인 실행 설정이 끝난 각과 같은 상태를 보이면 잔상이 겹쳐 그리지 않는다
+    await set(() =>
+      usePlayStore.getState().updateSettings({ hiveState: { red: 'tipped', blue: 'start' } })
+    )
+    expect(named('hiveRed.ghost')).toBeUndefined()
+    await set(() =>
+      usePlayStore.getState().updateSettings({ hiveState: { red: 'start', blue: 'start' } })
+    )
+    expect(named('hiveRed.ghost')).toBeDefined()
+    // 다음 INIT(ghostGame 지움)
+    await set(() => usePlayStore.setState({ ghostGame: null }))
+    expect(named('hiveRed.ghost')).toBeUndefined()
+  })
+
+  it('필드 CAD와 함께 그려도 잔상은 HIVE 몸체·태그를 그린다(숨김·고립 보기면 없음)', async () => {
+    loadCad()
+    withCad()
+    usePlayStore.setState({
+      ghostGame: { kinds: [], poses: [], flags: [], hives: [5236, -5236], hiveTips: [1, 0] }
+    })
+    await mount()
+    const ghost = named('hiveRed.ghost')!
+    expect(ghost.children.some((mesh) => mesh.name.startsWith('ghost.structure'))).toBe(true)
+    expect(ghost.children.some((mesh) => mesh.name.startsWith('ghost.tag'))).toBe(true)
+    await set(() => useSceneVisibilityStore.setState({ fieldHidden: true }))
+    expect(named('hiveRed.ghost')).toBeUndefined()
   })
 })

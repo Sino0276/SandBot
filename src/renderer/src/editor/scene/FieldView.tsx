@@ -1,5 +1,5 @@
 import { useThree } from '@react-three/fiber'
-import { memo, useEffect, useMemo } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   BoxGeometry,
@@ -14,6 +14,7 @@ import {
   Quaternion,
   Vector3,
   type BufferGeometry,
+  type Group,
   type Material,
   type Texture
 } from 'three'
@@ -35,17 +36,24 @@ import {
   fieldOutlineMeshes,
   fieldViewModel,
   FIELD_RENDER_ORDER,
+  isHiveBody,
   usesNominalFloor,
   WALL_LABEL_MATERIAL,
+  type FieldCarrierSpec,
   type FieldGeometrySpec,
   type FieldMaterialSpec,
   type FieldMeshSpec
 } from './fieldViewModel'
+import { cylinderOutlineGeometry, prismGeometry } from './fieldPartGeometry'
+import { GHOST_MATERIAL } from './ghostMaterial'
+import { bindHiveDisplay, hiveGhostAngle, hiveMotionBound } from './hiveDisplay'
 import ElementsView from './ElementsView'
 import StartMarkers from './StartMarkers'
 import { createLabelTexture } from './labelTexture'
 import { createTagTexture } from './tagTexture'
 import {
+  COLLIDER_DISABLED_COLOR,
+  COLLIDER_DISABLED_OPACITY,
   COLLIDER_OUTLINE_COLOR,
   COLLIDER_OUTLINE_HIDDEN_OPACITY,
   COLLIDER_OUTLINE_OPACITY
@@ -53,6 +61,9 @@ import {
 
 // 씬 뷰의 시즌 필드(spec-4ab §1.9): 타일·이음선·테이프·벽(레일 불투명, 판 반투명)·구조물·HIVE CELL·AprilTag·벽 라벨과 시작
 // 표시. 씬 문서 밖이고 클릭되지 않는다(시작 표시만 예외). 'none'은 지금 FieldFloor 그대로다. 메시 목록은 fieldViewModel.ts.
+// 6b(spec-6b §8): 부품이 있는 구조물은 공이 닿는 부품(FLOWER 케이지·CELL 트레이)으로 그리고, 경기 요소를 켠 실행 중에는 HIVE
+// carrier 그룹 안쪽 움직임 그룹이 시뮬레이터 HIVE 각을 React 렌더 없이 따른다(hiveDisplay.ts). 끝난 실행의 HIVE 각이 보이는
+// 시작 각과 다르면 그 각에 반투명 잔상(CELL·태그, 로봇 잔상과 같은 재질·renderOrder 5)을 다음 INIT·프로젝트 열기까지 둔다.
 // 재질은 (색, 투명도, 오프셋 종류)마다 컴포넌트 수명 동안 하나를 함께 쓰고, 시즌·HIVE 상태·보기 상태가 바뀔 때만 형상을
 // 다시 만들고, 언어가 바뀌면 라벨 텍스처만 다시 만든다(frameloop demand라 바뀌면 invalidate).
 // 필드 CAD(보기용, 4e)가 그려져 있으면(spec-4e §1.6 fieldLayers) 단순 형상은 CAD와 함께 그리는 것(태그·벽 라벨·넘어간 HIVE
@@ -74,7 +85,7 @@ function applyMaterialSpec(material: Material, spec: FieldMaterialSpec): void {
 
 // 빛을 받는 필드 재질의 거칠기 [가정: 표시만, 무광 플라스틱·금속 판]
 const FIELD_ROUGHNESS = 0.85
-// 원기둥 둘레 분할 수 [가정: 표시만, 지금 BIOBUZZ 데이터에는 원기둥이 없다]
+// 원기둥 둘레 분할 수 [가정: 표시만, 6b FLOWER 관·받침 원기둥과 그 윤곽의 원]
 const CYLINDER_SEGMENTS = 32
 
 // 색 재질 묶음: 같은 재질 키는 같은 객체
@@ -172,6 +183,8 @@ function makeGeometry(spec: FieldGeometrySpec): BufferGeometry {
       return new BoxGeometry(spec.size.x, spec.size.y, spec.size.z)
     case 'cylinder':
       return new CylinderGeometry(spec.radius, spec.radius, spec.height, CYLINDER_SEGMENTS)
+    case 'prism':
+      return prismGeometry(spec.polygon, spec.height)
   }
 }
 
@@ -196,6 +209,111 @@ function placement(matrix: readonly number[]): Placement {
 
 // 바닥·겹 요소·태그·라벨은 빛과 관계없이 보이는 평면(MeshBasicMaterial), 나머지는 빛을 받는다
 const FLAT_ROLES = new Set(['floor', 'seam', 'tape'])
+
+// FieldSpec.hives에서 carrier의 순번과 넘어가지 않은 각
+function hiveOf(spec: FieldSpec, carrier: FieldCarrierSpec): { index: number; startAngle: number } {
+  const index = spec.hives.findIndex((hive) => hive.key === carrier.key)
+  return { index, startAngle: spec.hives[index]?.startAngle ?? carrier.angle }
+}
+
+// HIVE carrier 그룹(6b, spec-6b §8): 바깥 그룹은 모델 각(시작 상태)을 props로, 안쪽 움직임 그룹은 경기 요소를 켠 실행 동안
+// 시뮬레이터 각과의 차를 명령형으로 갖는다(bindHiveDisplay, 끝나면 0). body는 필드 CAD와 함께 그릴 때의 HIVE 몸체이고 그
+// 그룹은 지금 각이 넘어가지 않은 각에서 벗어났을 때만 보인다(CAD의 HIVE는 넘어가지 않은 자세로 고정)
+function HiveCarrier({
+  carrier,
+  hive,
+  name,
+  body,
+  children
+}: {
+  carrier: FieldCarrierSpec
+  hive: { index: number; startAngle: number }
+  name: string
+  body?: ReactNode
+  children?: ReactNode
+}): React.JSX.Element {
+  const invalidate = useThree((state) => state.invalidate)
+  const motion = useRef<Group>(null)
+  const bodyGroup = useRef<Group>(null)
+  // 실행이 필드를 잠그고 경기 요소를 켰을 때만 묶는다(실행 시작·끝에만 바뀌는 boolean)
+  const bound = usePlayStore(hiveMotionBound)
+  const hasBody = body !== undefined
+  const { index, startAngle } = hive
+  useLayoutEffect(() => {
+    const object = motion.current
+    if (!object) return
+    return bindHiveDisplay(
+      {
+        motion: object,
+        body: hasBody ? bodyGroup.current : null,
+        index,
+        modelAngle: carrier.angle,
+        startAngle
+      },
+      bound ? usePlayStore : null,
+      invalidate
+    )
+  }, [bound, hasBody, index, carrier.angle, startAngle, invalidate])
+  return (
+    <group
+      name={name}
+      position={[carrier.pivot.x, carrier.pivot.y, carrier.pivot.z]}
+      rotation={[0, carrier.angle, 0]}
+    >
+      <group ref={motion} name={`${name}.motion`}>
+        {children}
+        {hasBody && (
+          <group ref={bodyGroup} name={`${name}.body`}>
+            {body}
+          </group>
+        )}
+      </group>
+    </group>
+  )
+}
+
+type GhostMesh = { key: string; geometry: BufferGeometry; placement: Placement }
+
+// 끝난 실행의 HIVE 잔상(6b): 그 HIVE carrier의 메시(CELL·태그·축 조립체)를 끝난 각에 로봇 잔상 재질로. 끝난 각이 보이는 모델 각과
+// 같으면(넘어가지 않고 끝남) 그리지 않는다. ghostGame은 실행 끝·INIT·프로젝트 열기에만 바뀌어 React로 그린다
+function HiveGhost({
+  carrier,
+  index,
+  meshes
+}: {
+  carrier: FieldCarrierSpec
+  index: number
+  meshes: readonly GhostMesh[]
+}): React.JSX.Element | null {
+  const invalidate = useThree((state) => state.invalidate)
+  const angle = usePlayStore((state) =>
+    hiveGhostAngle(state.ghostGame?.hives, index, carrier.angle)
+  )
+  useEffect(() => {
+    invalidate()
+  }, [angle, invalidate])
+  if (angle === null || meshes.length === 0) return null
+  return (
+    <group
+      name={`${carrier.key}.ghost`}
+      position={[carrier.pivot.x, carrier.pivot.y, carrier.pivot.z]}
+      rotation={[0, angle, 0]}
+    >
+      {meshes.map((mesh) => (
+        <mesh
+          key={mesh.key}
+          name={`ghost.${mesh.key}`}
+          geometry={mesh.geometry}
+          material={GHOST_MATERIAL}
+          position={mesh.placement.position}
+          quaternion={mesh.placement.quaternion}
+          renderOrder={FIELD_RENDER_ORDER.ghost}
+          raycast={noRaycast}
+        />
+      ))}
+    </group>
+  )
+}
 
 // 속성(시즌·HIVE 상태·숨김·층)이 같으면 다시 그리지 않는다. variant 'companion'은 필드 CAD와 함께 그리는 것만이다
 // (fieldCompanionModel). 그릴 모델(drawn)을 먼저 정하고 형상·자세·순번을 모두 그 모델 기준으로 만든다(비평 M3).
@@ -223,7 +341,7 @@ const SeasonFieldView = memo(function SeasonFieldView({
 
   const model = useMemo(() => {
     const full = fieldViewModel(spec, [tippedRed, tippedBlue], elementsHidden)
-    return variant === 'companion' ? fieldCompanionModel(full, [tippedRed, tippedBlue]) : full
+    return variant === 'companion' ? fieldCompanionModel(full) : full
   }, [spec, tippedRed, tippedBlue, elementsHidden, variant])
   const geometries = useMemo(() => new GeometrySet(model.meshes), [model])
   useDeferredDispose(geometries)
@@ -265,30 +383,54 @@ const SeasonFieldView = memo(function SeasonFieldView({
   }
 
   const fieldMeshes: React.JSX.Element[] = []
+  // carrier마다 움직임 그룹의 메시, companion의 HIVE 몸체(보이기를 바꾸는 그룹), 잔상 메시
   const carried = new Map<string, React.JSX.Element[]>()
+  const bodies = new Map<string, React.JSX.Element[]>()
+  const ghosts = new Map<string, GhostMesh[]>()
+  const add = <T,>(map: Map<string, T[]>, key: string, item: T): void => {
+    const list = map.get(key) ?? []
+    list.push(item)
+    map.set(key, list)
+  }
   model.meshes.forEach((mesh, index) => {
     const element = meshFor(mesh, index)
     if (!element) return
-    if (mesh.carrier === 'field') fieldMeshes.push(element)
-    else {
-      const list = carried.get(mesh.carrier) ?? []
-      list.push(element)
-      carried.set(mesh.carrier, list)
+    if (mesh.carrier === 'field') {
+      fieldMeshes.push(element)
+      return
     }
+    add(variant === 'companion' && isHiveBody(mesh) ? bodies : carried, mesh.carrier, element)
+    add(ghosts, mesh.carrier, {
+      key: mesh.key,
+      geometry: geometries.list[index],
+      placement: placements[index]
+    })
   })
 
   return (
     <group name="seasonField">
       {fieldMeshes}
+      {model.carriers.map((carrier) => {
+        const hive = hiveOf(spec, carrier)
+        return (
+          <HiveCarrier
+            key={carrier.key}
+            carrier={carrier}
+            hive={hive}
+            name={carrier.key}
+            body={variant === 'companion' ? (bodies.get(carrier.key) ?? null) : undefined}
+          >
+            {carried.get(carrier.key)}
+          </HiveCarrier>
+        )
+      })}
       {model.carriers.map((carrier) => (
-        <group
-          key={carrier.key}
-          name={carrier.key}
-          position={[carrier.pivot.x, carrier.pivot.y, carrier.pivot.z]}
-          rotation={[0, carrier.angle, 0]}
-        >
-          {carried.get(carrier.key)}
-        </group>
+        <HiveGhost
+          key={`${carrier.key}.ghost`}
+          carrier={carrier}
+          index={hiveOf(spec, carrier).index}
+          meshes={ghosts.get(carrier.key) ?? []}
+        />
       ))}
     </group>
   )
@@ -301,34 +443,48 @@ const SeasonFieldView = memo(function SeasonFieldView({
 const OUTLINE_THRESHOLD_DEG = 1
 
 class OutlineMaterials implements Disposable {
-  readonly front = new LineBasicMaterial({
-    color: COLLIDER_OUTLINE_COLOR,
-    transparent: true,
-    opacity: COLLIDER_OUTLINE_OPACITY,
-    depthTest: true,
-    depthWrite: false,
-    toneMapped: false
-  })
+  readonly front: LineBasicMaterial
   // CAD 면과 같은 평면의 선(바닥 사각형·FLOWER 벽 쪽 면)이 앞 패스에서 깜빡여도 이 패스가 잇는다
-  readonly hidden = new LineBasicMaterial({
-    color: COLLIDER_OUTLINE_COLOR,
-    transparent: true,
-    opacity: COLLIDER_OUTLINE_HIDDEN_OPACITY,
-    depthTest: false,
-    depthWrite: false,
-    toneMapped: false
-  })
+  readonly hidden: LineBasicMaterial
+  // 흐린 윤곽(6b 부품이 있는 구조물의 봉투 상자): Collider 기즈모의 끈 Collider와 같은 색·불투명도
+  readonly dimFront: LineBasicMaterial
+  readonly dimHidden: LineBasicMaterial
+  constructor() {
+    const line = (color: string, opacity: number, depthTest: boolean): LineBasicMaterial =>
+      new LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        depthTest,
+        depthWrite: false,
+        toneMapped: false
+      })
+    const hiddenRatio = COLLIDER_OUTLINE_HIDDEN_OPACITY / COLLIDER_OUTLINE_OPACITY
+    this.front = line(COLLIDER_OUTLINE_COLOR, COLLIDER_OUTLINE_OPACITY, true)
+    this.hidden = line(COLLIDER_OUTLINE_COLOR, COLLIDER_OUTLINE_HIDDEN_OPACITY, false)
+    this.dimFront = line(COLLIDER_DISABLED_COLOR, COLLIDER_DISABLED_OPACITY, true)
+    this.dimHidden = line(COLLIDER_DISABLED_COLOR, COLLIDER_DISABLED_OPACITY * hiddenRatio, false)
+  }
   dispose(): void {
     this.front.dispose()
     this.hidden.dispose()
+    this.dimFront.dispose()
+    this.dimHidden.dispose()
   }
 }
 
-// 메시마다 EdgesGeometry 하나(앞·가려진 패스가 함께 쓴다). 면 형상은 모서리를 뽑은 뒤 바로 해제한다
+// 메시마다 EdgesGeometry 하나(앞·가려진 패스가 함께 쓴다). 면 형상은 모서리를 뽑은 뒤 바로 해제한다. 원기둥(6b FLOWER 관·받침)은
+// 분할마다 세로선이 남지 않게 원 둘과 옆 선 넷이다(Collider 기즈모의 원기둥과 같은 모양)
 class OutlineGeometries implements Disposable {
   readonly list: BufferGeometry[]
   constructor(meshes: readonly FieldMeshSpec[]) {
     this.list = meshes.map((mesh) => {
+      if (mesh.geometry.kind === 'cylinder')
+        return cylinderOutlineGeometry(
+          mesh.geometry.radius,
+          mesh.geometry.height,
+          CYLINDER_SEGMENTS
+        )
       const solid = makeGeometry(mesh.geometry)
       const edges = new EdgesGeometry(solid, OUTLINE_THRESHOLD_DEG)
       solid.dispose()
@@ -366,15 +522,21 @@ const FieldColliderOutlines = memo(function FieldColliderOutlines({
     invalidate()
   }, [model, invalidate])
 
-  const passes: readonly ['front' | 'hidden', Material][] = [
-    ['front', materials.front],
-    ['hidden', materials.hidden]
-  ]
+  const passes = (mesh: FieldMeshSpec): readonly ['front' | 'hidden', Material][] =>
+    mesh.outline === 'dim'
+      ? [
+          ['front', materials.dimFront],
+          ['hidden', materials.dimHidden]
+        ]
+      : [
+          ['front', materials.front],
+          ['hidden', materials.hidden]
+        ]
   const fieldLines: React.JSX.Element[] = []
   const carried = new Map<string, React.JSX.Element[]>()
   model.meshes.forEach((mesh, index) => {
     const { position, quaternion } = placements[index]
-    const lines = passes.map(([pass, material]) => (
+    const lines = passes(mesh).map(([pass, material]) => (
       <lineSegments
         key={`${mesh.key}.${pass}`}
         name={`outline.${mesh.key}.${pass}`}
@@ -394,14 +556,14 @@ const FieldColliderOutlines = memo(function FieldColliderOutlines({
     <group name="fieldOutlines">
       {fieldLines}
       {model.carriers.map((carrier) => (
-        <group
+        <HiveCarrier
           key={carrier.key}
+          carrier={carrier}
+          hive={hiveOf(spec, carrier)}
           name={`outline.${carrier.key}`}
-          position={[carrier.pivot.x, carrier.pivot.y, carrier.pivot.z]}
-          rotation={[0, carrier.angle, 0]}
         >
           {carried.get(carrier.key)}
-        </group>
+        </HiveCarrier>
       ))}
     </group>
   )

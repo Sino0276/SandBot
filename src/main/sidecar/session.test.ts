@@ -18,6 +18,7 @@ import { ball as elementBall, ballWorldSpec } from '../../shared/sim/elements/el
 import {
   GAME_POSE_STRIDE,
   quantizeElements,
+  quantizeHives,
   type GameState
 } from '../../shared/sim/elements/gameState'
 import { PhysicsWorld } from '../../shared/sim/world'
@@ -25,6 +26,7 @@ import {
   MAX_WORLD_JOINTS,
   WORLD_SPEC_VERSION,
   type SimElementState,
+  type SimHiveState,
   type WorldSpec
 } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
@@ -1391,6 +1393,197 @@ describe('SidecarSession 경기 요소 gameState', () => {
     expect(order).toEqual(['pose', 'gameState', 'phase', 'finished'])
     // final은 한 번만
     expect(of('gameState').filter((e) => e.final !== undefined)).toHaveLength(1)
+  })
+
+  // 6b 계약(spec-6b §7): 움직이는 HIVE가 있는 세계는 같은 이벤트에 hives(각 정수)와 hiveTips(넘어간 횟수, 계약 리뷰)를 싣고
+  // 끝에는 finalHives(HIVE 상태)를 final과 함께 싣는다. HIVE 수가 실행의 첫 상태와 다르거나 횟수 길이가 각과 다른 상태는
+  // 버린다. HIVE가 없는 세계의 이벤트에는 세 키가 없다
+  it('6b: hives·hiveTips·finalHives를 나르고, HIVE 수가 바뀐 상태는 버린다', () => {
+    let last = 0
+    const hive = (angle: number): SimHiveState => ({
+      angle,
+      angularVelocity: 0,
+      asleep: false,
+      tips: 1
+    })
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => ({
+        revision: last / MS + 1,
+        ...quantizeElements([ball(0)]),
+        hives: last === 10 * MS ? [7] : [-5236, last / MS],
+        // 5 ms는 횟수 길이가 각과 달라 버린다. 15 ms부터 파랑이 한 번 넘어갔다
+        hiveTips: last === 10 * MS ? [0] : last === 5 * MS ? [0] : [0, last >= 15 * MS ? 1 : 0]
+      }),
+      elementSnapshot: () => [ball(0)],
+      hiveSnapshot: () => [hive(-Math.PI / 6), hive(-0)]
+    }
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 4; k++) {
+      proc.line(tick(k))
+      clock.advance(20)
+    }
+    proc.line({ type: 'finished', tNanos: 15 * MS, reason: 'returned' })
+    // 5 ms 상태(횟수 길이가 다름)와 10 ms 상태(HIVE 수가 1)는 버린다. 끝(settleWorld 20 ms)의 상태는 먼저 나가고 끝 상태를
+    // 실어 한 번 더 나간다(6a 규칙)
+    const sent = of('gameState')
+    expect(
+      sent.map((e) => [e.tNanos / MS, e.hives, e.hiveTips, e.finalHives !== undefined])
+    ).toEqual([
+      [0, [-5236, 0], [0, 0], false],
+      [15, [-5236, 15], [0, 1], false],
+      [20, [-5236, 20], [0, 1], false],
+      [20, [-5236, 20], [0, 1], true]
+    ])
+    expect(sent.at(-1)!.final).toEqual([ball(0)])
+    expect(sent.at(-1)!.finalHives).toEqual([hive(-Math.PI / 6), hive(0)])
+
+    // HIVE가 없는 세계는 키가 없고 hiveSnapshot도 읽지 않는다
+    const { world: plain, snapshots } = ballWorld()
+    let read = 0
+    plain.hiveSnapshot = () => {
+      read++
+      return [hive(0)]
+    }
+    const second = setup({ speed: 'max', world: plain })
+    boot(second.proc)
+    second.proc.line(tick(0))
+    second.proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(snapshots).toHaveLength(1)
+    expect(read).toBe(0)
+    for (const e of second.of('gameState')) {
+      expect(Object.hasOwn(e, 'hives')).toBe(false)
+      expect(Object.hasOwn(e, 'hiveTips')).toBe(false)
+      expect(Object.hasOwn(e, 'finalHives')).toBe(false)
+    }
+  })
+
+  // 6b(spec-6b §7): HIVE만 움직여도(공은 잠듦) gameState는 pose와 같은 throttle·같은 틱으로 나가고, 끝에는 settleWorld 뒤의 HIVE
+  // 상태를 final과 함께 pose 다음·phase 전에 싣는다
+  it('6b: HIVE 각만 바뀌어도 pose와 같은 박자·같은 틱, 끝 상태는 settleWorld 뒤에 읽어 pose 다음·phase 전', () => {
+    let last = 0
+    let revision = 0
+    let lastKey = ''
+    const reads: number[] = []
+    // 공은 잠든 채 그대로이고 빨강 HIVE만 30 ms부터 0.5 rad/s로 돈다(로봇도 같은 때 움직인다)
+    const angle = (): number => -Math.PI / 6 + Math.max(0, last - 30 * MS) * 5e-10
+    const hiveState = (): SimHiveState[] => [
+      { angle: angle(), angularVelocity: 0.5, asleep: false, tips: 0 },
+      { angle: Math.PI / 6, angularVelocity: 0, asleep: true, tips: 0 }
+    ]
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => ({ x: Math.max(0, last - 30 * MS) / 1e9, y: 0, yaw: 0, blocked: false }),
+      drainNotices: () => [],
+      gameState: () => {
+        const q = { ...quantizeElements([ball(1, true)]), ...quantizeHives(hiveState()) }
+        const key = JSON.stringify(q)
+        if (key !== lastKey) {
+          lastKey = key
+          revision++
+        }
+        return { revision, ...q }
+      },
+      elementSnapshot: () => [ball(1, true)],
+      hiveSnapshot: () => {
+        reads.push(last)
+        return hiveState()
+      }
+    }
+    const { clock, proc, events, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 30; k++) {
+      proc.line(tick(k))
+      clock.advance(5)
+    }
+    const shown = events.filter((e) => e.type === 'pose' || e.type === 'gameState')
+    const games = of('gameState')
+    expect(games.length).toBeGreaterThan(3)
+    // 공 자세는 그대로이고 HIVE 각만 바뀐다
+    for (const game of games) expect(game.poses).toEqual(games[0].poses)
+    expect(new Set(games.map((g) => g.hives![0])).size).toBe(games.length)
+    for (const game of games.slice(1)) {
+      const before = shown[shown.indexOf(game) - 1]
+      expect(before.type).toBe('pose')
+      expect(before.tNanos).toBe(game.tNanos)
+    }
+    proc.line({ type: 'finished', tNanos: 29 * 5 * MS, reason: 'returned' })
+    // 끝 상태는 마지막 틱 출력으로 한 틱 더 돈(150 ms) 세계에서 한 번 읽는다
+    expect(reads).toEqual([150 * MS])
+    const end = of('gameState').at(-1)!
+    expect(end.tNanos).toBe(150 * MS)
+    expect(end.finalHives).toEqual(hiveState())
+    expect(end.hives).toEqual(quantizeHives(hiveState()).hives)
+    const order = events
+      .filter((e) => ['pose', 'gameState', 'phase', 'finished'].includes(e.type))
+      .slice(-4)
+      .map((e) => e.type)
+    expect(order).toEqual(['pose', 'gameState', 'phase', 'finished'])
+    expect(of('gameState').filter((e) => e.finalHives !== undefined)).toHaveLength(1)
+  })
+
+  it('6b: HIVE 끝 상태의 모양이 틀리면 finalHives만 빼고, 읽기 예외는 worldError 한 번(공 끝 상태는 싣는다)', () => {
+    const hive = (patch: Partial<SimHiveState> = {}): SimHiveState => ({
+      angle: 0.1,
+      angularVelocity: 0,
+      asleep: true,
+      tips: 0,
+      ...patch
+    })
+    const make = (hiveSnapshot: () => unknown): SimWorld => ({
+      step: () => ({}),
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => ({
+        revision: 1,
+        ...quantizeElements([ball(0)]),
+        ...quantizeHives([hive(), hive()])
+      }),
+      elementSnapshot: () => [ball(0)],
+      hiveSnapshot: hiveSnapshot as () => SimHiveState[] | null
+    })
+    for (const bad of [
+      () => [hive()],
+      () => [hive(), hive({ angle: Number.NaN })],
+      () => [hive(), hive({ tips: -1 })],
+      () => [hive(), { ...hive(), asleep: 1 }],
+      () => null,
+      () => 'x'
+    ]) {
+      const { proc, of } = setup({ speed: 'max', world: make(bad) })
+      boot(proc)
+      proc.line(tick(0))
+      proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+      const end = of('gameState').at(-1)!
+      expect(end.final).toEqual([ball(0)])
+      expect(Object.hasOwn(end, 'finalHives')).toBe(false)
+      expect(of('simNotice')).toEqual([])
+    }
+    const { proc, of } = setup({
+      speed: 'max',
+      world: make(() => {
+        throw new Error('hive')
+      })
+    })
+    boot(proc)
+    proc.line(tick(0))
+    proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(of('simNotice')).toEqual([
+      expect.objectContaining({ code: 'worldError', params: { detail: 'Error: hive' } })
+    ])
+    const end = of('gameState').at(-1)!
+    expect(end.final).toEqual([ball(0)])
+    expect(Object.hasOwn(end, 'finalHives')).toBe(false)
+    expect(of('finished')).toHaveLength(1)
   })
 
   it('끝 상태가 이미 보낸 상태와 같아도 final만 실어 한 번 더 보낸다', () => {

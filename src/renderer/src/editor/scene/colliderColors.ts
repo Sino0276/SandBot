@@ -6,3 +6,6 @@ export const COLLIDER_DISABLED_COLOR = '#54c84d'
 // 않게, spec-4e 비평 U8)
 export const COLLIDER_OUTLINE_OPACITY = 0.9
 export const COLLIDER_OUTLINE_HIDDEN_OPACITY = 0.2
+// 끈 Collider(Unity 끈 색의 alpha 140/255 ≈ 0.55)와 계산에 덜 쓰는 단순 형상 윤곽(6b FLOWER 봉투 상자)의 앞 패스 불투명도
+// [가정: 표시만]. 가려진 패스는 이것 × (HIDDEN / OPACITY)
+export const COLLIDER_DISABLED_OPACITY = 0.55

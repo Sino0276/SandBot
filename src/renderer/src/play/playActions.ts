@@ -457,7 +457,8 @@ async function runInit(): Promise<void> {
   usePlayStore.setState({
     simPose: null,
     ghostPose: null,
-    // 경기 요소 잔상(6a)도 지운다. 끝 상태(lastRunElements)는 둔다(6d 이어 가기가 INIT에서 읽는다)
+    // 경기 요소 잔상(6a, 6b HIVE 잔상 각 포함)도 지운다. 끝 상태(lastRunElements, HIVE 끝 상태 포함)는 둔다(6d 이어 가기가
+    // INIT에서 읽는다)
     simGame: null,
     ghostGame: null,
     dash: null,

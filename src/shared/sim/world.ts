@@ -61,6 +61,7 @@ import type {
   SimMotorSpec,
   SimOtosSpec,
   SimElementState,
+  SimHiveState,
   SimPinpointSpec,
   SimPose,
   SimServoParams,
@@ -316,7 +317,8 @@ export class PhysicsWorld {
             options.sensorModels
           )
         : null
-    // 웹캠은 HIVE 상태(세계 설명 field.hiveTipped)로 태그 자세를 한 번 푼다(4ab FieldSpec을 같이 쓴다)
+    // 웹캠은 HIVE 시작 상태(세계 설명 field.hiveTipped)로 태그 자세를 한 번 푼다(4ab FieldSpec을 같이 쓴다). 경기 요소가 있는
+    // 세계는 프레임마다 움직이는 HIVE 각을 넘겨 각이 시작과 다른 HIVE의 태그만 다시 푼다(6b, inputs)
     this.cameras =
       spec.cameras.length > 0
         ? new FieldCameras(field, spec.field.hiveTipped, spec.cameras, spec.noise)
@@ -492,6 +494,11 @@ export class PhysicsWorld {
   // 경기 요소의 전체 정밀도 상태(6a, 6d AUTO → TELEOP 이어 가기·시험). 세계 설명에 경기 요소가 없으면 null
   elementSnapshot(): SimElementState[] | null {
     return this.elements ? this.elements.snapshot() : null
+  }
+
+  // 움직이는 HIVE의 상태(6b, FieldSpec.hives 순서, 6d 이어 가기·시험). 경기 요소가 없거나 움직이는 HIVE가 없으면 null
+  hiveSnapshot(): SimHiveState[] | null {
+    return this.elements ? this.elements.hiveSnapshot() : null
   }
 
   // 경기 요소의 구 층(6c 센서·카메라 이음새). 없으면 null
@@ -923,7 +930,9 @@ export class PhysicsWorld {
       const frames = this.sensorFrames()
       const notify = (detail: string): void => this.notify('worldError', { detail })
       this.sensors?.read(frames, tNanos, put, notify)
-      this.cameras?.read(frames, tPrev, tNanos, this.outputsPrev, put, notify)
+      this.cameras?.read(frames, tPrev, tNanos, this.outputsPrev, put, notify, () =>
+        this.elements ? this.elements.hiveAngles() : null
+      )
     }
     return state
   }

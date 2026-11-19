@@ -6,16 +6,25 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { OpModeInfo } from '../../../../shared/play'
 import { resolveElementType } from '../../../../shared/sim/elements/elementData'
 import { quantizeElements } from '../../../../shared/sim/elements/gameState'
-import { elementSpawns } from '../../../../shared/sim/elements/spawn'
+import { elementSpawns, restBodyFrames } from '../../../../shared/sim/elements/spawn'
+import {
+  placementActive,
+  placementFieldPosition,
+  type FieldElementPlacement,
+  type FieldSpec
+} from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
+import { mirrorElementPlacement } from '../../../../shared/sim/seasons/symmetry'
 import type { SimElementState } from '../../../../shared/sim/worldSpec'
 import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
 import { newRun, usePlayStore, type PlayRun, type PlayRunElements } from '../../play/playStore'
+import { RUN_ELEMENT_GROUPS } from '../../play/worldElements'
 import type { SceneObject, SceneObjects } from '../../scene/model'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
 import { useSceneVisibilityStore } from '../sceneVisibility'
 import { colliderScene } from '../collider/colliderTestkit'
+import { partsSpec } from './fieldPartsTestkit'
 import { preloadGizmoItems } from '../preload/preloadGizmoModel'
 import ElementsView from './ElementsView'
 import {
@@ -25,11 +34,25 @@ import {
   runElementBalls
 } from './elementsViewModel'
 
+// 시험이 만든 시즌 판(6b: BIOBUZZ 배치 데이터 전에 편집 중 FLOWER·CELL 공을 본다, fieldPartsTestkit). null이면 실제 시즌
+const seasonOverride = vi.hoisted(() => ({ biobuzz: null as FieldSpec | null }))
+vi.mock('../../../../shared/sim/seasons/seasons', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../shared/sim/seasons/seasons')>()
+  return {
+    ...actual,
+    resolveSeason: (id: Parameters<typeof actual.resolveSeason>[0]) =>
+      id === 'biobuzz' && seasonOverride.biobuzz !== null
+        ? seasonOverride.biobuzz
+        : actual.resolveSeason(id)
+  }
+})
+
 // 씬 뷰 경기 요소(6a, spec-6a §5): 편집 중 시작 배치·프리로드(자동은 반투명), 실행 중 시뮬레이터 상태를 React 렌더 없이 쓰기,
 // 끝난 실행의 잔상, 숨김·고립 보기, 클릭되지 않음, StrictMode 뒤에도 자원이 살아 있음. R3F를 WebGL 없이 그린다.
 
 const BIOBUZZ = resolveSeason('biobuzz')
 const POLLEN_R = resolveElementType(BIOBUZZ, 'pollen')!.radius
+// 편집 중 시작 HIVE 상태(둘 다 넘어가지 않음)의 배치 공(6b: GARDEN 8 + FLOWER 16 POLLEN, 위 CELL마다 NECTAR 3)
 
 function fakeRenderer(): object {
   return {
@@ -116,8 +139,25 @@ const TELEOP: OpModeInfo = {
   group: '',
   preselectTeleOp: ''
 }
-const spawns = elementSpawns(BIOBUZZ, { groups: ['garden'], preloads: [] }, { x: 0, y: 0, yaw: 0 })
+const spawns = elementSpawns(
+  BIOBUZZ,
+  { groups: ['garden'], preloads: [] },
+  { x: 0, y: 0, yaw: 0 },
+  restBodyFrames([]),
+  [false, false]
+)
 const ELEMENTS: PlayRunElements = { kinds: spawns.map((s) => s.kind), spawns }
+// 편집 중 시즌 배치의 종류별 공 수(GARDEN, 6b FLOWER·HIVE CELL: BIOBUZZ 배치 데이터 전후에 맞게 시즌 데이터로 센다)
+const EDIT_LAYOUT = elementSpawns(
+  BIOBUZZ,
+  { groups: [...RUN_ELEMENT_GROUPS], preloads: [] },
+  { x: 0, y: 0, yaw: 0 },
+  restBodyFrames([]),
+  [false, false]
+)
+const EDIT_POLLEN = EDIT_LAYOUT.filter((s) => s.kind === 'pollen').length
+const EDIT_NECTAR_RED = EDIT_LAYOUT.filter((s) => s.kind === 'nectarRed').length
+const EDIT_NECTAR_BLUE = EDIT_LAYOUT.filter((s) => s.kind === 'nectarBlue').length
 const running = (elements: PlayRunElements | null = ELEMENTS): PlayRun => ({
   ...newRun({
     runId: 'r',
@@ -165,13 +205,16 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   await flush()
+  seasonOverride.biobuzz = null
 })
 
 describe('ElementsView 편집 중', () => {
-  it('켠 BIOBUZZ는 GARDEN 여덟(불투명), 대상 로봇의 자동 자리는 반투명, 팀 자리는 불투명', async () => {
-    expect(mesh('solid').count).toBe(8)
+  it('켠 BIOBUZZ는 시즌 배치(GARDEN 여덟, 6b FLOWER·CELL)가 불투명, 대상 로봇의 자동 자리는 반투명, 팀 자리는 불투명', async () => {
+    expect(EDIT_POLLEN).toBe(8 + 16)
+    expect(EDIT_NECTAR_RED).toBe(3)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
     expect(mesh('preview').count).toBe(0)
-    expect(mesh('solid', 'nectarRed').count).toBe(0)
+    expect(mesh('solid', 'nectarRed').count).toBe(EDIT_NECTAR_RED)
     const first = instancePosition(mesh('solid'), 0)
     // 인스턴스 행렬은 Float32
     expect(first.x).toBeCloseTo(spawns[0].position.x, 6)
@@ -185,8 +228,8 @@ describe('ElementsView 편집 중', () => {
       useEditorStore.setState({ selectedId: 'hopper', selectedIds: ['hopper'] })
     )
     expect(mesh('preview').count).toBe(0)
-    expect(mesh('solid').count).toBe(9)
-    const slot = instancePosition(mesh('solid'), 8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN + 1)
+    const slot = instancePosition(mesh('solid'), EDIT_POLLEN)
     expect(slot.x).toBeCloseTo(0.9, 6)
     expect(slot.y).toBeCloseTo(0.9, 6)
     expect(slot.z).toBeCloseTo(0.1, 6)
@@ -202,7 +245,7 @@ describe('ElementsView 편집 중', () => {
     )
     expect(mesh('solid').count).toBe(0)
     await act(async () => usePlayStore.setState({ settings: DEFAULT_PLAY_SETTINGS }))
-    expect(mesh('solid').count).toBe(8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
     await act(async () => useSceneStore.setState({ field: { season: 'none' } }))
     expect(mesh('solid').count).toBe(0)
     await act(async () => useSceneStore.setState({ field: { season: 'biobuzz' } }))
@@ -218,6 +261,44 @@ describe('ElementsView 편집 중', () => {
     const hits: unknown[] = []
     mesh('solid').raycast(new THREE.Raycaster(), hits as never)
     expect(hits).toEqual([])
+  })
+})
+
+// 6b(spec-6b §8): 편집 중 시즌 배치에 FLOWER·HIVE CELL 공이 들고, HIVE CELL 공은 개인 실행 설정의 시작 HIVE 상태로 생기고 놓인다
+describe('ElementsView 편집 중 FLOWER·HIVE CELL(6b)', () => {
+  it('FLOWER POLLEN과 위로 향한 CELL의 NECTAR가 보이고, 빨강을 넘어간 채 시작하면 빨강 NECTAR가 그 CELL로 옮긴다', async () => {
+    const spec = partsSpec()
+    seasonOverride.biobuzz = spec
+    // 시즌 판을 바꾼 뒤 다시 그린다(시즌 문자열은 같다)
+    await act(async () => root.unmount())
+    await newRoot()
+    await act(async () => {
+      store = root.render(<ElementsView />)
+    })
+    const expected = (tipped: readonly [boolean, boolean]): FieldElementPlacement[] =>
+      spec.elements!.layout.filter((p) => placementActive(p, tipped))
+    const ofKind = (tipped: readonly [boolean, boolean], kind: string): FieldElementPlacement[] =>
+      expected(tipped).filter((p) => p.kind === kind)
+    expect(mesh('solid').count).toBe(ofKind([false, false], 'pollen').length)
+    expect(mesh('solid', 'nectarRed').count).toBe(ofKind([false, false], 'nectarRed').length)
+    expect(mesh('solid', 'nectarBlue').count).toBe(ofKind([false, false], 'nectarBlue').length)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN + 4)
+    const redAt = (tipped: readonly [boolean, boolean]): Vector3 => {
+      const placements = ofKind(tipped, 'nectarRed')
+      const last = placementFieldPosition(spec, placements.at(-1)!, tipped)
+      return new Vector3(last.x, last.y, last.z)
+    }
+    const shown = (): Vector3 =>
+      instancePosition(mesh('solid', 'nectarRed'), mesh('solid', 'nectarRed').count - 1)
+    expect(shown().distanceTo(redAt([false, false]))).toBeLessThan(1e-6)
+    await act(async () =>
+      usePlayStore.setState({
+        settings: { ...DEFAULT_PLAY_SETTINGS, hiveState: { red: 'tipped', blue: 'start' } }
+      })
+    )
+    expect(mesh('solid', 'nectarRed').count).toBe(ofKind([true, false], 'nectarRed').length)
+    expect(shown().distanceTo(redAt([true, false]))).toBeLessThan(1e-6)
+    expect(redAt([true, false]).distanceTo(redAt([false, false]))).toBeGreaterThan(0.1)
   })
 })
 
@@ -262,7 +343,7 @@ describe('ElementsView 실행 중·잔상', () => {
     )
     expect(mesh('ghost').count).toBe(7)
     expect(mesh('ghost').renderOrder).toBe(5)
-    expect(mesh('solid').count).toBe(8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
   })
 
   it('StrictMode의 정리 → 재실행 뒤에도 재질·형상을 해제하지 않고, 내려가면 해제한다', async () => {
@@ -282,7 +363,7 @@ describe('ElementsView 실행 중·잔상', () => {
       await flush()
       expect(material).not.toHaveBeenCalled()
       expect(geometry).not.toHaveBeenCalled()
-      expect(mesh('solid').count).toBe(8)
+      expect(mesh('solid').count).toBe(EDIT_POLLEN)
       await act(async () => root.unmount())
       await flush()
       expect(material).toHaveBeenCalled()
@@ -315,13 +396,50 @@ describe('elementsViewModel', () => {
   })
 
   it("editElementLayers: 'none'은 비고, 대상 로봇이 없으면 배치만", () => {
-    expect(editElementLayers(scene(), 'A', resolveSeason('none'))).toEqual({
+    expect(editElementLayers(scene(), 'A', resolveSeason('none'), [false, false])).toEqual({
       solid: [],
       preview: []
     })
-    const layers = editElementLayers(scene(), null, BIOBUZZ)
-    expect(layers.solid).toHaveLength(8)
+    const layers = editElementLayers(scene(), null, BIOBUZZ, [false, false])
+    expect(layers.solid).toHaveLength(EDIT_POLLEN + EDIT_NECTAR_RED + EDIT_NECTAR_BLUE)
     expect(layers.preview).toEqual([])
+  })
+
+  // 6b 계약 리뷰: 편집 중 HIVE CELL 공은 시작 HIVE 상태로 고르고 그 각으로 놓는다(규칙만 보려고 BIOBUZZ GARDEN 배치에 시험이
+  // 만든 CELL 배치를 얹은 판)
+  it('editElementLayers: HIVE CELL 공은 시작 HIVE 상태를 따른다', () => {
+    const cell = (when: 'start' | 'tipped'): FieldElementPlacement => ({
+      group: 'hiveCell',
+      kind: 'nectarRed',
+      position: { x: when === 'start' ? 0.29 : -0.29, y: 0, z: 0.0084 },
+      carrier: 'hiveRed',
+      when
+    })
+    const extra = [cell('start'), cell('tipped')]
+    const garden = BIOBUZZ.elements!.layout.filter((p) => p.group === 'garden')
+    const layout = [...garden, ...extra, ...extra.map(mirrorElementPlacement)]
+    const spec: FieldSpec = { ...BIOBUZZ, elements: { ...BIOBUZZ.elements!, layout } }
+    const positions = (tipped: readonly [boolean, boolean]): number[][] =>
+      editElementLayers(scene(), null, spec, tipped).solid.map((b) => b.position)
+    for (const tipped of [
+      [false, false],
+      [true, false],
+      [false, true]
+    ] as const) {
+      const expected = layout
+        .filter((p) => placementActive(p, tipped))
+        .map((p) => {
+          const q = placementFieldPosition(spec, p, tipped)
+          return [q.x, q.y, q.z]
+        })
+      expect(positions(tipped)).toEqual(expected)
+      expect(expected).toHaveLength(garden.length + 2)
+    }
+    // 빨강이 넘어간 채 시작하면 빨강 CELL 공의 자리가 바뀌고 파랑은 그대로다
+    const start = positions([false, false])
+    const redTipped = positions([true, false])
+    expect(redTipped.at(-2)).not.toEqual(start.at(-2))
+    expect(redTipped.at(-1)).toEqual(start.at(-1))
   })
 
   it('editElementLayers: 관절 하위 팀 자리 공은 관절 미리보기 슬라이더를 따라 Preload Slot 기즈모와 같은 자리다', () => {
@@ -341,10 +459,10 @@ describe('elementsViewModel', () => {
       preview,
       visibility: useSceneVisibilityStore.getInitialState()
     })
-    const lifted = editElementLayers(objects, 'R', BIOBUZZ, preview).solid.at(-1)!
+    const lifted = editElementLayers(objects, 'R', BIOBUZZ, [false, false], preview).solid.at(-1)!
     for (let i = 0; i < 3; i++) expect(lifted.position[i]).toBeCloseTo(gizmo[0].center[i], 12)
     // 미리보기 없으면 문서 자세(리프트가 0.3 m 아래)
-    const rest = editElementLayers(objects, 'R', BIOBUZZ).solid.at(-1)!
+    const rest = editElementLayers(objects, 'R', BIOBUZZ, [false, false]).solid.at(-1)!
     expect(lifted.position[2] - rest.position[2]).toBeCloseTo(0.3, 12)
   })
 })

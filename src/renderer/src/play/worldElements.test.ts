@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
 import { autoPreloadSlots, elementSpawns, restBodyFrames } from '../../../shared/sim/elements/spawn'
 import { resolveElementType, SLOT_GAP } from '../../../shared/sim/elements/elementData'
+import { placementActive } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { PhysicsWorld } from '../../../shared/sim/world'
 import { MAX_PRELOADS, parseWorldSpec, type Vec3 as SimVec3 } from '../../../shared/sim/worldSpec'
@@ -29,6 +30,9 @@ const SETTINGS = { batteryVoltage: 12 }
 // 번역 함수 대신 키를 그대로(경고 params 비교)
 const keyT = ((key: string) => key) as unknown as TFunction
 const ON: PlayRunField = { season: 'biobuzz', hiveTipped: [false, false], gameElements: true }
+// 시작 HIVE 상태(둘 다 넘어가지 않음)에서 생기는 배치 공(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6, 6b): 프리로드는 그 뒤 번호다
+const LAYOUT = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, [false, false]))
+const PRELOAD_AT = LAYOUT.length
 
 function object(
   id: string,
@@ -308,7 +312,7 @@ describe('withElements(INIT)', () => {
   it('GARDEN 묶음과 자리 순서의 프리로드(몸체 틀)를 넣고, 메인과 같은 검사를 지난다', () => {
     const objects = hopperScene()
     const result = withElements(build(objects), objects, 'R', ON, keyT)
-    expect(result.spec?.elements?.groups).toEqual(['garden'])
+    expect(result.spec?.elements?.groups).toEqual(['garden', 'flower', 'hiveCell'])
     expect(result.spec?.elements?.preloads.map((p) => [p.kind, p.body])).toEqual([
       ['pollen', -1],
       ['pollen', -1],
@@ -380,7 +384,10 @@ describe('withElements(INIT)', () => {
     }
     const result = withElements(build(huge), huge, 'R', ON, keyT)
     expect(keys(result.warnings)).toContain('worldPreloadNoRoom')
-    expect(result.spec?.elements).toEqual({ groups: ['garden'], preloads: [] })
+    expect(result.spec?.elements).toEqual({
+      groups: ['garden', 'flower', 'hiveCell'],
+      preloads: []
+    })
   })
 
   it('preloadOverlaps: 자동 자리도 충돌 몸체와 겹치면 이름 없이(번역은 withElements)', () => {
@@ -432,7 +439,7 @@ describe('withElements(INIT)', () => {
 })
 
 describe('runElementsOf와 첫 틱(통합)', () => {
-  it('실행의 공 = 공유 elementSpawns(배치 GARDEN 8 → 프리로드 자리 순서), JSON 왕복 뒤에도 같다', () => {
+  it('실행의 공 = 공유 elementSpawns(배치(GARDEN·FLOWER·CELL) → 프리로드 자리 순서), JSON 왕복 뒤에도 같다', () => {
     const objects = hopperScene()
     const result = withElements(
       withRunField(
@@ -447,18 +454,24 @@ describe('runElementsOf와 첫 틱(통합)', () => {
       keyT
     )
     const run = runElementsOf(result.spec)!
-    expect(run.kinds).toEqual([...Array(8).fill('pollen'), 'pollen', 'pollen', 'pollen'])
-    expect(run.spawns.slice(0, 8).every((s) => s.asleep)).toBe(true)
-    expect(run.spawns.slice(8).every((s) => !s.asleep)).toBe(true)
+    expect(run.kinds).toEqual([...LAYOUT.map((p) => p.kind), 'pollen', 'pollen', 'pollen'])
+    expect(run.spawns.slice(0, PRELOAD_AT).every((s) => s.asleep)).toBe(true)
+    expect(run.spawns.slice(PRELOAD_AT).every((s) => !s.asleep)).toBe(true)
     // 프리로드 필드 좌표 = 시작 자세(요 90°) ∘ 로봇 좌표 자리
     const slotA = robotPreloads(objects, 'R', BIOBUZZ).slots[0].inRobot
-    close(run.spawns[8].position, { x: -0.9 - slotA.y, y: -0.9 + slotA.x, z: slotA.z })
+    close(run.spawns[PRELOAD_AT].position, { x: -0.9 - slotA.y, y: -0.9 + slotA.x, z: slotA.z })
     const lift = robotPreloads(objects, 'R', BIOBUZZ).slots[2].inRobot
-    close(run.spawns[10].position, { x: -0.9 - lift.y, y: -0.9 + lift.x, z: lift.z }, 9)
+    close(run.spawns[PRELOAD_AT + 2].position, { x: -0.9 - lift.y, y: -0.9 + lift.x, z: lift.z }, 9)
     const parsed = parseWorldSpec(JSON.parse(JSON.stringify(result.spec)))
     if (typeof parsed === 'string') throw new Error(parsed)
     expect(
-      elementSpawns(BIOBUZZ, parsed.elements, parsed.robot.start, restBodyFrames(parsed.joints))
+      elementSpawns(
+        BIOBUZZ,
+        parsed.elements,
+        parsed.robot.start,
+        restBodyFrames(parsed.joints),
+        parsed.field.hiveTipped
+      )
     ).toEqual(run.spawns)
     // 시뮬레이터의 첫 틱 공: elementSnapshot이 이 시작 상태와 바이트로 같다(t = 0은 상태만 만든다)
     const world = new PhysicsWorld(parsed)
@@ -494,7 +507,7 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     })
     return objects
   }
-  // 경고와 2 s 실행 뒤 자리 공의 로봇 좌표 중심(공 0–7은 GARDEN)
+  // 경고와 2 s 실행 뒤 자리 공의 로봇 좌표 중심(앞 번호는 배치 공, 프리로드는 PRELOAD_AT부터)
   function run(objects: SceneObjects): { warnings: WorldWarning[]; balls: Vec3[] } {
     const doc = { season: 'biobuzz' }
     const built = withRunField(
@@ -508,7 +521,7 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     for (let k = 0; k <= 400; k++) world.step(k * 5_000_000, {})
     const balls = world
       .elementSnapshot()!
-      .slice(8)
+      .slice(PRELOAD_AT)
       .map((b): Vec3 => [b.position.x + 0.9, b.position.y + 0.9, b.position.z])
     return {
       warnings: result.warnings.filter((w) => w.key.startsWith('worldPreload')),
@@ -665,11 +678,11 @@ describe('preloadOverlaps: 결과 = 시뮬레이터(6a 리뷰 2)', () => {
     let start: SimVec3 | null = null
     for (let k = 0; k <= 400; k++) {
       world.step(k * 5_000_000, {})
-      const b = world.elementSnapshot()![8]
+      const b = world.elementSnapshot()![PRELOAD_AT]
       start ??= b.position
       fastest = Math.max(fastest, Math.hypot(b.velocity.x, b.velocity.y, b.velocity.z))
     }
-    const end = world.elementSnapshot()![8]
+    const end = world.elementSnapshot()![PRELOAD_AT]
     const from = start as SimVec3
     return {
       warnings: result.warnings.filter((w) => w.key.startsWith('worldPreload')),

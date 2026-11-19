@@ -1,13 +1,19 @@
 import type { SimElementGroup, SimElementKind, Vec2, Vec3 } from '../worldSpec'
 import {
+  applyMatrix3,
   boxVertices,
   circlePolygonSeparation,
+  isConvexCcwPolygon,
   matMul3,
   OVERLAP_TOLERANCE,
+  partInsideShape,
+  partVertices,
   polygonSeparation,
   rectPolygon,
   rotationMatrix,
   solidFootprints,
+  sphereInsideShape,
+  spherePartSeparation,
   sphereShapeSeparation
 } from './fieldGeometry'
 import { presetRect, START_DEPTH } from './startPose'
@@ -20,6 +26,7 @@ import {
   mirrorVec3,
   ROTATE_PI
 } from './symmetry'
+import { carrierAngle } from './tagPoses'
 
 // 시즌 필드 데이터의 모양(spec-4ab §1.3). 시즌마다 코드 상수(seasons/<시즌>.ts)이고 resolveSeason이 깊게 얼린 값을 준다.
 // 단위는 미터·라디안, 필드 좌표는 그 시즌의 FTC 공식 필드 좌표계(원점 필드 중앙 타일 윗면, Z 위, 반시계 +)다.
@@ -52,8 +59,84 @@ export type FieldShape =
   | { kind: 'cylinder'; center: Vec3; rotation: Vec3; radius: number; height: number }
 
 export type FieldCarrier = 'field' | 'hiveRed' | 'hiveBlue'
+// HIVE 몸체 틀(carrier 중 HIVE)
+export type FieldHiveKey = Exclude<FieldCarrier, 'field'>
 
 export type FieldStructureKey = 'footBar' | 'leg' | 'topBar' | 'logoPlate' | 'flower' | 'hiveCell'
+
+// ---- 구조물·HIVE 부품(6b, spec-6b §1.1) ----
+
+// 부품 하나의 형상(그 주인의 carrier 틀). 계산 기본형이다: 상자(FieldShape box와 같은 뜻), 볼록 기둥(자기 x·y 평면의 볼록
+// 반시계 다각형(점 셋 이상, center 기준)을 자기 z로 ±height/2 밀어낸 것), 세운 원기둥(rotation x = y = 0, 자기 z가 축).
+// 시즌 데이터의 고리 조각 각은 k·22.5°이고 그 cos·sin은 정확한 제곱근 식으로 적는다(시즌 데이터에 새 Math.sin·cos를 넣지
+// 않는다: 기준 해시가 Node를 올릴 때 다시 볼 것이 늘지 않게, spec-6b §1.1)
+export type FieldPartShape =
+  | { kind: 'box'; center: Vec3; rotation: Vec3; size: Vec3 }
+  | { kind: 'prism'; center: Vec3; rotation: Vec3; polygon: readonly Vec2[]; height: number }
+  | { kind: 'cylinder'; center: Vec3; rotation: Vec3; radius: number; height: number }
+
+// 부품 이름(6b, spec-6b §1.1·§8). 시즌 데이터와 렌더러(부품마다 표시 색: 관 초록, 고리 #202020, 위 고리 #f2c200, 백스톱
+// #8e44ad, 압출재·브래킷 #303030)가 같은 낱말을 쓰도록 계약으로 정한다 [결정: 6b 계약 리뷰. 형상 종류만으로는 고리·압출재·
+// 브래킷 기둥이나 관·받침 원기둥을 가를 수 없다]. 앞 낱말이 주인이다: flower* = FLOWER 구조물, cell* = HIVE CELL 구조물,
+// hive* = HIVE 몸체 부품(fieldPartOwner, checkFieldSpec이 확인). 공 조각과 로봇 조각은 같은 이름을 쓰고 robots·balls로 가른다
+// (예: 아래 고리는 공에 22.5° 조각 16개, 로봇에 구멍을 채운 볼록 기둥 하나)
+export const FIELD_PART_KEYS = [
+  // FLOWER(부록 A.2): 아래 고리(Layer X), 가운데 고리(Layer B), 위 고리(Layer C), 가운데 고리의 NECTAR 턱 셋(FAC 2.9), HIPS
+  // 관 넷, 아래·가운데 고리를 잇는 벽 쪽 압출재 둘, Field Wall Bracket, 백스톱 판, 백스톱 받침 둘
+  'flowerRingBottom',
+  'flowerRingMiddle',
+  'flowerRingTop',
+  'flowerLip',
+  'flowerPipe',
+  'flowerUpright',
+  'flowerWallBracket',
+  'flowerBackstop',
+  'flowerSpacer',
+  // CELL 트레이(부록 A.1): 밑판, 옆벽 둘, 지붕 둘, Back Skin, 입구·뒤 리브 조각, Cell Base Tube, Churro 받침 둘
+  'cellFloor',
+  'cellWall',
+  'cellRoof',
+  'cellBackSkin',
+  'cellRib',
+  'cellBaseTube',
+  'cellStandoff',
+  // HIVE 몸체(축 조립체)
+  'hivePivot'
+] as const
+export type FieldPartKey = (typeof FIELD_PART_KEYS)[number]
+
+export const isFieldPartKey = (value: unknown): value is FieldPartKey =>
+  (FIELD_PART_KEYS as readonly unknown[]).includes(value)
+
+// 부품 이름의 주인: FLOWER 구조물(key 'flower'), HIVE CELL 구조물(key 'hiveCell'), HIVE 몸체(FieldHive.parts)
+export function fieldPartOwner(key: FieldPartKey): 'flower' | 'hiveCell' | 'hive' {
+  if (key.startsWith('flower')) return 'flower'
+  return key.startsWith('cell') ? 'hiveCell' : 'hive'
+}
+
+export type FieldPart = {
+  shape: FieldPartShape
+  // 로봇 3D 몸체 충돌(5 collision3d staticShapes)과 INIT 3D 시작 겹침(startOverlaps)이 쓴다. HIVE 부품은 늘 false(로봇은
+  // HIVE에 닿지 않는다, 사용자 결정 11/19)
+  robots: boolean
+  // 공 접촉(6a ElementWorld)이 쓴다
+  balls: boolean
+  // 부품 이름(FIELD_PART_KEYS, 모든 부품에 둔다: 렌더러 표시 색, 봉투 예외 PART_ENVELOPE_EXCEPTIONS, CELL 밑판·Back Skin 찾기).
+  // 계산은 배열 순번만 쓴다(행 토큰 s<i>p<j>)
+  key: FieldPartKey
+}
+
+// 부품이 구조물 봉투(shape) 밖으로 나가도 되는 거리(m) [결정: spec-6b §1.1, CAD 측정 반올림보다 넉넉히]
+export const PART_ENVELOPE_TOLERANCE = 1e-3
+// 봉투 밖으로 나가도 되는 부품 이름(spec-6b §1.1·부록 A.2: FLOWER Field Wall Bracket이 벽 레일 위와 ±v로 넘는다). 다른 부품은
+// 봉투 안이다: 가운데 고리의 벽 쪽 탭(부록 A.2 u −0.06604)은 봉투 벽 쪽 면(벽 안쪽 면, u −0.064606)보다 1.43 mm 밖이지만 그
+// 자리는 벽이라 데이터가 벽 면에서 자른다 [결정: 6b 계약 리뷰. 이름 하나가 그 고리의 조각 전체를 덮으므로 예외에 넣지 않는다]
+export const PART_ENVELOPE_EXCEPTIONS: ReadonlySet<FieldPartKey> = new Set<FieldPartKey>([
+  'flowerWallBracket'
+])
+// CELL 트레이의 밑판·Back Skin 부품 이름: 데이터 시험이 hiveCell 시작 공이 둘에 닿는지 찾는다(spec-6b §1.2)
+export const CELL_FLOOR_PART_KEY = 'cellFloor' satisfies FieldPartKey
+export const CELL_BACK_SKIN_PART_KEY = 'cellBackSkin' satisfies FieldPartKey
 
 export type FieldStructure = {
   // i18n field.structures.<key>. 유일하지 않다(다리 넷이 모두 leg). 계산은 배열 순번만 쓴다
@@ -71,6 +154,11 @@ export type FieldStructure = {
   friction: number
   // HIVE 몸체 틀에 달린 것은 표시만(solid·occludes·sensed 모두 false여야 한다)
   carrier: FieldCarrier
+  // 계산 부품(6b, carrier 틀). 있으면 로봇 3D 충돌(robots 부품)과 공 접촉(balls 부품)은 shape 대신 이것을 쓴다. 다른 쓰임(평면
+  // 경로·fieldOverlaps·시작 프리셋·4c 광선·4d 가림·자동 프리로드·열기 알림)은 늘 shape(봉투)를 쓴다. carrier field 구조물의
+  // 부품은 봉투 안이다(PART_ENVELOPE_TOLERANCE, 이름이 PART_ENVELOPE_EXCEPTIONS에 있는 것은 예외). HIVE carrier CELL의 봉투는
+  // 표시만이라 트레이 부품이 넘어도 된다
+  parts?: readonly FieldPart[]
 }
 
 export type FieldTag = {
@@ -87,12 +175,19 @@ export type FieldTag = {
 }
 
 export type FieldHive = {
-  key: 'hiveRed' | 'hiveBlue'
+  key: FieldHiveKey
   // 필드 좌표
   pivot: Vec3
   // +Y축 둘레 오른손 각(rad). 0 = 몸체 틀이 필드 축과 나란함
   startAngle: number
   tippedAngle: number
+  // 한 축 동역학(6b, spec-6b §1.3·§2). 없으면 HIVE는 실행 동안 시작 상태로 고정이다(4ab·4d). 경기 요소(공)가 있는 실행에서만
+  // 움직인다. massMoment: 질량 × 축에서 무게중심까지(kg·m, 무게중심은 몸체 z축 위라 중력 토크 = massMoment·g·sin θ),
+  // inertia: 축 둘레 관성(kg·m²), pivotFriction: 축 쿨롱 마찰 토크(N·m). 파랑은 같은 값(mirrorHive)
+  dynamics?: { massMoment: number; inertia: number; pivotFriction: number }
+  // 움직이는 몸체 틀(이 HIVE carrier 틀)의 계산 부품(축 조립체). CELL 트레이는 carrier가 이 HIVE인 CELL 구조물의 parts다.
+  // robots는 늘 false
+  parts?: readonly FieldPart[]
 }
 
 export type FieldStartPreset = {
@@ -156,8 +251,16 @@ export type FieldElementType = {
   reentry: boolean
 }
 
-// 시작 배치 하나(필드 좌표 공 중심, 쉬는 상태로 생긴다)
-export type FieldElementPlacement = { group: SimElementGroup; kind: SimElementKind; position: Vec3 }
+// 시작 배치 하나(공 중심, 쉬는 상태로 생긴다). carrier가 없으면 position은 필드 좌표다. carrier가 있으면 그 HIVE 몸체 틀
+// 좌표이고(6b hiveCell), when이 있으면 그 HIVE의 시작 상태(세계 설명 field.hiveTipped)가 같을 때만 생긴다(넘어간 채 시작하면
+// 그때 위를 보는 CELL에 둔다). when은 carrier와 함께만 쓴다(placementActive·placementFieldPosition)
+export type FieldElementPlacement = {
+  group: SimElementGroup
+  kind: SimElementKind
+  position: Vec3
+  carrier?: FieldHiveKey
+  when?: 'start' | 'tipped'
+}
 
 export type FieldElements = {
   // 종류마다 하나(kind 유일)
@@ -216,6 +319,33 @@ export function deepFreeze<T>(value: T): T {
   return value
 }
 
+// ---- 시작 배치의 자리(6b, spec-6b §1.2). 세계 설명 검사(parseWorldSpec의 공 수)와 elementSpawns가 같은 규칙을 쓴다 ----
+
+// 이 배치가 실행에 생기는지: carrier·when이 없으면 늘, 있으면 그 HIVE의 시작 상태(hiveTipped [빨강, 파랑])가 when과 같을 때
+export function placementActive(
+  p: FieldElementPlacement,
+  hiveTipped: readonly [boolean, boolean]
+): boolean {
+  if (p.carrier === undefined || p.when === undefined) return true
+  const tipped = p.carrier === 'hiveRed' ? hiveTipped[0] : hiveTipped[1]
+  return (p.when === 'tipped') === tipped
+}
+
+// 배치의 시작 필드 좌표. carrier가 없으면 position의 복사본, 있으면 그 HIVE의 시작 각으로 T(pivot)·R_y(θ)·position
+// (seasons/tagPoses.ts tagFieldPose와 같은 호출 순서: carrierAngle → rotationMatrix → applyMatrix3 → pivot 더하기)
+export function placementFieldPosition(
+  field: FieldSpec,
+  p: FieldElementPlacement,
+  hiveTipped: readonly [boolean, boolean]
+): Vec3 {
+  if (p.carrier === undefined) return { x: p.position.x, y: p.position.y, z: p.position.z }
+  const hive = field.hives.find((h) => h.key === p.carrier)
+  if (!hive) throw new Error(`carrier ${p.carrier}가 시즌 데이터에 없다`)
+  const carrier = rotationMatrix({ x: 0, y: carrierAngle(field, p.carrier, hiveTipped), z: 0 })
+  const q = applyMatrix3(carrier, p.position)
+  return { x: hive.pivot.x + q.x, y: hive.pivot.y + q.y, z: hive.pivot.z + q.z }
+}
+
 // ---- 데이터 검사(데이터 시험만 부른다) ----
 
 // 프리셋 사각형이 피해야 할 solid 껍질의 높이: 29 in(R105.A 확장 높이 상한)
@@ -259,22 +389,99 @@ function mirroredVertices(shape: Extract<FieldShape, { kind: 'box' }>): Vec3[] {
   return boxVertices(shape).map(mirrorVec3)
 }
 
+// 원기둥(형상·부품)의 Rz(π) 상이 다른 원기둥과 같은지: 중심은 부호 반전, 반지름·높이는 그대로(세운 원기둥은 요가 뜻이 없다)
+function sameMirroredCylinder(
+  a: { center: Vec3; radius: number; height: number },
+  b: { center: Vec3; radius: number; height: number }
+): boolean {
+  const c = mirrorVec3(a.center)
+  return (
+    Math.abs(c.x - b.center.x) <= SYMMETRY_TOLERANCE &&
+    Math.abs(c.y - b.center.y) <= SYMMETRY_TOLERANCE &&
+    Math.abs(c.z - b.center.z) <= SYMMETRY_TOLERANCE &&
+    a.radius === b.radius &&
+    a.height === b.height
+  )
+}
+
+// 부품 형상의 Rz(π) 상이 다른 부품 형상과 같은지(6b): 상자·볼록 기둥은 꼭짓점 집합(볼록 다면체는 꼭짓점이 정한다), 원기둥은
+// 중심·크기
+function sameMirroredPart(original: FieldPartShape, candidate: FieldPartShape): boolean {
+  if (original.kind === 'cylinder' || candidate.kind === 'cylinder')
+    return (
+      original.kind === 'cylinder' &&
+      candidate.kind === 'cylinder' &&
+      sameMirroredCylinder(original, candidate)
+    )
+  if (original.kind !== candidate.kind) return false
+  if (
+    original.kind === 'prism' &&
+    candidate.kind === 'prism' &&
+    (original.polygon.length !== candidate.polygon.length || original.height !== candidate.height)
+  )
+    return false
+  return sameVertexSet(partVertices(original)!.map(mirrorVec3), partVertices(candidate)!)
+}
+
+// 부품 목록의 Rz(π) 짝(6b): 둘 다 없거나, 같은 길이이고 순번마다 쓰임(robots·balls)·이름·형상이 짝이다(mirrorStructure·
+// mirrorHive는 순서를 지킨다)
+function sameMirroredParts(
+  original: readonly FieldPart[] | undefined,
+  candidate: readonly FieldPart[] | undefined
+): boolean {
+  if (original === undefined || candidate === undefined) return original === candidate
+  return (
+    original.length === candidate.length &&
+    original.every((p, i) => {
+      const c = candidate[i]
+      return (
+        p.robots === c.robots &&
+        p.balls === c.balls &&
+        p.key === c.key &&
+        sameMirroredPart(p.shape, c.shape)
+      )
+    })
+  )
+}
+
 function sameShape(mirrored: FieldStructure, candidate: FieldStructure): boolean {
   const a = mirrored.shape
   const b = candidate.shape
+  if (!sameMirroredParts(mirrored.parts, candidate.parts)) return false
   if (a.kind === 'box' && b.kind === 'box')
     return sameVertexSet(mirroredVertices(a), boxVertices(b))
-  if (a.kind === 'cylinder' && b.kind === 'cylinder') {
-    const c = mirrorVec3(a.center)
-    return (
-      Math.abs(c.x - b.center.x) <= SYMMETRY_TOLERANCE &&
-      Math.abs(c.y - b.center.y) <= SYMMETRY_TOLERANCE &&
-      Math.abs(c.z - b.center.z) <= SYMMETRY_TOLERANCE &&
-      a.radius === b.radius &&
-      a.height === b.height
-    )
-  }
+  if (a.kind === 'cylinder' && b.kind === 'cylinder') return sameMirroredCylinder(a, b)
   return false
+}
+
+// 유한한 양수(부품 크기·HIVE 동역학. checkNumbers도 유한하지 않은 수를 따로 알린다)
+const isPositive = (value: number): boolean => Number.isFinite(value) && value > 0
+
+// 부품 하나의 모양(6b): 크기는 유한한 양수, 볼록 기둥은 볼록 반시계 다각형(점 셋 이상), 원기둥은 세운 것, 쓰임이 하나 이상, HIVE
+// 몸체 틀 부품은 로봇이 쓰지 않는다, 이름은 FIELD_PART_KEYS의 것이고 주인(owner: 구조물 key 또는 'hive')에 맞는다
+function checkPart(
+  part: FieldPart,
+  what: string,
+  carrier: FieldCarrier,
+  owner: FieldStructureKey | 'hive',
+  errors: string[]
+): void {
+  const shape = part.shape
+  if (shape.kind === 'box') {
+    if (!(isPositive(shape.size.x) && isPositive(shape.size.y) && isPositive(shape.size.z)))
+      errors.push(`${what}: size`)
+  } else if (shape.kind === 'prism') {
+    if (!isPositive(shape.height)) errors.push(`${what}: size`)
+    if (!isConvexCcwPolygon(shape.polygon)) errors.push(`${what}: polygon not convex CCW`)
+  } else {
+    if (!(isPositive(shape.radius) && isPositive(shape.height))) errors.push(`${what}: size`)
+    if (shape.rotation.x !== 0 || shape.rotation.y !== 0) errors.push(`${what}: tilted cylinder`)
+  }
+  if (!part.robots && !part.balls) errors.push(`${what}: unused`)
+  if (carrier !== 'field' && part.robots) errors.push(`${what}: robots on carrier ${carrier}`)
+  if (!isFieldPartKey(part.key)) errors.push(`${what}: unknown key ${String(part.key)}`)
+  else if (fieldPartOwner(part.key) !== owner)
+    errors.push(`${what}: key ${part.key} not for ${owner}`)
 }
 
 const sameMaterial = (a: FieldMaterial, b: FieldMaterial): boolean =>
@@ -333,6 +540,34 @@ export function checkFieldSpec(spec: FieldSpec): string[] {
     }
     if (s.carrier !== 'field' && (s.solid || s.occludes || s.sensed))
       errors.push(`${what}: carrier ${s.carrier} must be display only`)
+    // 부품(6b): 모양과 봉투(shape) 안(PART_ENVELOPE_TOLERANCE, 예외 이름은 빼고). 봉투 안은 carrier field 구조물만 본다
+    // [결정: 6b 계약 리뷰. 봉투는 평면 경로·4c 광선·4d 가림·시작 프리셋·자동 프리로드가 계산에 읽는 필드 구조물에서만 뜻이 있다.
+    // HIVE carrier CELL 상자는 표시만이고, 부록 A.1 CELL 트레이(Cell Base Tube x_b 0.1195, 리브 꼭대기 z_b 0.3327·보스 −0.0755)는
+    // 그 상자(x_b [0.23927, 0.54508], z_b [−0.03785, 0.3175])를 넘는다]
+    s.parts?.forEach((part, k) => {
+      const partWhat = `${what}.parts[${k}]`
+      checkPart(part, partWhat, s.carrier, s.key, errors)
+      if (s.carrier !== 'field' || PART_ENVELOPE_EXCEPTIONS.has(part.key)) return
+      if (!partInsideShape(part.shape, s.shape, PART_ENVELOPE_TOLERANCE))
+        errors.push(`${partWhat}: outside envelope`)
+    })
+  })
+
+  // HIVE(6b): 동역학 값은 유한한 양수(축 마찰은 유한한 0 이상: 마찰 없는 축), 부품 모양
+  spec.hives.forEach((h, i) => {
+    const what = `hives[${i}]`
+    const d = h.dynamics
+    if (
+      d &&
+      !(
+        isPositive(d.massMoment) &&
+        isPositive(d.inertia) &&
+        Number.isFinite(d.pivotFriction) &&
+        d.pivotFriction >= 0
+      )
+    )
+      errors.push(`${what}: dynamics`)
+    h.parts?.forEach((part, k) => checkPart(part, `${what}.parts[${k}]`, h.key, 'hive', errors))
   })
 
   const tagIds = new Set<number>()
@@ -426,7 +661,8 @@ export function checkFieldSpec(spec: FieldSpec): string[] {
   })
   spec.hives.forEach((h, i) => {
     const m = mirrorHive(h)
-    if (!spec.hives.some((c) => sameHive(m, c))) errors.push(`hives[${i}]: no Rz(pi) counterpart`)
+    if (!spec.hives.some((c) => sameHive(m, c) && sameMirroredParts(h.parts, c.parts)))
+      errors.push(`hives[${i}]: no Rz(pi) counterpart`)
   })
   spec.startPresets.forEach((p, i) => {
     const found = spec.startPresets.some((c) => {
@@ -450,9 +686,16 @@ const ELEMENT_TOLERANCE = 1e-9
 const SOLID_SPHERE_INERTIA = 0.4
 const THIN_SHELL_INERTIA = 2 / 3
 
-// 경기 요소(6a, spec-6a §4): 종류는 kind 유일·값 범위, 배치는 아는 종류이고 바닥에 놓이고(z = r) 필드 안이며 벽·구조물
-// (carrier field이고 solid ∨ occludes: 공이 부딪히는 것, collision3d.ts staticShapes와 같은 집합)·서로·시작 프리셋 사각형과
-// 겹치지 않고, Rz(π) 짝이 있다(색 있는 종류는 상대 색)
+// 경기 요소(6a, spec-6a §4; 6b 묶음별, spec-6b §1.2): 종류는 kind 유일·값 범위. 배치는 아는 종류이고 Rz(π) 짝이 있으며(같은
+// 묶음·when, 상대 carrier, 색 있는 종류는 상대 색), 같은 틀(필드, 또는 같은 carrier·when의 HIVE 몸체 틀)의 공끼리 겹치지 않는다.
+// 묶음마다:
+// - garden: 바닥에 놓이고(z = r) 필드 안이며 벽·구조물(carrier field이고 solid ∨ occludes: 공이 부딪히는 것, collision3d.ts
+//   staticShapes와 같은 집합)·시작 프리셋 사각형과 겹치지 않는다
+// - flower: 필드 안, 한 FLOWER 봉투 안(공 통째로)이고 그 FLOWER의 공 부품과 겹치지 않으며 다른 구조물·시작 프리셋과도 겹치지
+//   않는다. FLOWER마다 가장 낮은 공은 바닥에 놓이고(z = r) 나머지는 바로 아래 공에 닿는다(중심 거리 r + r′)
+// - hiveCell: carrier·when이 있고, 그 HIVE 몸체 틀에서 공 부품(CELL 트레이·HIVE 부품)과 겹치지 않으며 CELL 밑판
+//   (CELL_FLOOR_PART_KEY)과 Back Skin(CELL_BACK_SKIN_PART_KEY)에 닿는다
+// carrier·when은 hiveCell만 쓴다
 function checkElements(spec: FieldSpec, elements: FieldElements, errors: string[]): void {
   const kinds = new Set<string>()
   elements.types.forEach((t, i) => {
@@ -482,6 +725,25 @@ function checkElements(spec: FieldSpec, elements: FieldElements, errors: string[
   const { innerHalf } = spec.perimeter
   const radiusOf = (kind: string): number | null =>
     elements.types.find((t) => t.kind === kind)?.radius ?? null
+  const insideField = (c: Vec3, r: number): boolean =>
+    Math.abs(c.x) + r <= innerHalf + ELEMENT_TOLERANCE &&
+    Math.abs(c.y) + r <= innerHalf + ELEMENT_TOLERANCE
+  // 공이 부딪히는 필드 구조물(collision3d.ts staticShapes와 같은 집합)과 겹치는지. skip: 그 순번은 보지 않는다(자기 FLOWER)
+  const structureOverlaps = (c: Vec3, r: number, what: string, skip: number): void =>
+    spec.structures.forEach((s, i) => {
+      if (i === skip || s.carrier !== 'field' || !(s.solid || s.occludes)) return
+      if (sphereShapeSeparation(c, r, s.shape) < -ELEMENT_TOLERANCE)
+        errors.push(`${what}: structures[${i}]`)
+    })
+  const presetOverlapsBall = (c: Vec3, r: number, what: string): void =>
+    spec.startPresets.forEach((preset, i) => {
+      const rect = presetRect(preset, innerHalf)
+      if (circlePolygonSeparation(c, r, rectPolygon(rect)) < -OVERLAP_TOLERANCE)
+        errors.push(`startPresets[${i}]: ${what}`)
+    })
+  // FLOWER 순번 → 그 안의 공(배치 순번, 반지름)
+  const flowerBalls = new Map<number, { index: number; r: number }[]>()
+
   elements.layout.forEach((p, j) => {
     const what = `elements.layout[${j}]`
     const r = radiusOf(p.kind)
@@ -490,40 +752,109 @@ function checkElements(spec: FieldSpec, elements: FieldElements, errors: string[
       return
     }
     const c = p.position
-    if (!(Math.abs(c.z - r) <= ELEMENT_TOLERANCE)) errors.push(`${what}: not resting on floor`)
-    if (
-      !(Math.abs(c.x) + r <= innerHalf + ELEMENT_TOLERANCE) ||
-      !(Math.abs(c.y) + r <= innerHalf + ELEMENT_TOLERANCE)
-    )
-      errors.push(`${what}: outside field`)
-    spec.structures.forEach((s, i) => {
-      if (s.carrier !== 'field' || !(s.solid || s.occludes)) return
-      if (sphereShapeSeparation(c, r, s.shape) < -ELEMENT_TOLERANCE)
-        errors.push(`${what}: structures[${i}]`)
-    })
+    if (p.group === 'hiveCell') {
+      if (p.carrier === undefined || p.when === undefined)
+        errors.push(`${what}: hiveCell needs carrier and when`)
+    } else if (p.carrier !== undefined || p.when !== undefined) errors.push(`${what}: carrier`)
+    if (p.carrier !== undefined && !spec.hives.some((h) => h.key === p.carrier))
+      errors.push(`${what}: unknown carrier ${p.carrier}`)
+
+    if (p.group === 'garden') {
+      if (!(Math.abs(c.z - r) <= ELEMENT_TOLERANCE)) errors.push(`${what}: not resting on floor`)
+      if (!insideField(c, r)) errors.push(`${what}: outside field`)
+      structureOverlaps(c, r, what, -1)
+      presetOverlapsBall(c, r, what)
+    } else if (p.group === 'flower') {
+      if (!insideField(c, r)) errors.push(`${what}: outside field`)
+      const flower = spec.structures.findIndex(
+        (s) =>
+          s.key === 'flower' &&
+          s.carrier === 'field' &&
+          sphereInsideShape(c, r, s.shape, ELEMENT_TOLERANCE)
+      )
+      if (flower < 0) errors.push(`${what}: not inside a FLOWER`)
+      else {
+        spec.structures[flower].parts?.forEach((part, k) => {
+          if (part.balls && spherePartSeparation(c, r, part.shape) < -ELEMENT_TOLERANCE)
+            errors.push(`${what}: structures[${flower}].parts[${k}]`)
+        })
+        const list = flowerBalls.get(flower) ?? []
+        list.push({ index: j, r })
+        flowerBalls.set(flower, list)
+      }
+      structureOverlaps(c, r, what, flower)
+      presetOverlapsBall(c, r, what)
+    } else if (p.carrier !== undefined) {
+      // hiveCell: 그 HIVE 몸체 틀의 공 부품(CELL 트레이와 HIVE 부품)
+      let floor = false
+      let backSkin = false
+      const check = (part: FieldPart, where: string): void => {
+        if (!part.balls) return
+        const gap = spherePartSeparation(c, r, part.shape)
+        if (gap < -ELEMENT_TOLERANCE) errors.push(`${what}: ${where}`)
+        if (Math.abs(gap) <= ELEMENT_TOLERANCE) {
+          if (part.key === CELL_FLOOR_PART_KEY) floor = true
+          if (part.key === CELL_BACK_SKIN_PART_KEY) backSkin = true
+        }
+      }
+      spec.structures.forEach((s, i) => {
+        if (s.carrier === p.carrier)
+          s.parts?.forEach((part, k) => check(part, `structures[${i}].parts[${k}]`))
+      })
+      spec.hives.forEach((h, i) => {
+        if (h.key === p.carrier)
+          h.parts?.forEach((part, k) => check(part, `hives[${i}].parts[${k}]`))
+      })
+      if (!floor) errors.push(`${what}: not resting on a CELL floor`)
+      if (!backSkin) errors.push(`${what}: not against a CELL Back Skin`)
+    }
+
+    // 같은 틀의 공끼리(필드 좌표끼리, 같은 carrier·when의 몸체 틀끼리)
     for (let k = j + 1; k < elements.layout.length; k++) {
       const q = elements.layout[k]
       const rq = radiusOf(q.kind)
-      if (rq === null) continue
+      if (rq === null || q.carrier !== p.carrier || q.when !== p.when) continue
       const gap = Math.hypot(q.position.x - c.x, q.position.y - c.y, q.position.z - c.z) - r - rq
       if (gap < -ELEMENT_TOLERANCE) errors.push(`${what}: elements.layout[${k}]`)
     }
-    spec.startPresets.forEach((preset, i) => {
-      const rect = presetRect(preset, innerHalf)
-      if (circlePolygonSeparation(c, r, rectPolygon(rect)) < -OVERLAP_TOLERANCE)
-        errors.push(`startPresets[${i}]: ${what}`)
-    })
+
     const m = mirrorVec3(c)
+    const mirroredCarrier = p.carrier === undefined ? undefined : mirrorCarrier(p.carrier)
     const found = elements.layout.some(
       (q) =>
         q.group === p.group &&
         q.kind === mirrorElementKind(p.kind) &&
+        q.carrier === mirroredCarrier &&
+        q.when === p.when &&
         Math.abs(q.position.x - m.x) <= SYMMETRY_TOLERANCE &&
         Math.abs(q.position.y - m.y) <= SYMMETRY_TOLERANCE &&
         Math.abs(q.position.z - m.z) <= SYMMETRY_TOLERANCE
     )
     if (!found) errors.push(`${what}: no Rz(pi) counterpart`)
   })
+
+  // FLOWER 기둥: 가장 낮은 공은 바닥에, 나머지는 바로 아래 공에 닿는다(높이 순, 같은 높이는 배치 순서)
+  for (const list of flowerBalls.values()) {
+    const sorted = [...list].sort(
+      (a, b) =>
+        elements.layout[a.index].position.z - elements.layout[b.index].position.z ||
+        a.index - b.index
+    )
+    sorted.forEach((ball, n) => {
+      const what = `elements.layout[${ball.index}]`
+      const c = elements.layout[ball.index].position
+      if (n === 0) {
+        if (!(Math.abs(c.z - ball.r) <= ELEMENT_TOLERANCE))
+          errors.push(`${what}: not resting on floor`)
+        return
+      }
+      const below = sorted[n - 1]
+      const b = elements.layout[below.index].position
+      const distance = Math.hypot(c.x - b.x, c.y - b.y, c.z - b.z)
+      if (!(Math.abs(distance - (ball.r + below.r)) <= ELEMENT_TOLERANCE))
+        errors.push(`${what}: not touching the ball below`)
+    })
+  }
 }
 
 // SDK 묶음 이름의 Rz(π) 짝(빨강 득점 ↔ 파랑 관중석)
@@ -534,13 +865,21 @@ const CLUSTER_MIRROR: Record<string, string> = {
   'BLUE SCORING': 'RED AUDIENCE'
 }
 
+// a: Rz(π) 상(mirrorHive), b: 후보. 부품은 원본으로 따로 비교한다(sameMirroredParts)
 function sameHive(a: FieldHive, b: FieldHive): boolean {
+  const da = a.dynamics
+  const db = b.dynamics
   return (
     a.key === b.key &&
     a.pivot.x === b.pivot.x &&
     a.pivot.y === b.pivot.y &&
     a.pivot.z === b.pivot.z &&
     a.startAngle === b.startAngle &&
-    a.tippedAngle === b.tippedAngle
+    a.tippedAngle === b.tippedAngle &&
+    (da === undefined || db === undefined
+      ? da === db
+      : da.massMoment === db.massMoment &&
+        da.inertia === db.inertia &&
+        da.pivotFriction === db.pivotFriction)
   )
 }

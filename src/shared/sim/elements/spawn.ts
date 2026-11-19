@@ -1,6 +1,11 @@
 import { rotationZYX } from '../articulation'
 import { sphereShapeSeparation } from '../seasons/fieldGeometry'
-import type { Alliance, FieldSpec } from '../seasons/fieldSpec'
+import {
+  placementActive,
+  placementFieldPosition,
+  type Alliance,
+  type FieldSpec
+} from '../seasons/fieldSpec'
 import { composeFrames, type Frame3 } from '../sensorFrame'
 import type {
   Pose2,
@@ -70,19 +75,23 @@ function state(kind: SimElementKind, position: Vec3, asleep: boolean): SimElemen
   }
 }
 
-// 실행 시작의 공(필드 좌표). 순서가 공 번호다: 시즌 배치(FieldSpec.elements.layout 배열 순서, elements.groups에 든 묶음만,
-// 쉬는 상태로 잠들어 생긴다) → 프리로드(자리 순서, 깨어 있다). start: 로봇 시작 자세, bodyFrame: 몸체의 편집 자세 틀(로봇
-// 좌표, restBodyFrames). 세계 설명에 경기 요소가 없거나 시즌에 없으면 []
+// 실행 시작의 공(필드 좌표). 순서가 공 번호다: 시즌 배치(FieldSpec.elements.layout 배열 순서, elements.groups에 든 묶음 가운데
+// 시작 HIVE 상태로 생기는 것만(placementActive: hiveCell은 그때 위를 보는 CELL), 쉬는 상태로 잠들어 생긴다) → 프리로드(자리
+// 순서, 깨어 있다). start: 로봇 시작 자세, bodyFrame: 몸체의 편집 자세 틀(로봇 좌표, restBodyFrames), hiveTipped: 시작 HIVE
+// 상태 [빨강, 파랑](세계 설명 field.hiveTipped, HIVE 몸체 틀 배치의 자리도 이 각으로 푼다: placementFieldPosition). 세계 설명에
+// 경기 요소가 없거나 시즌에 없으면 []
 export function elementSpawns(
   field: FieldSpec,
   elements: SimElementsSpec | undefined,
   start: Pose2,
-  bodyFrame: (body: number) => Frame3 = restBodyFrames([])
+  bodyFrame: (body: number) => Frame3,
+  hiveTipped: readonly [boolean, boolean]
 ): SimElementState[] {
   if (!elements || !field.elements) return []
   const out: SimElementState[] = []
   for (const p of field.elements.layout)
-    if (elements.groups.includes(p.group)) out.push(state(p.kind, p.position, true))
+    if (elements.groups.includes(p.group) && placementActive(p, hiveTipped))
+      out.push(state(p.kind, placementFieldPosition(field, p, hiveTipped), true))
   for (const p of elements.preloads)
     out.push(state(p.kind, robotToField(start, bodyToRobot(bodyFrame(p.body), p.position)), false))
   return out
@@ -94,7 +103,8 @@ export type PreloadFace = 'front' | 'back' | 'left' | 'right'
 export const PRELOAD_FACES: readonly PreloadFace[] = ['front', 'back', 'left', 'right']
 
 // 공(필드 좌표 중심, 반지름)이 필드 밖으로 나가거나 공이 부딪히는 구조물(carrier field이고 solid ∨ occludes, collision3d.ts
-// staticShapes와 같은 집합)이나 다른 공과 겹치는지. 정확히 닿기만 한 것(분리 0)은 막히지 않는다
+// staticShapes와 같은 집합)이나 다른 공과 겹치는지. 정확히 닿기만 한 것(분리 0)은 막히지 않는다. 부품이 있는 구조물(6b FLOWER
+// 케이지)도 봉투 상자로 본다 [결정: spec-6b §5. 보수적이라 자동 프리로드 자리가 FLOWER 안·회수 구멍에 생기지 않는다]
 function blocked(
   field: FieldSpec,
   center: Vec3,
@@ -142,7 +152,9 @@ function faceSlots(footprint: readonly Vec2[], face: PreloadFace, radius: number
 
 // 팀이 Preload Slot을 두지 않은 로봇의 프리로드 POLLEN 자리(로봇 좌표, 몸체 −1). 앞 → 뒤 → 왼쪽 → 오른쪽 면 가운데 네 자리가
 // 모두 필드 안이고 구조물·고른 배치 묶음(groups, 같은 실행에 생길 시즌 공)과 겹치지 않는 첫 면이다. 모든 면이 막혔거나 시즌에
-// POLLEN이 없으면 null(프리로드 없이 실행하고 worldPreloadNoRoom). start: 로봇 시작 자세(필드 좌표)
+// POLLEN이 없으면 null(프리로드 없이 실행하고 worldPreloadNoRoom). start: 로봇 시작 자세(필드 좌표). HIVE 몸체 틀 배치(carrier,
+// 6b hiveCell)는 바닥 근처에 오지 않아 보지 않는다: 부르는 쪽도 groups에서 'hiveCell'을 뺀다(spec-6b §5, 렌더러 기억이 HIVE
+// 상태에 기대지 않게)
 export function autoPreloadSlots(
   footprint: readonly Vec2[],
   field: FieldSpec,
@@ -152,7 +164,7 @@ export function autoPreloadSlots(
   const type = resolveElementType(field, 'pollen')
   if (!type || footprint.length === 0) return null
   const others = (field.elements?.layout ?? []).flatMap((p) => {
-    if (!groups.includes(p.group)) return []
+    if (!groups.includes(p.group) || p.carrier !== undefined) return []
     const t = resolveElementType(field, p.kind)
     return t ? [{ position: p.position, radius: t.radius }] : []
   })

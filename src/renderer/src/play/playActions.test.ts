@@ -853,13 +853,14 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       useSceneStore.setState({ objects: withWheel(), field: { season: 'biobuzz' } })
       await initPlay()
       const { world } = lastRequest()
-      expect(world!.elements?.groups).toEqual(['garden'])
+      // 6b: 실행에 생기는 묶음 셋(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6)
+      expect(world!.elements?.groups).toEqual(['garden', 'flower', 'hiveCell'])
       // 바퀴 로봇은 Preload Slot이 없어 자동 자리(앞 타일) 넷
       expect(world!.elements?.preloads).toHaveLength(4)
       const run = usePlayStore.getState().run!
-      expect(run.elements?.kinds).toHaveLength(12)
+      expect(run.elements?.kinds).toHaveLength(8 + 16 + 6 + 4)
       expect(run.elements?.spawns.map((s) => s.asleep)).toEqual([
-        ...Array(8).fill(true),
+        ...Array(8 + 16 + 6).fill(true),
         ...Array(4).fill(false)
       ])
       // 실행 요청의 settings에는 렌더러 전용 gameElements가 없다
@@ -1475,6 +1476,27 @@ describe('시뮬레이터 자세·잔상·키보드 게임패드', () => {
     usePlayStore.setState({ ghostPose: { robotId: 'bot', x: 1, y: 1, yaw: 0 } })
     useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
     expect(usePlayStore.getState().ghostPose).toBeNull()
+  })
+
+  // 6b: HIVE 잔상 각·횟수(ghostGame.hives)와 HIVE 끝 상태(lastRunElements.hives)는 공과 같은 수명이다(INIT은 잔상만, 프로젝트를
+  // 열면 둘 다 지운다)
+  it('HIVE 잔상은 다음 INIT에, HIVE 끝 상태는 프로젝트를 열 때 지운다', async () => {
+    const ghostGame = { kinds: [], poses: [], flags: [], hives: [5236, 5236], hiveTips: [1, 0] }
+    const lastRunElements = {
+      runId: 'old',
+      robotId: 'bot',
+      tNanos: 0,
+      states: [],
+      hives: [{ angle: Math.PI / 6, angularVelocity: 0, asleep: true, tips: 1 }]
+    }
+    usePlayStore.setState({ ghostGame, lastRunElements })
+    await initPlay()
+    expect(usePlayStore.getState().ghostGame).toBeNull()
+    expect(usePlayStore.getState().lastRunElements).toBe(lastRunElements)
+    usePlayStore.setState({ ghostGame })
+    useProjectStore.setState({ session: useProjectStore.getState().session + 1 })
+    expect(usePlayStore.getState().ghostGame).toBeNull()
+    expect(usePlayStore.getState().lastRunElements).toBeNull()
   })
 
   it('실행 중 같은 프로젝트를 다시 열면 그 실행을 새 씬과 떼어 놓는다(자세·잠금·잔상 없음)', async () => {

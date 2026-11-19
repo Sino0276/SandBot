@@ -1,22 +1,23 @@
 # 기준 문서(docs/reference) 목차
 
-SandBot을 처음부터 다시 만들 수 있게, 시뮬레이터·편집기가 쓰는 **치수·상수·식·표·설계 결정·시험 기준**을 단계별로 모은 문서다. 코드가 원본이고(값이 어긋나면 코드가 맞다), 이 문서는 코드와 CLAUDE.md를 읽어 값·단위·위치(파일·상수)·상태·근거를 한곳에 정리한 것이다. 가정값만 따로 모은 표는 `docs/assumptions.md`, 6a 때 쓴 명세·계획은 `docs/research/6a/`다.
+SandBot을 처음부터 다시 만들 수 있게, 시뮬레이터·편집기가 쓰는 **치수·상수·식·표·설계 결정·시험 기준**을 단계별로 모은 문서다. 코드가 원본이고(값이 어긋나면 코드가 맞다), 이 문서는 코드와 CLAUDE.md를 읽어 값·단위·위치(파일·상수)·상태·근거를 한곳에 정리한 것이다. 가정값만 따로 모은 표는 `docs/assumptions.md`, 6a·6b 때 쓴 명세·계획은 `docs/research/6a/`·`docs/research/6b/`다.
 
 ## 문서 목록
 
-| 문서                                     | 단계            | 다루는 것                                                                                                                                                     |
-| ---------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`editor-project.md`](editor-project.md) | 편집기·공통     | 좌표계·회전·단위 세 층, CAD 정렬·STEP 임포트, 씬 문서 불변 조건, 프로젝트 파일 v1–v14, 하드웨어 카탈로그·검증·이름 규칙, Java·구성 XML 생성, 오프셋 계산      |
-| [`sidecar-time.md`](sidecar-time.md)     | 1단계·L1·L2     | JVM 사이드카, 가짜 SDK 세 층, 가상 시계·Hub 타이밍 비용표, 프로토콜(판 4), 틱·STOP·fail safe 규칙, 라이브러리 해석·Dashboard 대체                             |
-| [`mass.md`](mass.md)                     | 3a 질량 모델    | 메시 질량 성질 적분, 닫힘 지표, 재질 밀도 17종, 출력 재질 유효 밀도, COTS 질량 표 71개, 이름 규칙, 저울 맞추기                                                |
-| [`motors-joints.md`](motors-joints.md)   | 3b 관절         | SDK 모터 형식 표, 기어모터 데이터시트·전기 모델, VNH5050 전원단, 허브 제어 루프·PIDF, 서보 7종, 관절 동역학(CRBA·RNEA·LCP), 리깅                              |
-| [`drivetrain.md`](drivetrain.md)         | 3c 구동계       | 바퀴–타일 쿨롱 마찰(메카넘·옴니·일반), 롤러·굴림 저항, 바퀴 질량·관성, 법선 하중 분배, 벽 접촉, 부유 기저, Pedro 튜너 맞춤                                    |
-| [`field-biobuzz.md`](field-biobuzz.md)   | 4ab·4e 필드     | BIOBUZZ 벽·레일·판·바닥·테이프·구조물 17개·HIVE·AprilTag 30–45, G304 시작 프리셋, 대칭 생성, 공 데이터, 'none' 시즌, 필드 CAD 보기, 씬 뷰 표시 치수           |
-| [`sensors-vision.md`](sensors-vision.md) | 4c·4d 센서·비전 | VL53L0X 거리·APDS-9151 컬러 모델, 광선 기본형, 잡음, 카메라 모델 표, 프레임 격자·판정, 사이드카 VisionPortal·AprilTagProcessor, OpenCV solvePnP 이식          |
-| [`collision.md`](collision.md)           | 5 충돌          | 볼록 껍질, 정적 형상, SAT·GJK 좁은 단계, 충돌 행·마찰 패치, Collider 4종, 편집 자세 겹침, 알림, 기준 해시 여덟째                                              |
-| [`balls-6a.md`](balls-6a.md)             | 6a 공 물리      | POLLEN·NECTAR 데이터, 부드러운 법선·심·이력 스프링, 마찰·굴림 저항, 로봇 결합(Schur 보수), 섬·잠들기, 조밀 LCP, 필드 밖 다시 넣기, 프리로드, 기준 해시 아홉째 |
+| 문서                                     | 단계                | 다루는 것                                                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`editor-project.md`](editor-project.md) | 편집기·공통         | 좌표계·회전·단위 세 층, CAD 정렬·STEP 임포트, 씬 문서 불변 조건, 프로젝트 파일 v1–v14, 하드웨어 카탈로그·검증·이름 규칙, Java·구성 XML 생성, 오프셋 계산                                                                                |
+| [`sidecar-time.md`](sidecar-time.md)     | 1단계·L1·L2         | JVM 사이드카, 가짜 SDK 세 층, 가상 시계·Hub 타이밍 비용표, 프로토콜(판 4), 틱·STOP·fail safe 규칙, 라이브러리 해석·Dashboard 대체                                                                                                       |
+| [`mass.md`](mass.md)                     | 3a 질량 모델        | 메시 질량 성질 적분, 닫힘 지표, 재질 밀도 17종, 출력 재질 유효 밀도, COTS 질량 표 71개, 이름 규칙, 저울 맞추기                                                                                                                          |
+| [`motors-joints.md`](motors-joints.md)   | 3b 관절             | SDK 모터 형식 표, 기어모터 데이터시트·전기 모델, VNH5050 전원단, 허브 제어 루프·PIDF, 서보 7종, 관절 동역학(CRBA·RNEA·LCP), 리깅                                                                                                        |
+| [`drivetrain.md`](drivetrain.md)         | 3c 구동계           | 바퀴–타일 쿨롱 마찰(메카넘·옴니·일반), 롤러·굴림 저항, 바퀴 질량·관성, 법선 하중 분배, 벽 접촉, 부유 기저, Pedro 튜너 맞춤                                                                                                              |
+| [`field-biobuzz.md`](field-biobuzz.md)   | 4ab·4e 필드         | BIOBUZZ 벽·레일·판·바닥·테이프·구조물 17개·HIVE·AprilTag 30–45, G304 시작 프리셋, 대칭 생성, 공 데이터, 'none' 시즌, 필드 CAD 보기, 씬 뷰 표시 치수                                                                                     |
+| [`sensors-vision.md`](sensors-vision.md) | 4c·4d 센서·비전     | VL53L0X 거리·APDS-9151 컬러 모델, 광선 기본형, 잡음, 카메라 모델 표, 프레임 격자·판정, 사이드카 VisionPortal·AprilTagProcessor, OpenCV solvePnP 이식                                                                                    |
+| [`collision.md`](collision.md)           | 5 충돌              | 볼록 껍질, 정적 형상, SAT·GJK 좁은 단계, 충돌 행·마찰 패치, Collider 4종, 편집 자세 겹침, 알림, 기준 해시 여덟째                                                                                                                        |
+| [`balls-6a.md`](balls-6a.md)             | 6a 공 물리          | POLLEN·NECTAR 데이터, 부드러운 법선·심·이력 스프링, 마찰·굴림 저항, 로봇 결합(Schur 보수), 섬·잠들기, 조밀 LCP, 필드 밖 다시 넣기, 프리로드, 기준 해시 아홉째                                                                           |
+| [`hive-flower-6b.md`](hive-flower-6b.md) | 6b HIVE·FLOWER·CELL | 공식 필드 CAD 측정(CELL·FLOWER·HIVE), FLOWER 케이지·CELL 트레이 부품 표, HIVE 한 축 동역학·두 멈춤·잠들기, 보정표와 massMoment 창, 공–HIVE 접촉, 웹캠 태그가 HIVE 각을 따름, 세계 설명 v8·프로토콜·씬 뷰, 기준 해시 여덟째 다시 잼·열째 |
 
-6b(HIVE 넘어감·FLOWER 안쪽)·6c(센서·웹캠이 보는 공)·6d(점수·규칙 알림·사람 선수·AUTO→TELEOP 이어 가기)는 아직 구현 전이라 문서가 없다. 6a 문서의 "알려진 한계·남은 일"과 `docs/research/6a/plan-6a.md`의 "6b–6d에 남길 이음새"가 출발점이다.
+6c(센서·웹캠이 보는 공)·6d(점수·규칙 알림·사람 선수·AUTO→TELEOP 이어 가기)는 아직 구현 전이라 문서가 없다. 6a·6b 문서의 "알려진 한계·남은 일"(6b는 17.2절 "6c·6d에 남긴 이음새")과 `docs/research/6a/plan-6a.md`·`docs/research/6b/plan-6b.md`의 "남길 이음새"가 출발점이다.
 
 ## 읽는 법
 
@@ -40,7 +41,10 @@ SandBot을 처음부터 다시 만들 수 있게, 시뮬레이터·편집기가 
 | sensors-vision | 380         | 6           |
 | sidecar-time   | 260         | 6           |
 | balls-6a       | 330         | 2           |
+| hive-flower-6b | —           | —           |
 | editor-project | 430         | 9           |
+
+hive-flower-6b는 별도 대조 에이전트 없이 작성자가 코드·시험·명세를 읽으며 썼다(그래서 대조 항목 수를 적지 않았다). 작성자가 직접 다시 돌려 확인한 것: 보정 임계 12개(이분법)와 넘어감 시간(놓기·던지기·더 무거운 짐), 성능 P7–P9, 관성 추정 스크립트, 부품·정적 형상·공 수.
 
 이 수치는 "문서가 코드와 같은가"를 확인한 것이지 "코드의 값이 현실과 같은가"를 확인한 것이 아니다.
 
@@ -59,4 +63,8 @@ SandBot을 처음부터 다시 만들 수 있게, 시뮬레이터·편집기가 
 - 사이드카 `package-info.java`는 모터 power가 "꺼져 있거나 리셋이면 0"이라고 적었지만 코드(`Channel.publish`)는 리셋일 때만 0으로 만든다. `sidecar-time.md`가 코드 동작을 적었고 주석은 그대로다.
 - `RunRequest.timing`(Hub 타이밍 비용표 덮어쓰기)은 프로토콜에 있으나 앱이 늘 빈 객체를 보내고 환경 설정에 비용표 칸이 없다. `docs/assumptions.md`의 "팀 칸: 환경 설정 › 시뮬레이션 Hub 타이밍"은 오차·시드 칸만 말한다.
 - 코드 주석의 일부 숫자가 다시 계산한 값과 다르다: Pedro 튜너 맞춤 앞 감속 0.879 대 이 트리 0.8813 m/s²(`drivetrain.md`), goBILDA 웹캠 `crop`의 "fx 1.000배"가 1920×1080에서 0.990배(`sensors-vision.md`), `TOF_BIAS`·`TOF_NORM` 마지막 자리(`sensors-vision.md`), COTS `motorCotsKey` 주석의 "최대 38 g"(`mass.md`).
-- 문서가 길다(합쳐 약 9천 줄). 표 위주라 처음부터 읽기보다 찾아 읽는 용도이고, 먼저 각 문서의 목차와 "알려진 한계·남은 일"을 본다.
+- (6b) 명세 부록 A.2의 FLOWER 백스톱 폭 8.9 mm·위치는 코드(12.7 mm, `FLOWER_BACKSTOP_U`)와 다르다. 코드 주석에 "같은 높이 모든 단면에서 0.5 in 폭이라 다시 쟀다"가 있다. `hive-flower-6b.md` 1.5절.
+- (6b) 명세 부록 A.3의 HIVE 관성 기대 ≈ 0.35 kg·m²(CELL ≈ 1.07 kg·HIVE ≈ 2.6 kg)는 `inertia.py`를 돌린 값 0.3861(CELL 1.0927·HIVE 2.6654 kg)과 다르다. 코드는 0.386.
+- (6b) 코드 주석 `RING_SECTORS`의 "구멍 현 오차 ≈ 0.7–0.9 mm"는 구멍 반지름 0.0387·0.0489·0.0507에서 r·(1 − cos 11.25°) = 0.74·0.94·0.97 mm라 가장 큰 값이 1 mm에 가깝다(명세 §11은 0.7–1.0 mm). 값은 코드 그대로다.
+- (6b) 명세 §12가 약속한 `docs/research/6b/cad-measurements.md`는 만들지 않았다. 측정은 `cad-geometry-notes.txt`·`cad-scripts/`와 `hive-flower-6b.md` 2절이 맡는다.
+- 문서가 길다(합쳐 약 1만 줄). 표 위주라 처음부터 읽기보다 찾아 읽는 용도이고, 먼저 각 문서의 목차와 "알려진 한계·남은 일"을 본다.

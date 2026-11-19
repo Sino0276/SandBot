@@ -17,7 +17,8 @@ import {
   staticShapes,
   type EditPoseBody,
   type PlacedShape,
-  type SatCache
+  type SatCache,
+  type StaticShape
 } from './collision3d'
 import { robotSpec } from './driveTestkit'
 import { boxHull, prismHull, type Hull } from './hull'
@@ -633,21 +634,31 @@ describe('정적 형상·원기둥', () => {
   it('A13 구조물 규칙: 섀시는 solid만, 관절 몸체는 solid ∨ occludes, HIVE carrier는 둘 다 빠진다', () => {
     const field = resolveSeason('biobuzz')
     const shapes = staticShapes(field)
-    const byIndex = new Map(
-      shapes
-        .filter((s) => s.target.kind === 'structure')
-        .map((s) => [(s.target as { index: number }).index, s])
-    )
+    const ofStructure = (i: number): StaticShape[] =>
+      shapes.filter((s) => s.target.kind === 'structure' && s.target.index === i)
+    const byIndex = new Map(field.structures.map((_, i) => [i, ofStructure(i)[0]]))
     field.structures.forEach((s, i) => {
       const shape = byIndex.get(i)
       if (s.carrier !== 'field') expect(shape).toBeUndefined()
       else if (!s.solid && !s.occludes) expect(shape).toBeUndefined()
-      else {
+      else if (s.parts) {
+        // 6b: 부품이 있는 구조물(FLOWER 케이지)은 로봇 부품마다 하나(부품 순서, 토큰 s<i>p<j>), 공 전용 부품은 없다
+        const robots = s.parts.flatMap((part, j) => (part.robots ? [j] : []))
+        expect(ofStructure(i).map((st) => st.token)).toEqual(robots.map((j) => `s${i}p${j}`))
+        for (const st of ofStructure(i)) {
+          expect(st.chassis).toBe(s.solid)
+          expect(st.joints).toBe(true)
+        }
+      } else {
+        expect(ofStructure(i)).toHaveLength(1)
         expect(shape?.chassis).toBe(s.solid)
         expect(shape?.joints).toBe(true)
         expect(shape?.token).toBe(`s${i}`)
       }
     })
+    // 구조물 칸은 구조물 순서로 이어져 있다(부품 구조물도 그 자리에)
+    const order = shapes.flatMap((s) => (s.target.kind === 'structure' ? [s.target.index] : []))
+    expect(order).toEqual([...order].sort((a, b) => a - b))
     // 위 막대(6)·로고 판(7, 8)은 관절 몸체만
     for (const i of [6, 7, 8])
       expect(byIndex.get(i)).toMatchObject({ chassis: false, joints: true })

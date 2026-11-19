@@ -13,12 +13,13 @@ import type {
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import type { CameraModelId } from '../../../shared/sim/cameraData'
-import { isValidGameState } from '../../../shared/sim/elements/gameState'
+import { isValidGameState, validHiveStates } from '../../../shared/sim/elements/gameState'
 import type {
   SensorMount,
   SimCollider,
   SimElementKind,
-  SimElementState
+  SimElementState,
+  SimHiveState
 } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
@@ -160,8 +161,9 @@ export type PlayRun = {
   // 시뮬레이터가 쓰는 충돌 몸체(5, INIT 때 세계 설명 그대로: 섀시 다음 관절 순번 순). 실행 중 씬 뷰 기즈모가 이 형상을 표시
   // 자세 몸체 틀로 그리고, Console의 collisionOverlap이 몸체 이름을 찾는다. 세계 설명이 없으면 비어 있다.
   colliders: readonly PlayRunCollider[]
-  // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
-  // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
+  // 실행의 시즌과 HIVE 시작 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
+  // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로). 경기 요소를 켠
+  // 실행에서는 HIVE가 이 상태에서 시작해 움직이고(6b), 씬 뷰는 그 각을 simGame.hives로 그린다.
   field: PlayRunField
   // 실행의 경기 요소(6a, INIT 때 세계 설명 elements로 정함). 경기 요소 없이 실행했으면(설정 끔·시즌에 없음·세계 설명 없음) null
   elements: PlayRunElements | null
@@ -238,13 +240,21 @@ export type SimGameState = {
   poses: readonly number[]
   // 공마다 표식(1 잠듦, 2 필드 밖). 이벤트가 생략했으면 모두 0
   flags: readonly number[]
+  // 움직이는 HIVE의 몸체 각 × 1e4 정수(6b, FieldSpec.hives 순서, gameState.ts hiveDisplayAngle)와 이 실행에서 넘어간
+  // 횟수(같은 길이, hiveDisplayTips). 둘은 함께 있고, 이벤트에 HIVE 각이 없으면(빈 목록 포함) 두 키가 없다(HIVE는 실행의 시작
+  // 상태로 그린다)
+  hives?: readonly number[]
+  hiveTips?: readonly number[]
 }
 
-// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지)
+// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지). hives·
+// hiveTips(6b)는 끝난 HIVE 각과 넘어간 횟수(있을 때만, 함께)
 export type GhostGame = {
   kinds: readonly SimElementKind[]
   poses: readonly number[]
   flags: readonly number[]
+  hives?: readonly number[]
+  hiveTips?: readonly number[]
 }
 
 // 끝난 실행의 경기 요소 전체 정밀도 끝 상태(gameState final, 6d AUTO → TELEOP 이어 가기의 이음새). 다음 끝 상태가 오거나
@@ -254,6 +264,8 @@ export type LastRunElements = {
   robotId: string | null
   tNanos: number
   states: readonly SimElementState[]
+  // 움직이는 HIVE의 끝 상태(6b, gameState finalHives, 6d 이음새). 없었으면 키가 없다
+  hives?: readonly SimHiveState[]
 }
 
 // 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다. joints는 관절 오브젝트 id →
@@ -427,7 +439,12 @@ function endGame(data: PlayData, run: PlayRun): Pick<PlayData, 'simGame' | 'ghos
     return { simGame: null, ghostGame: data.ghostGame }
   return {
     simGame: null,
-    ghostGame: { kinds: run.elements.kinds, poses: game.poses, flags: game.flags }
+    ghostGame: {
+      kinds: run.elements.kinds,
+      poses: game.poses,
+      flags: game.flags,
+      ...(game.hives !== undefined ? { hives: game.hives, hiveTips: game.hiveTips ?? [] } : {})
+    }
   }
 }
 
@@ -716,32 +733,42 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       }
     }
     // 경기 요소 표시 상태(6a): 경기 요소로 실행한 것만, 공 수가 실행의 것과 같고 모양이 맞을 때(메인이 확인하지만 렌더러도
-    // 다른 공을 움직이지 않게) 받는다. 끝난 실행·떼어 놓은 실행은 받지 않고, 늦게 온 이전 상태로 되돌아가지 않는다. final(끝
-    // 상태)은 공 수가 같을 때 lastRunElements로 둔다
+    // 다른 공을 움직이지 않게) 받는다. HIVE 수(6b)는 메인 session.takeGame처럼 이 실행의 첫 상태로 정하고 다른 수의 상태는
+    // 받지 않는다. 끝난 실행·떼어 놓은 실행은 받지 않고, 늦게 온 이전 상태로 되돌아가지 않는다. final(끝 상태)은 공 수가 같을 때
+    // lastRunElements로 둔다
     case 'gameState': {
       const elements = run.elements
       if (run.phase === 'finished' || run.detached || !elements) return {}
-      if (!isValidGameState(event, elements.kinds.length)) return {}
-      const previous = data.simGame
-      if (previous && previous.runId === run.runId && previous.tNanos > event.tNanos) return {}
+      const previous = data.simGame?.runId === run.runId ? data.simGame : null
+      const hiveCount = previous ? (previous.hives?.length ?? 0) : undefined
+      if (!isValidGameState(event, elements.kinds.length, hiveCount)) return {}
+      if (previous && previous.tNanos > event.tNanos) return {}
       const simGame: SimGameState = {
         runId: run.runId,
         tNanos: event.tNanos,
         revision: event.revision,
         poses: event.poses,
-        flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0)
+        flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0),
+        // 빈 HIVE 각은 두지 않는다(메인도 보내지 않는다). 모양 검사가 hiveTips를 같은 길이로 맞춰 두었다
+        ...(Array.isArray(event.hives) && event.hives.length > 0
+          ? { hives: event.hives, hiveTips: event.hiveTips ?? [] }
+          : {})
       }
       const final = event.final
-      if (Array.isArray(final) && final.length === elements.kinds.length)
+      if (Array.isArray(final) && final.length === elements.kinds.length) {
+        // HIVE 끝 상태(6b)는 HIVE 각과 같은 수일 때만 둔다
+        const hives = validHiveStates(event.finalHives, event.hives?.length ?? 0)
         return {
           simGame,
           lastRunElements: {
             runId: run.runId,
             robotId: run.robotId,
             tNanos: event.tNanos,
-            states: final
+            states: final,
+            ...(hives !== null && hives.length > 0 ? { hives } : {})
           }
         }
+      }
       return { simGame }
     }
     case 'libraryProgress': {
@@ -777,6 +804,19 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             event.tNanos,
             'info',
             run.root
+          )
+        ])
+      // HIVE 넘어감(6b)은 경고가 아니라 안내다(경기에서 일어나는 일). params.hive로 문구를 고른다(모르는 값은 빨강)
+      if (event.code === 'hiveTip')
+        return withEntries(data, [
+          consoleEntry(
+            {
+              type: 'notice',
+              key: `sim.hiveTip.${event.params.hive === 'blue' ? 'blue' : 'red'}`,
+              params: { ...event.params }
+            },
+            event.tNanos,
+            'info'
           )
         ])
       // 몸체 충돌 겹침(5)은 몸체·대상을 풀어 둔다(번역은 그릴 때 consoleModel.entryHeadline, 언어를 바꾸면 따라 바뀐다)

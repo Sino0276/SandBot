@@ -1,4 +1,4 @@
-import { MAX_WORLD_ELEMENTS, type SimElementState } from '../worldSpec'
+import { MAX_WORLD_ELEMENTS, type SimElementState, type SimHiveState } from '../worldSpec'
 
 // 경기 요소 표시 상태(6a, spec-6a §5): 시뮬레이터 → 메인 → 렌더러 'gameState' 이벤트의 몸통. 공마다 위치 xyz와 사원수 wxyz를
 // 1e-4 단위 정수로 줄인 7칸(필드 좌표, 0.1 mm·사원수 1e-4)과 비트 표식이다. 공 순서는 elementSpawns 순서(배치 → 프리로드)이고
@@ -12,8 +12,21 @@ export const GAME_POSE_SCALE = 1e4
 export const ELEMENT_FLAG_ASLEEP = 1
 export const ELEMENT_FLAG_OUT = 2
 
-// PhysicsWorld.gameState()가 돌려주는 값(공이 없는 세계는 null). poses.length = GAME_POSE_STRIDE·N, flags.length = N
-export type GameState = { revision: number; poses: number[]; flags: number[] }
+// 움직이는 HIVE 수 한도(6b: BIOBUZZ 빨강·파랑)
+export const MAX_GAME_HIVES = 2
+
+// PhysicsWorld.gameState()가 돌려주는 값(공이 없는 세계는 null). poses.length = GAME_POSE_STRIDE·N, flags.length = N.
+// hives(6b, spec-6b §2·§7): 움직이는 HIVE가 있는 세계만, FieldSpec.hives 순서의 몸체 각(rad) × GAME_POSE_SCALE 정수.
+// hiveTips(6b): hives와 같은 길이, HIVE마다 이 실행에서 넘어간 횟수(SimHiveState.tips, 0 이상 정수). 실행 중 Field 인스펙터의
+// HIVE 줄이 쓴다(hiveTip 안내는 HIVE마다 실행에 한 번이라 두 번째부터는 이것만 센다). 둘은 함께 있거나 함께 없다(quantizeHives).
+// revision은 공 자세·표식, HIVE 각 정수, 넘어간 횟수 가운데 하나라도 바뀔 때 는다
+export type GameState = {
+  revision: number
+  poses: number[]
+  flags: number[]
+  hives?: number[]
+  hiveTips?: number[]
+}
 
 // 반올림한 정수(−0 없이)
 const quantize = (value: number): number => Math.round(value * GAME_POSE_SCALE) + 0
@@ -39,6 +52,25 @@ export function quantizeElements(states: readonly SimElementState[]): {
     flags.push((s.asleep ? ELEMENT_FLAG_ASLEEP : 0) | (s.out ? ELEMENT_FLAG_OUT : 0))
   }
   return { poses, flags }
+}
+
+// HIVE 상태 → 줄인 각(6b, 공과 같은 quantize: 같은 입력 → 같은 정수, −0 없음)과 넘어간 횟수(그대로)
+export function quantizeHives(states: readonly SimHiveState[]): {
+  hives: number[]
+  hiveTips: number[]
+} {
+  return { hives: states.map((s) => quantize(s.angle)), hiveTips: states.map((s) => s.tips) }
+}
+
+// HIVE k의 표시 각(rad). 칸이 없으면 null(시작 각으로 그린다)
+export function hiveDisplayAngle(hives: readonly number[] | undefined, k: number): number | null {
+  const value = hives?.[k]
+  return value === undefined ? null : value / GAME_POSE_SCALE
+}
+
+// HIVE k가 이 실행에서 넘어간 횟수. 칸이 없으면 null
+export function hiveDisplayTips(hiveTips: readonly number[] | undefined, k: number): number | null {
+  return hiveTips?.[k] ?? null
 }
 
 // 공 i의 표시 자세(필드 좌표 m, 단위로 다시 맞춘 사원수 [w, x, y, z]). 줄인 사원수가 0이면 단위 사원수
@@ -74,21 +106,63 @@ const isInt = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value)
 
 // 메인·렌더러가 받은 모양을 확인한다: revision은 0 이상 정수, poses는 GAME_POSE_STRIDE의 배수 길이의 정수(공
-// MAX_WORLD_ELEMENTS개까지), flags는 있으면 공 수만큼의 0–3 정수. count를 주면 공 수가 그것과 같아야 한다
+// MAX_WORLD_ELEMENTS개까지), flags는 있으면 공 수만큼의 0–3 정수, hives(6b)는 있으면 MAX_GAME_HIVES개까지의 정수, hiveTips(6b)는
+// 있으면 0 이상 정수이고 hives와 같은 길이(없는 쪽은 0)다. count를 주면 공 수가, hiveCount를 주면 HIVE 수(hives가 없으면 0)가
+// 그것과 같아야 한다(실행의 첫 상태로 정한 수)
 export function isValidGameState(
-  value: { revision: unknown; poses: unknown; flags?: unknown },
-  count?: number
+  value: {
+    revision: unknown
+    poses: unknown
+    flags?: unknown
+    hives?: unknown
+    hiveTips?: unknown
+  },
+  count?: number,
+  hiveCount?: number
 ): boolean {
-  const { revision, poses, flags } = value
+  const { revision, poses, flags, hives, hiveTips } = value
   if (!isInt(revision) || revision < 0) return false
   if (!Array.isArray(poses) || poses.length % GAME_POSE_STRIDE !== 0) return false
   const n = poses.length / GAME_POSE_STRIDE
   if (n > MAX_WORLD_ELEMENTS || (count !== undefined && n !== count)) return false
   if (!poses.every(isInt)) return false
+  if (hives !== undefined) {
+    if (!Array.isArray(hives) || hives.length > MAX_GAME_HIVES || !hives.every(isInt)) return false
+  }
+  if (hiveTips !== undefined) {
+    if (!Array.isArray(hiveTips) || !hiveTips.every((t) => isInt(t) && t >= 0)) return false
+  }
+  const h = Array.isArray(hives) ? hives.length : 0
+  if ((Array.isArray(hiveTips) ? hiveTips.length : 0) !== h) return false
+  if (hiveCount !== undefined && h !== hiveCount) return false
   if (flags === undefined) return true
   return (
     Array.isArray(flags) &&
     flags.length === n &&
     flags.every((f) => isInt(f) && f >= 0 && f <= (ELEMENT_FLAG_ASLEEP | ELEMENT_FLAG_OUT))
   )
+}
+
+// HIVE 끝 상태(hiveSnapshot·gameState finalHives, 6b)의 모양: count개, HIVE마다 유한한 각·각속도, boolean 잠듦, 0 이상 정수
+// 넘어간 횟수. 맞으면 새 객체(−0 없이), 아니면 null(메인·렌더러가 받은 값을 확인한다)
+export function validHiveStates(value: unknown, count: number): SimHiveState[] | null {
+  if (!Array.isArray(value) || value.length !== count || count > MAX_GAME_HIVES) return null
+  const out: SimHiveState[] = []
+  for (const item of value as unknown[]) {
+    if (typeof item !== 'object' || item === null) return null
+    const s = item as Record<string, unknown>
+    const { angle, angularVelocity, asleep, tips } = s
+    if (
+      typeof angle !== 'number' ||
+      !Number.isFinite(angle) ||
+      typeof angularVelocity !== 'number' ||
+      !Number.isFinite(angularVelocity) ||
+      typeof asleep !== 'boolean' ||
+      !isInt(tips) ||
+      tips < 0
+    )
+      return null
+    out.push({ angle: angle + 0, angularVelocity: angularVelocity + 0, asleep, tips })
+  }
+  return out
 }
