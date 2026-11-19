@@ -7,6 +7,7 @@ import {
   elementFlags,
   GAME_POSE_STRIDE,
   hiveDisplayAngle,
+  hiveDisplayTips,
   isValidGameState,
   quantizeElements,
   quantizeHives,
@@ -86,32 +87,49 @@ describe('HIVE 각(6b)', () => {
   })
   const { poses, flags } = quantizeElements([ball(), ball()])
 
-  it('각 × 1e4 정수(−0 없음)와 표시 각, 칸이 없으면 null', () => {
-    const hives = quantizeHives([hive(), hive({ angle: -0 }), hive({ angle: Math.PI / 6 })])
+  it('각 × 1e4 정수(−0 없음)·넘어간 횟수와 표시 각·횟수, 칸이 없으면 null', () => {
+    const { hives, hiveTips } = quantizeHives([
+      hive(),
+      hive({ angle: -0, tips: 3 }),
+      hive({ angle: Math.PI / 6, tips: 1 })
+    ])
     expect(hives).toEqual([-5236, 0, 5236])
     expect(hives.every((v) => Number.isInteger(v) && !Object.is(v, -0))).toBe(true)
+    expect(hiveTips).toEqual([0, 3, 1])
     expect(hiveDisplayAngle(hives, 0)).toBe(-0.5236)
     expect(hiveDisplayAngle(hives, 2)).toBe(0.5236)
     expect(hiveDisplayAngle(undefined, 0)).toBeNull()
     expect(hiveDisplayAngle([1], 1)).toBeNull()
+    expect(hiveDisplayTips(hiveTips, 1)).toBe(3)
+    expect(hiveDisplayTips(undefined, 0)).toBeNull()
+    expect(hiveDisplayTips([0], 1)).toBeNull()
   })
 
-  it('hives는 있으면 정수 둘까지, hiveCount를 주면 그 수(없으면 0)와 같아야 한다', () => {
-    expect(isValidGameState({ revision: 0, poses, flags, hives: [-5236, 5236] })).toBe(true)
+  it('hives는 있으면 정수 둘까지, hiveTips는 같은 길이의 0 이상 정수, hiveCount를 주면 그 수(없으면 0)와 같아야 한다', () => {
+    const both = { hives: [-5236, 5236], hiveTips: [0, 2] }
+    expect(isValidGameState({ revision: 0, poses, flags, ...both })).toBe(true)
+    expect(isValidGameState({ revision: 0, poses, hives: [], hiveTips: [] }, 2, 0)).toBe(true)
     expect(isValidGameState({ revision: 0, poses, hives: [] }, 2, 0)).toBe(true)
     expect(isValidGameState({ revision: 0, poses }, 2, 0)).toBe(true)
-    expect(isValidGameState({ revision: 0, poses, hives: [1, 2] }, 2, 2)).toBe(true)
+    expect(isValidGameState({ revision: 0, poses, ...both }, 2, 2)).toBe(true)
     // 6a 모양(hives 없음)도 그대로 받는다
     expect(isValidGameState({ revision: 0, poses, flags }, 2)).toBe(true)
   })
 
   it.each([
-    ['배열 아님', { revision: 0, poses, hives: 5 }, undefined],
-    ['정수 아님', { revision: 0, poses, hives: [0.5] }, undefined],
-    ['유한하지 않음', { revision: 0, poses, hives: [Infinity] }, undefined],
-    ['셋', { revision: 0, poses, hives: [0, 0, 0] }, undefined],
-    ['수가 다름', { revision: 0, poses, hives: [0] }, 2],
-    ['있어야 함', { revision: 0, poses }, 2]
+    ['배열 아님', { revision: 0, poses, hives: 5, hiveTips: [0] }, undefined],
+    ['정수 아님', { revision: 0, poses, hives: [0.5], hiveTips: [0] }, undefined],
+    ['유한하지 않음', { revision: 0, poses, hives: [Infinity], hiveTips: [0] }, undefined],
+    ['셋', { revision: 0, poses, hives: [0, 0, 0], hiveTips: [0, 0, 0] }, undefined],
+    ['수가 다름', { revision: 0, poses, hives: [0], hiveTips: [0] }, 2],
+    ['있어야 함', { revision: 0, poses }, 2],
+    // 넘어간 횟수(6b 계약 리뷰): hives와 함께, 같은 길이, 0 이상 정수
+    ['횟수 없음', { revision: 0, poses, hives: [0, 0] }, undefined],
+    ['횟수만', { revision: 0, poses, hiveTips: [0] }, undefined],
+    ['횟수 길이가 다름', { revision: 0, poses, hives: [0, 0], hiveTips: [0] }, undefined],
+    ['횟수 배열 아님', { revision: 0, poses, hives: [0], hiveTips: 0 }, undefined],
+    ['횟수 음수', { revision: 0, poses, hives: [0], hiveTips: [-1] }, undefined],
+    ['횟수 정수 아님', { revision: 0, poses, hives: [0], hiveTips: [0.5] }, undefined]
   ])('hives %s는 받지 않는다', (_, value, hiveCount) => {
     expect(isValidGameState(value, undefined, hiveCount)).toBe(false)
   })

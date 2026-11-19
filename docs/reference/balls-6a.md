@@ -810,14 +810,14 @@ NECTAR가 밖으로 나가면 표식만 남고 다시 넣지 않는다(`NECTAR_P
 
 ### 14.1 v7의 `elements`(`worldSpec.ts`)
 
-`WORLD_SPEC_VERSION` 7(v6 이하는 받지 않음). 선택 칸 `elements?: { groups: SimElementGroup[]; preloads: SimPreloadSpec[] }`. 키가 없으면 결과에도 없다(v6과 같은 값, 판만 7).
+6a에서 `WORLD_SPEC_VERSION` 7(v6 이하는 받지 않음). 선택 칸 `elements?: { groups: SimElementGroup[]; preloads: SimPreloadSpec[] }`. 키가 없으면 결과에도 없다(v6과 같은 값, 판만 7). 6b 계약에서 판이 8이 되었다(v7 이하는 받지 않음. 모양은 같고 아래 표의 묶음 값과 공 수 규칙만 늘었다).
 
 | 검사       | 값                                                                                                                                                                                                                     |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `groups`   | 길이 ≤ `ELEMENT_GROUPS.length`(1), 값은 알려진 묶음(`'garden'`), 유일                                                                                                                                                  |
+| `groups`   | 길이 ≤ `ELEMENT_GROUPS.length`, 값은 알려진 묶음, 유일. 6a는 `['garden']`(길이 1), 6b 계약부터 `['garden', 'flower', 'hiveCell']`(길이 3)                                                                              |
 | `preloads` | ≤ `MAX_PRELOADS` 4. 원소 `{ kind: 'pollen', body, position }`: `kind`는 `'pollen'`만, body는 정수 −1 ≤ body < joints.length(−1 = 로봇 좌표, ≥ 0 = 관절 틀 q = 0), position은 유한하고 각 성분 \|·\| ≤ `MAX_COORD` 10 m |
 | 시즌       | `resolveSeason(field.season).elements`가 null이 아님, 프리로드 종류를 그 시즌이 앎                                                                                                                                     |
-| 총 공 수   | 고른 묶음의 시즌 배치 수 + 프리로드 수 ≤ `MAX_WORLD_ELEMENTS` 64                                                                                                                                                       |
+| 총 공 수   | 고른 묶음의 시즌 배치 수 + 프리로드 수 ≤ `MAX_WORLD_ELEMENTS` 64. 6b 계약부터 배치는 시작 HIVE 상태 `field.hiveTipped`로 거른 것만 센다(`seasons/fieldSpec.ts` `placementActive`, `elementSpawns`와 같은 규칙)         |
 | 오류 순서  | 충돌체 칸을 모두 읽은 뒤 `elements`를 읽는다(기존 오류 순서 유지)                                                                                                                                                      |
 
 물리 값·배치는 렌더러가 보내지 않는다(시뮬레이터가 `resolveSeason`으로 푼다). `SimElementState`(6d 이음새)는 `{ kind, position, orientation[w,x,y,z], velocity, angularVelocity, asleep, out }`다.

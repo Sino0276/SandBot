@@ -7,7 +7,14 @@ import type { OpModeInfo } from '../../../../shared/play'
 import { resolveElementType } from '../../../../shared/sim/elements/elementData'
 import { quantizeElements } from '../../../../shared/sim/elements/gameState'
 import { elementSpawns, restBodyFrames } from '../../../../shared/sim/elements/spawn'
+import {
+  placementActive,
+  placementFieldPosition,
+  type FieldElementPlacement,
+  type FieldSpec
+} from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
+import { mirrorElementPlacement } from '../../../../shared/sim/seasons/symmetry'
 import type { SimElementState } from '../../../../shared/sim/worldSpec'
 import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
 import { newRun, usePlayStore, type PlayRun, type PlayRunElements } from '../../play/playStore'
@@ -328,6 +335,41 @@ describe('elementsViewModel', () => {
     const layers = editElementLayers(scene(), null, BIOBUZZ, [false, false])
     expect(layers.solid).toHaveLength(8)
     expect(layers.preview).toEqual([])
+  })
+
+  // 6b 계약 리뷰: 편집 중 HIVE CELL 공은 시작 HIVE 상태로 고르고 그 각으로 놓는다(BIOBUZZ 데이터 전이라 시험이 만든 판)
+  it('editElementLayers: HIVE CELL 공은 시작 HIVE 상태를 따른다', () => {
+    const cell = (when: 'start' | 'tipped'): FieldElementPlacement => ({
+      group: 'hiveCell',
+      kind: 'nectarRed',
+      position: { x: when === 'start' ? 0.29 : -0.29, y: 0, z: 0.0084 },
+      carrier: 'hiveRed',
+      when
+    })
+    const extra = [cell('start'), cell('tipped')]
+    const layout = [...BIOBUZZ.elements!.layout, ...extra, ...extra.map(mirrorElementPlacement)]
+    const spec: FieldSpec = { ...BIOBUZZ, elements: { ...BIOBUZZ.elements!, layout } }
+    const positions = (tipped: readonly [boolean, boolean]): number[][] =>
+      editElementLayers(scene(), null, spec, tipped).solid.map((b) => b.position)
+    for (const tipped of [
+      [false, false],
+      [true, false],
+      [false, true]
+    ] as const) {
+      const expected = layout
+        .filter((p) => placementActive(p, tipped))
+        .map((p) => {
+          const q = placementFieldPosition(spec, p, tipped)
+          return [q.x, q.y, q.z]
+        })
+      expect(positions(tipped)).toEqual(expected)
+      expect(expected).toHaveLength(10)
+    }
+    // 빨강이 넘어간 채 시작하면 빨강 CELL 공의 자리가 바뀌고 파랑은 그대로다
+    const start = positions([false, false])
+    const redTipped = positions([true, false])
+    expect(redTipped[8]).not.toEqual(start[8])
+    expect(redTipped[9]).toEqual(start[9])
   })
 
   it('editElementLayers: 관절 하위 팀 자리 공은 관절 미리보기 슬라이더를 따라 Preload Slot 기즈모와 같은 자리다', () => {

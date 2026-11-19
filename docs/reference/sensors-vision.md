@@ -1108,7 +1108,7 @@ RobotCore 12.0 `CameraCalibrationManager`(:107–480)·`CameraCalibrationHelper`
 - 카메라 제어 값 범위는 모델과 관계없는 가정이고 시뮬레이터에 영향이 없다.
 - OpenCV를 품은 팀 라이브러리 jar는 부모 먼저 로더 때문에 가짜 SDK의 OpenCV 클래스에 가려진다(`archive.ts` `PROTECTED`에 `org/opencv/`를 넣지 않았다. 실제 로봇에서도 같은 클래스가 둘이면 dex 병합이 실패한다). Limelight·HuskyLens의 AprilTag 결과는 없다.
 - 실측이 필요한 값: 처리 시간 표(d 1·2), 최소 변·모서리 각·흰 테두리, 포털 전이 시간, decisionMargin, 잡음 σ, 다른 종횡비 렌즈 값(C310·C270·LifeCam), OpenCV 오류 줄 번호(`docs/assumptions.md` 4d 표).
-- 4d는 `WORLD_SPEC_VERSION` 5·사이드카 프로토콜 4이고 `PROJECT_VERSION`은 10 그대로다(4d 시점의 값). 지금 코드는 `PROJECT_VERSION` 14(4e 필드 CAD v11, 코드 단위 설정 v12, 충돌체 v13, Preload Slot v14)·`WORLD_SPEC_VERSION` 7(충돌 v6, 경기 요소 v7)·`SIDECAR_PROTOCOL_VERSION` 4다. 웹캠 `cameras`는 세계 설명 v5에서 생겼고 v4는 받지 않는다(`parseWorldSpec`은 v7만 받는다).
+- 4d는 `WORLD_SPEC_VERSION` 5·사이드카 프로토콜 4이고 `PROJECT_VERSION`은 10 그대로다(4d 시점의 값). 지금 코드는 `PROJECT_VERSION` 14(4e 필드 CAD v11, 코드 단위 설정 v12, 충돌체 v13, Preload Slot v14)·`WORLD_SPEC_VERSION` 8(충돌 v6, 경기 요소 v7, 6b 묶음·HIVE 동역학 v8)·`SIDECAR_PROTOCOL_VERSION` 4다. 웹캠 `cameras`는 세계 설명 v5에서 생겼고 v4는 받지 않는다(`parseWorldSpec`은 v8만 받는다).
 
 ### 23.3 이 문서를 만들며 본 공백
 

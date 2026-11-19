@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { FieldSpec } from '../seasons/fieldSpec'
+import {
+  placementActive,
+  placementFieldPosition,
+  type FieldElementPlacement,
+  type FieldSpec
+} from '../seasons/fieldSpec'
 import { resolveSeason } from '../seasons/seasons'
-import { mirrorVec3 } from '../seasons/symmetry'
+import { mirrorElementPlacement, mirrorVec3 } from '../seasons/symmetry'
 import type { SimJointSpec, SimElementsSpec, Vec2, Vec3 } from '../worldSpec'
 import { MAX_PRELOADS, SLOT_GAP } from './elementData'
 import {
@@ -118,6 +123,56 @@ describe('elementSpawns', () => {
   })
 })
 
+// 6b 계약 리뷰: HIVE 몸체 틀 배치(hiveCell)는 시작 HIVE 상태로 거르고(placementActive) 그 각으로 놓는다
+// (placementFieldPosition). BIOBUZZ hiveCell 데이터는 다음 커밋이 넣으므로 시험이 만든 판으로 본다
+describe('elementSpawns: HIVE 몸체 틀 배치(6b)', () => {
+  const NECTAR_R = biobuzz.elements!.types.find((t) => t.kind === 'nectarRed')!.radius
+  const cell = (when: 'start' | 'tipped', y: number): FieldElementPlacement => ({
+    group: 'hiveCell',
+    kind: 'nectarRed',
+    position: { x: when === 'start' ? 0.29 : -0.29, y, z: -0.037287 + NECTAR_R },
+    carrier: 'hiveRed',
+    when
+  })
+  // 빨강: 시작 둘·넘어감 하나, 파랑(거울): 시작 하나·넘어감 둘
+  const red = [cell('start', -0.1), cell('start', 0.1), cell('tipped', 0)]
+  const blue = [cell('start', 0), cell('tipped', -0.1), cell('tipped', 0.1)].map(
+    mirrorElementPlacement
+  )
+  const layout = [...biobuzz.elements!.layout, ...red, ...blue]
+  const spec: FieldSpec = { ...biobuzz, elements: { ...biobuzz.elements!, layout } }
+  const elements: SimElementsSpec = { groups: ['garden', 'hiveCell'], preloads: [] }
+  const ORIGIN = { x: 0, y: 0, yaw: 0 }
+
+  it.each([
+    [[false, false], 8 + 2 + 1],
+    [[true, false], 8 + 1 + 1],
+    [[false, true], 8 + 2 + 2]
+  ] as const)('HIVE 상태 %j: 생기는 배치만 그 각의 필드 자리로(%i개)', (tipped, count) => {
+    const spawned = elementSpawns(spec, elements, ORIGIN, NO_JOINTS, tipped)
+    const expected = layout.filter((p) => placementActive(p, tipped))
+    expect(spawned).toHaveLength(count)
+    expect(spawned).toHaveLength(expected.length)
+    spawned.forEach((s, i) => {
+      expect(s.kind).toBe(expected[i].kind)
+      expect(s.position).toEqual(placementFieldPosition(spec, expected[i], tipped))
+      expect(s.asleep).toBe(true)
+    })
+    // HIVE 몸체 틀 배치는 몸체 틀 좌표 그대로가 아니다(피벗 높이 1.1 m 근처)
+    spawned.slice(8).forEach((s) => expect(s.position.z).toBeGreaterThan(0.8))
+  })
+
+  it('hiveCell 묶음을 고르지 않으면 HIVE 상태와 관계없이 GARDEN만', () => {
+    for (const tipped of [
+      [false, false],
+      [true, true]
+    ] as const)
+      expect(
+        elementSpawns(spec, { groups: ['garden'], preloads: [] }, ORIGIN, NO_JOINTS, tipped)
+      ).toHaveLength(8)
+  })
+})
+
 describe('autoPreloadSlots', () => {
   it('앞 면: 외곽 앞에서 r + 0.5 mm, 2r + 0.5 mm 간격, 바닥 위', () => {
     const result = autoPreloadSlots(SQUARE, open, { x: 0, y: -1, yaw: 0 })
@@ -159,6 +214,31 @@ describe('autoPreloadSlots', () => {
     const pose = { x: 1.49, y: -1.6, yaw: 0 }
     expect(autoPreloadSlots(SQUARE, open, pose)?.face).toBe('front')
     expect(autoPreloadSlots(SQUARE, open, pose, ['garden'])?.face).toBe('back')
+  })
+
+  // 6b: HIVE 몸체 틀 배치(carrier)는 그 좌표가 필드 좌표로 앞 자리 위에 오더라도 보지 않는다(바닥 근처에 오지 않는다)
+  it('HIVE 몸체 틀 배치(carrier)는 묶음을 골라도 막지 않는다', () => {
+    const pose = { x: 0, y: -1, yaw: 0 }
+    const front = autoPreloadSlots(SQUARE, open, pose)!
+    expect(front.face).toBe('front')
+    const onFront = { x: front.slots[0].x, y: pose.y + front.slots[0].y, z: R }
+    const entry = (carrier: boolean): FieldElementPlacement =>
+      carrier
+        ? {
+            group: 'hiveCell',
+            kind: 'pollen',
+            position: onFront,
+            carrier: 'hiveRed',
+            when: 'start'
+          }
+        : { group: 'garden', kind: 'pollen', position: onFront }
+    const withEntry = (carrier: boolean): FieldSpec => ({
+      ...open,
+      elements: { ...open.elements!, layout: [entry(carrier)] }
+    })
+    expect(autoPreloadSlots(SQUARE, withEntry(true), pose, ['hiveCell'])?.face).toBe('front')
+    // 같은 자리의 필드 배치는 앞 면을 막는다(대조)
+    expect(autoPreloadSlots(SQUARE, withEntry(false), pose, ['garden'])?.face).toBe('back')
   })
 
   it('공이 부딪히는 구조물(빨강 벽 FLOWER <3>)에 걸치는 면은 막힌다', () => {

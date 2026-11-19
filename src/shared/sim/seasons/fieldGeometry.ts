@@ -345,7 +345,7 @@ export function spherePartSeparation(center: Vec3, radius: number, shape: FieldP
 
 // 부품이 봉투(구조물 shape) 안인지(tolerance만큼 넘어도 된다). 상자·볼록 기둥은 꼭짓점(볼록이라 꼭짓점이 안이면 전체가 안),
 // 세운 원기둥 부품은 봉투 축마다 지지 거리 |a·Δc| + r·|a_xy| + (h/2)·|a_z|(상자 봉투) 또는 반지름 방향 |Δc_xy| + r와 높이
-// (원기둥 봉투)로 잰다
+// (원기둥 봉투)로 잰다. 비교는 "안"을 참으로 묻는 꼴이라 NaN이 든 부품은 안이 아니다
 export function partInsideShape(
   part: FieldPartShape,
   envelope: FieldShape,
@@ -364,13 +364,13 @@ export function partInsideShape(
         a.z * (p.z - envelope.center.z)
       const limit = half[k] + tolerance
       if (vertices) {
-        if (vertices.some((p) => Math.abs(along(p)) > limit)) return false
+        if (vertices.some((p) => !(Math.abs(along(p)) <= limit))) return false
       } else if (part.kind === 'cylinder') {
         const reach =
           Math.abs(along(part.center)) +
           part.radius * Math.hypot(a.x, a.y) +
           (part.height / 2) * Math.abs(a.z)
-        if (reach > limit) return false
+        if (!(reach <= limit)) return false
       }
     }
     return true

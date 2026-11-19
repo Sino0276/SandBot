@@ -67,13 +67,12 @@ export function mirrorPartShape(shape: FieldPartShape): FieldPartShape {
 
 // 부품 하나(6b): 형상만 바뀌고 쓰임·이름은 그대로(순서도 그대로라 짝 순번이 같다)
 export function mirrorPart(part: FieldPart): FieldPart {
-  const out: FieldPart = {
+  return {
     shape: mirrorPartShape(part.shape),
     robots: part.robots,
-    balls: part.balls
+    balls: part.balls,
+    key: part.key
   }
-  if (part.key !== undefined) out.key = part.key
-  return out
 }
 
 export function mirrorStructure(s: FieldStructure): FieldStructure {

@@ -16,9 +16,17 @@ export const ELEMENT_FLAG_OUT = 2
 export const MAX_GAME_HIVES = 2
 
 // PhysicsWorld.gameState()가 돌려주는 값(공이 없는 세계는 null). poses.length = GAME_POSE_STRIDE·N, flags.length = N.
-// hives(6b, spec-6b §2·§7): 움직이는 HIVE가 있는 세계만, FieldSpec.hives 순서의 몸체 각(rad) × GAME_POSE_SCALE 정수
-// (quantizeHives). revision은 공 자세·표식이나 HIVE 각 정수가 바뀔 때 는다
-export type GameState = { revision: number; poses: number[]; flags: number[]; hives?: number[] }
+// hives(6b, spec-6b §2·§7): 움직이는 HIVE가 있는 세계만, FieldSpec.hives 순서의 몸체 각(rad) × GAME_POSE_SCALE 정수.
+// hiveTips(6b): hives와 같은 길이, HIVE마다 이 실행에서 넘어간 횟수(SimHiveState.tips, 0 이상 정수). 실행 중 Field 인스펙터의
+// HIVE 줄이 쓴다(hiveTip 안내는 HIVE마다 실행에 한 번이라 두 번째부터는 이것만 센다). 둘은 함께 있거나 함께 없다(quantizeHives).
+// revision은 공 자세·표식, HIVE 각 정수, 넘어간 횟수 가운데 하나라도 바뀔 때 는다
+export type GameState = {
+  revision: number
+  poses: number[]
+  flags: number[]
+  hives?: number[]
+  hiveTips?: number[]
+}
 
 // 반올림한 정수(−0 없이)
 const quantize = (value: number): number => Math.round(value * GAME_POSE_SCALE) + 0
@@ -46,15 +54,23 @@ export function quantizeElements(states: readonly SimElementState[]): {
   return { poses, flags }
 }
 
-// HIVE 상태 → 줄인 각(6b, 공과 같은 quantize: 같은 입력 → 같은 정수, −0 없음)
-export function quantizeHives(states: readonly SimHiveState[]): number[] {
-  return states.map((s) => quantize(s.angle))
+// HIVE 상태 → 줄인 각(6b, 공과 같은 quantize: 같은 입력 → 같은 정수, −0 없음)과 넘어간 횟수(그대로)
+export function quantizeHives(states: readonly SimHiveState[]): {
+  hives: number[]
+  hiveTips: number[]
+} {
+  return { hives: states.map((s) => quantize(s.angle)), hiveTips: states.map((s) => s.tips) }
 }
 
 // HIVE k의 표시 각(rad). 칸이 없으면 null(시작 각으로 그린다)
 export function hiveDisplayAngle(hives: readonly number[] | undefined, k: number): number | null {
   const value = hives?.[k]
   return value === undefined ? null : value / GAME_POSE_SCALE
+}
+
+// HIVE k가 이 실행에서 넘어간 횟수. 칸이 없으면 null
+export function hiveDisplayTips(hiveTips: readonly number[] | undefined, k: number): number | null {
+  return hiveTips?.[k] ?? null
 }
 
 // 공 i의 표시 자세(필드 좌표 m, 단위로 다시 맞춘 사원수 [w, x, y, z]). 줄인 사원수가 0이면 단위 사원수
@@ -90,14 +106,21 @@ const isInt = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value)
 
 // 메인·렌더러가 받은 모양을 확인한다: revision은 0 이상 정수, poses는 GAME_POSE_STRIDE의 배수 길이의 정수(공
-// MAX_WORLD_ELEMENTS개까지), flags는 있으면 공 수만큼의 0–3 정수, hives(6b)는 있으면 MAX_GAME_HIVES개까지의 정수. count를
-// 주면 공 수가, hiveCount를 주면 HIVE 수(hives가 없으면 0)가 그것과 같아야 한다(실행의 첫 상태로 정한 수)
+// MAX_WORLD_ELEMENTS개까지), flags는 있으면 공 수만큼의 0–3 정수, hives(6b)는 있으면 MAX_GAME_HIVES개까지의 정수, hiveTips(6b)는
+// 있으면 0 이상 정수이고 hives와 같은 길이(없는 쪽은 0)다. count를 주면 공 수가, hiveCount를 주면 HIVE 수(hives가 없으면 0)가
+// 그것과 같아야 한다(실행의 첫 상태로 정한 수)
 export function isValidGameState(
-  value: { revision: unknown; poses: unknown; flags?: unknown; hives?: unknown },
+  value: {
+    revision: unknown
+    poses: unknown
+    flags?: unknown
+    hives?: unknown
+    hiveTips?: unknown
+  },
   count?: number,
   hiveCount?: number
 ): boolean {
-  const { revision, poses, flags, hives } = value
+  const { revision, poses, flags, hives, hiveTips } = value
   if (!isInt(revision) || revision < 0) return false
   if (!Array.isArray(poses) || poses.length % GAME_POSE_STRIDE !== 0) return false
   const n = poses.length / GAME_POSE_STRIDE
@@ -106,7 +129,11 @@ export function isValidGameState(
   if (hives !== undefined) {
     if (!Array.isArray(hives) || hives.length > MAX_GAME_HIVES || !hives.every(isInt)) return false
   }
+  if (hiveTips !== undefined) {
+    if (!Array.isArray(hiveTips) || !hiveTips.every((t) => isInt(t) && t >= 0)) return false
+  }
   const h = Array.isArray(hives) ? hives.length : 0
+  if ((Array.isArray(hiveTips) ? hiveTips.length : 0) !== h) return false
   if (hiveCount !== undefined && h !== hiveCount) return false
   if (flags === undefined) return true
   return (

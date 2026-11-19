@@ -339,7 +339,8 @@ export type PlayEvent =
   // [x, y, z, qw, qx, qy, qz] × 1e4 정수(src/shared/sim/elements/gameState.ts, 공 순서는 elementSpawns), flags는 공마다 비트
   // (1 잠듦, 2 필드 밖: 숨김)이고 모두 0이면 생략할 수 있다. final은 실행이 끝날 때 한 번 전체 정밀도 상태(6d 이어 가기).
   // hives(6b)는 움직이는 HIVE가 있는 세계만 FieldSpec.hives 순서의 몸체 각 × 1e4 정수(gameState.ts quantizeHives)이고,
-  // finalHives는 final과 함께 실행 끝의 HIVE 상태(hiveSnapshot)다
+  // hiveTips는 hives와 함께(같은 길이) HIVE마다 이 실행에서 넘어간 횟수(실행 중 Field 인스펙터 HIVE 줄). finalHives는 final과
+  // 함께 실행 끝의 HIVE 상태(hiveSnapshot)다
   | {
       type: 'gameState'
       runId: string
@@ -348,6 +349,7 @@ export type PlayEvent =
       poses: number[]
       flags?: number[]
       hives?: number[]
+      hiveTips?: number[]
       final?: SimElementState[]
       finalHives?: SimHiveState[]
     }
@@ -393,7 +395,8 @@ export type PlayEvent =
 // - elementCouplingLimit(6a): 로봇에 닿은 공 행이 결합 한도를 넘어 일부 공을 로봇에 한쪽으로만 풀었다. params 없음
 // - elementIslandLarge(6a): 공 더미가 커서 근사 반복(PGS)으로 풀었다. params 없음
 // - hiveTip(6b): HIVE가 넘어갔다(다른 안정 자세에 닿아 그쪽 댐퍼가 닿기 시작함, CM 10.5.1). params.hive: 'red'·'blue'. Console
-//   안내(info, 경고 아님). 같은 params는 실행마다 한 번이라 HIVE마다 한 줄이고, 횟수는 HIVE 상태 tips(6d)
+//   안내(info, 경고 아님). 같은 params는 실행마다 한 번이라 HIVE마다 한 줄이고, 횟수는 gameState hiveTips(실행 중)와 HIVE
+//   상태 tips(끝, 6d)
 export type SimNoticeCode =
   | 'sharedEncoderMode'
   | 'worldError'

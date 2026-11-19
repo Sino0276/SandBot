@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { FieldElementPlacement, FieldSpec } from './seasons/fieldSpec'
 import {
   TEST_ROBOT_HEIGHT,
   testChassis,
@@ -14,6 +15,22 @@ import {
   type SimJointSpec,
   type WorldSpec
 } from './worldSpec'
+
+// 시험이 만든 시즌 판(6b 계약 리뷰: parseWorldSpec의 공 수 규칙을 BIOBUZZ hiveCell 데이터 전에 본다). null이면 실제 시즌 그대로
+const seasonOverride = vi.hoisted(() => ({ biobuzz: null as FieldSpec | null }))
+vi.mock('./seasons/seasons', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./seasons/seasons')>()
+  return {
+    ...actual,
+    resolveSeason: (id: Parameters<typeof actual.resolveSeason>[0]) =>
+      id === 'biobuzz' && seasonOverride.biobuzz !== null
+        ? seasonOverride.biobuzz
+        : actual.resolveSeason(id)
+  }
+})
+afterEach(() => {
+  seasonOverride.biobuzz = null
+})
 
 function valid(): WorldSpec {
   return {
@@ -805,6 +822,40 @@ describe('parseWorldSpec v7(6a 계약)', () => {
     ]
   ])('%s가 틀리면 그 이름을 돌려준다', (what, value) => {
     expect(parseWorldSpec(value)).toBe(what)
+  })
+
+  // 6b 계약 리뷰: 공 수는 시작 HIVE 상태로 거른 배치(placementActive, elementSpawns와 같은 규칙)로 센다. 빨강 시작 CELL 57개 +
+  // 넘어간 CELL 1개를 더한 판에서 한도(64) 경계가 빨강 HIVE 상태를 따라 움직인다
+  it('공 수는 시작 HIVE 상태로 거른 배치로 센다(한도 경계가 field.hiveTipped를 따른다)', async () => {
+    const { resolveSeason } =
+      await vi.importActual<typeof import('./seasons/seasons')>('./seasons/seasons')
+    const real = resolveSeason('biobuzz')
+    const cell = (when: 'start' | 'tipped'): FieldElementPlacement => ({
+      group: 'hiveCell',
+      kind: 'nectarRed',
+      position: v(0.3, 0, 0.01),
+      carrier: 'hiveRed',
+      when
+    })
+    const layout = [
+      ...real.elements!.layout,
+      ...Array.from({ length: 57 }, () => cell('start')),
+      cell('tipped')
+    ]
+    seasonOverride.biobuzz = { ...real, elements: { ...real.elements!, layout } }
+    const spec = (hiveTipped: [boolean, boolean], groups: string[]): WorldSpec =>
+      ({
+        ...biobuzz({ groups, preloads: [] }),
+        field: { season: 'biobuzz', hiveTipped }
+      }) as WorldSpec
+    // 시작 상태: GARDEN 8 + 빨강 시작 CELL 57 = 65
+    expect(parseWorldSpec(spec([false, false], ['garden', 'hiveCell']))).toBe('elements: too many')
+    expect(parseWorldSpec(spec([false, true], ['garden', 'hiveCell']))).toBe('elements: too many')
+    // 빨강이 넘어간 채 시작: GARDEN 8 + 빨강 넘어간 CELL 1 = 9
+    const tipped = parseWorldSpec(spec([true, false], ['garden', 'hiveCell'])) as WorldSpec
+    expect(tipped.elements).toEqual({ groups: ['garden', 'hiveCell'], preloads: [] })
+    // hiveCell을 고르지 않으면 HIVE 상태와 관계없이 GARDEN만
+    expect(typeof parseWorldSpec(spec([false, false], ['garden']))).toBe('object')
   })
 
   it('경기 요소는 충돌 칸 뒤, 이름·참조 검사 앞에 읽는다', () => {

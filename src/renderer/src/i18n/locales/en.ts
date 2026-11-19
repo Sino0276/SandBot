@@ -656,7 +656,7 @@ const en: Messages = {
       hiveState: 'HIVE start state',
       hiveRed: 'Red HIVE',
       hiveBlue: 'Blue HIVE',
-      hiveStart: 'Start',
+      hiveStart: 'Untipped',
       hiveTipped: 'Tipped',
       hiveHint:
         'The HIVE state when a run starts. A personal run setting: it is not saved in the project and applies from the next INIT. During a run, balls in a CELL can tip the HIVE; with game elements (balls) off, the HIVE stays fixed in this state. Same value as in the Field inspector.',
@@ -2374,12 +2374,14 @@ const en: Messages = {
       hiveState: 'HIVE start state',
       hiveRed: 'Red HIVE',
       hiveBlue: 'Blue HIVE',
-      hiveStart: 'Start',
+      hiveStart: 'Untipped',
       hiveTipped: 'Tipped',
       hiveHint:
         'The HIVE state when a run starts. A personal run setting: it is not saved in the project and applies from the next INIT. During a run, balls in a CELL can tip the HIVE; with game elements (balls) off, the HIVE stays fixed in this state.',
-      // The HIVE during and after a run (6b): hive is the hiveRed/hiveBlue text, angle the body angle (°, one decimal), tips the tip count
+      // The HIVE during a run (hiveNow) and after STOP until the next INIT (hiveEnd; the scene view has already put the HIVE back
+      // in its start state) (6b): hive is the hiveRed/hiveBlue text, angle the body angle (°, one decimal), tips the tip count of that run
       hiveNow: '{{hive}}: now {{angle}}° · tipped {{tips}}×',
+      hiveEnd: '{{hive}}: ended at {{angle}}° · tipped {{tips}}×',
       showElements: 'Show field elements',
       noStartPresets: 'This season has no start position presets.',
       showElementsCadHint:

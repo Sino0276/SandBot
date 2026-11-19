@@ -239,18 +239,21 @@ export type SimGameState = {
   poses: readonly number[]
   // 공마다 표식(1 잠듦, 2 필드 밖). 이벤트가 생략했으면 모두 0
   flags: readonly number[]
-  // 움직이는 HIVE의 몸체 각 × 1e4 정수(6b, FieldSpec.hives 순서, gameState.ts hiveDisplayAngle). 이벤트에 없으면 키가 없다
-  // (HIVE는 실행의 시작 상태로 그린다)
+  // 움직이는 HIVE의 몸체 각 × 1e4 정수(6b, FieldSpec.hives 순서, gameState.ts hiveDisplayAngle)와 이 실행에서 넘어간
+  // 횟수(같은 길이, hiveDisplayTips). 둘은 함께 있고, 이벤트에 HIVE 각이 없으면(빈 목록 포함) 두 키가 없다(HIVE는 실행의 시작
+  // 상태로 그린다)
   hives?: readonly number[]
+  hiveTips?: readonly number[]
 }
 
-// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지). hives(6b)는
-// 끝난 HIVE 각(있을 때만)
+// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지). hives·
+// hiveTips(6b)는 끝난 HIVE 각과 넘어간 횟수(있을 때만, 함께)
 export type GhostGame = {
   kinds: readonly SimElementKind[]
   poses: readonly number[]
   flags: readonly number[]
   hives?: readonly number[]
+  hiveTips?: readonly number[]
 }
 
 // 끝난 실행의 경기 요소 전체 정밀도 끝 상태(gameState final, 6d AUTO → TELEOP 이어 가기의 이음새). 다음 끝 상태가 오거나
@@ -439,7 +442,7 @@ function endGame(data: PlayData, run: PlayRun): Pick<PlayData, 'simGame' | 'ghos
       kinds: run.elements.kinds,
       poses: game.poses,
       flags: game.flags,
-      ...(game.hives !== undefined ? { hives: game.hives } : {})
+      ...(game.hives !== undefined ? { hives: game.hives, hiveTips: game.hiveTips ?? [] } : {})
     }
   }
 }
@@ -729,21 +732,26 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
       }
     }
     // 경기 요소 표시 상태(6a): 경기 요소로 실행한 것만, 공 수가 실행의 것과 같고 모양이 맞을 때(메인이 확인하지만 렌더러도
-    // 다른 공을 움직이지 않게) 받는다. 끝난 실행·떼어 놓은 실행은 받지 않고, 늦게 온 이전 상태로 되돌아가지 않는다. final(끝
-    // 상태)은 공 수가 같을 때 lastRunElements로 둔다
+    // 다른 공을 움직이지 않게) 받는다. HIVE 수(6b)는 메인 session.takeGame처럼 이 실행의 첫 상태로 정하고 다른 수의 상태는
+    // 받지 않는다. 끝난 실행·떼어 놓은 실행은 받지 않고, 늦게 온 이전 상태로 되돌아가지 않는다. final(끝 상태)은 공 수가 같을 때
+    // lastRunElements로 둔다
     case 'gameState': {
       const elements = run.elements
       if (run.phase === 'finished' || run.detached || !elements) return {}
-      if (!isValidGameState(event, elements.kinds.length)) return {}
-      const previous = data.simGame
-      if (previous && previous.runId === run.runId && previous.tNanos > event.tNanos) return {}
+      const previous = data.simGame?.runId === run.runId ? data.simGame : null
+      const hiveCount = previous ? (previous.hives?.length ?? 0) : undefined
+      if (!isValidGameState(event, elements.kinds.length, hiveCount)) return {}
+      if (previous && previous.tNanos > event.tNanos) return {}
       const simGame: SimGameState = {
         runId: run.runId,
         tNanos: event.tNanos,
         revision: event.revision,
         poses: event.poses,
         flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0),
-        ...(Array.isArray(event.hives) ? { hives: event.hives } : {})
+        // 빈 HIVE 각은 두지 않는다(메인도 보내지 않는다). 모양 검사가 hiveTips를 같은 길이로 맞춰 두었다
+        ...(Array.isArray(event.hives) && event.hives.length > 0
+          ? { hives: event.hives, hiveTips: event.hiveTips ?? [] }
+          : {})
       }
       const final = event.final
       if (Array.isArray(final) && final.length === elements.kinds.length) {

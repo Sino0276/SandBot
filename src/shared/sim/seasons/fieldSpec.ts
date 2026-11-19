@@ -75,6 +75,45 @@ export type FieldPartShape =
   | { kind: 'prism'; center: Vec3; rotation: Vec3; polygon: readonly Vec2[]; height: number }
   | { kind: 'cylinder'; center: Vec3; rotation: Vec3; radius: number; height: number }
 
+// 부품 이름(6b, spec-6b §1.1·§8). 시즌 데이터와 렌더러(부품마다 표시 색: 관 초록, 고리 #202020, 위 고리 #f2c200, 백스톱
+// #8e44ad, 압출재·브래킷 #303030)가 같은 낱말을 쓰도록 계약으로 정한다 [결정: 6b 계약 리뷰. 형상 종류만으로는 고리·압출재·
+// 브래킷 기둥이나 관·받침 원기둥을 가를 수 없다]. 앞 낱말이 주인이다: flower* = FLOWER 구조물, cell* = HIVE CELL 구조물,
+// hive* = HIVE 몸체 부품(fieldPartOwner, checkFieldSpec이 확인). 공 조각과 로봇 조각은 같은 이름을 쓰고 robots·balls로 가른다
+// (예: 아래 고리는 공에 22.5° 조각 16개, 로봇에 구멍을 채운 볼록 기둥 하나)
+export const FIELD_PART_KEYS = [
+  // FLOWER(부록 A.2): 아래 고리(Layer X), 가운데 고리(Layer B), 위 고리(Layer C), 가운데 고리의 NECTAR 턱 셋(FAC 2.9), HIPS
+  // 관 넷, 아래·가운데 고리를 잇는 벽 쪽 압출재 둘, Field Wall Bracket, 백스톱 판, 백스톱 받침 둘
+  'flowerRingBottom',
+  'flowerRingMiddle',
+  'flowerRingTop',
+  'flowerLip',
+  'flowerPipe',
+  'flowerUpright',
+  'flowerWallBracket',
+  'flowerBackstop',
+  'flowerSpacer',
+  // CELL 트레이(부록 A.1): 밑판, 옆벽 둘, 지붕 둘, Back Skin, 입구·뒤 리브 조각, Cell Base Tube, Churro 받침 둘
+  'cellFloor',
+  'cellWall',
+  'cellRoof',
+  'cellBackSkin',
+  'cellRib',
+  'cellBaseTube',
+  'cellStandoff',
+  // HIVE 몸체(축 조립체)
+  'hivePivot'
+] as const
+export type FieldPartKey = (typeof FIELD_PART_KEYS)[number]
+
+export const isFieldPartKey = (value: unknown): value is FieldPartKey =>
+  (FIELD_PART_KEYS as readonly unknown[]).includes(value)
+
+// 부품 이름의 주인: FLOWER 구조물(key 'flower'), HIVE CELL 구조물(key 'hiveCell'), HIVE 몸체(FieldHive.parts)
+export function fieldPartOwner(key: FieldPartKey): 'flower' | 'hiveCell' | 'hive' {
+  if (key.startsWith('flower')) return 'flower'
+  return key.startsWith('cell') ? 'hiveCell' : 'hive'
+}
+
 export type FieldPart = {
   shape: FieldPartShape
   // 로봇 3D 몸체 충돌(5 collision3d staticShapes)과 INIT 3D 시작 겹침(startOverlaps)이 쓴다. HIVE 부품은 늘 false(로봇은
@@ -82,19 +121,22 @@ export type FieldPart = {
   robots: boolean
   // 공 접촉(6a ElementWorld)이 쓴다
   balls: boolean
-  // 표시·디버그·데이터 시험용 이름(계산은 배열 순번만 쓴다). 봉투 밖으로 나가도 되는 부품은 PART_ENVELOPE_EXCEPTIONS에, CELL
-  // 트레이의 밑판·Back Skin은 CELL_FLOOR_PART_KEY·CELL_BACK_SKIN_PART_KEY를 둔다
-  key?: string
+  // 부품 이름(FIELD_PART_KEYS, 모든 부품에 둔다: 렌더러 표시 색, 봉투 예외 PART_ENVELOPE_EXCEPTIONS, CELL 밑판·Back Skin 찾기).
+  // 계산은 배열 순번만 쓴다(행 토큰 s<i>p<j>)
+  key: FieldPartKey
 }
 
 // 부품이 구조물 봉투(shape) 밖으로 나가도 되는 거리(m) [결정: spec-6b §1.1, CAD 측정 반올림보다 넉넉히]
 export const PART_ENVELOPE_TOLERANCE = 1e-3
-// 봉투 밖으로 나가도 되는 부품 이름(spec-6b §1.1·부록 A.2: FLOWER Field Wall Bracket이 벽 레일 위와 ±v로 넘는다). 데이터를
-// 넣는 커밋이 그 이름을 여기 더한다
-export const PART_ENVELOPE_EXCEPTIONS: ReadonlySet<string> = new Set<string>()
+// 봉투 밖으로 나가도 되는 부품 이름(spec-6b §1.1·부록 A.2: FLOWER Field Wall Bracket이 벽 레일 위와 ±v로 넘는다). 다른 부품은
+// 봉투 안이다: 가운데 고리의 벽 쪽 탭(부록 A.2 u −0.06604)은 봉투 벽 쪽 면(벽 안쪽 면, u −0.064606)보다 1.43 mm 밖이지만 그
+// 자리는 벽이라 데이터가 벽 면에서 자른다 [결정: 6b 계약 리뷰. 이름 하나가 그 고리의 조각 전체를 덮으므로 예외에 넣지 않는다]
+export const PART_ENVELOPE_EXCEPTIONS: ReadonlySet<FieldPartKey> = new Set<FieldPartKey>([
+  'flowerWallBracket'
+])
 // CELL 트레이의 밑판·Back Skin 부품 이름: 데이터 시험이 hiveCell 시작 공이 둘에 닿는지 찾는다(spec-6b §1.2)
-export const CELL_FLOOR_PART_KEY = 'cellFloor'
-export const CELL_BACK_SKIN_PART_KEY = 'cellBackSkin'
+export const CELL_FLOOR_PART_KEY = 'cellFloor' satisfies FieldPartKey
+export const CELL_BACK_SKIN_PART_KEY = 'cellBackSkin' satisfies FieldPartKey
 
 export type FieldStructure = {
   // i18n field.structures.<key>. 유일하지 않다(다리 넷이 모두 leg). 계산은 배열 순번만 쓴다
@@ -113,8 +155,9 @@ export type FieldStructure = {
   // HIVE 몸체 틀에 달린 것은 표시만(solid·occludes·sensed 모두 false여야 한다)
   carrier: FieldCarrier
   // 계산 부품(6b, carrier 틀). 있으면 로봇 3D 충돌(robots 부품)과 공 접촉(balls 부품)은 shape 대신 이것을 쓴다. 다른 쓰임(평면
-  // 경로·fieldOverlaps·시작 프리셋·4c 광선·4d 가림·자동 프리로드·열기 알림)은 늘 shape(봉투)를 쓴다. 부품은 봉투 안이다
-  // (PART_ENVELOPE_TOLERANCE, 이름이 PART_ENVELOPE_EXCEPTIONS에 있는 것은 예외)
+  // 경로·fieldOverlaps·시작 프리셋·4c 광선·4d 가림·자동 프리로드·열기 알림)은 늘 shape(봉투)를 쓴다. carrier field 구조물의
+  // 부품은 봉투 안이다(PART_ENVELOPE_TOLERANCE, 이름이 PART_ENVELOPE_EXCEPTIONS에 있는 것은 예외). HIVE carrier CELL의 봉투는
+  // 표시만이라 트레이 부품이 넘어도 된다
   parts?: readonly FieldPart[]
 }
 
@@ -411,21 +454,34 @@ function sameShape(mirrored: FieldStructure, candidate: FieldStructure): boolean
   return false
 }
 
-// 부품 하나의 모양(6b): 크기 양수, 볼록 기둥은 볼록 반시계 다각형(점 셋 이상), 원기둥은 세운 것, 쓰임이 하나 이상, HIVE 몸체 틀
-// 부품은 로봇이 쓰지 않는다
-function checkPart(part: FieldPart, what: string, carrier: FieldCarrier, errors: string[]): void {
+// 유한한 양수(부품 크기·HIVE 동역학. checkNumbers도 유한하지 않은 수를 따로 알린다)
+const isPositive = (value: number): boolean => Number.isFinite(value) && value > 0
+
+// 부품 하나의 모양(6b): 크기는 유한한 양수, 볼록 기둥은 볼록 반시계 다각형(점 셋 이상), 원기둥은 세운 것, 쓰임이 하나 이상, HIVE
+// 몸체 틀 부품은 로봇이 쓰지 않는다, 이름은 FIELD_PART_KEYS의 것이고 주인(owner: 구조물 key 또는 'hive')에 맞는다
+function checkPart(
+  part: FieldPart,
+  what: string,
+  carrier: FieldCarrier,
+  owner: FieldStructureKey | 'hive',
+  errors: string[]
+): void {
   const shape = part.shape
   if (shape.kind === 'box') {
-    if (!(shape.size.x > 0 && shape.size.y > 0 && shape.size.z > 0)) errors.push(`${what}: size`)
+    if (!(isPositive(shape.size.x) && isPositive(shape.size.y) && isPositive(shape.size.z)))
+      errors.push(`${what}: size`)
   } else if (shape.kind === 'prism') {
-    if (!(shape.height > 0)) errors.push(`${what}: size`)
+    if (!isPositive(shape.height)) errors.push(`${what}: size`)
     if (!isConvexCcwPolygon(shape.polygon)) errors.push(`${what}: polygon not convex CCW`)
   } else {
-    if (!(shape.radius > 0 && shape.height > 0)) errors.push(`${what}: size`)
+    if (!(isPositive(shape.radius) && isPositive(shape.height))) errors.push(`${what}: size`)
     if (shape.rotation.x !== 0 || shape.rotation.y !== 0) errors.push(`${what}: tilted cylinder`)
   }
   if (!part.robots && !part.balls) errors.push(`${what}: unused`)
   if (carrier !== 'field' && part.robots) errors.push(`${what}: robots on carrier ${carrier}`)
+  if (!isFieldPartKey(part.key)) errors.push(`${what}: unknown key ${String(part.key)}`)
+  else if (fieldPartOwner(part.key) !== owner)
+    errors.push(`${what}: key ${part.key} not for ${owner}`)
 }
 
 const sameMaterial = (a: FieldMaterial, b: FieldMaterial): boolean =>
@@ -484,23 +540,34 @@ export function checkFieldSpec(spec: FieldSpec): string[] {
     }
     if (s.carrier !== 'field' && (s.solid || s.occludes || s.sensed))
       errors.push(`${what}: carrier ${s.carrier} must be display only`)
-    // 부품(6b): 모양과 봉투(shape) 안(PART_ENVELOPE_TOLERANCE, 예외 이름은 빼고)
+    // 부품(6b): 모양과 봉투(shape) 안(PART_ENVELOPE_TOLERANCE, 예외 이름은 빼고). 봉투 안은 carrier field 구조물만 본다
+    // [결정: 6b 계약 리뷰. 봉투는 평면 경로·4c 광선·4d 가림·시작 프리셋·자동 프리로드가 계산에 읽는 필드 구조물에서만 뜻이 있다.
+    // HIVE carrier CELL 상자는 표시만이고, 부록 A.1 CELL 트레이(Cell Base Tube x_b 0.1195, 리브 꼭대기 z_b 0.3327·보스 −0.0755)는
+    // 그 상자(x_b [0.23927, 0.54508], z_b [−0.03785, 0.3175])를 넘는다]
     s.parts?.forEach((part, k) => {
       const partWhat = `${what}.parts[${k}]`
-      checkPart(part, partWhat, s.carrier, errors)
-      const exempt = part.key !== undefined && PART_ENVELOPE_EXCEPTIONS.has(part.key)
-      if (!exempt && !partInsideShape(part.shape, s.shape, PART_ENVELOPE_TOLERANCE))
+      checkPart(part, partWhat, s.carrier, s.key, errors)
+      if (s.carrier !== 'field' || PART_ENVELOPE_EXCEPTIONS.has(part.key)) return
+      if (!partInsideShape(part.shape, s.shape, PART_ENVELOPE_TOLERANCE))
         errors.push(`${partWhat}: outside envelope`)
     })
   })
 
-  // HIVE(6b): 동역학 값은 양수(축 마찰은 0 이상: 마찰 없는 축), 부품 모양
+  // HIVE(6b): 동역학 값은 유한한 양수(축 마찰은 유한한 0 이상: 마찰 없는 축), 부품 모양
   spec.hives.forEach((h, i) => {
     const what = `hives[${i}]`
     const d = h.dynamics
-    if (d && !(d.massMoment > 0 && d.inertia > 0 && d.pivotFriction >= 0))
+    if (
+      d &&
+      !(
+        isPositive(d.massMoment) &&
+        isPositive(d.inertia) &&
+        Number.isFinite(d.pivotFriction) &&
+        d.pivotFriction >= 0
+      )
+    )
       errors.push(`${what}: dynamics`)
-    h.parts?.forEach((part, k) => checkPart(part, `${what}.parts[${k}]`, h.key, errors))
+    h.parts?.forEach((part, k) => checkPart(part, `${what}.parts[${k}]`, h.key, 'hive', errors))
   })
 
   const tagIds = new Set<number>()

@@ -769,7 +769,7 @@ externalRows:  마찰 행(friction 있음):
 | `cylinder`(v7)         | 끝점 ‖성분‖ ≤ 10, 반지름 [5e-4, 1], ‖b − a‖ ≥ 5e-4                                                                    |
 | 공통                   | friction [0, 2]. 다른 키는 버리고 받은 수를 그대로 돌려줌(껍질은 `PhysicsWorld`가 다시 만든다). Euler를 담지 않는다   |
 
-파싱 순서: 지금 칸을 모두 읽은 뒤 `robot.colliders` → 관절별 `colliders` → `collisionIgnore` → 충돌체 합 ≤ 64 → (v7) `elements`. 키가 없으면 결과에도 없어 형상 없는 세계의 결과 객체는 v5와 키·값이 같다(판만 6, 이후 7). v5 이하는 받지 않는다. `WORLD_SPEC_VERSION`은 6(충돌 형상), 7(6a: 원기둥 충돌체·경기 요소).
+파싱 순서: 지금 칸을 모두 읽은 뒤 `robot.colliders` → 관절별 `colliders` → `collisionIgnore` → 충돌체 합 ≤ 64 → (v7) `elements`. 키가 없으면 결과에도 없어 형상 없는 세계의 결과 객체는 v5와 키·값이 같다(판만 6, 이후 7). v5 이하는 받지 않는다. `WORLD_SPEC_VERSION`은 6(충돌 형상), 7(6a: 원기둥 충돌체·경기 요소), 8(6b: 경기 요소 묶음 flower·hiveCell, HIVE 동역학).
 
 ---
 

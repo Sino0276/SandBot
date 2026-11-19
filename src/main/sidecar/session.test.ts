@@ -1394,9 +1394,10 @@ describe('SidecarSession 경기 요소 gameState', () => {
     expect(of('gameState').filter((e) => e.final !== undefined)).toHaveLength(1)
   })
 
-  // 6b 계약(spec-6b §7): 움직이는 HIVE가 있는 세계는 같은 이벤트에 hives(각 정수)를 싣고 끝에는 finalHives(HIVE 상태)를
-  // final과 함께 싣는다. HIVE 수가 실행의 첫 상태와 다른 상태는 버린다. HIVE가 없는 세계의 이벤트에는 두 키가 없다
-  it('6b: hives·finalHives를 나르고, HIVE 수가 바뀐 상태는 버린다', () => {
+  // 6b 계약(spec-6b §7): 움직이는 HIVE가 있는 세계는 같은 이벤트에 hives(각 정수)와 hiveTips(넘어간 횟수, 계약 리뷰)를 싣고
+  // 끝에는 finalHives(HIVE 상태)를 final과 함께 싣는다. HIVE 수가 실행의 첫 상태와 다르거나 횟수 길이가 각과 다른 상태는
+  // 버린다. HIVE가 없는 세계의 이벤트에는 세 키가 없다
+  it('6b: hives·hiveTips·finalHives를 나르고, HIVE 수가 바뀐 상태는 버린다', () => {
     let last = 0
     const hive = (angle: number): SimHiveState => ({
       angle,
@@ -1414,7 +1415,9 @@ describe('SidecarSession 경기 요소 gameState', () => {
       gameState: () => ({
         revision: last / MS + 1,
         ...quantizeElements([ball(0)]),
-        hives: last === 10 * MS ? [7] : [-5236, last / MS]
+        hives: last === 10 * MS ? [7] : [-5236, last / MS],
+        // 5 ms는 횟수 길이가 각과 달라 버린다. 15 ms부터 파랑이 한 번 넘어갔다
+        hiveTips: last === 10 * MS ? [0] : last === 5 * MS ? [0] : [0, last >= 15 * MS ? 1 : 0]
       }),
       elementSnapshot: () => [ball(0)],
       hiveSnapshot: () => [hive(-Math.PI / 6), hive(-0)]
@@ -1426,14 +1429,16 @@ describe('SidecarSession 경기 요소 gameState', () => {
       clock.advance(20)
     }
     proc.line({ type: 'finished', tNanos: 15 * MS, reason: 'returned' })
-    // 10 ms 상태(HIVE 수가 1)는 버린다. 끝(settleWorld 20 ms)의 상태는 먼저 나가고 끝 상태를 실어 한 번 더 나간다(6a 규칙)
+    // 5 ms 상태(횟수 길이가 다름)와 10 ms 상태(HIVE 수가 1)는 버린다. 끝(settleWorld 20 ms)의 상태는 먼저 나가고 끝 상태를
+    // 실어 한 번 더 나간다(6a 규칙)
     const sent = of('gameState')
-    expect(sent.map((e) => [e.tNanos / MS, e.hives, e.finalHives !== undefined])).toEqual([
-      [0, [-5236, 0], false],
-      [5, [-5236, 5], false],
-      [15, [-5236, 15], false],
-      [20, [-5236, 20], false],
-      [20, [-5236, 20], true]
+    expect(
+      sent.map((e) => [e.tNanos / MS, e.hives, e.hiveTips, e.finalHives !== undefined])
+    ).toEqual([
+      [0, [-5236, 0], [0, 0], false],
+      [15, [-5236, 15], [0, 1], false],
+      [20, [-5236, 20], [0, 1], false],
+      [20, [-5236, 20], [0, 1], true]
     ])
     expect(sent.at(-1)!.final).toEqual([ball(0)])
     expect(sent.at(-1)!.finalHives).toEqual([hive(-Math.PI / 6), hive(0)])
@@ -1453,6 +1458,7 @@ describe('SidecarSession 경기 요소 gameState', () => {
     expect(read).toBe(0)
     for (const e of second.of('gameState')) {
       expect(Object.hasOwn(e, 'hives')).toBe(false)
+      expect(Object.hasOwn(e, 'hiveTips')).toBe(false)
       expect(Object.hasOwn(e, 'finalHives')).toBe(false)
     }
   })

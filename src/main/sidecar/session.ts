@@ -82,7 +82,8 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 //   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 로봇
 //   자세나 관절 값(joints)이 바뀔 때만, 일시 정지·Step 멈춤·끝에는 바로)·gameState(경기 요소 표시 상태, 6a: pose와 같은 16 ms
 //   간격과 바로 보내는 때, 세계의 revision이 바뀔 때만, 끝에는 전체 정밀도 상태 final을 실어 한 번 더. 6b: 움직이는 HIVE가
-//   있으면 같은 이벤트에 HIVE 각 hives, 끝에 HIVE 상태 finalHives)·simNotice(같은 code·params는 한 번)·finished.
+//   있으면 같은 이벤트에 HIVE 각 hives와 넘어간 횟수 hiveTips, 끝에 HIVE 상태 finalHives)·simNotice(같은 code·params는
+//   한 번)·finished.
 //   순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
@@ -738,9 +739,10 @@ export class SidecarSession {
     for (const notice of notices) this.simNotice(tNanos, notice.code, notice.params)
   }
 
-  // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식·HIVE 각, 공 수와 HIVE 수는 실행의 첫 상태와 같음)
-  // revision이 바뀐 것만 둔다(둔 때 true). 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고
-  // 마지막 좋은 상태를 둔다(pose와 같은 규칙). HIVE 각이 없는 세계는 hives 키를 두지 않는다(이벤트 모양이 6a와 같다)
+  // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식·HIVE 각·넘어간 횟수, 공 수와 HIVE 수는 실행의 첫
+  // 상태와 같음) revision이 바뀐 것만 둔다(둔 때 true). 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린
+  // 상태는 버리고 마지막 좋은 상태를 둔다(pose와 같은 규칙). HIVE 각이 없는 세계는 hives·hiveTips 키를 두지 않는다(이벤트 모양이
+  // 6a와 같다)
   private takeGame(tNanos: number, game: GameState): boolean {
     if (!isValidGameState(game, this.gameCount ?? undefined, this.hiveCount ?? undefined))
       return false
@@ -753,7 +755,10 @@ export class SidecarSession {
       revision: game.revision,
       poses: [...game.poses],
       flags: Array.isArray(game.flags) ? [...game.flags] : new Array<number>(count).fill(0),
-      ...(Array.isArray(game.hives) && game.hives.length > 0 ? { hives: [...game.hives] } : {})
+      // 모양 검사가 hiveTips를 hives와 같은 길이로 맞춰 두었다
+      ...(Array.isArray(game.hives) && game.hives.length > 0
+        ? { hives: [...game.hives], hiveTips: [...(game.hiveTips ?? [])] }
+        : {})
     }
     return true
   }
@@ -1192,7 +1197,8 @@ export class SidecarSession {
   }
 
   // 경기 요소 표시 상태(6a): revision이 보낸 것과 같으면 보내지 않는다(끝 상태 final·finalHives를 실을 때만 같은 상태를 다시
-  // 보낸다). 표식이 모두 0이면 flags 키를 넣지 않는다(이벤트가 짧다). HIVE 각(6b)은 있을 때만 hives로 싣는다
+  // 보낸다). 표식이 모두 0이면 flags 키를 넣지 않는다(이벤트가 짧다). HIVE 각과 넘어간 횟수(6b)는 있을 때만 hives·hiveTips로
+  // 함께 싣는다
   private sendGame(): void {
     const game = this.latestGame
     if (!game) return
@@ -1209,7 +1215,7 @@ export class SidecarSession {
       revision: game.revision,
       poses: game.poses,
       ...(game.flags.some((flag) => flag !== 0) ? { flags: game.flags } : {}),
-      ...(game.hives !== undefined ? { hives: game.hives } : {}),
+      ...(game.hives !== undefined ? { hives: game.hives, hiveTips: game.hiveTips ?? [] } : {}),
       ...(final !== null ? { final } : {}),
       ...(finalHives !== null ? { finalHives } : {})
     })

@@ -670,7 +670,7 @@ const ko = {
       hiveState: 'HIVE 시작 상태',
       hiveRed: '빨강 HIVE',
       hiveBlue: '파랑 HIVE',
-      hiveStart: '시작',
+      hiveStart: '넘어가지 않음',
       hiveTipped: '넘어감',
       hiveHint:
         '실행을 시작할 때의 HIVE 상태입니다. 개인 실행 설정이라 프로젝트에 저장되지 않고, 다음 INIT부터 적용됩니다. 실행 중에는 CELL에 들어간 공이 HIVE를 넘길 수 있고, 경기 요소(공)를 끄면 HIVE는 이 상태로 고정됩니다. Field 인스펙터의 같은 칸과 같은 값입니다.',
@@ -2363,12 +2363,14 @@ const ko = {
       hiveState: 'HIVE 시작 상태',
       hiveRed: '빨강 HIVE',
       hiveBlue: '파랑 HIVE',
-      hiveStart: '시작',
+      hiveStart: '넘어가지 않음',
       hiveTipped: '넘어감',
       hiveHint:
         '실행을 시작할 때의 HIVE 상태입니다. 개인 실행 설정이라 프로젝트에 저장되지 않고, 다음 INIT부터 적용됩니다. 실행 중에는 CELL에 들어간 공이 HIVE를 넘길 수 있고, 경기 요소(공)를 끄면 HIVE는 이 상태로 고정됩니다.',
-      // 실행 중·끝난 뒤의 HIVE(6b): hive는 hiveRed·hiveBlue 글자, angle은 몸체 각(°, 소수 한 자리), tips는 넘어간 횟수
+      // 실행 중(hiveNow)·STOP 뒤 다음 INIT까지(hiveEnd, 씬 뷰의 HIVE는 시작 상태로 돌아가 있다)의 HIVE(6b): hive는
+      // hiveRed·hiveBlue 글자, angle은 몸체 각(°, 소수 한 자리), tips는 그 실행에서 넘어간 횟수
       hiveNow: '{{hive}}: 지금 {{angle}}° · 넘어간 횟수 {{tips}}',
+      hiveEnd: '{{hive}}: 끝날 때 {{angle}}° · 넘어간 횟수 {{tips}}',
       showElements: '필드 요소 보이기',
       noStartPresets: '이 시즌에는 시작 위치 프리셋이 없습니다.',
       showElementsCadHint: '끄면 CAD도 숨기고 단순 바닥·벽·테이프를 보입니다.',

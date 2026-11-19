@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { applyMatrix3, rotationMatrix, spherePartSeparation } from './fieldGeometry'
+import {
+  applyMatrix3,
+  partInsideShape,
+  rotationMatrix,
+  spherePartSeparation
+} from './fieldGeometry'
 import {
   CELL_BACK_SKIN_PART_KEY,
   CELL_FLOOR_PART_KEY,
   checkFieldSpec,
+  FIELD_PART_KEYS,
+  fieldPartOwner,
+  isFieldPartKey,
+  PART_ENVELOPE_EXCEPTIONS,
   placementActive,
   placementFieldPosition,
   type FieldElementPlacement,
@@ -56,7 +65,7 @@ const PIPES: FieldPart[] = [
   },
   robots: true,
   balls: true,
-  key: 'pipe'
+  key: 'flowerPipe'
 }))
 // 로봇 전용 아래 고리 판(구멍을 채운 볼록 기둥, 반시계 정사각형)
 const BOTTOM_PLATE: FieldPart = {
@@ -73,7 +82,8 @@ const BOTTOM_PLATE: FieldPart = {
     height: 0.008992
   },
   robots: true,
-  balls: false
+  balls: false,
+  key: 'flowerRingBottom'
 }
 
 function withParts(index: number, parts: readonly FieldPart[]): FieldStructure {
@@ -175,8 +185,8 @@ describe('부품·배치 거울(symmetry.ts)', () => {
     expect(m.shape.rotation).toEqual({ x: 0, y: 0, z: wrapPi(Math.PI) })
     expect(m.shape.polygon).toEqual(prism.shape.polygon)
     expect(m.shape.height).toBe(prism.shape.height)
-    expect([m.robots, m.balls, Object.hasOwn(m, 'key')]).toEqual([true, false, false])
-    expect(mirrorPart(PIPES[0])).toMatchObject({ robots: true, balls: true, key: 'pipe' })
+    expect([m.robots, m.balls, m.key]).toEqual([true, false, 'flowerRingBottom'])
+    expect(mirrorPart(PIPES[0])).toMatchObject({ robots: true, balls: true, key: 'flowerPipe' })
 
     const flower = mirrorStructure(withParts(FLOWER, [...PIPES, BOTTOM_PLATE]))
     expect(flower.parts).toHaveLength(5)
@@ -195,7 +205,7 @@ describe('부품·배치 거울(symmetry.ts)', () => {
     const red: FieldHive = {
       ...biobuzz.hives[0],
       dynamics: { massMoment: 0.09, inertia: 0.35, pivotFriction: 0.005 },
-      parts: [{ ...PIPES[0], robots: false }]
+      parts: [{ ...PIPES[0], robots: false, key: 'hivePivot' }]
     }
     const blue = mirrorHive(red)
     expect(blue.key).toBe('hiveBlue')
@@ -236,7 +246,8 @@ describe('checkFieldSpec: 부품(6b)', () => {
         size: { x: 0.08, y: 0.08, z: 0.03 }
       },
       robots: false,
-      balls: true
+      balls: true,
+      key: 'flowerRingMiddle'
     }
     expect(checkFieldSpec(flowerSpec([...PIPES, BOTTOM_PLATE, box]))).toEqual([])
   })
@@ -288,10 +299,80 @@ describe('checkFieldSpec: 부품(6b)', () => {
     })
     expect(partErrors(flowerSpec([shifted(0.0045)]))).toEqual([])
     expect(partErrors(flowerSpec([shifted(0.0055)]))).toContain(`${at}: outside envelope`)
-    // 이름이 있어도 예외 목록(지금 비었다)에 없으면 오류
-    expect(partErrors(flowerSpec([{ ...shifted(0.0055), key: 'bracket' }]))).toContain(
-      `${at}: outside envelope`
+    // 예외 목록(Field Wall Bracket)의 이름만 봉투 밖으로 나가도 된다
+    expect(partErrors(flowerSpec([{ ...shifted(0.05), key: 'flowerWallBracket' }]))).toEqual([])
+  })
+
+  it('봉투 예외 목록은 아는 이름(Field Wall Bracket)만이다', () => {
+    expect([...PART_ENVELOPE_EXCEPTIONS]).toEqual(['flowerWallBracket'])
+    expect([...PART_ENVELOPE_EXCEPTIONS].every(isFieldPartKey)).toBe(true)
+    expect([CELL_FLOOR_PART_KEY, CELL_BACK_SKIN_PART_KEY].every(isFieldPartKey)).toBe(true)
+  })
+
+  it('부품 이름: 계약 낱말(유일)이고 앞 낱말이 주인(FLOWER·HIVE CELL·HIVE 몸체)이다', () => {
+    expect(new Set(FIELD_PART_KEYS).size).toBe(FIELD_PART_KEYS.length)
+    expect(FIELD_PART_KEYS.map(fieldPartOwner)).toEqual(
+      FIELD_PART_KEYS.map((key) =>
+        key.startsWith('flower') ? 'flower' : key.startsWith('cell') ? 'hiveCell' : 'hive'
+      )
     )
+    expect(isFieldPartKey('pipe')).toBe(false)
+    const at = `structures[${FLOWER}].parts[0]`
+    const unknown = { ...PIPES[0], key: 'pipe' } as unknown as FieldPart
+    expect(partErrors(flowerSpec([unknown]))).toContain(`${at}: unknown key pipe`)
+    expect(partErrors(flowerSpec([{ ...PIPES[0], key: 'cellRib' }]))).toContain(
+      `${at}: key cellRib not for flower`
+    )
+  })
+
+  // 6b 계약 리뷰: 봉투 안은 carrier field 구조물만 본다. HIVE carrier CELL 상자는 표시만이고 트레이(부록 A.1)가 넘는다
+  it('HIVE carrier CELL의 트레이 부품은 봉투(표시 상자) 밖이어도 된다', () => {
+    // Cell Base Tube(부록 A.1): x_b [0.119532, 0.544982], |y_b| ≤ 0.0127, z_b [−0.068885, −0.043485]
+    const baseTube: FieldPart = {
+      shape: {
+        kind: 'box',
+        center: { x: 0.332257, y: 0, z: -0.056185 },
+        rotation: zero,
+        size: { x: 0.42545, y: 0.0254, z: 0.0254 }
+      },
+      robots: false,
+      balls: true,
+      key: 'cellBaseTube'
+    }
+    const spec: FieldSpec = {
+      ...biobuzz,
+      structures: biobuzz.structures.map((s, i) => {
+        if (i === CELL) return withParts(CELL, [baseTube])
+        if (i === CELL_MIRROR) return mirrorStructure(withParts(CELL, [baseTube]))
+        return s
+      })
+    }
+    expect(checkFieldSpec(spec)).toEqual([])
+    // 부품은 실제로 그 상자 밖이다(carrier field 구조물이었으면 outside envelope)
+    expect(partInsideShape(baseTube.shape, biobuzz.structures[CELL].shape, 1e-3)).toBe(false)
+  })
+
+  it('유한하지 않은 크기는 크기 오류, NaN이 든 부품은 봉투 안이 아니다', () => {
+    const at = `structures[${FLOWER}].parts[0]`
+    const huge: FieldPart = {
+      ...PIPES[0],
+      shape: { ...PIPES[0].shape, radius: Infinity } as FieldPart['shape']
+    }
+    expect(partErrors(flowerSpec([huge]))).toContain(`${at}: size`)
+    const envelope = biobuzz.structures[FLOWER].shape
+    const lost = (center: { x: number; y: number; z: number }): FieldPart['shape'] => ({
+      ...PIPES[0].shape,
+      center
+    })
+    expect(partInsideShape(PIPES[0].shape, envelope, 1e-3)).toBe(true)
+    expect(partInsideShape(lost({ ...PIPES[0].shape.center, x: NaN }), envelope, 1e-3)).toBe(false)
+    if (BOTTOM_PLATE.shape.kind !== 'prism') throw new Error('prism')
+    const nanPrism = {
+      ...BOTTOM_PLATE.shape,
+      polygon: [...BOTTOM_PLATE.shape.polygon.slice(1), { x: NaN, y: 0 }]
+    }
+    expect(partInsideShape(BOTTOM_PLATE.shape, envelope, 1e-3)).toBe(true)
+    expect(partInsideShape(nanPrism, envelope, 1e-3)).toBe(false)
   })
 
   it('짝의 부품이 다르면 둘 다 짝을 잃는다', () => {
@@ -313,7 +394,8 @@ describe('checkFieldSpec: 부품(6b)', () => {
     const pivot: FieldPart = {
       shape: { kind: 'box', center: zero, rotation: zero, size: { x: 0.35, y: 0.038, z: 0.09 } },
       robots: false,
-      balls: true
+      balls: true,
+      key: 'hivePivot'
     }
     const hives = (red: FieldHive): FieldSpec => ({ ...biobuzz, hives: [red, mirrorHive(red)] })
     const red = { ...biobuzz.hives[0], dynamics, parts: [pivot] }
@@ -326,6 +408,18 @@ describe('checkFieldSpec: 부품(6b)', () => {
     )
     expect(checkFieldSpec(hives({ ...red, dynamics: { ...dynamics, inertia: -1 } }))).toContain(
       'hives[1]: dynamics'
+    )
+    // 유한하지 않은 값(checkNumbers도 따로 알린다)
+    for (const bad of [
+      { massMoment: Infinity },
+      { inertia: Number.NaN },
+      { pivotFriction: Infinity }
+    ])
+      expect(checkFieldSpec(hives({ ...red, dynamics: { ...dynamics, ...bad } }))).toContain(
+        'hives[0]: dynamics'
+      )
+    expect(checkFieldSpec(hives({ ...red, parts: [{ ...pivot, key: 'flowerPipe' }] }))).toContain(
+      'hives[0].parts[0]: key flowerPipe not for hive'
     )
     expect(checkFieldSpec(hives({ ...red, parts: [{ ...pivot, robots: true }] }))).toContain(
       'hives[0].parts[0]: robots on carrier hiveRed'
