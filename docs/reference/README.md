@@ -16,7 +16,7 @@ SandBot을 처음부터 다시 만들 수 있게, 시뮬레이터·편집기가 
 | [`collision.md`](collision.md)           | 5 충돌          | 볼록 껍질, 정적 형상, SAT·GJK 좁은 단계, 충돌 행·마찰 패치, Collider 4종, 편집 자세 겹침, 알림, 기준 해시 여덟째                                              |
 | [`balls-6a.md`](balls-6a.md)             | 6a 공 물리      | POLLEN·NECTAR 데이터, 부드러운 법선·심·이력 스프링, 마찰·굴림 저항, 로봇 결합(Schur 보수), 섬·잠들기, 조밀 LCP, 필드 밖 다시 넣기, 프리로드, 기준 해시 아홉째 |
 
-6b(HIVE 넘어감·FLOWER 안쪽)·6c(센서·웹캠이 보는 공)·6d(점수·규칙 알림·사람 선수·AUTO→TELEOP 이어 가기)는 아직 구현 전이라 문서가 없다. 6a 문서의 "알려진 한계·남은 일"과 `docs/research/6a/plan-6a.md`의 "6b–6d에 남길 이음새"가 출발점이다.
+6b(HIVE 넘어감·FLOWER 케이지·CELL 트레이)는 기준 문서가 아직 없고 `docs/research/6b/spec-6b.md`(명세)·`docs/research/6b/plan-6b.md`(계획), `docs/assumptions.md`의 6b 표, `balls-6a.md` 20.1절(6b 리뷰가 고친 것과 한계)에 흩어져 있다. 6c(센서·웹캠이 보는 공)·6d(점수·규칙 알림·사람 선수·AUTO→TELEOP 이어 가기)는 아직 구현 전이라 문서가 없다. 6a 문서의 "알려진 한계·남은 일"과 `docs/research/6a/plan-6a.md`의 "6b–6d에 남길 이음새"가 출발점이다.
 
 ## 읽는 법
 
