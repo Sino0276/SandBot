@@ -6,6 +6,7 @@ import { PhysicsWorld } from '../world'
 import type { SimCollider, SimElementState, WorldSpec } from '../worldSpec'
 import { ball, intakeWedge } from './elementTestkit'
 import { ElementWorld } from './elementWorld'
+import { loadStates } from './hiveTestkit'
 import { elementSpawns, restBodyFrames } from './spawn'
 
 // 6a 성능(spec-6a §2.7, plan.md 검증 표): 하위 단계 시간(5 ms 틱 ÷ 5)의 중앙값·p99를 로그로 남기고 CI 상한은 목표의 5배다(CI
@@ -277,8 +278,40 @@ describe('6a 성능', () => {
   }, 120_000)
 })
 
-// 6b 성능(spec-6b §10, 시험이 기록, CI 상한은 목표의 5배): P8 깨어 있는 FLOWER 공 16(기둥 넷이 케이지 공 부품에 닿음) = 0.6 ms
+// 6b 성능(spec-6b §10, 시험이 기록, CI 상한은 목표의 5배): P7 HIVE 섬 넘어감(3N+3P) = 1.0 ms, P8 깨어 있는 FLOWER 공 16(기둥 넷이
+// 케이지 공 부품에 닿음) = 0.6 ms
 describe('6b 성능', () => {
+  it('P7: HIVE 섬 넘어감(3N+3P를 Back Skin에 놓고 CELL이 넘어가는 동안)은 하위 단계 1.0 ms(목표) 안팎', () => {
+    const spec = robot()
+    // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음): HIVE가 깨어 있는 틱만 센다
+    const rounds = [0, 1, 2].map(() => {
+      const world = new PhysicsWorld(spec, {
+        elements: { initial: loadStates(BIOBUZZ, { nectar: 3, pollen: 3 }) }
+      })
+      const times: number[] = []
+      let tips = 0
+      for (let k = 0; k < 800; k++) {
+        const start = performance.now()
+        world.step(k * TICK, outputs(mecanum(0, 0, 0)))
+        const elapsed = (performance.now() - start) / 5
+        const hive = world.hiveSnapshot()![0]
+        if (k > 0 && !hive.asleep) times.push(elapsed)
+        tips = hive.tips
+      }
+      expect(world.drainNotices().filter((n) => n.code === 'worldError')).toEqual([])
+      times.sort((a, b) => a - b)
+      return { median: quantile(times, 0.5), p99: quantile(times, 0.99), ticks: times.length, tips }
+    })
+    const best = rounds.reduce((a, b) => (b.median < a.median ? b : a))
+    // 넘어가는 동안 HIVE가 깨어 있었다(0.5 s 넘게)
+    expect(best.tips).toBe(1)
+    expect(best.ticks).toBeGreaterThan(100)
+    console.info(
+      `6b 성능 P7: HIVE 섬 넘어감 3N+3P(깨어 있는 ${best.ticks}틱) 하위 단계 중앙값 ${best.median.toFixed(4)} ms, p99 ${best.p99.toFixed(4)} ms(목표 1.0)`
+    )
+    expect(best.median).toBeLessThan(5)
+  }, 120_000)
+
   it('P8: 깨어 있는 FLOWER 공 16(잠들지 않게)은 하위 단계 0.6 ms(목표) 안팎', () => {
     const spec = robot()
     const flower = elementSpawns(

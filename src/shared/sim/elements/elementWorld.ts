@@ -144,6 +144,8 @@ function applyT(r: readonly number[], v: V3): V3 {
   ]
 }
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+// 공이 HIVE에 닿지 않을 때 돌려주는 공유 빈 목록(읽기만 한다)
+const NO_HIVE_TOUCH: { part: number; found: BallContact }[] = []
 // 굴림·회전 저항을 걸 상대 각속도의 하한(rad/s) [결정: 보이는 회전보다 한참 작고 비정규 수(1e-308)보다 한참 크다]
 const MIN_RESIST_RATE = 1e-30
 // 공기 힘을 걸 속력 하한(m/s) [결정: 항력이 보이지 않는 속력. 비정규 수 근처의 나눗셈을 피한다]
@@ -1481,16 +1483,24 @@ export class ElementWorld {
   ): { part: number; found: BallContact }[] {
     const hive = this.hives[k]
     const r = this.radius[e]
-    const c = this.centerOf(e)
+    // 넓은 단계는 할당 없이(공마다 HIVE마다 하위 단계마다 부른다): 공 속력·HIVE 가장 빠른 부품 점의 속력으로 띠를 넓힌 경계 구
+    const o = 3 * e
+    const vx = this.vel[o]
+    const vy = this.vel[o + 1]
+    const vz = this.vel[o + 2]
     const band =
-      (norm(this.velocityOf(e)) + Math.abs(this.thetaDot[k]) * hive.reach) * h + COLLISION_MARGIN
-    const d = sub(c, hive.pivot)
+      (Math.sqrt(vx * vx + vy * vy + vz * vz) + Math.abs(this.thetaDot[k]) * hive.reach) * h +
+      COLLISION_MARGIN
+    const dx = this.pos[o] - hive.pivot[0]
+    const dy = this.pos[o + 1] - hive.pivot[1]
+    const dz = this.pos[o + 2] - hive.pivot[2]
     const reach = hive.reach + r + band
-    if (dot(d, d) > reach * reach) return []
+    if (dx * dx + dy * dy + dz * dz > reach * reach) return NO_HIVE_TOUCH
     const rotation = this.hiveMatrix(k)
-    const local = applyT(rotation, d)
+    const local = applyT(rotation, [dx, dy, dz])
     for (let i = 0; i < 3; i++)
-      if (local[i] + r + band < hive.min[i] || local[i] - r - band > hive.max[i]) return []
+      if (local[i] + r + band < hive.min[i] || local[i] - r - band > hive.max[i])
+        return NO_HIVE_TOUCH
     const out: { part: number; found: BallContact }[] = []
     for (let j = 0; j < hive.parts.length; j++) {
       const part = hive.parts[j]
@@ -1512,7 +1522,7 @@ export class ElementWorld {
       })
       if (first) break
     }
-    return out
+    return out.length === 0 ? NO_HIVE_TOUCH : out
   }
 
   // 공 e와 HIVE 부품의 접촉(HIVE 순서, 부품 순서, spec-6b §3). 마찰은 공 μ와 부품 μ의 평균, 반발은 딱딱한 면 [가정: CELL PETG
