@@ -122,7 +122,8 @@ function SimulationPreferences(): React.JSX.Element {
       </label>
       <p className="inspector-note">{t('preferences.simulation.gameElementsHint')}</p>
       <p className="inspector-note">{t('preferences.simulation.nextRun')}</p>
-      {/* HIVE 상태(spec-4ab §2.3): Field 인스펙터의 같은 칸과 같은 값(개인 실행 설정, 프로젝트·실행 취소와 무관) */}
+      {/* HIVE 시작 상태(spec-4ab §2.3, 6b spec-6b §8): Field 인스펙터의 같은 칸과 같은 값(개인 실행 설정, 프로젝트·실행 취소와
+          무관) */}
       <section className="preferences-subsection" aria-labelledby="preferences-hive">
         <h3 id="preferences-hive" className="preferences-subtitle">
           {t('preferences.simulation.hiveState')}

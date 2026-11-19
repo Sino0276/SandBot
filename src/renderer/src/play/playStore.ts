@@ -161,8 +161,9 @@ export type PlayRun = {
   // 시뮬레이터가 쓰는 충돌 몸체(5, INIT 때 세계 설명 그대로: 섀시 다음 관절 순번 순). 실행 중 씬 뷰 기즈모가 이 형상을 표시
   // 자세 몸체 틀로 그리고, Console의 collisionOverlap이 몸체 이름을 찾는다. 세계 설명이 없으면 비어 있다.
   colliders: readonly PlayRunCollider[]
-  // 실행의 시즌과 HIVE 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
-  // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로).
+  // 실행의 시즌과 HIVE 시작 상태 [빨강, 파랑](INIT 때 문서 시즌(모르면 'none')과 실행 설정 hiveState로 정함). 실행하는 동안
+  // 씬 뷰·Field 인스펙터·시작 표시가 문서 대신 이것을 쓴다(실행 중 실행 취소로 문서 시즌이 바뀌어도 그대로). 경기 요소를 켠
+  // 실행에서는 HIVE가 이 상태에서 시작해 움직이고(6b), 씬 뷰는 그 각을 simGame.hives로 그린다.
   field: PlayRunField
   // 실행의 경기 요소(6a, INIT 때 세계 설명 elements로 정함). 경기 요소 없이 실행했으면(설정 끔·시즌에 없음·세계 설명 없음) null
   elements: PlayRunElements | null

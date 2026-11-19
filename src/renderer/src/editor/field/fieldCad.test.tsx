@@ -402,6 +402,18 @@ describe('단순 형상 확인란·안내 줄(B4)', () => {
       settings: DEFAULT_PLAY_SETTINGS
     })
     expect(html()).toContain('data-field-cad="hiveTipped"')
+    // 6b: 경기 요소를 켠 실행은 넘어가지 않은 채 시작해도 HIVE가 움직일 수 있어 안내를 둔다(떼어 놓은 실행은 아님)
+    setStore(usePlayStore, {
+      run: run({ season: 'biobuzz', hiveTipped: [false, false], gameElements: true })
+    })
+    expect(html()).toContain('data-field-cad="hiveTipped"')
+    setStore(usePlayStore, {
+      run: run(
+        { season: 'biobuzz', hiveTipped: [false, false], gameElements: true },
+        { detached: true }
+      )
+    })
+    expect(html()).not.toContain('data-field-cad="hiveTipped"')
   })
 
   it("단순 시즌 줄: visual이 있고 'none'·모르는 시즌(잠근 실행이면 실행의 시즌)", () => {
