@@ -276,3 +276,30 @@ describe('6a 성능', () => {
     expect(p99).toBeLessThan(20)
   }, 120_000)
 })
+
+// 6b 성능(spec-6b §10, 시험이 기록, CI 상한은 목표의 5배): P8 깨어 있는 FLOWER 공 16(기둥 넷이 케이지 공 부품에 닿음) = 0.6 ms
+describe('6b 성능', () => {
+  it('P8: 깨어 있는 FLOWER 공 16(잠들지 않게)은 하위 단계 0.6 ms(목표) 안팎', () => {
+    const spec = robot()
+    const flower = elementSpawns(
+      BIOBUZZ,
+      { groups: ['flower'], preloads: [] },
+      spec.robot.start,
+      restBodyFrames([]),
+      spec.field.hiveTipped
+    ).map((s) => ({ ...s, asleep: false }))
+    expect(flower).toHaveLength(16)
+    // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음)
+    const runs = [0, 1, 2].map(() => measure(spec, flower, drive, 400, false))
+    const best = runs.reduce((a, b) => (b.median < a.median ? b : a))
+    // 공은 케이지 안에 남았고(기둥이 무너져도 관·고리 조각 안) 깨어 있다
+    for (const s of best.world.elementSnapshot()!) {
+      expect(s.out).toBe(false)
+      expect(s.asleep).toBe(false)
+    }
+    console.info(
+      `6b 성능 P8: 깨어 있는 FLOWER 공 16 하위 단계 중앙값 ${best.median.toFixed(4)} ms, p99 ${best.p99.toFixed(4)} ms(목표 0.6)`
+    )
+    expect(best.median).toBeLessThan(3)
+  }, 60_000)
+})

@@ -1,6 +1,11 @@
 import { Articulation } from './articulation'
 import { boxHull, canonicalHull, prismHull, transformHull, type Hull } from './hull'
-import { prismVertices, rotationMatrix, type FieldOverlap } from './seasons/fieldGeometry'
+import {
+  boxVertices,
+  prismVertices,
+  rotationMatrix,
+  type FieldOverlap
+} from './seasons/fieldGeometry'
 import { deepFreeze, type FieldPartShape, type FieldSpec } from './seasons/fieldSpec'
 import { composeFrames, planarFrame, type Frame3 } from './sensorFrame'
 import { SUPPLEMENT_TOLERANCE } from './fieldContact'
@@ -224,6 +229,74 @@ export type BallStaticPiece = {
   // 축 정렬 상자(넓은 단계)
   min: V3
   max: V3
+  // 세운(회전이 z 둘레뿐인) 상자·볼록 기둥의 위에서 본 반시계 다각형(필드 좌표, 바깥 법선·변 길이)과 높이: 공 짝을 껍질 좁은 단계
+  // (GJK)에 넘기기 전에 정확한 분리로 거른다(uprightSeparation). 세우지 않은 껍질은 null
+  upright: UprightPrism | null
+}
+
+export type UprightPrism = {
+  // [x0, y0, x1, y1, …] 반시계
+  points: readonly number[]
+  // 변 k(점 k → k + 1)의 바깥 단위 법선 [nx, ny]와 길이
+  normals: readonly number[]
+  lengths: readonly number[]
+  zMin: number
+  zMax: number
+}
+
+// 구(중심 c, 반지름 r)와 세운 볼록 기둥의 정확한 분리(음수면 침투 깊이, seasons/fieldGeometry.ts spherePartSeparation과 같은 식):
+// 평면은 다각형까지(안이면 가장 가까운 변 직선까지 음수), 축은 높이 구간까지. 껍질 좁은 단계를 부르기 전의 거르기라 결과 접촉은
+// 늘 껍질 좁은 단계(sphereHull)가 낸다
+export function uprightSeparation(c: V3, r: number, prism: UprightPrism): number {
+  const { points, normals, lengths } = prism
+  const n = lengths.length
+  let inside = -Infinity
+  for (let k = 0; k < n; k++)
+    inside = Math.max(
+      inside,
+      normals[2 * k] * (c[0] - points[2 * k]) + normals[2 * k + 1] * (c[1] - points[2 * k + 1])
+    )
+  let planar = inside
+  if (inside > 0) {
+    planar = Infinity
+    for (let k = 0; k < n; k++) {
+      const px = points[2 * k]
+      const py = points[2 * k + 1]
+      const qx = points[(2 * k + 2) % (2 * n)]
+      const qy = points[(2 * k + 3) % (2 * n)]
+      const dx = qx - px
+      const dy = qy - py
+      const t = Math.max(
+        0,
+        Math.min(1, ((c[0] - px) * dx + (c[1] - py) * dy) / (lengths[k] * lengths[k]))
+      )
+      planar = Math.min(planar, Math.hypot(c[0] - (px + t * dx), c[1] - (py + t * dy)))
+    }
+  }
+  const axial = Math.max(prism.zMin - c[2], c[2] - prism.zMax)
+  if (planar > 0 || axial > 0) return Math.hypot(Math.max(planar, 0), Math.max(axial, 0)) - r
+  return Math.max(planar, axial) - r
+}
+
+// 세운 상자·볼록 기둥(회전 x = y = 0)의 위에서 본 다각형: 아래 면 꼭짓점(상자는 boxVertices 비트 순서 0, 1, 3, 2가 반시계)
+function uprightPrism(shape: FieldPartShape, bounds: { min: V3; max: V3 }): UprightPrism | null {
+  if (shape.kind === 'cylinder' || shape.rotation.x !== 0 || shape.rotation.y !== 0) return null
+  const ring =
+    shape.kind === 'box'
+      ? [0, 1, 3, 2].map((k) => boxVertices(shape)[k])
+      : prismVertices(shape).slice(0, shape.polygon.length)
+  const points: number[] = []
+  const normals: number[] = []
+  const lengths: number[] = []
+  for (const v of ring) points.push(v.x, v.y)
+  for (let k = 0; k < ring.length; k++) {
+    const p = ring[k]
+    const q = ring[(k + 1) % ring.length]
+    const length = Math.hypot(q.x - p.x, q.y - p.y)
+    normals.push((q.y - p.y) / length, -(q.x - p.x) / length)
+    lengths.push(length)
+  }
+  return { points, normals, lengths, zMin: bounds.min[2], zMax: bounds.max[2] }
 }
 
 export type BallStaticShape =
@@ -319,12 +392,20 @@ function ballGroup(field: FieldSpec, index: number): BallStaticShape {
         hull: null,
         cylinder: { a: [c[0], c[1], c[2] - half], b: [c[0], c[1], c[2] + half], r: shape.radius },
         min: [c[0] - shape.radius, c[1] - shape.radius, c[2] - half],
-        max: [c[0] + shape.radius, c[1] + shape.radius, c[2] + half]
+        max: [c[0] + shape.radius, c[1] + shape.radius, c[2] + half],
+        upright: null
       }
     } else {
       const hull = partHull(shape)
       const bounds = shapeBounds({ kind: 'hull', hull })
-      piece = { token: `s${index}p${j}`, hull, cylinder: null, min: bounds.min, max: bounds.max }
+      piece = {
+        token: `s${index}p${j}`,
+        hull,
+        cylinder: null,
+        min: bounds.min,
+        max: bounds.max,
+        upright: uprightPrism(shape, bounds)
+      }
     }
     for (let k = 0; k < 3; k++) {
       min[k] = Math.min(min[k], piece.min[k])

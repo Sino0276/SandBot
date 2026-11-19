@@ -761,9 +761,9 @@ const HIVE_RED: FieldHive = {
     {
       shape: {
         kind: 'box',
-        center: { x: 0, y: 0, z: (-0.0689 + 0.0222) / 2 },
+        center: { x: 0, y: 0, z: -0.02335 },
         rotation: { x: 0, y: 0, z: 0 },
-        size: { x: 0.35, y: 0.0382, z: 0.0222 + 0.0689 }
+        size: { x: 0.35, y: 0.0382, z: 0.0911 }
       },
       robots: false,
       balls: true,

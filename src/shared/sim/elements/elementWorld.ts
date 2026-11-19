@@ -14,6 +14,7 @@ import {
   placeShape,
   shapeBounds,
   shapeSeparation,
+  uprightSeparation,
   type BallStaticShape,
   type BodyShape,
   type PlacedShape
@@ -127,6 +128,9 @@ const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const MIN_RESIST_RATE = 1e-30
 // 공기 힘을 걸 속력 하한(m/s) [결정: 항력이 보이지 않는 속력. 비정규 수 근처의 나눗셈을 피한다]
 const MIN_AIR_SPEED = 1e-9
+// 세운 기둥 거르기의 여유(m): 정확한 분리(uprightSeparation)가 띠보다 이만큼 넘게 멀 때만 껍질 좁은 단계를 건너뛴다
+// [결정: 6b. GJK와 평면 거리 식의 반올림 차(1e-15 크기)보다 크고 접촉 띠(1 mm)보다 한참 작다]
+const UPRIGHT_SLACK = 1e-9
 
 export type ElementWorldOptions = {
   // 시작 상태(시험과 6d AUTO → TELEOP 이어 가기의 이음새). 없으면 elementSpawns(시즌 배치 → 프리로드)
@@ -1210,6 +1214,8 @@ export class ElementWorld {
       if (st.kind === 'group') {
         st.pieces.forEach((piece, k) => {
           if (!near(piece.min, piece.max)) return
+          // 세운 기둥은 정확한 분리가 띠 밖이면 껍질 좁은 단계를 부르지 않는다(결과는 같고 GJK만 아낀다, 6b 성능 P8)
+          if (piece.upright && uprightSeparation(c, r, piece.upright) > band + UPRIGHT_SLACK) return
           const found = piece.cylinder
             ? sphereCylinder(c, r, piece.cylinder.a, piece.cylinder.b, piece.cylinder.r, band)
             : sphereHull(c, r, piece.hull as Hull, band)

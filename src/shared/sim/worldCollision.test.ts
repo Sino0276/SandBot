@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { Articulation, bodyPoint, type ContactSet } from './articulation'
-import { BodyCollision, frictionTangent } from './bodyCollision'
+import { BodyCollision, frictionTangent, MAX_COLLISION_ROWS } from './bodyCollision'
 import {
   bodyShape,
   placeShape,
   shapeSeparation,
+  startOverlaps,
   staticShapes,
   type PlacedShape
 } from './collision3d'
@@ -563,6 +564,77 @@ function fixedSpec(
 ): WorldSpec {
   return robotSpec({ start }, { wheels: [], motors: motors.map(motorSpec), joints, ...change })
 }
+
+// 6b FLOWER 케이지(spec-6b §4·§10): 섀시 상자가 케이지(고리 판·관·압출재·브래킷·백스톱의 로봇 부품)에 닿아도 하위 단계 충돌 행은
+// 한도 28 안이고(collisionLimit 없음) 케이지로 파고들지 않는다. 시작 겹침은 부품이 여럿이어도 구조물 하나로 알린다
+describe('6b FLOWER 케이지와 섀시', () => {
+  // FLOWER 11(빨강 벽, 축 (0.59418, −1.728254), 자기 u = 필드 +Y)의 필드 쪽에서 −Y로
+  const AXIS_11 = { x: 0.59418, y: -1.728254 }
+  type Run = { rows: number; limit: boolean; penetration: number; blocked: boolean; errors: number }
+  function press(start: Pose2, direction: number, power: number, seconds: number): Run {
+    let rows = 0
+    const original = Articulation.prototype.step
+    vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h: number,
+      drive: Parameters<Articulation['step']>[1],
+      contacts?: ContactSet
+    ) {
+      const n = (contacts?.rows ?? []).filter((r) => /^c(n|t1|t2|w)\./.test(r.key)).length
+      rows = Math.max(rows, n)
+      return original.call(this, h, drive, contacts)
+    })
+    const r = new Runner(spec3d(start)).run(seconds, () =>
+      outputs(toward(start.yaw, direction, power))
+    )
+    vi.restoreAllMocks()
+    const notices = r.world.drainNotices()
+    return {
+      rows,
+      limit: notices.some((n) => n.code === 'collisionLimit'),
+      penetration: Math.max(0, ...[start, ...r.poses].map((p) => cagePenetration(p, FLOWER_RED))),
+      blocked: r.poses.some((p) => p.blocked),
+      errors: notices.filter((n) => n.code === 'worldError').length
+    }
+  }
+
+  it('정면·45°·옆으로 미끄러지며 전출력으로 밀어도 충돌 행 ≤ 28, collisionLimit 없음, 침투 < 1e-6 m, blocked', () => {
+    // 섀시 앞면이 케이지 바깥(가운데 고리 u 0.0612)에서 2 cm, 정면(−Y)·비스듬히·케이지를 따라 미끄러짐
+    const front = AXIS_11.y + 0.0612 + 0.02 + HALF
+    for (const [x, direction, yaw] of [
+      [AXIS_11.x, -Math.PI / 2, -Math.PI / 2],
+      [AXIS_11.x + 0.05, -Math.PI / 2 - Math.PI / 6, -Math.PI / 2],
+      [AXIS_11.x - 0.15, -Math.PI / 2 + Math.PI / 4, -Math.PI / 2],
+      [AXIS_11.x + 0.1, -Math.PI / 2 - 0.3, -Math.PI / 4]
+    ]) {
+      const start = { x, y: front + (yaw === -Math.PI / 4 ? 0.12 : 0), yaw }
+      expect(cagePenetration(start, FLOWER_RED)).toBe(0)
+      const r = press(start, direction, 1, 2)
+      expect(r.rows).toBeGreaterThan(0)
+      expect(r.rows).toBeLessThanOrEqual(MAX_COLLISION_ROWS)
+      expect(r.limit).toBe(false)
+      expect(r.penetration).toBeLessThan(1e-6)
+      expect(r.blocked).toBe(true)
+      expect(r.errors).toBe(0)
+    }
+  }, 30_000)
+
+  it('시작 겹침(startOverlaps)은 케이지 부품 여럿에 걸쳐도 그 FLOWER를 한 번 알린다', () => {
+    // 섀시가 케이지에 3 cm 걸친 자세
+    const start = { x: AXIS_11.x, y: AXIS_11.y + 0.0612 - 0.03 + HALF, yaw: -Math.PI / 2 }
+    const spec = spec3d(start)
+    const placed = placeShape(bodyShape(chassisBox())!, planarFrame(start))
+    const touched = CAGE_PIECES.filter(
+      (st) =>
+        (st.target as { index: number }).index === FLOWER_RED &&
+        shapeSeparation(placed, { kind: 'hull', hull: st.hull! }) < -1e-3
+    )
+    expect(touched.length).toBeGreaterThan(1)
+    expect(startOverlaps(spec, BIOBUZZ)).toEqual([
+      { body: -1, targets: [{ kind: 'structure', index: FLOWER_RED }] }
+    ])
+  })
+})
 
 describe('A1 형상 없는 세계', () => {
   it('A1 형상이 없으면 BodyCollision을 쓰지 않고, 고정 기저의 art.step 셋째 인자는 undefined다', () => {

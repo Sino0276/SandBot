@@ -328,3 +328,72 @@ describe('A21 성능', () => {
     expect(median).toBeLessThan(200)
   })
 })
+
+// 6b 성능(spec-6b §10, 시험이 기록, CI 상한은 목표의 5배): P9 섀시가 FLOWER 케이지(로봇 부품 15)에 닿아 미끄러지는 하위 단계 = 0.5 ms
+describe('6b 성능', () => {
+  it('P9: 18 in 상자 섀시가 FLOWER <3> 케이지를 비스듬히 밀며 미끄러진다(목표 중앙값 0.5 ms, CI 2.5 ms)', () => {
+    const axis = { x: 0.59418, y: -1.728254 }
+    const start = { x: axis.x - 0.15, y: axis.y + 0.0612 + 0.02 + HALF, yaw: -Math.PI / 2 }
+    const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+    const spec: WorldSpec = {
+      ...base,
+      robot: {
+        ...base.robot,
+        start,
+        colliders: [
+          {
+            kind: 'box',
+            center: { x: 0, y: 0, z: 0.1 },
+            rotation: I,
+            half: { x: HALF, y: HALF, z: 0.1 },
+            friction: 0.4
+          }
+        ]
+      }
+    }
+    const keys = new Set<string>()
+    const rowCounts: number[] = []
+    const original = Articulation.prototype.step
+    vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
+      this: Articulation,
+      h: number,
+      drive: Parameters<Articulation['step']>[1],
+      contacts?: ContactSet
+    ) {
+      const collision = (contacts?.rows ?? []).filter((r) => r.key.startsWith('c'))
+      rowCounts.push(collision.length)
+      for (const row of collision)
+        if (row.key.startsWith('cn.')) keys.add(row.key.split('.').slice(0, 2).join('.'))
+      return original.call(this, h, drive, contacts)
+    })
+    // 앞(−Y, 케이지 쪽)으로 밀며 옆으로 미끄러진다: 섀시 앞면이 아래·가운데 고리 판과 관 둘레를 지난다
+    const out = (): Record<string, DeviceValues> => outputs(mecanum(0.6, -0.5, 0))
+    const runs: number[][] = []
+    let world: PhysicsWorld | null = null
+    for (let round = 0; round < 3; round++) {
+      world = new PhysicsWorld(spec)
+      const times: number[] = []
+      for (let k = 0; k < 400; k++) {
+        const t0 = performance.now()
+        world.step(k * TICK, out())
+        if (k > 0) times.push((performance.now() - t0) / 5)
+      }
+      runs.push(times)
+    }
+    vi.restoreAllMocks()
+    const notices = world!.drainNotices().map((n) => n.code)
+    expect(notices).not.toContain('worldError')
+    expect(notices).not.toContain('collisionLimit')
+    // 틱마다 세 번 잰 최솟값(기계 잡음)
+    const best = runs[0].map((_, k) => Math.min(...runs.map((r) => r[k]))).sort((a, b) => a - b)
+    const median = quantile(best, 0.5)
+    const p99 = quantile(best, 0.99)
+    const most = Math.max(...rowCounts)
+    console.info(
+      `6b 성능 P9: 섀시 대 FLOWER 케이지 하위 단계 중앙값 ${median.toFixed(3)} ms, p99 ${p99.toFixed(3)} ms, 충돌 행 최대 ${most}(목표 0.5 ms)`
+    )
+    expect([...keys].some((k) => /^cn\.rk0\/s11p\d+$/.test(k))).toBe(true)
+    expect(most).toBeLessThanOrEqual(28)
+    expect(median).toBeLessThan(2.5)
+  }, 60_000)
+})
