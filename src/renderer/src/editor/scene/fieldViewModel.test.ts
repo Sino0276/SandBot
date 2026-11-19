@@ -2,6 +2,11 @@ import { BoxGeometry, Group, Matrix4, Mesh, PlaneGeometry, Raycaster, Vector3 } 
 import { describe, expect, it } from 'vitest'
 import type { OpModeInfo } from '../../../../shared/play'
 import { applyMatrix3, matMul3, rotationMatrix } from '../../../../shared/sim/seasons/fieldGeometry'
+import {
+  FIELD_PART_KEYS,
+  fieldPartOwner,
+  type FieldSpec
+} from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { tag36h11Image } from '../../../../shared/sim/seasons/tag36h11'
 import type { Vec3 } from '../../../../shared/sim/worldSpec'
@@ -15,7 +20,10 @@ import {
 } from '../field/fieldDisplay'
 import {
   CAD_TAG_FRONT_OFFSET,
+  drawnParts,
+  FIELD_PART_COLORS,
   fieldCompanionModel,
+  isHiveBody,
   fieldOutlineMeshes,
   fieldViewModel,
   FIELD_RENDER_ORDER,
@@ -31,6 +39,7 @@ import {
   type FieldMeshSpec,
   type FieldViewModel
 } from './fieldViewModel'
+import { CELL_PLUS, FLOWER, FLOWER_MIRROR, partsSpec } from './fieldPartsTestkit'
 import { markerOccluded } from './startMarkerHover'
 import { tagPixels, tagTextureWhiteAt } from './tagTexture'
 
@@ -52,9 +61,22 @@ function carrierMatrix(model: FieldViewModel, carrier: FieldMeshSpec['carrier'])
 const worldOf = (model: FieldViewModel, mesh: FieldMeshSpec): Matrix4 =>
   carrierMatrix(model, mesh.carrier).multiply(new Matrix4().fromArray(mesh.matrix))
 
+// 그리는 구조물 메시 수(6b): 부품이 없는 구조물은 봉투 상자 하나, 있으면 공이 닿는 부품, HIVE 몸체 부품(BIOBUZZ 부품 데이터
+// 전후에 같은 시험이 맞게 시즌 데이터에서 센다)
+function structureMeshCounts(spec: FieldSpec): { structure: number; part: number } {
+  const plain = spec.structures.filter((structure) => !structure.parts).length
+  const part =
+    spec.structures.reduce((sum, structure) => sum + drawnParts(structure.parts).length, 0) +
+    spec.hives.reduce((sum, hive) => sum + drawnParts(hive.parts).length, 0)
+  return { structure: plain, part }
+}
+
 describe('fieldViewModel(C4)', () => {
-  it('BIOBUZZ: 구조물 17, 태그 16, 벽 라벨 4, 테이프 14', () => {
-    expect(ofRole(START, 'structure')).toHaveLength(17)
+  it('BIOBUZZ: 구조물 17(부품이 있으면 부품), 태그 16, 벽 라벨 4, 테이프 14', () => {
+    expect(BIOBUZZ.structures).toHaveLength(17)
+    const counts = structureMeshCounts(BIOBUZZ)
+    expect(ofRole(START, 'structure')).toHaveLength(counts.structure)
+    expect(ofRole(START, 'part')).toHaveLength(counts.part)
     expect(ofRole(START, 'tag')).toHaveLength(16)
     expect(ofRole(START, 'wallLabel')).toHaveLength(4)
     expect(ofRole(START, 'tape')).toHaveLength(14)
@@ -64,10 +86,15 @@ describe('fieldViewModel(C4)', () => {
   })
 
   it('HIVE CELL과 태그는 그 HIVE의 지금 각의 carrier 그룹 안에 있다', () => {
-    const cells = ofRole(START, 'structure').filter(
-      (mesh) => BIOBUZZ.structures[mesh.structureIndex!].key === 'hiveCell'
+    const cells = START.meshes.filter(
+      (mesh) =>
+        mesh.structureIndex !== undefined &&
+        BIOBUZZ.structures[mesh.structureIndex].key === 'hiveCell'
     )
-    expect(cells.map((mesh) => mesh.carrier)).toEqual([
+    expect([...new Set(cells.map((mesh) => mesh.structureIndex))]).toEqual([13, 14, 15, 16])
+    for (const mesh of cells)
+      expect(mesh.carrier).toBe(BIOBUZZ.structures[mesh.structureIndex!].carrier)
+    expect(BIOBUZZ.structures.slice(13).map((structure) => structure.carrier)).toEqual([
       'hiveRed',
       'hiveRed',
       'hiveBlue',
@@ -82,9 +109,11 @@ describe('fieldViewModel(C4)', () => {
       BIOBUZZ.hives[0].tippedAngle,
       BIOBUZZ.hives[1].startAngle
     ])
-    // 고정 구조물은 필드 틀
-    const fixed = ofRole(START, 'structure').filter((mesh) => mesh.carrier === 'field')
-    expect(fixed).toHaveLength(13)
+    // 고정 구조물은 필드 틀(구조물 13개)
+    const fixed = START.meshes.filter(
+      (mesh) => mesh.structureIndex !== undefined && mesh.carrier === 'field'
+    )
+    expect(new Set(fixed.map((mesh) => mesh.structureIndex)).size).toBe(13)
   })
 
   it('구조물 변환은 데이터의 중심·ZYX 회전 그대로다', () => {
@@ -154,9 +183,12 @@ describe('fieldViewModel(C4)', () => {
       expect(mesh.material).toMatchObject({ depthWrite: false, transparent: true })
       expect(mesh.renderOrder).toBe(FIELD_RENDER_ORDER.wallPanel)
     }
-    const cells = ofRole(START, 'structure').filter(
-      (mesh) => BIOBUZZ.structures[mesh.structureIndex!].key === 'hiveCell'
+    const cells = START.meshes.filter(
+      (mesh) =>
+        mesh.structureIndex !== undefined &&
+        BIOBUZZ.structures[mesh.structureIndex].key === 'hiveCell'
     )
+    expect(cells.length).toBeGreaterThan(0)
     for (const mesh of cells) {
       expect(mesh.material).toMatchObject({ depthWrite: false, transparent: true })
       expect(mesh.renderOrder).toBe(FIELD_RENDER_ORDER.hiveCell)
@@ -409,25 +441,32 @@ describe('시작 표시 재질·커서(4ab 리뷰 수정)', () => {
 describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
   const roles = (model: FieldViewModel): string[] => model.meshes.map((mesh) => mesh.role)
 
-  it('companion: 태그·벽 라벨만(시작 상태), carriers는 입력 그대로, 순서는 model.meshes', () => {
-    const companion = fieldCompanionModel(START, [false, false])
+  it('companion: 태그·벽 라벨과 HIVE 몸체(보이기는 씬 뷰가 각으로), carriers는 입력 그대로, 순서는 model.meshes', () => {
+    const companion = fieldCompanionModel(START)
     expect(companion.carriers).toBe(START.carriers)
     expect(ofRole(companion, 'tag')).toHaveLength(16)
     expect(ofRole(companion, 'wallLabel')).toHaveLength(4)
-    expect(companion.meshes).toHaveLength(20)
-    expect(new Set(roles(companion))).toEqual(new Set(['tag', 'wallLabel']))
+    const bodies = START.meshes.filter(isHiveBody)
+    // HIVE 몸체: CELL(부품이 있으면 트레이 부품)과 HIVE 축 조립체 부품, 모두 HIVE carrier
+    expect(bodies.length).toBeGreaterThanOrEqual(4)
+    expect(bodies.every((mesh) => mesh.carrier !== 'field' && mesh.role !== 'tag')).toBe(true)
+    expect(companion.meshes).toHaveLength(20 + bodies.length)
+    expect(new Set(roles(companion))).toEqual(
+      new Set(['tag', 'wallLabel', ...bodies.map((mesh) => mesh.role)])
+    )
     const order = START.meshes.map((mesh) => mesh.key)
     const keys = companion.meshes.map((mesh) => mesh.key)
     expect(keys).toEqual(order.filter((key) => keys.includes(key)))
-    // 벽 라벨은 같은 객체, 태그는 새 사본(입력을 바꾸지 않는다)
+    // 벽 라벨·HIVE 몸체는 같은 객체, 태그는 새 사본(입력을 바꾸지 않는다)
     const label = ofRole(companion, 'wallLabel')[0]
     expect(START.meshes).toContain(label)
+    for (const body of bodies) expect(companion.meshes).toContain(body)
     const tag = ofRole(companion, 'tag')[0]
     expect(START.meshes).not.toContain(tag)
   })
 
   it('companion 태그는 태그 평면 +z(앞면 법선 = 태그 −z)로 CAD_TAG_FRONT_OFFSET만큼 앞(1e-9)', () => {
-    const companion = fieldCompanionModel(START, [false, false])
+    const companion = fieldCompanionModel(START)
     const before = ofRole(START, 'tag')
     const after = ofRole(companion, 'tag')
     after.forEach((mesh, index) => {
@@ -452,35 +491,48 @@ describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
     })
   })
 
-  it('넘어간 HIVE의 CELL만 더한다(빨강 넘어감이면 빨강 CELL 2)', () => {
+  it('넘어간 상태와 관계없이 HIVE 몸체를 같은 모양으로 넣고, 고정 구조물(발판 막대·다리·FLOWER)은 넣지 않는다', () => {
     const tipped = fieldViewModel(BIOBUZZ, [true, false], false)
-    const companion = fieldCompanionModel(tipped, [true, false])
-    const cells = ofRole(companion, 'structure')
-    expect(cells).toHaveLength(2)
-    expect(cells.every((mesh) => mesh.carrier === 'hiveRed')).toBe(true)
-    expect(cells.every((mesh) => BIOBUZZ.structures[mesh.structureIndex!].key === 'hiveCell')).toBe(
-      true
+    const companion = fieldCompanionModel(tipped)
+    const bodies = companion.meshes.filter(isHiveBody)
+    expect(bodies.map((mesh) => mesh.key)).toEqual(
+      fieldCompanionModel(START)
+        .meshes.filter(isHiveBody)
+        .map((mesh) => mesh.key)
     )
-    const both = fieldCompanionModel(fieldViewModel(BIOBUZZ, [true, true], false), [true, true])
-    expect(ofRole(both, 'structure')).toHaveLength(4)
-    // carrier 구조물이 아닌 것(발판 막대·다리·FLOWER)은 넘어가도 넣지 않는다
-    expect(ofRole(both, 'structure').every((mesh) => mesh.carrier !== 'field')).toBe(true)
+    expect(
+      new Set(
+        bodies
+          .filter((mesh) => mesh.structureIndex !== undefined)
+          .map((mesh) => BIOBUZZ.structures[mesh.structureIndex!].key)
+      )
+    ).toEqual(new Set(['hiveCell']))
+    expect(
+      companion.meshes.every((mesh) => mesh.carrier !== 'field' || mesh.role === 'wallLabel')
+    ).toBe(true)
   })
 
   it("'none' 시즌의 companion은 비어 있다", () => {
     const none = fieldViewModel(resolveSeason('none'), [false, false], false)
-    expect(fieldCompanionModel(none, [false, false]).meshes).toEqual([])
+    expect(fieldCompanionModel(none).meshes).toEqual([])
   })
 
-  it('윤곽: 바닥 1 + 테이프 14 + 레일 8 + 판 12 + 판 이음 8 + 계산 구조물 13 = 56, HIVE CELL·carrier 없음', () => {
+  it('윤곽: 바닥 1 + 테이프 14 + 레일 8 + 판 12 + 판 이음 8 + 계산 구조물 13 = 56(부품이 있으면 부품 + 흐린 봉투), 표시 전용 CELL 상자 없음', () => {
     const outline = fieldOutlineMeshes(START, BIOBUZZ)
     expect(ofRole(outline, 'floor')).toHaveLength(1)
     expect(ofRole(outline, 'tape')).toHaveLength(14)
     expect(ofRole(outline, 'rail')).toHaveLength(8)
     expect(ofRole(outline, 'panel')).toHaveLength(12)
     expect(ofRole(outline, 'panelSeam')).toHaveLength(8)
+    // 계산 구조물 13개: 부품이 없으면 그 상자, 있으면 흐린 봉투(그리는 부품은 모두 윤곽)
+    const computed = BIOBUZZ.structures.filter((s) => s.solid || s.sensed || s.occludes)
+    expect(computed).toHaveLength(13)
     expect(ofRole(outline, 'structure')).toHaveLength(13)
-    expect(outline.meshes).toHaveLength(56)
+    expect(ofRole(outline, 'structure').filter((mesh) => mesh.outline === 'dim')).toHaveLength(
+      computed.filter((s) => s.parts).length
+    )
+    expect(ofRole(outline, 'part')).toEqual(ofRole(START, 'part'))
+    expect(outline.meshes).toHaveLength(56 + ofRole(START, 'part').length)
     expect(ofRole(outline, 'seam')).toHaveLength(0)
     expect(ofRole(outline, 'tag')).toHaveLength(0)
     expect(ofRole(outline, 'wallLabel')).toHaveLength(0)
@@ -488,11 +540,17 @@ describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
       const structure = BIOBUZZ.structures[mesh.structureIndex!]
       expect(structure.solid || structure.sensed || structure.occludes).toBe(true)
       expect(structure.key).not.toBe('hiveCell')
+      expect(mesh.outline === 'dim').toBe(structure.parts !== undefined)
     }
-    expect(outline.carriers).toEqual([])
-    // 순서는 model.meshes 순서
+    // HIVE carrier 그룹은 그 안에 윤곽(CELL 트레이·축 조립체 부품)이 있을 때만
+    expect(outline.carriers.map((carrier) => carrier.key)).toEqual(
+      START.carriers
+        .filter((carrier) => ofRole(START, 'part').some((mesh) => mesh.carrier === carrier.key))
+        .map((carrier) => carrier.key)
+    )
+    // 순서는 model.meshes 순서(흐린 봉투는 모델에 없다)
     const order = START.meshes.map((mesh) => mesh.key)
-    const keys = outline.meshes.map((mesh) => mesh.key)
+    const keys = outline.meshes.filter((mesh) => mesh.outline !== 'dim').map((mesh) => mesh.key)
     expect(keys).toEqual(order.filter((key) => keys.includes(key)))
     // 위 막대·로고 판(solid 아님, 가림·광선에 씀)은 남긴다
     const kept = new Set(ofRole(outline, 'structure').map((m) => m.structureIndex))
@@ -524,5 +582,159 @@ describe('fieldCompanionModel·fieldOutlineMeshes (B8)', () => {
     expect(ofRole(outline, 'floor')).toHaveLength(1)
     expect(ofRole(outline, 'structure')).toHaveLength(0)
     expect(outline.meshes.length).toBeGreaterThan(1)
+  })
+})
+
+// 6b(spec-6b §8): 부품이 있는 구조물·HIVE 몸체 부품(시험 판 fieldPartsTestkit: BIOBUZZ 부품 데이터 전후에 같은 규칙을 본다)
+describe('부품 그리기·색·윤곽·companion (6b)', () => {
+  const SPEC = partsSpec()
+  const MODEL = fieldViewModel(SPEC, [false, false], false)
+  const partsOf = (model: FieldViewModel, index: number): FieldMeshSpec[] =>
+    ofRole(model, 'part').filter((mesh) => mesh.structureIndex === index)
+
+  it('부품 색 표는 모든 부품 이름을 덮고, CELL 트레이만 주인 재질(null)이다', () => {
+    expect(Object.keys(FIELD_PART_COLORS).sort()).toEqual([...FIELD_PART_KEYS].sort())
+    for (const key of FIELD_PART_KEYS) {
+      const color = FIELD_PART_COLORS[key]
+      if (fieldPartOwner(key) === 'hiveCell') expect(color).toBeNull()
+      else expect(color).toMatch(/^#[0-9a-f]{6}$/)
+    }
+    expect(FIELD_PART_COLORS).toMatchObject({
+      flowerPipe: '#3fae49',
+      flowerRingBottom: '#202020',
+      flowerRingMiddle: '#202020',
+      flowerRingTop: '#f2c200',
+      flowerBackstop: '#8e44ad',
+      flowerUpright: '#303030',
+      flowerWallBracket: '#303030'
+    })
+  })
+
+  it('부품이 있는 구조물은 봉투 대신 공이 닿는 부품(로봇 전용 조각은 뺌)을 그리고, 색은 이름으로 정한다', () => {
+    expect(ofRole(MODEL, 'structure').map((mesh) => mesh.structureIndex)).not.toContain(FLOWER)
+    expect(ofRole(MODEL, 'structure').map((mesh) => mesh.structureIndex)).not.toContain(CELL_PLUS)
+    const flower = partsOf(MODEL, FLOWER)
+    // 1번(구멍을 채운 로봇 판)은 그리지 않는다. 키의 부품 순번은 주인의 parts 순번(행 토큰 s<i>p<j>와 같다)
+    expect(flower.map((mesh) => mesh.key)).toEqual([
+      'structure9.part0',
+      'structure9.part2',
+      'structure9.part3'
+    ])
+    expect(flower.map((mesh) => [mesh.partIndex, mesh.partKey, mesh.geometry.kind])).toEqual([
+      [0, 'flowerRingBottom', 'prism'],
+      [2, 'flowerPipe', 'cylinder'],
+      [3, 'flowerBackstop', 'box']
+    ])
+    expect(flower.map((mesh) => mesh.material.color)).toEqual(['#202020', '#3fae49', '#8e44ad'])
+    for (const mesh of flower) {
+      expect(mesh.carrier).toBe('field')
+      expect(mesh.material).toMatchObject({ opacity: 1, transparent: false, depthWrite: true })
+      expect(mesh.renderOrder).toBe(FIELD_RENDER_ORDER.floor)
+    }
+    // 거울 짝(FLOWER 10)도 같은 수
+    expect(partsOf(MODEL, FLOWER_MIRROR)).toHaveLength(3)
+    // 숨기면 부품도 없다
+    expect(ofRole(fieldViewModel(SPEC, [false, false], true), 'part')).toEqual([])
+  })
+
+  it('부품 변환: 볼록 기둥·상자는 중심·ZYX 그대로, 원기둥은 CylinderGeometry 축(y)을 자기 z로', () => {
+    const [prism, cylinder, box] = partsOf(MODEL, FLOWER)
+    const parts = SPEC.structures[FLOWER].parts!
+    for (const [mesh, part] of [
+      [prism, parts[0]],
+      [box, parts[3]]
+    ] as const) {
+      const matrix = new Matrix4().fromArray(mesh.matrix)
+      const position = new Vector3().setFromMatrixPosition(matrix)
+      const { x, y, z } = part.shape.center
+      expect(position.distanceTo(new Vector3(x, y, z))).toBeLessThan(1e-12)
+      const expected = rotationMatrix(part.shape.rotation)
+      for (let r = 0; r < 3; r++)
+        for (let c = 0; c < 3; c++)
+          expect(matrix.elements[c * 4 + r]).toBeCloseTo(expected[r * 3 + c], 12)
+    }
+    if (prism.geometry.kind !== 'prism' || parts[0].shape.kind !== 'prism') throw new Error('prism')
+    expect(prism.geometry.polygon).toEqual(parts[0].shape.polygon)
+    expect(prism.geometry.height).toBe(parts[0].shape.height)
+    // CylinderGeometry의 +y가 필드 +Z
+    const axis = new Vector3(0, 1, 0).transformDirection(new Matrix4().fromArray(cylinder.matrix))
+    expect(axis.z).toBeCloseTo(1, 12)
+  })
+
+  it('CELL 트레이 부품은 그 HIVE carrier 안의 반투명 HIVE CELL 재질(renderOrder 4), 축 조립체는 HIVE carrier의 불투명 #303030', () => {
+    const cell = partsOf(MODEL, CELL_PLUS)
+    expect(cell.map((mesh) => mesh.partKey)).toEqual(['cellFloor', 'cellBackSkin'])
+    for (const mesh of cell) {
+      expect(mesh.carrier).toBe('hiveRed')
+      expect(mesh.material).toMatchObject({
+        color: SPEC.structures[CELL_PLUS].material.display,
+        transparent: true,
+        depthWrite: false
+      })
+      expect(mesh.renderOrder).toBe(FIELD_RENDER_ORDER.hiveCell)
+    }
+    expect(partsOf(MODEL, CELL_PLUS + 2).every((mesh) => mesh.carrier === 'hiveBlue')).toBe(true)
+    const pivots = ofRole(MODEL, 'part').filter((mesh) => mesh.structureIndex === undefined)
+    expect(pivots.map((mesh) => [mesh.key, mesh.carrier, mesh.partKey])).toEqual([
+      ['hiveRed.part0', 'hiveRed', 'hivePivot'],
+      ['hiveBlue.part0', 'hiveBlue', 'hivePivot']
+    ])
+    expect(pivots.every((mesh) => mesh.material.color === '#303030')).toBe(true)
+  })
+
+  it('윤곽: 부품은 보통 색, 부품이 있는 계산 구조물의 봉투는 첫 부품 바로 앞에 흐리게(표시 전용 CELL 봉투는 없음), carrier는 둘 다', () => {
+    const outline = fieldOutlineMeshes(MODEL, SPEC)
+    const keys = outline.meshes.map((mesh) => mesh.key)
+    const at = keys.indexOf('structure9')
+    expect(at).toBeGreaterThan(-1)
+    expect(keys[at + 1]).toBe('structure9.part0')
+    expect(outline.meshes[at].outline).toBe('dim')
+    const envelope = SPEC.structures[FLOWER].shape
+    if (envelope.kind !== 'box') throw new Error('box')
+    expect(outline.meshes[at].geometry).toEqual({ kind: 'box', size: envelope.size })
+    expect(keys[keys.indexOf('structure10') + 1]).toBe('structure10.part0')
+    // CELL은 계산 구조물이 아니라 봉투가 없고 트레이 부품만 보통 윤곽이다
+    expect(keys).not.toContain('structure14')
+    expect(keys).toContain('structure14.part0')
+    expect(ofRole(outline, 'part').every((mesh) => mesh.outline === undefined)).toBe(true)
+    expect(outline.meshes.filter((mesh) => mesh.outline === 'dim')).toHaveLength(2)
+    expect(outline.carriers.map((carrier) => carrier.key)).toEqual(['hiveRed', 'hiveBlue'])
+    // 그려진 공 부품이 없는 계산 구조물의 봉투는 끝에 흐리게 둔다
+    const robotsOnly: FieldSpec = {
+      ...SPEC,
+      structures: SPEC.structures.map((structure, index) =>
+        index === FLOWER
+          ? {
+              ...structure,
+              parts: structure.parts!.map((part) => ({ ...part, balls: false, robots: true }))
+            }
+          : structure
+      )
+    }
+    const last = fieldOutlineMeshes(fieldViewModel(robotsOnly, [false, false], false), robotsOnly)
+    expect(last.meshes.at(-1)).toMatchObject({ key: 'structure9', outline: 'dim' })
+    // 숨김 모델에는 봉투도 없다
+    const hidden = fieldOutlineMeshes(fieldViewModel(SPEC, [false, false], true), SPEC)
+    expect(hidden.meshes.some((mesh) => mesh.outline === 'dim')).toBe(false)
+  })
+
+  it('companion: CELL 트레이·축 조립체 부품은 HIVE 몸체, FLOWER 부품은 CAD가 그려 넣지 않는다', () => {
+    const companion = fieldCompanionModel(MODEL)
+    const bodies = companion.meshes.filter(isHiveBody)
+    expect(bodies.map((mesh) => mesh.key)).toEqual([
+      'structure13.part0',
+      'structure13.part1',
+      'structure14.part0',
+      'structure14.part1',
+      'structure15.part0',
+      'structure15.part1',
+      'structure16.part0',
+      'structure16.part1',
+      'hiveRed.part0',
+      'hiveBlue.part0'
+    ])
+    expect(companion.meshes.some((mesh) => mesh.carrier === 'field' && mesh.role === 'part')).toBe(
+      false
+    )
   })
 })
