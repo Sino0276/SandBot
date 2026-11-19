@@ -488,7 +488,9 @@ export class ElementWorld {
         // 시험과 6d가 넘기는 값이라 믿지 않는다: 유한하지 않은 각·각속도(NaN이 잠든 채 퍼지지 않게)와 틀린 횟수는 던지고, 멈춤
         // 밖의 각은 그 멈춤 상수로 자른다(범위 안의 각은 그대로) [결정: 6b 리뷰]
         if (!Number.isFinite(given.angle) || !Number.isFinite(given.angularVelocity))
-          throw new RangeError(`elements: initialHives[${k}] needs a finite angle and angularVelocity`)
+          throw new RangeError(
+            `elements: initialHives[${k}] needs a finite angle and angularVelocity`
+          )
         if (!Number.isInteger(given.tips) || given.tips < 0)
           throw new RangeError(`elements: initialHives[${k}].tips needs a non-negative integer`)
         this.theta[k] = Math.min(Math.max(given.angle, hive.lower), hive.upper)
