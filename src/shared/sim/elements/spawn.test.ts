@@ -27,6 +27,9 @@ const SQUARE: Vec2[] = [
   { x: 0.2286, y: -0.2286 }
 ]
 const zero = { x: 0, y: 0, z: 0 }
+// 관절 없는 몸체 틀, 두 HIVE 모두 시작 상태
+const NO_JOINTS = restBodyFrames([])
+const START: readonly [boolean, boolean] = [false, false]
 
 function joint(parent: number, position: Vec3, rotation: Vec3): SimJointSpec {
   return {
@@ -62,8 +65,10 @@ describe('elementSpawns', () => {
   const start = { x: 0.5, y: -1, yaw: Math.PI / 2 }
 
   it('경기 요소가 없으면 []', () => {
-    expect(elementSpawns(biobuzz, undefined, start)).toEqual([])
-    expect(elementSpawns(resolveSeason('none'), { groups: [], preloads: [] }, start)).toEqual([])
+    expect(elementSpawns(biobuzz, undefined, start, NO_JOINTS, START)).toEqual([])
+    expect(
+      elementSpawns(resolveSeason('none'), { groups: [], preloads: [] }, start, NO_JOINTS, START)
+    ).toEqual([])
   })
 
   it('순서는 배치(고른 묶음, 잠듦) → 프리로드(깨어 있음), 프리로드는 시작 자세로 옮긴다', () => {
@@ -75,7 +80,7 @@ describe('elementSpawns', () => {
       ]
     }
     const joints = [joint(-1, { x: 0.1, y: 0, z: 0.2 }, { x: 0, y: 0, z: Math.PI / 2 })]
-    const spawned = elementSpawns(biobuzz, elements, start, restBodyFrames(joints))
+    const spawned = elementSpawns(biobuzz, elements, start, restBodyFrames(joints), START)
     expect(spawned).toHaveLength(10)
     spawned.slice(0, 8).forEach((s, i) => {
       expect(s.kind).toBe('pollen')
@@ -103,7 +108,9 @@ describe('elementSpawns', () => {
     const spawned = elementSpawns(
       biobuzz,
       { groups: [], preloads: [{ kind: 'pollen', body: -1, position: { x: -0, y: -0, z: R } }] },
-      { x: 0, y: 0, yaw: 0 }
+      { x: 0, y: 0, yaw: 0 },
+      NO_JOINTS,
+      START
     )
     expect(spawned).toHaveLength(1)
     expect(Object.is(spawned[0].position.x, -0)).toBe(false)

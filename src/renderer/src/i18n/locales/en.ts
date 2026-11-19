@@ -653,13 +653,13 @@ const en: Messages = {
     },
     // Simulation (personal settings, used from the next INIT)
     simulation: {
-      hiveState: 'HIVE state',
+      hiveState: 'HIVE start state',
       hiveRed: 'Red HIVE',
       hiveBlue: 'Blue HIVE',
       hiveStart: 'Start',
       hiveTipped: 'Tipped',
       hiveHint:
-        'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT. Same value as in the Field inspector.',
+        'The HIVE state when a run starts. A personal run setting: it is not saved in the project and applies from the next INIT. During a run, balls in a CELL can tip the HIVE; with game elements (balls) off, the HIVE stays fixed in this state. Same value as in the Field inspector.',
       title: 'Simulation',
       jitter: 'Hub timing jitter',
       jitterOff: 'Off (always the same result)',
@@ -1071,6 +1071,11 @@ const en: Messages = {
           'Many balls touch the robot, so some balls are only pushed by the robot and do not push it back (shown once per run).',
         elementIslandLarge:
           'A large pile of touching balls is solved with an approximate iteration. Forces inside the pile may be slightly off (shown once per run).',
+        // 6b: HIVE tipped (info, chosen by params.hive, once per HIVE per run)
+        hiveTip: {
+          red: 'The red HIVE tipped (shown once per run).',
+          blue: 'The blue HIVE tipped (shown once per run).'
+        },
         dashCamera:
           'The FTC Dashboard camera stream (startCameraStream) is not simulated. The call does nothing.',
         dashImage: 'FTC Dashboard sendImage is not shown. The call does nothing.',
@@ -2366,13 +2371,15 @@ const en: Messages = {
       axesNoDiagram:
         'The FTC field coordinate definition applied to this season layout (ftc-docs has no diagram for this season yet).',
       innerHalf: 'Wall inner half-width',
-      hiveState: 'HIVE state',
+      hiveState: 'HIVE start state',
       hiveRed: 'Red HIVE',
       hiveBlue: 'Blue HIVE',
       hiveStart: 'Start',
       hiveTipped: 'Tipped',
       hiveHint:
-        'A personal run setting. It is not saved in the project, and the simulator uses it from the next INIT.',
+        'The HIVE state when a run starts. A personal run setting: it is not saved in the project and applies from the next INIT. During a run, balls in a CELL can tip the HIVE; with game elements (balls) off, the HIVE stays fixed in this state.',
+      // The HIVE during and after a run (6b): hive is the hiveRed/hiveBlue text, angle the body angle (°, one decimal), tips the tip count
+      hiveNow: '{{hive}}: now {{angle}}° · tipped {{tips}}×',
       showElements: 'Show field elements',
       noStartPresets: 'This season has no start position presets.',
       showElementsCadHint:
@@ -2397,7 +2404,7 @@ const en: Messages = {
         showShapesHint:
           'Overlays the floor, tape, walls and structures that the simulator uses for blocking and sensing as green outlines. Hidden lines are drawn faint. This is a view setting and is not saved.',
         hiveTippedNote:
-          'The CAD HIVE is drawn in its starting state. A tipped HIVE is overlaid with the simple CELLs and tags.',
+          'The CAD HIVE is drawn untipped. A HIVE that starts tipped or tips during a run is overlaid with the simple CELLs and tags.',
         hiddenNote:
           'Field elements are hidden or isolation is on, so the CAD is not drawn and the simple floor, walls and tape are shown.',
         simpleSeasonNote:

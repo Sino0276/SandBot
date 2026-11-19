@@ -381,7 +381,13 @@ export function intakeWedge(): {
     gate
   })
   const field = resolveSeason('biobuzz')
-  const spawns = elementSpawns(field, spec.elements, start, restBodyFrames(spec.joints))
+  const spawns = elementSpawns(
+    field,
+    spec.elements,
+    start,
+    restBodyFrames(spec.joints),
+    spec.field.hiveTipped
+  )
   // 빨강 GARDEN 넷(공 0–3, 관중석 벽 +X에 붙은 한 줄) 앞 지름 + 1 mm에 잠든 공 한 줄
   const front = spawns.slice(0, 4).map((s) => ({
     ...s,

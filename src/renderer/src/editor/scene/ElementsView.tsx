@@ -18,7 +18,12 @@ import {
 import { simGameOf, usePlayStore, type PlayState } from '../../play/playStore'
 import { useSceneStore } from '../../scene/sceneStore'
 import { useEditorStore } from '../editorStore'
-import { documentSeasonId, lockedRunField, runLocksField } from '../field/fieldDisplay'
+import {
+  documentSeasonId,
+  hiveTippedOf,
+  lockedRunField,
+  runLocksField
+} from '../field/fieldDisplay'
 import { useJointPreviewStore } from '../joint/jointPreviewStore'
 import { startTargetRobotId } from '../field/startPresetModel'
 import { fieldElementsHidden, useSceneVisibilityStore } from '../sceneVisibility'
@@ -122,6 +127,8 @@ function ElementsView(): React.JSX.Element {
   const season = useSceneStore((state) => documentSeasonId(state.field))
   const activeId = useEditorStore((state) => state.selectedId)
   const gameElements = usePlayStore((state) => state.settings.gameElements)
+  // 편집 중 HIVE CELL 공의 시작 HIVE 상태(개인 실행 설정, 바뀔 때만 새 객체)
+  const hiveState = usePlayStore((state) => state.settings.hiveState)
   // 실행 전체가 아니라 잠금·잠근 필드·실행의 공만 구독한다(텔레메트리마다 바뀌는 run으로 다시 그리지 않게)
   const locked = usePlayStore((state) => runLocksField(state.run))
   const lockedField = usePlayStore((state) => lockedRunField(state.run))
@@ -172,9 +179,11 @@ function ElementsView(): React.JSX.Element {
   const edit = useMemo(
     () =>
       !locked && gameElements
-        ? editElementLayers(objects, targetRobotId, field, { values: previewValues })
+        ? editElementLayers(objects, targetRobotId, field, hiveTippedOf(hiveState), {
+            values: previewValues
+          })
         : { solid: [], preview: [] },
-    [locked, gameElements, objects, targetRobotId, field, previewValues]
+    [locked, gameElements, objects, targetRobotId, field, hiveState, previewValues]
   )
   const ghostBalls = useMemo(() => ghostElementBalls(ghost), [ghost])
 

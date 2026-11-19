@@ -14,7 +14,7 @@ import { useSceneVisibilityStore } from '../sceneVisibility'
 import FieldElementsSection from './FieldElementsSection'
 import FieldInspector from './FieldInspector'
 
-// Field 인스펙터 '경기 요소' 구역(6a): 공 켜기(개인 실행 설정), 묶음별 공 수(6b·6d 묶음은 단계), 실행의 공 수, 로봇 프리로드 출처.
+// Field 인스펙터 '경기 요소' 구역(6a): 공 켜기(개인 실행 설정), 묶음별 공 수(6d 묶음은 단계), 실행의 공 수, 로봇 프리로드 출처.
 
 vi.hoisted(() => {
   const storage = { getItem: () => null, setItem: () => {} }
@@ -95,14 +95,20 @@ function capture(render: () => ReactNode): Element[] {
 }
 
 describe("Field 인스펙터 '경기 요소'", () => {
-  it('BIOBUZZ: GARDEN POLLEN 8개, 6b·6d 묶음은 단계, 로봇마다 프리로드 출처(문서 순서)', () => {
+  it('BIOBUZZ: GARDEN POLLEN 8개, FLOWER·CELL은 수(6b), 6d 묶음은 단계, 로봇마다 프리로드 출처(문서 순서)', () => {
     const text = html()
     expect(text).toContain(t('field.inspector.elements.title'))
     expect(text).toContain(t('field.inspector.elements.enabled'))
     expect(text).toContain(
       `${t('field.inspector.elements.groups.garden')}</span><output class="field-inspector-value">${t('field.inspector.elements.count', { count: 8 })}`
     )
-    expect(text).toContain(t('field.inspector.elements.deferred', { stage: '6b' }))
+    // 6b 계약: FLOWER·CELL 묶음은 실행에 생기는 묶음이라 수를 보인다(시즌 데이터는 다음 커밋이 넣는다)
+    const biobuzz = resolveSeason('biobuzz').elements!.layout
+    for (const group of ['flower', 'hiveCell'] as const)
+      expect(text).toContain(
+        `${t(`field.inspector.elements.groups.${group}`)}</span><output class="field-inspector-value">${t('field.inspector.elements.count', { count: biobuzz.filter((p) => p.group === group && p.when !== 'tipped').length })}`
+      )
+    expect(text).not.toContain(t('field.inspector.elements.deferred', { stage: '6b' }))
     expect(text).toContain(t('field.inspector.elements.deferred', { stage: '6d' }))
     const alpha = text.indexOf(
       t('field.inspector.elements.robotLine', {

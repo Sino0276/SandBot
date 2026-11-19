@@ -11,7 +11,7 @@ import type {
   TelemetryFrame
 } from './sidecarProtocol'
 import type { LibraryProgress, LibraryReason, LibraryReport } from './libraries'
-import type { SimElementState, SimPose, WorldSpec } from './sim/worldSpec'
+import type { SimElementState, SimHiveState, SimPose, WorldSpec } from './sim/worldSpec'
 
 // ---- OpMode 목록 ----
 
@@ -337,7 +337,9 @@ export type PlayEvent =
   | ({ type: 'pose'; runId: string; tNanos: number } & SimPose)
   // 경기 요소(6a, spec-6a §5)의 표시 상태(revision이 바뀔 때, 약 60 Hz와 일시 정지·Step·끝에 바로, pose처럼). poses는 공마다
   // [x, y, z, qw, qx, qy, qz] × 1e4 정수(src/shared/sim/elements/gameState.ts, 공 순서는 elementSpawns), flags는 공마다 비트
-  // (1 잠듦, 2 필드 밖: 숨김)이고 모두 0이면 생략할 수 있다. final은 실행이 끝날 때 한 번 전체 정밀도 상태(6d 이어 가기)
+  // (1 잠듦, 2 필드 밖: 숨김)이고 모두 0이면 생략할 수 있다. final은 실행이 끝날 때 한 번 전체 정밀도 상태(6d 이어 가기).
+  // hives(6b)는 움직이는 HIVE가 있는 세계만 FieldSpec.hives 순서의 몸체 각 × 1e4 정수(gameState.ts quantizeHives)이고,
+  // finalHives는 final과 함께 실행 끝의 HIVE 상태(hiveSnapshot)다
   | {
       type: 'gameState'
       runId: string
@@ -345,7 +347,9 @@ export type PlayEvent =
       revision: number
       poses: number[]
       flags?: number[]
+      hives?: number[]
       final?: SimElementState[]
+      finalHives?: SimHiveState[]
     }
   // 시뮬레이터 안내(Console 경고 한 줄, 같은 code·params는 실행마다 한 번). code는 렌더러가 번역한다.
   | {
@@ -388,6 +392,8 @@ export type PlayEvent =
 // - elementCrushed(6a): 공이 딱딱한 심 깊이까지 눌렸다(그 접촉은 강체로 푼다). params 없음
 // - elementCouplingLimit(6a): 로봇에 닿은 공 행이 결합 한도를 넘어 일부 공을 로봇에 한쪽으로만 풀었다. params 없음
 // - elementIslandLarge(6a): 공 더미가 커서 근사 반복(PGS)으로 풀었다. params 없음
+// - hiveTip(6b): HIVE가 넘어갔다(다른 안정 자세에 닿아 그쪽 댐퍼가 닿기 시작함, CM 10.5.1). params.hive: 'red'·'blue'. Console
+//   안내(info, 경고 아님). 같은 params는 실행마다 한 번이라 HIVE마다 한 줄이고, 횟수는 HIVE 상태 tips(6d)
 export type SimNoticeCode =
   | 'sharedEncoderMode'
   | 'worldError'
@@ -401,6 +407,7 @@ export type SimNoticeCode =
   | 'elementCrushed'
   | 'elementCouplingLimit'
   | 'elementIslandLarge'
+  | 'hiveTip'
   | SidecarNoticeCode
 
 export type { GamepadState }

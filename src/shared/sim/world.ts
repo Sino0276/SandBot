@@ -61,6 +61,7 @@ import type {
   SimMotorSpec,
   SimOtosSpec,
   SimElementState,
+  SimHiveState,
   SimPinpointSpec,
   SimPose,
   SimServoParams,
@@ -492,6 +493,11 @@ export class PhysicsWorld {
   // 경기 요소의 전체 정밀도 상태(6a, 6d AUTO → TELEOP 이어 가기·시험). 세계 설명에 경기 요소가 없으면 null
   elementSnapshot(): SimElementState[] | null {
     return this.elements ? this.elements.snapshot() : null
+  }
+
+  // 움직이는 HIVE의 상태(6b, FieldSpec.hives 순서, 6d 이어 가기·시험). 경기 요소가 없거나 움직이는 HIVE가 없으면 null
+  hiveSnapshot(): SimHiveState[] | null {
+    return this.elements ? this.elements.hiveSnapshot() : null
   }
 
   // 경기 요소의 구 층(6c 센서·카메라 이음새). 없으면 null

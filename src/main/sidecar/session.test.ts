@@ -25,6 +25,7 @@ import {
   MAX_WORLD_JOINTS,
   WORLD_SPEC_VERSION,
   type SimElementState,
+  type SimHiveState,
   type WorldSpec
 } from '../../shared/sim/worldSpec'
 import { sourceMapper } from './launch'
@@ -1391,6 +1392,69 @@ describe('SidecarSession 경기 요소 gameState', () => {
     expect(order).toEqual(['pose', 'gameState', 'phase', 'finished'])
     // final은 한 번만
     expect(of('gameState').filter((e) => e.final !== undefined)).toHaveLength(1)
+  })
+
+  // 6b 계약(spec-6b §7): 움직이는 HIVE가 있는 세계는 같은 이벤트에 hives(각 정수)를 싣고 끝에는 finalHives(HIVE 상태)를
+  // final과 함께 싣는다. HIVE 수가 실행의 첫 상태와 다른 상태는 버린다. HIVE가 없는 세계의 이벤트에는 두 키가 없다
+  it('6b: hives·finalHives를 나르고, HIVE 수가 바뀐 상태는 버린다', () => {
+    let last = 0
+    const hive = (angle: number): SimHiveState => ({
+      angle,
+      angularVelocity: 0,
+      asleep: false,
+      tips: 1
+    })
+    const world: SimWorld = {
+      step: (tNanos) => {
+        last = tNanos
+        return {}
+      },
+      pose: () => null,
+      drainNotices: () => [],
+      gameState: () => ({
+        revision: last / MS + 1,
+        ...quantizeElements([ball(0)]),
+        hives: last === 10 * MS ? [7] : [-5236, last / MS]
+      }),
+      elementSnapshot: () => [ball(0)],
+      hiveSnapshot: () => [hive(-Math.PI / 6), hive(-0)]
+    }
+    const { clock, proc, of } = setup({ speed: 'max', world })
+    boot(proc)
+    for (let k = 0; k < 4; k++) {
+      proc.line(tick(k))
+      clock.advance(20)
+    }
+    proc.line({ type: 'finished', tNanos: 15 * MS, reason: 'returned' })
+    // 10 ms 상태(HIVE 수가 1)는 버린다. 끝(settleWorld 20 ms)의 상태는 먼저 나가고 끝 상태를 실어 한 번 더 나간다(6a 규칙)
+    const sent = of('gameState')
+    expect(sent.map((e) => [e.tNanos / MS, e.hives, e.finalHives !== undefined])).toEqual([
+      [0, [-5236, 0], false],
+      [5, [-5236, 5], false],
+      [15, [-5236, 15], false],
+      [20, [-5236, 20], false],
+      [20, [-5236, 20], true]
+    ])
+    expect(sent.at(-1)!.final).toEqual([ball(0)])
+    expect(sent.at(-1)!.finalHives).toEqual([hive(-Math.PI / 6), hive(0)])
+
+    // HIVE가 없는 세계는 키가 없고 hiveSnapshot도 읽지 않는다
+    const { world: plain, snapshots } = ballWorld()
+    let read = 0
+    plain.hiveSnapshot = () => {
+      read++
+      return [hive(0)]
+    }
+    const second = setup({ speed: 'max', world: plain })
+    boot(second.proc)
+    second.proc.line(tick(0))
+    second.proc.line({ type: 'finished', tNanos: 0, reason: 'returned' })
+    expect(snapshots).toHaveLength(1)
+    expect(read).toBe(0)
+    for (const e of second.of('gameState')) {
+      expect(Object.hasOwn(e, 'hives')).toBe(false)
+      expect(Object.hasOwn(e, 'finalHives')).toBe(false)
+    }
   })
 
   it('끝 상태가 이미 보낸 상태와 같아도 final만 실어 한 번 더 보낸다', () => {

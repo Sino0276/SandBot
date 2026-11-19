@@ -29,6 +29,7 @@ import {
   type SimCollider,
   type SimElementKind,
   type SimElementState,
+  type SimHiveState,
   type Vec3,
   type WorldSpec
 } from '../worldSpec'
@@ -330,7 +331,13 @@ export class ElementWorld {
     this.sleepEnabled = options.sleep ?? true
     const initial =
       options.initial ??
-      elementSpawns(field, spec.elements, spec.robot.start, restBodyFrames(spec.joints))
+      elementSpawns(
+        field,
+        spec.elements,
+        spec.robot.start,
+        restBodyFrames(spec.joints),
+        spec.field.hiveTipped
+      )
     const n = initial.length
     this.count = n
     this.kinds = initial.map((s) => s.kind)
@@ -845,6 +852,17 @@ export class ElementWorld {
   // 전체 정밀도 상태(6d 이어 가기·시험)
   snapshot(): SimElementState[] {
     return Array.from({ length: this.count }, (_, i) => this.stateOf(i))
+  }
+
+  // 움직이는 HIVE 상태(6b 계약, spec-6b §2 Outputs: FieldSpec.hives 순서). HIVE 동역학을 넣기 전이라 아직 null(움직이는 HIVE
+  // 없음)이다
+  hiveSnapshot(): SimHiveState[] | null {
+    return null
+  }
+
+  // 카메라가 태그 자세에 쓸 HIVE 각 [빨강, 파랑](6b 계약, spec-6b §6). 움직이는 HIVE가 없으면 null(시작 상태 태그 자세 그대로)
+  hiveAngles(): readonly [number, number] | null {
+    return null
   }
 
   tickState(): ElementTickState {

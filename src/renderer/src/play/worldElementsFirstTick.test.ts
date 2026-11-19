@@ -246,7 +246,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     // 섀시 충돌체: 섀시 상자 다음 바구니 벽 넷(소속 오브젝트 문서 순서)
     expect(spec.robot.colliders!.map((c) => c.kind)).toEqual(['box', 'box', 'box', 'box', 'box'])
     // 프리로드: 섀시 몸체(−1)의 로봇 좌표 자리, 하이어라키 순서
-    expect(spec.elements!.groups).toEqual(['garden'])
+    expect(spec.elements!.groups).toEqual(['garden', 'flower', 'hiveCell'])
     expect(spec.elements!.preloads.map((p) => [p.kind, p.body])).toEqual(
       Array.from({ length: 4 }, () => ['pollen', -1])
     )
@@ -260,7 +260,8 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       BIOBUZZ,
       parsed.elements,
       parsed.robot.start,
-      restBodyFrames(parsed.joints)
+      restBodyFrames(parsed.joints),
+      parsed.field.hiveTipped
     )
     expect(spawns.map((s) => s.kind)).toEqual(Array.from({ length: 12 }, () => 'pollen'))
     // 렌더러의 실행 공(run.elements)이 시뮬레이터가 쓰는 것과 같은 공유 함수 결과다

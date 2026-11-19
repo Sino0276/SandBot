@@ -1,5 +1,5 @@
 import type { Pose2, Vec2, Vec3 } from '../worldSpec'
-import type { FieldRect, FieldShape, FieldSpec } from './fieldSpec'
+import type { FieldPartShape, FieldRect, FieldShape, FieldSpec } from './fieldSpec'
 
 // 필드 요소의 평면 기하(spec-4ab §1.8, 순수·결정적, 배열 순서만 쓴다). 4a의 시작 겹침 판정과 4b의 구조물 접촉이 같이 쓴다.
 // 로봇은 "외곽 × [0, H]" 프리즘이고, 구조물은 그 높이 슬랩으로 자른 단면을 위에서 본 볼록 껍질로 다룬다.
@@ -279,6 +279,144 @@ export function sphereShapeSeparation(center: Vec3, radius: number, shape: Field
   const axial = Math.abs(local.z) - shape.height / 2
   if (radial > 0 || axial > 0) return Math.hypot(Math.max(radial, 0), Math.max(axial, 0)) - radius
   return Math.max(radial, axial) - radius
+}
+
+// ---- 구조물·HIVE 부품(6b, spec-6b §1.1, 데이터 검사와 표시용) ----
+
+type PrismShape = Extract<FieldPartShape, { kind: 'prism' }>
+
+// 볼록 반시계 다각형인지(점 셋 이상, 모든 변의 왼쪽에 다른 꼭짓점이 모두 있다: 일직선 점·시계 방향·꼬인 다각형은 아님).
+// worldSpec.ts 로봇 외곽 검사와 같은 규칙이다
+export function isConvexCcwPolygon(points: readonly Vec2[]): boolean {
+  const n = points.length
+  if (n < 3) return false
+  for (let i = 0; i < n; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % n]
+    for (let k = 0; k < n; k++) {
+      if (k === i || k === (i + 1) % n) continue
+      const p = points[k]
+      if (!((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) > 0)) return false
+    }
+  }
+  return true
+}
+
+// 볼록 기둥의 꼭짓점(carrier 틀): 아래(자기 z = −height/2) 다각형 순서 다음 위(+height/2) 다각형 순서
+export function prismVertices(shape: PrismShape): Vec3[] {
+  const m = rotationMatrix(shape.rotation)
+  const out: Vec3[] = []
+  for (const z of [-shape.height / 2, shape.height / 2])
+    for (const p of shape.polygon) {
+      const r = applyMatrix3(m, { x: p.x, y: p.y, z })
+      out.push({ x: shape.center.x + r.x, y: shape.center.y + r.y, z: shape.center.z + r.z })
+    }
+  return out
+}
+
+// 상자·볼록 기둥 부품의 꼭짓점(carrier 틀). 원기둥은 꼭짓점이 없어 null
+export function partVertices(shape: FieldPartShape): Vec3[] | null {
+  if (shape.kind === 'box') return boxVertices(shape)
+  if (shape.kind === 'prism') return prismVertices(shape)
+  return null
+}
+
+// 구(carrier 틀 중심·반지름)와 부품의 분리 거리(음수면 침투 깊이, 정확, 데이터 검사 전용). 상자·원기둥은
+// sphereShapeSeparation, 볼록 기둥은 다각형 × 구간의 곱 집합이라 평면 거리와 축 거리로 나눠 정확히 잰다
+export function spherePartSeparation(center: Vec3, radius: number, shape: FieldPartShape): number {
+  if (shape.kind !== 'prism') return sphereShapeSeparation(center, radius, shape)
+  const m = rotationMatrix(shape.rotation)
+  const d = {
+    x: center.x - shape.center.x,
+    y: center.y - shape.center.y,
+    z: center.z - shape.center.z
+  }
+  const local = {
+    x: m[0] * d.x + m[3] * d.y + m[6] * d.z,
+    y: m[1] * d.x + m[4] * d.y + m[7] * d.z,
+    z: m[2] * d.x + m[5] * d.y + m[8] * d.z
+  }
+  // 평면: 밖이면 다각형까지 거리, 안이면 가장 가까운 변 직선까지(음수)
+  const planar = circlePolygonSeparation({ x: local.x, y: local.y }, 0, shape.polygon)
+  const axial = Math.abs(local.z) - shape.height / 2
+  if (planar > 0 || axial > 0) return Math.hypot(Math.max(planar, 0), Math.max(axial, 0)) - radius
+  return Math.max(planar, axial) - radius
+}
+
+// 부품이 봉투(구조물 shape) 안인지(tolerance만큼 넘어도 된다). 상자·볼록 기둥은 꼭짓점(볼록이라 꼭짓점이 안이면 전체가 안),
+// 세운 원기둥 부품은 봉투 축마다 지지 거리 |a·Δc| + r·|a_xy| + (h/2)·|a_z|(상자 봉투) 또는 반지름 방향 |Δc_xy| + r와 높이
+// (원기둥 봉투)로 잰다
+export function partInsideShape(
+  part: FieldPartShape,
+  envelope: FieldShape,
+  tolerance: number
+): boolean {
+  const vertices = partVertices(part)
+  if (envelope.kind === 'box') {
+    const m = rotationMatrix(envelope.rotation)
+    const half = [envelope.size.x / 2, envelope.size.y / 2, envelope.size.z / 2]
+    for (let k = 0; k < 3; k++) {
+      // 봉투 자기 축 k(carrier 틀) = 회전 행렬의 열 k
+      const a = { x: m[k], y: m[3 + k], z: m[6 + k] }
+      const along = (p: Vec3): number =>
+        a.x * (p.x - envelope.center.x) +
+        a.y * (p.y - envelope.center.y) +
+        a.z * (p.z - envelope.center.z)
+      const limit = half[k] + tolerance
+      if (vertices) {
+        if (vertices.some((p) => Math.abs(along(p)) > limit)) return false
+      } else if (part.kind === 'cylinder') {
+        const reach =
+          Math.abs(along(part.center)) +
+          part.radius * Math.hypot(a.x, a.y) +
+          (part.height / 2) * Math.abs(a.z)
+        if (reach > limit) return false
+      }
+    }
+    return true
+  }
+  // 세운 원기둥 봉투(rotation x·y = 0)
+  const radial = (p: Vec3): number => Math.hypot(p.x - envelope.center.x, p.y - envelope.center.y)
+  const axial = (p: Vec3): number => Math.abs(p.z - envelope.center.z)
+  const radiusLimit = envelope.radius + tolerance
+  const heightLimit = envelope.height / 2 + tolerance
+  if (vertices) return vertices.every((p) => radial(p) <= radiusLimit && axial(p) <= heightLimit)
+  if (part.kind !== 'cylinder') return false
+  return (
+    radial(part.center) + part.radius <= radiusLimit &&
+    axial(part.center) + part.height / 2 <= heightLimit
+  )
+}
+
+// 구가 형상 안에 통째로 들어가는지(tolerance만큼 넘어도 된다, 데이터 검사 전용): 상자는 자기 틀 축마다 |p| + r ≤ 반 크기,
+// 세운 원기둥은 반지름·높이
+export function sphereInsideShape(
+  center: Vec3,
+  radius: number,
+  shape: FieldShape,
+  tolerance: number
+): boolean {
+  const m = rotationMatrix(shape.rotation)
+  const d = {
+    x: center.x - shape.center.x,
+    y: center.y - shape.center.y,
+    z: center.z - shape.center.z
+  }
+  const local = {
+    x: m[0] * d.x + m[3] * d.y + m[6] * d.z,
+    y: m[1] * d.x + m[4] * d.y + m[7] * d.z,
+    z: m[2] * d.x + m[5] * d.y + m[8] * d.z
+  }
+  if (shape.kind === 'box')
+    return (
+      Math.abs(local.x) + radius <= shape.size.x / 2 + tolerance &&
+      Math.abs(local.y) + radius <= shape.size.y / 2 + tolerance &&
+      Math.abs(local.z) + radius <= shape.size.z / 2 + tolerance
+    )
+  return (
+    Math.hypot(local.x, local.y) + radius <= shape.radius + tolerance &&
+    Math.abs(local.z) + radius <= shape.height / 2 + tolerance
+  )
 }
 
 // ---- 시작 겹침 ----

@@ -102,8 +102,13 @@ export type PreloadOutcome = 'pushedOut' | 'embedded' | 'squeezed'
 // 자리 하나의 편집 자세 겹침: 대상 이름(Console·카드에 하나)과 결과
 export type PreloadOverlap = { target: string; outcome: PreloadOutcome }
 
-// 6a에 생기는 배치 묶음(spec-6a §4: GARDEN만. FLOWER·CELL은 6b, 사람 선수는 6d)
+// 실행에 생기는 배치 묶음(GARDEN 6a, FLOWER·CELL 6b. 사람 선수는 6d)
 export const RUN_ELEMENT_GROUPS: readonly SimElementGroup[] = ELEMENT_GROUPS
+// 자동 프리로드 자리가 피할 배치 묶음: HIVE CELL 공은 바닥 근처에 오지 않아 뺀다(spec-6b §5: 그래서 robotPreloads 기억이 HIVE
+// 시작 상태에 기대지 않는다)
+export const AUTO_PRELOAD_GROUPS: readonly SimElementGroup[] = RUN_ELEMENT_GROUPS.filter(
+  (group) => group !== 'hiveCell'
+)
 
 // Matrix4(로봇 좌표 몸체 틀) → Frame3(행 우선 회전, 원점)
 export function frameOfMatrix(matrix: Matrix4): Frame3 {
@@ -173,7 +178,7 @@ function computePreloads(objects: SceneObjects, robotId: string, field: FieldSpe
       robotOutline(objects, robotId).footprint,
       field,
       start,
-      RUN_ELEMENT_GROUPS
+      AUTO_PRELOAD_GROUPS
     )
     if (!auto) return empty('noRoom')
     return {
@@ -438,7 +443,8 @@ export function runElementsOf(spec: WorldSpec | null): PlayRunElements | null {
     resolveSeason(spec.field.season),
     spec.elements,
     spec.robot.start,
-    restBodyFrames(spec.joints)
+    restBodyFrames(spec.joints),
+    spec.field.hiveTipped
   )
   return { kinds: spawns.map((s) => s.kind), spawns }
 }

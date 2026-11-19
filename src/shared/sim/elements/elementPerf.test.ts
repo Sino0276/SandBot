@@ -6,7 +6,7 @@ import { PhysicsWorld } from '../world'
 import type { SimCollider, SimElementState, WorldSpec } from '../worldSpec'
 import { ball, intakeWedge } from './elementTestkit'
 import { ElementWorld } from './elementWorld'
-import { elementSpawns } from './spawn'
+import { elementSpawns, restBodyFrames } from './spawn'
 
 // 6a 성능(spec-6a §2.7, plan.md 검증 표): 하위 단계 시간(5 ms 틱 ÷ 5)의 중앙값·p99를 로그로 남기고 CI 상한은 목표의 5배다(CI
 // 기계가 느릴 수 있다, collisionPerf.test.ts와 같은 방식). 목표: P1 잠든 공 56 = 기준 + 0.02 ms, P2 바닥에서 깬 56 = 0.3 ms,
@@ -94,7 +94,13 @@ describe('6a 성능', () => {
 
   it('P1: 잠든 공 56(GARDEN 8 + 바닥 48)은 공 없는 같은 세계보다 하위 단계 0.02 ms(목표) 안으로만 늘린다', () => {
     const spec = robot()
-    const garden = elementSpawns(BIOBUZZ, spec.elements, spec.robot.start)
+    const garden = elementSpawns(
+      BIOBUZZ,
+      spec.elements,
+      spec.robot.start,
+      restBodyFrames([]),
+      spec.field.hiveTipped
+    )
     const initial = [...garden, ...floorGrid(48, true)]
     expect(initial).toHaveLength(56)
     // 번갈아 세 번 재고 가장 작은 중앙값(기계 잡음)
@@ -115,7 +121,13 @@ describe('6a 성능', () => {
   it('P2: 바닥에서 깬 공 56(잠들기 끔)은 하위 단계 중앙값 0.3 ms(목표)', () => {
     const spec = robot()
     const initial = [
-      ...elementSpawns(BIOBUZZ, spec.elements, spec.robot.start).map((s) => ({
+      ...elementSpawns(
+        BIOBUZZ,
+        spec.elements,
+        spec.robot.start,
+        restBodyFrames([]),
+        spec.field.hiveTipped
+      ).map((s) => ({
         ...s,
         asleep: false
       })),

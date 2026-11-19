@@ -18,9 +18,11 @@ export const CONSOLE_PREFS_KEY = 'sandbot:console'
 // 아래 패널의 고른 탭
 export const DOCK_TAB_KEY = 'sandbot:playDock'
 
-// HIVE 상태(spec-4ab §1.5·§2.3): 빨강·파랑 HIVE가 시작 상태인지 넘어간 상태인지. 경기 조건이라 배터리 전압처럼 개인 실행
-// 설정이고 프로젝트 파일·실행 취소에는 넣지 않는다 [가정: HIVE 상태는 실행 동안 고정, 개인 실행 설정]. 렌더러 전용이다: 메인·
-// 사이드카는 쓰지 않고 시뮬레이터는 세계 설명 field.hiveTipped로만 받는다(공유 PlaySettings·PlayInitRequest는 그대로).
+// HIVE 시작 상태(spec-4ab §1.5·§2.3, 6b spec-6b §8): 실행을 시작할 때 빨강·파랑 HIVE가 넘어가지 않은 자세인지 넘어간
+// 자세인지. 경기 조건이라 배터리 전압처럼 개인 실행 설정이고 프로젝트 파일·실행 취소에는 넣지 않는다. 다음 INIT부터 적용되고,
+// 6b부터 경기 요소(공)가 있는 실행에서는 CELL의 공이 HIVE를 넘길 수 있으며(넘어간 채 시작하면 NECTAR는 그때 위를 보는 CELL에
+// 생긴다), 경기 요소를 끄면 HIVE는 이 상태로 고정이다. 렌더러 전용이다: 메인·사이드카는 쓰지 않고 시뮬레이터는 세계 설명
+// field.hiveTipped로만 받는다(공유 PlaySettings·PlayInitRequest는 그대로).
 export type HiveSide = 'start' | 'tipped'
 export type HiveState = { red: HiveSide; blue: HiveSide }
 // sensorNoise(spec-4c §1.6): 거리 센서 잡음을 켬(세계 설명 noise, 시드는 Hub 타이밍과 같은 seed 칸). 렌더러 전용이고 메인에는

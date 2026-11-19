@@ -853,7 +853,8 @@ describe('INIT의 세계 설명(운동학 시뮬레이터)', () => {
       useSceneStore.setState({ objects: withWheel(), field: { season: 'biobuzz' } })
       await initPlay()
       const { world } = lastRequest()
-      expect(world!.elements?.groups).toEqual(['garden'])
+      // 6b: 실행에 생기는 묶음 셋(FLOWER·CELL 시즌 데이터는 6b 데이터 커밋이 넣는다)
+      expect(world!.elements?.groups).toEqual(['garden', 'flower', 'hiveCell'])
       // 바퀴 로봇은 Preload Slot이 없어 자동 자리(앞 타일) 넷
       expect(world!.elements?.preloads).toHaveLength(4)
       const run = usePlayStore.getState().run!

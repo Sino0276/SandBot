@@ -320,7 +320,7 @@ describe('parseWorldSpec v4', () => {
 
   it("{ version }만 보내면 지금처럼 'robot'(새 검사는 robot 뒤)", () => {
     expect(parseWorldSpec({ version: WORLD_SPEC_VERSION })).toBe('robot')
-    expect(WORLD_SPEC_VERSION).toBe(7)
+    expect(WORLD_SPEC_VERSION).toBe(8)
     expect(parseWorldSpec({ ...valid(), version: 3 })).toBe('version')
   })
 
@@ -503,10 +503,11 @@ describe('parseWorldSpec v5', () => {
     })
   })
 
-  it('버전 5·6은 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
-    expect(WORLD_SPEC_VERSION).toBe(7)
+  it('버전 5·6·7은 받지 않는다(렌더러와 메인은 같은 빌드)', () => {
+    expect(WORLD_SPEC_VERSION).toBe(8)
     expect(parseWorldSpec({ ...valid(), version: 5 })).toBe('version')
     expect(parseWorldSpec({ ...valid(), version: 6 })).toBe('version')
+    expect(parseWorldSpec({ ...valid(), version: 7 })).toBe('version')
   })
 
   it.each([
@@ -742,7 +743,7 @@ describe('parseWorldSpec v7(6a 계약)', () => {
   it('경기 요소가 없으면 결과에 키가 없다(6과 키·값이 같다)', () => {
     const parsed = parseWorldSpec(withJoints()) as WorldSpec
     expect('elements' in parsed).toBe(false)
-    expect(parsed.version).toBe(7)
+    expect(parsed.version).toBe(8)
   })
 
   it('원기둥 충돌체를 그대로 읽는다(다른 키는 버린다)', () => {
@@ -777,8 +778,13 @@ describe('parseWorldSpec v7(6a 계약)', () => {
     ['elements', biobuzz(null)],
     ['elements', biobuzz([])],
     ['elements.groups', biobuzz({ groups: 'garden', preloads: [] })],
-    ['elements.groups', biobuzz({ groups: ['garden', 'garden'], preloads: [] })],
-    ['elements.groups[0]', biobuzz({ groups: ['flower'], preloads: [] })],
+    // 6b: 묶음이 셋이라 넷은 한도 밖, 같은 묶음 둘은 중복
+    [
+      'elements.groups',
+      biobuzz({ groups: ['garden', 'flower', 'hiveCell', 'garden'], preloads: [] })
+    ],
+    ['elements.groups: duplicate', biobuzz({ groups: ['garden', 'garden'], preloads: [] })],
+    ['elements.groups[0]', biobuzz({ groups: ['humanPlayer'], preloads: [] })],
     ['elements.preloads', biobuzz({ groups: [], preloads: undefined })],
     ['elements.preloads', biobuzz({ groups: [], preloads: [...four(), preload()] })],
     ['elements.preloads[0]', biobuzz({ groups: [], preloads: [1] })],
@@ -802,7 +808,7 @@ describe('parseWorldSpec v7(6a 계약)', () => {
   })
 
   it('경기 요소는 충돌 칸 뒤, 이름·참조 검사 앞에 읽는다', () => {
-    const bad = { ...biobuzz({ groups: ['flower'], preloads: [] }) }
+    const bad = { ...biobuzz({ groups: ['humanPlayer'], preloads: [] }) }
     expect(
       parseWorldSpec({ ...bad, robot: { ...bad.robot, colliders: [cylinder({ radius: 0 })] } })
     ).toBe('robot.colliders[0].radius')

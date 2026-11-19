@@ -6,7 +6,7 @@ import {
   elementFlags,
   GAME_POSE_STRIDE
 } from '../../../../shared/sim/elements/gameState'
-import { elementSpawns } from '../../../../shared/sim/elements/spawn'
+import { elementSpawns, restBodyFrames } from '../../../../shared/sim/elements/spawn'
 import type { FieldSpec } from '../../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import { ELEMENT_KINDS, type SimElementKind } from '../../../../shared/sim/worldSpec'
@@ -56,16 +56,19 @@ export function ballLook(
 
 const IDENTITY: [number, number, number, number] = [1, 0, 0, 0]
 const NO_PREVIEW: JointPreviewState = { values: {} }
+// 시즌 배치만 놓을 때의 몸체 틀(프리로드가 없어 쓰지 않는다)
+const NO_BODIES = restBodyFrames([])
 // 편집 중에는 실행 자세가 없다(실행이 필드를 잠그면 ElementsView는 실행의 공을 그린다)
 const NO_RUN = { run: null, simPose: null } as const
 
-// 편집 중 공: 시즌 시작 배치(6a에 생기는 묶음)와 대상 로봇 프리로드(팀 자리는 그 오브젝트의 표시 자세: 관절 미리보기 슬라이더를
-// 따른다(Preload Slot 기즈모·Collider 기즈모와 같은 sensorDisplayOverride, 6a 리뷰), 자동 자리는 로봇 시작 자세로 옮긴 필드
-// 좌표). 시즌에 경기 요소가 없으면 빈 층
+// 편집 중 공: 시즌 시작 배치(실행에 생기는 묶음, HIVE CELL 공은 시작 HIVE 상태 hiveTipped [빨강, 파랑]으로 고르고 놓는다)와
+// 대상 로봇 프리로드(팀 자리는 그 오브젝트의 표시 자세: 관절 미리보기 슬라이더를 따른다(Preload Slot 기즈모·Collider 기즈모와
+// 같은 sensorDisplayOverride, 6a 리뷰), 자동 자리는 로봇 시작 자세로 옮긴 필드 좌표). 시즌에 경기 요소가 없으면 빈 층
 export function editElementLayers(
   objects: SceneObjects,
   targetRobotId: string | null,
   field: FieldSpec,
+  hiveTipped: readonly [boolean, boolean],
   jointPreview: JointPreviewState = NO_PREVIEW
 ): Pick<ElementLayers, 'solid' | 'preview'> {
   if (!field.elements) return { solid: [], preview: [] }
@@ -73,7 +76,9 @@ export function editElementLayers(
   const solid: BallInstance[] = elementSpawns(
     field,
     { groups: [...RUN_ELEMENT_GROUPS], preloads: [] },
-    { x: 0, y: 0, yaw: 0 }
+    { x: 0, y: 0, yaw: 0 },
+    NO_BODIES,
+    hiveTipped
   ).map((s) => ({
     kind: s.kind,
     position: [s.position.x, s.position.y, s.position.z],

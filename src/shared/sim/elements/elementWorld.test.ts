@@ -53,7 +53,8 @@ describe('PhysicsWorld 경기 요소(6a)', () => {
       BIOBUZZ,
       spec.elements,
       spec.robot.start,
-      restBodyFrames(spec.joints)
+      restBodyFrames(spec.joints),
+      spec.field.hiveTipped
     )
     expect(world.elementSnapshot()).toEqual(expected)
     expect(expected).toHaveLength(12)

@@ -7,7 +7,7 @@
 import { isCameraModelId, type CameraModelId } from './cameraData'
 import { symmetricEigen3 } from './drivetrain'
 import { canonicalHull, HULL_MAX_COORD, MAX_HULL_POINTS } from './hull'
-import type { SeasonId } from './seasons/fieldSpec'
+import { placementActive, type SeasonId } from './seasons/fieldSpec'
 import { isSeasonId, resolveSeason } from './seasons/seasons'
 
 // 4: 시즌 field({ season, hiveTipped }), robot.height, 거리·컬러 센서 목록(4c), 잡음(4c·4d)을 더함(spec-4ab §3)
@@ -16,7 +16,10 @@ import { isSeasonId, resolveSeason } from './seasons/seasons'
 //    없으면 5와 같은 경로(섀시 평면 프리즘, 관절 몸체는 충돌 없음)다.
 // 7: 움직이는 경기 요소 elements({ groups, preloads }, 6a)와 원기둥 충돌체 kind 'cylinder'. 둘 다 선택이고, elements가 없으면
 //    공 코드가 돌지 않아 6과 같은 결과다(결과 객체에도 키가 없다)
-export const WORLD_SPEC_VERSION = 7
+// 8: 경기 요소 묶음 flower·hiveCell, HIVE 동역학(6b, spec-6b §7). 모양은 7과 같고 elements.groups에 받는 값이 늘었다. 공 수는
+//    시작 HIVE 상태(field.hiveTipped)로 거른 배치로 센다(hiveCell은 시작 상태로 위를 보는 CELL만). HIVE는 경기 요소가 있는
+//    세계에서만 움직인다
+export const WORLD_SPEC_VERSION = 8
 
 // 한도(메인 검증)
 export const MAX_WORLD_MOTORS = 64
@@ -62,8 +65,8 @@ export const MIN_CYLINDER_SEGMENT = MIN_CYLINDER_HEIGHT / 2
 export const MAX_WORLD_ELEMENTS = 64
 export const MAX_PRELOADS = 4
 export const ELEMENT_KINDS = ['pollen', 'nectarRed', 'nectarBlue'] as const
-// 시즌 배치 묶음. 6a는 GARDEN만 생긴다(6b가 'flower'·'hiveCell', 6d가 'humanPlayer'를 더한다)
-export const ELEMENT_GROUPS = ['garden'] as const
+// 시즌 배치 묶음: GARDEN(6a), FLOWER 안 POLLEN·위를 보는 HIVE CELL의 NECTAR(6b). 6d가 'humanPlayer'를 더한다
+export const ELEMENT_GROUPS = ['garden', 'flower', 'hiveCell'] as const
 
 export type Vec2 = { x: number; y: number }
 export type Vec3 = { x: number; y: number; z: number }
@@ -205,6 +208,15 @@ export type SimElementState = {
   angularVelocity: Vec3
   asleep: boolean
   out: boolean
+}
+// HIVE 하나의 상태(6b, spec-6b §2: hiveSnapshot·gameState final, 6d 이어 가기). FieldSpec.hives 순서. angle: 몸체 틀의 필드 +Y축
+// 둘레 각(rad, FieldHive.startAngle·tippedAngle과 같은 뜻), angularVelocity: rad/s, asleep: 잠듦(각속도 정확히 0), tips: 이
+// 실행에서 넘어간 횟수(CM 10.5.1: 다른 안정 자세에 닿아 그쪽 댐퍼가 닿기 시작할 때마다 하나)
+export type SimHiveState = {
+  angle: number
+  angularVelocity: number
+  asleep: boolean
+  tips: number
 }
 // 세계 설명의 경기 요소 칸: 생길 배치 묶음(유일, ELEMENT_GROUPS 값)과 프리로드(MAX_PRELOADS개까지, 자리 순서). 6d가
 // initial?: SimElementState[](AUTO 끝 상태로 이어 가기)를 더한다
@@ -991,8 +1003,14 @@ function preload(value: unknown, what: string, jointCount: number): SimPreloadSp
 }
 
 // 경기 요소 칸: 묶음은 유일한 아는 값, 시즌에 경기 요소가 있고(FieldSpec.elements), 그 시즌이 프리로드 종류를 알며, 생길 공
-// (고른 묶음의 배치 + 프리로드)이 MAX_WORLD_ELEMENTS 이하다
-function elements(value: unknown, season: SeasonId, jointCount: number): SimElementsSpec {
+// (고른 묶음의 배치 중 시작 HIVE 상태로 생기는 것(placementActive, elementSpawns와 같은 규칙) + 프리로드)이 MAX_WORLD_ELEMENTS
+// 이하다
+function elements(
+  value: unknown,
+  season: SeasonId,
+  jointCount: number,
+  hiveTipped: readonly [boolean, boolean]
+): SimElementsSpec {
   if (!isRecord(value)) fail('elements')
   const groups = list(value.groups, ELEMENT_GROUPS.length, 'elements.groups', (v, i) =>
     isElementGroup(v) ? v : fail(`elements.groups[${i}]`)
@@ -1005,7 +1023,9 @@ function elements(value: unknown, season: SeasonId, jointCount: number): SimElem
   if (data === null) fail('elements: season')
   for (const p of preloads) if (!data.types.some((t) => t.kind === p.kind)) fail('elements: season')
   const spawned =
-    data.layout.filter((entry) => groups.includes(entry.group)).length + preloads.length
+    data.layout.filter(
+      (entry) => groups.includes(entry.group) && placementActive(entry, hiveTipped)
+    ).length + preloads.length
   if (spawned > MAX_WORLD_ELEMENTS) fail('elements: too many')
   return { groups, preloads }
 }
@@ -1127,7 +1147,12 @@ export function parseWorldSpec(value: unknown): WorldSpec | string {
     if (colliderCount > MAX_WORLD_COLLIDERS) fail('colliders: too many')
     // v7(6a): 경기 요소는 충돌 칸 뒤에 읽는다(지금 칸의 오류가 먼저 나온다). 없으면 결과에도 키를 두지 않는다(6과 키·값이 같다)
     if (value.elements !== undefined)
-      spec.elements = elements(value.elements, spec.field.season, joints.length)
+      spec.elements = elements(
+        value.elements,
+        spec.field.season,
+        joints.length,
+        spec.field.hiveTipped
+      )
     const motorNames = new Set(spec.motors.map((m) => m.device))
     if (motorNames.size !== spec.motors.length) fail('motors: duplicate device')
     spec.wheels.forEach((w, i) => {

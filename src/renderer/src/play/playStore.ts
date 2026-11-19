@@ -13,12 +13,13 @@ import type {
 import type { SeasonId } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import type { CameraModelId } from '../../../shared/sim/cameraData'
-import { isValidGameState } from '../../../shared/sim/elements/gameState'
+import { isValidGameState, validHiveStates } from '../../../shared/sim/elements/gameState'
 import type {
   SensorMount,
   SimCollider,
   SimElementKind,
-  SimElementState
+  SimElementState,
+  SimHiveState
 } from '../../../shared/sim/worldSpec'
 import type { DeviceValues, TelemetryFrame } from '../../../shared/sidecarProtocol'
 import { jointMotionMatrix } from '../scene/jointMotion'
@@ -238,13 +239,18 @@ export type SimGameState = {
   poses: readonly number[]
   // 공마다 표식(1 잠듦, 2 필드 밖). 이벤트가 생략했으면 모두 0
   flags: readonly number[]
+  // 움직이는 HIVE의 몸체 각 × 1e4 정수(6b, FieldSpec.hives 순서, gameState.ts hiveDisplayAngle). 이벤트에 없으면 키가 없다
+  // (HIVE는 실행의 시작 상태로 그린다)
+  hives?: readonly number[]
 }
 
-// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지)
+// 끝난 실행의 경기 요소 마지막 표시 상태(씬 뷰의 반투명 잔상, ghostPose와 같은 수명: 다음 INIT·프로젝트 열기까지). hives(6b)는
+// 끝난 HIVE 각(있을 때만)
 export type GhostGame = {
   kinds: readonly SimElementKind[]
   poses: readonly number[]
   flags: readonly number[]
+  hives?: readonly number[]
 }
 
 // 끝난 실행의 경기 요소 전체 정밀도 끝 상태(gameState final, 6d AUTO → TELEOP 이어 가기의 이음새). 다음 끝 상태가 오거나
@@ -254,6 +260,8 @@ export type LastRunElements = {
   robotId: string | null
   tNanos: number
   states: readonly SimElementState[]
+  // 움직이는 HIVE의 끝 상태(6b, gameState finalHives, 6d 이음새). 없었으면 키가 없다
+  hives?: readonly SimHiveState[]
 }
 
 // 끝난 실행의 마지막 자세(씬 뷰의 반투명 잔상). 다음 INIT이나 프로젝트를 열 때 지운다. joints는 관절 오브젝트 id →
@@ -427,7 +435,12 @@ function endGame(data: PlayData, run: PlayRun): Pick<PlayData, 'simGame' | 'ghos
     return { simGame: null, ghostGame: data.ghostGame }
   return {
     simGame: null,
-    ghostGame: { kinds: run.elements.kinds, poses: game.poses, flags: game.flags }
+    ghostGame: {
+      kinds: run.elements.kinds,
+      poses: game.poses,
+      flags: game.flags,
+      ...(game.hives !== undefined ? { hives: game.hives } : {})
+    }
   }
 }
 
@@ -729,19 +742,24 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
         tNanos: event.tNanos,
         revision: event.revision,
         poses: event.poses,
-        flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0)
+        flags: event.flags ?? new Array<number>(elements.kinds.length).fill(0),
+        ...(Array.isArray(event.hives) ? { hives: event.hives } : {})
       }
       const final = event.final
-      if (Array.isArray(final) && final.length === elements.kinds.length)
+      if (Array.isArray(final) && final.length === elements.kinds.length) {
+        // HIVE 끝 상태(6b)는 HIVE 각과 같은 수일 때만 둔다
+        const hives = validHiveStates(event.finalHives, event.hives?.length ?? 0)
         return {
           simGame,
           lastRunElements: {
             runId: run.runId,
             robotId: run.robotId,
             tNanos: event.tNanos,
-            states: final
+            states: final,
+            ...(hives !== null && hives.length > 0 ? { hives } : {})
           }
         }
+      }
       return { simGame }
     }
     case 'libraryProgress': {
@@ -777,6 +795,19 @@ export function applyPlayEvent(data: PlayData, event: PlayEvent): Partial<PlayDa
             event.tNanos,
             'info',
             run.root
+          )
+        ])
+      // HIVE 넘어감(6b)은 경고가 아니라 안내다(경기에서 일어나는 일). params.hive로 문구를 고른다(모르는 값은 빨강)
+      if (event.code === 'hiveTip')
+        return withEntries(data, [
+          consoleEntry(
+            {
+              type: 'notice',
+              key: `sim.hiveTip.${event.params.hive === 'blue' ? 'blue' : 'red'}`,
+              params: { ...event.params }
+            },
+            event.tNanos,
+            'info'
           )
         ])
       // 몸체 충돌 겹침(5)은 몸체·대상을 풀어 둔다(번역은 그릴 때 consoleModel.entryHeadline, 언어를 바꾸면 따라 바뀐다)

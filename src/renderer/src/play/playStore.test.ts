@@ -3,7 +3,7 @@ import type { DashConfigNode, DashOp } from '../../../shared/dashboard'
 import type { OpModeInfo, PlayDiagnostic, PlayEvent } from '../../../shared/play'
 import { jointMotionMatrix } from '../scene/jointMotion'
 import type { JointSettings, SceneObjects } from '../scene/model'
-import type { SimElementState } from '../../../shared/sim/worldSpec'
+import type { SimElementState, SimHiveState } from '../../../shared/sim/worldSpec'
 import i18next from 'i18next'
 import en from '../i18n/locales/en'
 import ko from '../i18n/locales/ko'
@@ -681,6 +681,30 @@ describe('경기 요소 안내(6a)', () => {
     expect(entryHeadline(crushed, instance.t)).toBe(ko.console.notices.sim.elementCrushed)
   })
 
+  // 6b: HIVE 넘어감은 경고가 아니라 안내(info)이고 params.hive로 문구를 고른다(모르는 값은 빨강)
+  it('hiveTip은 info 줄, HIVE마다 문구(ko·en)', async () => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: 'ko',
+      resources: { ko: { translation: ko }, en: { translation: en } },
+      interpolation: { escapeValue: false }
+    })
+    const tip = (hive: string): PlayEvent => ({
+      type: 'simNotice',
+      runId: 'r1',
+      tNanos: 1,
+      code: 'hiveTip',
+      params: { hive }
+    })
+    for (const hive of ['red', 'blue'] as const) {
+      const entry = apply(data(), tip(hive)).entries[0]
+      expect(entry).toMatchObject({ type: 'notice', key: `sim.hiveTip.${hive}`, level: 'info' })
+      expect(entryHeadline(entry, instance.t)).toBe(ko.console.notices.sim.hiveTip[hive])
+      expect(en.console.notices.sim.hiveTip[hive]).toBeTruthy()
+    }
+    expect(apply(data(), tip('green')).entries[0]).toMatchObject({ key: 'sim.hiveTip.red' })
+  })
+
   it('경기 요소 없이 실행한 것(run.elements null)은 gameState를 받지 않는다', () => {
     const state = data()
     expect(
@@ -808,6 +832,38 @@ describe('경기 요소 gameState(6a)', () => {
     const short = apply(running(), game(10, 100, { final: [ball(0)] }))
     expect(short.lastRunElements).toBeNull()
     expect(short.simGame?.tNanos).toBe(10)
+  })
+
+  // 6b 계약: HIVE 각(hives)은 표시 상태·잔상에, HIVE 끝 상태(finalHives)는 HIVE 각과 같은 수일 때 lastRunElements에 둔다
+  it('6b: hives는 simGame·잔상으로, finalHives는 lastRunElements.hives로(수가 다르면 뺀다)', () => {
+    const hives = [-5236, 5236]
+    const finalHives: SimHiveState[] = [
+      { angle: -Math.PI / 6, angularVelocity: 0, asleep: true, tips: 0 },
+      { angle: Math.PI / 6, angularVelocity: 0, asleep: true, tips: 1 }
+    ]
+    const final = [ball(0.01), ball(1)]
+    const ended = apply(
+      running(),
+      game(10, 100, { hives }),
+      game(15, 150, { hives, final, finalHives }),
+      {
+        type: 'finished',
+        runId: 'r1',
+        tNanos: 15,
+        reason: 'returned',
+        detail: '',
+        preselectTeleOp: ''
+      }
+    )
+    expect(ended.lastRunElements?.hives).toEqual(finalHives)
+    expect(ended.ghostGame?.hives).toEqual(hives)
+    expect(apply(running(), game(10, 100, { hives })).simGame?.hives).toEqual(hives)
+    // HIVE 각이 없는 상태는 키가 없다(6a 모양)
+    expect(Object.hasOwn(apply(running(), game(10, 100)).simGame!, 'hives')).toBe(false)
+    // HIVE 끝 상태의 수가 HIVE 각과 다르면 공 끝 상태만 둔다
+    const short = apply(running(), game(15, 150, { hives, final, finalHives: [finalHives[0]] }))
+    expect(short.lastRunElements?.states).toEqual(final)
+    expect(Object.hasOwn(short.lastRunElements!, 'hives')).toBe(false)
   })
 
   it('finished만 와도 잔상을 남기고, 상태를 받지 못한 실행·떼어 놓은 실행은 이전 잔상을 그대로 둔다', () => {

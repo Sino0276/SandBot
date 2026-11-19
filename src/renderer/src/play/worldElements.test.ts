@@ -308,7 +308,7 @@ describe('withElements(INIT)', () => {
   it('GARDEN 묶음과 자리 순서의 프리로드(몸체 틀)를 넣고, 메인과 같은 검사를 지난다', () => {
     const objects = hopperScene()
     const result = withElements(build(objects), objects, 'R', ON, keyT)
-    expect(result.spec?.elements?.groups).toEqual(['garden'])
+    expect(result.spec?.elements?.groups).toEqual(['garden', 'flower', 'hiveCell'])
     expect(result.spec?.elements?.preloads.map((p) => [p.kind, p.body])).toEqual([
       ['pollen', -1],
       ['pollen', -1],
@@ -380,7 +380,10 @@ describe('withElements(INIT)', () => {
     }
     const result = withElements(build(huge), huge, 'R', ON, keyT)
     expect(keys(result.warnings)).toContain('worldPreloadNoRoom')
-    expect(result.spec?.elements).toEqual({ groups: ['garden'], preloads: [] })
+    expect(result.spec?.elements).toEqual({
+      groups: ['garden', 'flower', 'hiveCell'],
+      preloads: []
+    })
   })
 
   it('preloadOverlaps: 자동 자리도 충돌 몸체와 겹치면 이름 없이(번역은 withElements)', () => {
@@ -458,7 +461,13 @@ describe('runElementsOf와 첫 틱(통합)', () => {
     const parsed = parseWorldSpec(JSON.parse(JSON.stringify(result.spec)))
     if (typeof parsed === 'string') throw new Error(parsed)
     expect(
-      elementSpawns(BIOBUZZ, parsed.elements, parsed.robot.start, restBodyFrames(parsed.joints))
+      elementSpawns(
+        BIOBUZZ,
+        parsed.elements,
+        parsed.robot.start,
+        restBodyFrames(parsed.joints),
+        parsed.field.hiveTipped
+      )
     ).toEqual(run.spawns)
     // 시뮬레이터의 첫 틱 공: elementSnapshot이 이 시작 상태와 바이트로 같다(t = 0은 상태만 만든다)
     const world = new PhysicsWorld(parsed)

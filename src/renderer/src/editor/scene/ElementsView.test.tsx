@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { OpModeInfo } from '../../../../shared/play'
 import { resolveElementType } from '../../../../shared/sim/elements/elementData'
 import { quantizeElements } from '../../../../shared/sim/elements/gameState'
-import { elementSpawns } from '../../../../shared/sim/elements/spawn'
+import { elementSpawns, restBodyFrames } from '../../../../shared/sim/elements/spawn'
 import { resolveSeason } from '../../../../shared/sim/seasons/seasons'
 import type { SimElementState } from '../../../../shared/sim/worldSpec'
 import { DEFAULT_PLAY_SETTINGS } from '../../play/playSettings'
@@ -116,7 +116,13 @@ const TELEOP: OpModeInfo = {
   group: '',
   preselectTeleOp: ''
 }
-const spawns = elementSpawns(BIOBUZZ, { groups: ['garden'], preloads: [] }, { x: 0, y: 0, yaw: 0 })
+const spawns = elementSpawns(
+  BIOBUZZ,
+  { groups: ['garden'], preloads: [] },
+  { x: 0, y: 0, yaw: 0 },
+  restBodyFrames([]),
+  [false, false]
+)
 const ELEMENTS: PlayRunElements = { kinds: spawns.map((s) => s.kind), spawns }
 const running = (elements: PlayRunElements | null = ELEMENTS): PlayRun => ({
   ...newRun({
@@ -315,11 +321,11 @@ describe('elementsViewModel', () => {
   })
 
   it("editElementLayers: 'none'은 비고, 대상 로봇이 없으면 배치만", () => {
-    expect(editElementLayers(scene(), 'A', resolveSeason('none'))).toEqual({
+    expect(editElementLayers(scene(), 'A', resolveSeason('none'), [false, false])).toEqual({
       solid: [],
       preview: []
     })
-    const layers = editElementLayers(scene(), null, BIOBUZZ)
+    const layers = editElementLayers(scene(), null, BIOBUZZ, [false, false])
     expect(layers.solid).toHaveLength(8)
     expect(layers.preview).toEqual([])
   })
@@ -341,10 +347,10 @@ describe('elementsViewModel', () => {
       preview,
       visibility: useSceneVisibilityStore.getInitialState()
     })
-    const lifted = editElementLayers(objects, 'R', BIOBUZZ, preview).solid.at(-1)!
+    const lifted = editElementLayers(objects, 'R', BIOBUZZ, [false, false], preview).solid.at(-1)!
     for (let i = 0; i < 3; i++) expect(lifted.position[i]).toBeCloseTo(gizmo[0].center[i], 12)
     // 미리보기 없으면 문서 자세(리프트가 0.3 m 아래)
-    const rest = editElementLayers(objects, 'R', BIOBUZZ).solid.at(-1)!
+    const rest = editElementLayers(objects, 'R', BIOBUZZ, [false, false]).solid.at(-1)!
     expect(lifted.position[2] - rest.position[2]).toBeCloseTo(0.3, 12)
   })
 })

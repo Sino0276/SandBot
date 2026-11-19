@@ -32,12 +32,14 @@ import {
 import {
   GAME_POSE_STRIDE,
   isValidGameState,
+  validHiveStates,
   type GameState
 } from '../../shared/sim/elements/gameState'
 import {
   ELEMENT_KINDS,
   MAX_WORLD_JOINTS,
   type SimElementState,
+  type SimHiveState,
   type SimPose,
   type Vec3
 } from '../../shared/sim/worldSpec'
@@ -79,8 +81,8 @@ import { EMPTY_WORLD, type SimWorld } from './world'
 // 렌더러 이벤트: phase·status(10 Hz와 바뀔 때)·compiled·telemetry(최신만, 30 Hz 이하)·dash(합쳐서, 30 Hz 이하)·dashConfig(최신만,
 //   30 Hz 이하)·log(50 ms 묶음)·error·devices(20 Hz, 바뀔 때, 출력과 세계가 보낸 입력의 누적)·pose(약 60 Hz 마지막 값, 로봇
 //   자세나 관절 값(joints)이 바뀔 때만, 일시 정지·Step 멈춤·끝에는 바로)·gameState(경기 요소 표시 상태, 6a: pose와 같은 16 ms
-//   간격과 바로 보내는 때, 세계의 revision이 바뀔 때만, 끝에는 전체 정밀도 상태 final을 실어 한 번 더)·simNotice(같은
-//   code·params는 한 번)·finished.
+//   간격과 바로 보내는 때, 세계의 revision이 바뀔 때만, 끝에는 전체 정밀도 상태 final을 실어 한 번 더. 6b: 움직이는 HIVE가
+//   있으면 같은 이벤트에 HIVE 각 hives, 끝에 HIVE 상태 finalHives)·simNotice(같은 code·params는 한 번)·finished.
 //   순서가 중요한 이벤트(phase·compiled·error·simNotice·finished) 전에는 모아 둔 로그를 먼저 보낸다.
 
 export type HostClock = {
@@ -406,12 +408,14 @@ export class SidecarSession {
   private lastPoseKey = ''
   // 자세와 경기 요소 표시 상태를 함께 보낸다(POSE_INTERVAL_MS)
   private readonly poseThrottle: Throttle
-  // 경기 요소(6a): 세계가 낸 마지막 표시 상태(revision이 바뀐 것만, 복사본), 보낸 revision, 공 수(첫 상태로 정하고 실행 동안
-  // 바뀌지 않는다: 다른 수의 상태는 버린다), 끝에 실을 전체 정밀도 상태
+  // 경기 요소(6a): 세계가 낸 마지막 표시 상태(revision이 바뀐 것만, 복사본), 보낸 revision, 공 수와 HIVE 수(6b, 첫 상태로
+  // 정하고 실행 동안 바뀌지 않는다: 다른 수의 상태는 버린다), 끝에 실을 전체 정밀도 상태와 HIVE 상태(6b)
   private latestGame: ({ tNanos: number } & GameState) | null = null
   private sentGameRevision: number | null = null
   private gameCount: number | null = null
+  private hiveCount: number | null = null
   private gameFinal: SimElementState[] | null = null
+  private gameFinalHives: SimHiveState[] | null = null
   private readonly noticeKeys = new Set<string>()
   private worldFailed = false
 
@@ -734,19 +738,22 @@ export class SidecarSession {
     for (const notice of notices) this.simNotice(tNanos, notice.code, notice.params)
   }
 
-  // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식, 공 수는 실행의 첫 상태와 같음) revision이 바뀐 것만
-  // 둔다(둔 때 true). 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고 마지막 좋은 상태를
-  // 둔다(pose와 같은 규칙)
+  // 경기 요소 표시 상태(6a): 모양이 맞고(isValidGameState: 정수 7칸·표식·HIVE 각, 공 수와 HIVE 수는 실행의 첫 상태와 같음)
+  // revision이 바뀐 것만 둔다(둔 때 true). 세계가 같은 배열을 다시 써도 보낸 값이 바뀌지 않게 복사한다. 모양이 틀린 상태는 버리고
+  // 마지막 좋은 상태를 둔다(pose와 같은 규칙). HIVE 각이 없는 세계는 hives 키를 두지 않는다(이벤트 모양이 6a와 같다)
   private takeGame(tNanos: number, game: GameState): boolean {
-    if (!isValidGameState(game, this.gameCount ?? undefined)) return false
+    if (!isValidGameState(game, this.gameCount ?? undefined, this.hiveCount ?? undefined))
+      return false
     if (this.latestGame !== null && this.latestGame.revision === game.revision) return false
     const count = game.poses.length / GAME_POSE_STRIDE
     this.gameCount ??= count
+    this.hiveCount ??= Array.isArray(game.hives) ? game.hives.length : 0
     this.latestGame = {
       tNanos,
       revision: game.revision,
       poses: [...game.poses],
-      flags: Array.isArray(game.flags) ? [...game.flags] : new Array<number>(count).fill(0)
+      flags: Array.isArray(game.flags) ? [...game.flags] : new Array<number>(count).fill(0),
+      ...(Array.isArray(game.hives) && game.hives.length > 0 ? { hives: [...game.hives] } : {})
     }
     return true
   }
@@ -754,11 +761,16 @@ export class SidecarSession {
   // 끝(finish): 세계의 전체 정밀도 상태(6d AUTO → TELEOP 이어 가기)를 마지막 gameState에 실을 final로 읽어 둔다(그다음 throttle을
   // 비우면 pose 다음에 final을 실은 gameState가 나간다, phase·finished 전). 경기 요소가 없는 실행(표시 상태를 받은 적 없음)은
   // 아무것도 하지 않는다. 끝 상태를 읽지 못하거나 모양이 틀리면 final 없이 끝난다(읽기 예외는 worldError 한 번)
+  // HIVE 끝 상태(6b)도 같은 규칙이다: 표시 상태에 HIVE 각이 있었던 실행만 읽고(hiveSnapshot), 모양이 맞으면(validHiveStates: HIVE
+  // 수가 표시 상태와 같음) finalHives로 싣는다
   private finishGame(): void {
     if (this.latestGame === null || this.gameCount === null) return
     let snapshot: unknown = null
+    let hives: unknown = null
+    const hiveCount = this.hiveCount ?? 0
     try {
       snapshot = this.world.elementSnapshot?.() ?? null
+      if (hiveCount > 0) hives = this.world.hiveSnapshot?.() ?? null
     } catch (error) {
       if (!this.worldFailed) {
         this.worldFailed = true
@@ -766,6 +778,7 @@ export class SidecarSession {
       }
     }
     this.gameFinal = snapshot === null ? null : elementSnapshot(snapshot, this.gameCount)
+    this.gameFinalHives = hives === null ? null : validHiveStates(hives, hiveCount)
   }
 
   // 끝: 마지막 틱의 출력으로 세계를 한 틱 더 돌린다(머리 주석의 "세계"). 받은 틱이 없으면(컴파일 실패 등) 돌리지 않는다.
@@ -1059,8 +1072,8 @@ export class SidecarSession {
     this.devicesThrottle.flush()
     this.finishGame()
     this.poseThrottle.flush()
-    // 기다리던 것이 없었으면(마지막 상태를 이미 보냄) 같은 상태에 final만 실어 한 번 더 보낸다
-    if (this.gameFinal !== null) this.sendGame()
+    // 기다리던 것이 없었으면(마지막 상태를 이미 보냄) 같은 상태에 final(과 finalHives)만 실어 한 번 더 보낸다
+    if (this.gameFinal !== null || this.gameFinalHives !== null) this.sendGame()
     this.emitStatus(true)
     this.finishedEmitted = true
     if (this.statusTimer !== null) {
@@ -1178,15 +1191,17 @@ export class SidecarSession {
     this.emit({ type: 'pose', runId: this.runId, ...pose })
   }
 
-  // 경기 요소 표시 상태(6a): revision이 보낸 것과 같으면 보내지 않는다(끝 상태 final을 실을 때만 같은 상태를 다시 보낸다).
-  // 표식이 모두 0이면 flags 키를 넣지 않는다(이벤트가 짧다)
+  // 경기 요소 표시 상태(6a): revision이 보낸 것과 같으면 보내지 않는다(끝 상태 final·finalHives를 실을 때만 같은 상태를 다시
+  // 보낸다). 표식이 모두 0이면 flags 키를 넣지 않는다(이벤트가 짧다). HIVE 각(6b)은 있을 때만 hives로 싣는다
   private sendGame(): void {
     const game = this.latestGame
     if (!game) return
     const final = this.gameFinal
-    if (game.revision === this.sentGameRevision && final === null) return
+    const finalHives = this.gameFinalHives
+    if (game.revision === this.sentGameRevision && final === null && finalHives === null) return
     this.sentGameRevision = game.revision
     this.gameFinal = null
+    this.gameFinalHives = null
     this.emit({
       type: 'gameState',
       runId: this.runId,
@@ -1194,7 +1209,9 @@ export class SidecarSession {
       revision: game.revision,
       poses: game.poses,
       ...(game.flags.some((flag) => flag !== 0) ? { flags: game.flags } : {}),
-      ...(final !== null ? { final } : {})
+      ...(game.hives !== undefined ? { hives: game.hives } : {}),
+      ...(final !== null ? { final } : {}),
+      ...(finalHives !== null ? { finalHives } : {})
     })
   }
 
