@@ -347,6 +347,21 @@ describe('배치(flower·hiveCell)', () => {
       expect(p.position.y).toBeLessThan(0)
     })
     cells.slice(6).forEach((p, k) => expect(p).toEqual(mirrorElementPlacement(cells[k])))
+    // 필드 좌표로: 빨강 NECTAR는 두 시작 상태 모두 빨강 벽(−Y) 쪽, 파랑은 파랑 벽(+Y) 쪽 옆벽에 붙는다(6b 리뷰)
+    const red = BIOBUZZ.hives[0].pivot.y
+    const blue = BIOBUZZ.hives[1].pivot.y
+    for (const [i, hiveTipped] of [
+      [3, [true, false]],
+      [0, [false, false]]
+    ] as const)
+      for (const p of cells.slice(i, i + 3))
+        expect(placementFieldPosition(BIOBUZZ, p, [...hiveTipped]).y).toBeLessThan(red)
+    for (const [i, hiveTipped] of [
+      [9, [false, true]],
+      [6, [false, false]]
+    ] as const)
+      for (const p of cells.slice(i, i + 3))
+        expect(placementFieldPosition(BIOBUZZ, p, [...hiveTipped]).y).toBeGreaterThan(blue)
   })
 
   it('hiveCell NECTAR는 CELL 밑판·Back Skin에 닿고 트레이에 파고들지 않는다(몸체 틀, ±1e-9)', () => {
