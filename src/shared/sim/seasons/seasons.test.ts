@@ -11,7 +11,15 @@ import {
   type FieldStructure
 } from './fieldSpec'
 import { DEFAULT_PROJECT_SEASON, isSeasonId, resolveSeason, SEASON_IDS } from './seasons'
-import { mirrorPreset, mirrorStructure, mirrorTag, mirrorVec3, neg, wrapPi } from './symmetry'
+import {
+  mirrorPart,
+  mirrorPreset,
+  mirrorStructure,
+  mirrorTag,
+  mirrorVec3,
+  neg,
+  wrapPi
+} from './symmetry'
 
 // K1·K4(spec-4ab §5): 시즌 데이터 검사, 구조물 순서·짝·대칭, 'none' 값
 
@@ -202,18 +210,23 @@ describe('K1 데이터 검사', () => {
       ['loadingZone', 'blue'],
       ['garden', 'blue']
     ])
+    // 6b 동역학·부품은 같은 값(mirrorHive, seasons6b.test.ts가 값을 본다)
     expect(biobuzz.hives).toEqual([
       {
         key: 'hiveRed',
         pivot: { x: 0, y: -0.32385, z: 1.11633 },
         startAngle: -Math.PI / 6,
-        tippedAngle: Math.PI / 6
+        tippedAngle: Math.PI / 6,
+        dynamics: biobuzz.hives[0].dynamics,
+        parts: biobuzz.hives[0].parts
       },
       {
         key: 'hiveBlue',
         pivot: { x: 0, y: 0.32385, z: 1.11633 },
         startAngle: Math.PI / 6,
-        tippedAngle: -Math.PI / 6
+        tippedAngle: -Math.PI / 6,
+        dynamics: biobuzz.hives[0].dynamics,
+        parts: biobuzz.hives[0].parts!.map(mirrorPart)
       }
     ])
     const presets = biobuzz.startPresets
@@ -383,8 +396,11 @@ describe('6a 경기 요소 데이터', () => {
   it('GARDEN POLLEN 4 + 4: 빨강은 관중석 벽·빨강 벽 구석부터 한 줄, 파랑은 Rz(π)', () => {
     const r = typeOf('pollen').radius
     const h = biobuzz.perimeter.innerHalf
-    expect(elements.layout).toHaveLength(8)
-    expect(elements.layout.every((p) => p.group === 'garden' && p.kind === 'pollen')).toBe(true)
+    // GARDEN이 앞 여덟(6a와 같은 공 번호), 그 뒤 6b의 flower·hiveCell(seasons6b.test.ts)
+    expect(elements.layout.filter((p) => p.group === 'garden')).toHaveLength(8)
+    expect(
+      elements.layout.slice(0, 8).every((p) => p.group === 'garden' && p.kind === 'pollen')
+    ).toBe(true)
     elements.layout.slice(0, 4).forEach((p, k) => {
       expect(p.position).toEqual({ x: h - r, y: -h + r * (1 + 2 * k), z: r })
       // 중심은 GARDEN 띠 안
@@ -393,7 +409,7 @@ describe('6a 경기 요소 데이터', () => {
       expect(p.position.y).toBeLessThan(garden.rect[3])
     })
     elements.layout
-      .slice(4)
+      .slice(4, 8)
       .forEach((p, k) => expect(p.position).toEqual(mirrorVec3(elements.layout[k].position)))
     // 시작 프리셋은 공 자리(벽 − 2r)를 피한다
     const keepOut = biobuzz.startKeepOut[0].rect

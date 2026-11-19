@@ -37,6 +37,10 @@ import {
 
 const BIOBUZZ = resolveSeason('biobuzz')
 const POLLEN_R = resolveElementType(BIOBUZZ, 'pollen')!.radius
+// 편집 중 시작 HIVE 상태(둘 다 넘어가지 않음)의 배치 공(6b: GARDEN 8 + FLOWER 16 POLLEN, 위 CELL마다 NECTAR 3)
+const EDIT_LAYOUT = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, [false, false]))
+const EDIT_POLLEN = EDIT_LAYOUT.filter((p) => p.kind === 'pollen').length
+const EDIT_NECTAR_RED = EDIT_LAYOUT.filter((p) => p.kind === 'nectarRed').length
 
 function fakeRenderer(): object {
   return {
@@ -181,10 +185,12 @@ afterEach(async () => {
 })
 
 describe('ElementsView 편집 중', () => {
-  it('켠 BIOBUZZ는 GARDEN 여덟(불투명), 대상 로봇의 자동 자리는 반투명, 팀 자리는 불투명', async () => {
-    expect(mesh('solid').count).toBe(8)
+  it('켠 BIOBUZZ는 배치 공(GARDEN·FLOWER·CELL, 불투명), 대상 로봇의 자동 자리는 반투명, 팀 자리는 불투명', async () => {
+    expect(EDIT_POLLEN).toBe(8 + 16)
+    expect(EDIT_NECTAR_RED).toBe(3)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
     expect(mesh('preview').count).toBe(0)
-    expect(mesh('solid', 'nectarRed').count).toBe(0)
+    expect(mesh('solid', 'nectarRed').count).toBe(EDIT_NECTAR_RED)
     const first = instancePosition(mesh('solid'), 0)
     // 인스턴스 행렬은 Float32
     expect(first.x).toBeCloseTo(spawns[0].position.x, 6)
@@ -198,8 +204,8 @@ describe('ElementsView 편집 중', () => {
       useEditorStore.setState({ selectedId: 'hopper', selectedIds: ['hopper'] })
     )
     expect(mesh('preview').count).toBe(0)
-    expect(mesh('solid').count).toBe(9)
-    const slot = instancePosition(mesh('solid'), 8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN + 1)
+    const slot = instancePosition(mesh('solid'), EDIT_POLLEN)
     expect(slot.x).toBeCloseTo(0.9, 6)
     expect(slot.y).toBeCloseTo(0.9, 6)
     expect(slot.z).toBeCloseTo(0.1, 6)
@@ -215,7 +221,7 @@ describe('ElementsView 편집 중', () => {
     )
     expect(mesh('solid').count).toBe(0)
     await act(async () => usePlayStore.setState({ settings: DEFAULT_PLAY_SETTINGS }))
-    expect(mesh('solid').count).toBe(8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
     await act(async () => useSceneStore.setState({ field: { season: 'none' } }))
     expect(mesh('solid').count).toBe(0)
     await act(async () => useSceneStore.setState({ field: { season: 'biobuzz' } }))
@@ -275,7 +281,7 @@ describe('ElementsView 실행 중·잔상', () => {
     )
     expect(mesh('ghost').count).toBe(7)
     expect(mesh('ghost').renderOrder).toBe(5)
-    expect(mesh('solid').count).toBe(8)
+    expect(mesh('solid').count).toBe(EDIT_POLLEN)
   })
 
   it('StrictMode의 정리 → 재실행 뒤에도 재질·형상을 해제하지 않고, 내려가면 해제한다', async () => {
@@ -295,7 +301,7 @@ describe('ElementsView 실행 중·잔상', () => {
       await flush()
       expect(material).not.toHaveBeenCalled()
       expect(geometry).not.toHaveBeenCalled()
-      expect(mesh('solid').count).toBe(8)
+      expect(mesh('solid').count).toBe(EDIT_POLLEN)
       await act(async () => root.unmount())
       await flush()
       expect(material).toHaveBeenCalled()
@@ -333,11 +339,12 @@ describe('elementsViewModel', () => {
       preview: []
     })
     const layers = editElementLayers(scene(), null, BIOBUZZ, [false, false])
-    expect(layers.solid).toHaveLength(8)
+    expect(layers.solid).toHaveLength(EDIT_LAYOUT.length)
     expect(layers.preview).toEqual([])
   })
 
-  // 6b 계약 리뷰: 편집 중 HIVE CELL 공은 시작 HIVE 상태로 고르고 그 각으로 놓는다(BIOBUZZ 데이터 전이라 시험이 만든 판)
+  // 6b 계약 리뷰: 편집 중 HIVE CELL 공은 시작 HIVE 상태로 고르고 그 각으로 놓는다(규칙만 보려고 BIOBUZZ GARDEN 배치에 시험이
+  // 만든 CELL 배치를 얹은 판)
   it('editElementLayers: HIVE CELL 공은 시작 HIVE 상태를 따른다', () => {
     const cell = (when: 'start' | 'tipped'): FieldElementPlacement => ({
       group: 'hiveCell',
@@ -347,7 +354,8 @@ describe('elementsViewModel', () => {
       when
     })
     const extra = [cell('start'), cell('tipped')]
-    const layout = [...BIOBUZZ.elements!.layout, ...extra, ...extra.map(mirrorElementPlacement)]
+    const garden = BIOBUZZ.elements!.layout.filter((p) => p.group === 'garden')
+    const layout = [...garden, ...extra, ...extra.map(mirrorElementPlacement)]
     const spec: FieldSpec = { ...BIOBUZZ, elements: { ...BIOBUZZ.elements!, layout } }
     const positions = (tipped: readonly [boolean, boolean]): number[][] =>
       editElementLayers(scene(), null, spec, tipped).solid.map((b) => b.position)

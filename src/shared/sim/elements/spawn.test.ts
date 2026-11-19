@@ -124,7 +124,8 @@ describe('elementSpawns', () => {
 })
 
 // 6b 계약 리뷰: HIVE 몸체 틀 배치(hiveCell)는 시작 HIVE 상태로 거르고(placementActive) 그 각으로 놓는다
-// (placementFieldPosition). BIOBUZZ hiveCell 데이터는 다음 커밋이 넣으므로 시험이 만든 판으로 본다
+// (placementFieldPosition). 규칙만 보려고 BIOBUZZ GARDEN 배치에 시험이 만든 hiveCell 배치를 얹은 판으로 본다(실제 6b 배치는
+// seasons6b.test.ts)
 describe('elementSpawns: HIVE 몸체 틀 배치(6b)', () => {
   const NECTAR_R = biobuzz.elements!.types.find((t) => t.kind === 'nectarRed')!.radius
   const cell = (when: 'start' | 'tipped', y: number): FieldElementPlacement => ({
@@ -139,7 +140,8 @@ describe('elementSpawns: HIVE 몸체 틀 배치(6b)', () => {
   const blue = [cell('start', 0), cell('tipped', -0.1), cell('tipped', 0.1)].map(
     mirrorElementPlacement
   )
-  const layout = [...biobuzz.elements!.layout, ...red, ...blue]
+  const garden = biobuzz.elements!.layout.filter((p) => p.group === 'garden')
+  const layout = [...garden, ...red, ...blue]
   const spec: FieldSpec = { ...biobuzz, elements: { ...biobuzz.elements!, layout } }
   const elements: SimElementsSpec = { groups: ['garden', 'hiveCell'], preloads: [] }
   const ORIGIN = { x: 0, y: 0, yaw: 0 }

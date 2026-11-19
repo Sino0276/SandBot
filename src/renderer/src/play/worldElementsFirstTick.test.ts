@@ -7,6 +7,7 @@ import { DIRECTION, HALF, LX, LY, mecanum, outputs, RADIUS } from '../../../shar
 import { resolveElementType } from '../../../shared/sim/elements/elementData'
 import { quantizeElements, type GameState } from '../../../shared/sim/elements/gameState'
 import { elementSpawns, restBodyFrames } from '../../../shared/sim/elements/spawn'
+import { placementActive } from '../../../shared/sim/seasons/fieldSpec'
 import { resolveSeason } from '../../../shared/sim/seasons/seasons'
 import { PhysicsWorld } from '../../../shared/sim/world'
 import {
@@ -40,6 +41,9 @@ import { buildWorldSpec, withRunField, type WorldSpecResult } from './worldSpec'
 // 같은 꼴의 장면을 렌더러 빌더로 만든 것).
 
 const BIOBUZZ = resolveSeason('biobuzz')
+// 시작 HIVE 상태에서 생기는 배치 공(GARDEN 8 + FLOWER 16 + 위 CELL NECTAR 6, 6b). 프리로드는 그 뒤 번호
+const LAYOUT = BIOBUZZ.elements!.layout.filter((p) => placementActive(p, [false, false]))
+const N = LAYOUT.length
 const POLLEN_R = resolveElementType(BIOBUZZ, 'pollen')!.radius
 const ROLLER_R = 0.03
 // 롤러 아래 면과 공 윗면의 겹침(공이 섀시 앞면에 닿았을 때)
@@ -227,7 +231,7 @@ const gameEvent = (tNanos: number, game: GameState, final?: SimElementState[]): 
 })
 
 describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON → parseWorldSpec → PhysicsWorld', () => {
-  it('첫 틱 공 = 공유 elementSpawns(GARDEN 8 → 바구니 자리 넷), 원기둥 끝점, 렌더러 실행 표시 = 시뮬레이터 상태', () => {
+  it('첫 틱 공 = 공유 elementSpawns(배치(GARDEN·FLOWER·CELL) → 바구니 자리 넷), 원기둥 끝점, 렌더러 실행 표시 = 시뮬레이터 상태', () => {
     const objects = intakeScene()
     const result = build(objects)
     const spec = result.spec!
@@ -263,7 +267,10 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       restBodyFrames(parsed.joints),
       parsed.field.hiveTipped
     )
-    expect(spawns.map((s) => s.kind)).toEqual(Array.from({ length: 12 }, () => 'pollen'))
+    expect(spawns.map((s) => s.kind)).toEqual([
+      ...LAYOUT.map((p) => p.kind),
+      ...Array.from({ length: 4 }, () => 'pollen')
+    ])
     // 렌더러의 실행 공(run.elements)이 시뮬레이터가 쓰는 것과 같은 공유 함수 결과다
     const run = runElementsOf(spec)!
     expect(run.spawns).toEqual(spawns)
@@ -272,7 +279,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     world.step(0, {})
     expect(world.elementSnapshot()).toEqual(spawns)
     // 프리로드 필드 좌표 = 시작 자세(요 0) ∘ 자리
-    spawns.slice(8).forEach((s, k) =>
+    spawns.slice(N).forEach((s, k) =>
       close(s.position, {
         x: START[0] - 0.1,
         y: START[1] + (k - 1.5) * SLOT_PITCH,
@@ -300,7 +307,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     const next = { ...data, ...applyPlayEvent(data, gameEvent(0, game)) }
     expect(next.simGame?.revision).toBe(game.revision)
     const balls = runElementBalls(run, next.simGame)
-    expect(balls).toHaveLength(12)
+    expect(balls).toHaveLength(N + 4)
     const shown = (v: number): number => Math.round(v * 1e4) / 1e4
     balls.forEach((ball, i) => {
       const { x, y, z } = spawns[i].position
@@ -387,7 +394,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
       expect(last[k].position).toEqual(spawn[k].position)
     }
     // 프리로드 넷은 바구니(섀시 윗면 위)에 남았다
-    for (const k of [8, 9, 10, 11]) expect(last[k].position.z).toBeGreaterThan(0.2)
+    for (const k of [N, N + 1, N + 2, N + 3]) expect(last[k].position.z).toBeGreaterThan(0.2)
 
     // 렌더러: 마지막 simGame = 시뮬레이터의 마지막 표시 상태, 끝(final + phase finished) → 잔상과 6d 이어 가기 상태
     expect(data.simGame?.poses).toEqual(world.gameState()!.poses)
@@ -396,7 +403,7 @@ describe('6a 통합: Preload Slot·Cylinder Collider 씬 → 빌더 → JSON →
     apply({ type: 'phase', runId: 'run-1', phase: 'finished' })
     expect(data.simGame).toBeNull()
     const ghost = ghostElementBalls(data.ghostGame)
-    expect(ghost).toHaveLength(12)
+    expect(ghost).toHaveLength(N + 4)
     // 잔상 = 끝 상태를 1e-4 m로 줄인 자리
     const shown = (v: number): number => Math.round(v * 1e4) / 1e4
     ghost.forEach((ball, i) => {

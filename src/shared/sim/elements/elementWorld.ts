@@ -9,14 +9,14 @@ import type {
 } from '../articulation'
 import { COLLISION_MARGIN, frictionTangent, OVERLAP_NOTICE_DEPTH } from '../bodyCollision'
 import {
+  ballStaticShapes,
   bodyShape,
   placeShape,
   shapeBounds,
   shapeSeparation,
-  staticShapes,
+  type BallStaticShape,
   type BodyShape,
-  type PlacedShape,
-  type StaticShape
+  type PlacedShape
 } from '../collision3d'
 import { prismHull, type Hull } from '../hull'
 import { GRAVITY } from '../physics'
@@ -270,13 +270,11 @@ export class ElementWorld {
   private readonly exitPoint: Float64Array
 
   private readonly field: FieldSpec
-  // box: 축 정렬 상자(벽, 꼭짓점이 경계 그대로라 sphereBox로 정확하다)
-  private readonly statics: {
-    shape: StaticShape
-    min: V3 | null
-    max: V3 | null
-    box: boolean
-  }[]
+  // 공의 정적 형상(collision3d.ts ballStaticShapes: 벽은 축 정렬 상자 sphereBox, 구조물 봉투 껍질, 6b FLOWER 케이지는 공 부품 묶음,
+  // 바닥). staticCode[i]: 그 칸의 첫 짝 번호(묶음은 조각마다 하나씩), staticLeafCount: 정적 짝 번호 수
+  private readonly statics: readonly BallStaticShape[]
+  private readonly staticCode: number[]
+  private readonly staticLeafCount: number
   private readonly robotBodies: RobotBody[]
   // 로봇 몸체마다 첫 충돌체의 짝 번호 오프셋과 전체 충돌체 수(짝 번호: 정적 → 로봇 충돌체 → 공)
   private readonly robotShapeOffset: number[]
@@ -370,14 +368,16 @@ export class ElementWorld {
       this.exitPoint[2 * i] = s.position.x
       this.exitPoint[2 * i + 1] = s.position.y
     })
-    // 공이 부딪히는 정적 형상: 벽 넷, carrier field이고 solid ∨ occludes인 구조물(관절 몸체와 같은 집합), 바닥
-    this.statics = staticShapes(field)
-      .filter((s) => s.joints)
-      .map((shape) => {
-        if (!shape.hull) return { shape, min: null, max: null, box: false }
-        const b = shapeBounds({ kind: 'hull', hull: shape.hull })
-        return { shape, min: b.min, max: b.max, box: shape.target.kind === 'wall' }
-      })
+    // 공이 부딪히는 정적 형상: 벽 넷, carrier field이고 solid ∨ occludes인 구조물(관절 몸체와 같은 집합, 부품이 있으면 공 부품),
+    // 바닥
+    this.statics = ballStaticShapes(field)
+    let code = 0
+    this.staticCode = this.statics.map((st) => {
+      const start = code
+      code += st.kind === 'group' ? st.pieces.length : 1
+      return start
+    })
+    this.staticLeafCount = code
     this.start = spec.robot.start
     this.footprint = spec.robot.footprint
     this.height = spec.robot.height
@@ -945,7 +945,7 @@ export class ElementWorld {
 
   // 공 e와 상대(code: 정적 순번 → 로봇 충돌체 → 공)의 짝 키(처음 쓸 때 한 번 만든다)
   private keysFor(e: number, code: number, token: () => string): PairKeys {
-    const id = e * (this.statics.length + this.robotShapeCount + this.count) + code
+    const id = e * (this.staticLeafCount + this.robotShapeCount + this.count) + code
     let keys = this.pairKeys.get(id)
     if (!keys) {
       const t = token()
@@ -1142,7 +1142,7 @@ export class ElementWorld {
         dynamic,
         keys: this.keysFor(
           e,
-          this.statics.length + this.robotShapeOffset[b] + k,
+          this.staticLeafCount + this.robotShapeOffset[b] + k,
           () => `e${e}/${body.token}k${k}`
         ),
         normal: apply(ctx.rotation, found.normal),
@@ -1161,47 +1161,65 @@ export class ElementWorld {
     return out
   }
 
-  // 공 e와 정적 형상(벽 넷 → 구조물 → 바닥)
+  // 공 e와 정적 형상(벽 넷 → 구조물(6b 부품 묶음은 묶음 상자를 지난 조각, 부품 순서) → 바닥)
   private staticPairs(e: number, h: number, out: Contact[]): void {
     const r = this.radius[e]
     const c = this.centerOf(e)
     const band = norm(this.velocityOf(e)) * h + COLLISION_MARGIN
     const t = this.typeOf[e]
-    for (let index = 0; index < this.statics.length; index++) {
-      const st = this.statics[index]
-      let found: BallContact | null
-      if (st.shape.kind === 'floor') found = sphereFloor(c, r, band)
-      else {
-        const min = st.min as V3
-        const max = st.max as V3
-        let near = true
-        for (let i = 0; i < 3; i++)
-          if (c[i] + r + band < min[i] || c[i] - r - band > max[i]) near = false
-        if (!near) continue
-        found = st.box
-          ? sphereBox(c, r, min, max, band)
-          : sphereHull(c, r, st.shape.hull as Hull, band)
-      }
-      if (!found) continue
-      const floor = st.shape.kind === 'floor'
+    const near = (min: V3, max: V3): boolean => {
+      for (let i = 0; i < 3; i++)
+        if (c[i] + r + band < min[i] || c[i] - r - band > max[i]) return false
+      return true
+    }
+    const push = (
+      found: BallContact,
+      code: number,
+      token: string,
+      friction: number,
+      floor: boolean
+    ): void => {
       out.push({
         e,
         f: -1,
         body: -2,
         dynamic: false,
-        keys: this.keysFor(e, index, () => `e${e}/${st.shape.token}`),
+        keys: this.keysFor(e, code, () => `e${e}/${token}`),
         normal: found.normal,
         point: found.point,
         separation: found.separation,
         pointC: null,
         normalC: null,
         otherOmega: [0, 0, 0],
-        mu: (t.contact.friction + st.shape.friction) / 2,
+        mu: (t.contact.friction + friction) / 2,
         restitution: floor ? t.contact.restitution.floor : t.contact.restitution.hard,
         stiffness: CONTACT_STIFFNESS_PER_PLATE * t.contact.plateStiffness,
         mass: this.mass[e],
         core: t.contact.coreDepthRatio * r
       })
+    }
+    for (let index = 0; index < this.statics.length; index++) {
+      const st = this.statics[index]
+      const code = this.staticCode[index]
+      if (st.kind === 'floor') {
+        const found = sphereFloor(c, r, band)
+        if (found) push(found, code, st.token, st.friction, true)
+        continue
+      }
+      if (!near(st.min, st.max)) continue
+      if (st.kind === 'group') {
+        st.pieces.forEach((piece, k) => {
+          if (!near(piece.min, piece.max)) return
+          const found = piece.cylinder
+            ? sphereCylinder(c, r, piece.cylinder.a, piece.cylinder.b, piece.cylinder.r, band)
+            : sphereHull(c, r, piece.hull as Hull, band)
+          if (found) push(found, code + k, piece.token, st.friction, false)
+        })
+        continue
+      }
+      const found =
+        st.kind === 'box' ? sphereBox(c, r, st.min, st.max, band) : sphereHull(c, r, st.hull, band)
+      if (found) push(found, code, st.token, st.friction, false)
     }
   }
 
@@ -1229,7 +1247,7 @@ export class ElementWorld {
         f,
         body: -2,
         dynamic: false,
-        keys: this.keysFor(e, this.statics.length + this.robotShapeCount + f, () => `e${e}/e${f}`),
+        keys: this.keysFor(e, this.staticLeafCount + this.robotShapeCount + f, () => `e${e}/e${f}`),
         normal: found.normal,
         point: found.point,
         separation: found.separation,

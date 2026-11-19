@@ -33,10 +33,24 @@ import {
 import { tagFieldPose } from './tagPoses'
 
 // 6b 계약(spec-6b §1.1·§1.2): 구조물·HIVE 부품의 모양·거울·데이터 검사, 시작 배치의 carrier·when(placementActive·
-// placementFieldPosition), 묶음별 배치 검사(flower·hiveCell). BIOBUZZ 부품·배치 데이터는 다음 커밋이 넣으므로 여기서는 시험이
-// 만든 판(얕은 복사)으로 규칙만 본다.
+// placementFieldPosition), 묶음별 배치 검사(flower·hiveCell). 규칙만 보려고 BIOBUZZ에서 6b 데이터(구조물·HIVE 부품, HIVE 동역학,
+// flower·hiveCell 배치)를 뺀 판에 시험이 만든 부품·배치를 얹는다. 실제 6b 데이터는 seasons6b.test.ts가 본다.
 
-const biobuzz = resolveSeason('biobuzz')
+function without<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit<T, K> {
+  const out = { ...value }
+  for (const key of keys) delete out[key]
+  return out
+}
+const resolved = resolveSeason('biobuzz')
+const biobuzz: FieldSpec = {
+  ...resolved,
+  structures: resolved.structures.map((s) => without(s, 'parts')),
+  hives: resolved.hives.map((h) => without(h, 'dynamics', 'parts')),
+  elements: {
+    ...resolved.elements!,
+    layout: resolved.elements!.layout.filter((p) => p.group === 'garden')
+  }
+}
 const POLLEN_R = biobuzz.elements!.types.find((t) => t.kind === 'pollen')!.radius
 const NECTAR_R = biobuzz.elements!.types.find((t) => t.kind === 'nectarRed')!.radius
 const FLOWER = 9

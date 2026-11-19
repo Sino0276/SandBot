@@ -83,8 +83,23 @@ function hull(index: number, height = H18): Vec2[] {
 }
 const separation = (pose: Pose2, index: number, height = H18): number =>
   polygonSeparation(placeFootprint(FOOTPRINT, pose), hull(index, height))
+// 6b: 부품이 있는 구조물(FLOWER 케이지)은 시뮬레이터가 쓰는 로봇 부품 껍질(staticShapes s<i>p<j>)과 섀시 상자의 3D 침투(SAT 최선
+// 분리, 겹친 볼록의 정확한 깊이)로 잰다. 봉투 상자는 케이지보다 크다(부품이 봉투 안이라 케이지가 막아도 봉투에는 걸칠 수 있다)
+const CAGE_PIECES = staticShapes(BIOBUZZ).filter(
+  (s) => s.chassis && s.target.kind === 'structure' && BIOBUZZ.structures[s.target.index].parts
+)
+function cagePenetration(pose: Pose2, index: number | null, height = H18): number {
+  const placed = placeShape(bodyShape(chassisBox(height))!, planarFrame(pose))
+  let worst = 0
+  for (const st of CAGE_PIECES)
+    if (index === null || (st.target as { index: number }).index === index)
+      worst = Math.max(worst, -shapeSeparation(placed, { kind: 'hull', hull: st.hull! }))
+  return worst
+}
 const worstPenetration = (poses: readonly Pose2[], index: number, height = H18): number =>
-  Math.max(0, ...poses.map((p) => -separation(p, index, height)))
+  BIOBUZZ.structures[index].parts
+    ? Math.max(0, ...poses.map((p) => cagePenetration(p, index, height)))
+    : Math.max(0, ...poses.map((p) => -separation(p, index, height)))
 function wallPenetration(poses: readonly Pose2[], inner = INNER): number {
   let worst = 0
   for (const p of poses)
@@ -138,10 +153,12 @@ function recordRows(): string[][] {
   return steps
 }
 
-// 섀시–구조물 법선 행 키(cn.rk0/s<i>.…)
+// 섀시–구조물 법선 행 키(cn.rk0/s<i>.…, 6b 부품 구조물은 cn.rk0/s<i>p<j>.…)
 const chassisStructureKeys = (keys: readonly string[], index?: number): string[] =>
   keys.filter((k) =>
-    index === undefined ? /^cn\.rk0\/s\d/.test(k) : k.startsWith(`cn.rk0/s${index}.`)
+    index === undefined
+      ? /^cn\.rk0\/s\d/.test(k)
+      : new RegExp(`^cn\\.rk0/s${index}(p\\d+)?\\.`).test(k)
   )
 const worldErrors = (r: Runner): number =>
   r.world.drainNotices().filter((n) => n.code === 'worldError').length
@@ -168,7 +185,8 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
     const all = steps.flat()
     expect(all.some((k) => /^[nt][xys]/.test(k))).toBe(false)
     expect(all.some((k) => k.startsWith('cn.rk0/w3.'))).toBe(true)
-    expect(all.some((k) => k.startsWith('cn.rk0/s11.'))).toBe(true)
+    // 6b: FLOWER <3>(s11)은 케이지 부품 행(cn.rk0/s11p<j>.…)
+    expect(all.some((k) => /^cn\.rk0\/s11p\d+\./.test(k))).toBe(true)
     expect(r.poses.slice(-20).every((p) => p.blocked)).toBe(true)
     expect(worldErrors(r)).toBe(0)
   })
@@ -232,8 +250,12 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
   })
 
   it('A16 4ab A17 모서리 대 모서리: 요 45° 섀시 모서리를 FLOWER 모서리에 곧게 몰면 침투가 늘지 않고 |ω| < 0.5 rad/s, 두 번 돌려 바이트가 같다', () => {
-    const flower = hull(FLOWER_MX)
-    const corner = flower.reduce((a, b) => (b.x >= a.x && b.y >= a.y ? b : a))
+    // 6b: FLOWER는 케이지라 봉투 상자의 모서리에는 아무것도 없다. 섀시 높이 안의 케이지 로봇 부품 꼭짓점 가운데 (+x, +y) 쪽으로 가장
+    // 먼 것(가운데 고리 판 윤곽의 꼭짓점)이 그 모서리다
+    const flowerVertices = CAGE_PIECES.filter(
+      (st) => (st.target as { index: number }).index === FLOWER_MX
+    ).flatMap((st) => st.hull!.vertices.filter((v) => v.z <= H18))
+    const corner = flowerVertices.reduce((a, b) => (b.x + b.y > a.x + a.y ? b : a))
     const yaw = Math.PI / 4
     const lead = placeFootprint([FOOTPRINT[1]], { x: 0, y: 0, yaw })[0]
     const start = { x: corner.x + 0.03 - lead.x, y: corner.y - lead.y, yaw }
@@ -255,12 +277,15 @@ describe('A16 섀시 3D 경로(4ab 시험을 섀시 상자로)', () => {
   })
 
   const SOLIDS = solidFootprints(BIOBUZZ, H18)
+  // 부품 없는 solid 구조물은 4ab처럼 평면 SAT, 부품이 있는 것(6b FLOWER 케이지)은 로봇 부품과의 3D 침투
   const worstAny = (poses: readonly Pose2[]): number => {
     let worst = 0
-    for (const p of poses)
+    for (const p of poses) {
       for (const s of SOLIDS)
-        if (s.kind === 'polygon')
+        if (s.kind === 'polygon' && !BIOBUZZ.structures[s.index].parts)
           worst = Math.max(worst, -polygonSeparation(placeFootprint(FOOTPRINT, p), s.points))
+      worst = Math.max(worst, cagePenetration(p, null))
+    }
     return worst
   }
 
@@ -945,8 +970,11 @@ describe('A7 꼭짓점 대 꼭짓점(세계)', () => {
     const beta = -Math.atan(1 / Math.SQRT2)
     // 고정 정육면체: R = Ry(β)·Rx(45°)가 (1, 1, 1)/√3을 +z로
     const up = rotationMatrix({ x: Math.PI / 4, y: beta, z: 0 })
+    // FLOWER의 재질·플래그만 빌린다(6b 케이지 부품은 빼야 봉투 shape가 계산에 쓰인다)
+    const { parts: _cage, ...flowerFlags } = BIOBUZZ.structures[FLOWER_RED]
+    expect(_cage).toBeDefined()
     const cube: FieldStructure = {
-      ...BIOBUZZ.structures[FLOWER_RED],
+      ...flowerFlags,
       shape: {
         kind: 'box',
         center: { x: 0.5, y: 0, z: 0.2 },

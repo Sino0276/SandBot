@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DeviceValues } from '../sidecarProtocol'
 import { resolveServoParams } from './actuatorData'
 import { Articulation } from './articulation'
-import { BodyCollision } from './bodyCollision'
+import { BodyCollision, MAX_COLLISION_ROWS } from './bodyCollision'
 import { startOverlaps } from './collision3d'
 import {
   HALF,
@@ -873,6 +873,7 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(startOverlaps(mechanismCollision().spec, resolveSeason('biobuzz'))).toEqual([])
     // 한 번은 밖의 행 키(짝 토큰까지)와 팔–벽 매니폴드 법선을 모은다(해시에는 들어가지 않는다)
     const keys = new Set<string>()
+    let mostRows = 0
     const original = Articulation.prototype.step
     const spy = vi.spyOn(Articulation.prototype, 'step').mockImplementation(function (
       this: Articulation,
@@ -880,8 +881,12 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
       drive,
       contacts
     ) {
-      for (const row of contacts?.rows ?? [])
+      let collisionRows = 0
+      for (const row of contacts?.rows ?? []) {
         if (row.key.startsWith('cn.')) keys.add(row.key.split('.').slice(0, 2).join('.'))
+        if (/^c(n|t1|t2|w)\./.test(row.key)) collisionRows++
+      }
+      mostRows = Math.max(mostRows, collisionRows)
       return original.call(this, h, drive, contacts)
     })
     let side = false
@@ -897,12 +902,19 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     spy.mockRestore()
     const { ticks, hash } = trace(mechanismCollision(), 'biobuzz')
     expect(hash).toBe(first.hash)
-    for (const key of ['cn.j1k0/fl', 'cn.j1k0/w3', 'cn.rk0/w3', 'cn.rk0/s11'])
-      expect(keys.has(key)).toBe(true)
+    for (const key of ['cn.j1k0/fl', 'cn.j1k0/w3', 'cn.rk0/w3']) expect(keys.has(key)).toBe(true)
+    // 6b: FLOWER <3>(s11)는 케이지 부품이라 짝 토큰이 s11p<부품 순번>이다
+    expect([...keys].some((key) => key.startsWith('cn.rk0/s11p'))).toBe(true)
+    // 케이지 옆을 미끄러져도 하위 단계의 충돌 행은 한도 안이고 한도 알림이 없다(spec-6b §4)
+    expect(mostRows).toBeGreaterThan(0)
+    expect(mostRows).toBeLessThanOrEqual(MAX_COLLISION_ROWS)
+    expect(ticks.some((t) => t.notices.some((n) => n.code === 'collisionLimit'))).toBe(false)
     expect(side).toBe(true)
     expect(top).toBe(true)
     expect(ticks.filter((t) => t.pose.blocked).length).toBeGreaterThan(20)
-    expect(hash).toBe('c98655b20b36b68af6a3cb5fa0abaf8e4a9b684a0f623c1d8bab814735d7e6cf')
+    // 6b에서 다시 잼(사용자 결정 11/19): FLOWER <3>이 상자 봉투에서 케이지(아래·가운데·위 고리 판, 관, 압출재, 브래킷, 백스톱)가
+    // 되어 섀시 왼쪽이 닿는 면·행이 바뀌었다. 5단계 값 c98655b20b36b68af6a3cb5fa0abaf8e4a9b684a0f623c1d8bab814735d7e6cf
+    expect(hash).toBe('0875627f0125888141e3521b5c11fabab22cb4373bf4d69af57761ec62bf728e')
   })
 
   it('6a 움직이는 경기 요소(BIOBUZZ GARDEN + 인테이크 + 프리로드, 같은 프로세스에서 두 번 바이트가 같다)', () => {
