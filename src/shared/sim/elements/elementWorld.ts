@@ -162,7 +162,10 @@ export type ElementWorldOptions = {
   // 잠들기(기본 켬, 해석 시험이 끈다)
   sleep?: boolean
   // 움직이는 HIVE의 시작 상태(6b, FieldSpec.hives 순서, 시험과 6d 이어 가기의 이음새). 없으면 세계 설명 field.hiveTipped의 멈춤
-  // 각에서 잠들어 시작하고 넘어간 횟수 0이다
+  // 각에서 잠들어 시작하고 넘어간 횟수 0이다. 각·각속도는 유한해야 하고(아니면 RangeError) 각은 멈춤 사이로 잘린다.
+  // 한계: 쉬던 멈춤(restStop)은 상태에 없어 멈춤 사이에서 시작하면 모르는 것(0)이 된다: 처음 닿는 멈춤이 방금 떠난 멈춤이어도
+  // 넘어감으로 센다. 그래서 6d는 HIVE가 멈춤에서 쉬는 때(asleep, 각이 멈춤 상수)의 상태로 이어 가야 한다 [결정: 6b 리뷰. 상태에
+  // restStop을 더하면 hiveSnapshot 바이트가 바뀌어 열째 기준 해시가 달라진다]
   initialHives?: readonly SimHiveState[]
 }
 
@@ -482,7 +485,13 @@ export class ElementWorld {
     this.hives.forEach((hive, k) => {
       const given = initialHives?.[k]
       if (given) {
-        this.theta[k] = given.angle
+        // 시험과 6d가 넘기는 값이라 믿지 않는다: 유한하지 않은 각·각속도(NaN이 잠든 채 퍼지지 않게)와 틀린 횟수는 던지고, 멈춤
+        // 밖의 각은 그 멈춤 상수로 자른다(범위 안의 각은 그대로) [결정: 6b 리뷰]
+        if (!Number.isFinite(given.angle) || !Number.isFinite(given.angularVelocity))
+          throw new RangeError(`elements: initialHives[${k}] needs a finite angle and angularVelocity`)
+        if (!Number.isInteger(given.tips) || given.tips < 0)
+          throw new RangeError(`elements: initialHives[${k}].tips needs a non-negative integer`)
+        this.theta[k] = Math.min(Math.max(given.angle, hive.lower), hive.upper)
         this.thetaDot[k] = given.angularVelocity
         this.hiveAsleep[k] = given.asleep ? 1 : 0
         this.tips[k] = given.tips

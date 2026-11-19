@@ -397,6 +397,39 @@ describe('결정성과 안전', () => {
     expect(blue.asleep).toBe(true)
   })
 
+  it('initialHives는 믿지 않는다: 유한하지 않은 각·각속도와 틀린 횟수는 던지고, 멈춤 밖의 각은 멈춤 상수로 자른다', () => {
+    const blue = { angle: BLUE.startAngle, angularVelocity: 0, asleep: true, tips: 0 }
+    const states = [ball('pollen', { x: -1.5, y: 1.5, z: POLLEN_R }, { asleep: true })]
+    const make = (red: Partial<SimHiveState>): ElementWorld =>
+      new ElementWorld(worldSpec(), BIOBUZZ, {
+        initial: states,
+        initialHives: [{ angle: 0, angularVelocity: 0, asleep: false, tips: 0, ...red }, blue]
+      })
+    expect(() => make({ angle: NaN })).toThrow(RangeError)
+    expect(() => make({ angle: Infinity })).toThrow(RangeError)
+    expect(() => make({ angularVelocity: NaN })).toThrow(RangeError)
+    expect(() => make({ tips: -1 })).toThrow(RangeError)
+    expect(() => make({ tips: 0.5 })).toThrow(RangeError)
+    // 위 멈춤 너머의 각은 그 멈춤 상수이고(넘어감으로 세지 않는다), 아래도 같다. 안쪽 각은 그대로다
+    expect(Object.is(make({ angle: 0.9 }).hiveSnapshot()![0].angle, UPPER)).toBe(true)
+    expect(Object.is(make({ angle: -0.9 }).hiveSnapshot()![0].angle, LOWER)).toBe(true)
+    expect(make({ angle: 0.1 }).hiveSnapshot()![0].angle).toBe(0.1)
+    // 잘린 각으로 쉬면 잠들고 넘어감도 알림도 없다
+    const runner = new BallRunner(
+      worldSpec(),
+      {
+        field: BIOBUZZ,
+        elements: {
+          initial: states,
+          initialHives: [{ angle: 0.9, angularVelocity: 0, asleep: false, tips: 0 }, blue]
+        }
+      },
+      TICK_1MS
+    ).run(2)
+    expect(hiveOf(runner)).toEqual({ angle: UPPER, angularVelocity: 0, asleep: true, tips: 0 })
+    expect(runner.notices.filter((n) => n.code === 'worldError')).toEqual([])
+  })
+
   it('HIVE의 잠들기 문턱은 |ω|·HIVE_ARM이다(0.545 m, 5 mm/s)', () => {
     expect(HIVE_ARM).toBe(0.545)
     expect(SLEEP_SPEED / HIVE_ARM).toBeCloseTo(0.00917, 4)
