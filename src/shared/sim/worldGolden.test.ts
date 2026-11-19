@@ -21,18 +21,21 @@ import type { SeasonId } from './seasons/fieldSpec'
 import { resolveSeason } from './seasons/seasons'
 import { snapRobotToStart } from './seasons/startPose'
 import { testMotorParams } from './testkit'
-import { PhysicsWorld } from './world'
+import { elementSpawns, restBodyFrames } from './elements/spawn'
+import { loadStates } from './elements/hiveTestkit'
+import { PhysicsWorld, type PhysicsWorldOptions } from './world'
 import type {
   SimCollider,
   SimElementState,
+  SimHiveState,
   SimJointSpec,
   SimMotorSpec,
   SimPose,
   WorldSpec
 } from './worldSpec'
 
-// 시뮬레이터 출력 기준 해시. 대표 시나리오 아홉(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준, 일곱째는
-// 4d 웹캠 기준, 여덟째는 5 메커니즘 충돌 기준, 아홉째는 6a 경기 요소 기준)을 고정한 출력열로
+// 시뮬레이터 출력 기준 해시. 대표 시나리오 열(넷은 4단계 전 v3 기준, 다섯째는 4ab BIOBUZZ 기준, 여섯째는 4c 센서 기준, 일곱째는
+// 4d 웹캠 기준, 여덟째는 5 메커니즘 충돌 기준, 아홉째는 6a 경기 요소 기준, 열째는 6b HIVE 넘어감 기준)을 고정한 출력열로
 // 돌려, 틱마다 step()이 돌려준 입력, pose()(기저 basePose()의 x·y·yaw, 관절 q(), blocked), supportLoads(),
 // drainNotices()를 JSON으로 이어 sha256을 잰다.
 //
@@ -60,6 +63,12 @@ import type {
 // 않는다(판만 7로 올랐다). 아홉째는 틱마다 elementSnapshot()(공 전체 정밀도 상태)도 이어 붙이고, 공 접촉의 sqrt·반발·마찰 반올림과
 // 섬 LCP에 기대므로 Node·Electron을 올릴 때 다시 볼 해시가 하나 는다. 6a A가 잰 값이고 다음 단계가 지킨다.
 //
+// 열째는 6b의 HIVE 넘어감 기준이다(BIOBUZZ 묶음 셋 모두, 빨강 HIVE의 위로 향한 CELL에 3N+3P를 놓고 던져 한 번 넘어가 쏟아지고, 로봇 뒤
+// 웹캠이 넘어가기 전후 RED AUDIENCE 태그를 보고, 인테이크가 FLOWER <3> 아래 회수 구멍에서 POLLEN을 꺼낸다). 입력은 아홉째의 것에
+// 틱마다 hiveSnapshot()(HIVE 각·각속도·잠듦·넘어간 횟수)을 더한다. 경기 요소 없는 세계와 건드리지 않은 HIVE는 바이트 그대로라 앞의
+// 일곱 해시와 아홉째는 6b가 바꾸지 않는다(여덟째는 FLOWER 케이지로 6b A1이 다시 쟀다). 열째는 HIVE 중력 토크의 Math.sin과
+// 공–트레이 접촉에 기대므로 Node·Electron을 올릴 때 다시 볼 해시가 하나 는다. 6b A2가 잰 값이다.
+//
 // 해시는 물리 계산이 쓰는 Math.sin·exp 등의 결과에 기대고, V8은 이것을 fdlibm 이식으로 플랫폼과 관계없이 같게 낸다. Node를
 // 올려 이 시험만 깨지면, 4단계 전 커밋의 코드로 같은 Node에서 다시 재어 확인한 뒤에만 값을 바꾼다. 출력열 자체는 초월 함수를
 // 쓰지 않는다.
@@ -68,6 +77,8 @@ type Outputs = Record<string, DeviceValues>
 
 type Scenario = {
   spec: WorldSpec
+  // 시험 전용 시작 상태(경기 요소 initial 등, 열째가 쓴다)
+  options?: PhysicsWorldOptions
   ticks: number
   // 틱 k의 시각(ns, 늘어나기만)
   time: (k: number) => number
@@ -142,6 +153,38 @@ function traceElements(s: Scenario): {
   expect(ticks.some((t) => t.notices.some((n) => n.code === 'worldError'))).toBe(false)
   expect(text).not.toContain('null')
   return { ticks, snapshots, hash: createHash('sha256').update(text).digest('hex') }
+}
+
+// HIVE 넘어감 기준(열째): 아홉째의 입력에 틱마다 hiveSnapshot()(각·각속도·잠듦·넘어간 횟수)을 더한다
+function traceHive(s: Scenario): {
+  ticks: Tick[]
+  snapshots: SimElementState[][]
+  hives: SimHiveState[][]
+  hash: string
+} {
+  expect(s.spec.version).toBe(8)
+  const world = new PhysicsWorld(s.spec, s.options)
+  const ticks: Tick[] = []
+  const snapshots: SimElementState[][] = []
+  const hives: SimHiveState[][] = []
+  for (let k = 0; k < s.ticks; k++) {
+    const input = world.step(s.time(k), s.out(k))
+    ticks.push({
+      k,
+      input,
+      pose: world.pose(),
+      loads: world.supportLoads(),
+      notices: world.drainNotices()
+    })
+    snapshots.push(world.elementSnapshot() ?? [])
+    hives.push(world.hiveSnapshot() ?? [])
+  }
+  const text = JSON.stringify(
+    ticks.map((t, i) => [t.k, t.input, t.pose, t.loads, t.notices, snapshots[i], hives[i]])
+  )
+  expect(ticks.some((t) => t.notices.some((n) => n.code === 'worldError'))).toBe(false)
+  expect(text).not.toContain('null')
+  return { ticks, snapshots, hives, hash: createHash('sha256').update(text).digest('hex') }
 }
 
 const evenly = (k: number): number => k * TICK
@@ -767,13 +810,100 @@ function gardenIntake(): Scenario {
   return { spec, ticks: 640, time: uneven, out }
 }
 
+// (10) 6b HIVE 넘어감(BIOBUZZ, 묶음 셋 모두): 빨강 벽의 FLOWER <3>(11) 아래 회수 구멍 앞에서 −Y를 보는 메카넘 로봇. 앞 세운 롤러 둘(CR
+// 서보, μ 1)이 맨 아래 POLLEN 옆에 와 공을 꺼내고, 로봇 뒤 웹캠(40° 위, 뒤를 봄)이 HIVE의 RED AUDIENCE 34–37 태그를 본다. 빨강 HIVE의
+// 위로 향한 CELL(+X)에는 NECTAR 셋(시작 배치)에 POLLEN 둘을 놓고 셋째를 위 0.3 m에서 던져 넘어간다(3N+3P, 한 번 넘어가 반대 멈춤에
+// 닿고 공이 입구로 쏟아져 바닥에 닿는다). 파랑 HIVE는 건드리지 않는다. 틱 간격은 고르지 않다
+function hiveTip(): Scenario {
+  const AXIS = { x: 0.59418, y: -1.728254 }
+  const R = 0.015
+  const squeeze = 0.004
+  const ahead = 0.07
+  const lateral = 0.03555 + R - squeeze
+  const params = resolveServoParams('gobildaSpeed', 'crServo')
+  const roller = (side: 1 | -1): SimJointSpec => ({
+    parent: -1,
+    type: 'revolute',
+    origin: { position: { x: HALF + ahead, y: side * lateral, z: 0.0375 }, rotation: ZERO },
+    axis: { x: 0, y: 0, z: 1 },
+    limits: null,
+    body: { mass: 0.05, centerOfMass: ZERO, inertia: [2e-5, 2e-5, 2e-5, 0, 0, 0] },
+    friction: { coulomb: 0.02, viscous: 0.001 },
+    spring: null,
+    drive: {
+      kind: 'crServo',
+      device: side > 0 ? 'left' : 'right',
+      ratio: 1,
+      params,
+      direction: side > 0 ? -1 : 1
+    },
+    switches: [],
+    colliders: [
+      {
+        kind: 'cylinder',
+        a: { x: 0, y: 0, z: -0.0225 },
+        b: { x: 0, y: 0, z: 0.0225 },
+        radius: R,
+        friction: 1
+      }
+    ]
+  })
+  // 로봇은 −Y(FLOWER 쪽)를 본다. 롤러 중심의 자기 u = 0.08에서 시작
+  const start = { x: AXIS.x, y: AXIS.y + 0.08 + HALF + ahead, yaw: -Math.PI / 2 }
+  const base = robotSpec({ start }, { field: { season: 'biobuzz', hiveTipped: [false, false] } })
+  const chassis: SimCollider = {
+    kind: 'box',
+    center: { x: 0, y: 0, z: 0.1 },
+    rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    half: { x: HALF, y: HALF, z: 0.1 },
+    friction: 0.4
+  }
+  const spec: WorldSpec = {
+    ...base,
+    robot: { ...base.robot, start, colliders: [chassis] },
+    joints: [roller(1), roller(-1)],
+    cameras: [
+      {
+        device: 'cam',
+        mount: {
+          body: -1,
+          position: { x: -HALF, y: 0, z: 0.3 },
+          rotation: { x: 0, y: (-40 * Math.PI) / 180, z: Math.PI }
+        },
+        model: 'logitechC920'
+      }
+    ],
+    elements: { groups: ['garden', 'flower', 'hiveCell'], preloads: [] }
+  }
+  const field = resolveSeason('biobuzz')
+  const spawns = elementSpawns(
+    field,
+    spec.elements,
+    start,
+    restBodyFrames(spec.joints),
+    spec.field.hiveTipped
+  )
+  // 위로 향한 빨강 CELL: 시작 배치 NECTAR 셋 뒤에 POLLEN 둘(놓음)과 셋째(던짐)
+  const initial = [
+    ...spawns,
+    ...loadStates(field, { nectar: 3, pollen: 3 }, { toss: true }).slice(3)
+  ]
+  const servo = { position: 0, power: 0, pulseUs: 2400, pwm: true }
+  const out = (k: number): Outputs => {
+    const t = (k * TICK) / 1e9
+    const drive = t < 0.8 ? mecanum(0.15, 0, 0) : t < 1.1 ? mecanum(0, 0, 0) : mecanum(-0.15, 0, 0)
+    return { ...outputs(drive), left: servo, right: servo, cam: camOut }
+  }
+  return { spec, options: { elements: { initial } }, ticks: 1000, time: uneven, out }
+}
+
 // 시나리오가 덮으려는 것을 실제로 지나가는지(해시만으로는 시나리오가 아무 일도 하지 않아도 통과한다)
 const seen = (ticks: Tick[], device: string, key: string, value: unknown): boolean =>
   ticks.some((t) => t.input[device]?.[key] === value)
 const notified = (ticks: Tick[], code: string): boolean =>
   ticks.some((t) => t.notices.some((n) => n.code === code))
 
-describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서, 일곱째는 4d 웹캠, 여덟째는 5 메커니즘 충돌, 아홉째는 6a 경기 요소)", () => {
+describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째는 4ab BIOBUZZ, 여섯째는 4c 센서, 일곱째는 4d 웹캠, 여덟째는 5 메커니즘 충돌, 아홉째는 6a 경기 요소, 열째는 6b HIVE 넘어감)", () => {
   it('메카넘 + Pinpoint + 리프트', () => {
     const { ticks, hash } = trace(mecanumLift())
     const last = ticks[ticks.length - 1].pose
@@ -962,6 +1092,63 @@ describe("시뮬레이터 기준 해시('none' 넷은 4단계 전 v3, 다섯째�
     expect(ticks.some((t) => t.notices.some((n) => n.code === 'elementOutOfField'))).toBe(false)
     expect(hash).toBe('e498c93e3ead7b548e09033dff71cde9feb72b60103aed11f16c15316e8bed40')
   }, 60_000)
+
+  it('6b HIVE 넘어감(BIOBUZZ 묶음 셋, 웹캠, FLOWER 회수, 같은 프로세스에서 두 번 바이트가 같다)', () => {
+    const first = traceHive(hiveTip())
+    const { ticks, snapshots, hives, hash } = traceHive(hiveTip())
+    expect(hash).toBe(first.hash)
+    // 빨강 HIVE가 한 번 넘어가 반대 멈춤에 닿고(비트로 그 상수) 안내는 한 줄이다. 파랑은 시작 각 상수에서 잠든 채다
+    const red = resolveSeason('biobuzz').hives[0]
+    const blue = resolveSeason('biobuzz').hives[1]
+    const notices = ticks.flatMap((t) => t.notices.filter((n) => n.code === 'hiveTip'))
+    expect(notices.map((n) => n.params)).toEqual([{ hive: 'red' }])
+    const lastHive = hives[hives.length - 1]
+    expect(Object.is(lastHive[0].angle, red.tippedAngle)).toBe(true)
+    expect(lastHive[0]).toMatchObject({ tips: 1, asleep: true })
+    expect(Object.is(lastHive[1].angle, blue.startAngle)).toBe(true)
+    expect(lastHive[1]).toMatchObject({ tips: 0, asleep: true })
+    // 처음 멈춤을 떠난 틱과 반대 멈춤에 닿은 틱
+    const left = hives.findIndex((h) => h[0].angle > red.startAngle + 1e-6)
+    const reached = hives.findIndex((h) => h[0].angle === red.tippedAngle)
+    expect(left).toBeGreaterThan(0)
+    expect(reached).toBeGreaterThan(left)
+    // 웹캠: 넘어가기 전에도 후에도 RED AUDIENCE 34–37이 모두 보인다(HIVE 각을 따라 태그 꼭짓점이 바뀐다)
+    const tagIds = (k: number): number[] => {
+      const tags = ticks[k].input.cam?.tags
+      if (!Array.isArray(tags)) return []
+      const stride = 9
+      const ids: number[] = []
+      for (let i = 0; i < tags.length; i += stride) ids.push(tags[i] as number)
+      return ids
+    }
+    const seenBefore = ticks.slice(1, left).map((_, k) => tagIds(k + 1))
+    const seenAfter = ticks.slice(reached).map((_, k) => tagIds(reached + k))
+    expect(seenBefore.some((ids) => [34, 35, 36, 37].every((id) => ids.includes(id)))).toBe(true)
+    expect(seenAfter.some((ids) => [34, 35, 36, 37].every((id) => ids.includes(id)))).toBe(true)
+    const first34 = ticks.find((t) => (t.input.cam?.tags as number[] | undefined)?.length)!
+    const lastTags = ticks[ticks.length - 1].input.cam?.tags
+    expect(JSON.stringify(first34.input.cam?.tags)).not.toBe(JSON.stringify(lastTags))
+    // 공: 빨강 CELL 공(NECTAR 셋과 POLLEN 셋)이 입구로 쏟아져 바닥에 닿았고, 파랑 CELL NECTAR 셋은 처음 자리에서 잠든 채다
+    const last = snapshots[snapshots.length - 1]
+    const spawn = snapshots[0]
+    const cell = [24, 25, 26, 30, 31, 32]
+    for (const k of cell) {
+      expect(last[k].position.z).toBeLessThan(last[k].kind === 'pollen' ? 0.046 : 0.056)
+      expect(last[k].out).toBe(false)
+    }
+    for (const k of [27, 28, 29]) {
+      expect(last[k].asleep).toBe(true)
+      expect(last[k].position).toEqual(spawn[k].position)
+    }
+    // FLOWER <3>(11)의 맨 아래 POLLEN(공 16)을 인테이크가 꺼냈다: 아래 고리 바깥(자기 u > 0.0606 + r) 바닥에 있다
+    expect(last[16].position.y - -1.728254).toBeGreaterThan(0.0606 + 0.03555)
+    expect(last[16].position.z).toBeLessThan(0.04)
+    // 다른 FLOWER 공(공 8–15, 20–23)은 잠든 채 그 자리다
+    for (const k of [8, 9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 23])
+      expect(last[k].asleep).toBe(true)
+    expect(ticks.some((t) => t.notices.some((n) => n.code === 'elementOutOfField'))).toBe(false)
+    expect(hash).toBe('1a9211d82eed878a9ca4935fdb1e06d7d0937da473bc5caf0a5398dda897286d')
+  }, 120_000)
 
   it('바퀴·관절 없음', () => {
     const { ticks, hash } = trace(motorsOnly())
