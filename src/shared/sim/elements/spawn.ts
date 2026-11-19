@@ -103,7 +103,8 @@ export type PreloadFace = 'front' | 'back' | 'left' | 'right'
 export const PRELOAD_FACES: readonly PreloadFace[] = ['front', 'back', 'left', 'right']
 
 // 공(필드 좌표 중심, 반지름)이 필드 밖으로 나가거나 공이 부딪히는 구조물(carrier field이고 solid ∨ occludes, collision3d.ts
-// staticShapes와 같은 집합)이나 다른 공과 겹치는지. 정확히 닿기만 한 것(분리 0)은 막히지 않는다
+// staticShapes와 같은 집합)이나 다른 공과 겹치는지. 정확히 닿기만 한 것(분리 0)은 막히지 않는다. 부품이 있는 구조물(6b FLOWER
+// 케이지)도 봉투 상자로 본다 [결정: spec-6b §5. 보수적이라 자동 프리로드 자리가 FLOWER 안·회수 구멍에 생기지 않는다]
 function blocked(
   field: FieldSpec,
   center: Vec3,
