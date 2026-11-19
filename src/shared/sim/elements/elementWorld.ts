@@ -561,7 +561,7 @@ export class ElementWorld {
     this.hives.forEach((_, k) => {
       if (this.hiveIsAwake(k)) hiveQueue.push(k)
     })
-    for (let q = 0, hq = 0; q < queue.length || hq < hiveQueue.length; ) {
+    for (let q = 0, hq = 0; q < queue.length || hq < hiveQueue.length;) {
       for (; q < queue.length; q++) {
         const e = queue[q]
         const band = norm(this.velocityOf(e)) * h + COLLISION_MARGIN
@@ -585,7 +585,10 @@ export class ElementWorld {
         const k = hiveQueue[hq]
         const hive = this.hives[k]
         const reach =
-          hive.reach + this.maxRadius() + Math.abs(this.thetaDot[k]) * hive.reach * h + COLLISION_MARGIN
+          hive.reach +
+          this.maxRadius() +
+          Math.abs(this.thetaDot[k]) * hive.reach * h +
+          COLLISION_MARGIN
         const pivot = hive.pivot
         this.grid.query(
           pivot[0] - reach,
@@ -658,7 +661,8 @@ export class ElementWorld {
       if (made) rows.push(...made)
     })
     // 6b. HIVE의 멈춤·축 마찰 행(깨어 있는 HIVE, 모든 접촉 행 뒤)
-    for (let k = 0; k < this.hiveCount; k++) if (this.hiveIsAwake(k)) rows.push(...this.hiveRows(k, h))
+    for (let k = 0; k < this.hiveCount; k++)
+      if (this.hiveIsAwake(k)) rows.push(...this.hiveRows(k, h))
     // 7. 섬
     // 마디(공 → HIVE) 크기: HIVE 칸은 늘 0(로봇은 HIVE에 닿지 않고, 로봇이 쥔 공을 통해서만 섬에 든다)
     const robotTouch = new Uint8Array(n + this.hiveCount)
@@ -997,8 +1001,10 @@ export class ElementWorld {
     if (!this.moved) return
     this.moved = false
     const next = this.quantized(this.revision)
-    const sameList = (a: readonly number[] | undefined, b: readonly number[] | undefined): boolean =>
-      a === b || (a !== undefined && b !== undefined && a.every((x, i) => x === b[i]))
+    const sameList = (
+      a: readonly number[] | undefined,
+      b: readonly number[] | undefined
+    ): boolean => a === b || (a !== undefined && b !== undefined && a.every((x, i) => x === b[i]))
     const same =
       next.poses.length === this.display.poses.length &&
       next.poses.every((x, i) => x === this.display.poses[i]) &&
